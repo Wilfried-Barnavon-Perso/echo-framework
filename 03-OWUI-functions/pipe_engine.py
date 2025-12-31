@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V122.50 - Thought Fix)
+title: Gemini Pro Unified System (Platinum Agentic V122.65 - Hybrid Support Fix)
 author: ECHO Architecture
-version: 122.50
-description: Version Production Gold avec Gestion Stricte des Thought Signatures (Gemini 3 Pro).
+version: 122.65
+description: Support hybride strict : Active les Thought Signatures UNIQUEMENT pour Gemini 3, et maintient une config standard stable pour Gemini 2.5.
 """
 
 # ==============================================================================
@@ -323,9 +323,14 @@ class Orchestrator:
 
     def prepare_context(self, messages: List[Dict]) -> List[Dict]:
         """
-        Reconstruit l'historique avec une logique stricte pour Gemini 3 Pro.
-        - Gestion des Thought Signatures (Obligatoire pour éviter les répétitions/erreurs 400).
-        - Groupement correct User -> Model(FC) -> User(FR).
+        Reconstruit l'historique avec une logique stricte pour les Thought Signatures.
+        Règles d'Or (selon doc Gemini 3):
+        1. Function Call: Signature OBLIGATOIRE sur le 1er functionCall de la liste.
+        2. Text Chat: Signature recommandée sur la partie Text.
+        3. Parallel calls: Signature uniquement sur le premier appel.
+        
+        NOTE: Cette logique est sûre pour Gemini 2.5 car le nettoyage des balises Markdown
+        ou la présence de champs 'thoughtSignature' ignorés par le modèle 2.5 ne causent pas d'erreur.
         """
         contents = []
         
@@ -343,14 +348,13 @@ class Orchestrator:
             role = m["role"]
             content = m.get("content", "")
 
-            # Ignorer les messages systèmes et codes d'auth
+            # Ignorer les messages systèmes
             if role == "system" or ("4/" in str(content) and len(str(content)) > 30):
                 i += 1
                 continue
 
             # --- CAS 1 : TOOL RESPONSE (Résultat d'outil) ---
             if role == "tool":
-                # On doit regrouper TOUTES les réponses d'outils consécutives dans un seul message USER
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
                     tm = messages[i]
@@ -370,30 +374,27 @@ class Orchestrator:
                     })
                     i += 1
                 
-                # Ajout au flux (Rôle User obligatoire pour FunctionResponse)
                 if contents and contents[-1]["role"] == "user":
                     contents[-1]["parts"].extend(parts)
                 else:
                     contents.append({"role": "user", "parts": parts})
-                continue # Déjà incrémenté
+                continue
 
             # --- CAS 2 : MODEL (Assistant) ---
             elif role in ["assistant", "model"]:
                 parts = []
-                text_content = content
+                text_content = str(content) if content else ""
                 
-                # EXTRACTION THOUGHT SIGNATURE (CRITIQUE GEMINI 3)
-                # On cherche le lien caché [ ](context://thought_signature/...)
+                # A. NETTOYAGE DES PENSÉES (On garde propre pour le modèle)
+                text_content = re.sub(r'<think>.*?</think>', '', text_content, flags=re.DOTALL).strip()
+                
+                # B. EXTRACTION THOUGHT SIGNATURE (Persistée via lien caché)
                 thought_sig = None
-                sig_match = re.search(r"\[ \]\(context://thought_signature/(.*?)\)", str(text_content))
+                sig_match = re.search(r"\[\s*\]\(context://thought_signature/([a-zA-Z0-9_\-\.\=]+)\)", text_content)
                 if sig_match:
                     thought_sig = sig_match.group(1)
-                    # On nettoie le texte pour ne pas polluer le prompt
                     text_content = text_content.replace(sig_match.group(0), "").strip()
 
-                # Nettoyage des balises <think> si elles existent (pour ne pas répéter la pensée)
-                # text_content = re.sub(r'<think>.*?</think>', '', text_content, flags=re.DOTALL).strip()
-                
                 has_tools = False
                 if m.get("tool_calls"):
                     has_tools = True
@@ -406,22 +407,28 @@ class Orchestrator:
                             }
                         }
                         
-                        # INJECTION SIGNATURE : La signature doit être attachée au PREMIER functionCall
+                        # REGLE CRITIQUE : Signature sur le PREMIER functionCall
                         if first_fc and thought_sig:
                             fc_part["thoughtSignature"] = thought_sig
-                            thought_sig = None # Consommé
+                            thought_sig = None # Signature consommée
                             first_fc = False
                             
                         parts.append(fc_part)
                 
+                # Ajout du texte
                 if text_content:
                     text_part = {"text": text_content}
-                    # Si pas d'outil mais une signature (fin de tour thinking), on l'attache au texte
+                    # Si pas d'outil mais une signature (Chat standard ou fin de chaîne)
+                    # On l'attache au texte pour maintenir la mémoire
                     if not has_tools and thought_sig:
                          text_part["thoughtSignature"] = thought_sig
-                    
-                    parts.insert(0, text_part) # Texte toujours avant les outils
+                    parts.insert(0, text_part)
                 
+                # Cas rare : Ni texte ni outil, mais une signature (ex: étape purement cognitive)
+                # On crée un bloc texte vide pour porter la signature (autorisé par doc)
+                if not parts and thought_sig:
+                    parts.append({"text": "", "thoughtSignature": thought_sig})
+
                 if parts:
                     if contents and contents[-1]["role"] == "model":
                         contents[-1]["parts"].extend(parts)
@@ -433,30 +440,17 @@ class Orchestrator:
                 if content:
                     parts = [{"text": str(content)}]
                     if contents and contents[-1]["role"] == "user":
-                        # Fusion uniquement si ce n'est PAS une FunctionResponse
-                        # Si le précédent User contient functionResponse, on ne fusionne pas aveuglément du texte
-                        # sauf si Gemini l'autorise. Pour la sécurité, on sépare souvent.
-                        # Mais Gemini n'aime pas [User, User].
                         contents[-1]["parts"].extend(parts)
                     else:
                         contents.append({"role": "user", "parts": parts})
             
             i += 1
 
-        # --- FIX FINAL : GAP FILLER ---
-        # Gemini interdit strictement [User, User]. 
-        # Mais attention : [User(FC Response), User(Text)] est-il valide ? Non.
+        # Fusion des blocs consécutifs identiques (Optimisation)
         final_contents = []
         for c in contents:
             if final_contents and final_contents[-1]["role"] == c["role"]:
-                if c["role"] == "model":
-                    final_contents[-1]["parts"].extend(c["parts"])
-                else:
-                    # Deux USER consécutifs. 
-                    # Cas typique : User(Prompt) -> ... -> User(FunctionResponse).
-                    # Si on insère un modèle vide ici, ça casse la chaine "Model(FC) -> User(FR)".
-                    # Il faut fusionner les parts User.
-                    final_contents[-1]["parts"].extend(c["parts"])
+                final_contents[-1]["parts"].extend(c["parts"])
             else:
                 final_contents.append(c)
 
@@ -469,14 +463,25 @@ class GeminiAdapter:
     def __init__(self, base_url):
         self.base_url = base_url
 
-    def build(self, project_id, contents, system_instr, temp, max_tok, think, model_id, session_id_context, tools=None):
-        budget = 8192 if think == "LOW" else (16384 if think == "MEDIUM" else (32768 if think == "HIGH" else -1))
-        
+    def build(self, project_id, contents, system_instr, temp, max_tok, think_level, model_id, session_id_context, tools=None):
+        # 1. Configuration de base (Compatible Gemini 2.5 / 3)
         gen_config = {
             "temperature": temp,
             "maxOutputTokens": max_tok,
-            "thinkingConfig": {"includeThoughts": True, "thinkingBudget": budget},
         }
+
+        # 2. Configuration Spécifique Gemini 3 (Thinking Mode)
+        # Uniquement si l'ID du modèle contient "gemini-3"
+        if "gemini-3" in model_id:
+            t_level = think_level.lower()
+            if t_level == "dynamic":
+                t_level = "high" # Default pour Pro
+            
+            # Injection conditionnelle du bloc thinkingConfig
+            gen_config["thinkingConfig"] = {
+                "includeThoughts": True,
+                "thinkingLevel": t_level
+            }
 
         final_session_id = session_id_context if session_id_context else str(uuid.uuid4())
 
@@ -540,7 +545,7 @@ class StreamProcessor:
                             is_think = part.get("thought", False)
                             func_call = part.get("functionCall")
 
-                            # Capture de la signature pour ce tour
+                            # Capture de la signature CRITIQUE
                             if "thoughtSignature" in part:
                                 last_sig = part["thoughtSignature"]
 
@@ -591,7 +596,7 @@ class StreamProcessor:
         if in_think:
             yield "\n</think>\n"
         
-        # Stockage persistant de la signature via lien caché pour le prochain tour
+        # PERSISTENCE DE L'ÉTAT AGENTIQUE
         if last_sig:
             yield f"\n[ ](context://thought_signature/{last_sig})"
 
@@ -608,8 +613,8 @@ class Pipe:
         )
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
-        THINKING_LEVEL: Literal["DYNAMIC", "LOW", "MEDIUM", "HIGH"] = Field(
-            default="DYNAMIC", description="Budget Pensée"
+        THINKING_LEVEL: Literal["DYNAMIC", "LOW", "HIGH"] = Field(
+            default="DYNAMIC", description="Niveau de réflexion (Gemini 3)"
         )
         SYSTEM_PROMPT: str = Field(
             default="Tu es un assistant expert.", description="Prompt Système"
