@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V122.65 - Hybrid Support Fix)
+title: Gemini Pro Unified System (Platinum Agentic V122.75 - Documented Stateless Fix)
 author: ECHO Architecture
-version: 122.65
-description: Support hybride strict : Active les Thought Signatures UNIQUEMENT pour Gemini 3, et maintient une config standard stable pour Gemini 2.5.
+version: 122.75
+description: Version documentée et robuste. Corrige la duplication d'historique (Mode Stateless) et gère strictement les Signatures de Pensée pour Gemini 3 Pro, tout en assurant la rétrocompatibilité Gemini 2.5.
 """
 
 # ==============================================================================
@@ -25,6 +25,7 @@ from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Un
 # ==============================================================================
 # SECTION 1 : DÉPENDANCES OPTIONNELLES
 # ==============================================================================
+# Gestion souple des dépendances pour éviter les crashs si les libs Google manquent.
 try:
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import Flow
@@ -42,6 +43,8 @@ except ImportError:
 # ==============================================================================
 # SECTION 2 : CONFIGURATION CLIENT OAUTH2
 # ==============================================================================
+# Configuration standard pour l'authentification "Device Flow" ou "Installed App" de Google.
+# Ces identifiants permettent d'obtenir un token OAuth2 pour l'API CloudCode interne.
 OFFICIAL_CLIENT_CONFIG = {
     "installed": {
         "client_id": "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
@@ -63,6 +66,13 @@ SCOPES = [
 # SECTION 3 : SERVICE D'AUTHENTIFICATION
 # ==============================================================================
 class AuthService:
+    """
+    Gère le cycle de vie complet de l'authentification OAuth2 Google.
+    - Génération PKCE (Proof Key for Code Exchange) pour la sécurité.
+    - Échange du code d'autorisation contre un Token.
+    - Rafraîchissement automatique du Token expiré.
+    - Récupération de l'ID Projet Google Cloud (obligatoire pour l'API).
+    """
     def __init__(self, data_dir: str):
         self.token_path = f"{data_dir}/gemini_official_token.json"
         self.pkce_path = f"{data_dir}/gemini_pkce_verifier.txt"
@@ -70,6 +80,7 @@ class AuthService:
         self.base_url = "https://cloudcode-pa.googleapis.com/v1internal"
 
     def _generate_pkce(self):
+        """Génère le challenge PKCE pour sécuriser l'échange de code."""
         verifier = secrets.token_urlsafe(64)
         digest = hashlib.sha256(verifier.encode("utf-8")).digest()
         import base64
@@ -77,9 +88,12 @@ class AuthService:
         return verifier, challenge
 
     def get_auth_url(self) -> str:
+        """Génère l'URL de connexion Google pour l'utilisateur."""
         if not HAS_GOOGLE_LIBS:
             return "❌ **Erreur** : Librairies `google-auth` manquantes."
 
+        # Logique de réutilisation du verifier PKCE s'il est récent (< 300s)
+        # pour éviter les incohérences en cas de rechargement de page.
         should_generate_new = True
         if os.path.exists(self.pkce_path):
             try:
@@ -125,10 +139,12 @@ class AuthService:
         )
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
+        """Échange le code reçu de l'utilisateur contre un token d'accès durable."""
         if not HAS_GOOGLE_LIBS:
             return False, "Libs manquantes."
 
         if not os.path.exists(self.pkce_path):
+            # Tentative de récupération via thread concurrent si fichier verrouillé
             for _ in range(3):
                 if self.get_valid_credentials():
                     return True, "Succès (Récupéré via thread concurrent)."
@@ -157,6 +173,7 @@ class AuthService:
             return False, str(e)
 
     def get_valid_credentials(self):
+        """Récupère les credentials stockés et les rafraîchit si nécessaire."""
         creds = None
         if os.path.exists(self.token_path):
             try:
@@ -174,6 +191,11 @@ class AuthService:
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
+        """
+        Récupère l'ID du projet Google Cloud associé à l'utilisateur.
+        C'est indispensable pour router les requêtes vers l'API Gemini interne.
+        Utilise un cache pour éviter les appels API superflus.
+        """
         logs = ""
         if os.path.exists(self.internal_project_cache) and not debug_mode:
             with open(self.internal_project_cache, "r") as f:
@@ -185,6 +207,7 @@ class AuthService:
             "Authorization": f"Bearer {creds.token}",
             "Content-Type": "application/json",
         }
+        # Fallback sur les variables d'environnement si disponibles
         env_proj = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT_ID")
 
         payload = {
@@ -198,6 +221,7 @@ class AuthService:
             payload["cloudaicompanionProject"] = env_proj
 
         try:
+            # Appel API spécial 'loadCodeAssist' pour obtenir le projet par défaut
             url = f"{self.base_url}:loadCodeAssist"
             resp = httpx.post(url, headers=headers, json=payload, timeout=10)
 
@@ -226,6 +250,7 @@ class AuthService:
         return None, logs + "Echec."
 
     def reset_storage(self):
+        """Nettoie tous les fichiers de cache et tokens."""
         for p in [self.token_path, self.pkce_path, self.internal_project_cache]:
             if os.path.exists(p):
                 os.remove(p)
@@ -234,12 +259,20 @@ class AuthService:
 # SECTION 4 : ORCHESTRATEUR (CONTEXTE & SIGNATURES)
 # ==============================================================================
 class Orchestrator:
+    """
+    Responsable de la préparation des données avant l'envoi à l'API.
+    - Détection de l'authentification.
+    - Injection du contexte temporel et géographique.
+    - Conversion des outils Open WebUI au format Gemini.
+    - **Reconstruction critique de l'historique** (gestion des rôles, pensées, et signatures).
+    """
     def __init__(self, valves):
         self.valves = valves
         self.location_cache_file = "/app/backend/data/gemini_geo_cache_v2.json"
         self.tool_map = {}
 
     def check_for_auth_code(self, messages: List[Dict]) -> Optional[str]:
+        """Détecte si l'utilisateur a collé un code d'authentification Google (4/...)."""
         if not messages:
             return None
         last_msg = messages[-1].get("content", "").strip()
@@ -249,6 +282,7 @@ class Orchestrator:
         return None
 
     def _get_geo_info(self) -> Tuple[str, str]:
+        """Récupère la localisation approximative du serveur pour le contexte."""
         loc, tz = "Paris, France", "Europe/Paris"
         override = getattr(self.valves, "OVERRIDE_LOCATION", "").strip()
         if override:
@@ -281,6 +315,7 @@ class Orchestrator:
         return loc, tz
 
     def _get_current_time(self, timezone_id: str) -> Tuple[str, str]:
+        """Récupère l'heure locale formatée."""
         try:
             if HAS_ZONEINFO:
                 now = datetime.now(ZoneInfo(timezone_id))
@@ -291,6 +326,7 @@ class Orchestrator:
         return now.strftime("%A %d %B %Y"), now.strftime("%H:%M")
 
     def convert_owui_tools(self, tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
+        """Convertit les définitions d'outils Open WebUI vers le format Gemini Function Declarations."""
         if not tools:
             return None
         funcs = []
@@ -313,6 +349,7 @@ class Orchestrator:
         return [{"functionDeclarations": funcs}] if funcs else None
 
     def get_system_instruction(self) -> Dict:
+        """Construit le prompt système avec injection du contexte spatio-temporel."""
         sys_prompt_text = self.valves.SYSTEM_PROMPT
         if getattr(self.valves, "ENABLE_DATE_TIME", True):
             loc, tz = self._get_geo_info()
@@ -323,39 +360,48 @@ class Orchestrator:
 
     def prepare_context(self, messages: List[Dict]) -> List[Dict]:
         """
-        Reconstruit l'historique avec une logique stricte pour les Thought Signatures.
-        Règles d'Or (selon doc Gemini 3):
-        1. Function Call: Signature OBLIGATOIRE sur le 1er functionCall de la liste.
-        2. Text Chat: Signature recommandée sur la partie Text.
-        3. Parallel calls: Signature uniquement sur le premier appel.
+        Reconstruit l'historique des messages pour l'API Gemini.
+        Cette fonction est CRITIQUE pour éviter les boucles et le bégaiement.
         
-        NOTE: Cette logique est sûre pour Gemini 2.5 car le nettoyage des balises Markdown
-        ou la présence de champs 'thoughtSignature' ignorés par le modèle 2.5 ne causent pas d'erreur.
+        Logique appliquée :
+        1. **Nettoyage des Pensées** : On supprime les balises <think> du texte envoyé à Google. 
+           Si le modèle relit ses propres pensées passées, il a tendance à recommencer le raisonnement (boucle).
+        
+        2. **Gestion des Signatures (Thought Signatures)** : Gemini 3 Pro est 'Stateful' dans son raisonnement.
+           Il émet une signature cryptée après avoir pensé. 
+           POURQUOI : Cette signature contient l'état de sa mémoire de travail.
+           COMMENT : On la récupère depuis un lien caché Markdown (stocké par StreamProcessor) et on la 
+           réinjecte dans le champ 'thoughtSignature' de l'API.
+           REGLE D'OR : La signature doit être attachée au TOUT PREMIER élément (part) du message modèle.
+        
+        3. **Gestion des Outils** : On regroupe les appels d'outils et leurs réponses pour respecter la 
+           structure stricte User -> Model(Calls) -> User(Responses).
         """
         contents = []
         
-        # 1. Indexation des Tool IDs
+        # 1. Indexation des Tool IDs pour associer les réponses aux appels
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
                     if "id" in tc and "function" in tc:
                         self.tool_map[tc["id"]] = tc["function"].get("name")
 
-        # 2. Construction du flux
+        # 2. Construction du flux séquentiel
         i = 0
         while i < len(messages):
             m = messages[i]
             role = m["role"]
             content = m.get("content", "")
 
-            # Ignorer les messages systèmes
+            # Ignorer les messages systèmes (gérés par system_instruction) et les codes d'auth
             if role == "system" or ("4/" in str(content) and len(str(content)) > 30):
                 i += 1
                 continue
 
-            # --- CAS 1 : TOOL RESPONSE (Résultat d'outil) ---
+            # --- CAS 1 : TOOL RESPONSE (Résultat d'outil provenant du système) ---
             if role == "tool":
                 parts = []
+                # On regroupe toutes les réponses d'outils consécutives dans un seul message User
                 while i < len(messages) and messages[i]["role"] == "tool":
                     tm = messages[i]
                     tool_call_id = tm.get("tool_call_id")
@@ -374,60 +420,57 @@ class Orchestrator:
                     })
                     i += 1
                 
+                # Ajout au flux : Les FunctionResponse doivent être envoyées par le rôle 'user'
                 if contents and contents[-1]["role"] == "user":
                     contents[-1]["parts"].extend(parts)
                 else:
                     contents.append({"role": "user", "parts": parts})
                 continue
 
-            # --- CAS 2 : MODEL (Assistant) ---
+            # --- CAS 2 : MODEL (Réponse de l'Assistant) ---
             elif role in ["assistant", "model"]:
                 parts = []
                 text_content = str(content) if content else ""
                 
-                # A. NETTOYAGE DES PENSÉES (On garde propre pour le modèle)
+                # A. NETTOYAGE DES PENSÉES (CRITIQUE ANTI-BOUCLE)
+                # On retire tout ce qui est entre <think>...</think> pour que le modèle ne se "lise" pas penser.
                 text_content = re.sub(r'<think>.*?</think>', '', text_content, flags=re.DOTALL).strip()
                 
-                # B. EXTRACTION THOUGHT SIGNATURE (Persistée via lien caché)
+                # B. EXTRACTION THOUGHT SIGNATURE
+                # On cherche le lien caché [ ](context://thought_signature/...) injecté par StreamProcessor
                 thought_sig = None
                 sig_match = re.search(r"\[\s*\]\(context://thought_signature/([a-zA-Z0-9_\-\.\=]+)\)", text_content)
                 if sig_match:
                     thought_sig = sig_match.group(1)
+                    # On retire le lien caché du texte visible pour l'API
                     text_content = text_content.replace(sig_match.group(0), "").strip()
 
-                has_tools = False
+                # C. CONSTRUCTION DES PARTS (Texte + Outils)
+                
+                # 1. Texte (toujours en premier si présent, convention standard)
+                if text_content:
+                    parts.append({"text": text_content})
+
+                # 2. Outils (Function Calls)
                 if m.get("tool_calls"):
-                    has_tools = True
-                    first_fc = True
                     for tc in m["tool_calls"]:
-                        fc_part = {
+                        parts.append({
                             "functionCall": {
                                 "name": tc["function"]["name"],
                                 "args": json.loads(tc["function"]["arguments"])
                             }
-                        }
-                        
-                        # REGLE CRITIQUE : Signature sur le PREMIER functionCall
-                        if first_fc and thought_sig:
-                            fc_part["thoughtSignature"] = thought_sig
-                            thought_sig = None # Signature consommée
-                            first_fc = False
-                            
-                        parts.append(fc_part)
+                        })
                 
-                # Ajout du texte
-                if text_content:
-                    text_part = {"text": text_content}
-                    # Si pas d'outil mais une signature (Chat standard ou fin de chaîne)
-                    # On l'attache au texte pour maintenir la mémoire
-                    if not has_tools and thought_sig:
-                         text_part["thoughtSignature"] = thought_sig
-                    parts.insert(0, text_part)
-                
-                # Cas rare : Ni texte ni outil, mais une signature (ex: étape purement cognitive)
-                # On crée un bloc texte vide pour porter la signature (autorisé par doc)
-                if not parts and thought_sig:
-                    parts.append({"text": "", "thoughtSignature": thought_sig})
+                # 3. ATTACHEMENT DE LA SIGNATURE (CRITIQUE)
+                # La signature DOIT être attachée au TOUT PREMIER élément de la liste 'parts',
+                # qu'il s'agisse de texte ou d'un appel de fonction.
+                if thought_sig:
+                    if parts:
+                        parts[0]["thoughtSignature"] = thought_sig
+                    else:
+                        # Si aucun contenu visible mais une signature existe (cas rare pensée pure),
+                        # on crée un bloc texte vide pour porter la signature.
+                        parts.append({"text": "", "thoughtSignature": thought_sig})
 
                 if parts:
                     if contents and contents[-1]["role"] == "model":
@@ -435,7 +478,7 @@ class Orchestrator:
                     else:
                         contents.append({"role": "model", "parts": parts})
 
-            # --- CAS 3 : USER (Utilisateur Humain) ---
+            # --- CAS 3 : USER (Message de l'Utilisateur) ---
             else:
                 if content:
                     parts = [{"text": str(content)}]
@@ -446,7 +489,8 @@ class Orchestrator:
             
             i += 1
 
-        # Fusion des blocs consécutifs identiques (Optimisation)
+        # DEDUPLICATION & FUSION FINALE
+        # Optimisation pour regrouper les messages consécutifs du même rôle
         final_contents = []
         for c in contents:
             if final_contents and final_contents[-1]["role"] == c["role"]:
@@ -460,6 +504,10 @@ class Orchestrator:
 # SECTION 5 : ADAPTATEUR API
 # ==============================================================================
 class GeminiAdapter:
+    """
+    Construit la requête JSON finale pour l'API Google.
+    Gère la compatibilité Hybride (Gemini 2.5 vs Gemini 3) et le mode Stateless.
+    """
     def __init__(self, base_url):
         self.base_url = base_url
 
@@ -471,7 +519,8 @@ class GeminiAdapter:
         }
 
         # 2. Configuration Spécifique Gemini 3 (Thinking Mode)
-        # Uniquement si l'ID du modèle contient "gemini-3"
+        # Uniquement si l'ID du modèle contient "gemini-3", on active le bloc thinkingConfig.
+        # Gemini 2.5 rejetterait ce paramètre (Erreur 400).
         if "gemini-3" in model_id:
             t_level = think_level.lower()
             if t_level == "dynamic":
@@ -479,11 +528,20 @@ class GeminiAdapter:
             
             # Injection conditionnelle du bloc thinkingConfig
             gen_config["thinkingConfig"] = {
-                "includeThoughts": True,
+                "includeThoughts": True, # Nécessaire pour recevoir les pensées et la signature
                 "thinkingLevel": t_level
             }
 
-        final_session_id = session_id_context if session_id_context else str(uuid.uuid4())
+        # --- FIX CRITIQUE "STATELESS" (Anti-Bégaiement) ---
+        # Problème : L'API 'v1internal' conserve un historique côté serveur lié au session_id.
+        # Open WebUI gère déjà son propre historique complet et le renvoie à chaque requête.
+        # Si on réutilise le même session_id, Google AJOUTE l'historique reçu à celui déjà stocké.
+        # Résultat : Le contexte double, triple, quadruple... et le modèle boucle.
+        # 
+        # Solution : On génère un UUID aléatoire (uuid4) à CHAQUE requête.
+        # Cela force Google à traiter la requête comme une nouvelle session propre,
+        # en se basant uniquement sur l'historique fourni dans 'contents'.
+        final_session_id = str(uuid.uuid4())
 
         payload = {
             "model": model_id,
@@ -493,7 +551,7 @@ class GeminiAdapter:
                 "systemInstruction": system_instr,
                 "contents": contents,
                 "generationConfig": gen_config,
-                "session_id": final_session_id,
+                "session_id": final_session_id, # Session UNIQUE par appel
             },
         }
 
@@ -515,6 +573,13 @@ class GeminiAdapter:
 # SECTION 6 : PROCESSEUR DE FLUX
 # ==============================================================================
 class StreamProcessor:
+    """
+    Traite le flux SSE (Server-Sent Events) renvoyé par Google.
+    - Extrait les chunks de texte.
+    - Gère l'affichage des balises <think> (pensées).
+    - Capture et persiste la Thought Signature.
+    - Formate les appels d'outils pour Open WebUI.
+    """
     def __init__(self, debug=False):
         self.debug = debug
 
@@ -545,10 +610,11 @@ class StreamProcessor:
                             is_think = part.get("thought", False)
                             func_call = part.get("functionCall")
 
-                            # Capture de la signature CRITIQUE
+                            # Capture de la signature (CRITIQUE pour le maintien du raisonnement)
                             if "thoughtSignature" in part:
                                 last_sig = part["thoughtSignature"]
 
+                            # Cas 1 : Appel d'outil
                             if func_call:
                                 if in_think:
                                     yield "\n</think>\n"
@@ -578,12 +644,14 @@ class StreamProcessor:
                                 tool_index += 1
                                 yield chunk_dict
 
+                            # Cas 2 : Pensée (Thinking)
                             elif is_think:
                                 if not in_think:
                                     yield "<think>\n"
                                     in_think = True
                                 yield txt
 
+                            # Cas 3 : Texte standard
                             else:
                                 if in_think:
                                     yield "\n</think>\n"
@@ -597,11 +665,13 @@ class StreamProcessor:
             yield "\n</think>\n"
         
         # PERSISTENCE DE L'ÉTAT AGENTIQUE
+        # On injecte la signature capturée dans l'historique d'Open WebUI via un lien caché.
+        # L'Orchestrator la relira au prochain tour pour restaurer l'état mental du modèle.
         if last_sig:
             yield f"\n[ ](context://thought_signature/{last_sig})"
 
 # ==============================================================================
-# SECTION 7 : LE PIPE
+# SECTION 7 : LE PIPE (POINT D'ENTRÉE)
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
