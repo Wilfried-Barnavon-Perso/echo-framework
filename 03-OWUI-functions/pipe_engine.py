@@ -1,31 +1,33 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V122.75 - Documented Stateless Fix)
+title: Gemini Pro Unified System (Platinum Agentic V122.90 - Documented)
 author: ECHO Architecture
-version: 122.75
-description: Version documentée et robuste. Corrige la duplication d'historique (Mode Stateless) et gère strictement les Signatures de Pensée pour Gemini 3 Pro, tout en assurant la rétrocompatibilité Gemini 2.5.
+version: 122.90
+description: Version documentée. Système unifié pour Gemini 2.5 et 3.0 Pro. Intègre les correctifs critiques pour la stabilité : Mode Stateless (anti-doublons), Regex Base64 (gestion des signatures de pensée), et Filtres de sécurité ciblés.
 """
 
 # ==============================================================================
-# SECTION 0 : IMPORTATIONS
+# SECTION 0 : IMPORTATIONS ET UTILITAIRES DE BASE
 # ==============================================================================
 import os
 import json
 import sys
-import secrets
-import hashlib
-import random
-import re
+import secrets  # Utilisé pour générer des chaînes cryptographiques sécurisées (PKCE, IDs)
+import hashlib  # Pour le hachage SHA256 requis par le protocole PKCE OAuth2
+import random   # Pour générer des IDs de requête aléatoires
+import re       # Expressions régulières : Crucial pour parser les signatures et codes d'auth
 import time
-import uuid
-import httpx
+import uuid     # Pour générer des UUIDs uniques (Essentiel pour le fix Stateless)
+import httpx    # Client HTTP asynchrone performant pour les appels API
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
 
 # ==============================================================================
-# SECTION 1 : DÉPENDANCES OPTIONNELLES
+# SECTION 1 : GESTION DES DÉPENDANCES OPTIONNELLES
 # ==============================================================================
-# Gestion souple des dépendances pour éviter les crashs si les libs Google manquent.
+# Cette section assure que le script ne plante pas si les librairies Google ne sont pas
+# installées dans l'environnement Docker. Si elles manquent, certaines fonctions d'auth
+# seront désactivées mais le reste du code se chargera.
 try:
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import Flow
@@ -41,10 +43,11 @@ except ImportError:
     HAS_ZONEINFO = False
 
 # ==============================================================================
-# SECTION 2 : CONFIGURATION CLIENT OAUTH2
+# SECTION 2 : CONFIGURATION CLIENT OAUTH2 GOOGLE
 # ==============================================================================
-# Configuration standard pour l'authentification "Device Flow" ou "Installed App" de Google.
-# Ces identifiants permettent d'obtenir un token OAuth2 pour l'API CloudCode interne.
+# Identifiants "Client ID" et "Secret" officiels utilisés pour l'authentification
+# "Device Flow" ou applications installées. Ces identifiants permettent d'obtenir
+# un token d'accès compatible avec l'API interne CloudCode de Google.
 OFFICIAL_CLIENT_CONFIG = {
     "installed": {
         "client_id": "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
@@ -55,32 +58,37 @@ OFFICIAL_CLIENT_CONFIG = {
     }
 }
 
+# Scopes requis pour accéder à l'API Gemini et aux infos utilisateur basiques.
 SCOPES = [
-    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/cloud-platform", # Accès aux services Cloud (Gemini)
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid",
 ]
 
 # ==============================================================================
-# SECTION 3 : SERVICE D'AUTHENTIFICATION
+# SECTION 3 : SERVICE D'AUTHENTIFICATION (OAuth2 & PKCE)
 # ==============================================================================
 class AuthService:
     """
-    Gère le cycle de vie complet de l'authentification OAuth2 Google.
-    - Génération PKCE (Proof Key for Code Exchange) pour la sécurité.
-    - Échange du code d'autorisation contre un Token.
-    - Rafraîchissement automatique du Token expiré.
-    - Récupération de l'ID Projet Google Cloud (obligatoire pour l'API).
+    Gère l'intégralité du cycle de vie de l'authentification OAuth2 avec Google.
+    Implémente le protocole PKCE (Proof Key for Code Exchange) pour sécuriser
+    l'échange de code, même dans un environnement sans navigateur direct.
     """
     def __init__(self, data_dir: str):
+        # Chemins de persistance pour les tokens et le cache projet
         self.token_path = f"{data_dir}/gemini_official_token.json"
         self.pkce_path = f"{data_dir}/gemini_pkce_verifier.txt"
         self.internal_project_cache = f"{data_dir}/gemini_internal_project.txt"
+        # Endpoint interne non documenté mais puissant pour Gemini Code Assist
         self.base_url = "https://cloudcode-pa.googleapis.com/v1internal"
 
     def _generate_pkce(self):
-        """Génère le challenge PKCE pour sécuriser l'échange de code."""
+        """
+        Génère une paire (Verifier, Challenge) pour PKCE.
+        Le 'verifier' est un secret aléatoire. Le 'challenge' est son hash SHA256.
+        Google vérifiera que nous connaissons le secret lors de l'échange du code.
+        """
         verifier = secrets.token_urlsafe(64)
         digest = hashlib.sha256(verifier.encode("utf-8")).digest()
         import base64
@@ -88,12 +96,16 @@ class AuthService:
         return verifier, challenge
 
     def get_auth_url(self) -> str:
-        """Génère l'URL de connexion Google pour l'utilisateur."""
+        """
+        Génère l'URL sur laquelle l'utilisateur doit cliquer pour se connecter.
+        Initie le flux OAuth2 et stocke le 'verifier' PKCE temporairement.
+        """
         if not HAS_GOOGLE_LIBS:
             return "❌ **Erreur** : Librairies `google-auth` manquantes."
 
-        # Logique de réutilisation du verifier PKCE s'il est récent (< 300s)
-        # pour éviter les incohérences en cas de rechargement de page.
+        # Mécanisme de réutilisation du PKCE :
+        # Si un fichier PKCE récent (< 300s) existe, on le réutilise.
+        # Cela évite de briser le flux si l'utilisateur rafraîchit la page de chat.
         should_generate_new = True
         if os.path.exists(self.pkce_path):
             try:
@@ -114,6 +126,7 @@ class AuthService:
             except Exception as e:
                 return f"❌ Erreur IO: {str(e)}"
         else:
+            # Recalcul du challenge à partir du verifier existant
             digest = hashlib.sha256(verifier.encode("utf-8")).digest()
             import base64
             challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
@@ -125,7 +138,7 @@ class AuthService:
 
         url, _ = flow.authorization_url(
             prompt="consent",
-            access_type="offline",
+            access_type="offline", # Permet d'obtenir un Refresh Token
             code_challenge=challenge,
             code_challenge_method="S256",
         )
@@ -139,12 +152,16 @@ class AuthService:
         )
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
-        """Échange le code reçu de l'utilisateur contre un token d'accès durable."""
+        """
+        Échange le code d'autorisation (commençant par 4/...) fourni par l'utilisateur
+        contre un Token d'Accès et un Refresh Token définitifs.
+        """
         if not HAS_GOOGLE_LIBS:
             return False, "Libs manquantes."
 
+        # Sécurité : On a besoin du fichier PKCE généré à l'étape précédente.
         if not os.path.exists(self.pkce_path):
-            # Tentative de récupération via thread concurrent si fichier verrouillé
+            # Tentative de récupération (concurrence potentielle)
             for _ in range(3):
                 if self.get_valid_credentials():
                     return True, "Succès (Récupéré via thread concurrent)."
@@ -161,19 +178,25 @@ class AuthService:
             flow.redirect_uri = "https://codeassist.google.com/authcode"
             flow.fetch_token(code=code.strip(), code_verifier=verifier)
 
+            # Sauvegarde des credentials complets (Access + Refresh Token)
             with open(self.token_path, "w") as f:
                 f.write(flow.credentials.to_json())
 
+            # Nettoyage du secret temporaire
             if os.path.exists(self.pkce_path):
                 os.remove(self.pkce_path)
             return True, "Succès."
         except Exception as e:
+            # Si l'échange échoue, on vérifie si un token valide existe déjà
             if self.get_valid_credentials():
                 return True, "Succès (Récupéré post-erreur)."
             return False, str(e)
 
     def get_valid_credentials(self):
-        """Récupère les credentials stockés et les rafraîchit si nécessaire."""
+        """
+        Charge les credentials depuis le disque et les rafraîchit automatiquement
+        s'ils sont expirés, en utilisant le Refresh Token.
+        """
         creds = None
         if os.path.exists(self.token_path):
             try:
@@ -192,11 +215,12 @@ class AuthService:
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
         """
-        Récupère l'ID du projet Google Cloud associé à l'utilisateur.
-        C'est indispensable pour router les requêtes vers l'API Gemini interne.
-        Utilise un cache pour éviter les appels API superflus.
+        Récupère l'ID du projet Google Cloud (nécessaire pour l'API Gemini).
+        Tente de le récupérer via l'API interne `loadCodeAssist` qui renvoie
+        le projet par défaut associé à l'utilisateur, ou via les variables d'env.
         """
         logs = ""
+        # 1. Tentative depuis le cache fichier
         if os.path.exists(self.internal_project_cache) and not debug_mode:
             with open(self.internal_project_cache, "r") as f:
                 pid = f.read().strip()
@@ -207,7 +231,6 @@ class AuthService:
             "Authorization": f"Bearer {creds.token}",
             "Content-Type": "application/json",
         }
-        # Fallback sur les variables d'environnement si disponibles
         env_proj = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT_ID")
 
         payload = {
@@ -221,7 +244,7 @@ class AuthService:
             payload["cloudaicompanionProject"] = env_proj
 
         try:
-            # Appel API spécial 'loadCodeAssist' pour obtenir le projet par défaut
+            # 2. Appel API pour récupérer la config projet
             url = f"{self.base_url}:loadCodeAssist"
             resp = httpx.post(url, headers=headers, json=payload, timeout=10)
 
@@ -237,6 +260,7 @@ class AuthService:
                 if pid:
                     if pid.startswith("projects/"):
                         pid = pid.replace("projects/", "")
+                    # Mise en cache pour les futurs appels
                     with open(self.internal_project_cache, "w") as f:
                         f.write(pid)
                     return pid, logs
@@ -245,26 +269,28 @@ class AuthService:
         except Exception as e:
             return None, logs + f"Ex: {str(e)}"
 
+        # 3. Fallback sur variable d'environnement
         if env_proj:
             return env_proj, logs + "Fallback ENV."
         return None, logs + "Echec."
 
     def reset_storage(self):
-        """Nettoie tous les fichiers de cache et tokens."""
+        """Réinitialisation complète : supprime tokens et cache."""
         for p in [self.token_path, self.pkce_path, self.internal_project_cache]:
             if os.path.exists(p):
                 os.remove(p)
 
 # ==============================================================================
-# SECTION 4 : ORCHESTRATEUR (CONTEXTE & SIGNATURES)
+# SECTION 4 : ORCHESTRATEUR (RECONSTRUCTION ET NETTOYAGE DU CONTEXTE)
 # ==============================================================================
 class Orchestrator:
     """
-    Responsable de la préparation des données avant l'envoi à l'API.
-    - Détection de l'authentification.
-    - Injection du contexte temporel et géographique.
-    - Conversion des outils Open WebUI au format Gemini.
-    - **Reconstruction critique de l'historique** (gestion des rôles, pensées, et signatures).
+    Cette classe est le cœur de la logique de transformation des messages.
+    Elle prépare l'historique pour l'API Gemini en gérant :
+    - Les signatures de pensée (Gemini 3).
+    - Le nettoyage des balises <think>.
+    - Le regroupement des appels d'outils.
+    - La sécurité (filtrage des codes d'auth).
     """
     def __init__(self, valves):
         self.valves = valves
@@ -272,17 +298,21 @@ class Orchestrator:
         self.tool_map = {}
 
     def check_for_auth_code(self, messages: List[Dict]) -> Optional[str]:
-        """Détecte si l'utilisateur a collé un code d'authentification Google (4/...)."""
+        """Vérifie si le dernier message utilisateur contient un code d'auth Google."""
         if not messages:
             return None
         last_msg = messages[-1].get("content", "").strip()
+        # Regex pour capturer '4/...' suivi de caractères alphanumériques
         match = re.search(r"(4/[a-zA-Z0-9_-]+)", last_msg)
         if match and len(match.group(1)) > 30:
             return match.group(1)
         return None
 
     def _get_geo_info(self) -> Tuple[str, str]:
-        """Récupère la localisation approximative du serveur pour le contexte."""
+        """
+        Récupère la localisation (Ville, Pays) et le fuseau horaire.
+        Utilise un cache fichier pour limiter les appels à ip-api.com.
+        """
         loc, tz = "Paris, France", "Europe/Paris"
         override = getattr(self.valves, "OVERRIDE_LOCATION", "").strip()
         if override:
@@ -290,6 +320,7 @@ class Orchestrator:
         if getattr(self.valves, "ENABLE_AUTO_LOCATION", True):
             if os.path.exists(self.location_cache_file):
                 try:
+                    # Cache valide 24h
                     if time.time() - os.path.getmtime(self.location_cache_file) < 86400:
                         with open(self.location_cache_file, "r") as f:
                             c = json.load(f)
@@ -315,7 +346,7 @@ class Orchestrator:
         return loc, tz
 
     def _get_current_time(self, timezone_id: str) -> Tuple[str, str]:
-        """Récupère l'heure locale formatée."""
+        """Retourne la date et l'heure courantes formatées."""
         try:
             if HAS_ZONEINFO:
                 now = datetime.now(ZoneInfo(timezone_id))
@@ -326,7 +357,10 @@ class Orchestrator:
         return now.strftime("%A %d %B %Y"), now.strftime("%H:%M")
 
     def convert_owui_tools(self, tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
-        """Convertit les définitions d'outils Open WebUI vers le format Gemini Function Declarations."""
+        """
+        Convertit la structure des outils Open WebUI vers le format 'Function Declarations'
+        attendu par l'API Gemini.
+        """
         if not tools:
             return None
         funcs = []
@@ -349,69 +383,81 @@ class Orchestrator:
         return [{"functionDeclarations": funcs}] if funcs else None
 
     def get_system_instruction(self) -> Dict:
-        """Construit le prompt système avec injection du contexte spatio-temporel."""
+        """Prépare l'instruction système avec injection contextuelle (Date/Lieu)."""
         sys_prompt_text = self.valves.SYSTEM_PROMPT
         if getattr(self.valves, "ENABLE_DATE_TIME", True):
             loc, tz = self._get_geo_info()
             d, t = self._get_current_time(tz)
             sys_prompt_text += f"\n\n[CONTEXT]\nDate: {d}\nTime: {t}\nLocation: {loc}\n"
-
         return {"parts": [{"text": sys_prompt_text}]}
 
     def prepare_context(self, messages: List[Dict]) -> List[Dict]:
         """
-        Reconstruit l'historique des messages pour l'API Gemini.
-        Cette fonction est CRITIQUE pour éviter les boucles et le bégaiement.
+        RECONSTRUCTION CRITIQUE DE L'HISTORIQUE.
+        Cette fonction est vitale pour la stabilité de Gemini 3.
         
-        Logique appliquée :
-        1. **Nettoyage des Pensées** : On supprime les balises <think> du texte envoyé à Google. 
-           Si le modèle relit ses propres pensées passées, il a tendance à recommencer le raisonnement (boucle).
+        CORRECTIFS MAJEURS INTEGRES :
+        1. **Filtre Auth Code Sélectif** : On ne cherche les codes "4/..." QUE dans les messages USER.
+           Pourquoi ? Les signatures Base64 du modèle contiennent souvent "4/", ce qui déclenchait
+           une suppression erronée de l'historique modèle (cause du bégaiement).
         
-        2. **Gestion des Signatures (Thought Signatures)** : Gemini 3 Pro est 'Stateful' dans son raisonnement.
-           Il émet une signature cryptée après avoir pensé. 
-           POURQUOI : Cette signature contient l'état de sa mémoire de travail.
-           COMMENT : On la récupère depuis un lien caché Markdown (stocké par StreamProcessor) et on la 
-           réinjecte dans le champ 'thoughtSignature' de l'API.
-           REGLE D'OR : La signature doit être attachée au TOUT PREMIER élément (part) du message modèle.
+        2. **Regex Base64 Complète** : Capture les signatures contenant '+' et '/'.
         
-        3. **Gestion des Outils** : On regroupe les appels d'outils et leurs réponses pour respecter la 
-           structure stricte User -> Model(Calls) -> User(Responses).
+        3. **Filet de Sécurité (Safety Net)** : Si un tour modèle est vide après nettoyage, on injecte
+           un espace pour ne jamais briser l'alternance User/Model.
         """
         contents = []
         
-        # 1. Indexation des Tool IDs pour associer les réponses aux appels
+        # 1. Indexation des Tool IDs pour mapping futur
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
                     if "id" in tc and "function" in tc:
                         self.tool_map[tc["id"]] = tc["function"].get("name")
 
-        # 2. Construction du flux séquentiel
+        # 2. Boucle de traitement des messages
         i = 0
         while i < len(messages):
             m = messages[i]
             role = m["role"]
-            content = m.get("content", "")
-
-            # Ignorer les messages systèmes (gérés par system_instruction) et les codes d'auth
-            if role == "system" or ("4/" in str(content) and len(str(content)) > 30):
+            
+            # Gestion robuste du contenu (Str ou List pour multimodal)
+            raw_content = m.get("content", "")
+            if isinstance(raw_content, list):
+                content = ""
+                for part in raw_content:
+                    if isinstance(part, dict) and "text" in part:
+                        content += part["text"]
+            else:
+                content = str(raw_content) if raw_content else ""
+            
+            # --- FILTRE SYSTÈME ---
+            if role == "system":
                 i += 1
                 continue
+            
+            # --- FILTRE AUTH CODE CIBLÉ (FIX V122.85) ---
+            # On vérifie si c'est un code d'auth Google collé par l'utilisateur.
+            # IMPORTANT : On restreint cette vérification au rôle 'user'.
+            # Le modèle a le droit d'avoir "4/" dans sa signature Base64 sans être censuré.
+            if role == "user" and ("4/" in str(content) and len(str(content)) > 30):
+                # Double vérification via Regex pour éviter les faux positifs
+                if re.search(r"(4/[a-zA-Z0-9_-]+)", str(content)):
+                    i += 1
+                    continue
 
-            # --- CAS 1 : TOOL RESPONSE (Résultat d'outil provenant du système) ---
+            # --- CAS 1 : TOOL RESPONSE (Résultat d'exécution d'outil) ---
             if role == "tool":
                 parts = []
-                # On regroupe toutes les réponses d'outils consécutives dans un seul message User
+                # On regroupe toutes les réponses d'outils consécutives
                 while i < len(messages) and messages[i]["role"] == "tool":
                     tm = messages[i]
                     tool_call_id = tm.get("tool_call_id")
                     tool_name = self.tool_map.get(tool_call_id, tm.get("name", "unknown_tool"))
-                    
                     try:
                         parsed_content = json.loads(tm.get("content", "{}"))
                     except:
                         parsed_content = {"result": str(tm.get("content", ""))}
-
                     parts.append({
                         "functionResponse": {
                             "name": tool_name,
@@ -420,7 +466,7 @@ class Orchestrator:
                     })
                     i += 1
                 
-                # Ajout au flux : Les FunctionResponse doivent être envoyées par le rôle 'user'
+                # Les réponses de fonction doivent être envoyées sous le rôle 'user'
                 if contents and contents[-1]["role"] == "user":
                     contents[-1]["parts"].extend(parts)
                 else:
@@ -432,26 +478,25 @@ class Orchestrator:
                 parts = []
                 text_content = str(content) if content else ""
                 
-                # A. NETTOYAGE DES PENSÉES (CRITIQUE ANTI-BOUCLE)
-                # On retire tout ce qui est entre <think>...</think> pour que le modèle ne se "lise" pas penser.
+                # A. NETTOYAGE DES PENSÉES
+                # On supprime les balises <think> pour éviter que le modèle boucle sur ses propres pensées.
                 text_content = re.sub(r'<think>.*?</think>', '', text_content, flags=re.DOTALL).strip()
                 
-                # B. EXTRACTION THOUGHT SIGNATURE
-                # On cherche le lien caché [ ](context://thought_signature/...) injecté par StreamProcessor
+                # B. EXTRACTION SIGNATURE (FIX REGEX V122.90)
+                # On cherche le lien caché contenant la Thought Signature.
+                # Regex améliorée pour inclure '+' et '/' (Base64 standard).
                 thought_sig = None
-                sig_match = re.search(r"\[\s*\]\(context://thought_signature/([a-zA-Z0-9_\-\.\=]+)\)", text_content)
+                sig_match = re.search(r"\[\s*\]\(context://thought_signature/([a-zA-Z0-9_\-\.\=\+\/]+)\)", text_content)
                 if sig_match:
                     thought_sig = sig_match.group(1)
-                    # On retire le lien caché du texte visible pour l'API
+                    # On retire le lien caché du texte visible
                     text_content = text_content.replace(sig_match.group(0), "").strip()
 
-                # C. CONSTRUCTION DES PARTS (Texte + Outils)
-                
-                # 1. Texte (toujours en premier si présent, convention standard)
+                # C. CONSTRUCTION DES PARTS
                 if text_content:
                     parts.append({"text": text_content})
 
-                # 2. Outils (Function Calls)
+                # Ajout des appels de fonction (Function Calls)
                 if m.get("tool_calls"):
                     for tc in m["tool_calls"]:
                         parts.append({
@@ -461,16 +506,17 @@ class Orchestrator:
                             }
                         })
                 
-                # 3. ATTACHEMENT DE LA SIGNATURE (CRITIQUE)
-                # La signature DOIT être attachée au TOUT PREMIER élément de la liste 'parts',
-                # qu'il s'agisse de texte ou d'un appel de fonction.
+                # FIX : FILET DE SÉCURITÉ (Safety Net)
+                # Si après nettoyage 'parts' est vide (ex: message contenant uniquement <think>...),
+                # on force un espace insécable. Cela empêche la suppression du tour de parole
+                # qui causerait la fusion des messages User et le "bégaiement".
+                if not parts:
+                    parts.append({"text": " "}) 
+
+                # D. ATTACHEMENT DE LA SIGNATURE (Gestion d'État Gemini 3)
+                # La signature doit être attachée au PREMIER élément de la liste parts.
                 if thought_sig:
-                    if parts:
-                        parts[0]["thoughtSignature"] = thought_sig
-                    else:
-                        # Si aucun contenu visible mais une signature existe (cas rare pensée pure),
-                        # on crée un bloc texte vide pour porter la signature.
-                        parts.append({"text": "", "thoughtSignature": thought_sig})
+                    parts[0]["thoughtSignature"] = thought_sig
 
                 if parts:
                     if contents and contents[-1]["role"] == "model":
@@ -478,7 +524,7 @@ class Orchestrator:
                     else:
                         contents.append({"role": "model", "parts": parts})
 
-            # --- CAS 3 : USER (Message de l'Utilisateur) ---
+            # --- CAS 3 : USER (Message standard) ---
             else:
                 if content:
                     parts = [{"text": str(content)}]
@@ -489,8 +535,8 @@ class Orchestrator:
             
             i += 1
 
-        # DEDUPLICATION & FUSION FINALE
-        # Optimisation pour regrouper les messages consécutifs du même rôle
+        # 3. DÉDUPLICATION FINALE
+        # Fusion des blocs consécutifs ayant le même rôle (optimisation API)
         final_contents = []
         for c in contents:
             if final_contents and final_contents[-1]["role"] == c["role"]:
@@ -501,46 +547,44 @@ class Orchestrator:
         return final_contents
 
 # ==============================================================================
-# SECTION 5 : ADAPTATEUR API
+# SECTION 5 : ADAPTATEUR API (CONSTRUCTION DU PAYLOAD)
 # ==============================================================================
 class GeminiAdapter:
     """
-    Construit la requête JSON finale pour l'API Google.
-    Gère la compatibilité Hybride (Gemini 2.5 vs Gemini 3) et le mode Stateless.
+    Construit le payload JSON pour l'API.
+    Gère la distinction entre Gemini 2.5 (Standard) et Gemini 3 (Thinking).
+    Implémente le mode STATELESS pour éviter les collisions d'historique.
     """
     def __init__(self, base_url):
         self.base_url = base_url
 
     def build(self, project_id, contents, system_instr, temp, max_tok, think_level, model_id, session_id_context, tools=None):
-        # 1. Configuration de base (Compatible Gemini 2.5 / 3)
+        # Config de base commune
         gen_config = {
             "temperature": temp,
             "maxOutputTokens": max_tok,
         }
 
-        # 2. Configuration Spécifique Gemini 3 (Thinking Mode)
-        # Uniquement si l'ID du modèle contient "gemini-3", on active le bloc thinkingConfig.
-        # Gemini 2.5 rejetterait ce paramètre (Erreur 400).
+        # Configuration Spécifique Gemini 3 (Thinking Mode)
+        # On n'active 'thinkingConfig' QUE si le modèle est Gemini 3.
+        # Gemini 2.5 ne supporte pas ce champ et renverrait une erreur.
         if "gemini-3" in model_id:
             t_level = think_level.lower()
             if t_level == "dynamic":
-                t_level = "high" # Default pour Pro
+                t_level = "high" # Valeur par défaut pour Pro
             
-            # Injection conditionnelle du bloc thinkingConfig
             gen_config["thinkingConfig"] = {
-                "includeThoughts": True, # Nécessaire pour recevoir les pensées et la signature
+                "includeThoughts": True, # Obligatoire pour récupérer les pensées et la signature
                 "thinkingLevel": t_level
             }
 
-        # --- FIX CRITIQUE "STATELESS" (Anti-Bégaiement) ---
-        # Problème : L'API 'v1internal' conserve un historique côté serveur lié au session_id.
-        # Open WebUI gère déjà son propre historique complet et le renvoie à chaque requête.
-        # Si on réutilise le même session_id, Google AJOUTE l'historique reçu à celui déjà stocké.
-        # Résultat : Le contexte double, triple, quadruple... et le modèle boucle.
-        # 
-        # Solution : On génère un UUID aléatoire (uuid4) à CHAQUE requête.
-        # Cela force Google à traiter la requête comme une nouvelle session propre,
-        # en se basant uniquement sur l'historique fourni dans 'contents'.
+        # --- FIX CRITIQUE "STATELESS" (Anti-Bégaiement) V122.70 ---
+        # L'API interne Google conserve un état serveur si on réutilise le même session_id.
+        # Comme Open WebUI envoie déjà tout l'historique à chaque fois, réutiliser l'ID
+        # provoque une duplication exponentielle du contexte (A -> AB -> ABC...).
+        # SOLUTION : On génère un UUID aléatoire à chaque requête.
+        # Cela force Google à traiter la demande comme une session vierge, peuplée uniquement
+        # par le contenu de 'contents'.
         final_session_id = str(uuid.uuid4())
 
         payload = {
@@ -551,7 +595,7 @@ class GeminiAdapter:
                 "systemInstruction": system_instr,
                 "contents": contents,
                 "generationConfig": gen_config,
-                "session_id": final_session_id, # Session UNIQUE par appel
+                "session_id": final_session_id, # UUID Unique = Stateless
             },
         }
 
@@ -570,14 +614,14 @@ class GeminiAdapter:
         }
 
 # ==============================================================================
-# SECTION 6 : PROCESSEUR DE FLUX
+# SECTION 6 : PROCESSEUR DE FLUX (STREAMING & CAPTURE)
 # ==============================================================================
 class StreamProcessor:
     """
-    Traite le flux SSE (Server-Sent Events) renvoyé par Google.
-    - Extrait les chunks de texte.
-    - Gère l'affichage des balises <think> (pensées).
-    - Capture et persiste la Thought Signature.
+    Traite le flux de réponse SSE (Server-Sent Events) en temps réel.
+    - Découpe le flux en chunks.
+    - Gère l'affichage ou le masquage des pensées (<think>).
+    - **Capture la Thought Signature** pour la persistance.
     - Formate les appels d'outils pour Open WebUI.
     """
     def __init__(self, debug=False):
@@ -590,6 +634,7 @@ class StreamProcessor:
         tool_index = 0
 
         async for chunk in response.aiter_bytes():
+            # Décodage robuste avec 'ignore' pour éviter les crashs sur caractères partiels
             buffer += chunk.decode("utf-8", errors="ignore")
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
@@ -597,6 +642,7 @@ class StreamProcessor:
                 if not line or not line.startswith("data:"):
                     continue
                 try:
+                    # Parsing du JSON SSE
                     json_str = line[6:]
                     data = json.loads(json_str)
                     if self.debug:
@@ -610,16 +656,18 @@ class StreamProcessor:
                             is_think = part.get("thought", False)
                             func_call = part.get("functionCall")
 
-                            # Capture de la signature (CRITIQUE pour le maintien du raisonnement)
+                            # --- CAPTURE DE LA SIGNATURE ---
+                            # C'est ici qu'on récupère l'état mental de Gemini 3.
                             if "thoughtSignature" in part:
                                 last_sig = part["thoughtSignature"]
 
-                            # Cas 1 : Appel d'outil
+                            # Cas 1 : Appel de Fonction (Tool Call)
                             if func_call:
                                 if in_think:
                                     yield "\n</think>\n"
                                     in_think = False
 
+                                # Formatage spécifique pour Open WebUI
                                 chunk_dict = {
                                     "choices": [
                                         {
@@ -644,7 +692,7 @@ class StreamProcessor:
                                 tool_index += 1
                                 yield chunk_dict
 
-                            # Cas 2 : Pensée (Thinking)
+                            # Cas 2 : Pensée (Reasoning)
                             elif is_think:
                                 if not in_think:
                                     yield "<think>\n"
@@ -661,19 +709,25 @@ class StreamProcessor:
                 except:
                     pass
 
+        # Fermeture propre de la balise pensée si nécessaire
         if in_think:
             yield "\n</think>\n"
         
-        # PERSISTENCE DE L'ÉTAT AGENTIQUE
-        # On injecte la signature capturée dans l'historique d'Open WebUI via un lien caché.
-        # L'Orchestrator la relira au prochain tour pour restaurer l'état mental du modèle.
+        # --- PERSISTANCE DE LA SIGNATURE ---
+        # On injecte la signature capturée à la toute fin du message sous forme de lien caché.
+        # Open WebUI la stockera dans sa base de données.
+        # Lors de la prochaine requête, 'prepare_context' lira ce lien pour restaurer l'état.
         if last_sig:
             yield f"\n[ ](context://thought_signature/{last_sig})"
 
 # ==============================================================================
-# SECTION 7 : LE PIPE (POINT D'ENTRÉE)
+# SECTION 7 : LE PIPE (POINT D'ENTRÉE PRINCIPAL)
 # ==============================================================================
 class Pipe:
+    """
+    Classe principale instanciée par Open WebUI.
+    Définit les paramètres utilisateur (Valves) et orchestre le flux complet.
+    """
     class Valves(BaseModel):
         RUN_DIAGNOSTICS: bool = Field(default=False, description="🚑 DIAGNOSTICS")
         FORCE_RESET_AUTH: bool = Field(default=False, description="🔴 RESET AUTH")
@@ -699,6 +753,7 @@ class Pipe:
         os.makedirs(self.data_dir, exist_ok=True)
         self.auth = AuthService(self.data_dir)
         self.base_url = "https://cloudcode-pa.googleapis.com/v1internal"
+        # Nettoyage préventif du cache projet au démarrage
         if os.path.exists(self.auth.internal_project_cache):
             try:
                 os.remove(self.auth.internal_project_cache)
@@ -706,42 +761,50 @@ class Pipe:
                 pass
 
     async def pipe(self, body: dict, __user__: dict = None, __request__: Optional[any] = None) -> AsyncGenerator[Union[str, Dict], None]:
+        """Fonction principale appelée à chaque message utilisateur."""
         orch = Orchestrator(self.valves)
         proc = StreamProcessor(self.valves.DEBUG_MODE)
 
+        # 1. Debug Initial
         if self.valves.DEBUG_MODE:
             last_msg_content = "Aucun"
             if body.get("messages"):
                 last_msg_content = body["messages"][-1].get("content", "")[:200]
             yield f"🐞 **DEBUG: INPUT**\n`{last_msg_content}...`\n"
 
+        # 2. Gestion de l'authentification (Code collé par l'utilisateur)
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = self.auth.exchange_code(ac)
             yield f"✅ **{msg}**" if success else f"❌ **Échec** : `{msg}`"
             return
 
+        # 3. Commandes Spéciales (Reset Auth)
         if self.valves.FORCE_RESET_AUTH:
             self.auth.reset_storage()
             yield "🔄 **Reset.**"
             return
 
+        # 4. Vérification du Token
         creds = self.auth.get_valid_credentials()
         if not creds:
             yield self.auth.get_auth_url()
             return
 
+        # 5. Récupération Projet ID
         pid, debug_log = self.auth.get_project_id(creds, self.valves.DEBUG_MODE)
         if not pid:
             yield f"❌ **Erreur Projet**\n{debug_log}"
             return
 
+        # 6. Préparation de la requête
         tools = orch.convert_owui_tools(body.get("tools"))
         adapter = GeminiAdapter(self.base_url)
-        context = orch.prepare_context(body.get("messages", []))
+        context = orch.prepare_context(body.get("messages", [])) # Appel critique avec nettoyage
         sys_instr = orch.get_system_instruction()
         chat_id = body.get("chat_id")
 
+        # Construction du payload final (Stateless + Thinking Config)
         req = adapter.build(
             pid,
             context,
@@ -758,6 +821,7 @@ class Pipe:
         if self.valves.DEBUG_MODE:
             yield f"🐞 **API REQ**\nBody snippet: `{json.dumps(req['json'])[:500]}...`\n"
 
+        # 7. Exécution et Streaming
         try:
             async with httpx.AsyncClient(timeout=300) as client:
                 async with client.stream(
