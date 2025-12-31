@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V122.31 - Auditable)
+title: Gemini Pro Unified System (Platinum Agentic V122.50 - Thought Fix)
 author: ECHO Architecture
-version: 122.31
-description: Version Production Gold avec Fix Outils (Alignment & Error Handling).
+version: 122.50
+description: Version Production Gold avec Gestion Stricte des Thought Signatures (Gemini 3 Pro).
 """
 
 # ==============================================================================
@@ -231,7 +231,7 @@ class AuthService:
                 os.remove(p)
 
 # ==============================================================================
-# SECTION 4 : ORCHESTRATEUR
+# SECTION 4 : ORCHESTRATEUR (CONTEXTE & SIGNATURES)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves):
@@ -323,9 +323,9 @@ class Orchestrator:
 
     def prepare_context(self, messages: List[Dict]) -> List[Dict]:
         """
-        Reconstruit l'historique avec une logique stricte pour les Function Calls.
-        Gemini exige : User -> Model (FC) -> User (FR).
-        Si le Model fait 3 appels (FC1, FC2, FC3), il attend 3 réponses (FR1, FR2, FR3) dans le MÊME tour User.
+        Reconstruit l'historique avec une logique stricte pour Gemini 3 Pro.
+        - Gestion des Thought Signatures (Obligatoire pour éviter les répétitions/erreurs 400).
+        - Groupement correct User -> Model(FC) -> User(FR).
         """
         contents = []
         
@@ -371,34 +371,56 @@ class Orchestrator:
                     i += 1
                 
                 # Ajout au flux (Rôle User obligatoire pour FunctionResponse)
-                # Important : Si le dernier message était déjà USER, on fusionne ou on intercale
                 if contents and contents[-1]["role"] == "user":
                     contents[-1]["parts"].extend(parts)
                 else:
                     contents.append({"role": "user", "parts": parts})
-                continue # On a déjà incrémenté i dans la boucle while
+                continue # Déjà incrémenté
 
             # --- CAS 2 : MODEL (Assistant) ---
             elif role in ["assistant", "model"]:
                 parts = []
-                # Gestion des Tool Calls (Demande d'outil)
+                text_content = content
+                
+                # EXTRACTION THOUGHT SIGNATURE (CRITIQUE GEMINI 3)
+                # On cherche le lien caché [ ](context://thought_signature/...)
+                thought_sig = None
+                sig_match = re.search(r"\[ \]\(context://thought_signature/(.*?)\)", str(text_content))
+                if sig_match:
+                    thought_sig = sig_match.group(1)
+                    # On nettoie le texte pour ne pas polluer le prompt
+                    text_content = text_content.replace(sig_match.group(0), "").strip()
+
+                # Nettoyage des balises <think> si elles existent (pour ne pas répéter la pensée)
+                # text_content = re.sub(r'<think>.*?</think>', '', text_content, flags=re.DOTALL).strip()
+                
+                has_tools = False
                 if m.get("tool_calls"):
+                    has_tools = True
+                    first_fc = True
                     for tc in m["tool_calls"]:
-                        parts.append({
+                        fc_part = {
                             "functionCall": {
                                 "name": tc["function"]["name"],
                                 "args": json.loads(tc["function"]["arguments"])
                             }
-                        })
-                
-                # Gestion du texte
-                text_content = content
-                sig_match = re.search(r"\[ \]\(context://thought_signature/(.*?)\)", str(text_content))
-                if sig_match:
-                    text_content = text_content.replace(sig_match.group(0), "").strip()
+                        }
+                        
+                        # INJECTION SIGNATURE : La signature doit être attachée au PREMIER functionCall
+                        if first_fc and thought_sig:
+                            fc_part["thoughtSignature"] = thought_sig
+                            thought_sig = None # Consommé
+                            first_fc = False
+                            
+                        parts.append(fc_part)
                 
                 if text_content:
-                    parts.insert(0, {"text": text_content}) # Texte avant les appels
+                    text_part = {"text": text_content}
+                    # Si pas d'outil mais une signature (fin de tour thinking), on l'attache au texte
+                    if not has_tools and thought_sig:
+                         text_part["thoughtSignature"] = thought_sig
+                    
+                    parts.insert(0, text_part) # Texte toujours avant les outils
                 
                 if parts:
                     if contents and contents[-1]["role"] == "model":
@@ -411,6 +433,10 @@ class Orchestrator:
                 if content:
                     parts = [{"text": str(content)}]
                     if contents and contents[-1]["role"] == "user":
+                        # Fusion uniquement si ce n'est PAS une FunctionResponse
+                        # Si le précédent User contient functionResponse, on ne fusionne pas aveuglément du texte
+                        # sauf si Gemini l'autorise. Pour la sécurité, on sépare souvent.
+                        # Mais Gemini n'aime pas [User, User].
                         contents[-1]["parts"].extend(parts)
                     else:
                         contents.append({"role": "user", "parts": parts})
@@ -418,17 +444,19 @@ class Orchestrator:
             i += 1
 
         # --- FIX FINAL : GAP FILLER ---
-        # Gemini déteste [User, User]. On insère un Model vide si besoin.
+        # Gemini interdit strictement [User, User]. 
+        # Mais attention : [User(FC Response), User(Text)] est-il valide ? Non.
         final_contents = []
         for c in contents:
             if final_contents and final_contents[-1]["role"] == c["role"]:
                 if c["role"] == "model":
-                    # Fusion de deux modèles consécutifs
                     final_contents[-1]["parts"].extend(c["parts"])
                 else:
-                    # Insertion d'un modèle vide entre deux users
-                    final_contents.append({"role": "model", "parts": [{"text": " "}]})
-                    final_contents.append(c)
+                    # Deux USER consécutifs. 
+                    # Cas typique : User(Prompt) -> ... -> User(FunctionResponse).
+                    # Si on insère un modèle vide ici, ça casse la chaine "Model(FC) -> User(FR)".
+                    # Il faut fusionner les parts User.
+                    final_contents[-1]["parts"].extend(c["parts"])
             else:
                 final_contents.append(c)
 
@@ -512,6 +540,7 @@ class StreamProcessor:
                             is_think = part.get("thought", False)
                             func_call = part.get("functionCall")
 
+                            # Capture de la signature pour ce tour
                             if "thoughtSignature" in part:
                                 last_sig = part["thoughtSignature"]
 
@@ -561,6 +590,8 @@ class StreamProcessor:
 
         if in_think:
             yield "\n</think>\n"
+        
+        # Stockage persistant de la signature via lien caché pour le prochain tour
         if last_sig:
             yield f"\n[ ](context://thought_signature/{last_sig})"
 
