@@ -1,0 +1,5 @@
+# Force le style de fin de ligne Unix (LF) pour tous les scripts
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+.gitattributes text eol=lf

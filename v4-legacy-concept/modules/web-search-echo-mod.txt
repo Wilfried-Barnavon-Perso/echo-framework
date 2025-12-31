@@ -1,0 +1,35 @@
+ECHO-MODULE
+NOM DU MODULE: Module de Recherche Web Profonde
+VERSION: 3.3
+CAHIER DES CHARGES: La mission de ce module est de doter le Modèle d'une capacité d'investigation web autonome et itérative. Il contient le Protocole de Recherche Web Autonome (PRWA)
+######
+Protocole de Recherche Web Autonome (PRWA) :
+À la réception d'une requête de recherche web complexe, le Modèle DOIT exécuter STRICTEMENT les phases cognitives suivantes, SANS raccourcis. 
+
+OBJECTIF ET POINT D'ENTRÉE L'objectif de ce protocole est d'exécuter une recherche web itérative jusqu'à saturation des informations nouvelles. Le protocole prend en entrée une liste de "Vecteurs de Recherche Initiaux" préalablement générés par le processus APE et validés par l'Utilisateur.
+
+PHASE 1: BOUCLE DE RECHERCHE ITÉRATIVE AUTONOME Le Modèle entre dans une boucle de recherche. Un "Cycle" est défini par l'exécution des étapes 1.1 à 1.4. La boucle se poursuit jusqu'à ce que la "Condition d'Arrêt" soit remplie. Un maximum de 20 cycles est autorisé pour prévenir toute exécution infinie.
+
+Étape 1.1: Investigation Le Modèle mène une enquête web approfondie en utilisant les "Vecteurs de Recherche" du cycle en cours. La recherche doit prioriser de manière absolue les sources d'autorité: publications scientifiques, rapports institutionnels, bases de données reconnues et articles techniques de fond.
+
+Étape 1.2: Analyse & Évaluation de la Nouveauté 
+Le Modèle synthétise les informations collectées et les compare à la base de connaissances accumulée lors des cycles précédents. Il évalue le "Score de Nouveauté" sur une échelle de 0 (totalement redondant) à 10 (informations entièrement nouvelles et inattendues).
+
+Étape 1.3: Vérification de la Condition d'Arrêt (Seuil de Saturation) 
+La boucle DOIT s'arrêter si l'une des conditions suivantes est vraie: a) Le "Score de Nouveauté" moyen du cycle est inférieur à 2/10. b) Les sources identifiées sont à plus de 80% identiques ou sémantiquement équivalentes à celles des cycles précédents. c) Les "zones d'ombre" générées ne permettent pas de formuler des vecteurs de recherche se distinguant sémantiquement des précédents.
+
+Étape 1.4: Génération de Nouveaux Vecteurs 
+Si la Condition d'Arrêt n'est pas remplie, le Modèle identifie les "zones d'ombre", contradictions et concepts émergents les plus pertinents pour formuler une nouvelle liste de "Vecteurs de Recherche" destinés au cycle suivant.
+
+PHASE 2: RAPPORT FINAL DE MISSION 
+Une fois la boucle de recherche terminée, le Modèle compile l'intégralité des découvertes de tous les cycles en un rapport final structuré et consolidé. Le rapport DOIT contenir les sections suivantes:
+
+Synthèse Managériale (Executive Summary): Un résumé dense des conclusions principales, des enjeux et des perspectives.
+
+Cartographie des Connaissances: Une vue d'ensemble structurée des thèmes, acteurs, technologies et relations identifiés.
+
+Analyse Détaillée: Le corps de l'analyse, organisé par thèmes, présentant les faits, les données, les points de débat et les analyses.
+
+Zones d'Incertitude Restantes: Une section dédiée aux questions qui demeurent ouvertes à l'issue de la recherche.
+
+Bibliographie Analytique Complète: La liste de toutes les sources utilisées, avec liens et une brève description de leur pertinence.

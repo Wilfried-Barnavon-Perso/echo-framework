@@ -1,0 +1,51 @@
+﻿--- Fichiers Système Windows ---
+
+desktop.ini
+Desktop.ini
+[Dd]esktop.ini
+Thumbs.db
+$RECYCLE.BIN/
+*.lnk
+
+--- Fichiers Système Mac ---
+
+.DS_Store
+.AppleDouble
+.LSOverride
+
+--- Fichiers VM & Disques ---
+
+*.vhdx
+*.vhd
+*.iso
+*.qcow2
+*.vmdk
+
+--- Secrets & Configuration Locale ---
+
+settings.json
+gemini_official_token.json
+gemini_pkce_verifier.txt
+gemini_internal_project.txt
+.env
+.env.local
+
+--- Python & Logs ---
+
+*.log
+pycache/
+*.py[cod]
+venv/
+.pytest_cache/
+*.pyc
+
+--- IDE ---
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+--- Autres ---
+
+i_internal_project.txt
