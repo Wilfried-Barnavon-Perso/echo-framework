@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V129.01 - Hybrid Stability)
+title: Gemini Pro Unified System (Platinum Agentic V129.02 - Hybrid Stability)
 author: ECHO Architecture
-version: 129.01
-description: Base v123.05 (Stable) + Gestion des Signatures "Sidecar" (In-Disk) + Fix Alternance User/Model + Fix Network Buffering (Critical).
+version: 129.02
+description: Base v123.05 (Stable) + Gestion des Signatures "Sidecar" (In-Disk) + Fix Alternance User/Model + Fix Network Buffering + Fix Multi-Turn Tool Signature.
 """
 
 # ==============================================================================
@@ -308,16 +308,26 @@ class Orchestrator:
                 
                 if not parts: parts.append({"text": " "})
 
-                # INJECTION SIGNATURE (MODE DISQUE) - Dernier message seulement
+                # --- INJECTION SIGNATURE (LOGIQUE RENFORCÉE v129.02) ---
+                # On injecte la signature si c'est LE DERNIER message 'model' AVANT une action utilisateur ou outil.
+                # L'API Google est stricte : si un message contient un 'functionCall', il DOIT avoir la signature 
+                # si c'est la base de la réflexion actuelle.
+                
+                # Vérifions si c'est le dernier message de type "model" dans toute la liste
                 is_last_model_msg = True
                 for j in range(i + 1, len(messages)):
                     if messages[j]["role"] in ["assistant", "model"]:
                         is_last_model_msg = False
                         break
                 
-                if is_last_model_msg and chat_id:
+                # OU si ce message contient un appel d'outil (car la réponse suivante sera un tool_response,
+                # et Google a besoin de la signature sur l'appel pour continuer la réflexion après)
+                has_tool_call = any("functionCall" in p for p in parts)
+
+                if (is_last_model_msg or has_tool_call) and chat_id:
                     sig = self.sig_manager.get_signature(chat_id)
-                    if sig and parts:
+                    # On évite d'écraser s'il y en a déjà une (peu probable après nettoyage)
+                    if sig and parts and "thoughtSignature" not in parts[0]:
                         parts[0]["thoughtSignature"] = sig
 
                 contents.append({"role": "model", "parts": parts})
