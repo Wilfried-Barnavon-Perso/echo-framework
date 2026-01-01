@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V129.00 - Hybrid Stability)
+title: Gemini Pro Unified System (Platinum Agentic V129.01 - Hybrid Stability)
 author: ECHO Architecture
-version: 129.00
-description: Base v123.05 (Stable) + Gestion des Signatures "Sidecar" (In-Disk) + Fix Alternance User/Model.
+version: 129.01
+description: Base v123.05 (Stable) + Gestion des Signatures "Sidecar" (In-Disk) + Fix Alternance User/Model + Fix Network Buffering (Critical).
 """
 
 # ==============================================================================
@@ -102,7 +102,6 @@ class AuthService:
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
         
-        # Fallback si le fichier PKCE a disparu
         if not os.path.exists(self.pkce_path):
              for _ in range(3):
                 if self.get_valid_credentials(): return True, "Succès (Récupéré via cache)."
@@ -157,12 +156,11 @@ class AuthService:
             if os.path.exists(p): os.remove(p)
 
 # ==============================================================================
-# SECTION 4 : SIGNATURE MANAGER (NOUVEAUTÉ V129 - IN-DISK)
+# SECTION 4 : SIGNATURE MANAGER (IN-DISK)
 # ==============================================================================
 class SignatureManager:
     """
     Gère la persistance des Signatures de Pensée (Thought Signatures) sur le disque.
-    Cela évite les pertes dues au nettoyage de l'historique par Open WebUI.
     """
     def __init__(self, data_dir: str):
         self.sig_dir = os.path.join(data_dir, "signatures")
@@ -190,14 +188,13 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (LOGIQUE CÉRÉBRALE)
+# SECTION 5 : ORCHESTRATEUR
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
         self.valves = valves
         self.location_cache_file = "/app/backend/data/gemini_geo_cache_v2.json"
         self.tool_map = {}
-        # Injection du Signature Manager
         self.sig_manager = SignatureManager(data_dir)
 
     def check_for_auth_code(self, messages: List[Dict]) -> Optional[str]:
@@ -245,7 +242,7 @@ class Orchestrator:
         """
         Reconstruction de l'historique avec :
         1. Nettoyage <think>
-        2. Injection de Signature depuis le DISQUE (plus fiable)
+        2. Injection de Signature depuis le DISQUE
         3. Correction de l'alternance User/Model (Anti-Concaténation)
         """
         contents = []
@@ -296,14 +293,12 @@ class Orchestrator:
             # --- CAS 2 : MODEL ---
             elif role in ["assistant", "model"]:
                 parts = []
-                # Nettoyage visuel strict : On retire <think> et les anciens liens Markdown s'il en reste
+                # Nettoyage visuel strict
                 text_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
-                # On retire aussi les anciens liens cachés pour nettoyer l'affichage
                 text_content = re.sub(r'\[\s*\]\(context://thought_signature/[^\)]+\)', '', text_content).strip()
 
                 if text_content: parts.append({"text": text_content})
 
-                # Gestion Outils
                 if m.get("tool_calls"):
                     for tc in m["tool_calls"]:
                         try:
@@ -313,10 +308,7 @@ class Orchestrator:
                 
                 if not parts: parts.append({"text": " "})
 
-                # --- INJECTION SIGNATURE (MODE DISQUE) ---
-                # On l'injecte uniquement sur le tout dernier message du modèle
-                # pour restaurer sa mémoire de travail.
-                # On vérifie si c'est le dernier message 'model' de la liste
+                # INJECTION SIGNATURE (MODE DISQUE) - Dernier message seulement
                 is_last_model_msg = True
                 for j in range(i + 1, len(messages)):
                     if messages[j]["role"] in ["assistant", "model"]:
@@ -358,8 +350,6 @@ class GeminiAdapter:
             gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": t_level}
 
         # Stateless pur : UUID unique pour chaque requête.
-        # On ne se base plus sur chat_id pour la session Google (côté serveur), 
-        # car on gère nous-même l'historique complet + signature.
         final_session_id = str(uuid.uuid4())
 
         payload = {
@@ -389,7 +379,7 @@ class GeminiAdapter:
         }
 
 # ==============================================================================
-# SECTION 7 : PROCESSEUR DE FLUX (IN-DISK WRITER)
+# SECTION 7 : PROCESSEUR DE FLUX (FIXED BUFFERING)
 # ==============================================================================
 class StreamProcessor:
     def __init__(self, debug=False, chat_id=None, sig_manager=None):
@@ -400,12 +390,17 @@ class StreamProcessor:
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
         tool_index = 0
+        buffer = ""
 
         async for chunk in response.aiter_bytes():
-            try: buffer = chunk.decode("utf-8", errors="ignore")
-            except: continue
-            
-            for line in buffer.split("\n"):
+            try:
+                buffer += chunk.decode("utf-8", errors="ignore")
+            except:
+                continue
+
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
                 if not line.startswith("data:"): continue
                 try:
                     data = json.loads(line[6:])
@@ -420,7 +415,6 @@ class StreamProcessor:
                             func_call = part.get("functionCall")
 
                             # --- 1. CAPTURE DE LA SIGNATURE (CRITIQUE) ---
-                            # On sauvegarde immédiatement sur le disque.
                             if "thoughtSignature" in part and self.chat_id and self.sig_manager:
                                 self.sig_manager.save_signature(self.chat_id, part["thoughtSignature"])
 
@@ -459,7 +453,6 @@ class StreamProcessor:
                 except: pass
 
         if in_think: yield "\n</think>\n"
-        # Note : On ne génère PLUS de lien caché Markdown ici. C'est propre.
 
 # ==============================================================================
 # SECTION 8 : LE PIPE (POINT D'ENTRÉE)
@@ -525,7 +518,6 @@ class Pipe:
         # Construction Requête
         tools = orch.convert_owui_tools(body.get("tools"))
         adapter = GeminiAdapter(self.base_url)
-        # Passage du chat_id pour que prepare_context puisse charger la signature depuis le disque
         context = orch.prepare_context(body.get("messages", []), chat_id)
         sys_instr = orch.get_system_instruction()
 
