@@ -1,28 +1,23 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V128.50 - Production Master)
+title: Gemini Pro Unified System (Platinum Agentic V129.00 - Hybrid Stability)
 author: ECHO Architecture
-version: 128.50
-description: Version de Production Finale.
-ARCHITECTURE "SIDECAR MEMORY" :
-- Persistance : Les signatures de pensée (Gemini 3) sont stockées dans /signatures/{chat_id}.txt.
-- Stabilité : Mode Stateless (UUID unique) pour éviter la duplication d'historique côté Google.
-- Robustesse : Reconstitution intelligente de l'historique (Insertion de tours vides si nécessaire pour éviter la concaténation User/User).
-- Sécurité : Filtre Auth Code ciblé et Parsing JSON défensif.
+version: 129.00
+description: Base v123.05 (Stable) + Gestion des Signatures "Sidecar" (In-Disk) + Fix Alternance User/Model.
 """
 
 # ==============================================================================
-# SECTION 0 : IMPORTATIONS
+# SECTION 0 : IMPORTATIONS & UTILITAIRES
 # ==============================================================================
 import os
 import json
 import sys
-import secrets  # Pour générer des IDs cryptographiquement sûrs
-import hashlib  # Pour le hachage (non utilisé dans cette version simplifiée Sidecar, mais utile)
-import random   # Pour les IDs de requête
-import re       # Pour le nettoyage et l'extraction (Regex)
+import secrets
+import hashlib
+import random
+import re
 import time
-import uuid     # Pour le mode Stateless
-import httpx    # Client HTTP asynchrone
+import uuid
+import httpx
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
@@ -30,7 +25,6 @@ from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Un
 # ==============================================================================
 # SECTION 1 : DÉPENDANCES OPTIONNELLES
 # ==============================================================================
-# Gestion "Graceful" : Si les libs Google manquent, le code ne plante pas au démarrage.
 try:
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import Flow
@@ -69,10 +63,6 @@ SCOPES = [
 # SECTION 3 : SERVICE D'AUTHENTIFICATION
 # ==============================================================================
 class AuthService:
-    """
-    Gère l'authentification Google OAuth2 via le flux PKCE.
-    Responsable de l'obtention, du stockage et du rafraîchissement des tokens.
-    """
     def __init__(self, data_dir: str):
         self.token_path = f"{data_dir}/gemini_official_token.json"
         self.pkce_path = f"{data_dir}/gemini_pkce_verifier.txt"
@@ -80,7 +70,6 @@ class AuthService:
         self.base_url = "https://cloudcode-pa.googleapis.com/v1internal"
 
     def _generate_pkce(self):
-        """Génère le challenge PKCE pour sécuriser l'échange de code."""
         verifier = secrets.token_urlsafe(64)
         digest = hashlib.sha256(verifier.encode("utf-8")).digest()
         import base64
@@ -88,11 +77,9 @@ class AuthService:
         return verifier, challenge
 
     def get_auth_url(self) -> str:
-        """Génère l'URL de connexion pour l'utilisateur."""
         if not HAS_GOOGLE_LIBS:
             return "❌ **Erreur** : Librairies `google-auth` manquantes."
 
-        # On regénère un challenge à chaque fois pour la sécurité
         verifier, challenge = self._generate_pkce()
         try:
             with open(self.pkce_path, "w") as f: f.write(verifier)
@@ -113,9 +100,14 @@ class AuthService:
         )
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
-        """Échange le code d'auth contre un token."""
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
-        if not os.path.exists(self.pkce_path): return False, "Session expirée."
+        
+        # Fallback si le fichier PKCE a disparu
+        if not os.path.exists(self.pkce_path):
+             for _ in range(3):
+                if self.get_valid_credentials(): return True, "Succès (Récupéré via cache)."
+                time.sleep(0.5)
+             return False, "Session expirée (PKCE introuvable)."
 
         try:
             with open(self.pkce_path, "r") as f: verifier = f.read().strip()
@@ -125,10 +117,10 @@ class AuthService:
             with open(self.token_path, "w") as f: f.write(flow.credentials.to_json())
             if os.path.exists(self.pkce_path): os.remove(self.pkce_path)
             return True, "Succès."
-        except Exception as e: return False, str(e)
+        except Exception as e:
+            return False, str(e)
 
     def get_valid_credentials(self):
-        """Récupère un token valide (refresh auto)."""
         creds = None
         if os.path.exists(self.token_path):
             try: creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
@@ -141,93 +133,72 @@ class AuthService:
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
-        """
-        Récupère l'ID du projet Google Cloud.
-        FIX V128.20 : Parsing JSON ultra-défensif pour éviter 'AttributeError: str has no attribute get'.
-        """
-        log_prefix = "🔍 [ProjectID] "
         if os.path.exists(self.internal_project_cache) and not debug_mode:
-            with open(self.internal_project_cache, "r") as f: return f.read().strip(), ""
+            with open(self.internal_project_cache, "r") as f: return f.read().strip(), "Cache."
         
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
         
         try:
-            url = f"{self.base_url}:loadCodeAssist"
-            resp = httpx.post(url, headers=headers, json=payload, timeout=10)
-            
+            resp = httpx.post(f"{self.base_url}:loadCodeAssist", headers=headers, json=payload, timeout=10)
             if resp.status_code == 200:
-                try: data = resp.json()
-                except: return None, f"{log_prefix}Invalid JSON"
-                
-                # Double décodage si l'API renvoie une string JSONifiée
-                if isinstance(data, str):
-                    try: data = json.loads(data)
-                    except: return None, f"{log_prefix}Unparsable string"
-                
-                if not isinstance(data, dict): return None, f"{log_prefix}Bad type: {type(data)}"
-
-                project_info = data.get("cloudaicompanionProject", {})
-                pid = project_info if isinstance(project_info, str) else project_info.get("id")
-
+                data = resp.json()
+                raw = data.get("cloudaicompanionProject")
+                pid = raw.get("id") if isinstance(raw, dict) else raw
                 if pid:
                     pid = pid.replace("projects/", "")
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
-                    return pid, f"{log_prefix}Success: {pid}"
-                return None, f"{log_prefix}No ID found"
-            return None, f"{log_prefix}Error {resp.status_code}"
-        except Exception as e:
-            return None, f"{log_prefix}Ex: {str(e)}"
+                    return pid, "API OK."
+        except Exception as e: return None, str(e)
+        return None, "Fail."
 
     def reset_storage(self):
         for p in [self.token_path, self.pkce_path, self.internal_project_cache]:
             if os.path.exists(p): os.remove(p)
 
 # ==============================================================================
-# SECTION 4 : SIGNATURE MANAGER (SIDECAR DISK I/O)
+# SECTION 4 : SIGNATURE MANAGER (NOUVEAUTÉ V129 - IN-DISK)
 # ==============================================================================
 class SignatureManager:
     """
-    Gestionnaire de persistance "Sidecar".
-    Stocke la dernière signature de pensée connue pour une conversation donnée.
-    Le nettoyage est délégué à l'Admin Manager (script externe) pour la performance.
+    Gère la persistance des Signatures de Pensée (Thought Signatures) sur le disque.
+    Cela évite les pertes dues au nettoyage de l'historique par Open WebUI.
     """
     def __init__(self, data_dir: str):
         self.sig_dir = os.path.join(data_dir, "signatures")
         os.makedirs(self.sig_dir, exist_ok=True)
 
     def save_signature(self, chat_id: str, signature: str):
-        """Sauvegarde atomique de la signature (écrase la précédente)."""
-        if not chat_id: return
+        """Sauvegarde atomique de la signature pour ce chat_id."""
+        if not chat_id or not signature: return
         try:
             path = os.path.join(self.sig_dir, f"{chat_id}.txt")
             with open(path, "w") as f: f.write(signature)
-        except: pass
+        except Exception as e:
+            print(f"[SigManager] Error saving: {e}")
 
     def get_signature(self, chat_id: str) -> Optional[str]:
-        """Lecture de la signature + mise à jour du timestamp d'accès (pour LRU)."""
+        """Récupère la dernière signature connue."""
         if not chat_id: return None
         try:
             path = os.path.join(self.sig_dir, f"{chat_id}.txt")
             if os.path.exists(path):
-                os.utime(path, None) # Important pour le script de nettoyage
+                # On met à jour le mtime pour que l'Admin Manager sache que ce fichier est actif
+                os.utime(path, None)
                 with open(path, "r") as f: return f.read().strip()
         except: pass
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (RECONSTRUCTION ET NETTOYAGE)
+# SECTION 5 : ORCHESTRATEUR (LOGIQUE CÉRÉBRALE)
 # ==============================================================================
 class Orchestrator:
-    """
-    Prépare le contexte pour l'API.
-    Gère la reconstruction de l'historique et l'injection de la signature.
-    """
-    def __init__(self, valves):
+    def __init__(self, valves, data_dir):
         self.valves = valves
         self.location_cache_file = "/app/backend/data/gemini_geo_cache_v2.json"
         self.tool_map = {}
-        self.sig_manager = SignatureManager("/app/backend/data")
+        # Injection du Signature Manager
+        self.sig_manager = SignatureManager(data_dir)
 
     def check_for_auth_code(self, messages: List[Dict]) -> Optional[str]:
         if not messages: return None
@@ -239,22 +210,14 @@ class Orchestrator:
     def _get_geo_info(self) -> Tuple[str, str]:
         loc, tz = "Paris, France", "Europe/Paris"
         if getattr(self.valves, "OVERRIDE_LOCATION", ""): return self.valves.OVERRIDE_LOCATION, tz
-        if getattr(self.valves, "ENABLE_AUTO_LOCATION", True):
-             if os.path.exists(self.location_cache_file):
-                try:
-                    if time.time() - os.path.getmtime(self.location_cache_file) < 86400:
-                        with open(self.location_cache_file, "r") as f:
-                            c = json.load(f)
-                            return c.get("location", loc), c.get("timezone", tz)
-                except: pass
+        if getattr(self.valves, "ENABLE_AUTO_LOCATION", True) and os.path.exists(self.location_cache_file):
+            try:
+                if time.time() - os.path.getmtime(self.location_cache_file) < 86400:
+                    with open(self.location_cache_file, "r") as f:
+                        c = json.load(f)
+                        return c.get("location", loc), c.get("timezone", tz)
+            except: pass
         return loc, tz
-
-    def _get_current_time(self, timezone_id: str) -> Tuple[str, str]:
-        try:
-            if HAS_ZONEINFO: now = datetime.now(ZoneInfo(timezone_id))
-            else: now = datetime.now()
-        except: now = datetime.now()
-        return now.strftime("%A %d %B %Y"), now.strftime("%H:%M")
 
     def convert_owui_tools(self, tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
         if not tools: return None
@@ -262,30 +225,32 @@ class Orchestrator:
         for t in tools:
             if t.get("type") == "function":
                 f = t.get("function", {})
-                params = f.get("parameters", {"type": "object", "properties": {}})
-                funcs.append({"name": f.get("name"), "description": f.get("description", ""), "parameters": params})
+                funcs.append({
+                    "name": f.get("name"),
+                    "description": f.get("description", ""),
+                    "parameters": f.get("parameters", {"type": "object", "properties": {}})
+                })
         return [{"functionDeclarations": funcs}] if funcs else None
 
     def get_system_instruction(self) -> Dict:
-        sys_txt = self.valves.SYSTEM_PROMPT
+        sys_prompt_text = self.valves.SYSTEM_PROMPT
         if getattr(self.valves, "ENABLE_DATE_TIME", True):
             loc, tz = self._get_geo_info()
-            d, t = self._get_current_time(tz)
-            sys_txt += f"\n\n[CONTEXT]\nDate: {d}\nTime: {t}\nLocation: {loc}\n"
-        return {"parts": [{"text": sys_txt}]}
+            try: now = datetime.now(ZoneInfo(tz)) if HAS_ZONEINFO else datetime.now()
+            except: now = datetime.now()
+            sys_prompt_text += f"\n\n[CONTEXT]\nDate: {now.strftime('%A %d %B %Y')}\nTime: {now.strftime('%H:%M')}\nLocation: {loc}\n"
+        return {"parts": [{"text": sys_prompt_text}]}
 
-    def prepare_context(self, messages: List[Dict], chat_id: str = None) -> List[Dict]:
+    def prepare_context(self, messages: List[Dict], chat_id: str) -> List[Dict]:
         """
-        Reconstruction de l'historique pour l'API.
-        
-        FIX V128.50 : ANTI-CONCATÉNATION USER
-        Si l'historique contient "User A" puis "User B" (sans Modèle entre les deux à cause d'un bug passé),
-        on insère un message "Modèle vide" pour rétablir l'alternance.
-        Cela empêche Gemini de voir "TestTest ?" (concaténation).
+        Reconstruction de l'historique avec :
+        1. Nettoyage <think>
+        2. Injection de Signature depuis le DISQUE (plus fiable)
+        3. Correction de l'alternance User/Model (Anti-Concaténation)
         """
         contents = []
         
-        # Mapping des Outils
+        # 1. Mapping Outils
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -296,88 +261,87 @@ class Orchestrator:
         while i < len(messages):
             m = messages[i]
             role = m["role"]
+            content = ""
             raw_content = m.get("content", "")
+            
             if isinstance(raw_content, list):
-                content = ""
                 for part in raw_content:
                     if isinstance(part, dict) and "text" in part: content += part["text"]
-            else: content = str(raw_content) if raw_content else ""
+            else:
+                content = str(raw_content) if raw_content else ""
 
-            if role == "system": i += 1; continue
-            
-            # Filtre Auth Code (User Only)
+            # Filtres Système & Auth
+            if role == "system": i+=1; continue
             if role == "user" and ("4/" in str(content) and len(str(content)) > 30):
                 if re.search(r"(4/[a-zA-Z0-9_-]+)", str(content)): i += 1; continue
 
-            # CAS 1 : TOOL RESPONSE
+            # --- CAS 1 : TOOL RESPONSE ---
             if role == "tool":
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
                     tm = messages[i]
-                    tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown")
+                    tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
                     try: val = json.loads(tm.get("content", "{}"))
                     except: val = {"result": str(tm.get("content", ""))}
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
                 
-                # Ajout User
-                if contents and contents[-1]["role"] == "user": contents[-1]["parts"].extend(parts)
-                else: contents.append({"role": "user", "parts": parts})
+                # Fusion avec le dernier message User (requis par Gemini)
+                if contents and contents[-1]["role"] == "user":
+                    contents[-1]["parts"].extend(parts)
+                else:
+                    contents.append({"role": "user", "parts": parts})
                 continue
 
-            # CAS 2 : MODEL (Assistant)
+            # --- CAS 2 : MODEL ---
             elif role in ["assistant", "model"]:
                 parts = []
-                
-                # Nettoyage strict
+                # Nettoyage visuel strict : On retire <think> et les anciens liens Markdown s'il en reste
                 text_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+                # On retire aussi les anciens liens cachés pour nettoyer l'affichage
                 text_content = re.sub(r'\[\s*\]\(context://thought_signature/[^\)]+\)', '', text_content).strip()
 
                 if text_content: parts.append({"text": text_content})
 
+                # Gestion Outils
                 if m.get("tool_calls"):
                     for tc in m["tool_calls"]:
                         try:
-                            raw_args = tc["function"]["arguments"]
-                            args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                            args = json.loads(tc["function"]["arguments"])
                             parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
                         except: pass
                 
                 if not parts: parts.append({"text": " "})
 
-                # Injection Signature (Disque) - Seulement sur le dernier message modèle
-                if i == len(messages) - 1 and chat_id:
-                     thought_sig = self.sig_manager.get_signature(chat_id)
-                     if thought_sig and parts:
-                         parts[0]["thoughtSignature"] = thought_sig
+                # --- INJECTION SIGNATURE (MODE DISQUE) ---
+                # On l'injecte uniquement sur le tout dernier message du modèle
+                # pour restaurer sa mémoire de travail.
+                # On vérifie si c'est le dernier message 'model' de la liste
+                is_last_model_msg = True
+                for j in range(i + 1, len(messages)):
+                    if messages[j]["role"] in ["assistant", "model"]:
+                        is_last_model_msg = False
+                        break
+                
+                if is_last_model_msg and chat_id:
+                    sig = self.sig_manager.get_signature(chat_id)
+                    if sig and parts:
+                        parts[0]["thoughtSignature"] = sig
 
-                # Pas de fusion ici pour simplifier la logique d'alternance
                 contents.append({"role": "model", "parts": parts})
 
-            # CAS 3 : USER
+            # --- CAS 3 : USER ---
             else:
                 if content:
-                    parts = [{"text": str(content)}]
-                    # Note: On ne fusionne pas ici, on laisse la logique finale gérer l'alternance
-                    contents.append({"role": "user", "parts": parts})
+                    # FIX CONCATÉNATION : Si le précédent message était DÉJÀ un User, on insère un Model vide
+                    if contents and contents[-1]["role"] == "user":
+                         contents.append({"role": "model", "parts": [{"text": "..."}]})
+                    
+                    contents.append({"role": "user", "parts": [{"text": str(content)}]})
             
             i += 1
 
-        # DÉDUPLICATION INTELLIGENTE & CORRECTION D'ALTERNANCE
-        final_contents = []
-        for c in contents:
-            if final_contents and final_contents[-1]["role"] == c["role"]:
-                # Cas Critique : User après User -> Insertion Modèle Fantôme
-                if c["role"] == "user":
-                    final_contents.append({"role": "model", "parts": [{"text": "..."}]}) # Rétablit l'alternance
-                    final_contents.append(c)
-                else:
-                    # Pour le modèle, la fusion est OK (ex: pensée + outil)
-                    final_contents[-1]["parts"].extend(c["parts"])
-            else:
-                final_contents.append(c)
-
-        return final_contents
+        return contents
 
 # ==============================================================================
 # SECTION 6 : ADAPTATEUR API
@@ -386,16 +350,16 @@ class GeminiAdapter:
     def __init__(self, base_url):
         self.base_url = base_url
 
-    def build(self, project_id, contents, system_instr, temp, max_tok, think_level, model_id, session_id_context, tools=None):
+    def build(self, project_id, contents, system_instr, temp, max_tok, think_level, model_id, tools=None):
         gen_config = {"temperature": temp, "maxOutputTokens": max_tok}
-        
-        # Compatibilité Hybride : Thinking Config seulement pour Gemini 3
         if "gemini-3" in model_id:
             t_level = think_level.lower()
             if t_level == "dynamic": t_level = "high"
             gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": t_level}
 
-        # Stateless (Anti-Bégaiement Serveur)
+        # Stateless pur : UUID unique pour chaque requête.
+        # On ne se base plus sur chat_id pour la session Google (côté serveur), 
+        # car on gère nous-même l'historique complet + signature.
         final_session_id = str(uuid.uuid4())
 
         payload = {
@@ -425,94 +389,80 @@ class GeminiAdapter:
         }
 
 # ==============================================================================
-# SECTION 7 : PROCESSEUR DE FLUX (STREAMING & STOCKAGE)
+# SECTION 7 : PROCESSEUR DE FLUX (IN-DISK WRITER)
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, chat_id, sig_manager, debug=False):
+    def __init__(self, debug=False, chat_id=None, sig_manager=None):
         self.debug = debug
         self.chat_id = chat_id
         self.sig_manager = sig_manager
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
-        current_tool_id = None
         tool_index = 0
-        
-        async for chunk in response.aiter_bytes():
-            try: text_chunk = chunk.decode("utf-8", errors="ignore")
-            except: continue
 
-            for line in text_chunk.split("\n"):
-                line = line.strip()
+        async for chunk in response.aiter_bytes():
+            try: buffer = chunk.decode("utf-8", errors="ignore")
+            except: continue
+            
+            for line in buffer.split("\n"):
                 if not line.startswith("data:"): continue
                 try:
-                    json_str = line[5:].strip()
-                    if not json_str: continue
-                    data = json.loads(json_str)
-                    
+                    data = json.loads(line[6:])
                     if self.debug: yield f"\n`[SSE] {json.dumps(data, ensure_ascii=False)}`\n"
 
                     cand = data.get("response", {}).get("candidates", [])
-                    if not cand: continue
-                    
-                    candidate = cand[0]
-                    content = candidate.get("content", {})
-                    parts = content.get("parts", [])
+                    if cand and "content" in cand[0]:
+                        parts = cand[0]["content"].get("parts", [])
+                        for part in parts:
+                            txt = part.get("text", "")
+                            is_think = part.get("thought", False)
+                            func_call = part.get("functionCall")
 
-                    for part in parts:
-                        # 1. Capture & Sauvegarde Signature (Disque)
-                        if "thoughtSignature" in part:
-                            self.sig_manager.save_signature(self.chat_id, part["thoughtSignature"])
+                            # --- 1. CAPTURE DE LA SIGNATURE (CRITIQUE) ---
+                            # On sauvegarde immédiatement sur le disque.
+                            if "thoughtSignature" in part and self.chat_id and self.sig_manager:
+                                self.sig_manager.save_signature(self.chat_id, part["thoughtSignature"])
 
-                        # 2. Gestion Pensées
-                        is_thought = part.get("thought", False)
-                        text_val = part.get("text", "")
-
-                        if is_thought:
-                            if not in_think: yield "<think>\n"; in_think = True
-                            yield text_val; continue
-
-                        # Si on reçoit autre chose qu'une pensée, on ferme la balise
-                        if in_think and (text_val or part.get("functionCall")):
-                            yield "\n</think>\n"; in_think = False
-
-                        # 3. Gestion Outils
-                        func_call = part.get("functionCall")
-                        if func_call:
-                            if not current_tool_id: current_tool_id = f"call_{secrets.token_hex(8)}"
-                            args = func_call.get("args", {})
+                            # --- 2. TRAITEMENT PENSÉES ---
+                            if is_think:
+                                if not in_think: yield "<think>\n"; in_think = True
+                                yield txt
                             
-                            tool_payload = {
-                                "choices": [{
-                                    "index": 0,
-                                    "delta": {
-                                        "content": None,
-                                        "tool_calls": [{
-                                            "index": tool_index,
-                                            "id": current_tool_id,
-                                            "type": "function",
-                                            "function": {
-                                                "name": func_call["name"],
-                                                "arguments": json.dumps(args)
-                                            }
-                                        }]
-                                    },
-                                    "finish_reason": "tool_calls"
-                                }]
-                            }
-                            yield tool_payload
-                            tool_index += 1
-                            current_tool_id = None 
+                            # --- 3. TRAITEMENT OUTILS ---
+                            elif func_call:
+                                if in_think: yield "\n</think>\n"; in_think = False
+                                yield {
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {
+                                            "tool_calls": [{
+                                                "index": tool_index,
+                                                "id": f"call_{secrets.token_hex(8)}",
+                                                "type": "function",
+                                                "function": {
+                                                    "name": func_call["name"],
+                                                    "arguments": json.dumps(func_call["args"])
+                                                }
+                                            }]
+                                        },
+                                        "finish_reason": "tool_calls"
+                                    }]
+                                }
+                                tool_index += 1
 
-                        # 4. Texte Standard
-                        elif text_val: yield text_val
+                            # --- 4. TRAITEMENT TEXTE ---
+                            else:
+                                if in_think: yield "\n</think>\n"; in_think = False
+                                if txt: yield txt
 
                 except: pass
 
         if in_think: yield "\n</think>\n"
+        # Note : On ne génère PLUS de lien caché Markdown ici. C'est propre.
 
 # ==============================================================================
-# SECTION 8 : LE PIPE
+# SECTION 8 : LE PIPE (POINT D'ENTRÉE)
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
@@ -542,16 +492,15 @@ class Pipe:
         self.base_url = "https://cloudcode-pa.googleapis.com/v1internal"
 
     async def pipe(self, body: dict, __user__: dict = None, __request__: Optional[any] = None) -> AsyncGenerator[Union[str, Dict], None]:
-        orch = Orchestrator(self.valves)
+        # Initialisation avec Context Manager (Chat ID)
         chat_id = body.get("chat_id")
-        proc = StreamProcessor(chat_id, orch.sig_manager, self.valves.DEBUG_MODE)
+        orch = Orchestrator(self.valves, self.data_dir)
+        proc = StreamProcessor(self.valves.DEBUG_MODE, chat_id, orch.sig_manager)
 
         if self.valves.DEBUG_MODE:
-            last_msg_content = "Aucun"
-            if body.get("messages"):
-                last_msg_content = body["messages"][-1].get("content", "")[:200]
-            yield f"🐞 **DEBUG: INPUT**\n`{last_msg_content}...`\n"
+            yield f"🐞 **DEBUG: Chat ID** `{chat_id}`\n"
 
+        # Auth Flow
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = self.auth.exchange_code(ac)
@@ -573,8 +522,10 @@ class Pipe:
             yield f"❌ **Erreur Projet**\n{debug_log}"
             return
 
+        # Construction Requête
         tools = orch.convert_owui_tools(body.get("tools"))
         adapter = GeminiAdapter(self.base_url)
+        # Passage du chat_id pour que prepare_context puisse charger la signature depuis le disque
         context = orch.prepare_context(body.get("messages", []), chat_id)
         sys_instr = orch.get_system_instruction()
 
@@ -586,7 +537,6 @@ class Pipe:
             self.valves.MAX_TOKENS,
             self.valves.THINKING_LEVEL,
             self.valves.MODEL_SELECTION,
-            chat_id,
             tools,
         )
         req["headers"]["Authorization"] = f"Bearer {creds.token}"
@@ -594,6 +544,7 @@ class Pipe:
         if self.valves.DEBUG_MODE:
             yield f"🐞 **API REQ**\nBody snippet: `{json.dumps(req['json'])[:500]}...`\n"
 
+        # Exécution
         try:
             async with httpx.AsyncClient(timeout=300) as client:
                 async with client.stream(
