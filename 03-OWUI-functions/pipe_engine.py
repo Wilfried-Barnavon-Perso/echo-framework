@@ -1,12 +1,11 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V128.05 - CAS Memory)
+title: Gemini Pro Unified System (Platinum Agentic V128.15 - Debug Verbose)
 author: ECHO Architecture
-version: 128.05
-description: Architecture "Content-Addressable Storage" (CAS).
-- Rôle : Préserver la mémoire cognitive (Signatures) générée par le modèle.
-- Mécanisme : Sauvegarde l'association {Hash du Contenu -> Signature} dans un fichier JSON.
-- Restauration : Au tour suivant, utilise le contenu de l'historique pour retrouver et réinjecter la signature correspondante.
-- Conformité : Respecte le cycle de vie Gemini 3 (Thinking -> Signature -> Tool -> Signature Recall).
+version: 128.15
+description: Version Golden Master avec logs de debug étendus.
+- Architecture : Sidecar Memory (Disque) + Stateless (UUID).
+- Sécurité : Filtre Auth ciblé User + Regex Base64.
+- Debug : Traçage détaillé de l'auth, du projet ID, des signatures et du flux.
 """
 
 # ==============================================================================
@@ -143,53 +142,48 @@ class AuthService:
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
+        # DEBUG VERBOSE : On trace la source du Project ID
+        log_prefix = "🔍 [ProjectID] "
+        
         if os.path.exists(self.internal_project_cache) and not debug_mode:
-            with open(self.internal_project_cache, "r") as f: return f.read().strip(), "Cache."
+            with open(self.internal_project_cache, "r") as f:
+                pid = f.read().strip()
+                if debug_mode: return pid, f"{log_prefix}Cache Hit: {pid}"
+                return pid, ""
         
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
+        
         try:
             url = f"{self.base_url}:loadCodeAssist"
             resp = httpx.post(url, headers=headers, json=payload, timeout=10)
+            
             if resp.status_code == 200:
-                pid = resp.json().get("cloudaicompanionProject", {}).get("id")
+                data = resp.json()
+                pid = data.get("cloudaicompanionProject", {}).get("id")
                 if pid:
                     pid = pid.replace("projects/", "")
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
-                    return pid, ""
-        except: pass
-        return None, "Erreur API."
+                    return pid, f"{log_prefix}API Success: {pid}"
+                return None, f"{log_prefix}API JSON OK mais ID vide. Resp: {str(data)[:100]}"
+            else:
+                return None, f"{log_prefix}API Error {resp.status_code}: {resp.text[:200]}"
+        except Exception as e:
+            return None, f"{log_prefix}Exception: {str(e)}"
 
     def reset_storage(self):
         for p in [self.token_path, self.pkce_path, self.internal_project_cache]:
             if os.path.exists(p): os.remove(p)
 
 # ==============================================================================
-# SECTION 4 : SIGNATURE MANAGER (CAS - Stockage Associatif)
+# SECTION 4 : SIGNATURE MANAGER (CAS MEMORY)
 # ==============================================================================
 class SignatureManager:
-    """
-    Gestionnaire de Mémoire "Content Addressable Storage".
-    
-    Problème à résoudre :
-    - Gemini génère une signature liée à une réponse spécifique (Texte ou Outil).
-    - Open WebUI stocke la réponse (le contenu) mais perd la signature (métadonnée).
-    
-    Solution :
-    - On crée un dictionnaire persistant : { HASH(Contenu) : Signature }.
-    - Quand Open WebUI nous renvoie le contenu au tour suivant, on recalcule son HASH.
-    - On retrouve ainsi la Signature originale que le modèle avait générée.
-    """
     def __init__(self, data_dir: str):
         self.sig_dir = os.path.join(data_dir, "signatures")
         os.makedirs(self.sig_dir, exist_ok=True)
 
     def _compute_hash(self, content: Union[str, Dict]) -> str:
-        """
-        Calcule une empreinte unique (SHA256) pour identifier un contenu.
-        - Pour les outils (Dict) : Tri des clés pour garantir la stabilité du hash.
-        - Pour le texte (Str) : Nettoyage basique (strip) pour éviter les écarts d'espaces.
-        """
         if isinstance(content, dict):
             encoded = json.dumps(content, sort_keys=True).encode('utf-8')
         else:
@@ -197,51 +191,34 @@ class SignatureManager:
         return hashlib.sha256(encoded).hexdigest()
 
     def load_store(self, chat_id: str) -> Dict[str, str]:
-        """Charge le fichier JSON contenant toutes les signatures de cette conversation."""
         if not chat_id: return {}
         path = os.path.join(self.sig_dir, f"{chat_id}.json")
         if os.path.exists(path):
             try:
-                # Update access time pour le LRU cleaner (Admin Manager)
                 os.utime(path, None)
-                with open(path, "r") as f:
-                    return json.load(f)
+                with open(path, "r") as f: return json.load(f)
             except: pass
         return {}
 
     def save_signature(self, chat_id: str, content: Union[str, Dict], signature: str):
-        """
-        Archive une nouvelle signature générée par le modèle.
-        Lie la signature à l'empreinte du contenu qui l'a provoquée.
-        """
         if not chat_id or not content or not signature: return
-        
         content_hash = self._compute_hash(content)
         store = self.load_store(chat_id)
-        
-        # Optimisation : Si cette pensée est déjà connue, on ne réécrit pas le disque
-        if store.get(content_hash) == signature:
-            return
+        if store.get(content_hash) == signature: return
 
         store[content_hash] = signature
-        
         try:
             path = os.path.join(self.sig_dir, f"{chat_id}.json")
-            with open(path, "w") as f:
-                json.dump(store, f)
+            with open(path, "w") as f: json.dump(store, f)
         except: pass
 
     def get_signature_for_content(self, chat_id: str, content: Union[str, Dict]) -> Optional[str]:
-        """
-        Retrouve la signature associée à un contenu donné.
-        Utilisé lors de la reconstruction de l'historique pour l'API.
-        """
         store = self.load_store(chat_id)
         content_hash = self._compute_hash(content)
         return store.get(content_hash)
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (RECONSTRUCTION ET REHYDRATATION)
+# SECTION 5 : ORCHESTRATEUR
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves):
@@ -296,21 +273,7 @@ class Orchestrator:
         return {"parts": [{"text": sys_txt}]}
 
     def prepare_context(self, messages: List[Dict], chat_id: str = None) -> List[Dict]:
-        """
-        Reconstruction de l'historique avec réhydratation des signatures (Logique CAS).
-        
-        Processus pour chaque message :
-        1. Identification du contenu (Texte ou Arguments d'outil).
-        2. Calcul du Hash de ce contenu.
-        3. Interrogation du SignatureManager pour retrouver la signature archivée.
-        4. Injection de la signature dans l'objet API 'thoughtSignature'.
-        
-        Cette méthode garantit que l'API reçoit tout le contexte de pensée nécessaire,
-        sans avoir besoin de stocker la signature dans Open WebUI.
-        """
         contents = []
-        
-        # Indexation des Outils
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -322,20 +285,19 @@ class Orchestrator:
             m = messages[i]
             role = m["role"]
             raw_content = m.get("content", "")
-            
-            # Normalisation du contenu texte
             if isinstance(raw_content, list):
                 content = ""
                 for part in raw_content:
                     if isinstance(part, dict) and "text" in part: content += part["text"]
             else: content = str(raw_content) if raw_content else ""
-            
-            # Filtres Système & Auth (User Only)
+
             if role == "system": i += 1; continue
+            
+            # Filtre Auth (User Only)
             if role == "user" and ("4/" in str(content) and len(str(content)) > 30):
                 if re.search(r"(4/[a-zA-Z0-9_-]+)", str(content)): i += 1; continue
 
-            # CAS 1 : TOOL RESPONSE (Résultat d'exécution)
+            # CAS 1 : TOOL RESPONSE
             if role == "tool":
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
@@ -349,35 +311,31 @@ class Orchestrator:
                 else: contents.append({"role": "user", "parts": parts})
                 continue
 
-            # CAS 2 : MODEL (Assistant)
+            # CAS 2 : MODEL
             elif role in ["assistant", "model"]:
                 parts = []
-                
-                # A. Nettoyage du Texte (Suppression des pensées affichées)
+                # Nettoyage
                 text_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
-                # Nettoyage des anciens liens cachés (Legacy)
                 text_content = re.sub(r'\[\s*\]\(context://thought_signature/[^\)]+\)', '', text_content).strip()
 
-                # B. Réhydratation Signature (TEXTE)
-                # On utilise le texte nettoyé comme clé pour retrouver la signature
+                # Réhydratation (Texte)
                 thought_sig = None
                 if chat_id and text_content:
                     thought_sig = self.sig_manager.get_signature_for_content(chat_id, text_content)
 
-                if text_content:
-                    parts.append({"text": text_content})
+                if text_content: parts.append({"text": text_content})
 
-                # C. Gestion Outils & Réhydratation (OUTILS)
+                # Gestion Outils
                 if m.get("tool_calls"):
                     for tc in m["tool_calls"]:
                         try:
                             raw_args = tc["function"]["arguments"]
                             args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                             
-                            # Si on n'a pas trouvé de signature via le texte, on essaie via les args de l'outil
+                            # Réhydratation (Outil)
                             if not thought_sig and chat_id:
-                                tool_content_for_hash = {"name": tc["function"]["name"], "args": args}
-                                thought_sig = self.sig_manager.get_signature_for_content(chat_id, tool_content_for_hash)
+                                tool_data = {"name": tc["function"]["name"], "args": args}
+                                thought_sig = self.sig_manager.get_signature_for_content(chat_id, tool_data)
 
                             parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
                         except: pass
@@ -385,7 +343,7 @@ class Orchestrator:
                 # Safety Net
                 if not parts: parts.append({"text": " "})
 
-                # D. Injection de la Signature Retrouvée
+                # Injection
                 if thought_sig and parts:
                     parts[0]["thoughtSignature"] = thought_sig
 
@@ -420,13 +378,12 @@ class GeminiAdapter:
     def build(self, project_id, contents, system_instr, temp, max_tok, think_level, model_id, session_id_context, tools=None):
         gen_config = {"temperature": temp, "maxOutputTokens": max_tok}
         
-        # Configuration spécifique Gemini 3
         if "gemini-3" in model_id:
             t_level = think_level.lower()
             if t_level == "dynamic": t_level = "high"
             gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": t_level}
 
-        # Mode Stateless : UUID unique pour chaque appel API
+        # Stateless
         final_session_id = str(uuid.uuid4())
 
         payload = {
@@ -456,7 +413,7 @@ class GeminiAdapter:
         }
 
 # ==============================================================================
-# SECTION 7 : PROCESSEUR DE FLUX (CAPTURE & ARCHIVAGE)
+# SECTION 7 : PROCESSEUR DE FLUX
 # ==============================================================================
 class StreamProcessor:
     def __init__(self, chat_id, sig_manager, debug=False):
@@ -469,7 +426,6 @@ class StreamProcessor:
         current_tool_id = None
         tool_index = 0
         
-        # Buffers pour reconstruire le contenu complet à hasher
         full_text_buffer = ""
         current_tool_data = None
         current_sig = None
@@ -496,12 +452,9 @@ class StreamProcessor:
                     parts = content.get("parts", [])
 
                     for part in parts:
-                        # 1. Capture Signature (On la garde en mémoire jusqu'à la fin du flux)
-                        # Le modèle génère la signature, nous la capturons ici.
                         if "thoughtSignature" in part:
                             current_sig = part["thoughtSignature"]
 
-                        # 2. Gestion Pensées
                         is_thought = part.get("thought", False)
                         text_val = part.get("text", "")
 
@@ -512,13 +465,10 @@ class StreamProcessor:
                         if in_think and (text_val or part.get("functionCall")):
                             yield "\n</think>\n"; in_think = False
 
-                        # 3. Gestion Outils
                         func_call = part.get("functionCall")
                         if func_call:
                             if not current_tool_id: current_tool_id = f"call_{secrets.token_hex(8)}"
                             args = func_call.get("args", {})
-                            
-                            # On mémorise l'outil pour pouvoir l'associer à la signature plus tard
                             current_tool_data = {"name": func_call["name"], "args": args}
                             
                             tool_payload = {
@@ -543,26 +493,20 @@ class StreamProcessor:
                             tool_index += 1
                             current_tool_id = None 
 
-                        # 4. Texte Standard
                         elif text_val:
-                            full_text_buffer += text_val # On accumule le texte pour le hashage
+                            full_text_buffer += text_val
                             yield text_val
-
                 except: pass
 
         if in_think: yield "\n</think>\n"
 
-        # 5. ARCHIVAGE FINAL (MAPPING CONTENT -> SIGNATURE)
-        # Une fois le stream fini, on a le contenu complet ET la signature générée par le modèle.
-        # On sauvegarde l'association dans le fichier JSON pour le retrouver au prochain tour.
+        # Archivage CAS
         if current_sig and self.chat_id:
-            
-            # Cas A : Signature associée à du Texte
             if full_text_buffer.strip():
+                if self.debug: yield f"\n`[DEBUG] Saving Text Sig: {current_sig[:10]}...`\n"
                 self.sig_manager.save_signature(self.chat_id, full_text_buffer.strip(), current_sig)
-            
-            # Cas B : Signature associée à un Outil
             if current_tool_data:
+                if self.debug: yield f"\n`[DEBUG] Saving Tool Sig: {current_sig[:10]}...`\n"
                 self.sig_manager.save_signature(self.chat_id, current_tool_data, current_sig)
 
 # ==============================================================================
@@ -594,9 +538,7 @@ class Pipe:
         os.makedirs(self.data_dir, exist_ok=True)
         self.auth = AuthService(self.data_dir)
         self.base_url = "https://cloudcode-pa.googleapis.com/v1internal"
-        if os.path.exists(self.auth.internal_project_cache):
-            try: os.remove(self.auth.internal_project_cache)
-            except: pass
+        # Suppression du nettoyage auto au démarrage pour stabiliser l'auth
 
     async def pipe(self, body: dict, __user__: dict = None, __request__: Optional[any] = None) -> AsyncGenerator[Union[str, Dict], None]:
         orch = Orchestrator(self.valves)
