@@ -1,12 +1,33 @@
+"""
+ADMIN MANAGER SERVER v2.5 (Maintenance & Monitoring)
+
+RÔLE :
+Ce serveur Flask léger tourne dans un conteneur dédié pour gérer les opérations système
+que l'application principale (Open WebUI) ne devrait pas faire elle-même pour des raisons
+de sécurité et de performance.
+
+FONCTIONNALITÉS :
+1. Dashboard de Monitoring : CPU, RAM, Disque.
+2. Gestion Docker : Redémarrage des conteneurs via socket Docker.
+3. Backups : Création d'archives .tar.gz du volume de données.
+4. MAINTENANCE SIGNATURES (Nouveau) : Nettoyage périodique des fichiers de contexte Gemini.
+
+ARCHITECTURE DE STOCKAGE :
+- Les données Open WebUI sont montées dans /app/backend/data
+- Les signatures Gemini sont dans /app/backend/data/signatures
+"""
+
 from flask import Flask, request, jsonify, render_template_string, send_file, redirect, url_for, flash, session # pyright: ignore[reportMissingImports]
 from functools import wraps
-import os, subprocess, datetime, glob, secrets, json, time
+import os, subprocess, datetime, glob, secrets, json, time, threading
 from werkzeug.utils import secure_filename # pyright: ignore[reportMissingImports]
 
-# --- DEPENDANCES EXTERNES (DOCKER ONLY) ---
+# --- VÉRIFICATION DES DÉPENDANCES ---
+# Le script doit être robuste même si certaines libs manquent (mode dégradé)
+
 try:
-    import docker # pyright: ignore[reportMissingImports]
-    import paramiko # pyright: ignore[reportMissingImports]
+    import docker # Interface avec le socket Docker (/var/run/docker.sock)
+    import paramiko # Pour les connexions SSH (Legacy)
     DOCKER_AVAILABLE = True
 except ImportError:
     print("CRITIQUE: Docker/Paramiko non disponible (Dev Local ?)")
@@ -15,28 +36,56 @@ except ImportError:
     DOCKER_AVAILABLE = False
 
 try:
-    import psutil # pyright: ignore[reportMissingImports]
+    import psutil # Pour lire l'usage CPU/RAM/Disque
     HAS_PSUTIL = True
 except ImportError:
     HAS_PSUTIL = False
 
 try:
-    from apscheduler.schedulers.background import BackgroundScheduler # pyright: ignore[reportMissingImports]
+    from apscheduler.schedulers.background import BackgroundScheduler # Scheduler robuste pour les backups
     HAS_SCHEDULER = True
 except ImportError:
     HAS_SCHEDULER = False
+    
+try:
+    import schedule # Scheduler simple pour la maintenance des signatures
+    HAS_SIG_SCHEDULER = True
+except ImportError:
+    print("WARNING: 'schedule' lib missing. Signature maintenance scheduler disabled.")
+    HAS_SIG_SCHEDULER = False
 
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(32)
+app.secret_key = secrets.token_hex(32) # Sécurisation des sessions Flask
 
-# CONFIG
+# ==============================================================================
+# CONFIGURATION DES CHEMINS ET VOLUMES
+# ==============================================================================
 TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'open-webui')
-BACKUP_DIR = "/backups"
-DATA_DIR = "/data"
+BACKUP_DIR = "/backups" # Volume monté pour stocker les archives
 HOST_GATEWAY = "host.docker.internal"
 SETTINGS_FILE = os.path.join(BACKUP_DIR, "settings.json")
 
-# Initialisation Docker sécurisée
+# IMPORTANT : Harmonisation des chemins avec Open WebUI
+# Le volume de données est monté dans /app/backend/data
+OWUI_DATA_ROOT = "/app/backend/data"
+
+# Chemins spécifiques pour la maintenance des signatures Gemini
+# Ces fichiers sont générés par le Pipe Engine
+SIG_DATA_DIR = os.path.join(OWUI_DATA_ROOT, "signatures") 
+SIG_CONFIG_FILE = os.path.join(OWUI_DATA_ROOT, "signature_maintenance_config.json")
+
+# Pour les backups globaux, on archive tout le dossier de données
+DATA_DIR_FOR_BACKUP = OWUI_DATA_ROOT 
+
+# Configuration par défaut de la maintenance
+DEFAULT_SIG_CONFIG = {
+    "retention_weeks": 156, # 3 ans (52 semaines * 3)
+    "file_count_trigger": 100000, # Ne nettoie QUE si on dépasse 100k fichiers
+    "cleanup_hour": "03:00", # Heure d'exécution (nuit)
+    "last_run": "Never"
+}
+
+# Initialisation du client Docker
 client = None
 if DOCKER_AVAILABLE:
     try:
@@ -45,15 +94,125 @@ if DOCKER_AVAILABLE:
         print(f"Erreur init Docker: {e}")
         DOCKER_AVAILABLE = False
 
-# --- SCHEDULER ---
+# Démarrage du Scheduler pour les Backups (APScheduler)
 if HAS_SCHEDULER:
     try:
-        scheduler = BackgroundScheduler()
-        scheduler.start()
+        backup_scheduler = BackgroundScheduler()
+        backup_scheduler.start()
     except Exception as e:
-        print(f"Erreur Scheduler: {e}")
+        print(f"Erreur Backup Scheduler: {e}")
 
-# --- UTILS & LOGIC ---
+# ==============================================================================
+# LOGIQUE DE MAINTENANCE DES SIGNATURES (GEMINI SIDE-CAR)
+# ==============================================================================
+
+def load_sig_config():
+    """Charge la configuration de maintenance depuis le JSON."""
+    if os.path.exists(SIG_CONFIG_FILE):
+        try:
+            with open(SIG_CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except: pass
+    return DEFAULT_SIG_CONFIG.copy()
+
+def save_sig_config(config):
+    """Sauvegarde la configuration de maintenance."""
+    try:
+        os.makedirs(os.path.dirname(SIG_CONFIG_FILE), exist_ok=True)
+        with open(SIG_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=4)
+    except Exception as e:
+        print(f"Erreur sauvegarde config signatures: {e}")
+
+def run_signature_cleanup():
+    """
+    ALGORITHME DE NETTOYAGE DES SIGNATURES
+    
+    Pourquoi ?
+    Le Pipe Gemini génère un fichier texte par conversation pour stocker l'état cognitif.
+    Avec le temps, cela peut créer beaucoup de petits fichiers.
+    
+    Comment ?
+    1. Vérification Volumétrique : On compte les fichiers. Si < file_count_trigger, on arrête.
+       Cela évite de scanner les dates inutilement si le volume est faible.
+    2. Vérification Temporelle : Si le seuil est dépassé, on scanne les dates de modification.
+       On supprime les fichiers non touchés depuis 'retention_weeks'.
+       
+    Sécurité :
+    L'opération est faite fichier par fichier avec gestion d'exception pour ne jamais crasher le serveur.
+    """
+    print(f"🔧 [Maintenance] Démarrage du nettoyage dans {SIG_DATA_DIR}...")
+    config = load_sig_config()
+    
+    if not os.path.exists(SIG_DATA_DIR):
+        print(f"⚠️ [Maintenance] Sous-dossier {SIG_DATA_DIR} introuvable. Création au cas où...")
+        os.makedirs(SIG_DATA_DIR, exist_ok=True)
+        return
+
+    try:
+        # 1. Analyse Volumétrique (Rapide car basée sur l'inode du dossier)
+        files = [os.path.join(SIG_DATA_DIR, f) for f in os.listdir(SIG_DATA_DIR) 
+                 if os.path.isfile(os.path.join(SIG_DATA_DIR, f))]
+        count = len(files)
+        
+        # Condition de déclenchement
+        threshold = config.get("file_count_trigger", 100000)
+        if count < threshold:
+            print(f"ℹ️ [Maintenance] Seuil non atteint ({count} < {threshold}). Pas de nettoyage.")
+            return
+
+        print(f"⚠️ [Maintenance] Seuil dépassé ({count}). Analyse de l'ancienneté...")
+        
+        # 2. Nettoyage par âge
+        weeks = config.get("retention_weeks", 156)
+        retention_seconds = weeks * 7 * 24 * 3600
+        now = time.time()
+        deleted = 0
+        
+        for fpath in files:
+            try:
+                mtime = os.path.getmtime(fpath)
+                age = now - mtime
+                
+                # Suppression si trop vieux
+                if age > retention_seconds:
+                    os.remove(fpath)
+                    deleted += 1
+            except Exception as e:
+                print(f"⚠️ [Maintenance] Erreur suppression {fpath}: {e}")
+
+        print(f"✅ [Maintenance] Terminée. {deleted} signatures expirées supprimées.")
+        
+        # Mise à jour du timestamp de dernière exécution
+        config["last_run"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_sig_config(config)
+
+    except Exception as e:
+        print(f"💥 [Maintenance] Crash : {str(e)}")
+
+# Thread de planification (Schedule Lib)
+# Un thread séparé vérifie chaque minute s'il est l'heure de lancer la maintenance.
+def sig_scheduler_loop():
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+def setup_sig_scheduler():
+    """Configure l'heure de lancement de la tâche."""
+    if not HAS_SIG_SCHEDULER: return
+    config = load_sig_config()
+    target_time = config.get("cleanup_hour", "03:00")
+    
+    schedule.clear()
+    schedule.every().day.at(target_time).do(run_signature_cleanup)
+    print(f"⏰ [Maintenance] Tâche planifiée pour {target_time} quotidiennement.")
+
+if HAS_SIG_SCHEDULER:
+    setup_sig_scheduler()
+    t_sig = threading.Thread(target=sig_scheduler_loop, daemon=True)
+    t_sig.start()
+
+# --- UTILS & LOGIC BACKUPS (Legacy) ---
 
 def human_size(size):
     """Convertit une taille en octets en format lisible."""
@@ -82,7 +241,7 @@ def save_settings(new_settings):
     clean = load_settings()
     clean.update(new_settings)
     with open(SETTINGS_FILE, 'w') as f: json.dump(clean, f, indent=2)
-    update_schedule()
+    update_backup_schedule()
 
 def get_backup_list():
     try:
@@ -118,7 +277,8 @@ def perform_backup_task():
     try:
         container = client.containers.get(TARGET_CONTAINER)
         container.stop()
-        subprocess.run(['tar', '-czf', filepath, '-C', DATA_DIR, '.'], check=True)
+        # Backup du dossier complet (y compris le sous-dossier signatures)
+        subprocess.run(['tar', '-czf', filepath, '-C', DATA_DIR_FOR_BACKUP, '.'], check=True)
         container.start()
         apply_retention_policy()
     except Exception as e:
@@ -126,9 +286,9 @@ def perform_backup_task():
         except: pass
         print(f"Backup Error: {e}")
 
-def update_schedule():
+def update_backup_schedule():
     if not HAS_SCHEDULER: return
-    scheduler.remove_all_jobs()
+    backup_scheduler.remove_all_jobs()
     settings = load_settings()
     if settings.get("auto_backup"):
         time_str = settings.get("backup_time", "03:00")
@@ -140,22 +300,35 @@ def update_schedule():
             start_date = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if start_date <= now:
                 start_date += datetime.timedelta(days=1)
-            scheduler.add_job(perform_backup_task, 'interval', days=interval, start_date=start_date, id='auto_back')
+            backup_scheduler.add_job(perform_backup_task, 'interval', days=interval, start_date=start_date, id='auto_back')
         except Exception as e:
             print(f"Schedule Error: {e}")
 
-try: update_schedule()
+try: update_backup_schedule()
 except: pass
 
-# --- ROUTES ---
+# --- ROUTES FLASK ---
 
 @app.route('/')
 def index():
     if not session.get('logged_in'): return render_template_string(HTML_LOGIN)
+    
+    # Calcul des stats pour l'affichage (Nb fichiers signatures, taille totale)
+    sig_stats = {"count": 0, "size": "0 B"}
+    if os.path.exists(SIG_DATA_DIR):
+        try:
+            files = [os.path.join(SIG_DATA_DIR, f) for f in os.listdir(SIG_DATA_DIR) if os.path.isfile(os.path.join(SIG_DATA_DIR, f))]
+            sig_stats["count"] = len(files)
+            sig_stats["size"] = human_size(sum(os.path.getsize(f) for f in files))
+        except: pass
+
     return render_template_string(HTML_DASHBOARD, 
                                 server_time=datetime.datetime.now().strftime('%H:%M:%S'),
                                 settings=load_settings(),
-                                has_scheduler=HAS_SCHEDULER)
+                                sig_config=load_sig_config(),
+                                sig_stats=sig_stats,
+                                has_scheduler=HAS_SCHEDULER,
+                                has_sig_scheduler=HAS_SIG_SCHEDULER)
 
 @app.route('/', methods=['POST'])
 def login():
@@ -164,7 +337,6 @@ def login():
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        # Connexion à l'hôte Docker via la gateway interne
         ssh.connect(HOST_GATEWAY, username=username, password=password, timeout=5)
         ssh.close()
         session['logged_in'] = True
@@ -210,6 +382,62 @@ def containers():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+# --- ROUTES API MAINTENANCE SIGNATURES ---
+
+@app.route('/api/signatures/stats', methods=['GET'])
+def get_signature_stats():
+    """API pour monitoring externe : renvoie les stats des signatures."""
+    if not session.get('logged_in'): return jsonify({"error": "Auth required"}), 401
+    config = load_sig_config()
+    stats = {
+        "config": config,
+        "total_files": 0,
+        "total_size_mb": 0.0,
+        "status": "OK"
+    }
+    if os.path.exists(SIG_DATA_DIR):
+        try:
+            files = [os.path.join(SIG_DATA_DIR, f) for f in os.listdir(SIG_DATA_DIR) if os.path.isfile(os.path.join(SIG_DATA_DIR, f))]
+            stats["total_files"] = len(files)
+            stats["total_size_mb"] = round(sum(os.path.getsize(f) for f in files) / (1024 * 1024), 2)
+        except Exception as e:
+            stats["status"] = f"Error scanning: {str(e)}"
+    else:
+        stats["status"] = "Directory not found"
+    return jsonify(stats)
+
+@app.route('/settings/signatures', methods=['POST'])
+def update_signature_settings():
+    """Mise à jour de la configuration de nettoyage (Seuil, Rétention, Heure)."""
+    if not session.get('logged_in'): return redirect(url_for('index'))
+    config = load_sig_config()
+    
+    try:
+        config["retention_weeks"] = int(request.form.get("retention_weeks", 156))
+        config["file_count_trigger"] = int(request.form.get("file_count_trigger", 100000))
+        config["cleanup_hour"] = request.form.get("cleanup_hour", "03:00")
+        
+        save_sig_config(config)
+        
+        if HAS_SIG_SCHEDULER:
+            setup_sig_scheduler() # Replanifie avec la nouvelle heure immédiatement
+            
+        flash('Config maintenance signatures mise à jour.', 'success')
+    except Exception as e:
+        flash(f'Erreur mise à jour: {str(e)}', 'danger')
+        
+    return redirect(url_for('index'))
+
+@app.route('/action/signatures/cleanup', methods=['POST'])
+def force_signature_cleanup():
+    """Déclenchement manuel de la maintenance (Bouton Dashboard)."""
+    if not session.get('logged_in'): return redirect(url_for('index'))
+    # Lancement en thread pour ne pas bloquer l'interface web pendant le scan
+    threading.Thread(target=run_signature_cleanup).start()
+    flash('Nettoyage des signatures lancé en arrière-plan.', 'info')
+    return redirect(url_for('index'))
+
+
 @app.route('/action/<action_type>', methods=['POST'])
 def actions(action_type):
     if not session.get('logged_in'): return redirect(url_for('index'))
@@ -233,9 +461,9 @@ def actions(action_type):
                 try:
                     container = client.containers.get(TARGET_CONTAINER)
                     container.stop()
-                    # Nettoyage avant restore (optionnel mais recommandé)
-                    subprocess.run(f"rm -rf {DATA_DIR}/*", shell=True)
-                    subprocess.run(['tar', '-xzf', p, '-C', DATA_DIR], check=True)
+                    # Nettoyage avant restore
+                    subprocess.run(f"rm -rf {DATA_DIR_FOR_BACKUP}/*", shell=True)
+                    subprocess.run(['tar', '-xzf', p, '-C', DATA_DIR_FOR_BACKUP], check=True)
                     container.start()
                     flash('Restauration terminée.', 'success')
                 except Exception as e:
@@ -264,7 +492,7 @@ def settings():
         "cleanup_value": int(request.form.get('cleanup_value', 5))
     }
     save_settings(new_conf)
-    flash('Paramètres enregistrés.', 'success')
+    flash('Paramètres Backups enregistrés.', 'success')
     return redirect(url_for('index'))
 
 @app.route('/upload', methods=['POST'])
@@ -349,6 +577,7 @@ HTML_DASHBOARD = """
         #loader { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(13, 17, 23, 0.9); z-index: 9999; display: none; flex-direction: column; justify-content: center; align-items: center; }
         .status-badge { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
         .error-text { color: #ff7b72; font-size: 0.9rem; }
+        .sig-stat-val { font-size: 1.2rem; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -407,10 +636,12 @@ HTML_DASHBOARD = """
                 </div>
             </div>
 
-            <!-- DROITE : Paramètres & Docker -->
+            <!-- DROITE : Paramètres & Maintenance -->
             <div class="col-lg-4">
+                
+                <!-- AUTO-PILOT BACKUPS -->
                 <div class="card mb-4">
-                    <div class="card-header"><i class="bi bi-robot"></i> Auto-Pilot</div>
+                    <div class="card-header"><i class="bi bi-robot"></i> Auto-Pilot (Backups)</div>
                     <div class="card-body">
                         {% if not has_scheduler %}
                         <div class="alert alert-warning small">Module 'APScheduler' manquant.<br>Automatisation désactivée.</div>
@@ -424,11 +655,11 @@ HTML_DASHBOARD = """
                             <div class="row g-2 mb-3">
                                 <div class="col-6">
                                     <label class="form-label text-muted small mb-1">Jours</label>
-                                    <input type="number" name="interval_days" class="form-control bg-dark text-white border-secondary" value="{{ settings.interval_days }}" min="1" data-bs-toggle="tooltip" title="Fréquence (ex: tous les 1 jour)">
+                                    <input type="number" name="interval_days" class="form-control bg-dark text-white border-secondary" value="{{ settings.interval_days }}" min="1">
                                 </div>
                                 <div class="col-6">
                                     <label class="form-label text-muted small mb-1">Heure</label>
-                                    <input type="time" name="backup_time" class="form-control bg-dark text-white border-secondary" value="{{ settings.backup_time }}" data-bs-toggle="tooltip" title="Heure d'exécution (Serveur)">
+                                    <input type="time" name="backup_time" class="form-control bg-dark text-white border-secondary" value="{{ settings.backup_time }}">
                                 </div>
                             </div>
 
@@ -436,7 +667,7 @@ HTML_DASHBOARD = """
                             
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" name="auto_cleanup" id="autoCleanup" {% if settings.auto_cleanup %}checked{% endif %}>
-                                <label class="form-check-label" for="autoCleanup">Nettoyage</label>
+                                <label class="form-check-label" for="autoCleanup">Nettoyage Vieux Backups</label>
                             </div>
 
                             <div class="input-group mb-2">
@@ -449,11 +680,51 @@ HTML_DASHBOARD = """
                                 <input type="number" name="cleanup_value" class="form-control form-control-sm bg-dark text-white border-secondary" value="{{ settings.cleanup_value }}" min="1">
                             </div>
 
-                            <button type="submit" class="btn btn-primary w-100" data-bs-toggle="tooltip" title="Sauvegarder la configuration">Enregistrer</button>
+                            <button type="submit" class="btn btn-primary w-100">Enregistrer Config Backups</button>
                         </form>
                     </div>
                 </div>
 
+                <!-- MAINTENANCE SIGNATURES -->
+                <div class="card mb-4 border-info">
+                    <div class="card-header text-info"><i class="bi bi-shield-check"></i> Maintenance Signatures</div>
+                    <div class="card-body">
+                         {% if not has_sig_scheduler %}
+                        <div class="alert alert-warning small">Module 'schedule' manquant.<br>Auto-nettoyage désactivé.</div>
+                        {% endif %}
+                        
+                        <div class="d-flex justify-content-between mb-3 text-muted small">
+                            <span>Fichiers: <strong class="text-light">{{ sig_stats.count }}</strong></span>
+                            <span>Taille: <strong class="text-light">{{ sig_stats.size }}</strong></span>
+                        </div>
+                        <div class="text-muted small mb-3">Dernier run: <span class="text-light">{{ sig_config.last_run }}</span></div>
+
+                        <form action="/settings/signatures" method="post">
+                            <div class="mb-2">
+                                <label class="form-label text-muted small mb-0">Déclencheur (Nb Fichiers)</label>
+                                <input type="number" name="file_count_trigger" class="form-control form-control-sm bg-dark text-white border-secondary" value="{{ sig_config.file_count_trigger }}">
+                            </div>
+                            <div class="row g-2 mb-3">
+                                <div class="col-7">
+                                    <label class="form-label text-muted small mb-0">Rétention (Semaines)</label>
+                                    <input type="number" name="retention_weeks" class="form-control form-control-sm bg-dark text-white border-secondary" value="{{ sig_config.retention_weeks }}">
+                                </div>
+                                <div class="col-5">
+                                    <label class="form-label text-muted small mb-0">Heure</label>
+                                    <input type="time" name="cleanup_hour" class="form-control form-control-sm bg-dark text-white border-secondary" value="{{ sig_config.cleanup_hour }}">
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-sm btn-outline-info flex-grow-1">Sauver Config</button>
+                            </div>
+                        </form>
+                        <form action="/action/signatures/cleanup" method="post" class="mt-2">
+                             <button type="submit" class="btn btn-sm btn-info w-100"><i class="bi bi-stars"></i> Nettoyer Maintenant</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- DOCKER SERVICES -->
                 <div class="card">
                     <div class="card-header d-flex justify-content-between"><span><i class="bi bi-box-seam"></i> Services</span><button onclick="refreshContainers()" class="btn btn-sm btn-link text-white p-0" data-bs-toggle="tooltip" title="Rafraîchir l'état"><i class="bi bi-arrow-repeat"></i></button></div>
                     <ul class="list-group list-group-flush" id="container-list"></ul>
