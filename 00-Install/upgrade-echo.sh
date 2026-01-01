@@ -1,8 +1,11 @@
 #!/bin/bash
 # ==============================================================================
-# ECHO FRAMEWORK - UPGRADE MAJEUR (MIROIR & DESTRUCTIF)
+# ECHO FRAMEWORK - UPGRADE MAJEUR (SAFE FORCE UPDATE)
 # ==============================================================================
-# - Fixes: BOM Removal + CRLF Removal pour compatibilité Windows/Linux
+# CORRECTIF V128 : Ajout d'un 'git reset --hard' avant le pull.
+# Pourquoi ? Pour éviter les conflits bloquants si des fichiers locaux (comme
+# install-stack.sh) ont été touchés par des exécutions précédentes.
+# La source de vérité EST GitHub. Les modifs locales sont écrasées.
 # ==============================================================================
 
 # --- MECANISME SELF-RUN (Exécution depuis /tmp pour éviter l'auto-écrasement) ---
@@ -33,6 +36,9 @@ fi
 # --- SECURITE ---
 clear
 echo "⚠️  ATTENTION : UPGRADE MAJEUR (DESTRUCTIF)"
+echo "    Cette opération va :"
+echo "    1. Écraser TOUTES les modifications locales dans /opt/echo-framework-source"
+echo "    2. Redéployer les conteneurs (indisponibilité temporaire)"
 echo "    Assurez-vous d'avoir sauvegardé vos données."
 if [ -n "$SUDO_USER" ]; then
     echo "🔒 Confirmation requise :"
@@ -42,18 +48,26 @@ else
     [ "$CONFIRM" != "CONFIRMER" ] && exit 1
 fi
 
-echo "🔄 [1/4] SYNC GITHUB..."
+echo "🔄 [1/4] SYNC GITHUB (FORCE MODE)..."
 if [ ! -d "$SRC_DIR" ]; then
     echo "   🆕 Clonage initial..."
     git clone "$GIT_REPO" "$SRC_DIR"
 else
+    echo "   🧹 Nettoyage des modifications locales..."
+    cd "$SRC_DIR"
+    
+    # FIX CRITIQUE : Reset dur pour éviter les conflits de merge
+    git reset --hard HEAD
+    git clean -fd
+    
     echo "   📥 Pull updates (Branche courante)..."
     # Récupération de la branche active
-    CURRENT_BRANCH=$(cd "$SRC_DIR" && git rev-parse --abbrev-ref HEAD)
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
     echo "      Branche active : $CURRENT_BRANCH"
     
-    # Pull sur la branche active uniquement
-    cd "$SRC_DIR" && git pull origin "$CURRENT_BRANCH" || echo "⚠️ Git pull failed (continuing local)"
+    # Fetch et Reset sur la version distante pour garantir la synchro parfaite
+    git fetch origin "$CURRENT_BRANCH"
+    git reset --hard "origin/$CURRENT_BRANCH"
 fi
 
 echo "📂 [2/4] DEPLOIEMENT SCRIPTS (MODE MIROIR)..."
@@ -69,6 +83,7 @@ sync_mirror() {
     if [[ "$dest" != /opt/* ]]; then echo "⛔ Refus: $dest"; return; fi
     if [ ! -d "$dest" ]; then mkdir -p "$dest"; fi
 
+    # Suppression propre et copie
     rm -rf "$dest"/*
     cp -rf "$src"/. "$dest"/
 }
@@ -95,11 +110,7 @@ sync_mirror_file "$SRC_DIR/06-docker-browser-agent/browser_api.py" "/opt/browser
 
 # --- NETTOYAGE ENCODING (WINDOWS FIX : BOM + CRLF) ---
 echo "🧹 Nettoyage des caractères Windows (CRLF + BOM)..."
-# 1. Suppression du BOM UTF-8 (Byte Order Mark) s'il existe sur la première ligne
-# Le BOM (EF BB BF) casse le Shebang #!/bin/bash
 find /opt/owui-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
-
-# 2. Suppression des retours chariot Windows (\r)
 find /opt/owui-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" \) -exec sed -i 's/\r$//' {} +
 
 chmod +x /opt/owui-scripts/*.sh
