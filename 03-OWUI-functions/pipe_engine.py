@@ -1,30 +1,36 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V128.20 - Deep Safe JSON)
+title: Gemini Pro Unified System (Platinum Agentic V128.50 - Production Master)
 author: ECHO Architecture
-version: 128.20
-description: Correction de la gestion des erreurs API Project ID. Parsing JSON récursif pour gérer les réponses doublement encodées et vérification stricte du type de retour.
+version: 128.50
+description: Version de Production Finale.
+ARCHITECTURE "SIDECAR MEMORY" :
+- Persistance : Les signatures de pensée (Gemini 3) sont stockées dans /signatures/{chat_id}.txt.
+- Stabilité : Mode Stateless (UUID unique) pour éviter la duplication d'historique côté Google.
+- Robustesse : Reconstitution intelligente de l'historique (Insertion de tours vides si nécessaire pour éviter la concaténation User/User).
+- Sécurité : Filtre Auth Code ciblé et Parsing JSON défensif.
 """
 
 # ==============================================================================
-# SECTION 0 : IMPORTATIONS ET UTILITAIRES DE BASE
+# SECTION 0 : IMPORTATIONS
 # ==============================================================================
 import os
 import json
 import sys
-import secrets
-import hashlib
-import random
-import re
+import secrets  # Pour générer des IDs cryptographiquement sûrs
+import hashlib  # Pour le hachage (non utilisé dans cette version simplifiée Sidecar, mais utile)
+import random   # Pour les IDs de requête
+import re       # Pour le nettoyage et l'extraction (Regex)
 import time
-import uuid
-import httpx
+import uuid     # Pour le mode Stateless
+import httpx    # Client HTTP asynchrone
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
 
 # ==============================================================================
-# SECTION 1 : GESTION DES DÉPENDANCES
+# SECTION 1 : DÉPENDANCES OPTIONNELLES
 # ==============================================================================
+# Gestion "Graceful" : Si les libs Google manquent, le code ne plante pas au démarrage.
 try:
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import Flow
@@ -60,9 +66,13 @@ SCOPES = [
 ]
 
 # ==============================================================================
-# SECTION 3 : AUTHENTIFICATION
+# SECTION 3 : SERVICE D'AUTHENTIFICATION
 # ==============================================================================
 class AuthService:
+    """
+    Gère l'authentification Google OAuth2 via le flux PKCE.
+    Responsable de l'obtention, du stockage et du rafraîchissement des tokens.
+    """
     def __init__(self, data_dir: str):
         self.token_path = f"{data_dir}/gemini_official_token.json"
         self.pkce_path = f"{data_dir}/gemini_pkce_verifier.txt"
@@ -70,6 +80,7 @@ class AuthService:
         self.base_url = "https://cloudcode-pa.googleapis.com/v1internal"
 
     def _generate_pkce(self):
+        """Génère le challenge PKCE pour sécuriser l'échange de code."""
         verifier = secrets.token_urlsafe(64)
         digest = hashlib.sha256(verifier.encode("utf-8")).digest()
         import base64
@@ -77,26 +88,15 @@ class AuthService:
         return verifier, challenge
 
     def get_auth_url(self) -> str:
+        """Génère l'URL de connexion pour l'utilisateur."""
         if not HAS_GOOGLE_LIBS:
             return "❌ **Erreur** : Librairies `google-auth` manquantes."
 
-        should_generate_new = True
-        if os.path.exists(self.pkce_path):
-            try:
-                if time.time() - os.path.getmtime(self.pkce_path) < 300:
-                    with open(self.pkce_path, "r") as f:
-                        if len(f.read().strip()) > 10:
-                            should_generate_new = False
-            except: pass
-
-        if should_generate_new:
-            verifier, challenge = self._generate_pkce()
-            try:
-                with open(self.pkce_path, "w") as f: f.write(verifier)
-            except Exception as e: return f"❌ Erreur IO: {str(e)}"
-        else:
-            verifier, challenge = self._generate_pkce()
+        # On regénère un challenge à chaque fois pour la sécurité
+        verifier, challenge = self._generate_pkce()
+        try:
             with open(self.pkce_path, "w") as f: f.write(verifier)
+        except Exception as e: return f"❌ Erreur IO: {str(e)}"
 
         flow = Flow.from_client_config(
             OFFICIAL_CLIENT_CONFIG, scopes=SCOPES, autogenerate_code_verifier=False
@@ -113,6 +113,7 @@ class AuthService:
         )
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
+        """Échange le code d'auth contre un token."""
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
         if not os.path.exists(self.pkce_path): return False, "Session expirée."
 
@@ -127,6 +128,7 @@ class AuthService:
         except Exception as e: return False, str(e)
 
     def get_valid_credentials(self):
+        """Récupère un token valide (refresh auto)."""
         creds = None
         if os.path.exists(self.token_path):
             try: creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
@@ -139,13 +141,13 @@ class AuthService:
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
+        """
+        Récupère l'ID du projet Google Cloud.
+        FIX V128.20 : Parsing JSON ultra-défensif pour éviter 'AttributeError: str has no attribute get'.
+        """
         log_prefix = "🔍 [ProjectID] "
-        
         if os.path.exists(self.internal_project_cache) and not debug_mode:
-            with open(self.internal_project_cache, "r") as f:
-                pid = f.read().strip()
-                if debug_mode: return pid, f"{log_prefix}Cache Hit: {pid}"
-                return pid, ""
+            with open(self.internal_project_cache, "r") as f: return f.read().strip(), ""
         
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
@@ -155,92 +157,72 @@ class AuthService:
             resp = httpx.post(url, headers=headers, json=payload, timeout=10)
             
             if resp.status_code == 200:
-                try:
-                    data = resp.json()
-                except json.JSONDecodeError:
-                     return None, f"{log_prefix}Invalid JSON response: {resp.text[:100]}"
+                try: data = resp.json()
+                except: return None, f"{log_prefix}Invalid JSON"
                 
-                # --- FIX CRITIQUE: Parsing Récursif ---
+                # Double décodage si l'API renvoie une string JSONifiée
                 if isinstance(data, str):
-                    try:
-                        data = json.loads(data)
-                    except:
-                         return None, f"{log_prefix}API returned unparsable string: {data[:100]}"
+                    try: data = json.loads(data)
+                    except: return None, f"{log_prefix}Unparsable string"
                 
-                if not isinstance(data, dict):
-                    return None, f"{log_prefix}API returned unexpected type: {type(data)} - {str(data)[:100]}"
+                if not isinstance(data, dict): return None, f"{log_prefix}Bad type: {type(data)}"
 
                 project_info = data.get("cloudaicompanionProject", {})
-                
-                # Gestion polymorphe (String ou Dict)
-                if isinstance(project_info, str):
-                    pid = project_info
-                elif isinstance(project_info, dict):
-                    pid = project_info.get("id")
-                else:
-                    pid = None
+                pid = project_info if isinstance(project_info, str) else project_info.get("id")
 
                 if pid:
                     pid = pid.replace("projects/", "")
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
-                    return pid, f"{log_prefix}API Success: {pid}"
-                
-                return None, f"{log_prefix}ID not found in keys: {list(data.keys())}"
-            else:
-                return None, f"{log_prefix}API Error {resp.status_code}: {resp.text[:200]}"
+                    return pid, f"{log_prefix}Success: {pid}"
+                return None, f"{log_prefix}No ID found"
+            return None, f"{log_prefix}Error {resp.status_code}"
         except Exception as e:
-            return None, f"{log_prefix}Exception: {str(e)}"
+            return None, f"{log_prefix}Ex: {str(e)}"
 
     def reset_storage(self):
         for p in [self.token_path, self.pkce_path, self.internal_project_cache]:
             if os.path.exists(p): os.remove(p)
 
 # ==============================================================================
-# SECTION 4 : SIGNATURE MANAGER (CAS MEMORY)
+# SECTION 4 : SIGNATURE MANAGER (SIDECAR DISK I/O)
 # ==============================================================================
 class SignatureManager:
+    """
+    Gestionnaire de persistance "Sidecar".
+    Stocke la dernière signature de pensée connue pour une conversation donnée.
+    Le nettoyage est délégué à l'Admin Manager (script externe) pour la performance.
+    """
     def __init__(self, data_dir: str):
         self.sig_dir = os.path.join(data_dir, "signatures")
         os.makedirs(self.sig_dir, exist_ok=True)
 
-    def _compute_hash(self, content: Union[str, Dict]) -> str:
-        if isinstance(content, dict):
-            encoded = json.dumps(content, sort_keys=True).encode('utf-8')
-        else:
-            encoded = str(content).strip().encode('utf-8')
-        return hashlib.sha256(encoded).hexdigest()
-
-    def load_store(self, chat_id: str) -> Dict[str, str]:
-        if not chat_id: return {}
-        path = os.path.join(self.sig_dir, f"{chat_id}.json")
-        if os.path.exists(path):
-            try:
-                os.utime(path, None)
-                with open(path, "r") as f: return json.load(f)
-            except: pass
-        return {}
-
-    def save_signature(self, chat_id: str, content: Union[str, Dict], signature: str):
-        if not chat_id or not content or not signature: return
-        content_hash = self._compute_hash(content)
-        store = self.load_store(chat_id)
-        if store.get(content_hash) == signature: return
-
-        store[content_hash] = signature
+    def save_signature(self, chat_id: str, signature: str):
+        """Sauvegarde atomique de la signature (écrase la précédente)."""
+        if not chat_id: return
         try:
-            path = os.path.join(self.sig_dir, f"{chat_id}.json")
-            with open(path, "w") as f: json.dump(store, f)
+            path = os.path.join(self.sig_dir, f"{chat_id}.txt")
+            with open(path, "w") as f: f.write(signature)
         except: pass
 
-    def get_signature_for_content(self, chat_id: str, content: Union[str, Dict]) -> Optional[str]:
-        store = self.load_store(chat_id)
-        content_hash = self._compute_hash(content)
-        return store.get(content_hash)
+    def get_signature(self, chat_id: str) -> Optional[str]:
+        """Lecture de la signature + mise à jour du timestamp d'accès (pour LRU)."""
+        if not chat_id: return None
+        try:
+            path = os.path.join(self.sig_dir, f"{chat_id}.txt")
+            if os.path.exists(path):
+                os.utime(path, None) # Important pour le script de nettoyage
+                with open(path, "r") as f: return f.read().strip()
+        except: pass
+        return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR
+# SECTION 5 : ORCHESTRATEUR (RECONSTRUCTION ET NETTOYAGE)
 # ==============================================================================
 class Orchestrator:
+    """
+    Prépare le contexte pour l'API.
+    Gère la reconstruction de l'historique et l'injection de la signature.
+    """
     def __init__(self, valves):
         self.valves = valves
         self.location_cache_file = "/app/backend/data/gemini_geo_cache_v2.json"
@@ -293,7 +275,17 @@ class Orchestrator:
         return {"parts": [{"text": sys_txt}]}
 
     def prepare_context(self, messages: List[Dict], chat_id: str = None) -> List[Dict]:
+        """
+        Reconstruction de l'historique pour l'API.
+        
+        FIX V128.50 : ANTI-CONCATÉNATION USER
+        Si l'historique contient "User A" puis "User B" (sans Modèle entre les deux à cause d'un bug passé),
+        on insère un message "Modèle vide" pour rétablir l'alternance.
+        Cela empêche Gemini de voir "TestTest ?" (concaténation).
+        """
         contents = []
+        
+        # Mapping des Outils
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -313,9 +305,11 @@ class Orchestrator:
 
             if role == "system": i += 1; continue
             
+            # Filtre Auth Code (User Only)
             if role == "user" and ("4/" in str(content) and len(str(content)) > 30):
                 if re.search(r"(4/[a-zA-Z0-9_-]+)", str(content)): i += 1; continue
 
+            # CAS 1 : TOOL RESPONSE
             if role == "tool":
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
@@ -325,18 +319,19 @@ class Orchestrator:
                     except: val = {"result": str(tm.get("content", ""))}
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
+                
+                # Ajout User
                 if contents and contents[-1]["role"] == "user": contents[-1]["parts"].extend(parts)
                 else: contents.append({"role": "user", "parts": parts})
                 continue
 
+            # CAS 2 : MODEL (Assistant)
             elif role in ["assistant", "model"]:
                 parts = []
+                
+                # Nettoyage strict
                 text_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
                 text_content = re.sub(r'\[\s*\]\(context://thought_signature/[^\)]+\)', '', text_content).strip()
-
-                thought_sig = None
-                if chat_id and text_content:
-                    thought_sig = self.sig_manager.get_signature_for_content(chat_id, text_content)
 
                 if text_content: parts.append({"text": text_content})
 
@@ -345,36 +340,42 @@ class Orchestrator:
                         try:
                             raw_args = tc["function"]["arguments"]
                             args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                            
-                            if not thought_sig and chat_id:
-                                tool_data = {"name": tc["function"]["name"], "args": args}
-                                thought_sig = self.sig_manager.get_signature_for_content(chat_id, tool_data)
-
                             parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
                         except: pass
                 
                 if not parts: parts.append({"text": " "})
 
-                if thought_sig and parts:
-                    parts[0]["thoughtSignature"] = thought_sig
+                # Injection Signature (Disque) - Seulement sur le dernier message modèle
+                if i == len(messages) - 1 and chat_id:
+                     thought_sig = self.sig_manager.get_signature(chat_id)
+                     if thought_sig and parts:
+                         parts[0]["thoughtSignature"] = thought_sig
 
-                if parts:
-                    if contents and contents[-1]["role"] == "model": contents[-1]["parts"].extend(parts)
-                    else: contents.append({"role": "model", "parts": parts})
+                # Pas de fusion ici pour simplifier la logique d'alternance
+                contents.append({"role": "model", "parts": parts})
 
+            # CAS 3 : USER
             else:
                 if content:
                     parts = [{"text": str(content)}]
-                    if contents and contents[-1]["role"] == "user": contents[-1]["parts"].extend(parts)
-                    else: contents.append({"role": "user", "parts": parts})
+                    # Note: On ne fusionne pas ici, on laisse la logique finale gérer l'alternance
+                    contents.append({"role": "user", "parts": parts})
             
             i += 1
 
+        # DÉDUPLICATION INTELLIGENTE & CORRECTION D'ALTERNANCE
         final_contents = []
         for c in contents:
             if final_contents and final_contents[-1]["role"] == c["role"]:
-                final_contents[-1]["parts"].extend(c["parts"])
-            else: final_contents.append(c)
+                # Cas Critique : User après User -> Insertion Modèle Fantôme
+                if c["role"] == "user":
+                    final_contents.append({"role": "model", "parts": [{"text": "..."}]}) # Rétablit l'alternance
+                    final_contents.append(c)
+                else:
+                    # Pour le modèle, la fusion est OK (ex: pensée + outil)
+                    final_contents[-1]["parts"].extend(c["parts"])
+            else:
+                final_contents.append(c)
 
         return final_contents
 
@@ -388,11 +389,13 @@ class GeminiAdapter:
     def build(self, project_id, contents, system_instr, temp, max_tok, think_level, model_id, session_id_context, tools=None):
         gen_config = {"temperature": temp, "maxOutputTokens": max_tok}
         
+        # Compatibilité Hybride : Thinking Config seulement pour Gemini 3
         if "gemini-3" in model_id:
             t_level = think_level.lower()
             if t_level == "dynamic": t_level = "high"
             gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": t_level}
 
+        # Stateless (Anti-Bégaiement Serveur)
         final_session_id = str(uuid.uuid4())
 
         payload = {
@@ -422,7 +425,7 @@ class GeminiAdapter:
         }
 
 # ==============================================================================
-# SECTION 7 : PROCESSEUR DE FLUX
+# SECTION 7 : PROCESSEUR DE FLUX (STREAMING & STOCKAGE)
 # ==============================================================================
 class StreamProcessor:
     def __init__(self, chat_id, sig_manager, debug=False):
@@ -435,10 +438,6 @@ class StreamProcessor:
         current_tool_id = None
         tool_index = 0
         
-        full_text_buffer = ""
-        current_tool_data = None
-        current_sig = None
-
         async for chunk in response.aiter_bytes():
             try: text_chunk = chunk.decode("utf-8", errors="ignore")
             except: continue
@@ -461,9 +460,11 @@ class StreamProcessor:
                     parts = content.get("parts", [])
 
                     for part in parts:
+                        # 1. Capture & Sauvegarde Signature (Disque)
                         if "thoughtSignature" in part:
-                            current_sig = part["thoughtSignature"]
+                            self.sig_manager.save_signature(self.chat_id, part["thoughtSignature"])
 
+                        # 2. Gestion Pensées
                         is_thought = part.get("thought", False)
                         text_val = part.get("text", "")
 
@@ -471,14 +472,15 @@ class StreamProcessor:
                             if not in_think: yield "<think>\n"; in_think = True
                             yield text_val; continue
 
+                        # Si on reçoit autre chose qu'une pensée, on ferme la balise
                         if in_think and (text_val or part.get("functionCall")):
                             yield "\n</think>\n"; in_think = False
 
+                        # 3. Gestion Outils
                         func_call = part.get("functionCall")
                         if func_call:
                             if not current_tool_id: current_tool_id = f"call_{secrets.token_hex(8)}"
                             args = func_call.get("args", {})
-                            current_tool_data = {"name": func_call["name"], "args": args}
                             
                             tool_payload = {
                                 "choices": [{
@@ -502,20 +504,12 @@ class StreamProcessor:
                             tool_index += 1
                             current_tool_id = None 
 
-                        elif text_val:
-                            full_text_buffer += text_val
-                            yield text_val
+                        # 4. Texte Standard
+                        elif text_val: yield text_val
+
                 except: pass
 
         if in_think: yield "\n</think>\n"
-
-        if current_sig and self.chat_id:
-            if full_text_buffer.strip():
-                if self.debug: yield f"\n`[DEBUG] Saving Text Sig: {current_sig[:10]}...`\n"
-                self.sig_manager.save_signature(self.chat_id, full_text_buffer.strip(), current_sig)
-            if current_tool_data:
-                if self.debug: yield f"\n`[DEBUG] Saving Tool Sig: {current_sig[:10]}...`\n"
-                self.sig_manager.save_signature(self.chat_id, current_tool_data, current_sig)
 
 # ==============================================================================
 # SECTION 8 : LE PIPE
