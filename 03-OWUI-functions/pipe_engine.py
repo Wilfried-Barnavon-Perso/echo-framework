@@ -1,11 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V128.15 - Debug Verbose)
+title: Gemini Pro Unified System (Platinum Agentic V128.16 - Project ID Fix)
 author: ECHO Architecture
-version: 128.15
-description: Version Golden Master avec logs de debug étendus.
-- Architecture : Sidecar Memory (Disque) + Stateless (UUID).
-- Sécurité : Filtre Auth ciblé User + Regex Base64.
-- Debug : Traçage détaillé de l'auth, du projet ID, des signatures et du flux.
+version: 128.16
+description: Correction critique "AttributeError: 'str' object has no attribute 'get'". Renforcement du parsing de la réponse API pour get_project_id.
 """
 
 # ==============================================================================
@@ -142,7 +139,7 @@ class AuthService:
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
-        # DEBUG VERBOSE : On trace la source du Project ID
+        # DEBUG VERBOSE
         log_prefix = "🔍 [ProjectID] "
         
         if os.path.exists(self.internal_project_cache) and not debug_mode:
@@ -160,12 +157,35 @@ class AuthService:
             
             if resp.status_code == 200:
                 data = resp.json()
-                pid = data.get("cloudaicompanionProject", {}).get("id")
+                
+                # --- FIX CRITIQUE: Vérification du type ---
+                if isinstance(data, str):
+                    # Cas rare où l'API renvoie une chaîne JSON ou brute
+                    try:
+                        data = json.loads(data)
+                    except:
+                        return None, f"{log_prefix}API returned non-JSON string: {data[:100]}"
+                
+                if not isinstance(data, dict):
+                    return None, f"{log_prefix}API returned unexpected type: {type(data)}"
+
+                # Extraction sécurisée
+                project_info = data.get("cloudaicompanionProject", {})
+                
+                # Si project_info est une chaîne (cas 'projects/xyz') au lieu d'un dict
+                if isinstance(project_info, str):
+                    pid = project_info
+                elif isinstance(project_info, dict):
+                    pid = project_info.get("id")
+                else:
+                    pid = None
+
                 if pid:
                     pid = pid.replace("projects/", "")
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
                     return pid, f"{log_prefix}API Success: {pid}"
-                return None, f"{log_prefix}API JSON OK mais ID vide. Resp: {str(data)[:100]}"
+                
+                return None, f"{log_prefix}ID not found in: {str(data)[:200]}"
             else:
                 return None, f"{log_prefix}API Error {resp.status_code}: {resp.text[:200]}"
         except Exception as e:
@@ -293,11 +313,9 @@ class Orchestrator:
 
             if role == "system": i += 1; continue
             
-            # Filtre Auth (User Only)
             if role == "user" and ("4/" in str(content) and len(str(content)) > 30):
                 if re.search(r"(4/[a-zA-Z0-9_-]+)", str(content)): i += 1; continue
 
-            # CAS 1 : TOOL RESPONSE
             if role == "tool":
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
@@ -311,28 +329,23 @@ class Orchestrator:
                 else: contents.append({"role": "user", "parts": parts})
                 continue
 
-            # CAS 2 : MODEL
             elif role in ["assistant", "model"]:
                 parts = []
-                # Nettoyage
                 text_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
                 text_content = re.sub(r'\[\s*\]\(context://thought_signature/[^\)]+\)', '', text_content).strip()
 
-                # Réhydratation (Texte)
                 thought_sig = None
                 if chat_id and text_content:
                     thought_sig = self.sig_manager.get_signature_for_content(chat_id, text_content)
 
                 if text_content: parts.append({"text": text_content})
 
-                # Gestion Outils
                 if m.get("tool_calls"):
                     for tc in m["tool_calls"]:
                         try:
                             raw_args = tc["function"]["arguments"]
                             args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                             
-                            # Réhydratation (Outil)
                             if not thought_sig and chat_id:
                                 tool_data = {"name": tc["function"]["name"], "args": args}
                                 thought_sig = self.sig_manager.get_signature_for_content(chat_id, tool_data)
@@ -340,10 +353,8 @@ class Orchestrator:
                             parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
                         except: pass
                 
-                # Safety Net
                 if not parts: parts.append({"text": " "})
 
-                # Injection
                 if thought_sig and parts:
                     parts[0]["thoughtSignature"] = thought_sig
 
@@ -351,7 +362,6 @@ class Orchestrator:
                     if contents and contents[-1]["role"] == "model": contents[-1]["parts"].extend(parts)
                     else: contents.append({"role": "model", "parts": parts})
 
-            # CAS 3 : USER
             else:
                 if content:
                     parts = [{"text": str(content)}]
@@ -383,7 +393,6 @@ class GeminiAdapter:
             if t_level == "dynamic": t_level = "high"
             gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": t_level}
 
-        # Stateless
         final_session_id = str(uuid.uuid4())
 
         payload = {
@@ -500,7 +509,6 @@ class StreamProcessor:
 
         if in_think: yield "\n</think>\n"
 
-        # Archivage CAS
         if current_sig and self.chat_id:
             if full_text_buffer.strip():
                 if self.debug: yield f"\n`[DEBUG] Saving Text Sig: {current_sig[:10]}...`\n"
@@ -538,7 +546,6 @@ class Pipe:
         os.makedirs(self.data_dir, exist_ok=True)
         self.auth = AuthService(self.data_dir)
         self.base_url = "https://cloudcode-pa.googleapis.com/v1internal"
-        # Suppression du nettoyage auto au démarrage pour stabiliser l'auth
 
     async def pipe(self, body: dict, __user__: dict = None, __request__: Optional[any] = None) -> AsyncGenerator[Union[str, Dict], None]:
         orch = Orchestrator(self.valves)
