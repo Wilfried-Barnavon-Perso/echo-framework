@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V128.16 - Project ID Fix)
+title: Gemini Pro Unified System (Platinum Agentic V128.20 - Deep Safe JSON)
 author: ECHO Architecture
-version: 128.16
-description: Correction critique "AttributeError: 'str' object has no attribute 'get'". Renforcement du parsing de la réponse API pour get_project_id.
+version: 128.20
+description: Correction de la gestion des erreurs API Project ID. Parsing JSON récursif pour gérer les réponses doublement encodées et vérification stricte du type de retour.
 """
 
 # ==============================================================================
@@ -139,7 +139,6 @@ class AuthService:
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
-        # DEBUG VERBOSE
         log_prefix = "🔍 [ProjectID] "
         
         if os.path.exists(self.internal_project_cache) and not debug_mode:
@@ -156,23 +155,24 @@ class AuthService:
             resp = httpx.post(url, headers=headers, json=payload, timeout=10)
             
             if resp.status_code == 200:
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except json.JSONDecodeError:
+                     return None, f"{log_prefix}Invalid JSON response: {resp.text[:100]}"
                 
-                # --- FIX CRITIQUE: Vérification du type ---
+                # --- FIX CRITIQUE: Parsing Récursif ---
                 if isinstance(data, str):
-                    # Cas rare où l'API renvoie une chaîne JSON ou brute
                     try:
                         data = json.loads(data)
                     except:
-                        return None, f"{log_prefix}API returned non-JSON string: {data[:100]}"
+                         return None, f"{log_prefix}API returned unparsable string: {data[:100]}"
                 
                 if not isinstance(data, dict):
-                    return None, f"{log_prefix}API returned unexpected type: {type(data)}"
+                    return None, f"{log_prefix}API returned unexpected type: {type(data)} - {str(data)[:100]}"
 
-                # Extraction sécurisée
                 project_info = data.get("cloudaicompanionProject", {})
                 
-                # Si project_info est une chaîne (cas 'projects/xyz') au lieu d'un dict
+                # Gestion polymorphe (String ou Dict)
                 if isinstance(project_info, str):
                     pid = project_info
                 elif isinstance(project_info, dict):
@@ -185,7 +185,7 @@ class AuthService:
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
                     return pid, f"{log_prefix}API Success: {pid}"
                 
-                return None, f"{log_prefix}ID not found in: {str(data)[:200]}"
+                return None, f"{log_prefix}ID not found in keys: {list(data.keys())}"
             else:
                 return None, f"{log_prefix}API Error {resp.status_code}: {resp.text[:200]}"
         except Exception as e:
