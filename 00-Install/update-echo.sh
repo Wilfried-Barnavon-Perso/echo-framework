@@ -3,7 +3,7 @@
 # ECHO FRAMEWORK - UPDATE RAPIDE (MIROIR & HOT RELOAD)
 # ==============================================================================
 # Actions :
-# 1. Sync Git (Source)
+# 1. Sync Git (Auto-Clone si manquant)
 # 2. SYNC MIROIR (Supprime vieux fichiers /opt -> Copie nouveaux)
 # 3. Hot-Reload Python
 # 4. Re-conf API
@@ -18,12 +18,20 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "🔄 [1/4] SYNC GITHUB..."
-if [ ! -d "$SRC_DIR" ]; then
-    echo "   🆕 Clonage initial..."
+# --- LOGIQUE GIT AUTO-REPARATRICE ---
+if [ ! -d "$SRC_DIR/.git" ]; then
+    echo "   🆕 Dépôt Git introuvable. Clonage initial..."
+    rm -rf "$SRC_DIR" # Nettoyage si dossier vide ou corrompu
     git clone "$GIT_REPO" "$SRC_DIR"
+    if [ $? -ne 0 ]; then
+        echo "❌ Erreur critique : Impossible de cloner le dépôt."
+        exit 1
+    fi
 else
     echo "   📥 Pull updates..."
-    cd "$SRC_DIR" && git pull origin $(git rev-parse --abbrev-ref HEAD) || echo "⚠️ Git pull failed (continuing local)"
+    cd "$SRC_DIR" || exit
+    git reset --hard HEAD # Sécurité pour écraser les modifs locales accidentelles
+    git pull origin $(git rev-parse --abbrev-ref HEAD) || echo "⚠️ Git pull failed (continuing with local files if present)"
 fi
 
 echo "📂 [2/4] DEPLOIEMENT FICHIERS (MODE MIROIR)..."
