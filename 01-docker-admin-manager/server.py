@@ -1,178 +1,236 @@
+# -*- coding: utf-8 -*-
 """
-ADMIN MANAGER SERVER v2.6 (Maintenance & Monitoring)
+================================================================================
+MODULE : ECHO ADMIN MANAGER SERVER
+VERSION : v2.6.1 (Audit Ready)
+AUTEUR : ECHO Architecture
+DATE MAJ : 2026-01-02
 
-RÔLE :
-Ce serveur Flask léger tourne dans un conteneur dédié pour gérer les opérations système
-que l'application principale (Open WebUI) ne devrait pas faire elle-même pour des raisons
-de sécurité et de performance.
+--- DESCRIPTION ARCHITECTURALE ---
+Ce micro-service Flask agit comme le "Concierge" de l'infrastructure ECHO.
+Il s'exécute dans un conteneur Docker dédié (admin-manager) sur le port 3001.
 
-FONCTIONNALITÉS :
-1. Dashboard de Monitoring : CPU, RAM, Disque.
-2. Gestion Docker : Redémarrage des conteneurs via socket Docker.
-3. Backups : Création d'archives .tar.gz du volume de données.
-4. MAINTENANCE SIGNATURES (Nouveau) : Nettoyage périodique des fichiers de contexte Gemini.
+--- POURQUOI CE MODULE ? ---
+1. Sécurité : Isoler les opérations priviligiées (accès Docker.sock, Backups)
+   hors du conteneur principal Open WebUI (qui est exposé aux utilisateurs).
+2. Performance : Décharger le thread principal de l'IA des tâches de maintenance
+   lourdes (compression tar.gz, scan de fichiers).
+3. Résilience : Si ce module crash, l'IA continue de fonctionner.
 
-ARCHITECTURE DE STOCKAGE :
-- Les données Open WebUI sont montées dans /app/backend/data
-- Les signatures Gemini sont dans /app/backend/data/signatures
+--- RESPONSABILITÉS ---
+1. MONITORING : Exposition des métriques (CPU/RAM/Disque) via API.
+2. ORCHESTRATION : Redémarrage des conteneurs frères via le socket Docker.
+3. SAUVEGARDE : Archivage des données utilisateur (/app/backend/data).
+4. MAINTENANCE : Nettoyage automatique des signatures cognitives périmées.
+================================================================================
 """
 
-# --- FIX ENCODING UTF-8 ---
-# On force l'encodage par défaut pour éviter les caractères corrompus dans les logs/templates
-import sys
-if sys.version_info.major == 3:
-    import importlib
-    importlib.reload(sys)
-
+# Importations standards Flask pour l'API Web et le rendu HTML
+# 'session' est utilisé pour maintenir l'état de connexion (cookie signé)
+# 'flash' sert aux notifications utilisateur (succès/erreur)
 from flask import Flask, request, jsonify, render_template_string, send_file, redirect, url_for, flash, session # pyright: ignore[reportMissingImports]
-from functools import wraps
-import os, subprocess, datetime, glob, secrets, json, time, threading
-from werkzeug.utils import secure_filename # pyright: ignore[reportMissingImports]
 
-# --- VÉRIFICATION DES DÉPENDANCES ---
-# Le script doit être robuste même si certaines libs manquent (mode dégradé)
+# Bibliothèques systèmes pour les opérations fichiers et threads
+import os
+import subprocess   # Pour exécuter les commandes shell (tar, rm)
+import datetime
+import glob         # Pour le listing des fichiers de backup
+import secrets      # Pour la génération de clés cryptographiques fortes
+import json
+import time
+import threading    # Pour exécuter les tâches longues en arrière-plan sans bloquer l'API
+from werkzeug.utils import secure_filename # pyright: ignore[reportMissingImports] # Sécurisation des noms de fichiers uploadés
 
+# ==============================================================================
+# SECTION 1 : GESTION DES DÉPENDANCES & RÉSILIENCE
+# ==============================================================================
+# Le serveur est conçu pour démarrer en mode "dégradé" si certaines bibliothèques
+# manquent. Cela évite un crash complet de la stack si une mise à jour échoue.
+
+# 1.1 Interface Docker & SSH
 try:
-    import docker # Interface avec le socket Docker (/var/run/docker.sock)
-    import paramiko # Pour les connexions SSH (Legacy)
+    import docker       # SDK Python pour piloter le démon Docker via /var/run/docker.sock
+    import paramiko     # Client SSH utilisé pour l'authentification "Pass-Through"
     DOCKER_AVAILABLE = True
 except ImportError:
+    # Si on est en développement local sans Docker, on ne plante pas.
     print("CRITIQUE: Docker/Paramiko non disponible (Dev Local ?)")
     docker = None
     paramiko = None
     DOCKER_AVAILABLE = False
 
+# 1.2 Monitoring Système
 try:
-    import psutil # Pour lire l'usage CPU/RAM/Disque
+    import psutil       # Lecture cross-platform de l'usage CPU/RAM/Disque
     HAS_PSUTIL = True
 except ImportError:
-    HAS_PSUTIL = False
+    HAS_PSUTIL = False  # Les jauges seront grisées dans l'interface
 
+# 1.3 Planificateur de Tâches (Backups)
 try:
-    from apscheduler.schedulers.background import BackgroundScheduler # Scheduler robuste pour les backups
+    from apscheduler.schedulers.background import BackgroundScheduler
     HAS_SCHEDULER = True
 except ImportError:
     HAS_SCHEDULER = False
-    
+
+# 1.4 Planificateur de Tâches (Maintenance Signatures)
 try:
-    import schedule # Scheduler simple pour la maintenance des signatures
+    import schedule     # Librairie légère pour la syntaxe "every().day.at(...)"
     HAS_SIG_SCHEDULER = True
 except ImportError:
     print("WARNING: 'schedule' lib missing. Signature maintenance scheduler disabled.")
     HAS_SIG_SCHEDULER = False
 
+# ==============================================================================
+# SECTION 2 : CONFIGURATION FLASK & SÉCURITÉ
+# ==============================================================================
+
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(32) # Sécurisation des sessions Flask
-# --- FIX FLASK CONFIG ---
-app.config['JSON_AS_ASCII'] = False # Permet les accents dans les réponses JSON
+
+# SÉCURITÉ : Clé secrète pour signer les cookies de session.
+# Générée dynamiquement à chaque redémarrage pour invalider les sessions précédentes.
+# C'est une mesure de sécurité : si le serveur reboot, tout le monde doit se reconnecter.
+app.secret_key = secrets.token_hex(32)
+
+# CONFORT : Désactivation de l'échappement ASCII pour permettre les accents dans les JSON.
+app.config['JSON_AS_ASCII'] = False
+
+# HOOK GLOBAL : Correction de l'encodage des réponses
+@app.after_request
+def set_charset(response):
+    """
+    HOOK: Exécuté après chaque requête, juste avant d'envoyer la réponse au client.
+    
+    POURQUOI :
+    Les conteneurs Docker légers (Alpine/Slim) ont souvent une locale POSIX par défaut.
+    Sans cet en-tête explicite, les navigateurs peuvent afficher les accents (é, à)
+    comme des caractères corrompus (Ã©).
+    
+    ACTION :
+    Force 'charset=utf-8' sur tout contenu HTML.
+    """
+    if response.headers.get('Content-Type', '').startswith('text/html'):
+        response.headers['Content-Type'] = 'text/html; charset=utf-8'
+    return response
 
 # ==============================================================================
-# CONFIGURATION DES CHEMINS ET VOLUMES
+# SECTION 3 : CONSTANTES & CHEMINS (MAPPING DOCKER)
 # ==============================================================================
+# Ces chemins correspondent aux volumes montés définis dans 'install-stack.sh'.
+# Toute modification ici doit être répercutée dans le script d'installation.
+
+# Cible principale pour les backups (c'est le conteneur qu'on va arrêter/démarrer)
 TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'open-webui')
-BACKUP_DIR = "/backups" # Volume monté pour stocker les archives
+
+# Volume dédié aux backups (isolé des données pour pouvoir supprimer les données sans perdre les backups)
+BACKUP_DIR = "/backups"
+
+# Adresse de l'hôte Docker (permet de se connecter en SSH à la machine physique/VM depuis le conteneur)
 HOST_GATEWAY = "host.docker.internal"
+
+# Fichier de persistance des réglages de l'admin panel
 SETTINGS_FILE = os.path.join(BACKUP_DIR, "settings.json")
 
-# IMPORTANT : Harmonisation des chemins avec Open WebUI
-# Le volume de données est monté dans /app/backend/data
+# Racine des données de l'application (Monté en lecture/écriture)
 OWUI_DATA_ROOT = "/app/backend/data"
 
-# Chemins spécifiques pour la maintenance des signatures Gemini
-# Ces fichiers sont générés par le Pipe Engine
+# Sous-dossiers spécifiques pour la gestion des mémoires externes (Signatures Gemini)
 SIG_DATA_DIR = os.path.join(OWUI_DATA_ROOT, "signatures") 
 SIG_CONFIG_FILE = os.path.join(OWUI_DATA_ROOT, "signature_maintenance_config.json")
-
-# Pour les backups globaux, on archive tout le dossier de données
 DATA_DIR_FOR_BACKUP = OWUI_DATA_ROOT 
 
-# Configuration par défaut de la maintenance
+# Configuration par défaut (Fallback si le fichier JSON n'existe pas)
 DEFAULT_SIG_CONFIG = {
-    "retention_weeks": 156, # 3 ans (52 semaines * 3)
-    "file_count_trigger": 100000, # Ne nettoie QUE si on dépasse 100k fichiers
-    "cleanup_hour": "03:00", # Heure d'exécution (nuit)
+    "retention_weeks": 156,      # Conservation longue durée (3 ans)
+    "file_count_trigger": 100000, # Seuil de déclenchement élevé pour éviter l'I/O inutile
+    "cleanup_hour": "03:00",     # Exécution nocturne
     "last_run": "Never"
 }
 
-# Initialisation du client Docker
+# ==============================================================================
+# SECTION 4 : INITIALISATION DES SERVICES TIERS
+# ==============================================================================
+
 client = None
 if DOCKER_AVAILABLE:
     try:
+        # Connexion au socket local (/var/run/docker.sock)
+        # Nécessite que le volume soit monté dans le docker run
         client = docker.from_env()
-    except Exception as e:
+    except Exception as e: 
         print(f"Erreur init Docker: {e}")
         DOCKER_AVAILABLE = False
 
-# Démarrage du Scheduler pour les Backups (APScheduler)
 if HAS_SCHEDULER:
     try:
+        # Scheduler pour les backups (APScheduler est plus robuste pour les tâches lourdes)
         backup_scheduler = BackgroundScheduler()
         backup_scheduler.start()
-    except Exception as e:
-        print(f"Erreur Backup Scheduler: {e}")
+    except Exception as e: print(f"Erreur Backup Scheduler: {e}")
 
 # ==============================================================================
-# LOGIQUE DE MAINTENANCE DES SIGNATURES (GEMINI SIDE-CAR)
+# SECTION 5 : LOGIQUE MÉTIER - MAINTENANCE DES SIGNATURES
 # ==============================================================================
 
 def load_sig_config():
-    """Charge la configuration de maintenance depuis le JSON."""
+    """Charge la configuration depuis le disque avec gestion d'erreur et encodage."""
     if os.path.exists(SIG_CONFIG_FILE):
         try:
-            with open(SIG_CONFIG_FILE, 'r') as f:
+            with open(SIG_CONFIG_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except: pass
     return DEFAULT_SIG_CONFIG.copy()
 
 def save_sig_config(config):
-    """Sauvegarde la configuration de maintenance."""
+    """Persiste la configuration sur le disque."""
     try:
         os.makedirs(os.path.dirname(SIG_CONFIG_FILE), exist_ok=True)
-        with open(SIG_CONFIG_FILE, 'w') as f:
+        with open(SIG_CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=4)
-    except Exception as e:
-        print(f"Erreur sauvegarde config signatures: {e}")
+    except Exception as e: print(f"Erreur sauvegarde config signatures: {e}")
 
 def run_signature_cleanup():
     """
-    ALGORITHME DE NETTOYAGE DES SIGNATURES
+    ALGORITHME CRITIQUE : Nettoyage des fichiers de contexte (Signatures).
     
-    Pourquoi ?
-    Le Pipe Gemini génère un fichier texte par conversation pour stocker l'état cognitif.
-    Avec le temps, cela peut créer beaucoup de petits fichiers.
+    CONTEXTE :
+    Le 'Pipe Engine' génère un fichier .txt pour chaque conversation pour y stocker
+    la mémoire à long terme de Gemini. Sans nettoyage, l'inode count du système de fichiers
+    peut saturer.
     
-    Comment ?
-    1. Vérification Volumétrique : On compte les fichiers. Si < file_count_trigger, on arrête.
-       Cela évite de scanner les dates inutilement si le volume est faible.
-    2. Vérification Temporelle : Si le seuil est dépassé, on scanne les dates de modification.
-       On supprime les fichiers non touchés depuis 'retention_weeks'.
+    ALGORITHME :
+    1. Check Volumétrique (Fast Fail) : On compte les fichiers. Si < TRIGGER, on arrête.
+       Cela évite de scanner les timestamps de 100k fichiers inutilement.
+    2. Check Temporel (Deep Scan) : Si > TRIGGER, on itère sur chaque fichier.
+       Si (Date Actuelle - Date Modif) > RETENTION, on supprime.
        
-    Sécurité :
-    L'opération est faite fichier par fichier avec gestion d'exception pour ne jamais crasher le serveur.
+    SECURITE :
+    - try/except global pour ne pas crasher le thread de maintenance.
+    - try/except par fichier pour continuer même si un fichier est locké.
     """
     print(f"🔧 [Maintenance] Démarrage du nettoyage dans {SIG_DATA_DIR}...")
     config = load_sig_config()
     
+    # Sécurité : Si le dossier n'existe pas encore (pas de conversations), on sort.
     if not os.path.exists(SIG_DATA_DIR):
-        print(f"⚠️ [Maintenance] Sous-dossier {SIG_DATA_DIR} introuvable. Création au cas où...")
-        os.makedirs(SIG_DATA_DIR, exist_ok=True)
+        print(f"⚠️ [Maintenance] Sous-dossier {SIG_DATA_DIR} introuvable.")
         return
 
     try:
-        # 1. Analyse Volumétrique (Rapide car basée sur l'inode du dossier)
+        # Listing optimisé (list comprehension)
         files = [os.path.join(SIG_DATA_DIR, f) for f in os.listdir(SIG_DATA_DIR) 
                  if os.path.isfile(os.path.join(SIG_DATA_DIR, f))]
         count = len(files)
         
-        # Condition de déclenchement
         threshold = config.get("file_count_trigger", 100000)
+        
+        # Etape 1 : Décision
         if count < threshold:
-            print(f"ℹ️ [Maintenance] Seuil non atteint ({count} < {threshold}). Pas de nettoyage.")
+            print(f"ℹ️ [Maintenance] Seuil non atteint ({count} < {threshold}).")
             return
 
-        print(f"⚠️ [Maintenance] Seuil dépassé ({count}). Analyse de l'ancienneté...")
-        
-        # 2. Nettoyage par âge
+        # Etape 2 : Action
+        print(f"⚠️ [Maintenance] Seuil dépassé ({count}). Analyse...")
         weeks = config.get("retention_weeks", 156)
         retention_seconds = weeks * 7 * 24 * 3600
         now = time.time()
@@ -180,66 +238,61 @@ def run_signature_cleanup():
         
         for fpath in files:
             try:
-                mtime = os.path.getmtime(fpath)
-                age = now - mtime
-                
-                # Suppression si trop vieux
-                if age > retention_seconds:
-                    os.remove(fpath)
+                # Vérification de l'âge du fichier
+                if (now - os.path.getmtime(fpath)) > retention_seconds:
+                    os.remove(fpath) # Suppression définitive
                     deleted += 1
-            except Exception as e:
-                print(f"⚠️ [Maintenance] Erreur suppression {fpath}: {e}")
+            except: pass # Si échec suppression (lock Windows/Linux), on passe au suivant
 
-        print(f"✅ [Maintenance] Terminée. {deleted} signatures expirées supprimées.")
+        print(f"✅ [Maintenance] Terminée. {deleted} supprimés.")
         
-        # Mise à jour du timestamp de dernière exécution
+        # Mise à jour de l'état pour l'UI
         config["last_run"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         save_sig_config(config)
 
-    except Exception as e:
-        print(f"💥 [Maintenance] Crash : {str(e)}")
+    except Exception as e: print(f"💥 [Maintenance] Crash : {str(e)}")
 
-# Thread de planification (Schedule Lib)
-# Un thread séparé vérifie chaque minute s'il est l'heure de lancer la maintenance.
 def sig_scheduler_loop():
+    """Boucle infinie exécutée dans un thread démon pour vérifier le planning."""
     while True:
         schedule.run_pending()
-        time.sleep(60)
+        time.sleep(60) # Vérification chaque minute (suffisant pour une tâche quotidienne)
 
 def setup_sig_scheduler():
-    """Configure l'heure de lancement de la tâche."""
+    """Initialise ou met à jour l'horaire de la tâche de maintenance."""
     if not HAS_SIG_SCHEDULER: return
     config = load_sig_config()
     target_time = config.get("cleanup_hour", "03:00")
     
-    schedule.clear()
+    schedule.clear() # On vide les anciennes tâches pour éviter les doublons
     schedule.every().day.at(target_time).do(run_signature_cleanup)
-    print(f"⏰ [Maintenance] Tâche planifiée pour {target_time} quotidiennement.")
+    print(f"⏰ [Maintenance] Tâche planifiée pour {target_time}.")
 
+# Démarrage du thread de maintenance au lancement de Flask
 if HAS_SIG_SCHEDULER:
     setup_sig_scheduler()
     t_sig = threading.Thread(target=sig_scheduler_loop, daemon=True)
     t_sig.start()
 
-# --- UTILS & LOGIC BACKUPS (Legacy) ---
+# ==============================================================================
+# SECTION 6 : LOGIQUE MÉTIER - BACKUPS & RESTAURATION
+# ==============================================================================
 
 def human_size(size):
-    """Convertit une taille en octets en format lisible."""
+    """Utilitaire d'affichage : Convertit les octets en format lisible (MB, GB)."""
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if size < 1024:
-            return f"{size:.1f} {unit}"
+        if size < 1024: return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} PB"
 
 def load_settings():
-    defaults = {
-        "auto_backup": True, "auto_cleanup": True, 
-        "cleanup_mode": "count", "cleanup_value": 5, 
-        "backup_time": "03:00", "interval_days": 1
-    }
+    """Charge les paramètres de backup, fusionne avec les défauts si clés manquantes."""
+    defaults = {"auto_backup": True, "auto_cleanup": True, "cleanup_mode": "count", "cleanup_value": 5, "backup_time": "03:00", "interval_days": 1}
     if os.path.exists(SETTINGS_FILE):
         try: 
-            s = json.load(open(SETTINGS_FILE))
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                s = json.load(f)
+            # Merge safe : assure que toutes les clés par défaut existent
             for k, v in defaults.items():
                 if k not in s or s[k] is None: s[k] = v
             return s
@@ -247,82 +300,101 @@ def load_settings():
     return defaults
 
 def save_settings(new_settings):
+    """Sauvegarde les paramètres et notifie le scheduler du changement."""
     clean = load_settings()
     clean.update(new_settings)
-    with open(SETTINGS_FILE, 'w') as f: json.dump(clean, f, indent=2)
-    update_backup_schedule()
+    with open(SETTINGS_FILE, 'w', encoding='utf-8') as f: json.dump(clean, f, indent=2)
+    update_backup_schedule() # Application immédiate des changements
 
 def get_backup_list():
+    """Retourne la liste des backups triée par date décroissante."""
     try:
+        # Glob permet de ne lister que les .tar.gz
         files = sorted(glob.glob(os.path.join(BACKUP_DIR, '*.tar.gz')), key=os.path.getmtime, reverse=True)
         return [{'name': os.path.basename(f), 'size': human_size(os.path.getsize(f)), 'date': datetime.datetime.fromtimestamp(os.path.getmtime(f)).strftime('%d/%m/%Y %H:%M')} for f in files]
     except: return []
 
-def apply_retention_policy():
-    settings = load_settings()
-    if not settings.get("auto_cleanup", False): return
-    mode = settings.get("cleanup_mode", "count")
-    try: value = int(settings.get("cleanup_value", 5))
-    except: value = 5
-
-    files = sorted(glob.glob(os.path.join(BACKUP_DIR, '*.tar.gz')), key=os.path.getmtime, reverse=True)
-    
-    if mode == 'count' and len(files) > value:
-        for f in files[value:]:
-            try: os.remove(f)
-            except: pass
-    elif mode == 'days':
-        cutoff = time.time() - (value * 86400)
-        for f in files:
-            if os.path.getmtime(f) < cutoff:
-                try: os.remove(f)
-                except: pass
-
 def perform_backup_task():
+    """
+    Exécute la sauvegarde physique.
+    
+    PROCESSUS :
+    1. Stop Container : On arrête Open WebUI pour garantir l'intégrité des données (pas d'écriture pendant le backup).
+    2. Tar Gz : Compression de tout le dossier DATA_DIR_FOR_BACKUP.
+    3. Start Container : On relance le service immédiatement.
+    4. Retention : On supprime les vieux backups selon la politique définie.
+    """
     if not DOCKER_AVAILABLE or not client: return
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = f"owui_backup_{timestamp}.tar.gz"
     filepath = os.path.join(BACKUP_DIR, filename)
     try:
+        # 1. Arrêt
         container = client.containers.get(TARGET_CONTAINER)
         container.stop()
-        # Backup du dossier complet (y compris le sous-dossier signatures)
+        
+        # 2. Compression (Appel système direct pour performance)
         subprocess.run(['tar', '-czf', filepath, '-C', DATA_DIR_FOR_BACKUP, '.'], check=True)
+        
+        # 3. Redémarrage
         container.start()
-        apply_retention_policy()
+        
+        # 4. Nettoyage (Politique de Rétention)
+        settings = load_settings()
+        if settings.get("auto_cleanup", False):
+            mode = settings.get("cleanup_mode", "count")
+            value = int(settings.get("cleanup_value", 5))
+            files = sorted(glob.glob(os.path.join(BACKUP_DIR, '*.tar.gz')), key=os.path.getmtime, reverse=True)
+            
+            # Mode "Garder les X derniers"
+            if mode == 'count' and len(files) > value:
+                for f in files[value:]: os.remove(f)
+            # Mode "Supprimer les plus vieux que X jours"
+            elif mode == 'days':
+                cutoff = time.time() - (value * 86400)
+                for f in files:
+                    if os.path.getmtime(f) < cutoff: os.remove(f)
+
     except Exception as e:
+        # FAILSAFE : Si le backup plante, on DOIT tenter de redémarrer le service
         try: client.containers.get(TARGET_CONTAINER).start()
         except: pass
         print(f"Backup Error: {e}")
 
 def update_backup_schedule():
+    """Met à jour le job APScheduler en fonction des nouveaux réglages."""
     if not HAS_SCHEDULER: return
     backup_scheduler.remove_all_jobs()
     settings = load_settings()
     if settings.get("auto_backup"):
         time_str = settings.get("backup_time", "03:00")
-        if not time_str or ":" not in time_str: time_str = "03:00"
         try:
             interval = int(settings.get("interval_days", 1))
             hour, minute = map(int, time_str.split(':'))
             now = datetime.datetime.now()
+            # Calcul de la prochaine occurrence
             start_date = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if start_date <= now:
-                start_date += datetime.timedelta(days=1)
+            if start_date <= now: start_date += datetime.timedelta(days=1)
+            
+            # Ajout du job
             backup_scheduler.add_job(perform_backup_task, 'interval', days=interval, start_date=start_date, id='auto_back')
-        except Exception as e:
-            print(f"Schedule Error: {e}")
+        except Exception as e: print(f"Schedule Error: {e}")
 
+# Init au démarrage
 try: update_backup_schedule()
 except: pass
 
-# --- ROUTES FLASK ---
+# ==============================================================================
+# SECTION 7 : ROUTES FLASK (CONTROLEUR)
+# ==============================================================================
 
 @app.route('/')
 def index():
+    """Page d'accueil : Affiche soit le Login, soit le Dashboard."""
+    # Vérification de session simple (basée sur cookie signé)
     if not session.get('logged_in'): return render_template_string(HTML_LOGIN)
     
-    # Calcul des stats pour l'affichage (Nb fichiers signatures, taille totale)
+    # Calcul des stats signatures à la volée pour le dashboard
     sig_stats = {"count": 0, "size": "0 B"}
     if os.path.exists(SIG_DATA_DIR):
         try:
@@ -331,6 +403,7 @@ def index():
             sig_stats["size"] = human_size(sum(os.path.getsize(f) for f in files))
         except: pass
 
+    # Rendu du template HTML (injecté en bas de fichier)
     return render_template_string(HTML_DASHBOARD, 
                                 server_time=datetime.datetime.now().strftime('%H:%M:%S'),
                                 settings=load_settings(),
@@ -341,13 +414,26 @@ def index():
 
 @app.route('/', methods=['POST'])
 def login():
+    """
+    AUTHENTIFICATION PASSTHROUGH.
+    
+    Astuce de sécurité :
+    Au lieu de gérer notre propre base de données d'utilisateurs (risqué),
+    on utilise le compte système de la VM hôte via SSH.
+    
+    Si l'utilisateur peut se connecter en SSH à 'host.docker.internal' avec
+    les credentials fournis, alors il est autorisé à administrer ce conteneur.
+    """
     username = request.form.get('username')
     password = request.form.get('password')
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # Tentative de connexion à l'hôte
         ssh.connect(HOST_GATEWAY, username=username, password=password, timeout=5)
         ssh.close()
+        
+        # Succès : on marque la session comme valide
         session['logged_in'] = True
         return redirect(url_for('index'))
     except Exception as e:
@@ -359,8 +445,11 @@ def logout():
     session.clear()
     return redirect(url_for('index'))
 
+# --- API ENDPOINTS (Utilisés par le JS du Dashboard) ---
+
 @app.route('/api/stats')
 def stats():
+    """Renvoie les métriques système (AJAX)."""
     if not HAS_PSUTIL: return jsonify({"error": "psutil manquant"})
     try:
         disk = psutil.disk_usage('/backups')
@@ -371,16 +460,17 @@ def stats():
             "disk_total": human_size(disk.total),
             "disk_percent": disk.percent
         })
-    except Exception as e:
-        return jsonify({"error": str(e)})
+    except Exception as e: return jsonify({"error": str(e)})
 
 @app.route('/api/backups')
 def backups():
+    """Renvoie la liste des backups (AJAX)."""
     if not session.get('logged_in'): return jsonify([])
     return jsonify(get_backup_list())
 
 @app.route('/api/containers')
 def containers():
+    """Renvoie l'état des conteneurs Docker (AJAX)."""
     if not session.get('logged_in'): return jsonify([])
     if not DOCKER_AVAILABLE or not client: return jsonify({"error": "Docker non connecté"})
     try:
@@ -388,67 +478,54 @@ def containers():
         for c in client.containers.list(all=True):
             cl.append({"id": c.short_id, "name": c.name, "status": c.status.capitalize()})
         return jsonify(cl)
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-# --- ROUTES API MAINTENANCE SIGNATURES ---
+    except Exception as e: return jsonify({"error": str(e)})
 
 @app.route('/api/signatures/stats', methods=['GET'])
 def get_signature_stats():
-    """API pour monitoring externe : renvoie les stats des signatures."""
+    """Endpoint spécifique pour monitorer les signatures (Ex: par un outil externe)."""
     if not session.get('logged_in'): return jsonify({"error": "Auth required"}), 401
     config = load_sig_config()
-    stats = {
-        "config": config,
-        "total_files": 0,
-        "total_size_mb": 0.0,
-        "status": "OK"
-    }
+    stats = {"config": config, "total_files": 0, "total_size_mb": 0.0, "status": "OK"}
     if os.path.exists(SIG_DATA_DIR):
         try:
             files = [os.path.join(SIG_DATA_DIR, f) for f in os.listdir(SIG_DATA_DIR) if os.path.isfile(os.path.join(SIG_DATA_DIR, f))]
             stats["total_files"] = len(files)
             stats["total_size_mb"] = round(sum(os.path.getsize(f) for f in files) / (1024 * 1024), 2)
-        except Exception as e:
-            stats["status"] = f"Error scanning: {str(e)}"
-    else:
-        stats["status"] = "Directory not found"
+        except Exception as e: stats["status"] = f"Error scanning: {str(e)}"
+    else: stats["status"] = "Directory not found"
     return jsonify(stats)
+
+# --- ACTIONS UTILISATEURS (POST) ---
 
 @app.route('/settings/signatures', methods=['POST'])
 def update_signature_settings():
-    """Mise à jour de la configuration de nettoyage (Seuil, Rétention, Heure)."""
+    """Mise à jour des paramètres de maintenance signatures."""
     if not session.get('logged_in'): return redirect(url_for('index'))
     config = load_sig_config()
-    
     try:
+        # Conversion typée pour la sécurité
         config["retention_weeks"] = int(request.form.get("retention_weeks", 156))
         config["file_count_trigger"] = int(request.form.get("file_count_trigger", 100000))
         config["cleanup_hour"] = request.form.get("cleanup_hour", "03:00")
-        
         save_sig_config(config)
-        
-        if HAS_SIG_SCHEDULER:
-            setup_sig_scheduler() # Replanifie avec la nouvelle heure immédiatement
-            
+        # Rechargement immédiat du scheduler
+        if HAS_SIG_SCHEDULER: setup_sig_scheduler()
         flash('Config maintenance signatures mise à jour.', 'success')
-    except Exception as e:
-        flash(f'Erreur mise à jour: {str(e)}', 'danger')
-        
+    except Exception as e: flash(f'Erreur mise à jour: {str(e)}', 'danger')
     return redirect(url_for('index'))
 
 @app.route('/action/signatures/cleanup', methods=['POST'])
 def force_signature_cleanup():
-    """Déclenchement manuel de la maintenance (Bouton Dashboard)."""
+    """Bouton 'Nettoyer Maintenant'."""
     if not session.get('logged_in'): return redirect(url_for('index'))
-    # Lancement en thread pour ne pas bloquer l'interface web pendant le scan
+    # IMPORTANT : Threading pour ne pas bloquer la réponse HTTP
     threading.Thread(target=run_signature_cleanup).start()
     flash('Nettoyage des signatures lancé en arrière-plan.', 'info')
     return redirect(url_for('index'))
 
-
 @app.route('/action/<action_type>', methods=['POST'])
 def actions(action_type):
+    """Routeur générique pour les actions boutons."""
     if not session.get('logged_in'): return redirect(url_for('index'))
     
     if action_type == 'backup':
@@ -458,6 +535,7 @@ def actions(action_type):
     elif action_type == 'delete':
         fname = request.form.get('filename')
         if fname:
+            # secure_filename est vital pour éviter les attaques "Directory Traversal" (../../etc/passwd)
             p = os.path.join(BACKUP_DIR, secure_filename(fname))
             if os.path.exists(p): os.remove(p)
             flash('Fichier supprimé.', 'warning')
@@ -470,13 +548,12 @@ def actions(action_type):
                 try:
                     container = client.containers.get(TARGET_CONTAINER)
                     container.stop()
-                    # Nettoyage avant restore
+                    # ⚠️ ATTENTION : rm -rf est destructif. C'est pourquoi on demande confirmation en JS.
                     subprocess.run(f"rm -rf {DATA_DIR_FOR_BACKUP}/*", shell=True)
                     subprocess.run(['tar', '-xzf', p, '-C', DATA_DIR_FOR_BACKUP], check=True)
                     container.start()
                     flash('Restauration terminée.', 'success')
-                except Exception as e:
-                    flash(f'Erreur Restauration: {e}', 'danger')
+                except Exception as e: flash(f'Erreur Restauration: {e}', 'danger')
 
     elif action_type == 'restart':
         cid = request.form.get('container')
@@ -484,13 +561,13 @@ def actions(action_type):
             try:
                 client.containers.get(cid).restart()
                 flash('Conteneur redémarré.', 'info')
-            except Exception as e:
-                flash(f'Erreur: {e}', 'danger')
+            except Exception as e: flash(f'Erreur: {e}', 'danger')
 
     return redirect(url_for('index'))
 
 @app.route('/settings', methods=['POST'])
 def settings():
+    """Mise à jour des paramètres de backup globaux."""
     if not session.get('logged_in'): return redirect(url_for('index'))
     new_conf = {
         "auto_backup": 'auto_backup' in request.form,
@@ -506,6 +583,7 @@ def settings():
 
 @app.route('/upload', methods=['POST'])
 def upload():
+    """Importation manuelle d'un fichier .tar.gz."""
     if not session.get('logged_in'): return redirect(url_for('index'))
     if 'file' not in request.files: return redirect(url_for('index'))
     f = request.files['file']
@@ -518,10 +596,17 @@ def upload():
 
 @app.route('/download/<filename>')
 def download(filename):
+    """Exportation d'un backup vers le PC de l'utilisateur."""
     if not session.get('logged_in'): return redirect(url_for('index'))
+    # send_file gère les headers MIME et l'attachement automatiquement
     return send_file(os.path.join(BACKUP_DIR, secure_filename(filename)), as_attachment=True)
 
-# --- HTML TEMPLATES ---
+# ==============================================================================
+# SECTION 8 : TEMPLATES HTML (EMBARQUÉS)
+# ==============================================================================
+# Note : Les templates sont stockés dans des variables Python pour éviter
+# d'avoir à gérer des fichiers .html séparés dans le conteneur Docker.
+# Cela rend le script 'server.py' totalement autonome (Self-Contained).
 
 HTML_LOGIN = """
 <!doctype html>
@@ -530,6 +615,7 @@ HTML_LOGIN = """
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Connexion ECHO Admin</title>
+    <!-- Bootstrap CDN : Pas de dépendance locale -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #121212; }
@@ -742,6 +828,7 @@ HTML_DASHBOARD = """
         </div>
     </div>
 
+    <!-- JS pour l'interactivité AJAX sans rechargement de page -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         document.addEventListener("DOMContentLoaded", function() {
@@ -754,9 +841,7 @@ HTML_DASHBOARD = """
                 if(confirm("RESTAURATION DESTRUCTIVE ! Confirmer ?")) { showLoader("Restauration..."); return true; } return false; 
             };
 
-            // Fonction AJAX générique pour le debug
             async function fetchData(url) {
-                console.log(`Fetching ${url}...`);
                 const res = await fetch(url);
                 if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
                 return await res.json();
@@ -765,16 +850,12 @@ HTML_DASHBOARD = """
             async function updateStats() {
                 try {
                     const d = await fetchData('/api/stats');
-                    if(d.error) {
-                        console.error("Stats API Error:", d.error);
-                        document.getElementById('disk-text').innerHTML = `<span class="error-text">${d.error}</span>`;
-                        return;
-                    }
+                    if(d.error) { document.getElementById('disk-text').innerHTML = `<span class="error-text">${d.error}</span>`; return; }
                     document.getElementById('cpu-val').innerText = d.cpu + '%'; document.getElementById('cpu-bar').style.width = d.cpu + '%';
                     document.getElementById('ram-val').innerText = d.ram + '%'; document.getElementById('ram-bar').style.width = d.ram + '%';
                     document.getElementById('disk-val').innerText = d.disk_percent + '%'; document.getElementById('disk-bar').style.width = d.disk_percent + '%';
                     document.getElementById('disk-text').innerText = `${d.disk_used} / ${d.disk_total}`;
-                } catch(e) { console.error("Stats Network Error:", e); }
+                } catch(e) { console.error("Stats Error:", e); }
             }
 
             async function refreshBackups() {
@@ -783,9 +864,7 @@ HTML_DASHBOARD = """
                     const list = document.getElementById('backup-list');
                     list.innerHTML = '';
                     if(data.length === 0) { list.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted">Vide</td></tr>'; return; }
-                    
                     document.querySelectorAll('.tooltip').forEach(e => e.remove());
-                    
                     data.forEach(b => {
                         list.innerHTML += `<tr>
                             <td><i class="bi bi-file-earmark-zip text-warning me-2"></i>${b.name}</td>
@@ -804,10 +883,8 @@ HTML_DASHBOARD = """
                             </td>
                         </tr>`;
                     });
-                    
-                    var newTooltips = [].slice.call(list.querySelectorAll('[data-bs-toggle="tooltip"]'));
-                    newTooltips.map(function (el) { return new bootstrap.Tooltip(el) });
-                } catch(e) { console.error("Backup Network Error:", e); }
+                    [].slice.call(list.querySelectorAll('[data-bs-toggle="tooltip"]')).map(function (el) { return new bootstrap.Tooltip(el) });
+                } catch(e) { console.error("Backup Error:", e); }
             }
 
             async function refreshContainers() {
@@ -815,40 +892,25 @@ HTML_DASHBOARD = """
                     const data = await fetchData('/api/containers');
                     const list = document.getElementById('container-list');
                     list.innerHTML = '';
-                    
-                    if (data.error) {
-                        list.innerHTML = `<li class="list-group-item bg-transparent text-danger small">${data.error}</li>`;
-                        return;
-                    }
-
+                    if (data.error) { list.innerHTML = `<li class="list-group-item bg-transparent text-danger small">${data.error}</li>`; return; }
                     document.querySelectorAll('.tooltip').forEach(e => e.remove());
-
                     data.forEach(c => {
                         const isUp = c.status.startsWith('Up');
                         const color = isUp ? 'bg-success' : 'bg-danger';
                         list.innerHTML += `<li class="list-group-item bg-transparent border-secondary text-light d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="fw-bold"><span class="status-badge ${color}"></span>${c.name}</div>
-                                <div class="small text-muted" style="font-size:0.75rem">${c.status}</div>
-                            </div>
+                            <div><div class="fw-bold"><span class="status-badge ${color}"></span>${c.name}</div><div class="small text-muted" style="font-size:0.75rem">${c.status}</div></div>
                             <form action="/action/restart" method="post" onsubmit="showLoader('Redémarrage...')">
                                 <input type="hidden" name="container" value="${c.id}">
                                 <button class="btn btn-sm btn-outline-secondary py-0" data-bs-toggle="tooltip" title="Redémarrer le conteneur"><i class="bi bi-power"></i></button>
-                            </form>
-                        </li>`;
+                            </form></li>`;
                     });
-                    
-                    var newTooltips = [].slice.call(list.querySelectorAll('[data-bs-toggle="tooltip"]'));
-                    newTooltips.map(function (el) { return new bootstrap.Tooltip(el) });
-                } catch(e) { console.error("Container Network Error:", e); }
+                    [].slice.call(list.querySelectorAll('[data-bs-toggle="tooltip"]')).map(function (el) { return new bootstrap.Tooltip(el) });
+                } catch(e) { console.error("Container Error:", e); }
             }
 
-            // Init & Loop
             updateStats(); refreshBackups(); refreshContainers();
             setInterval(updateStats, 3000); 
             setInterval(refreshContainers, 5000); 
-            
-            // Expose
             window.refreshBackups = refreshBackups;
             window.refreshContainers = refreshContainers;
         });
@@ -857,6 +919,14 @@ HTML_DASHBOARD = """
 </html>
 """
 
+# ==============================================================================
+# SECTION 9 : POINT D'ENTRÉE (MAIN)
+# ==============================================================================
+
 if __name__ == '__main__':
-    # Mode DEBUG désactivé pour stabilité Docker (évite le crash du reloader)
+    # Lancement du serveur Flask
+    # host='0.0.0.0' : Écoute sur toutes les interfaces (requis pour Docker)
+    # port=3001 : Port exposé par le conteneur
+    # debug=False : IMPORTANT en prod pour la sécurité et la stabilité Docker
+    # threaded=True : Permet de traiter plusieurs requêtes en parallèle (ex: upload + monitoring)
     app.run(host='0.0.0.0', port=3001, debug=False, threaded=True)
