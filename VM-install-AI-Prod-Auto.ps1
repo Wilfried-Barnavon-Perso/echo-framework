@@ -116,7 +116,6 @@ $FilesMap = @{
   # 6. VERSIONING
   # NOTE: On copie le fichier VERSION local vers /opt/ECHO_VERSION sur la VM
   "/opt/ECHO_VERSION"                             = "$ScriptDir\VERSION"
-  "/opt/echo-manifest.json"                       = "$ScriptDir\ECHO_MANIFEST.json"
 }
 
 Write-Host "🔍 Vérification de l'intégrité des fichiers sources..."
@@ -213,8 +212,6 @@ $WriteFilesBlock
       - [chmod, +x, /opt/owui-scripts/update-echo.sh]
       - [chmod, +x, /opt/owui-scripts/upgrade-echo.sh]
       - [chmod, +x, /opt/owui-scripts/config-owui.sh]
-      # Permission 644 pour la version
-      - [chmod, 644, /opt/ECHO_VERSION]
       
       # Liens Symboliques pour usage facile
       - [ln, -s, /opt/owui-scripts/update-echo.sh, /usr/local/bin/update-echo]

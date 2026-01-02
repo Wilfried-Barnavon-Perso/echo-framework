@@ -1,28 +1,22 @@
-﻿--- Fichiers Système Windows ---
-
-desktop.ini
-Desktop.ini
+﻿# --- Fichiers Système Windows ---
 [Dd]esktop.ini
 Thumbs.db
 $RECYCLE.BIN/
 *.lnk
 
---- Fichiers Système Mac ---
-
+# --- Fichiers Système Mac ---
 .DS_Store
 .AppleDouble
 .LSOverride
 
---- Fichiers VM & Disques ---
-
+# --- Fichiers VM & Disques ---
 *.vhdx
 *.vhd
 *.iso
 *.qcow2
 *.vmdk
 
---- Secrets & Configuration Locale ---
-
+# --- Secrets & Configuration Locale ---
 settings.json
 gemini_official_token.json
 gemini_pkce_verifier.txt
@@ -30,22 +24,19 @@ gemini_internal_project.txt
 .env
 .env.local
 
---- Python & Logs ---
-
+# --- Python & Logs ---
 *.log
-pycache/
+__pycache__/
 *.py[cod]
 venv/
 .pytest_cache/
-*.pyc
 
---- IDE ---
-
+# --- IDE ---
 .vscode/
 .idea/
 *.swp
 *.swo
 
---- Autres ---
-
+# --- Autres ---
+# Vérifiez si "i_internal_project.txt" n'est pas une typo de "gemini_internal_project.txt"
 i_internal_project.txt

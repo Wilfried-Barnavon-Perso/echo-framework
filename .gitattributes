@@ -1,5 +1,28 @@
-# Force le style de fin de ligne Unix (LF) pour tous les scripts
+# ==============================================================================
+# GIT ATTRIBUTES - ECHO FRAMEWORK
+#
+# Force LF line endings for scripts to prevent Windows CRLF issues in Linux VM
+# ==============================================================================
+
+# Scripts Bash & Python : Toujours en LF
 *.sh text eol=lf
 *.py text eol=lf
+
+# Configs & Documentation
 *.md text eol=lf
-.gitattributes text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.gitignore text eol=lf
+.editorconfig text eol=lf
+
+# Le fichier VERSION doit être strict
+VERSION text eol=lf
+
+# PowerShell reste en CRLF (natif Windows) ou LF, mais Git gère mieux en auto
+*.ps1 text auto
+
+# Images (Binaires)
+*.png binary
+*.jpg binary
+*.ico binary
