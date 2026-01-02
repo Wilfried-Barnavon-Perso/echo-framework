@@ -1,5 +1,5 @@
 """
-ADMIN MANAGER SERVER v2.5 (Maintenance & Monitoring)
+ADMIN MANAGER SERVER v2.6 (Maintenance & Monitoring)
 
 RÔLE :
 Ce serveur Flask léger tourne dans un conteneur dédié pour gérer les opérations système
@@ -16,6 +16,13 @@ ARCHITECTURE DE STOCKAGE :
 - Les données Open WebUI sont montées dans /app/backend/data
 - Les signatures Gemini sont dans /app/backend/data/signatures
 """
+
+# --- FIX ENCODING UTF-8 ---
+# On force l'encodage par défaut pour éviter les caractères corrompus dans les logs/templates
+import sys
+if sys.version_info.major == 3:
+    import importlib
+    importlib.reload(sys)
 
 from flask import Flask, request, jsonify, render_template_string, send_file, redirect, url_for, flash, session # pyright: ignore[reportMissingImports]
 from functools import wraps
@@ -56,6 +63,8 @@ except ImportError:
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32) # Sécurisation des sessions Flask
+# --- FIX FLASK CONFIG ---
+app.config['JSON_AS_ASCII'] = False # Permet les accents dans les réponses JSON
 
 # ==============================================================================
 # CONFIGURATION DES CHEMINS ET VOLUMES
