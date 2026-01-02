@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.3.1
+# SCRIPT VERSION : 5.3.2
 # DATE           : 2026-01-02
 # AUTHOR         : ECHO Architecture
 # ==============================================================================
@@ -41,9 +41,14 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.3.1"
+$SCRIPT_VERSION = "5.3.2"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
+
+# --- CONFIGURATION BRANCHE (NOUVEAU) ---
+# Permet de définir quelle branche git sera suivie par la VM.
+# Modifiez cette valeur si vous souhaitez déployer une branche de dev (ex: "dev", "feature-x").
+$BRANCHE = "main" 
 
 Write-Host "🚀 ECHO INFRASTRUCTURE DEPLOYER [Script v$SCRIPT_VERSION]" -ForegroundColor Cyan
 Write-Host "=========================================================="
@@ -62,6 +67,7 @@ if ($ECHO_VERSION -notmatch "^\d+\.\d+\.\d+") {
 }
 
 Write-Host "📦 Stack Target    : v$ECHO_VERSION" -ForegroundColor Green
+Write-Host "🌿 Target Branch   : $BRANCHE" -ForegroundColor Green
 
 # Vérification de cohérence (Optionnel mais informatif)
 if ($ECHO_VERSION -ne $SCRIPT_VERSION) {
@@ -69,8 +75,8 @@ if ($ECHO_VERSION -ne $SCRIPT_VERSION) {
 }
 
 # --- 2. CONFIGURATION VM DYNAMIQUE ---
-# Nommage conventionnel : ECHO-vX.Y.Z (ajout du 'v' pour le nom d'hôte)
-$VMName = "ECHO-v$ECHO_VERSION" 
+# Nommage conventionnel : ECHO-vX.Y.Z-BRANCHE
+$VMName = "ECHO-v$ECHO_VERSION-$BRANCHE" 
 Write-Host "🖥️  VM Name         : $VMName" -ForegroundColor Yellow
 
 $SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
@@ -159,13 +165,20 @@ foreach ($DestPath in $FilesMap.Keys) {
   }
 }
 
-# Traçabilité du Script de Déploiement (Optionnel mais utile)
-# On garde aussi la trace de la version DU SCRIPT dans /opt/echo_deploy_script_version
+# Traçabilité du Script de Déploiement
 $ScriptVerContent = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($SCRIPT_VERSION))
 $WriteFilesBlock += "      - path: /opt/echo_deploy_script_version`n"
 $WriteFilesBlock += "        permissions: '0444'`n" # Lecture seule
 $WriteFilesBlock += "        encoding: b64`n"
 $WriteFilesBlock += "        content: $ScriptVerContent`n"
+
+# --- INJECTION DE LA BRANCHE (NOUVEAU) ---
+# On écrit la variable $BRANCHE dans /opt/ECHO_BRANCH
+$BrancheContent = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($BRANCHE))
+$WriteFilesBlock += "      - path: /opt/ECHO_BRANCH`n"
+$WriteFilesBlock += "        permissions: '0644'`n"
+$WriteFilesBlock += "        encoding: b64`n"
+$WriteFilesBlock += "        content: $BrancheContent`n"
 
 
 # --- 6. USER-DATA CLOUD-INIT ---
