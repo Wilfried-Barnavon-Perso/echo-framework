@@ -2,63 +2,75 @@
 # ==============================================================================
 # SCRIPT : install-stack.sh
 # VERSION : v5.3.1
-# ROLE : DÉPLOIEMENT & ORCHESTRATION DES CONTENEURS DOCKER
+# AUTEUR  : ECHO Architecture
+# DATE    : 2026-01-02
+#
+# ROLE : ORCHESTRATION DU DÉPLOIEMENT DES CONTENEURS DOCKER
 # ==============================================================================
 #
 # --- QUOI (WHAT) ---
-# Ce script est le "maître d'œuvre" du déploiement. Il est responsable de :
-# 1. Vérifier que Docker est prêt.
-# 2. Créer le réseau virtuel pour isoler les conteneurs.
-# 3. Lancer ou relancer chaque service (conteneur) avec la bonne configuration.
-# 4. Initialiser la configuration interne d'Open WebUI une fois démarré.
+# Ce script est le point d'entrée principal pour lancer ou relancer la stack ECHO.
+# Il déploie 5 conteneurs interconnectés :
+# 1. Watchtower (Mise à jour auto des images)
+# 2. Python Worker (Exécution code sandboxé)
+# 3. Browser Agent (Navigation web headless)
+# 4. Admin Manager (Monitoring, Backups, Maintenance)
+# 5. Open WebUI (Interface Chat, RAG, Auth)
 #
 # --- POURQUOI (WHY) ---
-# Docker Compose est souvent utilisé pour cela, mais un script Bash offre plus de
-# contrôle pour :
-# - La gestion dynamique des volumes (nettoyage conditionnel).
-# - L'enchaînement séquentiel strict (attendre que A soit prêt avant B).
-# - La compatibilité maximale (pas besoin d'installer docker-compose binaire).
+# Pourquoi un script Bash plutôt qu'un Docker Compose ?
+# 1. Gestion dynamique : Permet de lire des fichiers de version ou de configuration
+#    avant de lancer les conteneurs (ex: ECHO_VERSION).
+# 2. Nettoyage conditionnel : La fonction cleanup_container permet de gérer proprement
+#    le redémarrage sans erreurs "Name already in use".
+# 3. Séquencement strict : On s'assure que le réseau est prêt avant les conteneurs.
 #
 # --- COMMENT (HOW - ALGO) ---
-# 1. PRE-CHECK : On attend que le socket Docker réponde.
-# 2. VERSIONING : On lit le fichier /opt/ECHO_VERSION pour savoir ce qu'on déploie.
-# 3. NETWORKING : On crée un bridge network 'ai-net' dédié.
-# 4. DEPLOY LOOP : Pour chaque service (Watchtower, Worker, Browser, Admin, OWUI) :
-#    a. On arrête l'ancien conteneur s'il existe (cleanup_container).
-#    b. On supprime l'ancien conteneur.
-#    c. On lance le nouveau avec 'docker run' et tous les volumes montés.
-# 5. POST-INSTALL : On attend que OWUI réponde sur le port 3000, puis on injecte sa config.
+# 1. PRE-REQUIS : Vérifie Docker, les permissions, et le réseau 'ai-net'.
+# 2. VERSIONING : Synchronise le fichier version local avec le système (/opt/ECHO_VERSION).
+# 3. DÉPLOIEMENT SÉQUENTIEL : Pour chaque service :
+#    a. Stop & Remove l'ancien conteneur.
+#    b. Run le nouveau avec les bons volumes montés.
+# 4. POST-INSTALL : Attend le Healthcheck de OWUI et injecte la configuration interne.
 # ==============================================================================
 
-# --- ETAPE 0 : VERSIONING SYSTEME ---
-# On s'assure que le fichier de version système est synchronisé avec le dépôt git local.
-# Cela garantit que la version affichée est bien celle du code présent sur le disque.
+# --- ETAPE 0 : GESTION DE LA VERSION SYSTÈME ---
+# But : Garantir que la VM "sait" quelle version elle fait tourner.
+# La source de vérité est le fichier VERSION dans le dépôt git local.
 REPO_ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"
 SOURCE_VERSION_FILE="$REPO_ROOT/VERSION"
 SYSTEM_VERSION_FILE="/opt/ECHO_VERSION"
 
+# Copie atomique de la version pour que les autres scripts (Admin, Shell) puissent la lire
 if [ -f "$SOURCE_VERSION_FILE" ]; then
-    # Copie de la source vers la destination système
     cp "$SOURCE_VERSION_FILE" "$SYSTEM_VERSION_FILE"
-    # Permission 644 : Lecture pour tous (nécessaire pour Admin Dashboard non-root)
+    # Permission 644 : Lecture autorisée pour tout le monde (User 'echo', 'www-data', etc.)
     chmod 644 "$SYSTEM_VERSION_FILE"
 fi
 
-# Lecture pour affichage utilisateur
+# Lecture pour l'affichage utilisateur (Feedback immédiat)
 if [ -f "$SYSTEM_VERSION_FILE" ]; then
     ECHO_VERSION=$(cat "$SYSTEM_VERSION_FILE")
-    # Nettoyage cosmétique : on retire le 'v' s'il est présent pour l'affichage
+    # Nettoyage cosmétique : on retire le 'v' s'il est présent pour l'affichage propre
     ECHO_VERSION=$(echo "$ECHO_VERSION" | sed 's/^v//')
 else
     ECHO_VERSION="unknown"
     echo "⚠️  Attention : Fichier de version introuvable ($SYSTEM_VERSION_FILE)."
 fi
 
-echo "🚀 ECHO FRAMEWORK INSTALLER [v$ECHO_VERSION]"
-echo "=========================================="
+# --- CONFIGURATION BRANCHE DYNAMIQUE (V133+) ---
+# Permet de savoir sur quelle branche git on se trouve pour le log
+BRANCH_FILE="/opt/ECHO_BRANCH"
+TARGET_BRANCH="main" # Défaut
+if [ -f "$BRANCH_FILE" ]; then
+    TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]')
+fi
+
+echo "🚀 ECHO FRAMEWORK INSTALLER [v$ECHO_VERSION] sur branche [$TARGET_BRANCH]"
+echo "==========================================================="
 
 # ------------------------------------------------------------------------------
-# FONCTIONS UTILITAIRES
+# FONCTIONS UTILITAIRES (TOOLBOX)
 # ------------------------------------------------------------------------------
 
 # Fonction : wait_for_docker
@@ -89,20 +101,22 @@ cleanup_container() {
 }
 
 # ------------------------------------------------------------------------------
-# PRÉPARATION DU SYSTÈME
+# PRÉPARATION DU SYSTÈME (PRE-FLIGHT CHECKS)
 # ------------------------------------------------------------------------------
 
 wait_for_docker
 
-# On rend les scripts exécutables pour éviter les erreurs "Permission denied" plus tard.
+# Rendre les scripts exécutables est vital. 
+# Si on oublie ça, les 'docker exec' plus bas échoueront avec 'Permission denied'.
 chmod +x /opt/owui-scripts/*.sh 2>/dev/null || true
 
 # Création du réseau Docker 'ai-net' s'il n'existe pas.
-# Ce réseau permet aux conteneurs de se parler par leur nom (ex: ping python-worker).
+# Ce réseau 'bridge' permet aux conteneurs de se parler par leur nom DNS (ex: ping python-worker).
+# Isolation : Les conteneurs ne sont pas exposés sur le réseau hôte par défaut (sauf ports publiés).
 docker network inspect ai-net >/dev/null 2>&1 || docker network create ai-net
 
 # ------------------------------------------------------------------------------
-# DÉPLOIEMENT DES CONTENEURS
+# DÉPLOIEMENT DES CONTENEURS (SERVICES)
 # ------------------------------------------------------------------------------
 
 # --- 1. WATCHTOWER (AUTO-UPDATE) ---
@@ -131,7 +145,7 @@ docker run -d --name python-worker --network ai-net --restart always \
 # --- 3. BROWSER AGENT (NAVIGATION WEB) ---
 # Rôle : Naviguer sur le web réel via un Chrome headless piloté par DrissionPage.
 # Dépendances : Installation lourde (chromium, fonts, libs graphiques) requise dans l'image.
-# IPC=host : Nécessaire pour éviter les crashs de mémoire partagée de Chrome.
+# IPC=host : Nécessaire pour éviter les crashs de mémoire partagée de Chrome (/dev/shm).
 cleanup_container "browser-agent"
 docker run -d --name browser-agent --network ai-net --restart always \
   --ipc=host \
@@ -165,7 +179,7 @@ docker run -d --name admin-manager --network ai-net --restart always \
 # Volumes "Injection" :
 # On monte nos scripts locaux (/opt/owui-...) directement DANS le conteneur.
 # Cela permet de modifier le code (ex: pipe_engine.py) sur l'hôte et de juste redémarrer le conteneur
-# pour que ce soit pris en compte, sans reconstruire l'image.
+# pour que ce soit pris en compte, sans reconstruire l'image (Hot Reloading).
 cleanup_container "open-webui"
 echo "🧠 Démarrage Open WebUI (:main)..."
 docker run -d --name open-webui --network ai-net --restart always \
@@ -178,10 +192,11 @@ docker run -d --name open-webui --network ai-net --restart always \
   ghcr.io/open-webui/open-webui:main
 
 # ------------------------------------------------------------------------------
-# POST-INSTALLATION
+# POST-INSTALLATION (CONFIGURATION APPLICATIVE)
 # ------------------------------------------------------------------------------
 echo "⏳ Attente disponibilité Open WebUI (Healthcheck)..."
 # On boucle tant que l'URL /health ne renvoie pas un code 200 OK.
+# Cela évite de lancer la config alors que le serveur n'est pas prêt.
 until curl -s -f http://localhost:3000/health > /dev/null; do
     sleep 5
     echo -n "."
@@ -193,6 +208,6 @@ echo " UP."
 echo "🔧 Configuration Auto..."
 docker exec open-webui /bin/bash /opt/owui-scripts/config-owui.sh
 
-# Petit nettoyage final pour gagner de la place disque
+# Petit nettoyage final pour gagner de la place disque (supprime les images non utilisées)
 docker image prune -f >/dev/null 2>&1
-echo "✅ DEPLOIEMENT STABILISÉ [v$ECHO_VERSION]."
+echo "✅ DEPLOIEMENT STABILISÉ [v$ECHO_VERSION] sur [$TARGET_BRANCH]."

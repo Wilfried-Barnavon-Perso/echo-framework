@@ -30,6 +30,8 @@
 # ==============================================================================
 
 # --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
+# But : Empêcher la fenêtre de se fermer brutalement en cas d'erreur critique,
+# pour laisser le temps à l'utilisateur de lire le message d'erreur.
 function Pause-OnError {
   param([string]$Message)
   Write-Error "❌ ERREUR CRITIQUE : $Message"
@@ -43,9 +45,8 @@ $SCRIPT_VERSION = "5.3.1"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
-Write-Host "🚀 ECHO INFRASTRUCTURE DEPLOYER" -ForegroundColor Cyan
-Write-Host "   Script Version : $SCRIPT_VERSION"
-Write-Host "=============================================="
+Write-Host "🚀 ECHO INFRASTRUCTURE DEPLOYER [Script v$SCRIPT_VERSION]" -ForegroundColor Cyan
+Write-Host "=========================================================="
 
 # Vérification Stricte du Fichier VERSION (Source de vérité de la Stack)
 if (-not (Test-Path $VersionFile)) {
@@ -84,9 +85,10 @@ $AutoUser = "echo"
 $AppPassword = "password" 
 $AutoHostname = "echo-server" 
 # Hash généré pour 'password' (SHA-512)
-$HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0' 
+$HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0' 
 
 # --- 3. VERIFICATION DES FICHIERS (MAPPING STRICT) ---
+# Dictionnaire : Source Windows => Destination Linux
 $FilesMap = @{
   # 1. SCRIPTS D'INSTALLATION
   "/opt/owui-scripts/install-stack.sh"            = "$ScriptDir\00-Install\install-stack.sh"
@@ -129,6 +131,7 @@ foreach ($Key in $FilesMap.Keys) {
 Write-Host "✅ Tous les fichiers critiques sont présents." -ForegroundColor Green
 
 # --- 4. AUTO-ELEVATION ADMIN ---
+# Requis car Hyper-V nécessite des privilèges Administrateur
 if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   Start-Process powershell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $PSCommandPath) -Verb RunAs
   Exit
@@ -147,7 +150,7 @@ foreach ($DestPath in $FilesMap.Keys) {
       $RawContent = $RawContent.Replace('${AutoUser}', $AutoUser)
     }
         
-    # Encodage Base64
+    # Encodage Base64 pour éviter problèmes caractères spéciaux dans YAML
     $B64Content = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($RawContent.Replace("`r`n", "`n")))
         
     $WriteFilesBlock += "      - path: $DestPath`n"
@@ -205,12 +208,15 @@ $WriteFilesBlock
     runcmd:
       - [chown, -R, "${AutoUser}:${AutoUser}", "/home/${AutoUser}"]
       - [systemctl restart chrony]
-      # Permissions Exécutables
+      # Permissions Exécutables pour les scripts bash
       - [chmod, +x, /opt/owui-scripts/install-stack.sh]
       - [chmod, +x, /opt/owui-scripts/update-echo.sh]
       - [chmod, +x, /opt/owui-scripts/upgrade-echo.sh]
       - [chmod, +x, /opt/owui-scripts/config-owui.sh]
-      # Liens Symboliques
+      # Permission 644 pour la version
+      - [chmod, 644, /opt/ECHO_VERSION]
+      
+      # Liens Symboliques pour usage facile
       - [ln, -s, /opt/owui-scripts/update-echo.sh, /usr/local/bin/update-echo]
       - [ln, -s, /opt/owui-scripts/upgrade-echo.sh, /usr/local/bin/upgrade-echo]
       

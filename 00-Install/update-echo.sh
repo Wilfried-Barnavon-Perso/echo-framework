@@ -1,55 +1,98 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : update-echo.sh
-# ROLE : MISE À JOUR RAPIDE (HOT FIX)
+# VERSION : v5.3.1
+# ROLE : MISE À JOUR RAPIDE (HOT FIX & SYNC)
 # ==============================================================================
 #
 # --- QUOI (WHAT) ---
 # Ce script met à jour le CODE SOURCE de l'application (Python, Bash) sur la VM,
-# sans toucher aux images Docker lourdes. C'est l'équivalent d'un "git pull" amélioré.
+# sans toucher aux images Docker lourdes. C'est l'équivalent d'un "git pull" amélioré
+# et orchestré.
 #
 # --- POURQUOI (WHY) ---
-# Télécharger les images Docker (upgrade) est long et coupe le service.
-# 99% du temps, on veut juste pousser une modif dans `pipe_engine.py` ou `server.py`.
-# Ce script fait cela en quelques secondes.
+# Télécharger les images Docker (upgrade) est long (> 5min) et coupe le service.
+# 99% du temps, les mises à jour concernent la logique métier (Pipe, Tools, Admin).
+# Ce script déploie ces changements en quelques secondes (< 10s).
 #
 # --- COMMENT (HOW - ALGO) ---
-# 1. AUTO-RÉPARATION GIT : Si le dossier /opt/echo-framework-source n'est pas un git valide,
-#    il le clone automatiquement.
-# 2. PULL : Il récupère les dernières modifs depuis GitHub.
-# 3. MIROIR : Il copie les fichiers du dépôt Git vers les dossiers de production /opt/owui-*.
+# 1. SÉLECTION BRANCHE : Lit /opt/ECHO_BRANCH pour savoir quelle version suivre.
+# 2. AUTO-RÉPARATION GIT : Si le dossier /opt/echo-framework-source n'est pas un git valide,
+#    il le clone automatiquement. Si la branche n'existe pas, il prévient.
+# 3. PULL : Il récupère les dernières modifs depuis GitHub.
+# 4. MIROIR : Il copie les fichiers du dépôt Git vers les dossiers de production /opt/owui-*.
 #    - Utilise 'sync_mirror' (destructif) pour les dossiers gérés intégralement.
 #    - Utilise 'sync_mirror_file' (additif) pour les dossiers partagés.
-# 4. RELOAD : Il redémarre les services impactés pour charger le nouveau code.
+# 5. RELOAD : Il redémarre les services impactés pour charger le nouveau code.
 # ==============================================================================
 
 GIT_REPO="https://github.com/Wilfried-Barnavon-Perso/echo-framework.git"
 SRC_DIR="/opt/echo-framework-source"
+BRANCH_FILE="/opt/ECHO_BRANCH"
 
-# Sécurité Root
+# Sécurité Root : Les manipulations dans /opt requièrent les privilèges
 if [ "$EUID" -ne 0 ]; then
   echo "❌ Run as root (sudo)."
   exit 1
 fi
 
+# --- ETAPE 1 : DÉTERMINATION DE LA CIBLE ---
+# On lit le fichier de branche système. Si absent, on vise 'main'.
+TARGET_BRANCH="main"
+if [ -f "$BRANCH_FILE" ]; then
+    # Lecture propre (suppression des espaces/sauts de ligne éventuels)
+    TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]')
+    echo "🌿 Cible : Branche '$TARGET_BRANCH' (définie dans $BRANCH_FILE)"
+else
+    echo "🌿 Cible : Branche 'main' (défaut)"
+fi
+
 echo "🔄 [1/4] SYNC GITHUB..."
-# --- LOGIQUE GIT AUTO-REPARATRICE ---
-# Vérifie si le dossier .git existe. Si non, c'est que l'installation initiale
-# n'a pas cloné le repo (mode "fichiers seuls"). On répare en clonant.
+
+# --- ETAPE 2 : LOGIQUE GIT AUTO-REPARATRICE ---
+# Scénario A : Le dépôt n'a jamais été cloné (Install via VM-install V5.2)
 if [ ! -d "$SRC_DIR/.git" ]; then
     echo "   🆕 Dépôt Git introuvable. Clonage initial..."
     rm -rf "$SRC_DIR" # Nettoyage préventif
+    
+    # Clone initial
     git clone "$GIT_REPO" "$SRC_DIR"
     if [ $? -ne 0 ]; then
         echo "❌ Erreur critique : Impossible de cloner le dépôt."
         exit 1
     fi
-else
-    # Si le repo existe, on met à jour proprement
-    echo "   📥 Pull updates..."
+    
     cd "$SRC_DIR" || exit
-    git reset --hard HEAD # Écrase les modifs locales accidentelles (Source de vérité = GitHub)
-    git pull origin $(git rev-parse --abbrev-ref HEAD) || echo "⚠️ Git pull failed (continuing with local files if present)"
+    
+    # Vérification de l'existence de la branche cible avant de checkout
+    if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+        git checkout "$TARGET_BRANCH"
+    else
+        echo "❌ ERREUR FATALE : La branche '$TARGET_BRANCH' n'existe pas sur le dépôt distant."
+        exit 1
+    fi
+
+# Scénario B : Le dépôt existe déjà
+else
+    echo "   📥 Mise à jour..."
+    cd "$SRC_DIR" || exit
+    
+    # Reset local : On considère GitHub comme la source de vérité absolue.
+    # On écrase les modifications locales accidentelles pour éviter les conflits de merge.
+    git reset --hard HEAD
+    
+    # Fetch : Récupération des méta-données distantes
+    git fetch origin
+    
+    # Vérification de sécurité : La branche cible existe-t-elle toujours ?
+    if ! git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+        echo "❌ ERREUR FATALE : La branche cible '$TARGET_BRANCH' est introuvable sur le remote."
+        exit 1
+    fi
+
+    # Bascule et Pull
+    git checkout "$TARGET_BRANCH" || exit 1
+    git pull origin "$TARGET_BRANCH" || echo "⚠️ Git pull failed (continuing with local files if present)"
 fi
 
 echo "📂 [2/4] DEPLOIEMENT FICHIERS (MODE MIROIR)..."
@@ -73,7 +116,7 @@ sync_mirror "$SRC_DIR/04-OWUI-tools"    "/opt/owui-tools"
 sync_mirror "$SRC_DIR/03-OWUI-functions" "/opt/owui-functions"
 sync_mirror "$SRC_DIR/05-OWUI-filters"  "/opt/owui-filters"
 
-# VERSIONING : Mise à jour du fichier système
+# VERSIONING UPDATE : Mise à jour du fichier système (/opt/ECHO_VERSION)
 if [ -f "$SRC_DIR/VERSION" ]; then
     cp "$SRC_DIR/VERSION" "/opt/ECHO_VERSION"
     chmod 644 "/opt/ECHO_VERSION"
@@ -104,10 +147,11 @@ docker restart admin-manager python-worker browser-agent > /dev/null 2>&1
 
 echo "🤖 [4/4] CONFIG API OPEN WEBUI..."
 # Appel à l'API interne d'Open WebUI pour recharger les configurations (Pipes, Tools)
+# Cela évite de devoir redémarrer Open WebUI (qui est long) juste pour un changement de Pipe.
 if docker ps | grep -q open-webui; then
     docker exec open-webui /bin/bash /opt/owui-scripts/config-owui.sh
 else
     echo "⚠️ Open WebUI non démarré."
 fi
 
-echo "✅ UPDATE TERMINÉ."
+echo "✅ UPDATE TERMINÉ (Branche: $TARGET_BRANCH)."

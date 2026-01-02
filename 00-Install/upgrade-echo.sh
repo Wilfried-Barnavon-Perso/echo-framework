@@ -1,12 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh
+# VERSION : v5.3.1
 # ROLE : MISE À NIVEAU MAJEURE (SAFE FORCE UPDATE)
 # ==============================================================================
 #
 # --- QUOI (WHAT) ---
 # Ce script met à jour TOUT : le code (scripts) ET les binaires (images Docker).
-# C'est une opération "lourde" et potentiellement destructive (interruption de service).
+# C'est une opération "lourde" et destructrice (interruption de service).
 #
 # --- POURQUOI (WHY) ---
 # À utiliser quand une nouvelle version d'Open WebUI sort (ex: v0.5 -> v0.6)
@@ -16,7 +17,7 @@
 # 1. SELF-RUN : Le script se copie dans /tmp pour s'exécuter.
 #    Pourquoi ? Car il va probablement se mettre à jour lui-même pendant l'opération.
 #    S'il s'écrasait pendant qu'il tourne, le shell crasherait.
-# 2. GIT RESET HARD : Force la synchronisation stricte avec GitHub.
+# 2. GIT RESET HARD : Force la synchronisation stricte avec GitHub (Branche Cible).
 #    On abandonne toute modification locale pour garantir un état propre.
 # 3. DOCKER PULL : Télécharge les nouvelles images depuis le registre.
 # 4. REBUILD : Appelle 'install-stack.sh' pour recréer tous les conteneurs à neuf.
@@ -36,11 +37,12 @@ if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
 fi
 
 # ==============================================================================
-# EXECUTION DEPUIS /tmp
+# LE CODE CI-DESSOUS S'EXECUTE DEPUIS /tmp/upgrade-echo-running.sh
 # ==============================================================================
 
 GIT_REPO="https://github.com/Wilfried-Barnavon-Perso/echo-framework.git"
 SRC_DIR="/opt/echo-framework-source"
+BRANCH_FILE="/opt/ECHO_BRANCH"
 
 # Sécurité Root
 if [ "$EUID" -ne 0 ]; then
@@ -48,14 +50,23 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# --- DÉTERMINATION DE LA BRANCHE CIBLE ---
+TARGET_BRANCH="main"
+if [ -f "$BRANCH_FILE" ]; then
+    TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]')
+    echo "🌿 Cible : Branche '$TARGET_BRANCH'"
+else
+    echo "🌿 Cible : Branche 'main' (défaut)"
+fi
+
 # --- SECURITE UTILISATEUR ---
 # Confirmation explicite requise car l'opération coupe le service.
 clear
 echo "⚠️  ATTENTION : UPGRADE MAJEUR (DESTRUCTIF)"
 echo "    Cette opération va :"
-echo "    1. Écraser TOUTES les modifications locales dans /opt/echo-framework-source"
-echo "    2. Redéployer les conteneurs (indisponibilité temporaire)"
-echo "    Assurez-vous d'avoir sauvegardé vos données."
+echo "    1. Basculer sur la branche : $TARGET_BRANCH"
+echo "    2. Écraser TOUTES les modifications locales"
+echo "    3. Redéployer les conteneurs (Interruption de service)"
 if [ -n "$SUDO_USER" ]; then
     echo "🔒 Confirmation requise :"
     sudo -k; if ! sudo -u "$SUDO_USER" sudo -v; then exit 1; fi
@@ -67,7 +78,7 @@ fi
 # --- ETAPE 1 : SYNCHRONISATION GIT (AUTO-RÉPARATION) ---
 echo "🔄 [1/4] SYNC GITHUB (FORCE MODE)..."
 
-# Cas A : Pas de git -> Clone
+# Scénario A : Pas de git -> Clone
 if [ ! -d "$SRC_DIR/.git" ]; then
     echo "   🆕 Dépôt Git introuvable. Clonage initial..."
     rm -rf "$SRC_DIR" 
@@ -76,16 +87,37 @@ if [ ! -d "$SRC_DIR/.git" ]; then
         echo "❌ Erreur critique : Impossible de cloner le dépôt."
         exit 1
     fi
-# Cas B : Git présent -> Reset Hard (Nettoyage impitoyable)
-else
-    echo "   🧹 Nettoyage des modifications locales..."
+    
     cd "$SRC_DIR" || exit
+    
+    # Vérification branche
+    if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+        git checkout "$TARGET_BRANCH"
+    else
+        echo "❌ ERREUR FATALE : La branche '$TARGET_BRANCH' n'existe pas."
+        exit 1
+    fi
+    
+# Scénario B : Git présent -> Reset Hard
+else
+    echo "   🧹 Nettoyage et mise à jour..."
+    cd "$SRC_DIR" || exit
+    
+    git fetch origin
+    
+    # Vérification existence branche distante
+    if ! git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+        echo "❌ ERREUR FATALE : La branche '$TARGET_BRANCH' n'existe pas sur le remote."
+        exit 1
+    fi
     
     git reset --hard HEAD
     git clean -fd
     
-    echo "   📥 Pull updates..."
-    git pull origin main || echo "⚠️ Git pull failed"
+    echo "   📥 Bascule sur $TARGET_BRANCH..."
+    git checkout "$TARGET_BRANCH"
+    # Reset HARD sur la version distante pour être 100% iso prod
+    git reset --hard "origin/$TARGET_BRANCH"
 fi
 
 # --- ETAPE 2 : DÉPLOIEMENT FICHIERS (MODE MIROIR) ---
@@ -94,14 +126,9 @@ echo "📂 [2/4] DEPLOIEMENT SCRIPTS (MODE MIROIR)..."
 sync_mirror() {
     local src="$1"
     local dest="$2"
-    
-    if [ ! -d "$src" ]; then
-        echo "⚠️ Source manquante: $src (Ignoré)"
-        return
-    fi
+    if [ ! -d "$src" ]; then echo "⚠️ Source manquante: $src"; return; fi
     if [[ "$dest" != /opt/* ]]; then echo "⛔ Refus: $dest"; return; fi
     if [ ! -d "$dest" ]; then mkdir -p "$dest"; fi
-
     rm -rf "$dest"/*
     cp -rf "$src"/. "$dest"/
 }
@@ -156,4 +183,4 @@ docker system prune -f > /dev/null 2>&1
 # Relance via le script d'installation standard (qui utilisera les nouvelles images et scripts)
 /bin/bash /opt/owui-scripts/install-stack.sh
 
-echo "✨ UPGRADE TERMINÉ."
+echo "✨ UPGRADE TERMINÉ (Branche: $TARGET_BRANCH)."
