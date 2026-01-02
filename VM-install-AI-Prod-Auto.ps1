@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.3.2
+# SCRIPT VERSION : 5.3.3
 # DATE           : 2026-01-02
 # AUTHOR         : ECHO Architecture
 # ==============================================================================
@@ -48,7 +48,8 @@ $VersionFile = "$ScriptDir\VERSION"
 # --- CONFIGURATION BRANCHE (NOUVEAU) ---
 # Permet de définir quelle branche git sera suivie par la VM.
 # Modifiez cette valeur si vous souhaitez déployer une branche de dev (ex: "dev", "feature-x").
-$BRANCHE = "main" 
+#$BRANCHE = "main" 
+$BRANCHE = "dev" 
 
 Write-Host "🚀 ECHO INFRASTRUCTURE DEPLOYER [Script v$SCRIPT_VERSION]" -ForegroundColor Cyan
 Write-Host "=========================================================="
