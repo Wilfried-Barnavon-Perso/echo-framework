@@ -41,7 +41,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.3.2"
+$SCRIPT_VERSION = "5.3.3"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
@@ -89,7 +89,7 @@ $RAMStartup = 4096MB
 
 $AutoUser = "echo"
 $AppPassword = "password" 
-$AutoHostname = "echo-server" 
+$AutoHostname = $VMName.ToLower() -replace '\s', ''
 # Hash généré pour 'password' (SHA-512)
 $HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0' 
 
