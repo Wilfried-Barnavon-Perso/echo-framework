@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.01 - Signature Fix)
+title: Gemini Pro Unified System (Platinum Agentic V134.02 - Deduplication & Stability)
 author: ECHO Architecture
-version: 134.01
-description: v134.01: Correctif critique API 400. La signature de pensée est maintenant propagée sur TOUTES les parties du message (Text & FunctionCall) pour satisfaire la validation stricte de l'API. Maintient le Disk Reader v134.
+version: 134.02
+description: v134.02: Optimisation Multimodale. Évite la duplication des fichiers (Disk Read vs Content DataURI) pour prévenir les erreurs 400 sur les PDF. Reconstruit intelligemment les chemins de fichiers manquants. Maintient le correctif des signatures (Outils).
 """
 
 # ==============================================================================
@@ -208,7 +208,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (DISK READER + SIG FIX V134.01)
+# SECTION 5 : ORCHESTRATEUR (DISK READER V134.02)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -264,6 +264,7 @@ class Orchestrator:
         """Lit un fichier local et retourne son contenu en Base64."""
         if not file_path or not os.path.exists(file_path):
             return None
+        # Sécurité pour éviter de lire hors du dossier app (Docker)
         if "/app/" not in file_path: return None
         try:
             with open(file_path, "rb") as f:
@@ -349,7 +350,7 @@ class Orchestrator:
                         is_last_model_msg = False
                         break
 
-                # SIG FIX V134.01: Propagate signature to ALL parts
+                # SIG FIX V134.01
                 if tool_calls_in_msg or is_last_model_msg:
                     sig_to_use = found_in_band_sig
                     if not sig_to_use and chat_id: sig_to_use = self.sig_manager.get_signature(chat_id)
@@ -363,12 +364,21 @@ class Orchestrator:
 
             else: # USER
                 parts = []
+                has_disk_files = False
 
-                # 1. Disk Read Bypass (V134)
+                # 1. Disk Read Bypass (V134.02 Robust)
                 if "files" in m and isinstance(m["files"], list):
                     for f_obj in m["files"]:
                         f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
                         f_path = f_info.get("path")
+                        
+                        # V134.02: Reconstruction intelligente du chemin si manquant
+                        if not f_path and "id" in f_info:
+                            f_name = f_info.get("filename") or f_info.get("name") or "unknown"
+                            candidate_path = f"/app/backend/data/uploads/{f_info['id']}_{f_name}"
+                            if os.path.exists(candidate_path):
+                                f_path = candidate_path
+
                         f_mime = f_info.get("content_type")
                         if not f_mime and f_path:
                             f_mime, _ = mimetypes.guess_type(f_path)
@@ -377,12 +387,15 @@ class Orchestrator:
                             b64_data = self._read_file_from_disk(f_path)
                             if b64_data:
                                 parts.append({"inlineData": {"mimeType": f_mime, "data": b64_data}})
+                                has_disk_files = True
 
-                # 2. Standard Content
+                # 2. Content Processing (Deduplication Logic V134.02)
                 content = m.get("content", "")
                 if isinstance(content, str):
                     if content.startswith("data:") and ";base64," in content:
-                        parts.append(self._parse_data_uri(content))
+                        # Si on a déjà lu des fichiers disque, on évite de rajouter des doublons base64
+                        if not has_disk_files:
+                            parts.append(self._parse_data_uri(content))
                     elif content.strip():
                         parts.append({"text": content})
                 elif isinstance(content, list):
@@ -392,9 +405,9 @@ class Orchestrator:
                                 parts.append({"text": item.get("text", "")})
                             elif item.get("type") == "image_url":
                                 url = item.get("image_url", {}).get("url", "")
-                                if url.startswith("data:"):
+                                if url.startswith("data:") and not has_disk_files:
                                     parts.append(self._parse_data_uri(url))
-                            elif "image" in item and item["image"].startswith("data:"):
+                            elif "image" in item and item["image"].startswith("data:") and not has_disk_files:
                                 parts.append(self._parse_data_uri(item["image"]))
 
                 if parts:
