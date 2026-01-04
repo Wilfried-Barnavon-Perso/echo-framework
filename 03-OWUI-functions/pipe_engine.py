@@ -85,7 +85,6 @@ class AuthService:
     def _generate_pkce(self):
         verifier = secrets.token_urlsafe(64)
         digest = hashlib.sha256(verifier.encode("utf-8")).digest()
-        import base64
         challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
         return verifier, challenge
 
@@ -114,7 +113,6 @@ class AuthService:
             except Exception as e: return f"❌ Erreur IO: {str(e)}"
         else:
             digest = hashlib.sha256(verifier.encode("utf-8")).digest()
-            import base64
             challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
 
         flow = Flow.from_client_config(
