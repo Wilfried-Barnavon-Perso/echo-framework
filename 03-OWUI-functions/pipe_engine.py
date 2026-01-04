@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.02 - Deduplication & Stability)
+title: Gemini Pro Unified System (Platinum Agentic V134.03 - Robust File Recovery)
 author: ECHO Architecture
-version: 134.02
-description: v134.02: Optimisation Multimodale. Évite la duplication des fichiers (Disk Read vs Content DataURI) pour prévenir les erreurs 400 sur les PDF. Reconstruit intelligemment les chemins de fichiers manquants. Maintient le correctif des signatures (Outils).
+version: 134.03
+description: v134.03: Reconstruction forcée des chemins de fichiers pour contourner les erreurs 'Not Supported' d'OWUI (Audio/Vidéo). Maintient l'anti-doublon pour les PDF et le correctif de signature des outils.
 """
 
 # ==============================================================================
@@ -208,12 +208,13 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (DISK READER V134.02)
+# SECTION 5 : ORCHESTRATEUR (RECOVERY V134.03)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
         self.valves = valves
         self.location_cache_file = "/app/backend/data/gemini_geo_cache_v2.json"
+        self.uploads_dir = "/app/backend/data/uploads"
         self.tool_map = {}
         self.sig_manager = SignatureManager(data_dir)
 
@@ -260,17 +261,39 @@ class Orchestrator:
             sys_prompt_text += f"\n\n[CONTEXT]\nDate: {now.strftime('%A %d %B %Y')}\nTime: {now.strftime('%H:%M')}\nLocation: {loc}\n"
         return {"parts": [{"text": sys_prompt_text}]}
 
-    def _read_file_from_disk(self, file_path: str) -> Optional[str]:
-        """Lit un fichier local et retourne son contenu en Base64."""
-        if not file_path or not os.path.exists(file_path):
-            return None
-        # Sécurité pour éviter de lire hors du dossier app (Docker)
-        if "/app/" not in file_path: return None
-        try:
-            with open(file_path, "rb") as f:
-                return base64.standard_b64encode(f.read()).decode("utf-8")
-        except Exception:
-            return None
+    def _get_file_content(self, f_id: str, f_name: str, provided_path: str = None) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Tente de récupérer le contenu du fichier par tous les moyens.
+        Retourne (base64_data, mime_type).
+        """
+        candidates = []
+        # 1. Chemin fourni par OWUI (s'il existe)
+        if provided_path:
+            candidates.append(provided_path)
+
+        # 2. Reconstruction standard : {id}_{filename}
+        if f_id and f_name:
+            clean_name = f_name.replace("/", "_").replace("\\", "_")
+            candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
+
+        # 3. Essai de lecture
+        for path in candidates:
+            if os.path.exists(path) and os.path.isfile(path):
+                try:
+                    mime_type, _ = mimetypes.guess_type(path)
+                    if not mime_type:
+                        # Fallback basique
+                        if path.endswith(".mp4"): mime_type = "video/mp4"
+                        elif path.endswith(".mp3"): mime_type = "audio/mp3"
+                        elif path.endswith(".pdf"): mime_type = "application/pdf"
+                        else: mime_type = "application/octet-stream"
+
+                    with open(path, "rb") as f:
+                        data = base64.standard_b64encode(f.read()).decode("utf-8")
+                        return data, mime_type
+                except:
+                    continue
+        return None, None
 
     def _parse_data_uri(self, data_uri: str) -> Dict:
         try:
@@ -296,7 +319,6 @@ class Orchestrator:
 
             if role == "system": i+=1; continue
 
-            # Auth code skip
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
                 if re.search(r"(4/[a-zA-Z0-9_-]+)", raw_content): i += 1; continue
@@ -329,7 +351,6 @@ class Orchestrator:
 
                 if text_content: parts.append({"text": text_content})
 
-                # Tool calls & Signature Extraction
                 found_in_band_sig = None
                 tool_calls_in_msg = False
                 if m.get("tool_calls"):
@@ -350,7 +371,7 @@ class Orchestrator:
                         is_last_model_msg = False
                         break
 
-                # SIG FIX V134.01
+                # SIG FIX V134.01 maintained
                 if tool_calls_in_msg or is_last_model_msg:
                     sig_to_use = found_in_band_sig
                     if not sig_to_use and chat_id: sig_to_use = self.sig_manager.get_signature(chat_id)
@@ -366,34 +387,26 @@ class Orchestrator:
                 parts = []
                 has_disk_files = False
 
-                # 1. Disk Read Bypass (V134.02 Robust)
+                # 1. Disk Read Bypass (Robust V134.03)
                 if "files" in m and isinstance(m["files"], list):
                     for f_obj in m["files"]:
                         f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
+
+                        f_id = f_info.get("id")
+                        f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
                         f_path = f_info.get("path")
-                        
-                        # V134.02: Reconstruction intelligente du chemin si manquant
-                        if not f_path and "id" in f_info:
-                            f_name = f_info.get("filename") or f_info.get("name") or "unknown"
-                            candidate_path = f"/app/backend/data/uploads/{f_info['id']}_{f_name}"
-                            if os.path.exists(candidate_path):
-                                f_path = candidate_path
 
-                        f_mime = f_info.get("content_type")
-                        if not f_mime and f_path:
-                            f_mime, _ = mimetypes.guess_type(f_path)
+                        # Reconstruction forcée si path invalide ou manquant
+                        b64_data, mime_type = self._get_file_content(f_id, f_name, f_path)
 
-                        if f_path and f_mime:
-                            b64_data = self._read_file_from_disk(f_path)
-                            if b64_data:
-                                parts.append({"inlineData": {"mimeType": f_mime, "data": b64_data}})
-                                has_disk_files = True
+                        if b64_data and mime_type:
+                            parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
+                            has_disk_files = True
 
-                # 2. Content Processing (Deduplication Logic V134.02)
+                # 2. Content Processing (Deduplication Logic V134.02 maintained)
                 content = m.get("content", "")
                 if isinstance(content, str):
                     if content.startswith("data:") and ";base64," in content:
-                        # Si on a déjà lu des fichiers disque, on évite de rajouter des doublons base64
                         if not has_disk_files:
                             parts.append(self._parse_data_uri(content))
                     elif content.strip():
