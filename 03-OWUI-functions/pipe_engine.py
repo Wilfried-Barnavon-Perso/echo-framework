@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V132.01 - PKCE Robustness)
+title: Gemini Pro Unified System (Platinum Agentic V133.00 - Multimodal Native)
 author: ECHO Architecture
-version: 132.01
-description: Version v132.00 avec correctif critique sur l'authentification. Réintégration du mécanisme anti-double-envoi PKCE (hérité de la v122.31) pour éviter l'erreur 'Invalid code verifier'.
+version: 133.00
+description: v133.00: Activation du support Multimodal (Images, PDF, Audio, Vidéo) via inlineData. Maintien de la robustesse PKCE v132.
 """
 
 # ==============================================================================
@@ -95,19 +95,16 @@ class AuthService:
         """
         Génère l'URL de connexion.
         FIX V132.01 : Vérifie si un verifier récent existe déjà pour ne pas l'écraser.
-        Cela évite l'erreur 'Invalid code verifier' si l'utilisateur rafraîchit la page.
         """
         if not HAS_GOOGLE_LIBS:
             return "❌ **Erreur** : Librairies `google-auth` manquantes."
 
-        # --- LOGIQUE ANTI-DOUBLE-ENVOI (Héritage v122.31) ---
         should_generate_new = True
         verifier = None
-        
+
         if os.path.exists(self.pkce_path):
             try:
                 creation_time = os.path.getmtime(self.pkce_path)
-                # Si le fichier a moins de 5 minutes (300s), on le considère comme actif
                 if time.time() - creation_time < 300:
                     with open(self.pkce_path, "r") as f:
                         existing_verifier = f.read().strip()
@@ -117,14 +114,11 @@ class AuthService:
             except: pass
 
         if should_generate_new:
-            # Génération d'un nouveau couple
             verifier, challenge = self._generate_pkce()
             try:
                 with open(self.pkce_path, "w") as f: f.write(verifier)
             except Exception as e: return f"❌ Erreur IO: {str(e)}"
         else:
-            # Recalcul du challenge à partir du verifier existant
-            # Cela permet de redonner la MÊME URL valide à l'utilisateur
             digest = hashlib.sha256(verifier.encode("utf-8")).digest()
             import base64
             challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
@@ -145,7 +139,7 @@ class AuthService:
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
-        
+
         if not os.path.exists(self.pkce_path):
              for _ in range(3):
                 if self.get_valid_credentials(): return True, "Succès (Récupéré via cache)."
@@ -157,9 +151,9 @@ class AuthService:
             flow = Flow.from_client_config(OFFICIAL_CLIENT_CONFIG, scopes=GOOGLE_SCOPES, autogenerate_code_verifier=False)
             flow.redirect_uri = GOOGLE_REDIRECT_URI
             flow.fetch_token(code=code.strip(), code_verifier=verifier)
-            
+
             with open(self.token_path, "w") as f: f.write(flow.credentials.to_json())
-            
+
             if os.path.exists(self.pkce_path): os.remove(self.pkce_path)
             return True, "Succès."
         except Exception as e:
@@ -180,10 +174,10 @@ class AuthService:
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
         if os.path.exists(self.internal_project_cache) and not debug_mode:
             with open(self.internal_project_cache, "r") as f: return f.read().strip(), "Cache."
-        
+
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
-        
+
         try:
             resp = httpx.post(f"{self.base_url}:loadCodeAssist", headers=headers, json=payload, timeout=10)
             if resp.status_code == 200:
@@ -227,7 +221,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR
+# SECTION 5 : ORCHESTRATEUR (MULTIMODAL V133)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -238,7 +232,9 @@ class Orchestrator:
 
     def check_for_auth_code(self, messages: List[Dict]) -> Optional[str]:
         if not messages: return None
-        last_msg = messages[-1].get("content", "").strip()
+        last_msg = messages[-1].get("content", "")
+        if isinstance(last_msg, list): return None # Auth code is usually text
+        last_msg = str(last_msg).strip()
         match = re.search(r"(4/[a-zA-Z0-9_-]+)", last_msg)
         if match and len(match.group(1)) > 30: return match.group(1)
         return None
@@ -277,8 +273,52 @@ class Orchestrator:
             sys_prompt_text += f"\n\n[CONTEXT]\nDate: {now.strftime('%A %d %B %Y')}\nTime: {now.strftime('%H:%M')}\nLocation: {loc}\n"
         return {"parts": [{"text": sys_prompt_text}]}
 
+    def _parse_data_uri(self, data_uri: str) -> Dict:
+        """Helper to convert base64 data URI to Gemini InlineData"""
+        try:
+            header, data = data_uri.split(",", 1)
+            # header ex: data:image/png;base64
+            mime_type = header.split(":")[1].split(";")[0]
+            return {"inlineData": {"mimeType": mime_type, "data": data}}
+        except Exception:
+            return {"text": "[Error processing file]"}
+
+    def _extract_multimodal_parts(self, message: Dict) -> List[Dict]:
+        """Extracts text and media parts from OWUI message content."""
+        parts = []
+        content = message.get("content", "")
+
+        # Cas 1: Contenu String (potentiellement une image collée en base64 direct)
+        if isinstance(content, str):
+            if content.startswith("data:") and ";base64," in content:
+                parts.append(self._parse_data_uri(content))
+            else:
+                if content.strip(): parts.append({"text": content})
+
+        # Cas 2: Contenu Liste (Format standard OpenAI / OWUI Multimodal)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict):
+                    itm_type = item.get("type")
+                    if itm_type == "text":
+                        txt = item.get("text", "")
+                        if txt: parts.append({"text": txt})
+                    elif itm_type == "image_url":
+                        # OWUI envoie souvent: {"type": "image_url", "image_url": {"url": "data:..."}}
+                        url = item.get("image_url", {}).get("url", "")
+                        if url.startswith("data:"):
+                            parts.append(self._parse_data_uri(url))
+                    # Cas edge: parfois "image" est une clé directe
+                    elif "image" in item:
+                        if item["image"].startswith("data:"):
+                             parts.append(self._parse_data_uri(item["image"]))
+
+        return parts
+
     def prepare_context(self, messages: List[Dict], chat_id: str) -> List[Dict]:
         contents = []
+
+        # Mapping des tool_ids
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -289,19 +329,18 @@ class Orchestrator:
         while i < len(messages):
             m = messages[i]
             role = m["role"]
-            content = ""
+
+            # --- SKIP SYSTEM ---
+            if role == "system":
+                i+=1; continue
+
+            # --- SKIP AUTH CODE IN HISTORY ---
             raw_content = m.get("content", "")
-            
-            if isinstance(raw_content, list):
-                for part in raw_content:
-                    if isinstance(part, dict) and "text" in part: content += part["text"]
-            else:
-                content = str(raw_content) if raw_content else ""
+            if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
+                if re.search(r"(4/[a-zA-Z0-9_-]+)", raw_content):
+                    i += 1; continue
 
-            if role == "system": i+=1; continue
-            if role == "user" and ("4/" in str(content) and len(str(content)) > 30):
-                if re.search(r"(4/[a-zA-Z0-9_-]+)", str(content)): i += 1; continue
-
+            # --- HANDLE TOOL OUTPUTS ---
             if role == "tool":
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
@@ -311,23 +350,32 @@ class Orchestrator:
                     except: val = {"result": str(tm.get("content", ""))}
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
-                
+
                 if contents and contents[-1]["role"] == "user":
                     contents[-1]["parts"].extend(parts)
                 else:
                     contents.append({"role": "user", "parts": parts})
                 continue
 
+            # --- HANDLE MODEL (Assistant) ---
             elif role in ["assistant", "model"]:
                 parts = []
-                text_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+                # Nettoyage des balises de pensée pour l'historique
+                text_content = ""
+                if isinstance(raw_content, str):
+                    text_content = raw_content
+                elif isinstance(raw_content, list):
+                    for p in raw_content:
+                        if isinstance(p, dict) and "text" in p: text_content += p["text"]
+
+                text_content = re.sub(r'<think>.*?</think>', '', text_content, flags=re.DOTALL).strip()
                 text_content = re.sub(r'\[\s*\]\(context://thought_signature/[^\)]+\)', '', text_content).strip()
 
                 if text_content: parts.append({"text": text_content})
 
                 found_in_band_sig = None
                 tool_calls_in_msg = False
-                
+
                 if m.get("tool_calls"):
                     tool_calls_in_msg = True
                     for tc in m["tool_calls"]:
@@ -337,34 +385,37 @@ class Orchestrator:
                                 found_in_band_sig = args.pop("_thought_signature")
                             parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
                         except: pass
-                
+
                 if not parts: parts.append({"text": " "})
 
+                # Logique Signature de pensée
                 is_last_model_msg = True
                 for j in range(i + 1, len(messages)):
                     if messages[j]["role"] in ["assistant", "model"]:
                         is_last_model_msg = False
                         break
-                
+
                 if tool_calls_in_msg or is_last_model_msg:
                     sig_to_use = found_in_band_sig
                     if not sig_to_use and chat_id:
                         sig_to_use = self.sig_manager.get_signature(chat_id)
-                    
                     if not sig_to_use and tool_calls_in_msg:
                         sig_to_use = MAGIC_KEY_SKIP_VALIDATION
-
                     if sig_to_use and parts and "thoughtSignature" not in parts[0]:
                         parts[0]["thoughtSignature"] = sig_to_use
 
                 contents.append({"role": "model", "parts": parts})
 
+            # --- HANDLE USER (Multimodal) ---
             else:
-                if content:
+                user_parts = self._extract_multimodal_parts(m)
+                if user_parts:
                     if contents and contents[-1]["role"] == "user":
-                         contents.append({"role": "model", "parts": [{"text": "..."}]})
-                    contents.append({"role": "user", "parts": [{"text": str(content)}]})
-            
+                         # Merge consécutif user pour éviter erreur Gemini
+                         contents[-1]["parts"].extend(user_parts)
+                    else:
+                        contents.append({"role": "user", "parts": user_parts})
+
             i += 1
 
         return contents
@@ -456,13 +507,13 @@ class StreamProcessor:
                             if is_think:
                                 if not in_think: yield "<think>\n"; in_think = True
                                 yield txt
-                            
+
                             elif func_call:
                                 if in_think: yield "\n</think>\n"; in_think = False
                                 args = func_call.get("args", {})
                                 if self.current_sig:
                                     args["_thought_signature"] = self.current_sig
-                                
+
                                 yield {
                                     "choices": [{
                                         "index": 0,
@@ -521,7 +572,7 @@ class Pipe:
         self.base_url = GOOGLE_API_BASE_URL
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None) -> AsyncGenerator[Union[str, Dict], None]:
-        
+
         chat_id = body.get("chat_id")
         if not chat_id and __metadata__:
             chat_id = __metadata__.get("chat_id")
