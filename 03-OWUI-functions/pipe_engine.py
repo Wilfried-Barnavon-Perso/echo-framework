@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V133.00 - Multimodal Native)
+title: Gemini Pro Unified System (Platinum Agentic V134.00 - Direct Disk Access)
 author: ECHO Architecture
-version: 133.00
-description: v133.00: Activation du support Multimodal (Images, PDF, Audio, Vidéo) via inlineData. Maintien de la robustesse PKCE v132.
+version: 134.00
+description: v134.00: Contournement du pré-traitement OWUI. Lecture directe des fichiers (Vidéo, Audio, PDF) sur le disque via les chemins 'uploads'. Supporte Multi-PDF et fichiers lourds.
 """
 
 # ==============================================================================
@@ -18,6 +18,8 @@ import re
 import time
 import uuid
 import httpx
+import base64
+import mimetypes
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
@@ -74,10 +76,6 @@ OFFICIAL_CLIENT_CONFIG = {
 # SECTION 3 : SERVICE D'AUTHENTIFICATION (IDENTITY PROVIDER)
 # ==============================================================================
 class AuthService:
-    """
-    Gère l'authentification OAuth2 avec Google.
-    Intègre une protection contre le double-clic (PKCE Cache).
-    """
     def __init__(self, data_dir: str):
         self.token_path = f"{data_dir}/gemini_official_token.json"
         self.pkce_path = f"{data_dir}/gemini_pkce_verifier.txt"
@@ -92,10 +90,6 @@ class AuthService:
         return verifier, challenge
 
     def get_auth_url(self) -> str:
-        """
-        Génère l'URL de connexion.
-        FIX V132.01 : Vérifie si un verifier récent existe déjà pour ne pas l'écraser.
-        """
         if not HAS_GOOGLE_LIBS:
             return "❌ **Erreur** : Librairies `google-auth` manquantes."
 
@@ -139,25 +133,20 @@ class AuthService:
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
-
         if not os.path.exists(self.pkce_path):
              for _ in range(3):
                 if self.get_valid_credentials(): return True, "Succès (Récupéré via cache)."
                 time.sleep(0.5)
              return False, "Session expirée (PKCE introuvable)."
-
         try:
             with open(self.pkce_path, "r") as f: verifier = f.read().strip()
             flow = Flow.from_client_config(OFFICIAL_CLIENT_CONFIG, scopes=GOOGLE_SCOPES, autogenerate_code_verifier=False)
             flow.redirect_uri = GOOGLE_REDIRECT_URI
             flow.fetch_token(code=code.strip(), code_verifier=verifier)
-
             with open(self.token_path, "w") as f: f.write(flow.credentials.to_json())
-
             if os.path.exists(self.pkce_path): os.remove(self.pkce_path)
             return True, "Succès."
-        except Exception as e:
-            return False, str(e)
+        except Exception as e: return False, str(e)
 
     def get_valid_credentials(self):
         creds = None
@@ -174,10 +163,8 @@ class AuthService:
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
         if os.path.exists(self.internal_project_cache) and not debug_mode:
             with open(self.internal_project_cache, "r") as f: return f.read().strip(), "Cache."
-
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
-
         try:
             resp = httpx.post(f"{self.base_url}:loadCodeAssist", headers=headers, json=payload, timeout=10)
             if resp.status_code == 200:
@@ -196,7 +183,7 @@ class AuthService:
             if os.path.exists(p): os.remove(p)
 
 # ==============================================================================
-# SECTION 4 : SIGNATURE MANAGER (IN-DISK)
+# SECTION 4 : SIGNATURE MANAGER
 # ==============================================================================
 class SignatureManager:
     def __init__(self, data_dir: str):
@@ -221,7 +208,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (MULTIMODAL V133)
+# SECTION 5 : ORCHESTRATEUR (DISK READER V134)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -233,7 +220,7 @@ class Orchestrator:
     def check_for_auth_code(self, messages: List[Dict]) -> Optional[str]:
         if not messages: return None
         last_msg = messages[-1].get("content", "")
-        if isinstance(last_msg, list): return None # Auth code is usually text
+        if isinstance(last_msg, list): return None
         last_msg = str(last_msg).strip()
         match = re.search(r"(4/[a-zA-Z0-9_-]+)", last_msg)
         if match and len(match.group(1)) > 30: return match.group(1)
@@ -273,52 +260,30 @@ class Orchestrator:
             sys_prompt_text += f"\n\n[CONTEXT]\nDate: {now.strftime('%A %d %B %Y')}\nTime: {now.strftime('%H:%M')}\nLocation: {loc}\n"
         return {"parts": [{"text": sys_prompt_text}]}
 
+    def _read_file_from_disk(self, file_path: str) -> Optional[str]:
+        """Lit un fichier local et retourne son contenu en Base64."""
+        if not file_path or not os.path.exists(file_path):
+            return None
+        # Sécurité basique pour ne pas sortir du dossier app (optionnel)
+        if "/app/" not in file_path:
+            return None
+        try:
+            with open(file_path, "rb") as f:
+                return base64.standard_b64encode(f.read()).decode("utf-8")
+        except Exception:
+            return None
+
     def _parse_data_uri(self, data_uri: str) -> Dict:
-        """Helper to convert base64 data URI to Gemini InlineData"""
         try:
             header, data = data_uri.split(",", 1)
-            # header ex: data:image/png;base64
             mime_type = header.split(":")[1].split(";")[0]
             return {"inlineData": {"mimeType": mime_type, "data": data}}
-        except Exception:
-            return {"text": "[Error processing file]"}
-
-    def _extract_multimodal_parts(self, message: Dict) -> List[Dict]:
-        """Extracts text and media parts from OWUI message content."""
-        parts = []
-        content = message.get("content", "")
-
-        # Cas 1: Contenu String (potentiellement une image collée en base64 direct)
-        if isinstance(content, str):
-            if content.startswith("data:") and ";base64," in content:
-                parts.append(self._parse_data_uri(content))
-            else:
-                if content.strip(): parts.append({"text": content})
-
-        # Cas 2: Contenu Liste (Format standard OpenAI / OWUI Multimodal)
-        elif isinstance(content, list):
-            for item in content:
-                if isinstance(item, dict):
-                    itm_type = item.get("type")
-                    if itm_type == "text":
-                        txt = item.get("text", "")
-                        if txt: parts.append({"text": txt})
-                    elif itm_type == "image_url":
-                        # OWUI envoie souvent: {"type": "image_url", "image_url": {"url": "data:..."}}
-                        url = item.get("image_url", {}).get("url", "")
-                        if url.startswith("data:"):
-                            parts.append(self._parse_data_uri(url))
-                    # Cas edge: parfois "image" est une clé directe
-                    elif "image" in item:
-                        if item["image"].startswith("data:"):
-                             parts.append(self._parse_data_uri(item["image"]))
-
-        return parts
+        except: return {"text": "[Error parsing data URI]"}
 
     def prepare_context(self, messages: List[Dict], chat_id: str) -> List[Dict]:
         contents = []
 
-        # Mapping des tool_ids
+        # Mapping Tools
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -330,17 +295,13 @@ class Orchestrator:
             m = messages[i]
             role = m["role"]
 
-            # --- SKIP SYSTEM ---
-            if role == "system":
-                i+=1; continue
+            if role == "system": i+=1; continue
 
-            # --- SKIP AUTH CODE IN HISTORY ---
+            # Auth code skip
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
-                if re.search(r"(4/[a-zA-Z0-9_-]+)", raw_content):
-                    i += 1; continue
+                if re.search(r"(4/[a-zA-Z0-9_-]+)", raw_content): i += 1; continue
 
-            # --- HANDLE TOOL OUTPUTS ---
             if role == "tool":
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
@@ -350,20 +311,16 @@ class Orchestrator:
                     except: val = {"result": str(tm.get("content", ""))}
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
-
                 if contents and contents[-1]["role"] == "user":
                     contents[-1]["parts"].extend(parts)
                 else:
                     contents.append({"role": "user", "parts": parts})
                 continue
 
-            # --- HANDLE MODEL (Assistant) ---
             elif role in ["assistant", "model"]:
                 parts = []
-                # Nettoyage des balises de pensée pour l'historique
                 text_content = ""
-                if isinstance(raw_content, str):
-                    text_content = raw_content
+                if isinstance(raw_content, str): text_content = raw_content
                 elif isinstance(raw_content, list):
                     for p in raw_content:
                         if isinstance(p, dict) and "text" in p: text_content += p["text"]
@@ -373,9 +330,9 @@ class Orchestrator:
 
                 if text_content: parts.append({"text": text_content})
 
+                # Tool calls & Signature
                 found_in_band_sig = None
                 tool_calls_in_msg = False
-
                 if m.get("tool_calls"):
                     tool_calls_in_msg = True
                     for tc in m["tool_calls"]:
@@ -388,7 +345,6 @@ class Orchestrator:
 
                 if not parts: parts.append({"text": " "})
 
-                # Logique Signature de pensée
                 is_last_model_msg = True
                 for j in range(i + 1, len(messages)):
                     if messages[j]["role"] in ["assistant", "model"]:
@@ -397,24 +353,60 @@ class Orchestrator:
 
                 if tool_calls_in_msg or is_last_model_msg:
                     sig_to_use = found_in_band_sig
-                    if not sig_to_use and chat_id:
-                        sig_to_use = self.sig_manager.get_signature(chat_id)
-                    if not sig_to_use and tool_calls_in_msg:
-                        sig_to_use = MAGIC_KEY_SKIP_VALIDATION
+                    if not sig_to_use and chat_id: sig_to_use = self.sig_manager.get_signature(chat_id)
+                    if not sig_to_use and tool_calls_in_msg: sig_to_use = MAGIC_KEY_SKIP_VALIDATION
                     if sig_to_use and parts and "thoughtSignature" not in parts[0]:
                         parts[0]["thoughtSignature"] = sig_to_use
 
                 contents.append({"role": "model", "parts": parts})
 
-            # --- HANDLE USER (Multimodal) ---
-            else:
-                user_parts = self._extract_multimodal_parts(m)
-                if user_parts:
+            else: # USER
+                parts = []
+
+                # 1. Traitement des fichiers attachés via OWUI (Disk Read Bypass)
+                # C'est ici que la magie opère pour Vidéo/Audio/PDF Multiples
+                if "files" in m and isinstance(m["files"], list):
+                    for f_obj in m["files"]:
+                        # Structure typique OWUI: {"file": {"path": "...", "meta": {...}}}
+                        f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
+
+                        f_path = f_info.get("path")
+                        # Fallback mime detection
+                        f_mime = f_info.get("content_type")
+                        if not f_mime and f_path:
+                            f_mime, _ = mimetypes.guess_type(f_path)
+
+                        if f_path and f_mime:
+                            # Bypass complet: lecture disque -> base64 -> Gemini
+                            b64_data = self._read_file_from_disk(f_path)
+                            if b64_data:
+                                parts.append({"inlineData": {"mimeType": f_mime, "data": b64_data}})
+
+                # 2. Traitement du contenu texte/image_url standard
+                content = m.get("content", "")
+                if isinstance(content, str):
+                    if content.startswith("data:") and ";base64," in content:
+                        parts.append(self._parse_data_uri(content))
+                    elif content.strip():
+                        parts.append({"text": content})
+                elif isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict):
+                            if item.get("type") == "text":
+                                parts.append({"text": item.get("text", "")})
+                            elif item.get("type") == "image_url":
+                                url = item.get("image_url", {}).get("url", "")
+                                if url.startswith("data:"):
+                                    parts.append(self._parse_data_uri(url))
+                            elif "image" in item and item["image"].startswith("data:"):
+                                parts.append(self._parse_data_uri(item["image"]))
+
+                # 3. Aggregation
+                if parts:
                     if contents and contents[-1]["role"] == "user":
-                         # Merge consécutif user pour éviter erreur Gemini
-                         contents[-1]["parts"].extend(user_parts)
+                        contents[-1]["parts"].extend(parts)
                     else:
-                        contents.append({"role": "user", "parts": user_parts})
+                        contents.append({"role": "user", "parts": parts})
 
             i += 1
 
