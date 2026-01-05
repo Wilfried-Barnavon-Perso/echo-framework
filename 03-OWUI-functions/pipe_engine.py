@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.24 - Deep Debug)
+title: Gemini Pro Unified System (Platinum Agentic V134.25 - Full Debug No Truncation)
 author: ECHO Architecture
-version: 134.24
-description: v134.24: Version de diagnostic avancé. Ajout de logs détaillés sur la structure des messages OWUI pour identifier précisément comment le texte RAG est injecté. Maintient le filtrage strict des binaires (inlineData uniquement) et du prompt utilisateur (nettoyage base64).
+version: 134.25
+description: v134.25: Version de diagnostic intégral. Suppression de toute limite de taille (troncature) dans les logs de débogage pour permettre une inspection complète des messages bruts envoyés par OWUI et de la structure JSON envoyée à Gemini.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.24)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.25)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -368,10 +368,9 @@ class Orchestrator:
 
             # DEBUG LOGGING (Capture raw content of the last user message)
             if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
-                # We log a snippet of the raw message to see what OWUI sends
+                # We log the full raw message to see what OWUI sends
                 debug_dump = json.dumps(m, default=str)
-                # Truncate overly long strings for readability in logs
-                if len(debug_dump) > 3000: debug_dump = debug_dump[:3000] + "...[TRUNCATED]"
+                # No truncation requested
                 self.debug_log.append(f"🔍 **OWUI RAW MSG**: `{debug_dump}`")
 
             raw_content = m.get("content", "")
@@ -670,7 +669,7 @@ class Pipe:
                 for part in content.get("parts", []):
                     if "inlineData" in part and "data" in part["inlineData"]:
                         part["inlineData"]["data"] = f"[...base64 data of type {part['inlineData'].get('mimeType', 'unknown')}...]"
-            yield f"🐞 **API REQ**\n`{json.dumps(log_req)[:1000]}...`\n"
+            yield f"🐞 **API REQ**\n`{json.dumps(log_req)}`\n"
 
 
         try:
