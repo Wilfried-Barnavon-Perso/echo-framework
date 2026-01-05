@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.37 - Force Load)
+title: Gemini Pro Unified System (Platinum Agentic V134.38 - Raw Arguments Priority)
 author: ECHO Architecture
-version: 134.37
-description: v134.37: Force le chargement des fichiers binaires même si OWUI les marque comme "failed" (ex: vidéos non supportées par le RAG). Le script ignore les métadonnées d'erreur d'OWUI et se fie uniquement à la présence physique du fichier sur le disque pour l'injection inlineData. Ajoute des logs détaillés sur la raison exacte de l'inclusion ou de l'exclusion de chaque fichier.
+version: 134.38
+description: v134.38: Restauration critique de la lecture des fichiers via les arguments bruts (__files__). Analyse: Les fichiers marqués "Failed" par le RAG d'OWUI sont souvent retirés de l'historique des messages, rendant le script aveugle si on ne regarde que 'messages'. Cette version capture les fichiers directement depuis l'entrée du pipe (kwargs), garantissant l'injection même si OWUI a rejeté le fichier.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.37)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.38)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -456,38 +456,57 @@ class Orchestrator:
             else: # USER
                 parts = []
                 
-                # 1. PROCESS FILES (SINGLE SOURCE OF TRUTH: 'files' key in message)
-                # Ignore kwargs/extra_files as per request
+                # 1. PROCESS FILES (From Message OR Extra Files - UNIFIED)
+                files_to_process = []
+                seen_file_ids = set()
+
+                # A. Files from the message history object
                 if "files" in m and isinstance(m["files"], list):
-                    if self.valves.DEBUG_MODE and i == len(messages) - 1:
-                        self.debug_log.append(f"🔍 [Target] Found 'files' in message: {len(m['files'])} file(s)")
+                    for f in m["files"]:
+                        # Extract ID safely, handling different depths
+                        fid = f.get("file", {}).get("id") or f.get("id")
+                        if fid and fid not in seen_file_ids:
+                            files_to_process.append(f)
+                            seen_file_ids.add(fid)
+                
+                # B. Files from pipe arguments (ONLY for the last message) - CRITICAL RESTORATION V134.38
+                if i == len(messages) - 1 and extra_files:
+                    extras = extra_files if isinstance(extra_files, list) else [extra_files]
+                    for ef in extras:
+                         # Extract ID safely
+                        ef_id = ef.get("file", {}).get("id") or ef.get("id")
+                        if ef_id and ef_id not in seen_file_ids:
+                            files_to_process.append(ef)
+                            seen_file_ids.add(ef_id)
 
-                    for f_obj in m["files"]:
-                        try:
-                            # Normalize object structure
-                            f_real = f_obj.get("file", f_obj) 
-                            
-                            f_id = f_real.get("id")
-                            f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
-                            f_owui_path = f_real.get("path")
-                            
-                            # IGNORE OWUI STATUS (Force Load)
-                            # Even if OWUI says "data": {"status": "failed"}, we try to load the file from disk.
-                            
-                            data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name, f_owui_path)
+                if self.valves.DEBUG_MODE and i == len(messages) - 1:
+                    self.debug_log.append(f"🔍 Fichiers identifiés pour ce tour (Unified): {len(files_to_process)}")
 
-                            if error_msg:
-                                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ [Error] File Load: {error_msg}")
-                                parts.append({"text": f"\n[SYSTEM ERROR: Could not load file {f_name}. Reason: {error_msg}.]\n"})
-                            
-                            elif data:
-                                if is_text:
-                                    parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
-                                elif mime_type:
-                                    parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
-                                    if self.valves.DEBUG_MODE: self.debug_log.append(f"🚀 [Inject] Added inlineData: {f_name} ({mime_type})")
-                        except Exception as e:
-                                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 [Critical] File loop exception: {str(e)}")
+                for f_obj in files_to_process:
+                    try:
+                        # Normalize object structure (sometimes flattened, sometimes nested in 'file')
+                        f_real = f_obj.get("file", f_obj) 
+                        
+                        f_id = f_real.get("id")
+                        f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
+                        f_owui_path = f_real.get("path")
+                        
+                        # FORCE LOAD: We try to load even if status is 'failed' or path is missing
+
+                        data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name, f_owui_path)
+
+                        if error_msg:
+                            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ [Error] File Load: {error_msg}")
+                            parts.append({"text": f"\n[SYSTEM ERROR: Could not load file {f_name}. Reason: {error_msg}.]\n"})
+                        
+                        elif data:
+                            if is_text:
+                                parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
+                            elif mime_type:
+                                parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
+                                if self.valves.DEBUG_MODE: self.debug_log.append(f"🚀 [Inject] Added inlineData: {f_name} ({mime_type})")
+                    except Exception as e:
+                            if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 [Critical] File loop exception: {str(e)}")
 
                 # 2. PROCESS TEXT CONTENT (RAW PASS-THROUGH)
                 content = m.get("content", "")
