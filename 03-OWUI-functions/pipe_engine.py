@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.33 - Raw Context Pass-Through)
+title: Gemini Pro Unified System (Platinum Agentic V134.36 - Single Source Truth)
 author: ECHO Architecture
-version: 134.33
-description: v134.33: Suppression de la logique de nettoyage/filtrage automatique du RAG. Le script transmet désormais le contenu textuel d'OWUI "tel quel" (après nettoyage technique des base64), laissant à l'utilisateur le contrôle total via le template de prompt RAG d'OWUI. Maintient la gestion robuste des fichiers binaires et des chemins.
+version: 134.36
+description: v134.36: Simplification radicale de la gestion des fichiers. 1) Utilise 'messages' comme SEULE source de vérité pour les fichiers (historique et actuel). 2) Supprime les marqueurs textuels [System...] envoyés au modèle. 3) Ajoute des logs de débogage granulaires (Ciblage > Localisation > Encodage > Injection) pour tracer précisément le parcours du binaire.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.33)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.36)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -272,14 +272,16 @@ class Orchestrator:
 
     def _resolve_local_path(self, provided_path: str, f_id: str, f_name: str) -> Optional[str]:
         """
-        Tente de résoudre le chemin local du fichier, même si le chemin OWUI est différent.
+        Tente de résoudre le chemin local du fichier.
         """
+        self.debug_log.append(f"📂 [Locate] Start search for ID={f_id}, Name={f_name}")
+        
         # 1. Test direct du chemin fourni (si volume monté à l'identique)
         if provided_path and os.path.exists(provided_path):
+            self.debug_log.append(f"✅ [Locate] Direct path OK: {provided_path}")
             return provided_path
 
         # 2. Construction basée sur self.uploads_dir et l'ID
-        # OWUI stocke souvent sous : /app/backend/data/uploads/{id}_{filename}
         candidates = []
         
         # Pattern standard OWUI : ID_Filename
@@ -294,8 +296,10 @@ class Orchestrator:
 
         for p in candidates:
             if os.path.exists(p) and os.path.isfile(p):
+                self.debug_log.append(f"✅ [Locate] Found via glob: {p}")
                 return p
         
+        self.debug_log.append(f"❌ [Locate] Failed. Candidates tried: {candidates}")
         return None
 
     def _get_file_content(self, f_id: str, f_name: str, owui_path: str = None) -> Tuple[Optional[str], Optional[str], bool, str]:
@@ -309,7 +313,7 @@ class Orchestrator:
         real_path = self._resolve_local_path(owui_path, f_id, f_name)
         
         if not real_path:
-            return None, None, False, f"File not found. OWUI path: {owui_path}, Local Search in: {self.uploads_dir}, ID: {f_id}"
+            return None, None, False, f"File not found on disk."
 
         # --- LOGIQUE DE DÉTECTION TYPE MIME (PRIORITAIRE) ---
         mime_type, _ = mimetypes.guess_type(real_path)
@@ -359,8 +363,11 @@ class Orchestrator:
                 elif ext_clean in ['.webp']: mime_type = "image/webp"
                 else: mime_type = "application/octet-stream"
 
+            self.debug_log.append(f"⚙️ [Encode] Reading binary file: {real_path} as {mime_type}")
             with open(real_path, "rb") as f:
-                data = base64.standard_b64encode(f.read()).decode("utf-8")
+                raw_data = f.read()
+                data = base64.standard_b64encode(raw_data).decode("utf-8")
+                self.debug_log.append(f"✅ [Encode] Success: {len(raw_data)} bytes -> Base64")
                 return data, mime_type, False, ""
         except Exception as e: return None, None, False, f"Binary Read Error: {str(e)}"
 
@@ -371,7 +378,7 @@ class Orchestrator:
             return {"inlineData": {"mimeType": mime_type, "data": data}}
         except: return {"text": "[Error parsing data URI]"}
 
-    def prepare_context(self, messages: List[Dict], chat_id: str, extra_files: List = None) -> List[Dict]:
+    def prepare_context(self, messages: List[Dict], chat_id: str) -> List[Dict]:
         contents = []
         for m in messages:
             if m.get("tool_calls"):
@@ -388,10 +395,7 @@ class Orchestrator:
             # DEBUG LOGGING (Capture raw content of the last user message)
             if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
                 debug_dump = json.dumps(m, default=str)
-                # No truncation for deep debug
-                self.debug_log.append(f"🔍 **OWUI RAW MSG**: `{debug_dump}`")
-                if extra_files:
-                    self.debug_log.append(f"📂 **Extra Files**: `{json.dumps(extra_files, default=str)}`")
+                self.debug_log.append(f"🔍 [Target] OWUI RAW MSG: `{debug_dump}`")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
@@ -448,48 +452,38 @@ class Orchestrator:
 
             else: # USER
                 parts = []
-                # Flag to check if we are in "Native Binary Mode" - Kept for potential logic, effectively unused for text cleaning now
-                binary_file_present = False
-
-                # 1. PROCESS FILES (From Message OR Extra Files)
-                # Prioritize 'files' in message, fallback to extra_files for the LAST message
-                files_to_process = []
-                if "files" in m and isinstance(m["files"], list):
-                    files_to_process.extend(m["files"])
                 
-                # If this is the last message and we have extra_files from the pipe argument
-                if i == len(messages) - 1 and extra_files and not files_to_process:
-                    # Some versions of OWUI use a dict, some a list
-                    if isinstance(extra_files, list):
-                        files_to_process.extend(extra_files)
-                    elif isinstance(extra_files, dict):
-                        files_to_process.append(extra_files)
+                # 1. PROCESS FILES (SINGLE SOURCE OF TRUTH: 'files' key in message)
+                # Ignore kwargs/extra_files as per request
+                if "files" in m and isinstance(m["files"], list):
+                    if self.valves.DEBUG_MODE and i == len(messages) - 1:
+                        self.debug_log.append(f"🔍 [Target] Found 'files' in message: {len(m['files'])} file(s)")
 
-                for f_obj in files_to_process:
-                    try:
-                        f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
-                        f_id = f_info.get("id")
-                        f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
-                        f_owui_path = f_info.get("path") # Chemin fourni par OWUI
+                    for f_obj in m["files"]:
+                        try:
+                            # Normalize object structure
+                            f_real = f_obj.get("file", f_obj) 
+                            
+                            f_id = f_real.get("id")
+                            f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
+                            f_owui_path = f_real.get("path")
 
-                        data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name, f_owui_path)
+                            data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name, f_owui_path)
 
-                        if error_msg:
-                            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ File Load Error: {error_msg}")
-                            parts.append({"text": f"\n[SYSTEM ERROR: Could not load file {f_name}. Reason: {error_msg}.]\n"})
-                        
-                        elif data:
-                            if is_text:
-                                # Text Files -> Sent as Text Part
-                                parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
-                            elif mime_type:
-                                # Binary Files (PDF, Video, etc.) -> Sent as InlineData ONLY
-                                parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
-                                binary_file_present = True
-                    except Exception as e:
-                            if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 Critical File Error: {str(e)}")
+                            if error_msg:
+                                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ [Error] File Load: {error_msg}")
+                                parts.append({"text": f"\n[SYSTEM ERROR: Could not load file {f_name}. Reason: {error_msg}.]\n"})
+                            
+                            elif data:
+                                if is_text:
+                                    parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
+                                elif mime_type:
+                                    parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
+                                    if self.valves.DEBUG_MODE: self.debug_log.append(f"🚀 [Inject] Added inlineData: {f_name} ({mime_type})")
+                        except Exception as e:
+                                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 [Critical] File loop exception: {str(e)}")
 
-                # 2. PROCESS TEXT CONTENT
+                # 2. PROCESS TEXT CONTENT (RAW PASS-THROUGH)
                 content = m.get("content", "")
                 if isinstance(content, str):
                     # Always clean base64 images to avoid duplication/noise
@@ -497,10 +491,6 @@ class Orchestrator:
                     content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
                     content = content.strip()
                     
-                    # NO RAG CLEANING (V134.33):
-                    # We pass the full OWUI content (which may include RAG context) directly to Gemini.
-                    # It is up to the user to configure the RAG template in OWUI to avoid duplicates or issues.
-
                     if content:
                         parts.append({"text": content})
 
@@ -670,8 +660,7 @@ class Pipe:
         self.auth = AuthService(self.data_dir)
         self.base_url = GOOGLE_API_BASE_URL
 
-    # Ajout de **kwargs pour capturer les fichiers cachés d'OWUI
-    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
+    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None) -> AsyncGenerator[Union[str, Dict], None]:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None) or (__metadata__.get("session_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
         proc = StreamProcessor(self.valves.DEBUG_MODE, chat_id, orch.sig_manager)
@@ -695,11 +684,7 @@ class Pipe:
 
         tools = orch.convert_owui_tools(body.get("tools"))
         adapter = GeminiAdapter(self.base_url)
-        
-        # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
-        files = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
-        
-        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files)
+        context = orch.prepare_context(body.get("messages", []), chat_id)
 
         # DEBUG: Output raw incoming OWUI message logs if available
         if self.valves.DEBUG_MODE and hasattr(orch, 'debug_log') and orch.debug_log:
