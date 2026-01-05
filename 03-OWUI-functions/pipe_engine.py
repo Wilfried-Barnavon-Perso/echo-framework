@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.11 - Robust Globbing & Error Handling)
+title: Gemini Pro Unified System (Platinum Agentic V134.13 - Globbing & Clean Base64)
 author: ECHO Architecture
-version: 134.11
-description: v134.11: Base v134.08 améliorée. 1. Globbing UUID pour fichiers. 2. Ignore strictement le champ 'document' (extraction texte OWUI). 3. Gestion avancée des erreurs API (JSON dans stream) pour éviter les réponses vides.
+version: 134.13
+description: v134.13: Version ajustée. Utilise le Globbing pour trouver les fichiers, assure une conversion Base64 propre. Suppression du forçage MIME PDF superflu.
 """
 
 # ==============================================================================
@@ -209,7 +209,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (GLOBBING V134.11)
+# SECTION 5 : ORCHESTRATEUR (GLOBBING V134.13)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -293,7 +293,8 @@ class Orchestrator:
                     with open(path, "rb") as f:
                         data = base64.standard_b64encode(f.read()).decode("utf-8")
                         return data, mime_type
-                except: continue
+                except:
+                    continue
         return None, None
 
     def _parse_data_uri(self, data_uri: str) -> Dict:
@@ -386,11 +387,10 @@ class Orchestrator:
                             parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
                             if "text" not in mime_type: disk_file_loaded = True
 
-                # 2. READ CONTENT (Strictly 'content' field only, NO 'document')
+                # 2. READ CONTENT
                 content = m.get("content", "")
                 if isinstance(content, str):
                     if disk_file_loaded:
-                        # Clean markdown images and DataURIs if file loaded from disk
                         content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
                         content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
                         content = content.strip()
@@ -466,17 +466,6 @@ class StreamProcessor:
         tool_index = 0
         buffer = ""
 
-        # ERROR HANDLING JSON (Missing in v134.08)
-        ct = response.headers.get("content-type", "")
-        if "application/json" in ct:
-            err_body = await response.aread()
-            try:
-                err_json = json.loads(err_body)
-                err_msg = err_json.get("error", {}).get("message", str(err_body))
-                yield f"⚠️ **API ERROR**\n`{err_msg}`"
-            except: yield f"⚠️ **API ERROR (Raw)**\n`{err_body.decode(errors='ignore')}`"
-            return
-
         async for chunk in response.aiter_bytes():
             try: buffer += chunk.decode("utf-8", errors="ignore")
             except: continue
@@ -484,17 +473,6 @@ class StreamProcessor:
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 line = line.strip()
-                if not line: continue
-
-                # FALLBACK ERROR IN STREAM
-                if line.startswith("{") and "error" in line:
-                    try:
-                        data = json.loads(line)
-                        if "error" in data:
-                            yield f"⚠️ **Stream Error**\n`{data['error'].get('message', line)}`"
-                            continue
-                    except: pass
-
                 if not line.startswith("data:"): continue
                 try:
                     data = json.loads(line[6:])
