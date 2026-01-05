@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.26 - Surgical Context Cleaning)
+title: Gemini Pro Unified System (Platinum Agentic V134.29 - Prompt Recovery)
 author: ECHO Architecture
-version: 134.26
-description: v134.26: Solution définitive pour la gestion hybride RAG/Natif. Utilise des expressions régulières (Regex) pour supprimer chirurgicalement les blocs XML <context>... </context> et les instructions RAG injectées par OWUI UNIQUEMENT lorsqu'un fichier binaire est détecté. Cela préserve le prompt utilisateur intégral et l'historique, tout en éliminant la redondance qui fait planter les conversations longues.
+version: 134.29
+description: v134.29: Amélioration critique de la récupération du prompt utilisateur. Au lieu de nettoyer le texte RAG par regex, le script détecte la balise de fin </context> injectée par OWUI et récupère tout le texte qui la suit, isolant ainsi le message original de l'utilisateur du 'bruit' contextuel. Inclut également des diagnostics de système de fichiers améliorés.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.26)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.29)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -270,13 +270,12 @@ class Orchestrator:
             sys_prompt_text += f"\n\n[CONTEXT]\nDate: {now.strftime('%A %d %B %Y')}\nTime: {now.strftime('%H:%M')}\nLocation: {loc}\n"
         return {"parts": [{"text": sys_prompt_text}]}
 
-    def _get_file_content(self, f_id: str, f_name: str) -> Tuple[Optional[str], Optional[str], bool]:
+    def _get_file_content(self, f_id: str, f_name: str) -> Tuple[Optional[str], Optional[str], bool, str]:
         """
         Récupère le contenu d'un fichier avec priorité à la détection MIME.
-        Logique validée par test_gemini_api.py.
-        Retourne: (data, mime_type, is_text)
+        Retourne: (data, mime_type, is_text, error_log)
         """
-        if not f_id: return None, None, False
+        if not f_id: return None, None, False, "No File ID"
         candidates = []
 
         # 1. Globbing ID_* (Priority)
@@ -288,6 +287,9 @@ class Orchestrator:
         if f_name:
             clean_name = f_name.replace("/", "_").replace("\\", "_")
             candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
+
+        if not candidates:
+            return None, None, False, f"File not found in {self.uploads_dir} (ID: {f_id})"
 
         for path in candidates:
             if os.path.exists(path) and os.path.isfile(path):
@@ -311,8 +313,8 @@ class Orchestrator:
                         with open(path, "r", encoding="utf-8", errors="ignore") as f:
                             text_content = f.read()
                             if len(text_content) > 500000: text_content = text_content[:500000] + "\n...[TRUNCATED]..."
-                            return text_content, "text/plain", True
-                    except: pass 
+                            return text_content, "text/plain", True, ""
+                    except Exception as e: return None, None, False, f"Text Read Error: {str(e)}"
 
                 # B. Traitement BINAIRES (Images, Audio, Video, PDF)
                 try:
@@ -341,9 +343,10 @@ class Orchestrator:
 
                     with open(path, "rb") as f:
                         data = base64.standard_b64encode(f.read()).decode("utf-8")
-                        return data, mime_type, False
-                except: continue
-        return None, None, False
+                        return data, mime_type, False, ""
+                except Exception as e: return None, None, False, f"Binary Read Error: {str(e)}"
+        
+        return None, None, False, f"File path candidates {candidates} failed to open"
 
     def _parse_data_uri(self, data_uri: str) -> Dict:
         try:
@@ -352,7 +355,7 @@ class Orchestrator:
             return {"inlineData": {"mimeType": mime_type, "data": data}}
         except: return {"text": "[Error parsing data URI]"}
 
-    def prepare_context(self, messages: List[Dict], chat_id: str) -> List[Dict]:
+    def prepare_context(self, messages: List[Dict], chat_id: str, extra_files: List = None) -> List[Dict]:
         contents = []
         for m in messages:
             if m.get("tool_calls"):
@@ -369,9 +372,10 @@ class Orchestrator:
             # DEBUG LOGGING (Capture raw content of the last user message)
             if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
                 debug_dump = json.dumps(m, default=str)
-                # Cap debug log to avoid crashing the browser with huge logs, but enough to see structure
-                if len(debug_dump) > 5000: debug_dump = debug_dump[:5000] + "...[TRUNCATED FOR LOG VIEW]"
+                # No truncation for deep debug
                 self.debug_log.append(f"🔍 **OWUI RAW MSG**: `{debug_dump}`")
+                if extra_files:
+                    self.debug_log.append(f"📂 **Extra Files**: `{json.dumps(extra_files, default=str)}`")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
@@ -431,47 +435,63 @@ class Orchestrator:
                 # Flag to check if we are in "Native Binary Mode"
                 binary_file_present = False
 
-                # 1. PROCESS FILES FROM DISK (STRICT: Binary Only, Ignore Metadata)
+                # 1. PROCESS FILES (From Message OR Extra Files)
+                # Prioritize 'files' in message, fallback to extra_files for the LAST message
+                files_to_process = []
                 if "files" in m and isinstance(m["files"], list):
-                    for f_obj in m["files"]:
-                        try:
-                            f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
-                            f_id = f_info.get("id")
-                            f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
+                    files_to_process.extend(m["files"])
+                
+                # If this is the last message and we have extra_files from the pipe argument
+                if i == len(messages) - 1 and extra_files and not files_to_process:
+                    files_to_process.extend(extra_files)
 
-                            data, mime_type, is_text = self._get_file_content(f_id, f_name)
+                for f_obj in files_to_process:
+                    try:
+                        f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
+                        f_id = f_info.get("id")
+                        f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
 
-                            if data:
-                                if is_text:
-                                    # Text Files -> Sent as Text Part
-                                    parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
-                                elif mime_type:
-                                    # Binary Files (PDF, Video, etc.) -> Sent as InlineData ONLY
-                                    parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
-                                    binary_file_present = True
-                        except: pass
+                        data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name)
 
-                # 2. PROCESS TEXT CONTENT (SURGICAL CLEANING)
+                        if error_msg:
+                            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ File Load Error: {error_msg}")
+                            parts.append({"text": f"\n[SYSTEM ERROR: Could not load file {f_name}. Reason: {error_msg}.]\n"})
+                        
+                        elif data:
+                            if is_text:
+                                # Text Files -> Sent as Text Part
+                                parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
+                            elif mime_type:
+                                # Binary Files (PDF, Video, etc.) -> Sent as InlineData ONLY
+                                parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
+                                binary_file_present = True
+                    except Exception as e:
+                            if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 Critical File Error: {str(e)}")
+
+                # 2. PROCESS TEXT CONTENT (PROMPT RECOVERY STRATEGY)
                 content = m.get("content", "")
                 if isinstance(content, str):
                     # Clean up base64 images (always, to avoid duplicates)
                     content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
                     content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
                     
-                    # --- SURGICAL RAG CLEANING ---
-                    # If we found a binary file, we MUST strip the RAG text injected by OWUI.
-                    # RAG text is contained in <context>...</context> tags.
-                    # We also strip the standard OWUI Task/Guidelines header if present with context.
-                    if binary_file_present:
-                        # 1. Remove the whole <context> block (including newlines)
-                        content = re.sub(r'<context>.*?</context>', '', content, flags=re.DOTALL)
-                        
-                        # 2. Remove typical OWUI RAG Headers (Task/Guidelines/Output)
-                        # These usually appear before the context.
-                        content = re.sub(r'### Task:.*?### Output:', '', content, flags=re.DOTALL)
-                        
-                        # 3. Aggressive trim to clean up empty lines left behind
-                        content = content.strip()
+                    # ROBUST PROMPT RECOVERY:
+                    # Check for OWUI context injection using the unique </context> tag.
+                    # If present, we assume everything BEFORE it is RAG/Noise, and everything AFTER is the user prompt.
+                    if "</context>" in content:
+                        try:
+                            # Split once from the right or just the first occurrence if structure is fixed
+                            # OWUI structure: [Header][<context>...text...</context>][User Prompt]
+                            _, user_prompt_part = content.split("</context>", 1)
+                            
+                            cleaned_prompt = user_prompt_part.strip()
+                            
+                            # If we recovered something, use it. Otherwise, fallback to full content (safe)
+                            if cleaned_prompt:
+                                content = cleaned_prompt
+                                if self.valves.DEBUG_MODE: self.debug_log.append("✂️ Context Cleaned: Successfully extracted user prompt.")
+                        except Exception as e:
+                            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Context Split Error: {str(e)}")
 
                     if content:
                         parts.append({"text": content})
@@ -666,7 +686,11 @@ class Pipe:
 
         tools = orch.convert_owui_tools(body.get("tools"))
         adapter = GeminiAdapter(self.base_url)
-        context = orch.prepare_context(body.get("messages", []), chat_id)
+        
+        # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
+        files = body.get("files") # Parfois présent à la racine
+        
+        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files)
 
         # DEBUG: Output raw incoming OWUI message logs if available
         if self.valves.DEBUG_MODE and hasattr(orch, 'debug_log') and orch.debug_log:
