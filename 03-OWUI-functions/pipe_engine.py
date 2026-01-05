@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.03 - Robust File Recovery)
+title: Gemini Pro Unified System (Platinum Agentic V134.04 - Path Reconstruction)
 author: ECHO Architecture
-version: 134.03
-description: v134.03: Reconstruction forcée des chemins de fichiers pour contourner les erreurs 'Not Supported' d'OWUI (Audio/Vidéo). Maintient l'anti-doublon pour les PDF et le correctif de signature des outils.
+version: 134.04
+description: v134.04: Correction Erreur 400 & Audio/Vidéo. Force la reconstruction du chemin d'accès (ID_Filename) pour garantir la lecture disque. Filtre strictement les doublons dans le contenu.
 """
 
 # ==============================================================================
@@ -206,7 +206,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (RECOVERY V134.03)
+# SECTION 5 : ORCHESTRATEUR (RECOVERY V134.04)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -259,38 +259,34 @@ class Orchestrator:
             sys_prompt_text += f"\n\n[CONTEXT]\nDate: {now.strftime('%A %d %B %Y')}\nTime: {now.strftime('%H:%M')}\nLocation: {loc}\n"
         return {"parts": [{"text": sys_prompt_text}]}
 
-    def _get_file_content(self, f_id: str, f_name: str, provided_path: str = None) -> Tuple[Optional[str], Optional[str]]:
+    def _get_file_content(self, f_id: str, f_name: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        Tente de récupérer le contenu du fichier par tous les moyens.
-        Retourne (base64_data, mime_type).
+        Reconstruit le chemin et lit le contenu.
+        PRIORITÉ: Construction {id}_{filename} dans uploads_dir.
         """
-        candidates = []
-        # 1. Chemin fourni par OWUI (s'il existe)
-        if provided_path:
-            candidates.append(provided_path)
+        if not f_id or not f_name:
+            return None, None
 
-        # 2. Reconstruction standard : {id}_{filename}
-        if f_id and f_name:
-            clean_name = f_name.replace("/", "_").replace("\\", "_")
-            candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
+        clean_name = f_name.replace("/", "_").replace("\\", "_")
+        target_path = os.path.join(self.uploads_dir, f"{f_id}_{clean_name}")
 
-        # 3. Essai de lecture
-        for path in candidates:
-            if os.path.exists(path) and os.path.isfile(path):
-                try:
-                    mime_type, _ = mimetypes.guess_type(path)
-                    if not mime_type:
-                        # Fallback basique
-                        if path.endswith(".mp4"): mime_type = "video/mp4"
-                        elif path.endswith(".mp3"): mime_type = "audio/mp3"
-                        elif path.endswith(".pdf"): mime_type = "application/pdf"
-                        else: mime_type = "application/octet-stream"
+        if os.path.exists(target_path) and os.path.isfile(target_path):
+            try:
+                mime_type, _ = mimetypes.guess_type(target_path)
+                if not mime_type:
+                    if target_path.endswith(".mp4"): mime_type = "video/mp4"
+                    elif target_path.endswith(".mp3"): mime_type = "audio/mp3"
+                    elif target_path.endswith(".pdf"): mime_type = "application/pdf"
+                    elif target_path.endswith(".jpg") or target_path.endswith(".jpeg"): mime_type = "image/jpeg"
+                    elif target_path.endswith(".png"): mime_type = "image/png"
+                    else: mime_type = "application/octet-stream"
 
-                    with open(path, "rb") as f:
-                        data = base64.standard_b64encode(f.read()).decode("utf-8")
-                        return data, mime_type
-                except:
-                    continue
+                with open(target_path, "rb") as f:
+                    data = base64.standard_b64encode(f.read()).decode("utf-8")
+                    return data, mime_type
+            except:
+                pass
+
         return None, None
 
     def _parse_data_uri(self, data_uri: str) -> Dict:
@@ -385,26 +381,26 @@ class Orchestrator:
                 parts = []
                 has_disk_files = False
 
-                # 1. Disk Read Bypass (Robust V134.03)
+                # 1. Disk Read Bypass (Priority & Path Reconstruction V134.04)
                 if "files" in m and isinstance(m["files"], list):
                     for f_obj in m["files"]:
                         f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
 
                         f_id = f_info.get("id")
                         f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
-                        f_path = f_info.get("path")
 
-                        # Reconstruction forcée si path invalide ou manquant
-                        b64_data, mime_type = self._get_file_content(f_id, f_name, f_path)
+                        # Reconstruction stricte via ID + Filename
+                        b64_data, mime_type = self._get_file_content(f_id, f_name)
 
                         if b64_data and mime_type:
                             parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
                             has_disk_files = True
 
-                # 2. Content Processing (Deduplication Logic V134.02 maintained)
+                # 2. Content Processing & Deduplication (V134.04 Strict)
                 content = m.get("content", "")
                 if isinstance(content, str):
                     if content.startswith("data:") and ";base64," in content:
+                        # Si on a déjà lu des fichiers disque, on ignore les dataURI string (souvent des duplicatas ou previews)
                         if not has_disk_files:
                             parts.append(self._parse_data_uri(content))
                     elif content.strip():
@@ -416,10 +412,12 @@ class Orchestrator:
                                 parts.append({"text": item.get("text", "")})
                             elif item.get("type") == "image_url":
                                 url = item.get("image_url", {}).get("url", "")
+                                # Si fichiers disque présents, on ignore STRICTEMENT les image_url pour éviter l'erreur 400
                                 if url.startswith("data:") and not has_disk_files:
                                     parts.append(self._parse_data_uri(url))
-                            elif "image" in item and item["image"].startswith("data:") and not has_disk_files:
-                                parts.append(self._parse_data_uri(item["image"]))
+                            elif "image" in item and item["image"].startswith("data:"):
+                                if not has_disk_files:
+                                    parts.append(self._parse_data_uri(item["image"]))
 
                 if parts:
                     if contents and contents[-1]["role"] == "user":
