@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.29 - Prompt Recovery)
+title: Gemini Pro Unified System (Platinum Agentic V134.33 - Raw Context Pass-Through)
 author: ECHO Architecture
-version: 134.29
-description: v134.29: Amélioration critique de la récupération du prompt utilisateur. Au lieu de nettoyer le texte RAG par regex, le script détecte la balise de fin </context> injectée par OWUI et récupère tout le texte qui la suit, isolant ainsi le message original de l'utilisateur du 'bruit' contextuel. Inclut également des diagnostics de système de fichiers améliorés.
+version: 134.33
+description: v134.33: Suppression de la logique de nettoyage/filtrage automatique du RAG. Le script transmet désormais le contenu textuel d'OWUI "tel quel" (après nettoyage technique des base64), laissant à l'utilisateur le contrôle total via le template de prompt RAG d'OWUI. Maintient la gestion robuste des fichiers binaires et des chemins.
 """
 
 # ==============================================================================
@@ -216,13 +216,13 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.29)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.33)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
         self.valves = valves
         self.location_cache_file = "/app/backend/data/gemini_geo_cache_v2.json"
-        self.uploads_dir = "/app/backend/data/uploads"
+        self.uploads_dir = "/app/backend/data/uploads" # Chemin cible dans le conteneur pipelines
         self.tool_map = {}
         self.sig_manager = SignatureManager(data_dir)
         self.debug_log = []
@@ -270,83 +270,99 @@ class Orchestrator:
             sys_prompt_text += f"\n\n[CONTEXT]\nDate: {now.strftime('%A %d %B %Y')}\nTime: {now.strftime('%H:%M')}\nLocation: {loc}\n"
         return {"parts": [{"text": sys_prompt_text}]}
 
-    def _get_file_content(self, f_id: str, f_name: str) -> Tuple[Optional[str], Optional[str], bool, str]:
+    def _resolve_local_path(self, provided_path: str, f_id: str, f_name: str) -> Optional[str]:
+        """
+        Tente de résoudre le chemin local du fichier, même si le chemin OWUI est différent.
+        """
+        # 1. Test direct du chemin fourni (si volume monté à l'identique)
+        if provided_path and os.path.exists(provided_path):
+            return provided_path
+
+        # 2. Construction basée sur self.uploads_dir et l'ID
+        # OWUI stocke souvent sous : /app/backend/data/uploads/{id}_{filename}
+        candidates = []
+        
+        # Pattern standard OWUI : ID_Filename
+        if f_name:
+            clean_name = f_name.replace("/", "_").replace("\\", "_")
+            candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
+        
+        # Pattern de secours : ID_* (si le nom a changé)
+        search_pattern = os.path.join(self.uploads_dir, f"{f_id}_*")
+        matches = glob.glob(search_pattern)
+        if matches: candidates.extend(matches)
+
+        for p in candidates:
+            if os.path.exists(p) and os.path.isfile(p):
+                return p
+        
+        return None
+
+    def _get_file_content(self, f_id: str, f_name: str, owui_path: str = None) -> Tuple[Optional[str], Optional[str], bool, str]:
         """
         Récupère le contenu d'un fichier avec priorité à la détection MIME.
         Retourne: (data, mime_type, is_text, error_log)
         """
         if not f_id: return None, None, False, "No File ID"
-        candidates = []
-
-        # 1. Globbing ID_* (Priority)
-        search_pattern = os.path.join(self.uploads_dir, f"{f_id}_*")
-        matches = glob.glob(search_pattern)
-        if matches: candidates.append(matches[0])
-
-        # 2. Fallback Exact Name
-        if f_name:
-            clean_name = f_name.replace("/", "_").replace("\\", "_")
-            candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
-
-        if not candidates:
-            return None, None, False, f"File not found in {self.uploads_dir} (ID: {f_id})"
-
-        for path in candidates:
-            if os.path.exists(path) and os.path.isfile(path):
-                # --- LOGIQUE DE DÉTECTION TYPE MIME (PRIORITAIRE) ---
-                mime_type, _ = mimetypes.guess_type(path)
-                ext = os.path.splitext(path)[1].lower()
-
-                # Définition des familles MIME texte
-                is_text_mime = False
-                if mime_type:
-                    if mime_type.startswith("text/"): is_text_mime = True
-                    if mime_type in ["application/json", "application/javascript", "application/xml", "application/x-yaml"]: is_text_mime = True
-                 
-                # Fallback Extension pour le code source (souvent mal typé par l'OS)
-                if not is_text_mime and ext in TEXT_EXTENSIONS:
-                    is_text_mime = True
-
-                # A. Traitement TEXTE (Code, Config, Logs)
-                if is_text_mime:
-                    try:
-                        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                            text_content = f.read()
-                            if len(text_content) > 500000: text_content = text_content[:500000] + "\n...[TRUNCATED]..."
-                            return text_content, "text/plain", True, ""
-                    except Exception as e: return None, None, False, f"Text Read Error: {str(e)}"
-
-                # B. Traitement BINAIRES (Images, Audio, Video, PDF)
-                try:
-                    # Fallback manuel si mimetypes a échoué (Testé et validé)
-                    if not mime_type:
-                        ext_clean = ext.lower()
-                        # VIDEO
-                        if ext_clean in ['.mp4', '.m4v']: mime_type = "video/mp4"
-                        elif ext_clean in ['.webm']: mime_type = "video/webm"
-                        elif ext_clean in ['.mpeg', '.mpg']: mime_type = "video/mpeg"
-                        elif ext_clean in ['.mov']: mime_type = "video/quicktime"
-                        elif ext_clean in ['.avi']: mime_type = "video/x-msvideo"
-                        # AUDIO
-                        elif ext_clean in ['.mp3']: mime_type = "audio/mp3"
-                        elif ext_clean in ['.wav']: mime_type = "audio/wav"
-                        elif ext_clean in ['.ogg']: mime_type = "audio/ogg"
-                        elif ext_clean in ['.flac']: mime_type = "audio/flac"
-                        elif ext_clean in ['.aac']: mime_type = "audio/aac"
-                        elif ext_clean in ['.m4a']: mime_type = "audio/mp4"
-                        # IMAGE / PDF
-                        elif ext_clean in ['.pdf']: mime_type = "application/pdf"
-                        elif ext_clean in ['.jpg', '.jpeg']: mime_type = "image/jpeg"
-                        elif ext_clean in ['.png']: mime_type = "image/png"
-                        elif ext_clean in ['.webp']: mime_type = "image/webp"
-                        else: mime_type = "application/octet-stream"
-
-                    with open(path, "rb") as f:
-                        data = base64.standard_b64encode(f.read()).decode("utf-8")
-                        return data, mime_type, False, ""
-                except Exception as e: return None, None, False, f"Binary Read Error: {str(e)}"
         
-        return None, None, False, f"File path candidates {candidates} failed to open"
+        # Résolution du chemin réel
+        real_path = self._resolve_local_path(owui_path, f_id, f_name)
+        
+        if not real_path:
+            return None, None, False, f"File not found. OWUI path: {owui_path}, Local Search in: {self.uploads_dir}, ID: {f_id}"
+
+        # --- LOGIQUE DE DÉTECTION TYPE MIME (PRIORITAIRE) ---
+        mime_type, _ = mimetypes.guess_type(real_path)
+        ext = os.path.splitext(real_path)[1].lower()
+
+        # Définition des familles MIME texte
+        is_text_mime = False
+        if mime_type:
+            if mime_type.startswith("text/"): is_text_mime = True
+            if mime_type in ["application/json", "application/javascript", "application/xml", "application/x-yaml"]: is_text_mime = True
+            
+        # Fallback Extension pour le code source (souvent mal typé par l'OS)
+        if not is_text_mime and ext in TEXT_EXTENSIONS:
+            is_text_mime = True
+
+        # A. Traitement TEXTE (Code, Config, Logs)
+        if is_text_mime:
+            try:
+                with open(real_path, "r", encoding="utf-8", errors="ignore") as f:
+                    text_content = f.read()
+                    if len(text_content) > 500000: text_content = text_content[:500000] + "\n...[TRUNCATED]..."
+                    return text_content, "text/plain", True, ""
+            except Exception as e: return None, None, False, f"Text Read Error: {str(e)}"
+
+        # B. Traitement BINAIRES (Images, Audio, Video, PDF)
+        try:
+            # Fallback manuel si mimetypes a échoué (Testé et validé)
+            if not mime_type:
+                ext_clean = ext.lower()
+                # VIDEO
+                if ext_clean in ['.mp4', '.m4v']: mime_type = "video/mp4"
+                elif ext_clean in ['.webm']: mime_type = "video/webm"
+                elif ext_clean in ['.mpeg', '.mpg']: mime_type = "video/mpeg"
+                elif ext_clean in ['.mov']: mime_type = "video/quicktime"
+                elif ext_clean in ['.avi']: mime_type = "video/x-msvideo"
+                # AUDIO
+                elif ext_clean in ['.mp3']: mime_type = "audio/mp3"
+                elif ext_clean in ['.wav']: mime_type = "audio/wav"
+                elif ext_clean in ['.ogg']: mime_type = "audio/ogg"
+                elif ext_clean in ['.flac']: mime_type = "audio/flac"
+                elif ext_clean in ['.aac']: mime_type = "audio/aac"
+                elif ext_clean in ['.m4a']: mime_type = "audio/mp4"
+                # IMAGE / PDF
+                elif ext_clean in ['.pdf']: mime_type = "application/pdf"
+                elif ext_clean in ['.jpg', '.jpeg']: mime_type = "image/jpeg"
+                elif ext_clean in ['.png']: mime_type = "image/png"
+                elif ext_clean in ['.webp']: mime_type = "image/webp"
+                else: mime_type = "application/octet-stream"
+
+            with open(real_path, "rb") as f:
+                data = base64.standard_b64encode(f.read()).decode("utf-8")
+                return data, mime_type, False, ""
+        except Exception as e: return None, None, False, f"Binary Read Error: {str(e)}"
 
     def _parse_data_uri(self, data_uri: str) -> Dict:
         try:
@@ -432,7 +448,7 @@ class Orchestrator:
 
             else: # USER
                 parts = []
-                # Flag to check if we are in "Native Binary Mode"
+                # Flag to check if we are in "Native Binary Mode" - Kept for potential logic, effectively unused for text cleaning now
                 binary_file_present = False
 
                 # 1. PROCESS FILES (From Message OR Extra Files)
@@ -443,15 +459,20 @@ class Orchestrator:
                 
                 # If this is the last message and we have extra_files from the pipe argument
                 if i == len(messages) - 1 and extra_files and not files_to_process:
-                    files_to_process.extend(extra_files)
+                    # Some versions of OWUI use a dict, some a list
+                    if isinstance(extra_files, list):
+                        files_to_process.extend(extra_files)
+                    elif isinstance(extra_files, dict):
+                        files_to_process.append(extra_files)
 
                 for f_obj in files_to_process:
                     try:
                         f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
                         f_id = f_info.get("id")
                         f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
+                        f_owui_path = f_info.get("path") # Chemin fourni par OWUI
 
-                        data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name)
+                        data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name, f_owui_path)
 
                         if error_msg:
                             if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ File Load Error: {error_msg}")
@@ -468,30 +489,17 @@ class Orchestrator:
                     except Exception as e:
                             if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 Critical File Error: {str(e)}")
 
-                # 2. PROCESS TEXT CONTENT (PROMPT RECOVERY STRATEGY)
+                # 2. PROCESS TEXT CONTENT
                 content = m.get("content", "")
                 if isinstance(content, str):
-                    # Clean up base64 images (always, to avoid duplicates)
+                    # Always clean base64 images to avoid duplication/noise
                     content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
                     content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
+                    content = content.strip()
                     
-                    # ROBUST PROMPT RECOVERY:
-                    # Check for OWUI context injection using the unique </context> tag.
-                    # If present, we assume everything BEFORE it is RAG/Noise, and everything AFTER is the user prompt.
-                    if "</context>" in content:
-                        try:
-                            # Split once from the right or just the first occurrence if structure is fixed
-                            # OWUI structure: [Header][<context>...text...</context>][User Prompt]
-                            _, user_prompt_part = content.split("</context>", 1)
-                            
-                            cleaned_prompt = user_prompt_part.strip()
-                            
-                            # If we recovered something, use it. Otherwise, fallback to full content (safe)
-                            if cleaned_prompt:
-                                content = cleaned_prompt
-                                if self.valves.DEBUG_MODE: self.debug_log.append("✂️ Context Cleaned: Successfully extracted user prompt.")
-                        except Exception as e:
-                            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Context Split Error: {str(e)}")
+                    # NO RAG CLEANING (V134.33):
+                    # We pass the full OWUI content (which may include RAG context) directly to Gemini.
+                    # It is up to the user to configure the RAG template in OWUI to avoid duplicates or issues.
 
                     if content:
                         parts.append({"text": content})
@@ -662,7 +670,8 @@ class Pipe:
         self.auth = AuthService(self.data_dir)
         self.base_url = GOOGLE_API_BASE_URL
 
-    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None) -> AsyncGenerator[Union[str, Dict], None]:
+    # Ajout de **kwargs pour capturer les fichiers cachés d'OWUI
+    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None) or (__metadata__.get("session_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
         proc = StreamProcessor(self.valves.DEBUG_MODE, chat_id, orch.sig_manager)
@@ -688,7 +697,7 @@ class Pipe:
         adapter = GeminiAdapter(self.base_url)
         
         # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
-        files = body.get("files") # Parfois présent à la racine
+        files = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
         
         context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files)
 
