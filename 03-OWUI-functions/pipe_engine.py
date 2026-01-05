@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.15 - Anti-Silence & Globbing)
+title: Gemini Pro Unified System (Platinum Agentic V134.18 - Multimedia Support)
 author: ECHO Architecture
-version: 134.15
-description: v134.15: Version optimisée. Utilise le Globbing pour les fichiers (sans dépendre du path OWUI). Intègre la protection Anti-Silence pour afficher les raisons de blocage (Safety, Recitation) au lieu d'une réponse vide.
+version: 134.18
+description: v134.18: Intégration de la logique validée par test pour le support Audio/Vidéo. Ajout d'une détection exhaustive des types MIME pour garantir l'envoi correct des fichiers multimédias (MP4, MP3, WAV, MOV, etc.) vers l'endpoint cloudcode-pa.
 """
 
 # ==============================================================================
@@ -42,6 +42,13 @@ GOOGLE_SCOPES = [
 
 # --- CONSTANTES MAGIQUES ---
 MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator"
+
+# Fallback extensions si MIME type inconnu (pour code source)
+TEXT_EXTENSIONS = {
+    '.py', '.js', '.html', '.css', '.java', '.c', '.cpp', '.h', '.hpp', '.rs', '.go', '.ts', 
+    '.json', '.yaml', '.yml', '.toml', '.xml', '.md', '.txt', '.sh', '.bat', '.ps1', 
+    '.dockerfile', 'dockerfile', '.env', '.gitignore', '.editorconfig', '.conf', '.ini'
+}
 
 # ==============================================================================
 # SECTION 1 : DÉPENDANCES OPTIONNELLES
@@ -209,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (GLOBBING V134.15)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.18)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -262,8 +269,13 @@ class Orchestrator:
             sys_prompt_text += f"\n\n[CONTEXT]\nDate: {now.strftime('%A %d %B %Y')}\nTime: {now.strftime('%H:%M')}\nLocation: {loc}\n"
         return {"parts": [{"text": sys_prompt_text}]}
 
-    def _get_file_content(self, f_id: str, f_name: str) -> Tuple[Optional[str], Optional[str]]:
-        if not f_id: return None, None
+    def _get_file_content(self, f_id: str, f_name: str) -> Tuple[Optional[str], Optional[str], bool]:
+        """
+        Récupère le contenu d'un fichier avec priorité à la détection MIME.
+        Logique validée par test_gemini_api.py.
+        Retourne: (data, mime_type, is_text)
+        """
+        if not f_id: return None, None, False
         candidates = []
 
         # 1. Globbing ID_* (Priority)
@@ -278,23 +290,59 @@ class Orchestrator:
 
         for path in candidates:
             if os.path.exists(path) and os.path.isfile(path):
+                # --- LOGIQUE DE DÉTECTION TYPE MIME (PRIORITAIRE) ---
+                mime_type, _ = mimetypes.guess_type(path)
+                ext = os.path.splitext(path)[1].lower()
+
+                # Définition des familles MIME texte
+                is_text_mime = False
+                if mime_type:
+                    if mime_type.startswith("text/"): is_text_mime = True
+                    if mime_type in ["application/json", "application/javascript", "application/xml", "application/x-yaml"]: is_text_mime = True
+                
+                # Fallback Extension pour le code source (souvent mal typé par l'OS)
+                if not is_text_mime and ext in TEXT_EXTENSIONS:
+                    is_text_mime = True
+
+                # A. Traitement TEXTE (Code, Config, Logs)
+                if is_text_mime:
+                    try:
+                        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                            text_content = f.read()
+                            if len(text_content) > 500000: text_content = text_content[:500000] + "\n...[TRUNCATED]..."
+                            return text_content, "text/plain", True
+                    except: pass 
+
+                # B. Traitement BINAIRES (Images, Audio, Video, PDF)
                 try:
-                    mime_type, _ = mimetypes.guess_type(path)
+                    # Fallback manuel si mimetypes a échoué (Testé et validé)
                     if not mime_type:
-                        ext = os.path.splitext(path)[1].lower()
-                        if ext == ".mp4": mime_type = "video/mp4"
-                        elif ext == ".mp3": mime_type = "audio/mp3"
-                        elif ext == ".pdf": mime_type = "application/pdf"
-                        elif ext in [".jpg", ".jpeg"]: mime_type = "image/jpeg"
-                        elif ext == ".png": mime_type = "image/png"
-                        elif ext == ".webp": mime_type = "image/webp"
+                        ext_clean = ext.lower()
+                        # VIDEO
+                        if ext_clean in ['.mp4', '.m4v']: mime_type = "video/mp4"
+                        elif ext_clean in ['.webm']: mime_type = "video/webm"
+                        elif ext_clean in ['.mpeg', '.mpg']: mime_type = "video/mpeg"
+                        elif ext_clean in ['.mov']: mime_type = "video/quicktime"
+                        elif ext_clean in ['.avi']: mime_type = "video/x-msvideo"
+                        # AUDIO
+                        elif ext_clean in ['.mp3']: mime_type = "audio/mp3"
+                        elif ext_clean in ['.wav']: mime_type = "audio/wav"
+                        elif ext_clean in ['.ogg']: mime_type = "audio/ogg"
+                        elif ext_clean in ['.flac']: mime_type = "audio/flac"
+                        elif ext_clean in ['.aac']: mime_type = "audio/aac"
+                        elif ext_clean in ['.m4a']: mime_type = "audio/mp4"
+                        # IMAGE / PDF
+                        elif ext_clean in ['.pdf']: mime_type = "application/pdf"
+                        elif ext_clean in ['.jpg', '.jpeg']: mime_type = "image/jpeg"
+                        elif ext_clean in ['.png']: mime_type = "image/png"
+                        elif ext_clean in ['.webp']: mime_type = "image/webp"
                         else: mime_type = "application/octet-stream"
 
                     with open(path, "rb") as f:
                         data = base64.standard_b64encode(f.read()).decode("utf-8")
-                        return data, mime_type
+                        return data, mime_type, False
                 except: continue
-        return None, None
+        return None, None, False
 
     def _parse_data_uri(self, data_uri: str) -> Dict:
         try:
@@ -381,10 +429,17 @@ class Orchestrator:
                         f_id = f_info.get("id")
                         f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
 
-                        b64_data, mime_type = self._get_file_content(f_id, f_name)
-                        if b64_data and mime_type:
-                            parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
-                            if "text" not in mime_type: disk_file_loaded = True
+                        data, mime_type, is_text = self._get_file_content(f_id, f_name)
+                        
+                        if data:
+                            if is_text:
+                                parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
+                                disk_file_loaded = True
+                            elif mime_type:
+                                # Injection Multimédia (Image/Video/Audio)
+                                parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
+                                # Les images/vidéos ne comptent pas comme "texte chargé"
+                                if "image" not in mime_type and "video" not in mime_type: disk_file_loaded = True
 
                 # 2. READ CONTENT
                 content = m.get("content", "")
@@ -498,10 +553,8 @@ class StreamProcessor:
                     if self.debug: yield f"\n`[SSE] {json.dumps(data, ensure_ascii=False)}`\n"
 
                     cand = data.get("response", {}).get("candidates", [])
-                    # ANTI-SILENCE FIX v134.15
                     if cand:
                         first_cand = cand[0]
-                        # Check content
                         if "content" in first_cand:
                             parts = first_cand["content"].get("parts", [])
                             for part in parts:
@@ -536,7 +589,6 @@ class StreamProcessor:
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     if txt: yield txt
                         else:
-                             # Content is empty, check finishReason
                              reason = first_cand.get("finishReason", "UNKNOWN")
                              if reason != "STOP":
                                  yield f"⚠️ **Stop Reason: {reason}**\n"
