@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.04 - Path Reconstruction)
+title: Gemini Pro Unified System (Platinum Agentic V134.05 - Mime/Collision Fix)
 author: ECHO Architecture
-version: 134.04
-description: v134.04: Correction Erreur 400 & Audio/Vidéo. Force la reconstruction du chemin d'accès (ID_Filename) pour garantir la lecture disque. Filtre strictement les doublons dans le contenu.
+version: 134.05
+description: v134.05: Correction critique Erreur 400. Empêche l'envoi du DataURI en tant que texte brut lors de la collision avec la lecture disque. Renforce la détection MIME.
 """
 
 # ==============================================================================
@@ -206,7 +206,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (RECOVERY V134.04)
+# SECTION 5 : ORCHESTRATEUR (RECOVERY V134.05)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -261,8 +261,7 @@ class Orchestrator:
 
     def _get_file_content(self, f_id: str, f_name: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        Reconstruit le chemin et lit le contenu.
-        PRIORITÉ: Construction {id}_{filename} dans uploads_dir.
+        Reconstruit le chemin {id}_{filename} et lit le contenu avec détection MIME.
         """
         if not f_id or not f_name:
             return None, None
@@ -274,11 +273,14 @@ class Orchestrator:
             try:
                 mime_type, _ = mimetypes.guess_type(target_path)
                 if not mime_type:
-                    if target_path.endswith(".mp4"): mime_type = "video/mp4"
-                    elif target_path.endswith(".mp3"): mime_type = "audio/mp3"
-                    elif target_path.endswith(".pdf"): mime_type = "application/pdf"
-                    elif target_path.endswith(".jpg") or target_path.endswith(".jpeg"): mime_type = "image/jpeg"
-                    elif target_path.endswith(".png"): mime_type = "image/png"
+                    # Fallback MIME types
+                    ext = os.path.splitext(target_path)[1].lower()
+                    if ext == ".mp4": mime_type = "video/mp4"
+                    elif ext == ".mp3": mime_type = "audio/mp3"
+                    elif ext == ".pdf": mime_type = "application/pdf"
+                    elif ext in [".jpg", ".jpeg"]: mime_type = "image/jpeg"
+                    elif ext == ".png": mime_type = "image/png"
+                    elif ext == ".webp": mime_type = "image/webp"
                     else: mime_type = "application/octet-stream"
 
                 with open(target_path, "rb") as f:
@@ -365,7 +367,6 @@ class Orchestrator:
                         is_last_model_msg = False
                         break
 
-                # SIG FIX V134.01 maintained
                 if tool_calls_in_msg or is_last_model_msg:
                     sig_to_use = found_in_band_sig
                     if not sig_to_use and chat_id: sig_to_use = self.sig_manager.get_signature(chat_id)
@@ -381,7 +382,7 @@ class Orchestrator:
                 parts = []
                 has_disk_files = False
 
-                # 1. Disk Read Bypass (Priority & Path Reconstruction V134.04)
+                # 1. Disk Read Bypass (Priority)
                 if "files" in m and isinstance(m["files"], list):
                     for f_obj in m["files"]:
                         f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
@@ -389,22 +390,24 @@ class Orchestrator:
                         f_id = f_info.get("id")
                         f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
 
-                        # Reconstruction stricte via ID + Filename
                         b64_data, mime_type = self._get_file_content(f_id, f_name)
 
                         if b64_data and mime_type:
                             parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
                             has_disk_files = True
 
-                # 2. Content Processing & Deduplication (V134.04 Strict)
+                # 2. Content Processing & Collision Avoidance
                 content = m.get("content", "")
                 if isinstance(content, str):
                     if content.startswith("data:") and ";base64," in content:
-                        # Si on a déjà lu des fichiers disque, on ignore les dataURI string (souvent des duplicatas ou previews)
+                        # DATA URI DETECTED
                         if not has_disk_files:
                             parts.append(self._parse_data_uri(content))
+                        # ELSE: DROP IT (Collision with disk file)
                     elif content.strip():
+                        # TEXT CONTENT
                         parts.append({"text": content})
+
                 elif isinstance(content, list):
                     for item in content:
                         if isinstance(item, dict):
@@ -412,9 +415,10 @@ class Orchestrator:
                                 parts.append({"text": item.get("text", "")})
                             elif item.get("type") == "image_url":
                                 url = item.get("image_url", {}).get("url", "")
-                                # Si fichiers disque présents, on ignore STRICTEMENT les image_url pour éviter l'erreur 400
-                                if url.startswith("data:") and not has_disk_files:
-                                    parts.append(self._parse_data_uri(url))
+                                if url.startswith("data:"):
+                                    if not has_disk_files:
+                                        parts.append(self._parse_data_uri(url))
+                                    # ELSE: DROP IT
                             elif "image" in item and item["image"].startswith("data:"):
                                 if not has_disk_files:
                                     parts.append(self._parse_data_uri(item["image"]))
@@ -592,12 +596,12 @@ class Pipe:
         proc = StreamProcessor(self.valves.DEBUG_MODE, chat_id, orch.sig_manager)
 
         if self.valves.DEBUG_MODE:
-            yield f"🐞 **DEBUG**\nChatID: `{chat_id}`\nMeta: `{str(__metadata__)}`\n"
+            yield f"🐞 **DEBUG**\nChatID: \`{chat_id}\`\nMeta: \`{str(__metadata__)}\`\n"
 
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = self.auth.exchange_code(ac)
-            yield f"✅ **{msg}**" if success else f"❌ **Échec** : `{msg}`"
+            yield f"✅ **{msg}**" if success else f"❌ **Échec** : \`{msg}\`"
             return
 
         if self.valves.FORCE_RESET_AUTH:
@@ -633,7 +637,7 @@ class Pipe:
         req["headers"]["Authorization"] = f"Bearer {creds.token}"
 
         if self.valves.DEBUG_MODE:
-            yield f"🐞 **API REQ**\nBody snippet: `{json.dumps(req['json'])[:500]}...`\n"
+            yield f"🐞 **API REQ**\nBody snippet: \`{json.dumps(req['json'])[:500]}...\`\n"
 
         try:
             async with httpx.AsyncClient(timeout=300) as client:
@@ -642,10 +646,10 @@ class Pipe:
                 ) as r:
                     if r.status_code != 200:
                         err = await r.aread()
-                        yield f"⚠️ **API ERROR {r.status_code}**\n`{err.decode(errors='ignore')}`"
+                        yield f"⚠️ **API ERROR {r.status_code}**\n\`{err.decode(errors='ignore')}\`"
                         return
 
                     async for token in proc.process(r):
                         yield token
         except Exception as e:
-            yield f"🔥 **CRASH** : `{str(e)}`"
+            yield f"🔥 **CRASH** : \`{str(e)}\`"
