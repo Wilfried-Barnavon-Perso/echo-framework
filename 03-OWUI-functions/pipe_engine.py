@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.43 - File System Audit)
+title: Gemini Pro Unified System (Platinum Agentic V134.44 - Index Logic Fix)
 author: ECHO Architecture
-version: 134.43
-description: v134.43: Version d'audit système. Ajoute un diagnostic 'ls' du dossier /app/backend/data/uploads directement dans la réponse du modèle pour prouver l'accès aux fichiers. Simplifie la logique de récupération de fichier en forçant la recherche dans ce dossier spécifique si le chemin fourni par OWUI échoue.
+version: 134.44
+description: v134.44: Correction de la logique d'injection des fichiers. Remplace la vérification fragile de l'index de boucle par un ciblage explicite du dernier message utilisateur pour fusionner les fichiers du 'body' (extra_files). Cela garantit que les fichiers sont bien attachés au prompt, même si des messages système ou d'authentification décalent les index. Maintient les diagnostics complets (Input Dump, Disk Probe).
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.43)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.44)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -374,21 +374,26 @@ class Orchestrator:
                     if "id" in tc and "function" in tc:
                         self.tool_map[tc["id"]] = tc["function"].get("name")
 
+        # 1. Identify the index of the Last User Message (for file injection)
+        last_user_idx = -1
+        for idx in range(len(messages) - 1, -1, -1):
+            if messages[idx]["role"] == "user":
+                last_user_idx = idx
+                break
+        
+        if self.valves.DEBUG_MODE:
+             self.debug_log.append(f"🎯 Last User Message Index: {last_user_idx}")
+             # Inject Disk Probe info into logs once
+             probe_info = self._probe_disk()
+             self.debug_log.append(f"🔍 **DISK PROBE**: `{probe_info}`")
+             if extra_files:
+                 self.debug_log.append(f"📂 **Extra Files (KWARGS)**: `{json.dumps(extra_files, default=str)}`")
+
         i = 0
         while i < len(messages):
             m = messages[i]
             role = m["role"]
             if role == "system": i+=1; continue
-
-            if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
-                # Inject Disk Probe info into logs
-                probe_info = self._probe_disk()
-                self.debug_log.append(f"🔍 **DISK PROBE**: `{probe_info}`")
-                
-                debug_dump = json.dumps(m, default=str)
-                self.debug_log.append(f"🔍 **OWUI RAW MSG**: `{debug_dump}`")
-                if extra_files:
-                    self.debug_log.append(f"📂 **Extra Files**: `{json.dumps(extra_files, default=str)}`")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
@@ -449,6 +454,7 @@ class Orchestrator:
                 files_to_process = []
                 seen_ids = set()
 
+                # A. Files from the message history object
                 if "files" in m and isinstance(m["files"], list):
                     for f in m["files"]:
                         f_real = f.get("file", f)
@@ -457,7 +463,8 @@ class Orchestrator:
                             files_to_process.append(f)
                             seen_ids.add(fid)
                 
-                if i == len(messages) - 1 and extra_files:
+                # B. Files from pipe arguments (ONLY for the LAST USER MESSAGE)
+                if i == last_user_idx and extra_files:
                     extras = extra_files if isinstance(extra_files, list) else [extra_files]
                     for f in extras:
                         f_real = f.get("file", f)
@@ -484,7 +491,7 @@ class Orchestrator:
                                 parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
                             elif mime_type:
                                 parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
-                                if self.valves.DEBUG_MODE: self.debug_log.append(f"🚀 INJECTED: {f_name} ({mime_type})")
+                                if self.valves.DEBUG_MODE: self.debug_log.append(f"✅ Files injected into Last User Message: {f_name} ({mime_type})")
                     except Exception as e:
                             if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 Loop Error: {str(e)}")
 
@@ -689,7 +696,7 @@ class Pipe:
         adapter = GeminiAdapter(self.base_url)
         
         # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
-        files = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
+        files_from_args = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
         
         # DEBUG: Dump the entire 'body' keys and 'kwargs' keys to know WHERE files are hiding
         if self.valves.DEBUG_MODE:
@@ -705,7 +712,7 @@ class Pipe:
              
              yield f"🔍 **INPUT DUMP**:\n- Body Keys: `{body_keys}`\n- Kwargs Keys: `{kwargs_keys}`\n- Body Files: `{body_files_dump}`\n- Kwargs Files: `{kwargs_files_dump}`\n"
         
-        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files)
+        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files_from_args)
 
         # DEBUG: Output raw incoming OWUI message logs if available
         if self.valves.DEBUG_MODE and hasattr(orch, 'debug_log') and orch.debug_log:
