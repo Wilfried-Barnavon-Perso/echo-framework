@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.25 - Full Debug No Truncation)
+title: Gemini Pro Unified System (Platinum Agentic V134.26 - Surgical Context Cleaning)
 author: ECHO Architecture
-version: 134.25
-description: v134.25: Version de diagnostic intégral. Suppression de toute limite de taille (troncature) dans les logs de débogage pour permettre une inspection complète des messages bruts envoyés par OWUI et de la structure JSON envoyée à Gemini.
+version: 134.26
+description: v134.26: Solution définitive pour la gestion hybride RAG/Natif. Utilise des expressions régulières (Regex) pour supprimer chirurgicalement les blocs XML <context>... </context> et les instructions RAG injectées par OWUI UNIQUEMENT lorsqu'un fichier binaire est détecté. Cela préserve le prompt utilisateur intégral et l'historique, tout en éliminant la redondance qui fait planter les conversations longues.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.25)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.26)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -368,9 +368,9 @@ class Orchestrator:
 
             # DEBUG LOGGING (Capture raw content of the last user message)
             if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
-                # We log the full raw message to see what OWUI sends
                 debug_dump = json.dumps(m, default=str)
-                # No truncation requested
+                # Cap debug log to avoid crashing the browser with huge logs, but enough to see structure
+                if len(debug_dump) > 5000: debug_dump = debug_dump[:5000] + "...[TRUNCATED FOR LOG VIEW]"
                 self.debug_log.append(f"🔍 **OWUI RAW MSG**: `{debug_dump}`")
 
             raw_content = m.get("content", "")
@@ -428,12 +428,13 @@ class Orchestrator:
 
             else: # USER
                 parts = []
-                
+                # Flag to check if we are in "Native Binary Mode"
+                binary_file_present = False
+
                 # 1. PROCESS FILES FROM DISK (STRICT: Binary Only, Ignore Metadata)
                 if "files" in m and isinstance(m["files"], list):
                     for f_obj in m["files"]:
                         try:
-                            # Extraction stricte de l'ID pour localiser le fichier
                             f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
                             f_id = f_info.get("id")
                             f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
@@ -446,19 +447,32 @@ class Orchestrator:
                                     parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
                                 elif mime_type:
                                     # Binary Files (PDF, Video, etc.) -> Sent as InlineData ONLY
-                                    # We DO NOT extract text metadata here.
                                     parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
+                                    binary_file_present = True
                         except: pass
 
-                # 2. PROCESS TEXT CONTENT (STRICT: User Prompt Only)
+                # 2. PROCESS TEXT CONTENT (SURGICAL CLEANING)
                 content = m.get("content", "")
                 if isinstance(content, str):
-                    # Clean up any base64 images that might be in the text prompt
+                    # Clean up base64 images (always, to avoid duplicates)
                     content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
                     content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
-                    content = content.strip()
                     
-                    # Send the prompt as is (No length truncation, rely on user to not send mixed junk)
+                    # --- SURGICAL RAG CLEANING ---
+                    # If we found a binary file, we MUST strip the RAG text injected by OWUI.
+                    # RAG text is contained in <context>...</context> tags.
+                    # We also strip the standard OWUI Task/Guidelines header if present with context.
+                    if binary_file_present:
+                        # 1. Remove the whole <context> block (including newlines)
+                        content = re.sub(r'<context>.*?</context>', '', content, flags=re.DOTALL)
+                        
+                        # 2. Remove typical OWUI RAG Headers (Task/Guidelines/Output)
+                        # These usually appear before the context.
+                        content = re.sub(r'### Task:.*?### Output:', '', content, flags=re.DOTALL)
+                        
+                        # 3. Aggressive trim to clean up empty lines left behind
+                        content = content.strip()
+
                     if content:
                         parts.append({"text": content})
 
@@ -669,7 +683,7 @@ class Pipe:
                 for part in content.get("parts", []):
                     if "inlineData" in part and "data" in part["inlineData"]:
                         part["inlineData"]["data"] = f"[...base64 data of type {part['inlineData'].get('mimeType', 'unknown')}...]"
-            yield f"🐞 **API REQ**\n`{json.dumps(log_req)}`\n"
+            yield f"🐞 **API REQ**\n`{json.dumps(log_req)[:1000]}...`\n"
 
 
         try:
