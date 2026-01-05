@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.15 - Anti-Silence & Globbing)
+title: Gemini Pro Unified System (Platinum Agentic V134.16 - Anti-Silence Watchdog)
 author: ECHO Architecture
-version: 134.15
-description: v134.15: Version optimisée. Utilise le Globbing pour les fichiers (sans dépendre du path OWUI). Intègre la protection Anti-Silence pour afficher les raisons de blocage (Safety, Recitation) au lieu d'une réponse vide.
+version: 134.16
+description: v134.16: Ajout d'un Watchdog qui garantit une réponse même en cas de silence API. Gestion explicite des blocages 'promptFeedback' (Safety) qui renvoyaient des candidats vides. Maintien du Globbing pour les fichiers.
 """
 
 # ==============================================================================
@@ -209,7 +209,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (GLOBBING V134.15)
+# SECTION 5 : ORCHESTRATEUR (GLOBBING V134.16)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -271,7 +271,7 @@ class Orchestrator:
         matches = glob.glob(search_pattern)
         if matches: candidates.append(matches[0])
 
-        # 2. Fallback Exact Name
+        # 2. Fallback Exact Name (Safety Net)
         if f_name:
             clean_name = f_name.replace("/", "_").replace("\\", "_")
             candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
@@ -380,8 +380,9 @@ class Orchestrator:
                         f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
                         f_id = f_info.get("id")
                         f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
-
+                        
                         b64_data, mime_type = self._get_file_content(f_id, f_name)
+                        
                         if b64_data and mime_type:
                             parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
                             if "text" not in mime_type: disk_file_loaded = True
@@ -497,49 +498,59 @@ class StreamProcessor:
                     data = json.loads(line[6:])
                     if self.debug: yield f"\n`[SSE] {json.dumps(data, ensure_ascii=False)}`\n"
 
-                    cand = data.get("response", {}).get("candidates", [])
-                    # ANTI-SILENCE FIX v134.15
-                    if cand:
-                        first_cand = cand[0]
-                        # Check content
-                        if "content" in first_cand:
-                            parts = first_cand["content"].get("parts", [])
-                            for part in parts:
-                                txt = part.get("text", "")
-                                is_think = part.get("thought", False)
-                                func_call = part.get("functionCall")
+                    root_resp = data.get("response", {})
+                    cand = root_resp.get("candidates", [])
 
-                                if "thoughtSignature" in part:
-                                    self.current_sig = part["thoughtSignature"]
-                                    if self.chat_id and self.sig_manager:
-                                        self.sig_manager.save_signature(self.chat_id, self.current_sig)
+                    # ANTI-SILENCE WATCHDOG v134.16
+                    if not cand:
+                        # Check for Prompt Level Block
+                        feedback = root_resp.get("promptFeedback", {})
+                        if feedback:
+                            block_reason = feedback.get("blockReason", "UNKNOWN")
+                            yield f"⛔ **Prompt Blocked**: {block_reason}\n"
+                        continue
 
-                                if is_think:
-                                    if not in_think: yield "<think>\n"; in_think = True
-                                    yield txt
-                                elif func_call:
-                                    if in_think: yield "\n</think>\n"; in_think = False
-                                    args = func_call.get("args", {})
-                                    if self.current_sig: args["_thought_signature"] = self.current_sig
-                                    yield {
-                                        "choices": [{
-                                            "index": 0, "delta": {
-                                                "tool_calls": [{
-                                                    "index": tool_index, "id": f"call_{secrets.token_hex(8)}",
-                                                    "type": "function", "function": {"name": func_call["name"], "arguments": json.dumps(args)}
-                                                }]
-                                            }, "finish_reason": "tool_calls"
-                                        }]
-                                    }
-                                    tool_index += 1
-                                else:
-                                    if in_think: yield "\n</think>\n"; in_think = False
-                                    if txt: yield txt
-                        else:
-                             # Content is empty, check finishReason
-                             reason = first_cand.get("finishReason", "UNKNOWN")
-                             if reason != "STOP":
-                                 yield f"⚠️ **Stop Reason: {reason}**\n"
+                    # If cand exists...
+                    first_cand = cand[0]
+                    # Check content
+                    if "content" in first_cand:
+                        parts = first_cand["content"].get("parts", [])
+                        for part in parts:
+                            txt = part.get("text", "")
+                            is_think = part.get("thought", False)
+                            func_call = part.get("functionCall")
+
+                            if "thoughtSignature" in part:
+                                self.current_sig = part["thoughtSignature"]
+                                if self.chat_id and self.sig_manager:
+                                    self.sig_manager.save_signature(self.chat_id, self.current_sig)
+
+                            if is_think:
+                                if not in_think: yield "<think>\n"; in_think = True
+                                yield txt
+                            elif func_call:
+                                if in_think: yield "\n</think>\n"; in_think = False
+                                args = func_call.get("args", {})
+                                if self.current_sig: args["_thought_signature"] = self.current_sig
+                                yield {
+                                    "choices": [{
+                                        "index": 0, "delta": {
+                                            "tool_calls": [{
+                                                "index": tool_index, "id": f"call_{secrets.token_hex(8)}",
+                                                "type": "function", "function": {"name": func_call["name"], "arguments": json.dumps(args)}
+                                            }]
+                                        }, "finish_reason": "tool_calls"
+                                    }]
+                                }
+                                tool_index += 1
+                            else:
+                                if in_think: yield "\n</think>\n"; in_think = False
+                                if txt: yield txt
+                    else:
+                         # Content is empty, check finishReason
+                         reason = first_cand.get("finishReason", "UNKNOWN")
+                         if reason != "STOP":
+                             yield f"⚠️ **Stop Reason: {reason}**\n"
                                  
                 except: pass
         if in_think: yield "\n</think>\n"
@@ -599,6 +610,7 @@ class Pipe:
 
         if self.valves.DEBUG_MODE: yield f"🐞 **API REQ**\n`{json.dumps(req['json'])[:500]}...`\n"
 
+        has_yielded = False
         try:
             async with httpx.AsyncClient(timeout=300) as client:
                 async with client.stream("POST", req["url"], json=req["json"], headers=req["headers"]) as r:
@@ -606,5 +618,10 @@ class Pipe:
                         err = await r.aread()
                         yield f"⚠️ **API ERROR {r.status_code}**\n`{err.decode(errors='ignore')}`"
                         return
-                    async for token in proc.process(r): yield token
+                    async for token in proc.process(r):
+                        yield token
+                        has_yielded = True
         except Exception as e: yield f"🔥 **CRASH** : `{str(e)}`"
+        
+        if not has_yielded:
+            yield "⚠️ **Error**: No response received from Gemini API. (Prompt blocked or Filtered)"
