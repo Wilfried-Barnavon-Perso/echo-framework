@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.41 - Total Input Dump)
+title: Gemini Pro Unified System (Platinum Agentic V134.42 - Critical Signature Fix)
 author: ECHO Architecture
-version: 134.41
-description: v134.41: Version de diagnostic radical. Le script loggue la structure complète des objets 'body' et 'kwargs' reçus par la fonction pipe() pour révéler l'emplacement exact des métadonnées de fichiers (cachées dans des clés inattendues ou des structures imbriquées). Maintient la logique de chargement 'Force Load' et le 'Raw Context Pass-Through'.
+version: 134.42
+description: v134.42: Correction du crash immédiat 'unexpected keyword argument'. Mise à jour de la signature de la méthode Orchestrator.prepare_context pour accepter l'argument 'extra_files' passé par le Pipe. Maintient le dump complet des entrées pour le diagnostic final.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.41)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.42)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -356,7 +356,8 @@ class Orchestrator:
             return {"inlineData": {"mimeType": mime_type, "data": data}}
         except: return {"text": "[Error parsing data URI]"}
 
-    def prepare_context(self, messages: List[Dict], chat_id: str, extra_files_from_args: Any = None) -> List[Dict]:
+    # CORRECTION CRITIQUE V134.42: Ajout de 'extra_files' à la signature
+    def prepare_context(self, messages: List[Dict], chat_id: str, extra_files: Any = None) -> List[Dict]:
         contents = []
         for m in messages:
             if m.get("tool_calls"):
@@ -370,16 +371,13 @@ class Orchestrator:
             role = m["role"]
             if role == "system": i+=1; continue
 
-            # --- TOTAL DUMP DIAGNOSTIC ---
+            # DEBUG LOGGING (Capture raw content of the last user message)
             if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
-                # Dump 'files' keys found in this message
-                if "files" in m:
-                    self.debug_log.append(f"📦 MSG['files']: {json.dumps(m['files'], default=str)[:1000]}")
-                else:
-                    self.debug_log.append("📦 MSG['files']: MISSING")
-                
-                # Dump extra_files argument
-                self.debug_log.append(f"📦 KWARGS['__files__']: {json.dumps(extra_files_from_args, default=str)[:1000]}")
+                debug_dump = json.dumps(m, default=str)
+                # No truncation for deep debug
+                self.debug_log.append(f"🔍 **OWUI RAW MSG**: `{debug_dump}`")
+                if extra_files:
+                    self.debug_log.append(f"📂 **Extra Files (KWARGS)**: `{json.dumps(extra_files, default=str)}`")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
@@ -453,9 +451,9 @@ class Orchestrator:
                             files_to_process.append(f)
                             seen_ids.add(fid)
 
-                # B. From kwargs '__files__' (Only for last message)
-                if i == len(messages) - 1 and extra_files_from_args:
-                    extras = extra_files_from_args if isinstance(extra_files_from_args, list) else [extra_files_from_args]
+                # B. From kwargs 'extra_files' (Only for last message)
+                if i == len(messages) - 1 and extra_files:
+                    extras = extra_files if isinstance(extra_files, list) else [extra_files]
                     for f in extras:
                         f_real = f.get("file", f)
                         fid = f_real.get("id")
@@ -691,12 +689,15 @@ class Pipe:
         
         # DEBUG: Dump the entire 'body' keys and 'kwargs' keys to know WHERE files are hiding
         if self.valves.DEBUG_MODE:
-             body_keys = list(body.keys())
-             kwargs_keys = list(kwargs.keys())
+             # Protect against missing keys
+             body_keys = list(body.keys()) if body else []
+             kwargs_keys = list(kwargs.keys()) if kwargs else []
+             
              # Dump raw body.files if present
-             body_files_dump = json.dumps(body.get("files"), default=str) if "files" in body else "None"
+             body_files_dump = json.dumps(body.get("files"), default=str) if body and "files" in body else "None"
+             
              # Dump kwargs.__files__ if present
-             kwargs_files_dump = json.dumps(kwargs.get("__files__"), default=str) if "__files__" in kwargs else "None"
+             kwargs_files_dump = json.dumps(kwargs.get("__files__"), default=str) if kwargs and "__files__" in kwargs else "None"
              
              yield f"🔍 **INPUT DUMP**:\n- Body Keys: `{body_keys}`\n- Kwargs Keys: `{kwargs_keys}`\n- Body Files: `{body_files_dump}`\n- Kwargs Files: `{kwargs_files_dump}`\n"
         
