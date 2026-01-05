@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.08 - Globbing Strategy)
+title: Gemini Pro Unified System (Platinum Agentic V134.11 - Robust Globbing & Error Handling)
 author: ECHO Architecture
-version: 134.08
-description: v134.08: Ajout du module 'glob'. La reconstruction de fichier utilise désormais le globbing sur l'ID (id_*) pour trouver les fichiers indépendamment du formatage du nom (accents, espaces). Maintient le nettoyage strict des doublons.
+version: 134.11
+description: v134.11: Base v134.08 améliorée. 1. Globbing UUID pour fichiers. 2. Ignore strictement le champ 'document' (extraction texte OWUI). 3. Gestion avancée des erreurs API (JSON dans stream) pour éviter les réponses vides.
 """
 
 # ==============================================================================
@@ -20,7 +20,7 @@ import uuid
 import httpx
 import base64
 import mimetypes
-import glob  # Ajout critique pour le globbing v134.08
+import glob
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
@@ -209,7 +209,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (GLOBBING V134.08)
+# SECTION 5 : ORCHESTRATEUR (GLOBBING V134.11)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -263,23 +263,15 @@ class Orchestrator:
         return {"parts": [{"text": sys_prompt_text}]}
 
     def _get_file_content(self, f_id: str, f_name: str) -> Tuple[Optional[str], Optional[str]]:
-        """
-        Reconstruit le chemin via GLOBBING sur l'ID ({id}_*) pour gérer les caractères spéciaux.
-        """
         if not f_id: return None, None
-
         candidates = []
-        
-        # Stratégie Globbing (V134.08) : On cherche tout fichier commençant par l'ID
-        # C'est la seule méthode fiable si OWUI a sanitizé le nom de fichier
+
+        # 1. Globbing ID_* (Priority)
         search_pattern = os.path.join(self.uploads_dir, f"{f_id}_*")
         matches = glob.glob(search_pattern)
-        
-        if matches:
-            # On prend le premier match trouvé (logiquement il n'y en a qu'un par ID unique)
-            candidates.append(matches[0])
-        
-        # Fallback classique (si glob échoue pour une raison obscure)
+        if matches: candidates.append(matches[0])
+
+        # 2. Fallback Exact Name
         if f_name:
             clean_name = f_name.replace("/", "_").replace("\\", "_")
             candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
@@ -301,8 +293,7 @@ class Orchestrator:
                     with open(path, "rb") as f:
                         data = base64.standard_b64encode(f.read()).decode("utf-8")
                         return data, mime_type
-                except:
-                    continue
+                except: continue
         return None, None
 
     def _parse_data_uri(self, data_uri: str) -> Dict:
@@ -314,8 +305,6 @@ class Orchestrator:
 
     def prepare_context(self, messages: List[Dict], chat_id: str) -> List[Dict]:
         contents = []
-
-        # Mapping Tools
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -326,7 +315,6 @@ class Orchestrator:
         while i < len(messages):
             m = messages[i]
             role = m["role"]
-
             if role == "system": i+=1; continue
 
             raw_content = m.get("content", "")
@@ -342,10 +330,8 @@ class Orchestrator:
                     except: val = {"result": str(tm.get("content", ""))}
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
-                if contents and contents[-1]["role"] == "user":
-                    contents[-1]["parts"].extend(parts)
-                else:
-                    contents.append({"role": "user", "parts": parts})
+                if contents and contents[-1]["role"] == "user": contents[-1]["parts"].extend(parts)
+                else: contents.append({"role": "user", "parts": parts})
                 continue
 
             elif role in ["assistant", "model"]:
@@ -358,7 +344,6 @@ class Orchestrator:
 
                 text_content = re.sub(r'<think>.*?</think>', '', text_content, flags=re.DOTALL).strip()
                 text_content = re.sub(r'\[\s*\]\(context://thought_signature/[^\)]+\)', '', text_content).strip()
-
                 if text_content: parts.append({"text": text_content})
 
                 found_in_band_sig = None
@@ -368,54 +353,44 @@ class Orchestrator:
                     for tc in m["tool_calls"]:
                         try:
                             args = json.loads(tc["function"]["arguments"])
-                            if "_thought_signature" in args:
-                                found_in_band_sig = args.pop("_thought_signature")
+                            if "_thought_signature" in args: found_in_band_sig = args.pop("_thought_signature")
                             parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
                         except: pass
 
                 if not parts: parts.append({"text": " "})
-
                 is_last_model_msg = True
                 for j in range(i + 1, len(messages)):
-                    if messages[j]["role"] in ["assistant", "model"]:
-                        is_last_model_msg = False
-                        break
+                    if messages[j]["role"] in ["assistant", "model"]: is_last_model_msg = False; break
 
                 if tool_calls_in_msg or is_last_model_msg:
                     sig_to_use = found_in_band_sig
                     if not sig_to_use and chat_id: sig_to_use = self.sig_manager.get_signature(chat_id)
                     if not sig_to_use and tool_calls_in_msg: sig_to_use = MAGIC_KEY_SKIP_VALIDATION
-
                     if sig_to_use and parts:
-                        for part in parts:
-                            part["thoughtSignature"] = sig_to_use
-
+                        for part in parts: part["thoughtSignature"] = sig_to_use
                 contents.append({"role": "model", "parts": parts})
 
             else: # USER
                 parts = []
                 disk_file_loaded = False
 
-                # 1. Disk Read (Priority via Globbing)
+                # 1. READ FILE FROM DISK
                 if "files" in m and isinstance(m["files"], list):
                     for f_obj in m["files"]:
                         f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
-
                         f_id = f_info.get("id")
                         f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
 
                         b64_data, mime_type = self._get_file_content(f_id, f_name)
-
                         if b64_data and mime_type:
                             parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
-                            if "text" not in mime_type:
-                                disk_file_loaded = True
+                            if "text" not in mime_type: disk_file_loaded = True
 
-                # 2. Content Processing & Strict Cleaning
+                # 2. READ CONTENT (Strictly 'content' field only, NO 'document')
                 content = m.get("content", "")
                 if isinstance(content, str):
                     if disk_file_loaded:
-                        # Cleaning: Remove markdown images and dataURIs if file loaded from disk
+                        # Clean markdown images and DataURIs if file loaded from disk
                         content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
                         content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
                         content = content.strip()
@@ -434,20 +409,15 @@ class Orchestrator:
                             elif item.get("type") == "image_url":
                                 url = item.get("image_url", {}).get("url", "")
                                 if url.startswith("data:") and disk_file_loaded: continue
-                                if url.startswith("data:"):
-                                    parts.append(self._parse_data_uri(url))
+                                if url.startswith("data:"): parts.append(self._parse_data_uri(url))
                             elif "image" in item and item["image"].startswith("data:"):
                                 if disk_file_loaded: continue
                                 parts.append(self._parse_data_uri(item["image"]))
 
                 if parts:
-                    if contents and contents[-1]["role"] == "user":
-                        contents[-1]["parts"].extend(parts)
-                    else:
-                        contents.append({"role": "user", "parts": parts})
-
+                    if contents and contents[-1]["role"] == "user": contents[-1]["parts"].extend(parts)
+                    else: contents.append({"role": "user", "parts": parts})
             i += 1
-
         return contents
 
 # ==============================================================================
@@ -464,31 +434,20 @@ class GeminiAdapter:
             if t_level == "dynamic": t_level = "high"
             gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": t_level}
 
-        final_session_id = str(uuid.uuid4())
-
         payload = {
-            "model": model_id,
-            "project": project_id,
-            "user_prompt_id": hex(random.getrandbits(64))[2:],
+            "model": model_id, "project": project_id, "user_prompt_id": hex(random.getrandbits(64))[2:],
             "request": {
-                "systemInstruction": system_instr,
-                "contents": contents,
-                "generationConfig": gen_config,
-                "session_id": final_session_id,
+                "systemInstruction": system_instr, "contents": contents,
+                "generationConfig": gen_config, "session_id": str(uuid.uuid4()),
             },
         }
-
         if tools:
             payload["request"]["tools"] = tools
             payload["request"]["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
 
         return {
             "url": f"{self.base_url}:streamGenerateContent?alt=sse",
-            "headers": {
-                "Content-Type": "application/json",
-                "User-Agent": "GeminiCLI/0.20.0",
-                "x-goog-api-client": "gl-python/3.10",
-            },
+            "headers": {"Content-Type": "application/json", "User-Agent": "GeminiCLI/0.20.0"},
             "json": payload,
         }
 
@@ -507,15 +466,35 @@ class StreamProcessor:
         tool_index = 0
         buffer = ""
 
-        async for chunk in response.aiter_bytes():
+        # ERROR HANDLING JSON (Missing in v134.08)
+        ct = response.headers.get("content-type", "")
+        if "application/json" in ct:
+            err_body = await response.aread()
             try:
-                buffer += chunk.decode("utf-8", errors="ignore")
-            except:
-                continue
+                err_json = json.loads(err_body)
+                err_msg = err_json.get("error", {}).get("message", str(err_body))
+                yield f"⚠️ **API ERROR**\n`{err_msg}`"
+            except: yield f"⚠️ **API ERROR (Raw)**\n`{err_body.decode(errors='ignore')}`"
+            return
+
+        async for chunk in response.aiter_bytes():
+            try: buffer += chunk.decode("utf-8", errors="ignore")
+            except: continue
 
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 line = line.strip()
+                if not line: continue
+
+                # FALLBACK ERROR IN STREAM
+                if line.startswith("{") and "error" in line:
+                    try:
+                        data = json.loads(line)
+                        if "error" in data:
+                            yield f"⚠️ **Stream Error**\n`{data['error'].get('message', line)}`"
+                            continue
+                    except: pass
+
                 if not line.startswith("data:"): continue
                 try:
                     data = json.loads(line[6:])
@@ -541,34 +520,22 @@ class StreamProcessor:
                             elif func_call:
                                 if in_think: yield "\n</think>\n"; in_think = False
                                 args = func_call.get("args", {})
-                                if self.current_sig:
-                                    args["_thought_signature"] = self.current_sig
-
+                                if self.current_sig: args["_thought_signature"] = self.current_sig
                                 yield {
                                     "choices": [{
-                                        "index": 0,
-                                        "delta": {
+                                        "index": 0, "delta": {
                                             "tool_calls": [{
-                                                "index": tool_index,
-                                                "id": f"call_{secrets.token_hex(8)}",
-                                                "type": "function",
-                                                "function": {
-                                                    "name": func_call["name"],
-                                                    "arguments": json.dumps(args)
-                                                }
+                                                "index": tool_index, "id": f"call_{secrets.token_hex(8)}",
+                                                "type": "function", "function": {"name": func_call["name"], "arguments": json.dumps(args)}
                                             }]
-                                        },
-                                        "finish_reason": "tool_calls"
+                                        }, "finish_reason": "tool_calls"
                                     }]
                                 }
                                 tool_index += 1
-
                             else:
                                 if in_think: yield "\n</think>\n"; in_think = False
                                 if txt: yield txt
-
                 except: pass
-
         if in_think: yield "\n</think>\n"
 
 # ==============================================================================
@@ -579,17 +546,11 @@ class Pipe:
         RUN_DIAGNOSTICS: bool = Field(default=False, description="🚑 DIAGNOSTICS")
         FORCE_RESET_AUTH: bool = Field(default=False, description="🔴 RESET AUTH")
         DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
-        MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(
-            default="gemini-3-pro-preview", description="Modèle"
-        )
+        MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
-        THINKING_LEVEL: Literal["DYNAMIC", "LOW", "HIGH"] = Field(
-            default="DYNAMIC", description="Niveau de réflexion (Gemini 3)"
-        )
-        SYSTEM_PROMPT: str = Field(
-            default="Tu es un assistant expert.", description="Prompt Système"
-        )
+        THINKING_LEVEL: Literal["DYNAMIC", "LOW", "HIGH"] = Field(default="DYNAMIC", description="Niveau de réflexion (Gemini 3)")
+        SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système")
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
         OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu")
@@ -602,18 +563,11 @@ class Pipe:
         self.base_url = GOOGLE_API_BASE_URL
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None) -> AsyncGenerator[Union[str, Dict], None]:
-
-        chat_id = body.get("chat_id")
-        if not chat_id and __metadata__:
-            chat_id = __metadata__.get("chat_id")
-        if not chat_id and __metadata__:
-            chat_id = __metadata__.get("session_id")
-
+        chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None) or (__metadata__.get("session_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
         proc = StreamProcessor(self.valves.DEBUG_MODE, chat_id, orch.sig_manager)
 
-        if self.valves.DEBUG_MODE:
-            yield f"🐞 **DEBUG**\nChatID: `{chat_id}`\nMeta: `{str(__metadata__)}`\n"
+        if self.valves.DEBUG_MODE: yield f"🐞 **DEBUG**\nChatID: `{chat_id}`\n"
 
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
@@ -622,51 +576,29 @@ class Pipe:
             return
 
         if self.valves.FORCE_RESET_AUTH:
-            self.auth.reset_storage()
-            yield "🔄 **Reset.**"
-            return
+            self.auth.reset_storage(); yield "🔄 **Reset.**"; return
 
         creds = self.auth.get_valid_credentials()
-        if not creds:
-            yield self.auth.get_auth_url()
-            return
+        if not creds: yield self.auth.get_auth_url(); return
 
         pid, debug_log = self.auth.get_project_id(creds, self.valves.DEBUG_MODE)
-        if not pid:
-            yield f"❌ **Erreur Projet**\n{debug_log}"
-            return
+        if not pid: yield f"❌ **Erreur Projet**\n{debug_log}"; return
 
         tools = orch.convert_owui_tools(body.get("tools"))
         adapter = GeminiAdapter(self.base_url)
         context = orch.prepare_context(body.get("messages", []), chat_id)
-        sys_instr = orch.get_system_instruction()
 
-        req = adapter.build(
-            pid,
-            context,
-            sys_instr,
-            self.valves.TEMPERATURE,
-            self.valves.MAX_TOKENS,
-            self.valves.THINKING_LEVEL,
-            self.valves.MODEL_SELECTION,
-            tools,
-        )
+        req = adapter.build(pid, context, orch.get_system_instruction(), self.valves.TEMPERATURE, self.valves.MAX_TOKENS, self.valves.THINKING_LEVEL, self.valves.MODEL_SELECTION, tools)
         req["headers"]["Authorization"] = f"Bearer {creds.token}"
 
-        if self.valves.DEBUG_MODE:
-            yield f"🐞 **API REQ**\nBody snippet: `{json.dumps(req['json'])[:500]}...`\n"
+        if self.valves.DEBUG_MODE: yield f"🐞 **API REQ**\n`{json.dumps(req['json'])[:500]}...`\n"
 
         try:
             async with httpx.AsyncClient(timeout=300) as client:
-                async with client.stream(
-                    "POST", req["url"], json=req["json"], headers=req["headers"]
-                ) as r:
+                async with client.stream("POST", req["url"], json=req["json"], headers=req["headers"]) as r:
                     if r.status_code != 200:
                         err = await r.aread()
                         yield f"⚠️ **API ERROR {r.status_code}**\n`{err.decode(errors='ignore')}`"
                         return
-
-                    async for token in proc.process(r):
-                        yield token
-        except Exception as e:
-            yield f"🔥 **CRASH** : `{str(e)}`"
+                    async for token in proc.process(r): yield token
+        except Exception as e: yield f"🔥 **CRASH** : `{str(e)}`"
