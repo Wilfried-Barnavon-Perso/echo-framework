@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.45 - Deep Scan & Forced Debug)
+title: Gemini Pro Unified System (Platinum Agentic V134.46 - File Object Forensics)
 author: ECHO Architecture
-version: 134.45
-description: v134.45: Approche 'Deep Scan'. 1) Le script parcourt récursivement l'intégralité de l'objet 'body' reçu pour débusquer les métadonnées de fichiers (id/path) où qu'elles se cachent. 2) Le mode DEBUG est forcé à TRUE par défaut pour garantir l'affichage des diagnostics dans le chat. 3) Maintient l'accès disque direct sur /app/backend/data/uploads.
+version: 134.46
+description: v134.46: Refonte de l'extraction des métadonnées de fichiers. Le script utilise une logique d'inspection profonde pour extraire l'ID et le chemin du fichier, quelle que soit la structure de l'objet (dict plat, imbriqué, ou objet Pydantic). Ajoute des logs exhaustifs sur la structure de chaque objet fichier rencontré pour diagnostiquer pourquoi ils sont ignorés.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.45)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.46)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -281,11 +281,8 @@ class Orchestrator:
             return f"❌ Error listing dir: {str(e)}"
 
     def _resolve_local_path(self, provided_path: str, f_id: str, f_name: str) -> Optional[str]:
-        self.debug_log.append(f"📂 [Locate] ID={f_id}, Name={f_name}")
-        
         # 1. Test direct
         if provided_path and os.path.exists(provided_path):
-            self.debug_log.append(f"✅ Direct Path OK: {provided_path}")
             return provided_path
 
         # 2. Construction locale
@@ -300,10 +297,8 @@ class Orchestrator:
 
         for p in candidates:
             if os.path.exists(p) and os.path.isfile(p):
-                self.debug_log.append(f"✅ Found via glob: {p}")
                 return p
         
-        self.debug_log.append(f"❌ Failed to locate. Candidates: {candidates}")
         return None
 
     def _get_file_content(self, f_id: str, f_name: str, owui_path: str = None) -> Tuple[Optional[str], Optional[str], bool, str]:
@@ -366,28 +361,8 @@ class Orchestrator:
             return {"inlineData": {"mimeType": mime_type, "data": data}}
         except: return {"text": "[Error parsing data URI]"}
 
-    def _extract_all_files_from_body(self, data: Any, collected_files: List[Dict]) -> None:
-        """
-        Scan récursif profond pour trouver tout objet ressemblant à un fichier.
-        """
-        if isinstance(data, dict):
-            # Check if this dict looks like a file
-            if "id" in data and ("filename" in data or "path" in data):
-                 # Avoid duplicates based on ID
-                 fid = data.get("id")
-                 if fid and not any(f.get("id") == fid or f.get("file", {}).get("id") == fid for f in collected_files):
-                     collected_files.append(data)
-            
-            for key, value in data.items():
-                self._extract_all_files_from_body(value, collected_files)
-        elif isinstance(data, list):
-            for item in data:
-                self._extract_all_files_from_body(item, collected_files)
-
-    def prepare_context(self, body: Dict, chat_id: str, extra_files: Any = None) -> List[Dict]:
-        messages = body.get("messages", [])
+    def prepare_context(self, messages: List[Dict], chat_id: str, extra_files: Any = None) -> List[Dict]:
         contents = []
-        
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -401,18 +376,12 @@ class Orchestrator:
                 last_user_idx = idx
                 break
         
-        # 2. DEEP SCAN for files (Nuclear Option)
-        all_found_files = []
-        if last_user_idx != -1:
-            # We scan the WHOLE body to find files, as OWUI hides them in weird places
-            self._extract_all_files_from_body(body, all_found_files)
-            if extra_files:
-                 self._extract_all_files_from_body(extra_files, all_found_files)
-
         if self.valves.DEBUG_MODE:
+             # Force disk probe
              probe_info = self._probe_disk()
              self.debug_log.append(f"🔍 **DISK**: `{probe_info}`")
-             self.debug_log.append(f"🔍 **DEEP SCAN FILES**: found {len(all_found_files)}")
+             if extra_files:
+                 self.debug_log.append(f"📂 **Extra Files (KWARGS)**: `{json.dumps(extra_files, default=str)}`")
 
         i = 0
         while i < len(messages):
@@ -420,11 +389,9 @@ class Orchestrator:
             role = m["role"]
             if role == "system": i+=1; continue
 
-            # DEBUG LOGGING 
-            if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
+            if self.valves.DEBUG_MODE and role == "user" and i == last_user_idx:
                 debug_dump = json.dumps(m, default=str)
-                # No truncation for deep debug
-                self.debug_log.append(f"🔍 [Target] MSG: `{debug_dump}`")
+                self.debug_log.append(f"🔍 [Target Msg] Raw: `{debug_dump}`")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
@@ -482,28 +449,58 @@ class Orchestrator:
             else: # USER
                 parts = []
                 
-                # INJECT FILES ONLY INTO THE LAST USER MESSAGE
-                if i == last_user_idx:
-                    for f_obj in all_found_files:
-                        try:
-                            f_real = f_obj.get("file", f_obj) 
-                            f_id = f_real.get("id")
-                            f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
-                            f_owui_path = f_real.get("path")
+                files_to_process = []
+                seen_ids = set()
 
-                            data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name, f_owui_path)
+                # A. From Message 'files' list
+                if "files" in m and isinstance(m["files"], list):
+                    for f in m["files"]:
+                        # Forensics extraction
+                        if isinstance(f, dict):
+                            fid = f.get("id") or f.get("file", {}).get("id")
+                            if fid and fid not in seen_ids:
+                                files_to_process.append(f)
+                                seen_ids.add(fid)
+                
+                # B. From kwargs 'extra_files' (Only for last user message)
+                if i == last_user_idx and extra_files:
+                    extras = extra_files if isinstance(extra_files, list) else [extra_files]
+                    for f in extras:
+                        if isinstance(f, dict):
+                            fid = f.get("id") or f.get("file", {}).get("id")
+                            if fid and fid not in seen_ids:
+                                files_to_process.append(f)
+                                seen_ids.add(fid)
 
-                            if error_msg:
-                                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Load Error ({f_name}): {error_msg}")
-                            
-                            elif data:
-                                if is_text:
-                                    parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
-                                elif mime_type:
-                                    parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
-                                    if self.valves.DEBUG_MODE: self.debug_log.append(f"🚀 INJECTED: {f_name} ({mime_type})")
-                        except Exception as e:
-                                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 Loop Error: {str(e)}")
+                if self.valves.DEBUG_MODE and i == last_user_idx:
+                    self.debug_log.append(f"🔍 Files to process: {len(files_to_process)} (IDs: {seen_ids})")
+
+                for f_obj in files_to_process:
+                    try:
+                        # Deep inspection to find ID/Path/Name
+                        f_real = f_obj.get("file", f_obj) 
+                        
+                        f_id = f_real.get("id")
+                        f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
+                        f_owui_path = f_real.get("path")
+
+                        if self.valves.DEBUG_MODE:
+                            self.debug_log.append(f"⚙️ Processing File: ID={f_id}, Name={f_name}, Path={f_owui_path}")
+
+                        data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name, f_owui_path)
+
+                        if error_msg:
+                            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Load Error ({f_name}): {error_msg}")
+                            parts.append({"text": f"\n[SYSTEM ERROR: Could not load file {f_name}. Reason: {error_msg}.]\n"})
+                        
+                        elif data:
+                            if is_text:
+                                parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
+                            elif mime_type:
+                                parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
+                                if self.valves.DEBUG_MODE: self.debug_log.append(f"🚀 INJECTED: {f_name} ({mime_type})")
+                    except Exception as e:
+                            if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 Loop Error: {str(e)}")
 
                 content = m.get("content", "")
                 if isinstance(content, str):
@@ -662,8 +659,7 @@ class Pipe:
     class Valves(BaseModel):
         RUN_DIAGNOSTICS: bool = Field(default=False, description="🚑 DIAGNOSTICS")
         FORCE_RESET_AUTH: bool = Field(default=False, description="🔴 RESET AUTH")
-        # FORCE DEBUG MODE TO TRUE FOR DIAGNOSTICS
-        DEBUG_MODE: bool = Field(default=True, description="🐞 DEBUG MODE")
+        DEBUG_MODE: bool = Field(default=True, description="🐞 DEBUG MODE") # FORCED TRUE
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
@@ -707,10 +703,9 @@ class Pipe:
         adapter = GeminiAdapter(self.base_url)
         
         # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
-        files_from_args = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
+        files = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
         
-        # NOTE: On passe 'body' en entier pour le Deep Scan
-        context = orch.prepare_context(body, chat_id, extra_files=files_from_args) # NOTE: 'prepare_context' now takes 'body' dict, not 'messages' list for first arg
+        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files)
 
         # DEBUG: Output raw incoming OWUI message logs if available
         if self.valves.DEBUG_MODE and hasattr(orch, 'debug_log') and orch.debug_log:
