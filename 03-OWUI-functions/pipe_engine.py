@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.18 - Multimedia Support)
+title: Gemini Pro Unified System (Platinum Agentic V134.21 - Multimedia Full Context)
 author: ECHO Architecture
-version: 134.18
-description: v134.18: Intégration de la logique validée par test pour le support Audio/Vidéo. Ajout d'une détection exhaustive des types MIME pour garantir l'envoi correct des fichiers multimédias (MP4, MP3, WAV, MOV, etc.) vers l'endpoint cloudcode-pa.
+version: 134.21
+description: v134.21: Ajustement de la gestion du contexte. Suppression du filtrage restrictif "dernière ligne" pour supporter les prompts longs/multi-lignes, tout en maintenant la priorité aux fichiers binaires (PDF/Audio/Vidéo) injectés via inlineData.
 """
 
 # ==============================================================================
@@ -299,7 +299,7 @@ class Orchestrator:
                 if mime_type:
                     if mime_type.startswith("text/"): is_text_mime = True
                     if mime_type in ["application/json", "application/javascript", "application/xml", "application/x-yaml"]: is_text_mime = True
-                
+                 
                 # Fallback Extension pour le code source (souvent mal typé par l'OS)
                 if not is_text_mime and ext in TEXT_EXTENSIONS:
                     is_text_mime = True
@@ -420,9 +420,11 @@ class Orchestrator:
 
             else: # USER
                 parts = []
-                disk_file_loaded = False
+                # NOTE: We track if binary files are loaded, but we DO NOT truncate the text anymore
+                # to support large multi-line prompts as requested by the user.
+                # files_are_binary = False 
 
-                # 1. READ FILE FROM DISK
+                # 1. PROCESS FILES FROM DISK
                 if "files" in m and isinstance(m["files"], list):
                     for f_obj in m["files"]:
                         f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
@@ -430,47 +432,44 @@ class Orchestrator:
                         f_name = f_info.get("filename") or f_info.get("meta", {}).get("name")
 
                         data, mime_type, is_text = self._get_file_content(f_id, f_name)
-                        
+
                         if data:
                             if is_text:
                                 parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
-                                disk_file_loaded = True
                             elif mime_type:
-                                # Injection Multimédia (Image/Video/Audio)
+                                # This is a binary file (PDF, video, audio, etc.)
                                 parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
-                                # Les images/vidéos ne comptent pas comme "texte chargé"
-                                if "image" not in mime_type and "video" not in mime_type: disk_file_loaded = True
+                                # files_are_binary = True
 
-                # 2. READ CONTENT
+                # 2. PROCESS TEXT CONTENT
                 content = m.get("content", "")
                 if isinstance(content, str):
-                    if disk_file_loaded:
-                        content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
-                        content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
-                        content = content.strip()
-
-                    if content or not disk_file_loaded:
-                        if content.startswith("data:") and ";base64," in content and not disk_file_loaded:
-                             parts.append(self._parse_data_uri(content))
-                        else:
-                             parts.append({"text": content})
+                    # CLEANING: Always remove base64 data URIs from text to avoid noise
+                    content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
+                    content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
+                    content = content.strip()
+                    
+                    if content:
+                        parts.append({"text": content})
 
                 elif isinstance(content, list):
+                    # Standard handling for list-based content (e.g., from other models)
                     for item in content:
                         if isinstance(item, dict):
                             if item.get("type") == "text":
                                 parts.append({"text": item.get("text", "")})
                             elif item.get("type") == "image_url":
                                 url = item.get("image_url", {}).get("url", "")
-                                if url.startswith("data:") and disk_file_loaded: continue
-                                if url.startswith("data:"): parts.append(self._parse_data_uri(url))
+                                if url.startswith("data:"):
+                                    parts.append(self._parse_data_uri(url))
                             elif "image" in item and item["image"].startswith("data:"):
-                                if disk_file_loaded: continue
                                 parts.append(self._parse_data_uri(item["image"]))
 
                 if parts:
-                    if contents and contents[-1]["role"] == "user": contents[-1]["parts"].extend(parts)
-                    else: contents.append({"role": "user", "parts": parts})
+                    if contents and contents[-1]["role"] == "user":
+                        contents[-1]["parts"].extend(parts)
+                    else:
+                        contents.append({"role": "user", "parts": parts})
             i += 1
         return contents
 
@@ -649,7 +648,15 @@ class Pipe:
         req = adapter.build(pid, context, orch.get_system_instruction(), self.valves.TEMPERATURE, self.valves.MAX_TOKENS, self.valves.THINKING_LEVEL, self.valves.MODEL_SELECTION, tools)
         req["headers"]["Authorization"] = f"Bearer {creds.token}"
 
-        if self.valves.DEBUG_MODE: yield f"🐞 **API REQ**\n`{json.dumps(req['json'])[:500]}...`\n"
+        if self.valves.DEBUG_MODE:
+            # Clean up the request for concise logging, especially the large base64 data
+            log_req = json.loads(json.dumps(req['json'])) # Deep copy
+            for content in log_req.get("request", {}).get("contents", []):
+                for part in content.get("parts", []):
+                    if "inlineData" in part and "data" in part["inlineData"]:
+                        part["inlineData"]["data"] = f"[...base64 data of type {part['inlineData'].get('mimeType', 'unknown')}...]"
+            yield f"🐞 **API REQ**\n`{json.dumps(log_req)[:1000]}...`\n"
+
 
         try:
             async with httpx.AsyncClient(timeout=300) as client:
