@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.23 - Strict Native Binary)
+title: Gemini Pro Unified System (Platinum Agentic V134.24 - Deep Debug)
 author: ECHO Architecture
-version: 134.23
-description: v134.23: Implémentation stricte du "Native Binary Bypass". Les fichiers (PDF, Vidéo, Audio, Image) sont lus exclusivement depuis le disque et injectés via inlineData. Les métadonnées textuelles des fichiers issues d'OWUI sont ignorées. Le prompt utilisateur est nettoyé des injections Base64.
+version: 134.24
+description: v134.24: Version de diagnostic avancé. Ajout de logs détaillés sur la structure des messages OWUI pour identifier précisément comment le texte RAG est injecté. Maintient le filtrage strict des binaires (inlineData uniquement) et du prompt utilisateur (nettoyage base64).
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.23)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.24)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -225,6 +225,7 @@ class Orchestrator:
         self.uploads_dir = "/app/backend/data/uploads"
         self.tool_map = {}
         self.sig_manager = SignatureManager(data_dir)
+        self.debug_log = []
 
     def check_for_auth_code(self, messages: List[Dict]) -> Optional[str]:
         if not messages: return None
@@ -365,6 +366,14 @@ class Orchestrator:
             role = m["role"]
             if role == "system": i+=1; continue
 
+            # DEBUG LOGGING (Capture raw content of the last user message)
+            if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
+                # We log a snippet of the raw message to see what OWUI sends
+                debug_dump = json.dumps(m, default=str)
+                # Truncate overly long strings for readability in logs
+                if len(debug_dump) > 3000: debug_dump = debug_dump[:3000] + "...[TRUNCATED]"
+                self.debug_log.append(f"🔍 **OWUI RAW MSG**: `{debug_dump}`")
+
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
                 if re.search(r"(4/[a-zA-Z0-9_-]+)", raw_content): i += 1; continue
@@ -450,7 +459,7 @@ class Orchestrator:
                     content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
                     content = content.strip()
                     
-                    # Send the prompt as is (No length truncation)
+                    # Send the prompt as is (No length truncation, rely on user to not send mixed junk)
                     if content:
                         parts.append({"text": content})
 
@@ -645,6 +654,11 @@ class Pipe:
         tools = orch.convert_owui_tools(body.get("tools"))
         adapter = GeminiAdapter(self.base_url)
         context = orch.prepare_context(body.get("messages", []), chat_id)
+
+        # DEBUG: Output raw incoming OWUI message logs if available
+        if self.valves.DEBUG_MODE and hasattr(orch, 'debug_log') and orch.debug_log:
+            for log in orch.debug_log:
+                yield f"{log}\n"
 
         req = adapter.build(pid, context, orch.get_system_instruction(), self.valves.TEMPERATURE, self.valves.MAX_TOKENS, self.valves.THINKING_LEVEL, self.valves.MODEL_SELECTION, tools)
         req["headers"]["Authorization"] = f"Bearer {creds.token}"
