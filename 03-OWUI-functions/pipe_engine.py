@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.42 - Critical Signature Fix)
+title: Gemini Pro Unified System (Platinum Agentic V134.43 - File System Audit)
 author: ECHO Architecture
-version: 134.42
-description: v134.42: Correction du crash immédiat 'unexpected keyword argument'. Mise à jour de la signature de la méthode Orchestrator.prepare_context pour accepter l'argument 'extra_files' passé par le Pipe. Maintient le dump complet des entrées pour le diagnostic final.
+version: 134.43
+description: v134.43: Version d'audit système. Ajoute un diagnostic 'ls' du dossier /app/backend/data/uploads directement dans la réponse du modèle pour prouver l'accès aux fichiers. Simplifie la logique de récupération de fichier en forçant la recherche dans ce dossier spécifique si le chemin fourni par OWUI échoue.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.42)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.43)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -270,30 +270,40 @@ class Orchestrator:
             sys_prompt_text += f"\n\n[CONTEXT]\nDate: {now.strftime('%A %d %B %Y')}\nTime: {now.strftime('%H:%M')}\nLocation: {loc}\n"
         return {"parts": [{"text": sys_prompt_text}]}
 
+    def _probe_disk(self) -> str:
+        """Helper to list files in uploads dir for debug."""
+        try:
+            if not os.path.exists(self.uploads_dir):
+                return f"❌ Dir not found: {self.uploads_dir}"
+            files = os.listdir(self.uploads_dir)
+            return f"✅ Dir exists. {len(files)} files. First 3: {files[:3]}"
+        except Exception as e:
+            return f"❌ Error listing dir: {str(e)}"
+
     def _resolve_local_path(self, provided_path: str, f_id: str, f_name: str) -> Optional[str]:
-        # 1. Test direct du chemin fourni
+        self.debug_log.append(f"📂 [Locate] ID={f_id}, Name={f_name}")
+        
+        # 1. Test direct
         if provided_path and os.path.exists(provided_path):
-            self.debug_log.append(f"✅ Path found (Direct): {provided_path}")
+            self.debug_log.append(f"✅ Direct Path OK: {provided_path}")
             return provided_path
 
-        # 2. Construction basée sur self.uploads_dir et l'ID
+        # 2. Construction locale
         candidates = []
-        
-        # Pattern standard OWUI : ID_Filename
         if f_name:
             clean_name = f_name.replace("/", "_").replace("\\", "_")
             candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
         
-        # Pattern de secours : ID_* (si le nom a changé)
         search_pattern = os.path.join(self.uploads_dir, f"{f_id}_*")
         matches = glob.glob(search_pattern)
         if matches: candidates.extend(matches)
 
         for p in candidates:
             if os.path.exists(p) and os.path.isfile(p):
-                self.debug_log.append(f"✅ Path found (Glob): {p}")
+                self.debug_log.append(f"✅ Found via glob: {p}")
                 return p
         
+        self.debug_log.append(f"❌ Failed to locate. Candidates: {candidates}")
         return None
 
     def _get_file_content(self, f_id: str, f_name: str, owui_path: str = None) -> Tuple[Optional[str], Optional[str], bool, str]:
@@ -302,7 +312,7 @@ class Orchestrator:
         real_path = self._resolve_local_path(owui_path, f_id, f_name)
         
         if not real_path:
-            return None, None, False, f"File not found on disk: {f_id}"
+            return None, None, False, f"File not found on disk."
 
         mime_type, _ = mimetypes.guess_type(real_path)
         ext = os.path.splitext(real_path)[1].lower()
@@ -356,7 +366,6 @@ class Orchestrator:
             return {"inlineData": {"mimeType": mime_type, "data": data}}
         except: return {"text": "[Error parsing data URI]"}
 
-    # CORRECTION CRITIQUE V134.42: Ajout de 'extra_files' à la signature
     def prepare_context(self, messages: List[Dict], chat_id: str, extra_files: Any = None) -> List[Dict]:
         contents = []
         for m in messages:
@@ -371,13 +380,15 @@ class Orchestrator:
             role = m["role"]
             if role == "system": i+=1; continue
 
-            # DEBUG LOGGING (Capture raw content of the last user message)
             if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
+                # Inject Disk Probe info into logs
+                probe_info = self._probe_disk()
+                self.debug_log.append(f"🔍 **DISK PROBE**: `{probe_info}`")
+                
                 debug_dump = json.dumps(m, default=str)
-                # No truncation for deep debug
                 self.debug_log.append(f"🔍 **OWUI RAW MSG**: `{debug_dump}`")
                 if extra_files:
-                    self.debug_log.append(f"📂 **Extra Files (KWARGS)**: `{json.dumps(extra_files, default=str)}`")
+                    self.debug_log.append(f"📂 **Extra Files**: `{json.dumps(extra_files, default=str)}`")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
@@ -435,23 +446,17 @@ class Orchestrator:
             else: # USER
                 parts = []
                 
-                # 1. AGGRESSIVE FILE GATHERING
-                # We look everywhere.
-                
                 files_to_process = []
                 seen_ids = set()
 
-                # A. From Message 'files' list
                 if "files" in m and isinstance(m["files"], list):
                     for f in m["files"]:
-                         # Normalisation structure
                         f_real = f.get("file", f)
                         fid = f_real.get("id")
                         if fid and fid not in seen_ids:
                             files_to_process.append(f)
                             seen_ids.add(fid)
-
-                # B. From kwargs 'extra_files' (Only for last message)
+                
                 if i == len(messages) - 1 and extra_files:
                     extras = extra_files if isinstance(extra_files, list) else [extra_files]
                     for f in extras:
@@ -460,8 +465,7 @@ class Orchestrator:
                         if fid and fid not in seen_ids:
                             files_to_process.append(f)
                             seen_ids.add(fid)
-                
-                # Processing Loop
+
                 for f_obj in files_to_process:
                     try:
                         f_real = f_obj.get("file", f_obj) 
@@ -473,6 +477,7 @@ class Orchestrator:
 
                         if error_msg:
                             if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Load Error ({f_name}): {error_msg}")
+                            parts.append({"text": f"\n[SYSTEM ERROR: Could not load file {f_name}. Reason: {error_msg}.]\n"})
                         
                         elif data:
                             if is_text:
@@ -483,7 +488,6 @@ class Orchestrator:
                     except Exception as e:
                             if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 Loop Error: {str(e)}")
 
-                # 2. PROCESS TEXT CONTENT
                 content = m.get("content", "")
                 if isinstance(content, str):
                     content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
@@ -685,7 +689,7 @@ class Pipe:
         adapter = GeminiAdapter(self.base_url)
         
         # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
-        files_from_args = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
+        files = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
         
         # DEBUG: Dump the entire 'body' keys and 'kwargs' keys to know WHERE files are hiding
         if self.valves.DEBUG_MODE:
@@ -701,7 +705,7 @@ class Pipe:
              
              yield f"🔍 **INPUT DUMP**:\n- Body Keys: `{body_keys}`\n- Kwargs Keys: `{kwargs_keys}`\n- Body Files: `{body_files_dump}`\n- Kwargs Files: `{kwargs_files_dump}`\n"
         
-        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files_from_args)
+        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files)
 
         # DEBUG: Output raw incoming OWUI message logs if available
         if self.valves.DEBUG_MODE and hasattr(orch, 'debug_log') and orch.debug_log:
