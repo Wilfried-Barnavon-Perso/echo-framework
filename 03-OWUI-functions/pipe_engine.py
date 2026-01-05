@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.38 - Raw Arguments Priority)
+title: Gemini Pro Unified System (Platinum Agentic V134.41 - Total Input Dump)
 author: ECHO Architecture
-version: 134.38
-description: v134.38: Restauration critique de la lecture des fichiers via les arguments bruts (__files__). Analyse: Les fichiers marqués "Failed" par le RAG d'OWUI sont souvent retirés de l'historique des messages, rendant le script aveugle si on ne regarde que 'messages'. Cette version capture les fichiers directement depuis l'entrée du pipe (kwargs), garantissant l'injection même si OWUI a rejeté le fichier.
+version: 134.41
+description: v134.41: Version de diagnostic radical. Le script loggue la structure complète des objets 'body' et 'kwargs' reçus par la fonction pipe() pour révéler l'emplacement exact des métadonnées de fichiers (cachées dans des clés inattendues ou des structures imbriquées). Maintient la logique de chargement 'Force Load' et le 'Raw Context Pass-Through'.
 """
 
 # ==============================================================================
@@ -216,13 +216,13 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.38)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.41)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
         self.valves = valves
         self.location_cache_file = "/app/backend/data/gemini_geo_cache_v2.json"
-        self.uploads_dir = "/app/backend/data/uploads" # Chemin cible dans le conteneur pipelines
+        self.uploads_dir = "/app/backend/data/uploads" 
         self.tool_map = {}
         self.sig_manager = SignatureManager(data_dir)
         self.debug_log = []
@@ -271,14 +271,9 @@ class Orchestrator:
         return {"parts": [{"text": sys_prompt_text}]}
 
     def _resolve_local_path(self, provided_path: str, f_id: str, f_name: str) -> Optional[str]:
-        """
-        Tente de résoudre le chemin local du fichier.
-        """
-        self.debug_log.append(f"📂 [Locate] Start search for ID={f_id}, Name={f_name}")
-        
-        # 1. Test direct du chemin fourni (si volume monté à l'identique)
+        # 1. Test direct du chemin fourni
         if provided_path and os.path.exists(provided_path):
-            self.debug_log.append(f"✅ [Locate] Direct path OK: {provided_path}")
+            self.debug_log.append(f"✅ Path found (Direct): {provided_path}")
             return provided_path
 
         # 2. Construction basée sur self.uploads_dir et l'ID
@@ -296,40 +291,30 @@ class Orchestrator:
 
         for p in candidates:
             if os.path.exists(p) and os.path.isfile(p):
-                self.debug_log.append(f"✅ [Locate] Found via glob: {p}")
+                self.debug_log.append(f"✅ Path found (Glob): {p}")
                 return p
         
-        self.debug_log.append(f"❌ [Locate] Failed. Candidates tried: {candidates}")
         return None
 
     def _get_file_content(self, f_id: str, f_name: str, owui_path: str = None) -> Tuple[Optional[str], Optional[str], bool, str]:
-        """
-        Récupère le contenu d'un fichier avec priorité à la détection MIME.
-        Retourne: (data, mime_type, is_text, error_log)
-        """
         if not f_id: return None, None, False, "No File ID"
         
-        # Résolution du chemin réel
         real_path = self._resolve_local_path(owui_path, f_id, f_name)
         
         if not real_path:
-            return None, None, False, f"File not found on disk."
+            return None, None, False, f"File not found on disk: {f_id}"
 
-        # --- LOGIQUE DE DÉTECTION TYPE MIME (PRIORITAIRE) ---
         mime_type, _ = mimetypes.guess_type(real_path)
         ext = os.path.splitext(real_path)[1].lower()
 
-        # Définition des familles MIME texte
         is_text_mime = False
         if mime_type:
             if mime_type.startswith("text/"): is_text_mime = True
             if mime_type in ["application/json", "application/javascript", "application/xml", "application/x-yaml"]: is_text_mime = True
             
-        # Fallback Extension pour le code source (souvent mal typé par l'OS)
         if not is_text_mime and ext in TEXT_EXTENSIONS:
             is_text_mime = True
 
-        # A. Traitement TEXTE (Code, Config, Logs)
         if is_text_mime:
             try:
                 with open(real_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -338,36 +323,29 @@ class Orchestrator:
                     return text_content, "text/plain", True, ""
             except Exception as e: return None, None, False, f"Text Read Error: {str(e)}"
 
-        # B. Traitement BINAIRES (Images, Audio, Video, PDF)
         try:
-            # Fallback manuel si mimetypes a échoué (Testé et validé)
             if not mime_type:
                 ext_clean = ext.lower()
-                # VIDEO
                 if ext_clean in ['.mp4', '.m4v']: mime_type = "video/mp4"
                 elif ext_clean in ['.webm']: mime_type = "video/webm"
                 elif ext_clean in ['.mpeg', '.mpg']: mime_type = "video/mpeg"
                 elif ext_clean in ['.mov']: mime_type = "video/quicktime"
                 elif ext_clean in ['.avi']: mime_type = "video/x-msvideo"
-                # AUDIO
                 elif ext_clean in ['.mp3']: mime_type = "audio/mp3"
                 elif ext_clean in ['.wav']: mime_type = "audio/wav"
                 elif ext_clean in ['.ogg']: mime_type = "audio/ogg"
                 elif ext_clean in ['.flac']: mime_type = "audio/flac"
                 elif ext_clean in ['.aac']: mime_type = "audio/aac"
                 elif ext_clean in ['.m4a']: mime_type = "audio/mp4"
-                # IMAGE / PDF
                 elif ext_clean in ['.pdf']: mime_type = "application/pdf"
                 elif ext_clean in ['.jpg', '.jpeg']: mime_type = "image/jpeg"
                 elif ext_clean in ['.png']: mime_type = "image/png"
                 elif ext_clean in ['.webp']: mime_type = "image/webp"
                 else: mime_type = "application/octet-stream"
 
-            self.debug_log.append(f"⚙️ [Encode] Reading binary file: {real_path} as {mime_type}")
             with open(real_path, "rb") as f:
                 raw_data = f.read()
                 data = base64.standard_b64encode(raw_data).decode("utf-8")
-                self.debug_log.append(f"✅ [Encode] Success: {len(raw_data)} bytes -> Base64")
                 return data, mime_type, False, ""
         except Exception as e: return None, None, False, f"Binary Read Error: {str(e)}"
 
@@ -378,7 +356,7 @@ class Orchestrator:
             return {"inlineData": {"mimeType": mime_type, "data": data}}
         except: return {"text": "[Error parsing data URI]"}
 
-    def prepare_context(self, messages: List[Dict], chat_id: str, extra_files: List = None) -> List[Dict]:
+    def prepare_context(self, messages: List[Dict], chat_id: str, extra_files_from_args: Any = None) -> List[Dict]:
         contents = []
         for m in messages:
             if m.get("tool_calls"):
@@ -392,13 +370,16 @@ class Orchestrator:
             role = m["role"]
             if role == "system": i+=1; continue
 
-            # DEBUG LOGGING (Capture raw content of the last user message)
+            # --- TOTAL DUMP DIAGNOSTIC ---
             if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
-                debug_dump = json.dumps(m, default=str)
-                # No truncation for deep debug
-                self.debug_log.append(f"🔍 [Target] OWUI RAW MSG: `{debug_dump}`")
-                if extra_files:
-                    self.debug_log.append(f"📂 **Extra Files (__files__)**: `{json.dumps(extra_files, default=str)}`")
+                # Dump 'files' keys found in this message
+                if "files" in m:
+                    self.debug_log.append(f"📦 MSG['files']: {json.dumps(m['files'], default=str)[:1000]}")
+                else:
+                    self.debug_log.append("📦 MSG['files']: MISSING")
+                
+                # Dump extra_files argument
+                self.debug_log.append(f"📦 KWARGS['__files__']: {json.dumps(extra_files_from_args, default=str)[:1000]}")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
@@ -456,66 +437,60 @@ class Orchestrator:
             else: # USER
                 parts = []
                 
-                # 1. PROCESS FILES (From Message OR Extra Files - UNIFIED)
+                # 1. AGGRESSIVE FILE GATHERING
+                # We look everywhere.
+                
                 files_to_process = []
-                seen_file_ids = set()
+                seen_ids = set()
 
-                # A. Files from the message history object
+                # A. From Message 'files' list
                 if "files" in m and isinstance(m["files"], list):
                     for f in m["files"]:
-                        # Extract ID safely, handling different depths
-                        fid = f.get("file", {}).get("id") or f.get("id")
-                        if fid and fid not in seen_file_ids:
+                         # Normalisation structure
+                        f_real = f.get("file", f)
+                        fid = f_real.get("id")
+                        if fid and fid not in seen_ids:
                             files_to_process.append(f)
-                            seen_file_ids.add(fid)
+                            seen_ids.add(fid)
+
+                # B. From kwargs '__files__' (Only for last message)
+                if i == len(messages) - 1 and extra_files_from_args:
+                    extras = extra_files_from_args if isinstance(extra_files_from_args, list) else [extra_files_from_args]
+                    for f in extras:
+                        f_real = f.get("file", f)
+                        fid = f_real.get("id")
+                        if fid and fid not in seen_ids:
+                            files_to_process.append(f)
+                            seen_ids.add(fid)
                 
-                # B. Files from pipe arguments (ONLY for the last message) - CRITICAL RESTORATION V134.38
-                if i == len(messages) - 1 and extra_files:
-                    extras = extra_files if isinstance(extra_files, list) else [extra_files]
-                    for ef in extras:
-                         # Extract ID safely
-                        ef_id = ef.get("file", {}).get("id") or ef.get("id")
-                        if ef_id and ef_id not in seen_file_ids:
-                            files_to_process.append(ef)
-                            seen_file_ids.add(ef_id)
-
-                if self.valves.DEBUG_MODE and i == len(messages) - 1:
-                    self.debug_log.append(f"🔍 Fichiers identifiés pour ce tour (Unified): {len(files_to_process)}")
-
+                # Processing Loop
                 for f_obj in files_to_process:
                     try:
-                        # Normalize object structure (sometimes flattened, sometimes nested in 'file')
                         f_real = f_obj.get("file", f_obj) 
-                        
                         f_id = f_real.get("id")
                         f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
                         f_owui_path = f_real.get("path")
-                        
-                        # FORCE LOAD: We try to load even if status is 'failed' or path is missing
 
                         data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name, f_owui_path)
 
                         if error_msg:
-                            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ [Error] File Load: {error_msg}")
-                            parts.append({"text": f"\n[SYSTEM ERROR: Could not load file {f_name}. Reason: {error_msg}.]\n"})
+                            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Load Error ({f_name}): {error_msg}")
                         
                         elif data:
                             if is_text:
                                 parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
                             elif mime_type:
                                 parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
-                                if self.valves.DEBUG_MODE: self.debug_log.append(f"🚀 [Inject] Added inlineData: {f_name} ({mime_type})")
+                                if self.valves.DEBUG_MODE: self.debug_log.append(f"🚀 INJECTED: {f_name} ({mime_type})")
                     except Exception as e:
-                            if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 [Critical] File loop exception: {str(e)}")
+                            if self.valves.DEBUG_MODE: self.debug_log.append(f"🔥 Loop Error: {str(e)}")
 
-                # 2. PROCESS TEXT CONTENT (RAW PASS-THROUGH)
+                # 2. PROCESS TEXT CONTENT
                 content = m.get("content", "")
                 if isinstance(content, str):
-                    # Always clean base64 images to avoid duplication/noise
                     content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
                     content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
                     content = content.strip()
-                    
                     if content:
                         parts.append({"text": content})
 
@@ -712,9 +687,20 @@ class Pipe:
         adapter = GeminiAdapter(self.base_url)
         
         # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
-        files = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
+        files_from_args = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
         
-        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files)
+        # DEBUG: Dump the entire 'body' keys and 'kwargs' keys to know WHERE files are hiding
+        if self.valves.DEBUG_MODE:
+             body_keys = list(body.keys())
+             kwargs_keys = list(kwargs.keys())
+             # Dump raw body.files if present
+             body_files_dump = json.dumps(body.get("files"), default=str) if "files" in body else "None"
+             # Dump kwargs.__files__ if present
+             kwargs_files_dump = json.dumps(kwargs.get("__files__"), default=str) if "__files__" in kwargs else "None"
+             
+             yield f"🔍 **INPUT DUMP**:\n- Body Keys: `{body_keys}`\n- Kwargs Keys: `{kwargs_keys}`\n- Body Files: `{body_files_dump}`\n- Kwargs Files: `{kwargs_files_dump}`\n"
+        
+        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files_from_args)
 
         # DEBUG: Output raw incoming OWUI message logs if available
         if self.valves.DEBUG_MODE and hasattr(orch, 'debug_log') and orch.debug_log:
