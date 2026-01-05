@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.05 - Mime/Collision Fix)
+title: Gemini Pro Unified System (Platinum Agentic V134.08 - Globbing Strategy)
 author: ECHO Architecture
-version: 134.05
-description: v134.05: Correction critique Erreur 400. Empêche l'envoi du DataURI en tant que texte brut lors de la collision avec la lecture disque. Renforce la détection MIME.
+version: 134.08
+description: v134.08: Ajout du module 'glob'. La reconstruction de fichier utilise désormais le globbing sur l'ID (id_*) pour trouver les fichiers indépendamment du formatage du nom (accents, espaces). Maintient le nettoyage strict des doublons.
 """
 
 # ==============================================================================
@@ -20,6 +20,7 @@ import uuid
 import httpx
 import base64
 import mimetypes
+import glob  # Ajout critique pour le globbing v134.08
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
@@ -85,6 +86,7 @@ class AuthService:
     def _generate_pkce(self):
         verifier = secrets.token_urlsafe(64)
         digest = hashlib.sha256(verifier.encode("utf-8")).digest()
+        import base64
         challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
         return verifier, challenge
 
@@ -113,6 +115,7 @@ class AuthService:
             except Exception as e: return f"❌ Erreur IO: {str(e)}"
         else:
             digest = hashlib.sha256(verifier.encode("utf-8")).digest()
+            import base64
             challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
 
         flow = Flow.from_client_config(
@@ -206,7 +209,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (RECOVERY V134.05)
+# SECTION 5 : ORCHESTRATEUR (GLOBBING V134.08)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -261,34 +264,45 @@ class Orchestrator:
 
     def _get_file_content(self, f_id: str, f_name: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        Reconstruit le chemin {id}_{filename} et lit le contenu avec détection MIME.
+        Reconstruit le chemin via GLOBBING sur l'ID ({id}_*) pour gérer les caractères spéciaux.
         """
-        if not f_id or not f_name:
-            return None, None
+        if not f_id: return None, None
 
-        clean_name = f_name.replace("/", "_").replace("\\", "_")
-        target_path = os.path.join(self.uploads_dir, f"{f_id}_{clean_name}")
+        candidates = []
+        
+        # Stratégie Globbing (V134.08) : On cherche tout fichier commençant par l'ID
+        # C'est la seule méthode fiable si OWUI a sanitizé le nom de fichier
+        search_pattern = os.path.join(self.uploads_dir, f"{f_id}_*")
+        matches = glob.glob(search_pattern)
+        
+        if matches:
+            # On prend le premier match trouvé (logiquement il n'y en a qu'un par ID unique)
+            candidates.append(matches[0])
+        
+        # Fallback classique (si glob échoue pour une raison obscure)
+        if f_name:
+            clean_name = f_name.replace("/", "_").replace("\\", "_")
+            candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
 
-        if os.path.exists(target_path) and os.path.isfile(target_path):
-            try:
-                mime_type, _ = mimetypes.guess_type(target_path)
-                if not mime_type:
-                    # Fallback MIME types
-                    ext = os.path.splitext(target_path)[1].lower()
-                    if ext == ".mp4": mime_type = "video/mp4"
-                    elif ext == ".mp3": mime_type = "audio/mp3"
-                    elif ext == ".pdf": mime_type = "application/pdf"
-                    elif ext in [".jpg", ".jpeg"]: mime_type = "image/jpeg"
-                    elif ext == ".png": mime_type = "image/png"
-                    elif ext == ".webp": mime_type = "image/webp"
-                    else: mime_type = "application/octet-stream"
+        for path in candidates:
+            if os.path.exists(path) and os.path.isfile(path):
+                try:
+                    mime_type, _ = mimetypes.guess_type(path)
+                    if not mime_type:
+                        ext = os.path.splitext(path)[1].lower()
+                        if ext == ".mp4": mime_type = "video/mp4"
+                        elif ext == ".mp3": mime_type = "audio/mp3"
+                        elif ext == ".pdf": mime_type = "application/pdf"
+                        elif ext in [".jpg", ".jpeg"]: mime_type = "image/jpeg"
+                        elif ext == ".png": mime_type = "image/png"
+                        elif ext == ".webp": mime_type = "image/webp"
+                        else: mime_type = "application/octet-stream"
 
-                with open(target_path, "rb") as f:
-                    data = base64.standard_b64encode(f.read()).decode("utf-8")
-                    return data, mime_type
-            except:
-                pass
-
+                    with open(path, "rb") as f:
+                        data = base64.standard_b64encode(f.read()).decode("utf-8")
+                        return data, mime_type
+                except:
+                    continue
         return None, None
 
     def _parse_data_uri(self, data_uri: str) -> Dict:
@@ -380,9 +394,9 @@ class Orchestrator:
 
             else: # USER
                 parts = []
-                has_disk_files = False
+                disk_file_loaded = False
 
-                # 1. Disk Read Bypass (Priority)
+                # 1. Disk Read (Priority via Globbing)
                 if "files" in m and isinstance(m["files"], list):
                     for f_obj in m["files"]:
                         f_info = f_obj.get("file", {}) if "file" in f_obj else f_obj
@@ -394,19 +408,23 @@ class Orchestrator:
 
                         if b64_data and mime_type:
                             parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
-                            has_disk_files = True
+                            if "text" not in mime_type:
+                                disk_file_loaded = True
 
-                # 2. Content Processing & Collision Avoidance
+                # 2. Content Processing & Strict Cleaning
                 content = m.get("content", "")
                 if isinstance(content, str):
-                    if content.startswith("data:") and ";base64," in content:
-                        # DATA URI DETECTED
-                        if not has_disk_files:
-                            parts.append(self._parse_data_uri(content))
-                        # ELSE: DROP IT (Collision with disk file)
-                    elif content.strip():
-                        # TEXT CONTENT
-                        parts.append({"text": content})
+                    if disk_file_loaded:
+                        # Cleaning: Remove markdown images and dataURIs if file loaded from disk
+                        content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
+                        content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
+                        content = content.strip()
+
+                    if content or not disk_file_loaded:
+                        if content.startswith("data:") and ";base64," in content and not disk_file_loaded:
+                             parts.append(self._parse_data_uri(content))
+                        else:
+                             parts.append({"text": content})
 
                 elif isinstance(content, list):
                     for item in content:
@@ -415,13 +433,12 @@ class Orchestrator:
                                 parts.append({"text": item.get("text", "")})
                             elif item.get("type") == "image_url":
                                 url = item.get("image_url", {}).get("url", "")
+                                if url.startswith("data:") and disk_file_loaded: continue
                                 if url.startswith("data:"):
-                                    if not has_disk_files:
-                                        parts.append(self._parse_data_uri(url))
-                                    # ELSE: DROP IT
+                                    parts.append(self._parse_data_uri(url))
                             elif "image" in item and item["image"].startswith("data:"):
-                                if not has_disk_files:
-                                    parts.append(self._parse_data_uri(item["image"]))
+                                if disk_file_loaded: continue
+                                parts.append(self._parse_data_uri(item["image"]))
 
                 if parts:
                     if contents and contents[-1]["role"] == "user":
@@ -596,12 +613,12 @@ class Pipe:
         proc = StreamProcessor(self.valves.DEBUG_MODE, chat_id, orch.sig_manager)
 
         if self.valves.DEBUG_MODE:
-            yield f"🐞 **DEBUG**\nChatID: \`{chat_id}\`\nMeta: \`{str(__metadata__)}\`\n"
+            yield f"🐞 **DEBUG**\nChatID: `{chat_id}`\nMeta: `{str(__metadata__)}`\n"
 
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = self.auth.exchange_code(ac)
-            yield f"✅ **{msg}**" if success else f"❌ **Échec** : \`{msg}\`"
+            yield f"✅ **{msg}**" if success else f"❌ **Échec** : `{msg}`"
             return
 
         if self.valves.FORCE_RESET_AUTH:
@@ -637,7 +654,7 @@ class Pipe:
         req["headers"]["Authorization"] = f"Bearer {creds.token}"
 
         if self.valves.DEBUG_MODE:
-            yield f"🐞 **API REQ**\nBody snippet: \`{json.dumps(req['json'])[:500]}...\`\n"
+            yield f"🐞 **API REQ**\nBody snippet: `{json.dumps(req['json'])[:500]}...`\n"
 
         try:
             async with httpx.AsyncClient(timeout=300) as client:
@@ -646,10 +663,10 @@ class Pipe:
                 ) as r:
                     if r.status_code != 200:
                         err = await r.aread()
-                        yield f"⚠️ **API ERROR {r.status_code}**\n\`{err.decode(errors='ignore')}\`"
+                        yield f"⚠️ **API ERROR {r.status_code}**\n`{err.decode(errors='ignore')}`"
                         return
 
                     async for token in proc.process(r):
                         yield token
         except Exception as e:
-            yield f"🔥 **CRASH** : \`{str(e)}\`"
+            yield f"🔥 **CRASH** : `{str(e)}`"
