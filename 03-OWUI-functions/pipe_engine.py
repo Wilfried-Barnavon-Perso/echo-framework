@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.36 - Single Source Truth)
+title: Gemini Pro Unified System (Platinum Agentic V134.37 - Force Load)
 author: ECHO Architecture
-version: 134.36
-description: v134.36: Simplification radicale de la gestion des fichiers. 1) Utilise 'messages' comme SEULE source de vérité pour les fichiers (historique et actuel). 2) Supprime les marqueurs textuels [System...] envoyés au modèle. 3) Ajoute des logs de débogage granulaires (Ciblage > Localisation > Encodage > Injection) pour tracer précisément le parcours du binaire.
+version: 134.37
+description: v134.37: Force le chargement des fichiers binaires même si OWUI les marque comme "failed" (ex: vidéos non supportées par le RAG). Le script ignore les métadonnées d'erreur d'OWUI et se fie uniquement à la présence physique du fichier sur le disque pour l'injection inlineData. Ajoute des logs détaillés sur la raison exacte de l'inclusion ou de l'exclusion de chaque fichier.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.36)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.37)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -378,7 +378,7 @@ class Orchestrator:
             return {"inlineData": {"mimeType": mime_type, "data": data}}
         except: return {"text": "[Error parsing data URI]"}
 
-    def prepare_context(self, messages: List[Dict], chat_id: str) -> List[Dict]:
+    def prepare_context(self, messages: List[Dict], chat_id: str, extra_files: List = None) -> List[Dict]:
         contents = []
         for m in messages:
             if m.get("tool_calls"):
@@ -395,7 +395,10 @@ class Orchestrator:
             # DEBUG LOGGING (Capture raw content of the last user message)
             if self.valves.DEBUG_MODE and role == "user" and i == len(messages) - 1:
                 debug_dump = json.dumps(m, default=str)
+                # No truncation for deep debug
                 self.debug_log.append(f"🔍 [Target] OWUI RAW MSG: `{debug_dump}`")
+                if extra_files:
+                    self.debug_log.append(f"📂 **Extra Files (__files__)**: `{json.dumps(extra_files, default=str)}`")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
@@ -467,7 +470,10 @@ class Orchestrator:
                             f_id = f_real.get("id")
                             f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
                             f_owui_path = f_real.get("path")
-
+                            
+                            # IGNORE OWUI STATUS (Force Load)
+                            # Even if OWUI says "data": {"status": "failed"}, we try to load the file from disk.
+                            
                             data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name, f_owui_path)
 
                             if error_msg:
@@ -660,7 +666,8 @@ class Pipe:
         self.auth = AuthService(self.data_dir)
         self.base_url = GOOGLE_API_BASE_URL
 
-    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None) -> AsyncGenerator[Union[str, Dict], None]:
+    # Ajout de **kwargs pour capturer les fichiers cachés d'OWUI
+    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None) or (__metadata__.get("session_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
         proc = StreamProcessor(self.valves.DEBUG_MODE, chat_id, orch.sig_manager)
@@ -684,7 +691,11 @@ class Pipe:
 
         tools = orch.convert_owui_tools(body.get("tools"))
         adapter = GeminiAdapter(self.base_url)
-        context = orch.prepare_context(body.get("messages", []), chat_id)
+        
+        # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
+        files = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
+        
+        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files)
 
         # DEBUG: Output raw incoming OWUI message logs if available
         if self.valves.DEBUG_MODE and hasattr(orch, 'debug_log') and orch.debug_log:
