@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.16 - Anti-Silence Watchdog)
+title: Gemini Pro Unified System (Platinum Agentic V134.17 - Content Scrubbing Extreme)
 author: ECHO Architecture
-version: 134.16
-description: v134.16: Ajout d'un Watchdog qui garantit une réponse même en cas de silence API. Gestion explicite des blocages 'promptFeedback' (Safety) qui renvoyaient des candidats vides. Maintien du Globbing pour les fichiers.
+version: 134.17
+description: v134.17: Renforcement du nettoyage de contenu. Si un fichier est lu sur le disque, TOUT contenu textuel suspect (DataURI, balises images, texte long non-utilisateur) est purgé pour éviter les doublons et l'erreur 400.
 """
 
 # ==============================================================================
@@ -209,7 +209,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (GLOBBING V134.16)
+# SECTION 5 : ORCHESTRATEUR (GLOBBING V134.17)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -387,13 +387,17 @@ class Orchestrator:
                             parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
                             if "text" not in mime_type: disk_file_loaded = True
 
-                # 2. READ CONTENT
+                # 2. READ CONTENT (Extreme Scrubbing v134.17)
                 content = m.get("content", "")
                 if isinstance(content, str):
                     if disk_file_loaded:
+                        # Nettoyage RADICAL des doublons si le fichier est lu sur disque
                         content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
                         content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
                         content = content.strip()
+                        # Si le contenu ne ressemble plus à une question utilisateur mais à des résidus d'extraction
+                        if len(content) > 1000 and " " not in content[:50]: # Detection de garbage base64 résiduel
+                            content = "" 
 
                     if content or not disk_file_loaded:
                         if content.startswith("data:") and ";base64," in content and not disk_file_loaded:
