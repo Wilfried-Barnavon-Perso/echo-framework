@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.47 - Forced Debug & Input Audit)
+title: Gemini Pro Unified System (Platinum Agentic V134.53 - Robust Filter Aware)
 author: ECHO Architecture
-version: 134.47
-description: v134.47: Version de diagnostic critique. 1) Le mode DEBUG est forcé à TRUE (hardcoded) pour garantir l'affichage des logs. 2) Ajout d'un dump complet des entrées (body['files'], kwargs, messages[-1]['files']) pour localiser où OWUI cache les métadonnées des fichiers marqués 'failed'. 3) Maintient la logique de chargement binaire direct et de nettoyage contextuel.
+version: 134.53
+description: v134.53: Version de production consolidée. 1) Restauration complète des Valves (Pydantic) pour la configuration via l'UI. 2) Architecture hybride : utilise prioritairement les fichiers préservés par le filtre 'Bypass RAG' (metadata.raw_files) mais conserve les mécanismes de secours (kwargs, messages) et le 'Force Load'. 3) Réintégration des outils de diagnostic avancés (Disk Probe, Input Dump). 4) Support complet des fonctions (Tools) et de l'authentification OAuth.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.47)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.53)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -363,7 +363,8 @@ class Orchestrator:
             return {"inlineData": {"mimeType": mime_type, "data": data}}
         except: return {"text": "[Error parsing data URI]"}
 
-    def prepare_context(self, messages: List[Dict], chat_id: str, extra_files: Any = None) -> List[Dict]:
+    def prepare_context(self, body: Dict, chat_id: str, extra_files: Any = None) -> List[Dict]:
+        messages = body.get("messages", [])
         contents = []
         for m in messages:
             if m.get("tool_calls"):
@@ -382,8 +383,6 @@ class Orchestrator:
              # Force disk probe
              probe_info = self._probe_disk()
              self.debug_log.append(f"🔍 **DISK**: `{probe_info}`")
-             if extra_files:
-                 self.debug_log.append(f"📂 **Extra Files (KWARGS)**: `{json.dumps(extra_files, default=str)}`")
 
         i = 0
         while i < len(messages):
@@ -393,7 +392,13 @@ class Orchestrator:
 
             if self.valves.DEBUG_MODE and role == "user" and i == last_user_idx:
                 debug_dump = json.dumps(m, default=str)
+                # No truncation for deep debug
                 self.debug_log.append(f"🔍 [Target Msg] Raw: `{debug_dump}`")
+                
+                # Log Filter presence
+                raw_files_meta = body.get("metadata", {}).get("raw_files")
+                if raw_files_meta:
+                     self.debug_log.append(f"✅ Filter Active: {len(raw_files_meta)} files in metadata")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
@@ -454,17 +459,27 @@ class Orchestrator:
                 files_to_process = []
                 seen_ids = set()
 
-                # A. From Message 'files' list
+                # A. From Message 'files' list (Standard)
                 if "files" in m and isinstance(m["files"], list):
                     for f in m["files"]:
-                        # Forensics extraction
                         if isinstance(f, dict):
                             fid = f.get("id") or f.get("file", {}).get("id")
                             if fid and fid not in seen_ids:
                                 files_to_process.append(f)
                                 seen_ids.add(fid)
                 
-                # B. From kwargs 'extra_files' (Only for last user message)
+                # B. From Filter (metadata.raw_files) - ONLY for last user message
+                if i == last_user_idx:
+                    raw_files = body.get("metadata", {}).get("raw_files", [])
+                    if raw_files:
+                         for f in raw_files:
+                            if isinstance(f, dict):
+                                fid = f.get("id") or f.get("file", {}).get("id")
+                                if fid and fid not in seen_ids:
+                                    files_to_process.append(f)
+                                    seen_ids.add(fid)
+
+                # C. From kwargs 'extra_files' (Backup)
                 if i == last_user_idx and extra_files:
                     extras = extra_files if isinstance(extra_files, list) else [extra_files]
                     for f in extras:
@@ -485,9 +500,6 @@ class Orchestrator:
                         f_id = f_real.get("id")
                         f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
                         f_owui_path = f_real.get("path")
-
-                        if self.valves.DEBUG_MODE:
-                            self.debug_log.append(f"⚙️ Processing File: ID={f_id}, Name={f_name}, Path={f_owui_path}")
 
                         data, mime_type, is_text, error_msg = self._get_file_content(f_id, f_name, f_owui_path)
 
@@ -661,8 +673,7 @@ class Pipe:
     class Valves(BaseModel):
         RUN_DIAGNOSTICS: bool = Field(default=False, description="🚑 DIAGNOSTICS")
         FORCE_RESET_AUTH: bool = Field(default=False, description="🔴 RESET AUTH")
-        # FORCE DEBUG TRUE pour ce diagnostic crucial
-        DEBUG_MODE: bool = Field(default=True, description="🐞 DEBUG MODE")
+        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
@@ -706,7 +717,7 @@ class Pipe:
         adapter = GeminiAdapter(self.base_url)
         
         # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
-        files_from_args = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
+        files = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
         
         # DEBUG: Dump the entire 'body' keys and 'kwargs' keys to know WHERE files are hiding
         if self.valves.DEBUG_MODE:
@@ -722,7 +733,8 @@ class Pipe:
              
              yield f"🔍 **INPUT DUMP**:\n- Body Keys: `{body_keys}`\n- Kwargs Keys: `{kwargs_keys}`\n- Body Files: `{body_files_dump}`\n- Kwargs Files: `{kwargs_files_dump}`\n"
         
-        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files_from_args)
+        # NOTE: On passe 'body' en entier pour le support du Filtre
+        context = orch.prepare_context(body, chat_id, extra_files=files)
 
         # DEBUG: Output raw incoming OWUI message logs if available
         if self.valves.DEBUG_MODE and hasattr(orch, 'debug_log') and orch.debug_log:
