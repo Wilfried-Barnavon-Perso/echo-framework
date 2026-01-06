@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.55 - Filter Diagnostic)
+title: Gemini Pro Unified System (Platinum Agentic V134.59 - Root Key Pure)
 author: ECHO Architecture
-version: 134.55
-description: v134.55: Version de diagnostic spécifique pour le couplage Filtre/Pipe. 1) Ajout d'un dump complet de body['metadata'] pour vérifier si le filtre a bien créé la clé 'raw_files'. 2) Renforcement de la récupération des fichiers via metadata.raw_files. 3) Maintient les mécanismes de secours et la configuration Pydantic.
+version: 134.59
+description: v134.59: Alignement strict sur la stratégie "Root Key" (raw_files_from_filter). Simplification de la logique de récupération des fichiers pour éviter la multiplication des points de recherche.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.55)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.59)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -384,9 +384,13 @@ class Orchestrator:
              probe_info = self._probe_disk()
              self.debug_log.append(f"🔍 **DISK**: `{probe_info}`")
              
-             # Dump metadata raw_files
+             # Dump metadata raw_files (Legacy)
              raw_files_dump = json.dumps(body.get("metadata", {}).get("raw_files", []), default=str)
              self.debug_log.append(f"📦 **METADATA RAW FILES**: `{raw_files_dump}`")
+             
+             # Dump ROOT raw_files_from_filter (AUDIT FIX)
+             root_files_dump = json.dumps(body.get("raw_files_from_filter", []), default=str)
+             self.debug_log.append(f"📦 **ROOT FILTER FILES**: `{root_files_dump}`")
 
         i = 0
         while i < len(messages):
@@ -458,25 +462,25 @@ class Orchestrator:
                 files_to_process = []
                 seen_ids = set()
 
-                # A. From Message 'files' list (Standard)
+                # A. From Message 'files' list (Standard OWUI)
                 if "files" in m and isinstance(m["files"], list):
                     for f in m["files"]:
                         if isinstance(f, dict):
                             fid = f.get("id") or f.get("file", {}).get("id")
                             if fid and fid not in seen_ids:
-                                files_to_process.append(f)
-                                seen_ids.add(fid)
+                                files_to_process.append(f); seen_ids.add(fid)
                 
-                # B. From Filter (metadata.raw_files) - ONLY for last user message
+                # B. From Filter (Priority to ROOT KEY as per Audit)
                 if i == last_user_idx:
-                    raw_files = body.get("metadata", {}).get("raw_files", [])
+                    # B1. Root Key (The fix - raw_files_from_filter)
+                    raw_files = body.get("raw_files_from_filter", [])
+                    
                     if raw_files:
-                         for f in raw_files:
+                          for f in raw_files:
                             if isinstance(f, dict):
                                 fid = f.get("id") or f.get("file", {}).get("id")
                                 if fid and fid not in seen_ids:
-                                    files_to_process.append(f)
-                                    seen_ids.add(fid)
+                                    files_to_process.append(f); seen_ids.add(fid)
 
                 # C. From kwargs 'extra_files' (Backup)
                 if i == last_user_idx and extra_files:
@@ -485,8 +489,7 @@ class Orchestrator:
                         if isinstance(f, dict):
                             fid = f.get("id") or f.get("file", {}).get("id")
                             if fid and fid not in seen_ids:
-                                files_to_process.append(f)
-                                seen_ids.add(fid)
+                                files_to_process.append(f); seen_ids.add(fid)
 
                 if self.valves.DEBUG_MODE and i == last_user_idx:
                     self.debug_log.append(f"🔍 Files to process: {len(files_to_process)} (IDs: {seen_ids})")
@@ -731,7 +734,12 @@ class Pipe:
              kwargs_files_dump = json.dumps(kwargs.get("__files__"), default=str) if kwargs and "__files__" in kwargs else "None"
              
              yield f"🔍 **INPUT DUMP**:\n- Body Keys: `{body_keys}`\n- Kwargs Keys: `{kwargs_keys}`\n- Body Files: `{body_files_dump}`\n- Kwargs Files: `{kwargs_files_dump}`\n"
-        
+
+             # NEW: FULL BODY DUMP (Truncated) to find where OWUI hides the data
+             full_body_str = json.dumps(body, default=str, indent=2)
+             if len(full_body_str) > 2000: full_body_str = full_body_str[:2000] + "\n...[TRUNCATED]..."
+             yield f"📜 **FULL BODY CONTENT**:\n```json\n{full_body_str}\n```\n"
+
         # NOTE: On passe 'body' en entier pour le support du Filtre
         context = orch.prepare_context(body, chat_id, extra_files=files)
 

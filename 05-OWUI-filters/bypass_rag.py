@@ -1,12 +1,12 @@
 """
-title: Bypass RAG & Force Raw Metadata
+title: Bypass RAG (Audit Aligned - Root Key Only)
 author: ECHO Architecture
-version: 1.1
-description: Active file_handler=True ET déplace les fichiers vers metadata.raw_files pour une consommation parfaite par le Pipe Gemini 3.
+version: 1.8
+description: Version alignée sur l'audit. Recherche les fichiers aux emplacements standards (body['files'] et metadata['files']) et les transmet via la clé racine 'raw_files_from_filter' pour un transport sûr. Supprime la complexité du scan de messages.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import logging
 
 # Configuration du log
@@ -22,34 +22,57 @@ class Filter:
     def __init__(self):
         # 1. Empêche OWUI de lancer le moteur RAG/Tika
         self.file_handler = True
+        # 2. Permet l'activation/désactivation globale dans l'UI
+        self.toggle = True
         self.valves = self.Valves()
 
     def inlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
-        logger.info(f"🛡️ [Bypass RAG] Inlet triggered.")
-        
-        # Récupération des fichiers depuis les différents endroits possibles
-        files = body.get("files", [])
-        
-        # Vérification aussi dans body['metadata']['files'] (structure OWUI parfois changeante)
-        meta_files = body.get("metadata", {}).get("files", [])
-        
-        all_files = []
-        if files: all_files.extend(files)
-        if meta_files: all_files.extend(meta_files)
+        # Si le filtre est désactivé via le toggle UI, on ne fait rien
+        if not self.toggle:
+            return body
 
+        logger.info(f"🛡️ [Bypass RAG Audit v1.8] Inlet triggered.")
+        
+        # --- PHASE 1 : SCAN STANDARD (Aligné sur l'hypothèse simplifiée) ---
+        all_files = []
+        seen_ids = set()
+
+        # Helper pour ajouter proprement
+        def add_file(f_obj: Any):
+            if not isinstance(f_obj, dict): return
+            
+            target = f_obj
+            if f_obj.get("type") == "file" and isinstance(f_obj.get("file"), dict):
+                target = f_obj["file"]
+            
+            fid = target.get("id")
+            if fid and fid not in seen_ids:
+                all_files.append(target)
+                seen_ids.add(fid)
+
+        # Source A : body['files'] (Standard moderne)
+        for f in body.get("files", []): add_file(f)
+        
+        # Source B : body['metadata']['files'] (Standard legacy/compatible)
+        for f in body.get("metadata", {}).get("files", []): add_file(f)
+
+        # Note: On ne scanne PAS 'messages' ici, conformément à votre directive 
+        # d'éviter la multiplication des points de recherche non prouvés.
+
+        # --- PHASE 2 : ACTION ROOT KEY (Recommandation Audit) ---
         if all_files:
-            logger.info(f"🛡️ [Bypass RAG] {len(all_files)} fichiers détectés -> Transfert vers raw_files.")
+            logger.info(f"🛡️ [Bypass RAG] {len(all_files)} fichiers détectés. Transfert vers raw_files_from_filter.")
             
-            # 2. Création de la clé attendue par ton Pipe Engine (Section 5, Logique B)
-            if "metadata" not in body: body["metadata"] = {}
-            body["metadata"]["raw_files"] = all_files
+            # Injection à la racine pour survivre au middleware OWUI
+            body["raw_files_from_filter"] = all_files
             
-            # 3. Nettoyage (Optionnel mais recommandé pour être sûr qu'OWUI ne voit plus rien)
-            # On laisse body['files'] vide pour le reste du pipeline OWUI standard, 
-            # mais le Pipe Gemini lira 'raw_files'.
-            # Note: Si tu as besoin que l'UI affiche les fichiers après coup, ne vide pas tout, 
-            # mais pour le 'processing', c'est plus sûr.
+            # --- PHASE 3 : NETTOYAGE ---
+            if "files" in body: body["files"] = []
+            if "metadata" in body and "files" in body["metadata"]: body["metadata"]["files"] = []
             
+        else:
+            logger.info("🛡️ [Bypass RAG] Aucun fichier trouvé (Scan Standard).")
+
         return body
 
     def outlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
