@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.4.0
+# SCRIPT VERSION : 5.4.1
 # DATE           : 2026-01-06
 # AUTHOR         : ECHO Architecture
 # ==============================================================================
@@ -41,7 +41,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.4.0"
+$SCRIPT_VERSION = "5.4.1"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
@@ -150,7 +150,12 @@ $WriteFilesBlock = ""
 foreach ($DestPath in $FilesMap.Keys) {
   if (Test-Path $FilesMap[$DestPath]) {
     $LocalPath = $FilesMap[$DestPath]
-    $RawContent = Get-Content -Path $LocalPath -Raw
+    
+    # --- FIX ENCODING UTF-8 (V5.4.1) ---
+    # Utilisation de .NET System.IO.File pour forcer la lecture en UTF-8.
+    # Get-Content (PowerShell 5.1) utilise par défaut l'encodage système (Windows-1252) 
+    # si le fichier n'a pas de BOM, ce qui corrompt les accents et emojis dans les fichiers Linux.
+    $RawContent = [System.IO.File]::ReadAllText($LocalPath, [System.Text.Encoding]::UTF8)
         
     # Remplacement dynamique user dans install-stack.sh uniquement
     if ($DestPath -eq "/opt/owui-scripts/install-stack.sh") {
@@ -158,6 +163,7 @@ foreach ($DestPath in $FilesMap.Keys) {
     }
         
     # Encodage Base64 pour éviter problèmes caractères spéciaux dans YAML
+    # On normalise aussi les fins de ligne Windows (CRLF) -> Linux (LF)
     $B64Content = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($RawContent.Replace("`r`n", "`n")))
         
     $WriteFilesBlock += "      - path: $DestPath`n"
