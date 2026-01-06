@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.53 - Robust Filter Aware)
+title: Gemini Pro Unified System (Platinum Agentic V134.54 - Universal File Hunter)
 author: ECHO Architecture
-version: 134.53
-description: v134.53: Version de production consolidée. 1) Restauration complète des Valves (Pydantic) pour la configuration via l'UI. 2) Architecture hybride : utilise prioritairement les fichiers préservés par le filtre 'Bypass RAG' (metadata.raw_files) mais conserve les mécanismes de secours (kwargs, messages) et le 'Force Load'. 3) Réintégration des outils de diagnostic avancés (Disk Probe, Input Dump). 4) Support complet des fonctions (Tools) et de l'authentification OAuth.
+version: 134.54
+description: v134.54: Stratégie de récupération de fichiers 'Terre Brûlée'. Le script chasse les fichiers dans TOUTES les localisations possibles (metadata.raw_files du filtre, kwargs.__files__, body.files, messages.files). Il fusionne tout, dédoublonne par ID, et force l'injection binaire. Ajout d'un rapport de diagnostic DEBUG explicite sur la source des fichiers trouvés.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.53)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.54)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
