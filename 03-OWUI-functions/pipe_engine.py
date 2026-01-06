@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.54 - Universal File Hunter)
+title: Gemini Pro Unified System (Platinum Agentic V134.55 - Filter Diagnostic)
 author: ECHO Architecture
-version: 134.54
-description: v134.54: Stratégie de récupération de fichiers 'Terre Brûlée'. Le script chasse les fichiers dans TOUTES les localisations possibles (metadata.raw_files du filtre, kwargs.__files__, body.files, messages.files). Il fusionne tout, dédoublonne par ID, et force l'injection binaire. Ajout d'un rapport de diagnostic DEBUG explicite sur la source des fichiers trouvés.
+version: 134.55
+description: v134.55: Version de diagnostic spécifique pour le couplage Filtre/Pipe. 1) Ajout d'un dump complet de body['metadata'] pour vérifier si le filtre a bien créé la clé 'raw_files'. 2) Renforcement de la récupération des fichiers via metadata.raw_files. 3) Maintient les mécanismes de secours et la configuration Pydantic.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.54)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.55)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -383,6 +383,10 @@ class Orchestrator:
              # Force disk probe
              probe_info = self._probe_disk()
              self.debug_log.append(f"🔍 **DISK**: `{probe_info}`")
+             
+             # Dump metadata raw_files
+             raw_files_dump = json.dumps(body.get("metadata", {}).get("raw_files", []), default=str)
+             self.debug_log.append(f"📦 **METADATA RAW FILES**: `{raw_files_dump}`")
 
         i = 0
         while i < len(messages):
@@ -394,11 +398,6 @@ class Orchestrator:
                 debug_dump = json.dumps(m, default=str)
                 # No truncation for deep debug
                 self.debug_log.append(f"🔍 [Target Msg] Raw: `{debug_dump}`")
-                
-                # Log Filter presence
-                raw_files_meta = body.get("metadata", {}).get("raw_files")
-                if raw_files_meta:
-                     self.debug_log.append(f"✅ Filter Active: {len(raw_files_meta)} files in metadata")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
