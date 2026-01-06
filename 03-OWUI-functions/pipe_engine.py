@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.59 - Root Key Pure)
+title: Gemini Pro Unified System (Platinum Agentic V134.61 - Stable Root Key)
 author: ECHO Architecture
-version: 134.59
-description: v134.59: Alignement strict sur la stratégie "Root Key" (raw_files_from_filter). Simplification de la logique de récupération des fichiers pour éviter la multiplication des points de recherche.
+version: 134.61
+description: v134.61: Version de production validée. Utilise exclusivement le canal 'raw_files_from_filter' pour la récupération des fichiers, garantissant la compatibilité avec le middleware Open-WebUI. Logs de debug nettoyés.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.59)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.61)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -276,7 +276,7 @@ class Orchestrator:
             if not os.path.exists(self.uploads_dir):
                 return f"❌ Dir not found: {self.uploads_dir}"
             files = os.listdir(self.uploads_dir)
-            return f"✅ Dir exists. {len(files)} files. First 3: {files[:3]}"
+            return f"✅ Dir exists. {len(files)} files."
         except Exception as e:
             return f"❌ Error listing dir: {str(e)}"
 
@@ -380,17 +380,16 @@ class Orchestrator:
                 break
         
         if self.valves.DEBUG_MODE:
-             # Force disk probe
+             # Force disk probe (Simpler)
              probe_info = self._probe_disk()
              self.debug_log.append(f"🔍 **DISK**: `{probe_info}`")
              
-             # Dump metadata raw_files (Legacy)
-             raw_files_dump = json.dumps(body.get("metadata", {}).get("raw_files", []), default=str)
-             self.debug_log.append(f"📦 **METADATA RAW FILES**: `{raw_files_dump}`")
-             
-             # Dump ROOT raw_files_from_filter (AUDIT FIX)
-             root_files_dump = json.dumps(body.get("raw_files_from_filter", []), default=str)
-             self.debug_log.append(f"📦 **ROOT FILTER FILES**: `{root_files_dump}`")
+             # Report on ROOT FILTER FILES (Audit Strategy)
+             root_files = body.get("raw_files_from_filter", [])
+             if root_files:
+                 self.debug_log.append(f"📦 **ROOT FILTER FILES**: Found {len(root_files)} files.")
+             else:
+                 self.debug_log.append(f"📦 **ROOT FILTER FILES**: None")
 
         i = 0
         while i < len(messages):
@@ -399,9 +398,8 @@ class Orchestrator:
             if role == "system": i+=1; continue
 
             if self.valves.DEBUG_MODE and role == "user" and i == last_user_idx:
-                debug_dump = json.dumps(m, default=str)
-                # No truncation for deep debug
-                self.debug_log.append(f"🔍 [Target Msg] Raw: `{debug_dump}`")
+                 # Simplified target msg log
+                self.debug_log.append(f"🔍 [Target Msg] Found User Message")
 
             raw_content = m.get("content", "")
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
@@ -721,25 +719,6 @@ class Pipe:
         # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
         files = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
         
-        # DEBUG: Dump the entire 'body' keys and 'kwargs' keys to know WHERE files are hiding
-        if self.valves.DEBUG_MODE:
-             # Protect against missing keys
-             body_keys = list(body.keys()) if body else []
-             kwargs_keys = list(kwargs.keys()) if kwargs else []
-             
-             # Dump raw body.files if present
-             body_files_dump = json.dumps(body.get("files"), default=str) if body and "files" in body else "None"
-             
-             # Dump kwargs.__files__ if present
-             kwargs_files_dump = json.dumps(kwargs.get("__files__"), default=str) if kwargs and "__files__" in kwargs else "None"
-             
-             yield f"🔍 **INPUT DUMP**:\n- Body Keys: `{body_keys}`\n- Kwargs Keys: `{kwargs_keys}`\n- Body Files: `{body_files_dump}`\n- Kwargs Files: `{kwargs_files_dump}`\n"
-
-             # NEW: FULL BODY DUMP (Truncated) to find where OWUI hides the data
-             full_body_str = json.dumps(body, default=str, indent=2)
-             if len(full_body_str) > 2000: full_body_str = full_body_str[:2000] + "\n...[TRUNCATED]..."
-             yield f"📜 **FULL BODY CONTENT**:\n```json\n{full_body_str}\n```\n"
-
         # NOTE: On passe 'body' en entier pour le support du Filtre
         context = orch.prepare_context(body, chat_id, extra_files=files)
 

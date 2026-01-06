@@ -1,8 +1,8 @@
 """
 title: Bypass RAG (Audit Aligned - Root Key Only)
 author: ECHO Architecture
-version: 1.8
-description: Version alignée sur l'audit. Recherche les fichiers aux emplacements standards (body['files'] et metadata['files']) et les transmet via la clé racine 'raw_files_from_filter' pour un transport sûr. Supprime la complexité du scan de messages.
+version: 1.9
+description: Version finale v1.9. Validée par tests de production (Audit Aligned). Utilise la clé racine 'raw_files_from_filter' pour garantir le transport sécurisé des fichiers vers le Pipe.
 """
 
 from pydantic import BaseModel, Field
@@ -31,7 +31,7 @@ class Filter:
         if not self.toggle:
             return body
 
-        logger.info(f"🛡️ [Bypass RAG Audit v1.8] Inlet triggered.")
+        logger.info(f"🛡️ [Bypass RAG v1.9] Inlet triggered.")
         
         # --- PHASE 1 : SCAN STANDARD (Aligné sur l'hypothèse simplifiée) ---
         all_files = []
