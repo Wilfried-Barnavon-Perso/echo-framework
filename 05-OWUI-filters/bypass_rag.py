@@ -1,8 +1,8 @@
 """
-title: Bypass RAG for Native Uploads
+title: Bypass RAG & Force Raw Metadata
 author: ECHO Architecture
-version: 1.0
-description: Active le mode 'file_handler = True' pour empêcher Open WebUI de traiter les fichiers (RAG/Extraction). Cela permet de transmettre les métadonnées brutes des fichiers (ID, Path) au Pipe suivant (Gemini) sans altération ni suppression en cas d'échec d'extraction.
+version: 1.1
+description: Active file_handler=True ET déplace les fichiers vers metadata.raw_files pour une consommation parfaite par le Pipe Gemini 3.
 """
 
 from pydantic import BaseModel, Field
@@ -20,26 +20,35 @@ class Filter:
         )
 
     def __init__(self):
-        # C'est la ligne MAGIQUE.
-        # Elle signale à OWUI : "Je gère les fichiers, ne lance pas le RAG."
+        # 1. Empêche OWUI de lancer le moteur RAG/Tika
         self.file_handler = True
         self.valves = self.Valves()
 
     def inlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
-        """
-        Intercept la requête avant le traitement RAG.
-        """
-        # On log pour confirmer que le filtre est bien passé par là
-        logger.info(f"🛡️ [Bypass RAG Filter] Inlet triggered.")
+        logger.info(f"🛡️ [Bypass RAG] Inlet triggered.")
         
-        # On vérifie si des fichiers sont présents
-        messages = body.get("messages", [])
-        if messages:
-            last_msg = messages[-1]
-            if "files" in last_msg or body.get("files"):
-                logger.info(f"🛡️ [Bypass RAG Filter] Fichiers détectés. RAG désactivé par file_handler=True.")
-                # On ne touche à rien, on laisse passer le body tel quel.
-                # Grâce à self.file_handler=True, OWUI ne va PAS essayer d'extraire le texte.
+        # Récupération des fichiers depuis les différents endroits possibles
+        files = body.get("files", [])
+        
+        # Vérification aussi dans body['metadata']['files'] (structure OWUI parfois changeante)
+        meta_files = body.get("metadata", {}).get("files", [])
+        
+        all_files = []
+        if files: all_files.extend(files)
+        if meta_files: all_files.extend(meta_files)
+
+        if all_files:
+            logger.info(f"🛡️ [Bypass RAG] {len(all_files)} fichiers détectés -> Transfert vers raw_files.")
+            
+            # 2. Création de la clé attendue par ton Pipe Engine (Section 5, Logique B)
+            if "metadata" not in body: body["metadata"] = {}
+            body["metadata"]["raw_files"] = all_files
+            
+            # 3. Nettoyage (Optionnel mais recommandé pour être sûr qu'OWUI ne voit plus rien)
+            # On laisse body['files'] vide pour le reste du pipeline OWUI standard, 
+            # mais le Pipe Gemini lira 'raw_files'.
+            # Note: Si tu as besoin que l'UI affiche les fichiers après coup, ne vide pas tout, 
+            # mais pour le 'processing', c'est plus sûr.
             
         return body
 
