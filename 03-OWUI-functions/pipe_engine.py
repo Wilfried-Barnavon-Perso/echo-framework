@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.46 - File Object Forensics)
+title: Gemini Pro Unified System (Platinum Agentic V134.47 - Forced Debug & Input Audit)
 author: ECHO Architecture
-version: 134.46
-description: v134.46: Refonte de l'extraction des métadonnées de fichiers. Le script utilise une logique d'inspection profonde pour extraire l'ID et le chemin du fichier, quelle que soit la structure de l'objet (dict plat, imbriqué, ou objet Pydantic). Ajoute des logs exhaustifs sur la structure de chaque objet fichier rencontré pour diagnostiquer pourquoi ils sont ignorés.
+version: 134.47
+description: v134.47: Version de diagnostic critique. 1) Le mode DEBUG est forcé à TRUE (hardcoded) pour garantir l'affichage des logs. 2) Ajout d'un dump complet des entrées (body['files'], kwargs, messages[-1]['files']) pour localiser où OWUI cache les métadonnées des fichiers marqués 'failed'. 3) Maintient la logique de chargement binaire direct et de nettoyage contextuel.
 """
 
 # ==============================================================================
@@ -216,7 +216,7 @@ class SignatureManager:
         return None
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.46)
+# SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING V134.47)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, data_dir):
@@ -283,6 +283,7 @@ class Orchestrator:
     def _resolve_local_path(self, provided_path: str, f_id: str, f_name: str) -> Optional[str]:
         # 1. Test direct
         if provided_path and os.path.exists(provided_path):
+            self.debug_log.append(f"✅ Path found (Direct): {provided_path}")
             return provided_path
 
         # 2. Construction locale
@@ -297,6 +298,7 @@ class Orchestrator:
 
         for p in candidates:
             if os.path.exists(p) and os.path.isfile(p):
+                self.debug_log.append(f"✅ Path found (Glob): {p}")
                 return p
         
         return None
@@ -307,7 +309,7 @@ class Orchestrator:
         real_path = self._resolve_local_path(owui_path, f_id, f_name)
         
         if not real_path:
-            return None, None, False, f"File not found on disk."
+            return None, None, False, f"File not found on disk: {f_id}"
 
         mime_type, _ = mimetypes.guess_type(real_path)
         ext = os.path.splitext(real_path)[1].lower()
@@ -659,7 +661,8 @@ class Pipe:
     class Valves(BaseModel):
         RUN_DIAGNOSTICS: bool = Field(default=False, description="🚑 DIAGNOSTICS")
         FORCE_RESET_AUTH: bool = Field(default=False, description="🔴 RESET AUTH")
-        DEBUG_MODE: bool = Field(default=True, description="🐞 DEBUG MODE") # FORCED TRUE
+        # FORCE DEBUG TRUE pour ce diagnostic crucial
+        DEBUG_MODE: bool = Field(default=True, description="🐞 DEBUG MODE")
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
@@ -703,9 +706,23 @@ class Pipe:
         adapter = GeminiAdapter(self.base_url)
         
         # Récupération sécurisée des fichiers via l'argument spécial __files__ s'il existe
-        files = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
+        files_from_args = body.get("files") or kwargs.get("__files__") # Capture prioritaire via kwargs si body vide
         
-        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files)
+        # DEBUG: Dump the entire 'body' keys and 'kwargs' keys to know WHERE files are hiding
+        if self.valves.DEBUG_MODE:
+             # Protect against missing keys
+             body_keys = list(body.keys()) if body else []
+             kwargs_keys = list(kwargs.keys()) if kwargs else []
+             
+             # Dump raw body.files if present
+             body_files_dump = json.dumps(body.get("files"), default=str) if body and "files" in body else "None"
+             
+             # Dump kwargs.__files__ if present
+             kwargs_files_dump = json.dumps(kwargs.get("__files__"), default=str) if kwargs and "__files__" in kwargs else "None"
+             
+             yield f"🔍 **INPUT DUMP**:\n- Body Keys: `{body_keys}`\n- Kwargs Keys: `{kwargs_keys}`\n- Body Files: `{body_files_dump}`\n- Kwargs Files: `{kwargs_files_dump}`\n"
+        
+        context = orch.prepare_context(body.get("messages", []), chat_id, extra_files=files_from_args)
 
         # DEBUG: Output raw incoming OWUI message logs if available
         if self.valves.DEBUG_MODE and hasattr(orch, 'debug_log') and orch.debug_log:
