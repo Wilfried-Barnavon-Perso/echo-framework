@@ -1,8 +1,8 @@
 """
 title: Bypass RAG (Audit Aligned - Root Key Only)
 author: ECHO Architecture
-version: 1.9
-description: Version finale v1.9. Validée par tests de production (Audit Aligned). Utilise la clé racine 'raw_files_from_filter' pour garantir le transport sécurisé des fichiers vers le Pipe.
+version: 1.10
+description: v1.10: Correctif de stabilité. Sécurisation des itérateurs pour éviter l'erreur 'NoneType object is not iterable' lorsque les champs 'files' ou 'metadata' sont présents mais nuls.
 """
 
 from pydantic import BaseModel, Field
@@ -31,9 +31,9 @@ class Filter:
         if not self.toggle:
             return body
 
-        logger.info(f"🛡️ [Bypass RAG v1.9] Inlet triggered.")
+        logger.info(f"🛡️ [Bypass RAG v1.10] Inlet triggered.")
         
-        # --- PHASE 1 : SCAN STANDARD (Aligné sur l'hypothèse simplifiée) ---
+        # --- PHASE 1 : SCAN STANDARD (Sécurisé) ---
         all_files = []
         seen_ids = set()
 
@@ -51,10 +51,15 @@ class Filter:
                 seen_ids.add(fid)
 
         # Source A : body['files'] (Standard moderne)
-        for f in body.get("files", []): add_file(f)
+        # Correction : Utilisation de (body.get(...) or []) pour gérer le cas où la clé existe mais vaut None
+        for f in (body.get("files") or []): 
+            add_file(f)
         
         # Source B : body['metadata']['files'] (Standard legacy/compatible)
-        for f in body.get("metadata", {}).get("files", []): add_file(f)
+        # Correction : Sécurisation de l'accès à metadata ET à files
+        metadata = body.get("metadata") or {}
+        for f in (metadata.get("files") or []): 
+            add_file(f)
 
         # Note: On ne scanne PAS 'messages' ici, conformément à votre directive 
         # d'éviter la multiplication des points de recherche non prouvés.
