@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh
-# VERSION : v5.3.1
+# VERSION : v5.3.2
 # AUTEUR  : ECHO Architecture
 # DATE    : 2026-01-02
 #

@@ -1,12 +1,13 @@
 #!/bin/bash
 # ==============================================================================
-# CONFIGURATION AUTOMATIQUE OPEN WEBUI (API-BASED v5.12 - ECHO ENGINE)
+# CONFIGURATION AUTOMATIQUE OPEN WEBUI (API-BASED v5.13 - ECHO ENGINE)
 # ==============================================================================
 # - Gestion UTF-8 BOM (Nettoyage)
 # - Gestion Create/Update (Idempotence) avec FIX URL (/id/)
 # - Configuration Native Pipe "ECHO Engine" & Activation Tools/Filters
 # - FIX v5.4 : Smart Toggle (Vérification d'état avant bascule)
 # - FIX v5.6 : HARD RESET ECHO Engine (Delete/Create) pour purger User Valves
+# - UPDATE v5.13 : Activation globale systématique des filtres (Bypass RAG etc.)
 # ==============================================================================
 
 OWUI_URL="http://localhost:8080"
@@ -95,7 +96,7 @@ ensure_active() {
     echo "      🔎 État actuel de $id : $IS_ACTIVE"
 
     if [ "$IS_ACTIVE" == "true" ]; then
-        # Si déjà actif -> ON/OFF/ON pour rafraîchir le cache UI
+        # Si déjà actif -> ON/OFF/ON pour rafraîchir le cache UI et Valves
         echo "      🔄 Rafraîchissement Cache (OFF -> ON)..."
         curl -s -X POST "$OWUI_URL/api/v1/$endpoint_base/id/$id/toggle" -H "Authorization: Bearer $TOKEN" > /dev/null
         sleep 1
@@ -106,7 +107,7 @@ ensure_active() {
         curl -s -X POST "$OWUI_URL/api/v1/$endpoint_base/id/$id/toggle" -H "Authorization: Bearer $TOKEN" > /dev/null
     fi
     
-    echo "      ✅ $id opérationnel."
+    echo "      ✅ $id opérationnel (Global)."
 }
 
 
@@ -149,7 +150,7 @@ if [ -d "$TOOLS_DIR" ]; then
     done
 fi
 
-# --- 5. IMPORT FILTRES ---
+# --- 5. IMPORT FILTRES (GLOBAL VALVES) ---
 echo "🛡️ [FILTERS] Traitement des Filtres..."
 FILTERS_DIR="/opt/owui-filters"
 if [ -d "$FILTERS_DIR" ]; then
@@ -159,12 +160,29 @@ if [ -d "$FILTERS_DIR" ]; then
         FILTER_ID="${FILENAME%.*}"
         echo "   -> Traitement de $FILTER_ID..."
         
+        # Cas spécifique pour Bypass RAG si besoin de log
+        if [ "$FILTER_ID" == "bypass_rag" ]; then
+            echo "      ⚠️  Filtre Critique détecté : Bypass RAG (Audit Aligned)"
+        fi
+        
         CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
+        # NOTE: is_active: true force l'activation globale de la fonction (Type Filter)
         PAYLOAD=$(jq -n \
                   --arg id "$FILTER_ID" \
                   --arg name "$FILTER_ID" \
                   --arg content "$CONTENT" \
-                  '{id: $id, name: $name, content: ($content | fromjson), type: "filter", meta: {description: "ECHO Filter", manifest: {}}, is_active: true}')
+                  '{
+                    id: $id, 
+                    name: $name, 
+                    content: ($content | fromjson), 
+                    type: "filter", 
+                    meta: {
+                        description: "ECHO Filter", 
+                        manifest: {}
+                    }, 
+                    is_active: true,
+                    is_global: true
+                  }')
         
         api_upsert "functions" "$FILTER_ID" "$PAYLOAD" "Filtre"
         ensure_active "functions" "$FILTER_ID"

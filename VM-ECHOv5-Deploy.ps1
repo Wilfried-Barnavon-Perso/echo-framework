@@ -1,8 +1,8 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.3.3
-# DATE           : 2026-01-02
+# SCRIPT VERSION : 5.4.0
+# DATE           : 2026-01-06
 # AUTHOR         : ECHO Architecture
 # ==============================================================================
 #
@@ -41,7 +41,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.3.3"
+$SCRIPT_VERSION = "5.4.0"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
@@ -92,7 +92,7 @@ $AutoUser = "echo"
 $AppPassword = "password" 
 $AutoHostname = $VMName.ToLower() -replace '\s', ''
 # Hash généré pour 'password' (SHA-512)
-$HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0' 
+$HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0' 
 
 # --- 3. VERIFICATION DES FICHIERS (MAPPING STRICT) ---
 # Dictionnaire : Source Windows => Destination Linux
@@ -119,6 +119,7 @@ $FilesMap = @{
 
   # 5. FILTRES
   "/opt/owui-filters/token_monitor.py"            = "$ScriptDir\05-OWUI-filters\token_monitor.py"
+  "/opt/owui-filters/bypass_rag.py"               = "$ScriptDir\05-OWUI-filters\bypass_rag.py"
   
   # 6. VERSIONING
   # NOTE: On copie le fichier VERSION local vers /opt/ECHO_VERSION sur la VM

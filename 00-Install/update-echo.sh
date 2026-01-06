@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : update-echo.sh
-# VERSION : v5.3.1
+# VERSION : v5.3.2
 # ROLE : MISE À JOUR RAPIDE (HOT FIX & SYNC)
 # ==============================================================================
 #
@@ -114,6 +114,7 @@ sync_mirror() {
 sync_mirror "$SRC_DIR/00-Install"       "/opt/owui-scripts"
 sync_mirror "$SRC_DIR/04-OWUI-tools"    "/opt/owui-tools"
 sync_mirror "$SRC_DIR/03-OWUI-functions" "/opt/owui-functions"
+# INTEGRATION FILTRE : Le dossier filters est synchronisé intégralement (incluant bypass_rag.py)
 sync_mirror "$SRC_DIR/05-OWUI-filters"  "/opt/owui-filters"
 
 # VERSIONING UPDATE : Mise à jour du fichier système (/opt/ECHO_VERSION)
@@ -146,7 +147,7 @@ echo "⚡ [3/4] HOT RELOAD SERVICES..."
 docker restart admin-manager python-worker browser-agent > /dev/null 2>&1
 
 echo "🤖 [4/4] CONFIG API OPEN WEBUI..."
-# Appel à l'API interne d'Open WebUI pour recharger les configurations (Pipes, Tools)
+# Appel à l'API interne d'Open WebUI pour recharger les configurations (Pipes, Tools, Filters)
 # Cela évite de devoir redémarrer Open WebUI (qui est long) juste pour un changement de Pipe.
 if docker ps | grep -q open-webui; then
     docker exec open-webui /bin/bash /opt/owui-scripts/config-owui.sh
