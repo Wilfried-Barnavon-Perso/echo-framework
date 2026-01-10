@@ -580,10 +580,12 @@ class GeminiAdapter:
 # SECTION 7 : PROCESSEUR DE FLUX
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, debug=False, chat_id=None, sig_manager=None):
+    def __init__(self, debug=False, chat_id=None, sig_manager=None, event_emitter=None, context_limit=1048576):
         self.debug = debug
         self.chat_id = chat_id
         self.sig_manager = sig_manager
+        self.event_emitter = event_emitter
+        self.context_limit = context_limit
         self.current_sig = None
         self.usage_stats = None
 
@@ -672,6 +674,26 @@ class StreamProcessor:
                 except: pass
         if in_think: yield "\n</think>\n"
         
+        # --- UI STATUS UPDATE (Event Emitter) ---
+        if self.usage_stats and self.event_emitter:
+            try:
+                p_tok = self.usage_stats.get("promptTokenCount", 0)
+                c_tok = self.usage_stats.get("candidatesTokenCount", 0)
+                t_tok = self.usage_stats.get("totalTokenCount", 0)
+                
+                percentage = (t_tok / self.context_limit) * 100
+                status_desc = f"In: {p_tok} | Out: {c_tok} | Contexte: {percentage:.2f}% ({t_tok})"
+
+                await self.event_emitter({
+                    "type": "status",
+                    "data": {
+                        "status": "complete",
+                        "done": True,
+                        "description": status_desc
+                    }
+                })
+            except Exception: pass
+
         # Envoi propre des mStadata standard (OpenAI Protocol)
         # Cela permet S OWUI de stocker et d'afficher les tokens nativement sans polluer le chat.
         if self.usage_stats:
@@ -698,6 +720,7 @@ class Pipe:
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
+        CONTEXT_WINDOW: int = Field(default=1048576, description="Fenêtre de Contexte (Tokens)")
         THINKING_LEVEL: Literal["DYNAMIC", "LOW", "HIGH"] = Field(default="DYNAMIC", description="Niveau de réflexion (Gemini 3)")
         SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système")
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
@@ -712,10 +735,10 @@ class Pipe:
         self.base_url = GOOGLE_API_BASE_URL
 
     # Ajout de **kwargs pour capturer les fichiers cachés d'OWUI
-    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
+    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, __event_emitter__=None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None) or (__metadata__.get("session_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
-        proc = StreamProcessor(self.valves.DEBUG_MODE, chat_id, orch.sig_manager)
+        proc = StreamProcessor(self.valves.DEBUG_MODE, chat_id, orch.sig_manager, event_emitter=__event_emitter__, context_limit=self.valves.CONTEXT_WINDOW)
 
         if self.valves.DEBUG_MODE: yield f"🐞 **DEBUG**\nChatID: `{chat_id}`\n"
 
