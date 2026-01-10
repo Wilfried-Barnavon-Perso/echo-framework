@@ -428,6 +428,7 @@ class Orchestrator:
 
                 text_content = re.sub(r'<think>.*?</think>', '', text_content, flags=re.DOTALL).strip()
                 text_content = re.sub(r'\[\s*\]\(context://thought_signature/[^\)]+\)', '', text_content).strip()
+                
                 if text_content: parts.append({"text": text_content})
 
                 found_in_band_sig = None
@@ -584,6 +585,7 @@ class StreamProcessor:
         self.chat_id = chat_id
         self.sig_manager = sig_manager
         self.current_sig = None
+        self.usage_stats = None
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
@@ -621,6 +623,10 @@ class StreamProcessor:
                 try:
                     data = json.loads(line[6:])
                     if self.debug: yield f"\n`[SSE] {json.dumps(data, ensure_ascii=False)}`\n"
+
+                    # Capture Metadata
+                    if "usageMetadata" in data:
+                        self.usage_stats = data["usageMetadata"]
 
                     cand = data.get("response", {}).get("candidates", [])
                     if cand:
@@ -665,6 +671,21 @@ class StreamProcessor:
                                  
                 except: pass
         if in_think: yield "\n</think>\n"
+        
+        # Envoi propre des mStadata standard (OpenAI Protocol)
+        # Cela permet S OWUI de stocker et d'afficher les tokens nativement sans polluer le chat.
+        if self.usage_stats:
+            in_tok = self.usage_stats.get("promptTokenCount", 0)
+            out_tok = self.usage_stats.get("candidatesTokenCount", 0)
+            total_tok = self.usage_stats.get("totalTokenCount", 0)
+            
+            yield {
+                "usage": {
+                    "prompt_tokens": in_tok,
+                    "completion_tokens": out_tok,
+                    "total_tokens": total_tok
+                }
+            }
 
 # ==============================================================================
 # SECTION 8 : LE PIPE (POINT D'ENTRÉE)
