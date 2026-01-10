@@ -16,8 +16,10 @@ L'intelligence est appuyée par une stack logicielle modulaire, orchestrée par 
 | **Python Worker** | `02-docker-python-worker` | Sandbox Docker pour l'exécution sécurisée de code Python. |
 | **ECHO Engine** | `03-OWUI-functions` | Le "Cerveau" (Pipe). Injecte la constitution et gère le contexte. |
 | **Agent Tools** | `04-OWUI-tools` | Les "Bras". Outils spécialisés (Recherche Web, Exécution Code). |
-| **Filtres** | `05-OWUI-filters` | Sécurité et surveillance (Token Monitor, Bypass RAG). |
+| **Filtres** | `05-OWUI-filters` | Sécurité (Token Monitor) et **Infrastructure (Bypass RAG - Requis)**. |
 | **Browser Agent** | `06-docker-browser-agent` | Agent de navigation autonome. |
+
+> **Note Critique :** Le filtre `bypass_rag.py` est **obligatoire** pour le bon fonctionnement du `pipe_engine`. Il intercepte les fichiers avant le traitement RAG natif d'Open WebUI, permettant au moteur ECHO de gérer le contexte de manière autonome.
 
 ## ⚖️ Système Constitutionnel
 
