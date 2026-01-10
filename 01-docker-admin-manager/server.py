@@ -3,7 +3,7 @@
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
 VERSION : v2.6.1 (Audit Ready)
-AUTEUR : ECHO Architecture
+AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-01-02
 
 --- DESCRIPTION ARCHITECTURALE ---

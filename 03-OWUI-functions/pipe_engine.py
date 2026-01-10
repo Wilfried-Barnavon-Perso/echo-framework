@@ -1,6 +1,6 @@
 """
 title: Gemini Pro Unified System (Platinum Agentic V134.61 - Stable Root Key)
-author: ECHO Architecture
+author: Wilfried BARNAVON
 version: 134.61
 description: v134.61: Version de production validée. Utilise exclusivement le canal 'raw_files_from_filter' pour la récupération des fichiers, garantissant la compatibilité avec le middleware Open-WebUI. Logs de debug nettoyés.
 """

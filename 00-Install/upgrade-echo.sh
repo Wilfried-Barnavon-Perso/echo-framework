@@ -2,6 +2,7 @@
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh
 # VERSION : v5.3.2
+# AUTEUR  : Wilfried BARNAVON
 # ROLE : MISE À NIVEAU MAJEURE (SAFE FORCE UPDATE)
 # ==============================================================================
 #

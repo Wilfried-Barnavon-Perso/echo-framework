@@ -1,6 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (API-BASED v5.13 - ECHO ENGINE)
+# AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # - Gestion UTF-8 BOM (Nettoyage)
 # - Gestion Create/Update (Idempotence) avec FIX URL (/id/)

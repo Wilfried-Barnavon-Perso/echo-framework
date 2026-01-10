@@ -6,6 +6,13 @@ import uuid
 import os
 import shutil
 import traceback
+"""
+================================================================================
+MODULE : ECHO BROWSER AGENT API
+VERSION : v1.0
+AUTEUR : Wilfried BARNAVON
+================================================================================
+"""
 
 app = Flask(__name__)
 

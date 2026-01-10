@@ -1,6 +1,6 @@
 """
 title: Advanced Web Browser
-author: ECHO v5
+author: Wilfried BARNAVON
 version: 1.1
 description: Navigateur persistant capable de cliquer, remplir des formulaires et lire le contenu (via Browser Agent).
 """

@@ -4,7 +4,7 @@ import sys, io, contextlib, traceback, multiprocessing, tempfile, os
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
 VERSION : v1.1.0 (Sandbox Core)
-AUTEUR : ECHO Architecture
+AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-01-10
 ================================================================================
 """

@@ -1,6 +1,6 @@
 """
 title: Python Code Executor (Sidecar)
-author: ECHO Architecture
+author: Wilfried BARNAVON
 version: 4.1
 """
 import requests, json

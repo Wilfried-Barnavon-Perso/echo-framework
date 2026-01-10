@@ -1,6 +1,6 @@
 """
 title: Gemini Internal Web Search
-author: ECHO Architecture
+author: Wilfried BARNAVON
 version: 9.1
 """
 import json, os, requests, uuid, random

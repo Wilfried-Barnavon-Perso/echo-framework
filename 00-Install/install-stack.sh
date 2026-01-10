@@ -2,7 +2,7 @@
 # ==============================================================================
 # SCRIPT : install-stack.sh
 # VERSION : v5.3.2
-# AUTEUR  : ECHO Architecture
+# AUTEUR  : Wilfried BARNAVON
 # DATE    : 2026-01-02
 #
 # ROLE : ORCHESTRATION DU DÉPLOIEMENT DES CONTENEURS DOCKER

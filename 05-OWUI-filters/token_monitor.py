@@ -1,6 +1,6 @@
 """
 title: Token Stats Monitor
-author: ECHO
+author: Wilfried BARNAVON
 type: filter
 """
 
