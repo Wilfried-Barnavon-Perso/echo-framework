@@ -691,7 +691,11 @@ class StreamProcessor:
             if self.debug: yield f"\n🐞 **DEBUG** Injecting Stats: P={p_tok}, C={c_tok}, T={t_tok}\n"
 
             # Format Markdown discret
-            stats_md = f"\n\n> **⚡ Métriques de Flux (Gemini)**\n> 📥 **Entrée:** {p_tok} | 📤 **Sortie:** {c_tok} | 📦 **Total:** {t_tok}\n"
+            stats_md = f"""\n\n<details>
+<summary>⚡ Métriques de Flux (Gemini)</summary>
+
+📥 **Entrée:** {p_tok} | 📤 **Sortie:** {c_tok} | 📦 **Total:** {t_tok}
+</details>\n"""
             yield stats_md
 
             # Envoi aussi du protocole standard pour la DB
