@@ -629,8 +629,12 @@ class StreamProcessor:
                     if self.debug: yield f"\n`[SSE] {json.dumps(data, ensure_ascii=False)}`\n"
 
                     # Capture Metadata
-                    if "usageMetadata" in data:
-                        self.usage_stats = data["usageMetadata"]
+                    meta = data.get("usageMetadata")
+                    if not meta:
+                        meta = data.get("response", {}).get("usageMetadata")
+
+                    if meta:
+                        self.usage_stats = meta
                         if self.debug: yield f"\n🐞 **DEBUG** Usage Metadata received: `{json.dumps(self.usage_stats)}`\n"
 
                     cand = data.get("candidates", [])
