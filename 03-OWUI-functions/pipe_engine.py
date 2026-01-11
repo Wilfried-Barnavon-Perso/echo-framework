@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.63 - Stable Root Key)
+title: Gemini Pro Unified System (Platinum Agentic V134.61 - Stable Root Key)
 author: Wilfried BARNAVON
-version: 134.63
-description: v134.63: Robustesse extraction candidates API (Fix SSE structure) + Logs de debug structurés pour diagnostic.
+version: 134.61
+description: v134.61: Version de production validée. Utilise exclusivement le canal 'raw_files_from_filter' pour la récupération des fichiers, garantissant la compatibilité avec le middleware Open-WebUI. Logs de debug nettoyés.
 """
 
 # ==============================================================================
@@ -631,12 +631,8 @@ class StreamProcessor:
                     # Capture Metadata
                     if "usageMetadata" in data:
                         self.usage_stats = data["usageMetadata"]
-                        if self.debug: yield f"\n🐞 **DEBUG** Usage Metadata received: `{json.dumps(self.usage_stats)}`\n"
 
-                    cand = data.get("candidates", [])
-                    if not cand:
-                        cand = data.get("response", {}).get("candidates", [])
-
+                    cand = data.get("response", {}).get("candidates", [])
                     if cand:
                         first_cand = cand[0]
                         if "content" in first_cand:
@@ -686,8 +682,6 @@ class StreamProcessor:
             c_tok = self.usage_stats.get("candidatesTokenCount", 0)
             t_tok = self.usage_stats.get("totalTokenCount", 0)
             
-            if self.debug: yield f"\n🐞 **DEBUG** Injecting Stats: P={p_tok}, C={c_tok}, T={t_tok}\n"
-
             # Format "Citation" natif (discret)
             stats_html = f"""
 \n
@@ -783,15 +777,6 @@ class Pipe:
                     if "inlineData" in part and "data" in part["inlineData"]:
                         part["inlineData"]["data"] = f"[...base64 data of type {part['inlineData'].get('mimeType', 'unknown')}...]"
             yield f"🐞 **API REQ**\n`{json.dumps(log_req)[:1000]}...`\n"
-
-            # DEBUG: Log Structure
-            if self.valves.DEBUG_MODE:
-                summary = []
-                for c in log_req.get("request", {}).get("contents", []):
-                    role = c.get("role", "?")
-                    parts_len = len(c.get("parts", []))
-                    summary.append(f"{role}[{parts_len}]")
-                yield f"\n🐞 **MSG STRUCTURE**: {' -> '.join(summary)}\n"
 
 
         try:
