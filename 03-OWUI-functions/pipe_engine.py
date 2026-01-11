@@ -631,6 +631,7 @@ class StreamProcessor:
                     # Capture Metadata
                     if "usageMetadata" in data:
                         self.usage_stats = data["usageMetadata"]
+                        if self.debug: yield f"\n🐞 **DEBUG** Usage Metadata received: `{json.dumps(self.usage_stats)}`\n"
 
                     cand = data.get("response", {}).get("candidates", [])
                     if cand:
@@ -682,6 +683,8 @@ class StreamProcessor:
             c_tok = self.usage_stats.get("candidatesTokenCount", 0)
             t_tok = self.usage_stats.get("totalTokenCount", 0)
             
+            if self.debug: yield f"\n🐞 **DEBUG** Injecting Stats: P={p_tok}, C={c_tok}, T={t_tok}\n"
+
             # Format "Citation" natif (discret)
             stats_html = f"""
 \n
