@@ -136,12 +136,14 @@ OWUI_DATA_ROOT = "/app/backend/data"
 
 # Sous-dossiers spécifiques pour la gestion des mémoires externes (Signatures Gemini)
 SIG_DATA_DIR = os.path.join(OWUI_DATA_ROOT, "signatures") 
+STATS_DATA_DIR = os.path.join(OWUI_DATA_ROOT, "stats")
 SIG_CONFIG_FILE = os.path.join(OWUI_DATA_ROOT, "signature_maintenance_config.json")
 DATA_DIR_FOR_BACKUP = OWUI_DATA_ROOT 
 
 # Configuration par défaut (Fallback si le fichier JSON n'existe pas)
 DEFAULT_SIG_CONFIG = {
     "retention_weeks": 156,      # Conservation longue durée (3 ans)
+    "stats_retention_days": 7,   # Rétention courte pour les stats (-1 = Infini)
     "file_count_trigger": 100000, # Seuil de déclenchement élevé pour éviter l'I/O inutile
     "cleanup_hour": "03:00",     # Exécution nocturne
     "last_run": "Never"
@@ -189,6 +191,39 @@ def save_sig_config(config):
             json.dump(config, f, indent=4)
     except Exception as e: print(f"Erreur sauvegarde config signatures: {e}")
 
+def run_stats_cleanup(config):
+    """
+    Nettoyage spécifique des métriques JSON (Stats).
+    Géré séparément des signatures car la politique de rétention est très différente (jours vs années).
+    """
+    if not os.path.exists(STATS_DATA_DIR): return
+    
+    days = config.get("stats_retention_days", 7)
+    if days == -1: 
+        print("ℹ️ [Maintenance] Stats: Nettoyage désactivé (-1).")
+        return
+
+    print(f"ℹ️ [Maintenance] Nettoyage Stats (Rétention: {days} jours)...")
+    now = time.time()
+    retention_sec = days * 24 * 3600
+    count = 0
+    
+    try:
+        # Scan simple : pas de seuil volumétrique car ce dossier doit rester léger
+        files = [os.path.join(STATS_DATA_DIR, f) for f in os.listdir(STATS_DATA_DIR) 
+                 if f.endswith('.json')]
+        
+        for fpath in files:
+            try:
+                if (now - os.path.getmtime(fpath)) > retention_sec:
+                    os.remove(fpath)
+                    count += 1
+            except: pass
+        
+        if count > 0: print(f"✅ [Maintenance] Stats: {count} fichiers supprimés.")
+        
+    except Exception as e: print(f"💥 [Maintenance] Stats Error: {str(e)}")
+
 def run_signature_cleanup():
     """
     ALGORITHME CRITIQUE : Nettoyage des fichiers de contexte (Signatures).
@@ -227,6 +262,8 @@ def run_signature_cleanup():
         # Etape 1 : Décision
         if count < threshold:
             print(f"ℹ️ [Maintenance] Seuil non atteint ({count} < {threshold}).")
+            # --- INTERCEPTION : On lance quand même le nettoyage des Stats même si Signatures OK ---
+            run_stats_cleanup(config)
             return
 
         # Etape 2 : Action
@@ -245,6 +282,9 @@ def run_signature_cleanup():
             except: pass # Si échec suppression (lock Windows/Linux), on passe au suivant
 
         print(f"✅ [Maintenance] Terminée. {deleted} supprimés.")
+        
+        # --- LANCEMENT NETTOYAGE STATS ---
+        run_stats_cleanup(config)
         
         # Mise à jour de l'état pour l'UI
         config["last_run"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -505,6 +545,7 @@ def update_signature_settings():
     try:
         # Conversion typée pour la sécurité
         config["retention_weeks"] = int(request.form.get("retention_weeks", 156))
+        config["stats_retention_days"] = int(request.form.get("stats_retention_days", 7))
         config["file_count_trigger"] = int(request.form.get("file_count_trigger", 100000))
         config["cleanup_hour"] = request.form.get("cleanup_hour", "03:00")
         save_sig_config(config)
@@ -801,13 +842,17 @@ HTML_DASHBOARD = """
                             </div>
                             <div class="row g-2 mb-3">
                                 <div class="col-7">
-                                    <label class="form-label text-muted small mb-0">Rétention (Semaines)</label>
+                                    <label class="form-label text-muted small mb-0">Rétention Sigs (Semaines)</label>
                                     <input type="number" name="retention_weeks" class="form-control form-control-sm bg-dark text-white border-secondary" value="{{ sig_config.retention_weeks }}">
                                 </div>
                                 <div class="col-5">
                                     <label class="form-label text-muted small mb-0">Heure</label>
                                     <input type="time" name="cleanup_hour" class="form-control form-control-sm bg-dark text-white border-secondary" value="{{ sig_config.cleanup_hour }}">
                                 </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label text-muted small mb-0">Rétention Stats (Jours) <span class="text-secondary" style="font-size:0.7em">(-1 = Jamais)</span></label>
+                                <input type="number" name="stats_retention_days" class="form-control form-control-sm bg-dark text-white border-secondary" value="{{ sig_config.stats_retention_days }}">
                             </div>
                             <div class="d-flex gap-2">
                                 <button type="submit" class="btn btn-sm btn-outline-info flex-grow-1">Sauver Config</button>
