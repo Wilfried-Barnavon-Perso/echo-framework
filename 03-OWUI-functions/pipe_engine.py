@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.65 - Stable Root Key)
+title: Gemini Pro Unified System (Platinum Agentic V134.66 - Stable Root Key)
 author: Wilfried BARNAVON
-version: 134.65
-description: v134.65: Ajout réglages SHOW_METRICS et MAX_CONTEXT_SIZE.
+version: 134.66
+description: v134.66: Sauvegarde persistante des métriques par chat_id pour context_gauge.
 """
 
 # ==============================================================================
@@ -593,6 +593,8 @@ class StreamProcessor:
         self.context_window = context_window
         self.current_sig = None
         self.usage_stats = None
+        self.stats_dir = "/app/backend/data/stats"
+        os.makedirs(self.stats_dir, exist_ok=True)
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
@@ -636,6 +638,13 @@ class StreamProcessor:
                     if meta:
                         self.usage_stats = meta
                         if self.debug: yield f"\n🐞 **DEBUG** Usage Metadata received: `{json.dumps(self.usage_stats)}`\n"
+                        # Sauvegarde des stats pour les outils (Context Gauge)
+                        if self.chat_id:
+                            try:
+                                safe_id = "".join(x for x in str(self.chat_id) if x.isalnum() or x in "-_")
+                                with open(f"{self.stats_dir}/{safe_id}.json", "w") as f:
+                                    json.dump(self.usage_stats, f)
+                            except: pass
 
                     cand = data.get("candidates", [])
                     if not cand:
