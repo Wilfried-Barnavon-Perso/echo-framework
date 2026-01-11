@@ -286,4 +286,4 @@ if (-not (Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
 else {
   Write-Warning "⚠️  La VM $VMName existe déjà. Aucune action effectuée."
   Pause-OnError "Veuillez supprimer la VM existante ou incrémenter la version du fichier VERSION."
-}
+} 

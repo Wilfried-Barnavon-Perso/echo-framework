@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.62 - Stable Root Key)
+title: Gemini Pro Unified System (Platinum Agentic V134.63 - Stable Root Key)
 author: Wilfried BARNAVON
-version: 134.62
-description: v134.62: Ajout de l'affichage natif des métriques de consommation Gemini (Citations) avec nettoyage automatique du contexte.
+version: 134.63
+description: v134.63: Robustesse extraction candidates API (Fix SSE structure) + Logs de debug structurés pour diagnostic.
 """
 
 # ==============================================================================
@@ -633,7 +633,10 @@ class StreamProcessor:
                         self.usage_stats = data["usageMetadata"]
                         if self.debug: yield f"\n🐞 **DEBUG** Usage Metadata received: `{json.dumps(self.usage_stats)}`\n"
 
-                    cand = data.get("response", {}).get("candidates", [])
+                    cand = data.get("candidates", [])
+                    if not cand:
+                        cand = data.get("response", {}).get("candidates", [])
+
                     if cand:
                         first_cand = cand[0]
                         if "content" in first_cand:
@@ -780,6 +783,15 @@ class Pipe:
                     if "inlineData" in part and "data" in part["inlineData"]:
                         part["inlineData"]["data"] = f"[...base64 data of type {part['inlineData'].get('mimeType', 'unknown')}...]"
             yield f"🐞 **API REQ**\n`{json.dumps(log_req)[:1000]}...`\n"
+
+            # DEBUG: Log Structure
+            if self.valves.DEBUG_MODE:
+                summary = []
+                for c in log_req.get("request", {}).get("contents", []):
+                    role = c.get("role", "?")
+                    parts_len = len(c.get("parts", []))
+                    summary.append(f"{role}[{parts_len}]")
+                yield f"\n🐞 **MSG STRUCTURE**: {' -> '.join(summary)}\n"
 
 
         try:
