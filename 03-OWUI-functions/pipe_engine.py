@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.67 - Strict Context)
+title: Gemini Pro Unified System (Platinum Agentic V134.71 - Labeled Metrics)
 author: Wilfried BARNAVON
-version: 134.67
-description: v134.67: Fix visuel (suppression métriques lors des Tool Calls) et harmonisation stricte avec context_gauge.
+version: 134.71
+description: v134.71: Ajout d'un label dans le titre des métriques pour indiquer le moment de la mesure (Réponse vs Action:ToolName).
 """
 
 # ==============================================================================
@@ -594,13 +594,13 @@ class StreamProcessor:
         self.current_sig = None
         self.usage_stats = None
         self.stats_dir = "/app/backend/data/stats"
-        self.has_tool_calls = False # <-- Ajout flag pour nettoyer l'output
         os.makedirs(self.stats_dir, exist_ok=True)
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
         tool_index = 0
         buffer = ""
+        step_label = "Final" # Label par défaut
 
         ct = response.headers.get("content-type", "")
         if "application/json" in ct:
@@ -634,12 +634,11 @@ class StreamProcessor:
                     data = json.loads(line[6:])
                     if self.debug: yield f"\n`[SSE] {json.dumps(data, ensure_ascii=False)}`\n"
 
-                    # Capture Metadata (Nested 'response' check only as requested)
+                    # Capture Metadata
                     meta = data.get("response", {}).get("usageMetadata")
                     if meta:
                         self.usage_stats = meta
                         if self.debug: yield f"\n🐞 **DEBUG** Usage Metadata received: `{json.dumps(self.usage_stats)}`\n"
-                        # Sauvegarde des stats pour les outils (Context Gauge)
                         if self.chat_id:
                             try:
                                 safe_id = "".join(x for x in str(self.chat_id) if x.isalnum() or x in "-_")
@@ -669,8 +668,7 @@ class StreamProcessor:
                                     if not in_think: yield "<think>\n"; in_think = True
                                     yield txt
                                 elif func_call:
-                                    # <-- Flag tool call détecté
-                                    self.has_tool_calls = True
+                                    step_label = f"Action: {func_call.get('name', 'Unknown')}" # Update du label
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     args = func_call.get("args", {})
                                     if self.current_sig: args["_thought_signature"] = self.current_sig
@@ -696,7 +694,7 @@ class StreamProcessor:
                 except: pass
         if in_think: yield "\n</think>\n"
         
-        # --- INJECTION DES MÉTRIQUES (Invisible pour le modèle au prochain tour grâce au nettoyage) ---
+        # --- INJECTION DES MÉTRIQUES (SYSTEMATIQUE) ---
         if self.usage_stats:
             p_tok = self.usage_stats.get("promptTokenCount", 0)
             c_tok = self.usage_stats.get("candidatesTokenCount", 0)
@@ -704,8 +702,8 @@ class StreamProcessor:
             
             if self.debug: yield f"\n🐞 **DEBUG** Injecting Stats: P={p_tok}, C={c_tok}, T={t_tok}\n"
 
-            # Ne montrer les métriques QUE SI ce n'est PAS un appel d'outil
-            if self.show_metrics and not self.has_tool_calls:
+            # Condition simple : Si l'utilisateur veut les métriques, on les affiche.
+            if self.show_metrics:
                 # Calcul pourcentage occupation contexte
                 percent = 0
                 if self.context_window > 0:
@@ -717,7 +715,7 @@ class StreamProcessor:
 
                 # Format Markdown
                 stats_md = f"""\n\n<details>
-<summary>⚡ Contexte: {percent:.1f}% {bar}</summary>
+<summary>⚡ Contexte [{step_label}]: {percent:.1f}% {bar}</summary>
 
 | Métrique | Valeur |
 | :--- | :--- |
