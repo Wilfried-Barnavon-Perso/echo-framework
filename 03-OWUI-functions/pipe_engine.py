@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.63 - Stable Root Key)
+title: Gemini Pro Unified System (Platinum Agentic V134.64 - Stable Root Key)
 author: Wilfried BARNAVON
-version: 134.63
-description: v134.63: Robustesse extraction candidates API (Fix SSE structure) + Logs de debug structurés pour diagnostic.
+version: 134.64
+description: v134.64: Nettoyage extraction tokens (nested only) + Formatage stats en Markdown.
 """
 
 # ==============================================================================
@@ -432,6 +432,7 @@ class Orchestrator:
                 # --- NETTOYAGE ANTI-POLLUTION (Stats & Citations) ---
                 text_content = re.sub(r'<div.*?>.*?Stats:.*?</div>', '', text_content, flags=re.DOTALL | re.IGNORECASE).strip()
                 text_content = re.sub(r'<details.*?>.*?Métriques de Flux.*?</details>', '', text_content, flags=re.DOTALL | re.IGNORECASE).strip()
+                text_content = re.sub(r'> \*\*⚡ Métriques de Flux.*?\n', '', text_content).strip()
 
                 if text_content: parts.append({"text": text_content})
 
@@ -628,11 +629,8 @@ class StreamProcessor:
                     data = json.loads(line[6:])
                     if self.debug: yield f"\n`[SSE] {json.dumps(data, ensure_ascii=False)}`\n"
 
-                    # Capture Metadata
-                    meta = data.get("usageMetadata")
-                    if not meta:
-                        meta = data.get("response", {}).get("usageMetadata")
-
+                    # Capture Metadata (Nested 'response' check only as requested)
+                    meta = data.get("response", {}).get("usageMetadata")
                     if meta:
                         self.usage_stats = meta
                         if self.debug: yield f"\n🐞 **DEBUG** Usage Metadata received: `{json.dumps(self.usage_stats)}`\n"
@@ -692,19 +690,9 @@ class StreamProcessor:
             
             if self.debug: yield f"\n🐞 **DEBUG** Injecting Stats: P={p_tok}, C={c_tok}, T={t_tok}\n"
 
-            # Format "Citation" natif (discret)
-            stats_html = f"""
-\n
-<details class="usage-stats">
-<summary>⚡ Métriques de Flux (Gemini)</summary>
-<div style="font-size: 0.85em; padding: 8px; color: var(--text-gray-500);">
-  <span style="margin-right: 15px;">📥 <b>Entrée:</b> {p_tok}</span>
-  <span style="margin-right: 15px;">📤 <b>Sortie:</b> {c_tok}</span>
-  <span>📦 <b>Total:</b> {t_tok}</span>
-</div>
-</details>
-"""
-            yield stats_html
+            # Format Markdown discret
+            stats_md = f"\n\n> **⚡ Métriques de Flux (Gemini)**\n> 📥 **Entrée:** {p_tok} | 📤 **Sortie:** {c_tok} | 📦 **Total:** {t_tok}\n"
+            yield stats_md
 
             # Envoi aussi du protocole standard pour la DB
             yield {
