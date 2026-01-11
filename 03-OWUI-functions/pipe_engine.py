@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.66 - Stable Root Key)
+title: Gemini Pro Unified System (Platinum Agentic V134.67 - Strict Context)
 author: Wilfried BARNAVON
-version: 134.66
-description: v134.66: Sauvegarde persistante des métriques par chat_id pour context_gauge.
+version: 134.67
+description: v134.67: Fix visuel (suppression métriques lors des Tool Calls) et harmonisation stricte avec context_gauge.
 """
 
 # ==============================================================================
@@ -594,6 +594,7 @@ class StreamProcessor:
         self.current_sig = None
         self.usage_stats = None
         self.stats_dir = "/app/backend/data/stats"
+        self.has_tool_calls = False # <-- Ajout flag pour nettoyer l'output
         os.makedirs(self.stats_dir, exist_ok=True)
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
@@ -668,6 +669,8 @@ class StreamProcessor:
                                     if not in_think: yield "<think>\n"; in_think = True
                                     yield txt
                                 elif func_call:
+                                    # <-- Flag tool call détecté
+                                    self.has_tool_calls = True
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     args = func_call.get("args", {})
                                     if self.current_sig: args["_thought_signature"] = self.current_sig
@@ -701,7 +704,8 @@ class StreamProcessor:
             
             if self.debug: yield f"\n🐞 **DEBUG** Injecting Stats: P={p_tok}, C={c_tok}, T={t_tok}\n"
 
-            if self.show_metrics:
+            # Ne montrer les métriques QUE SI ce n'est PAS un appel d'outil
+            if self.show_metrics and not self.has_tool_calls:
                 # Calcul pourcentage occupation contexte
                 percent = 0
                 if self.context_window > 0:
@@ -723,7 +727,7 @@ class StreamProcessor:
 </details>\n"""
                 yield stats_md
 
-            # Envoi aussi du protocole standard pour la DB
+            # Envoi aussi du protocole standard pour la DB (Toujours envoyé pour update du système)
             yield {
                 "usage": {
                     "prompt_tokens": p_tok,
