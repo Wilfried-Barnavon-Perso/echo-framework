@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.71 - Labeled Metrics)
+title: Gemini Pro Unified System (Platinum Agentic V134.72 - Contextual Labeling)
 author: Wilfried BARNAVON
-version: 134.71
-description: v134.71: Ajout d'un label dans le titre des métriques pour indiquer le moment de la mesure (Réponse vs Action:ToolName).
+version: 134.72
+description: v134.72: Affichage contextuel des métriques : "Pré-[NomOutil]" (Appel), "Post-Action" (Retour outil) ou "Réponse" (Standard).
 """
 
 # ==============================================================================
@@ -585,12 +585,13 @@ class GeminiAdapter:
 # SECTION 7 : PROCESSEUR DE FLUX
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, debug=False, chat_id=None, sig_manager=None, show_metrics=False, context_window=1048576):
+    def __init__(self, debug=False, chat_id=None, sig_manager=None, show_metrics=False, context_window=1048576, initial_label="Réponse"):
         self.debug = debug
         self.chat_id = chat_id
         self.sig_manager = sig_manager
         self.show_metrics = show_metrics
         self.context_window = context_window
+        self.initial_label = initial_label # Label de départ (dérivé du contexte pipe)
         self.current_sig = None
         self.usage_stats = None
         self.stats_dir = "/app/backend/data/stats"
@@ -600,7 +601,7 @@ class StreamProcessor:
         in_think = False
         tool_index = 0
         buffer = ""
-        step_label = "Final" # Label par défaut
+        step_label = self.initial_label # Commence avec "Réponse" ou "Post-Action"
 
         ct = response.headers.get("content-type", "")
         if "application/json" in ct:
@@ -668,7 +669,7 @@ class StreamProcessor:
                                     if not in_think: yield "<think>\n"; in_think = True
                                     yield txt
                                 elif func_call:
-                                    step_label = f"Action: {func_call.get('name', 'Unknown')}" # Update du label
+                                    step_label = f"Pré-{func_call.get('name', 'Action')}" # Update du label : on prépare l'action
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     args = func_call.get("args", {})
                                     if self.current_sig: args["_thought_signature"] = self.current_sig
@@ -764,12 +765,20 @@ class Pipe:
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None) or (__metadata__.get("session_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
+        
+        # Détection basique du contexte "Post-Action" via l'historique immédiat
+        initial_label = "Réponse"
+        msgs = body.get("messages", [])
+        if msgs and msgs[-1].get("role") == "tool":
+             initial_label = "Post-Action"
+        
         proc = StreamProcessor(
             self.valves.DEBUG_MODE, 
             chat_id, 
             orch.sig_manager, 
             self.valves.SHOW_METRICS, 
-            self.valves.MAX_CONTEXT_SIZE
+            self.valves.MAX_CONTEXT_SIZE,
+            initial_label # On passe le label déduit
         )
 
         if self.valves.DEBUG_MODE: yield f"🐞 **DEBUG**\nChatID: `{chat_id}`\n"
