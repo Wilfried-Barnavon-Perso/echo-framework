@@ -585,10 +585,12 @@ class GeminiAdapter:
 # SECTION 7 : PROCESSEUR DE FLUX
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, debug=False, chat_id=None, sig_manager=None):
+    def __init__(self, debug=False, chat_id=None, sig_manager=None, show_metrics=False, context_window=1048576):
         self.debug = debug
         self.chat_id = chat_id
         self.sig_manager = sig_manager
+        self.show_metrics = show_metrics
+        self.context_window = context_window
         self.current_sig = None
         self.usage_stats = None
 
@@ -690,13 +692,27 @@ class StreamProcessor:
             
             if self.debug: yield f"\n🐞 **DEBUG** Injecting Stats: P={p_tok}, C={c_tok}, T={t_tok}\n"
 
-            # Format Markdown discret
-            stats_md = f"""\n\n<details>
-<summary>⚡ Métriques de Flux (Gemini)</summary>
+            if self.show_metrics:
+                # Calcul pourcentage occupation contexte
+                percent = 0
+                if self.context_window > 0:
+                    percent = (t_tok / self.context_window) * 100
+                
+                # Barre de progression simple (10 blocs)
+                filled = int(percent / 10)
+                bar = "█" * filled + "░" * (10 - filled)
 
-📥 **Entrée:** {p_tok} | 📤 **Sortie:** {c_tok} | 📦 **Total:** {t_tok}
+                # Format Markdown
+                stats_md = f"""\n\n<details>
+<summary>⚡ Contexte: {percent:.1f}% {bar}</summary>
+
+| Métrique | Valeur |
+| :--- | :--- |
+| **Prompt** | {p_tok:,} |
+| **Réponse** | {c_tok:,} |
+| **Total** | {t_tok:,} / {self.context_window:,} |
 </details>\n"""
-            yield stats_md
+                yield stats_md
 
             # Envoi aussi du protocole standard pour la DB
             yield {
