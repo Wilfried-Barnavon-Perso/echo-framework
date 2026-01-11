@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.64 - Stable Root Key)
+title: Gemini Pro Unified System (Platinum Agentic V134.65 - Stable Root Key)
 author: Wilfried BARNAVON
-version: 134.64
-description: v134.64: Nettoyage extraction tokens (nested only) + Formatage stats en Markdown.
+version: 134.65
+description: v134.65: Ajout réglages SHOW_METRICS et MAX_CONTEXT_SIZE.
 """
 
 # ==============================================================================
@@ -731,9 +731,11 @@ class Pipe:
         RUN_DIAGNOSTICS: bool = Field(default=False, description="🚑 DIAGNOSTICS")
         FORCE_RESET_AUTH: bool = Field(default=False, description="🔴 RESET AUTH")
         DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
+        SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
+        MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
         THINKING_LEVEL: Literal["DYNAMIC", "LOW", "HIGH"] = Field(default="DYNAMIC", description="Niveau de réflexion (Gemini 3)")
         SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système")
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
@@ -751,7 +753,13 @@ class Pipe:
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None) or (__metadata__.get("session_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
-        proc = StreamProcessor(self.valves.DEBUG_MODE, chat_id, orch.sig_manager)
+        proc = StreamProcessor(
+            self.valves.DEBUG_MODE, 
+            chat_id, 
+            orch.sig_manager, 
+            self.valves.SHOW_METRICS, 
+            self.valves.MAX_CONTEXT_SIZE
+        )
 
         if self.valves.DEBUG_MODE: yield f"🐞 **DEBUG**\nChatID: `{chat_id}`\n"
 
