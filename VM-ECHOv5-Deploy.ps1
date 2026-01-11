@@ -1,8 +1,8 @@
-﻿# ==============================================================================
+# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.4.1
-# DATE           : 2026-01-06
+# SCRIPT VERSION : 5.4.6
+# DATE           : 2026-01-11
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -116,9 +116,9 @@ $FilesMap = @{
   "/opt/owui-tools/gemini_internal_web_search.py" = "$ScriptDir\04-OWUI-tools\gemini_internal_web_search.py"
   "/opt/owui-tools/web_browser_advanced.py"       = "$ScriptDir\04-OWUI-tools\web_browser_advanced.py"
   "/opt/owui-tools/api_client.py"                 = "$ScriptDir\04-OWUI-tools\api_client.py"
+  "/opt/owui-tools/context_gauge.py"              = "$ScriptDir\04-OWUI-tools\context_gauge.py"
 
   # 5. FILTRES
-  "/opt/owui-filters/token_monitor.py"            = "$ScriptDir\05-OWUI-filters\token_monitor.py"
   "/opt/owui-filters/bypass_rag.py"               = "$ScriptDir\05-OWUI-filters\bypass_rag.py"
   
   # 6. VERSIONING

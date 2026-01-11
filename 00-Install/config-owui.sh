@@ -237,6 +237,7 @@ if [ -d "$FUNCS_DIR" ]; then
                     },
                     toolIds: [
                       "api_client",
+                      "context_gauge",
                       "gemini_internal_web_search",
                       "python_code_executor",
                       "web_browser_advanced"
