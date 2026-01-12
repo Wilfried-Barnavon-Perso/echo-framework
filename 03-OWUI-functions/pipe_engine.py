@@ -1,13 +1,15 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.80 - Stable)
+title: Gemini Pro Unified System (Platinum Agentic V134.85 - Documented)
 author: Wilfried BARNAVON
-version: 134.80
-description: v134.80: Version certifiée sans régression par rapport à la v134.72. Intègre le "Smart Cache" avec "Token Guard" (Check réel des tokens). Modèles limités à Pro/Preview conformément à la politique stricte.
+version: 134.85
+description: v134.85: Version entièrement documentée. Ajout de commentaires explicatifs sur l'architecture (Auth Hybride, Smart Cache, Split Strategy) pour auditabilité et maintenance. Fonctionnalités identiques à la v134.84.
 """
 
 # ==============================================================================
 # SECTION 0 : IMPORTATIONS & CONSTANTES GLOBALES
 # ==============================================================================
+# Importation des librairies standard pour la gestion système, crypto, et réseau.
+# L'usage de `httpx` est privilégié pour éviter les dépendances SDK lourdes dans Open WebUI.
 import os
 import json
 import sys
@@ -26,6 +28,8 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
 
 # --- CONSTANTES DE CONFIGURATION GOOGLE ---
+# Identifiants OAuth2 simulant l'IDE "Google Code Assist" pour accéder à l'API interne.
+# Cette stratégie permet d'accéder à des quotas et modèles spécifiques non disponibles via API Key standard.
 GOOGLE_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = "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"
 GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -41,15 +45,15 @@ GOOGLE_SCOPES = [
 ]
 
 # --- REGISTRE DE CACHE GLOBAL (Stockage Volatile) ---
-# Format: { "hash_sha256": { "name": "cachedContents/xxx", "expires_at": timestamp_epoch } }
+# Dictionnaire en mémoire pour stocker les références de cache (Resource Names) et éviter les appels API redondants.
+# Structure : { "hash_sha256": { "name": "cachedContents/xxx", "expires_at": timestamp_epoch } }
 _LOCAL_CACHE_REGISTRY = {}
 
 # --- CONSTANTES MAGIQUES ---
-MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator"
-MIN_ABSOLUTE_TOKENS_FLASH = 32768 # Seuil strict API pour Flash (Gardé pour logique interne)
-MIN_ABSOLUTE_TOKENS_PRO = 4096    # Seuil strict API pour Pro
+MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator" # Clé interne pour contourner la validation stricte des pensées.
+MIN_ABSOLUTE_TOKENS_PRO = 4096    # Seuil strict imposé par l'API Gemini pour la création de cache contextuel.
 
-# Fallback extensions si MIME type inconnu
+# Extensions considérées comme du texte brut pour le chargement.
 TEXT_EXTENSIONS = {
     '.py', '.js', '.html', '.css', '.java', '.c', '.cpp', '.h', '.hpp', '.rs', '.go', '.ts', 
     '.json', '.yaml', '.yml', '.toml', '.xml', '.md', '.txt', '.sh', '.bat', '.ps1', 
@@ -59,6 +63,8 @@ TEXT_EXTENSIONS = {
 # ==============================================================================
 # SECTION 1 : DÉPENDANCES OPTIONNELLES
 # ==============================================================================
+# Tentative de chargement des librairies Google Auth pour la gestion avancée des tokens.
+# Le script est conçu pour fonctionner même si elles sont absentes (mode dégradé ou auth manuelle).
 try:
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import Flow
@@ -87,9 +93,13 @@ OFFICIAL_CLIENT_CONFIG = {
 }
 
 # ==============================================================================
-# SECTION 3 : SERVICE D'AUTHENTIFICATION
+# SECTION 3 : SERVICE D'AUTHENTIFICATION (IDENTITY PROVIDER)
 # ==============================================================================
 class AuthService:
+    """
+    Gère le flux d'authentification OAuth2 complet avec PKCE (Proof Key for Code Exchange).
+    Simule le comportement de l'extension VSCode "Google Code Assist" pour obtenir un token utilisateur valide.
+    """
     def __init__(self, data_dir: str):
         self.token_path = f"{data_dir}/gemini_official_token.json"
         self.pkce_path = f"{data_dir}/gemini_pkce_verifier.txt"
@@ -97,6 +107,7 @@ class AuthService:
         self.base_url = GOOGLE_API_BASE_URL
 
     def _generate_pkce(self):
+        """Génère le couple Verifier/Challenge pour sécuriser l'échange de code OAuth."""
         verifier = secrets.token_urlsafe(64)
         digest = hashlib.sha256(verifier.encode("utf-8")).digest()
         import base64
@@ -104,16 +115,21 @@ class AuthService:
         return verifier, challenge
 
     def get_auth_url(self) -> str:
+        """
+        Génère l'URL d'authentification Google que l'utilisateur doit visiter.
+        Utilise le flux 'installed app' pour récupérer un code d'autorisation.
+        """
         if not HAS_GOOGLE_LIBS:
             return "❌ **Erreur** : Librairies `google-auth` manquantes."
 
+        # Gestion de la persistence du verifier PKCE pour survivre aux redémarrages de session courte.
         should_generate_new = True
         verifier = None
 
         if os.path.exists(self.pkce_path):
             try:
                 creation_time = os.path.getmtime(self.pkce_path)
-                if time.time() - creation_time < 300:
+                if time.time() - creation_time < 300: # 5 minutes de validité
                     with open(self.pkce_path, "r") as f:
                         existing_verifier = f.read().strip()
                     if len(existing_verifier) > 10:
@@ -127,6 +143,7 @@ class AuthService:
                 with open(self.pkce_path, "w") as f: f.write(verifier)
             except Exception as e: return f"❌ Erreur IO: {str(e)}"
         else:
+            # Recalcul du challenge si le verifier existe déjà
             digest = hashlib.sha256(verifier.encode("utf-8")).digest()
             import base64
             challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
@@ -146,8 +163,10 @@ class AuthService:
         )
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
+        """Échange le code d'autorisation reçu contre un Token d'Accès et un Refresh Token."""
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
         if not os.path.exists(self.pkce_path):
+             # Tentative de récupération via cache si PKCE perdu (ex: restart docker)
              for _ in range(3):
                 if self.get_valid_credentials(): return True, "Succès (Récupéré via cache)."
                 time.sleep(0.5)
@@ -163,6 +182,7 @@ class AuthService:
         except Exception as e: return False, str(e)
 
     def get_valid_credentials(self):
+        """Récupère les identifiants stockés et les rafraîchit automatiquement si expirés."""
         creds = None
         if os.path.exists(self.token_path):
             try: creds = Credentials.from_authorized_user_file(self.token_path, GOOGLE_SCOPES)
@@ -175,8 +195,13 @@ class AuthService:
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
+        """
+        Récupère l'ID du projet Google Cloud associé à l'utilisateur (Shadow Project).
+        C'est nécessaire pour l'API Interne (Code Assist) qui requiert un 'project-id' valide.
+        """
         if os.path.exists(self.internal_project_cache) and not debug_mode:
             with open(self.internal_project_cache, "r") as f: return f.read().strip(), "Cache."
+        
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
         try:
@@ -200,6 +225,7 @@ class AuthService:
 # SECTION 4 : SIGNATURE MANAGER
 # ==============================================================================
 class SignatureManager:
+    """Gère la persistance des signatures de pensée (CoT) pour assurer la continuité des conversations."""
     def __init__(self, data_dir: str):
         self.sig_dir = os.path.join(data_dir, "signatures")
         os.makedirs(self.sig_dir, exist_ok=True)
@@ -225,6 +251,12 @@ class SignatureManager:
 # SECTION 5 : ORCHESTRATEUR (SMART FILE HANDLING)
 # ==============================================================================
 class Orchestrator:
+    """
+    Chef d'orchestre qui prépare le contexte pour l'IA.
+    - Résout les chemins de fichiers locaux (Open WebUI Uploads).
+    - Charge le contenu des fichiers (Texte ou Binaire Base64).
+    - Prépare l'historique des messages.
+    """
     def __init__(self, valves, data_dir):
         self.valves = valves
         self.location_cache_file = "/app/backend/data/gemini_geo_cache_v2.json"
@@ -234,6 +266,7 @@ class Orchestrator:
         self.debug_log = []
 
     def check_for_auth_code(self, messages: List[Dict]) -> Optional[str]:
+        """Détecte si l'utilisateur a collé un code d'authentification Google (4/...)."""
         if not messages: return None
         last_msg = messages[-1].get("content", "")
         if isinstance(last_msg, list): return None
@@ -243,6 +276,7 @@ class Orchestrator:
         return None
 
     def _get_geo_info(self) -> Tuple[str, str]:
+        """Récupère les infos de géolocalisation pour le contexte système."""
         loc, tz = "Paris, France", "Europe/Paris"
         if getattr(self.valves, "OVERRIDE_LOCATION", ""): return self.valves.OVERRIDE_LOCATION, tz
         if getattr(self.valves, "ENABLE_AUTO_LOCATION", True) and os.path.exists(self.location_cache_file):
@@ -255,6 +289,7 @@ class Orchestrator:
         return loc, tz
 
     def convert_owui_tools(self, tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
+        """Convertit le format des outils Open WebUI vers le format attendu par Gemini."""
         if not tools: return None
         funcs = []
         for t in tools:
@@ -268,6 +303,7 @@ class Orchestrator:
         return [{"functionDeclarations": funcs}] if funcs else None
 
     def get_system_instruction(self) -> Dict:
+        """Construit le prompt système avec injection dynamique du temps et du lieu."""
         sys_prompt_text = self.valves.SYSTEM_PROMPT
         if getattr(self.valves, "ENABLE_DATE_TIME", True):
             loc, tz = self._get_geo_info()
@@ -277,6 +313,7 @@ class Orchestrator:
         return {"parts": [{"text": sys_prompt_text}]}
 
     def _probe_disk(self) -> str:
+        """Helper de debug pour lister les fichiers présents dans le volume Docker."""
         try:
             if not os.path.exists(self.uploads_dir):
                 return f"❌ Dir not found: {self.uploads_dir}"
@@ -286,10 +323,13 @@ class Orchestrator:
             return f"❌ Error listing dir: {str(e)}"
 
     def _resolve_local_path(self, provided_path: str, f_id: str, f_name: str) -> Optional[str]:
+        """Tente de retrouver le chemin absolu d'un fichier uploadé dans Open WebUI."""
+        # 1. Test direct
         if provided_path and os.path.exists(provided_path):
             self.debug_log.append(f"✅ Path found (Direct): {provided_path}")
             return provided_path
 
+        # 2. Construction heuristique (Open WebUI renronne parfois les fichiers avec l'ID en préfixe)
         candidates = []
         if f_name:
             clean_name = f_name.replace("/", "_").replace("\\", "_")
@@ -306,6 +346,7 @@ class Orchestrator:
         return None
 
     def _get_file_content(self, f_id: str, f_name: str, owui_path: str = None) -> Tuple[Optional[str], Optional[str], bool, str]:
+        """Lit et encode le contenu d'un fichier (Texte brut ou Base64 pour binaire)."""
         if not f_id: return None, None, False, "No File ID"
         
         real_path = self._resolve_local_path(owui_path, f_id, f_name)
@@ -333,6 +374,7 @@ class Orchestrator:
             except Exception as e: return None, None, False, f"Text Read Error: {str(e)}"
 
         try:
+            # Détection MIME manuelle pour les formats mal gérés par défaut
             if not mime_type:
                 ext_clean = ext.lower()
                 if ext_clean in ['.mp4', '.m4v']: mime_type = "video/mp4"
@@ -366,7 +408,12 @@ class Orchestrator:
         except: return {"text": "[Error parsing data URI]"}
 
     def estimate_tokens(self, contents: List[Dict]) -> int:
-        """Estimation heuristique (à titre informatif désormais)."""
+        """
+        Estimation heuristique locale rapide des tokens.
+        - Texte : 1 token ~= 4 caractères.
+        - Image : ~258 tokens (standard Gemini 2.0).
+        Sert à prendre une décision rapide "Cache or Not" avant validation précise.
+        """
         total = 0
         for item in contents:
             parts = item.get("parts", [])
@@ -374,10 +421,14 @@ class Orchestrator:
                 if "text" in p:
                     total += len(p["text"]) // 4
                 elif "inlineData" in p:
-                    total += 258 # Gemini 2.0 image token count
+                    total += 258 
         return total
 
     def prepare_context(self, body: Dict, chat_id: str, extra_files: Any = None) -> List[Dict]:
+        """
+        Construit l'objet `contents` complet pour l'API Gemini.
+        Gère l'historique, les tool calls, et l'injection des fichiers (Audit & Fallback).
+        """
         messages = body.get("messages", [])
         contents = []
         for m in messages:
@@ -386,7 +437,7 @@ class Orchestrator:
                     if "id" in tc and "function" in tc:
                         self.tool_map[tc["id"]] = tc["function"].get("name")
 
-        # 1. Identify Last User Message Index
+        # Identification du dernier message utilisateur pour injection des fichiers récents
         last_user_idx = -1
         for idx in range(len(messages) - 1, -1, -1):
             if messages[idx]["role"] == "user":
@@ -412,6 +463,7 @@ class Orchestrator:
                 self.debug_log.append(f"🔍 [Target Msg] Found User Message")
 
             raw_content = m.get("content", "")
+            # Skip messages contenant le code d'auth 4/... pour ne pas polluer le contexte
             if role == "user" and isinstance(raw_content, str) and ("4/" in raw_content and len(raw_content) > 30):
                 if re.search(r"(4/[a-zA-Z0-9_-]+)", raw_content): i += 1; continue
 
@@ -436,6 +488,7 @@ class Orchestrator:
                     for p in raw_content:
                         if isinstance(p, dict) and "text" in p: text_content += p["text"]
 
+                # Nettoyage des balises de pensée et artefacts visuels pour le contexte
                 text_content = re.sub(r'<think>.*?</think>', '', text_content, flags=re.DOTALL).strip()
                 text_content = re.sub(r'\[\s*\]\(context://thought_signature/[^\)]+\)', '', text_content).strip()
                 
@@ -446,6 +499,7 @@ class Orchestrator:
 
                 if text_content: parts.append({"text": text_content})
 
+                # Gestion des signatures de pensée (Thought Signature) pour la continuité CoT
                 found_in_band_sig = None
                 tool_calls_in_msg = False
                 if m.get("tool_calls"):
@@ -475,6 +529,8 @@ class Orchestrator:
                 files_to_process = []
                 seen_ids = set()
 
+                # Stratégie de récupération des fichiers (Multi-sources)
+                # 1. Depuis le message standard (OWUI)
                 if "files" in m and isinstance(m["files"], list):
                     for f in m["files"]:
                         if isinstance(f, dict):
@@ -482,6 +538,7 @@ class Orchestrator:
                             if fid and fid not in seen_ids:
                                 files_to_process.append(f); seen_ids.add(fid)
                 
+                # 2. Depuis le filtre global (Audit, priorité haute)
                 if i == last_user_idx:
                     raw_files = body.get("raw_files_from_filter", [])
                     if raw_files:
@@ -491,6 +548,7 @@ class Orchestrator:
                                 if fid and fid not in seen_ids:
                                     files_to_process.append(f); seen_ids.add(fid)
 
+                # 3. Depuis kwargs (Fallback)
                 if i == last_user_idx and extra_files:
                     extras = extra_files if isinstance(extra_files, list) else [extra_files]
                     for f in extras:
@@ -502,6 +560,7 @@ class Orchestrator:
                 if self.valves.DEBUG_MODE and i == last_user_idx:
                     self.debug_log.append(f"🔍 Files to process: {len(files_to_process)} (IDs: {seen_ids})")
 
+                # Chargement effectif du contenu des fichiers
                 for f_obj in files_to_process:
                     try:
                         f_real = f_obj.get("file", f_obj) 
@@ -525,6 +584,7 @@ class Orchestrator:
 
                 content = m.get("content", "")
                 if isinstance(content, str):
+                    # Nettoyage des fausses images base64 injectées par OWUI (on préfère notre chargement propre)
                     content = re.sub(r'!\[.*?\]\(data:[^)]+\)', '', content)
                     content = re.sub(r'data:[a-zA-Z0-9/.-]+;base64,[a-zA-Z0-9+/=]+', '', content)
                     content = content.strip()
@@ -556,7 +616,8 @@ class Orchestrator:
 # ==============================================================================
 class ContextCacheManager:
     """
-    Gère la création du cache via l'API Publique en utilisant le Token OAuth (GCA).
+    Gère la création du cache via l'API Publique Google.
+    Utilise le Token OAuth (Identity Provider) pour authentifier les appels.
     """
     def __init__(self, auth_token: str):
         self.auth_token = auth_token
@@ -564,8 +625,11 @@ class ContextCacheManager:
 
     async def count_tokens(self, model: str, system_inst: dict, contents: list, tools: list = None) -> int:
         """
-        PRE-FLIGHT CHECK: Appelle l'API pour compter précisément les tokens.
-        Évite les erreurs 400 si l'estimation locale surestime.
+        PRE-FLIGHT CHECK: Appelle l'endpoint `:countTokens` de l'API.
+        
+        Pourquoi cet appel réseau ?
+        - Pour les fichiers binaires (PDF, Vidéo, Audio), le comptage local est impossible sans le moteur de tokenisation propriétaire de Google.
+        - Évite de tenter une création de cache qui échouerait avec une erreur 400 si le volume est insuffisant (< 4096 tokens).
         """
         real_model = model if model.startswith("models/") else f"models/{model}"
         url = f"{self.base_url}/{real_model}:countTokens"
@@ -582,6 +646,7 @@ class ContextCacheManager:
         }
 
         try:
+            # Utilisation de httpx pour éviter dépendance au SDK google-genai
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code == 200:
@@ -596,7 +661,7 @@ class ContextCacheManager:
             return -1
 
     async def create(self, model: str, system_inst: dict, contents: list, ttl: int = 600) -> Optional[str]:
-        """Crée le cache et retourne son Resource Name."""
+        """Crée le cache contextuel sur les serveurs de Google et retourne son Resource Name."""
         url = f"{self.base_url}/cachedContents"
         real_model = model if model.startswith("models/") else f"models/{model}"
 
@@ -629,10 +694,10 @@ class ContextCacheManager:
 
 class SmartCacheStrategy:
     """
-    Gère la stratégie de mise en cache explicite :
-    - Détection de changement de contexte (Fingerprinting)
-    - Création si nécessaire
-    - Réutilisation si possible
+    Intelligence du Cache :
+    - Fingerprinting : Calcule un hash unique du contexte complet.
+    - Persistance locale : Garde en mémoire les ID de cache valides pour éviter les ré-uploads.
+    - Pre-flight : Vérifie le quota de tokens avant création.
     """
     def __init__(self, cache_manager):
         self.mgr = cache_manager
@@ -650,18 +715,18 @@ class SmartCacheStrategy:
             del self.registry[h]
 
     def _compute_hash(self, model: str, system_inst: Dict, contents: List[Dict]) -> str:
-        """Génère une empreinte unique (Fingerprint) du contexte."""
-        # On inclut le modèle, le system prompt et tout le contenu (dont les fichiers base64)
+        """Génère une empreinte SHA256 unique du contexte (incluant les fichiers binaires)."""
         data = {
             "model": model,
             "system": system_inst,
             "contents": contents
         }
-        # sort_keys=True est crucial pour la reproductibilité
+        # sort_keys=True est crucial pour garantir le même hash quel que soit l'ordre des clés
         dump = json.dumps(data, sort_keys=True)
         return hashlib.sha256(dump.encode()).hexdigest()
 
     async def get_or_create_cache(self, model: str, system_inst: dict, contents: list, ttl: int = 600, tools: list = None) -> Optional[str]:
+        """Méthode principale : Tente de récupérer un cache existant, ou en crée un nouveau si nécessaire."""
         self._cleanup()
         
         # 1. Calcul du Fingerprint
@@ -678,15 +743,13 @@ class SmartCacheStrategy:
                 print(f"⌛ [CACHE] Expired locally. Re-creating...")
 
         # 3. VERIFICATION AVANT CREATION (Anti-400)
-        # On ne le fait qu'en cas de Miss, pour éviter une latence à chaque hit.
+        # On ne le fait qu'en cas de Miss, pour éviter une latence réseau à chaque hit.
         print(f"🔄 [CACHE] Miss. Verifying token count...")
         
         real_tokens = await self.mgr.count_tokens(model, system_inst, contents, tools)
         
-        # Détermination du seuil selon le modèle
+        # Le cache n'est accepté que pour les gros contextes (> 4096 tokens pour Pro)
         threshold = MIN_ABSOLUTE_TOKENS_PRO
-        if "flash" in model.lower():
-            threshold = MIN_ABSOLUTE_TOKENS_FLASH
             
         print(f"📊 [CHECK] Real: {real_tokens} vs Required: {threshold}")
         
@@ -698,7 +761,7 @@ class SmartCacheStrategy:
         name = await self.mgr.create(model, system_inst, contents, ttl)
 
         if name:
-            # On stocke avec une marge de sécurité de 30s pour éviter d'utiliser un cache qui expire pendant la requête
+            # On stocke avec une marge de sécurité de 30s
             self.registry[current_hash] = {
                 "name": name,
                 "expires_at": now + ttl - 30 
@@ -708,8 +771,8 @@ class SmartCacheStrategy:
 
 class PublicGeminiOAuthAdapter:
     """
-    Adaptateur spécial pour envoyer des requêtes à l'API Publique
-    mais authentifiées avec le token OAuth interne.
+    Adaptateur pour utiliser un Cache créé (API Publique) avec un Token OAuth (API Interne).
+    C'est la clé de voûte de l'architecture hybride.
     """
     def __init__(self, auth_token: str):
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
@@ -720,21 +783,13 @@ class PublicGeminiOAuthAdapter:
         url = f"{self.base_url}/{real_model}:streamGenerateContent?alt=sse"
 
         payload = {
-            "contents": contents,          # Uniquement le dernier message
-            "cachedContent": cached_name,  # Le lien magique vers le contexte lourd
+            "contents": contents,          # Uniquement le dernier message (Trigger)
+            "cachedContent": cached_name,  # Le pointeur vers le contexte lourd
             "generationConfig": {
                 "temperature": temp,
                 "maxOutputTokens": max_tok
             }
         }
-        # Tools are defined in the cache creation, but can be overridden/specified here if needed,
-        # usually for cache, tools are baked in. But if we send new tools for the turn, careful.
-        # For simplicity here, we assume tools are part of the cached context or not used in this turn.
-        if tools:
-             # NOTE: If tools are in cachedContent, sending them here might conflict or be required.
-             # API behavior: Tools should usually be in the cache creation payload if they are static.
-             pass 
-
         return {
             "url": url,
             "headers": {
@@ -745,7 +800,7 @@ class PublicGeminiOAuthAdapter:
         }
 
 class GeminiAdapter:
-    """Adaptateur Standard pour l'API Interne (Code Assist)"""
+    """Adaptateur Standard pour l'API Interne (Code Assist) - Mode Fallback."""
     def __init__(self, base_url):
         self.base_url = base_url
 
@@ -777,6 +832,13 @@ class GeminiAdapter:
 # SECTION 7 : PROCESSEUR DE FLUX
 # ==============================================================================
 class StreamProcessor:
+    """
+    Traite le flux SSE (Server-Sent Events) renvoyé par Gemini.
+    - Décode les chunks JSON.
+    - Gère l'affichage du Thinking (balises <think>).
+    - Capture les métriques d'usage (tokens).
+    - Injecte les statistiques en fin de réponse.
+    """
     def __init__(self, debug=False, chat_id=None, sig_manager=None, show_metrics=False, context_window=1048576, initial_label="Réponse"):
         self.debug = debug
         self.chat_id = chat_id
@@ -827,10 +889,9 @@ class StreamProcessor:
                     data = json.loads(line[6:])
                     if self.debug: yield f"\n`[SSE] {json.dumps(data, ensure_ascii=False)}`\n"
 
-                    # Capture Metadata
+                    # Capture Metadata (Compatible API Publique et Interne)
                     meta = data.get("response", {}).get("usageMetadata")
-                    # Fallback pour API Publique qui structure différemment
-                    if not meta: meta = data.get("usageMetadata")
+                    if not meta: meta = data.get("usageMetadata") # Fallback API Publique
                     
                     if meta:
                         self.usage_stats = meta
@@ -864,7 +925,7 @@ class StreamProcessor:
                                     if not in_think: yield "<think>\n"; in_think = True
                                     yield txt
                                 elif func_call:
-                                    step_label = f"Pré-{func_call.get('name', 'Action')}" # Update du label : on prépare l'action
+                                    step_label = f"Pré-{func_call.get('name', 'Action')}" # Update du label
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     args = func_call.get("args", {})
                                     if self.current_sig: args["_thought_signature"] = self.current_sig
@@ -898,7 +959,6 @@ class StreamProcessor:
             
             if self.debug: yield f"\n🐞 **DEBUG** Injecting Stats: P={p_tok}, C={c_tok}, T={t_tok}\n"
 
-            # Condition simple : Si l'utilisateur veut les métriques, on les affiche.
             if self.show_metrics:
                 percent = 0
                 if self.context_window > 0:
@@ -938,8 +998,8 @@ class Pipe:
         
         # --- CACHING VALVES ---
         ENABLE_CACHING: bool = Field(default=True, description="🧠 Activer Smart Cache")
-        CACHE_TTL: int = Field(default=600, description="⏱️ Durée Cache (sec)")
-        MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens (Heuristique)")
+        CACHE_TTL: int = Field(default=604800, description="⏱️ Durée Cache (sec, défaut 7 jours)")
+        MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens (Heuristique locale)")
         
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
         TEMPERATURE: float = Field(default=1.0, description="Température")
@@ -962,6 +1022,7 @@ class Pipe:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None) or (__metadata__.get("session_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
         
+        # Détection du contexte pour l'affichage (Réponse vs Post-Action outil)
         initial_label = "Réponse"
         msgs = body.get("messages", [])
         if msgs and msgs[-1].get("role") == "tool":
@@ -978,6 +1039,7 @@ class Pipe:
 
         if self.valves.DEBUG_MODE: yield f"🐞 **DEBUG**\nChatID: `{chat_id}`\n"
 
+        # --- GESTION AUTHENTIFICATION ---
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = self.auth.exchange_code(ac)
@@ -993,8 +1055,8 @@ class Pipe:
         pid, debug_log = self.auth.get_project_id(creds, self.valves.DEBUG_MODE)
         if not pid: yield f"❌ **Erreur Projet**\n{debug_log}"; return
 
+        # --- PREPARATION CONTEXTE ---
         tools = orch.convert_owui_tools(body.get("tools"))
-        
         files = body.get("files") or kwargs.get("__files__") 
         context = orch.prepare_context(body, chat_id, extra_files=files)
 
@@ -1003,38 +1065,64 @@ class Pipe:
                 yield f"{log}\n"
 
         # ==============================================================================
-        # LOGIQUE DE CACHING INTELLIGENT (Avec Pre-Flight Check)
+        # LOGIQUE DE CACHING INTELLIGENT (Souveraineté Tokens + Split Universel)
         # ==============================================================================
         req = None
         
-        # 1. Analyse Heuristique (Quick Pass)
-        has_active_files = False
-        for msg in context:
-            for part in msg.get("parts", []):
-                if "inlineData" in part:
-                    has_active_files = True; break
-                if "text" in part and "--- FILE:" in part["text"]:
-                    has_active_files = True; break
-            if has_active_files: break
-
+        # Estimation locale rapide pour décider si on TENTE le cache
         estimated_tokens = orch.estimate_tokens(context)
         user_threshold = self.valves.MIN_CACHE_TOKENS
         
-        # On tente le cache si : Fichiers présents OU estimation > seuil utilisateur
-        attempt_cache = self.valves.ENABLE_CACHING and (has_active_files or estimated_tokens >= user_threshold)
+        attempt_cache = self.valves.ENABLE_CACHING and (estimated_tokens >= user_threshold)
         
         if self.valves.DEBUG_MODE:
-            yield f"📊 **CACHE PRE-CHECK**: Attempt={attempt_cache} (Files={has_active_files}, Est={estimated_tokens})\n"
+            yield f"📊 **CACHE PRE-CHECK**: Attempt={attempt_cache} (Est={estimated_tokens})\n"
 
         if attempt_cache:
-            history_to_cache = context[:-1]
-            last_msg = [context[-1]] if context else []
+            # --- STRATÉGIE SPLIT ---
+            # Le "Problème du dernier message" : L'API Cache demande un historique.
+            # Si le fichier lourd est dans le dernier message, il n'est pas caché.
+            # SOLUTION : On déplace dynamiquement les parties lourdes du dernier message vers l'historique caché.
+            
+            history_to_cache = list(context[:-1]) 
+            trigger_content = list(context[-1:]) 
+            
+            if context:
+                last_msg = context[-1]
+                last_parts = last_msg.get("parts", [])
+                cacheable_parts = []
+                trigger_parts = []
+                
+                for p in last_parts:
+                    # Critère de Split : Fichier binaire OU Texte très long
+                    is_heavy = False
+                    if "inlineData" in p: is_heavy = True
+                    elif "text" in p:
+                        if "--- FILE:" in p["text"]: is_heavy = True
+                        elif len(p["text"]) > 1000: is_heavy = True
+                    
+                    if is_heavy:
+                        cacheable_parts.append(p)
+                    else:
+                        trigger_parts.append(p)
+                
+                # Application du Split si nécessaire
+                if cacheable_parts:
+                    heavy_msg = {"role": last_msg["role"], "parts": cacheable_parts}
+                    history_to_cache.append(heavy_msg)
+                    
+                    if not trigger_parts: trigger_parts = [{"text": " "}]
+                    trigger_content = [{"role": last_msg["role"], "parts": trigger_parts}]
+                    
+                    if self.valves.DEBUG_MODE: yield f"🔪 **CACHE SPLIT**: Moved heavy parts to history. Trigger light.\n"
 
-            if history_to_cache and last_msg:
+            # ----------------------------------------------------------------------------------
+
+            if history_to_cache and trigger_content:
                 cache_mgr = ContextCacheManager(creds.token)
                 strategy = SmartCacheStrategy(cache_mgr)
 
-                # Appel avec verification des tools car ils comptent dans le quota
+                # Tentative de récupération ou création du cache (avec Pre-flight Check réel)
                 cache_name = await strategy.get_or_create_cache(
                     self.valves.MODEL_SELECTION,
                     orch.get_system_instruction(),
@@ -1045,10 +1133,11 @@ class Pipe:
 
                 if cache_name:
                     if self.valves.DEBUG_MODE: yield f"✅ **CACHE LOCKED**: `{cache_name}`\n"
+                    # Utilisation de l'adaptateur spécial (Cache Publique + Auth Interne)
                     adapter = PublicGeminiOAuthAdapter(creds.token)
                     req = adapter.build(
                         self.valves.MODEL_SELECTION,
-                        last_msg,
+                        trigger_content, # On envoie uniquement le trigger léger
                         self.valves.TEMPERATURE,
                         self.valves.MAX_TOKENS,
                         cached_name=cache_name,
@@ -1058,7 +1147,7 @@ class Pipe:
                     yield f"⏩ **CACHE SKIPPED**: Fallback to standard generation.\n"
 
         # ==============================================================================
-        # FALLBACK (Comportement Standard)
+        # FALLBACK (Comportement Standard sans Cache)
         # ==============================================================================
         if not req:
             adapter = GeminiAdapter(self.base_url)
