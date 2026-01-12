@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.88 - Explicit Trigger)
+title: Gemini Pro Unified System (Platinum Agentic V134.89 - Timeout Fix)
 author: Wilfried BARNAVON
-version: 134.88
-description: v134.88: Retour à la logique "Explicite". Suppression du hack d'estimation (5000 tokens). La présence de fichiers lourds (PDF, Vidéo, Audio) déclenche désormais directement et obligatoirement le "Pre-flight Check" (API countTokens), indépendamment de l'estimation locale.
+version: 134.89
+description: v134.89: Correction critique des Timeouts. Augmentation du délai de "Pre-flight Check" (:countTokens) à 120s pour supporter l'upload de gros fichiers (vidéos > 100Mo) sans échouer silencieusement. Amélioration des messages d'erreur de cache pour le débogage.
 """
 
 # ==============================================================================
@@ -645,8 +645,8 @@ class ContextCacheManager:
         }
 
         try:
-            # Utilisation de httpx pour éviter dépendance au SDK google-genai
-            async with httpx.AsyncClient(timeout=10) as client:
+            # Augmentation du timeout à 120s pour supporter l'upload de gros fichiers (300MB+) lors du comptage
+            async with httpx.AsyncClient(timeout=120) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -677,12 +677,12 @@ class ContextCacheManager:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            # Timeout généreux pour la création effective du cache (upload lourd)
+            async with httpx.AsyncClient(timeout=300) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
                     name = data.get("name")
-                    # print(f"✅ [CACHE] Created: {name} (Valid: {ttl}s)")
                     return name, None
                 else:
                     error_msg = f"⚠️ [CACHE] Failed: {resp.status_code} - {resp.text}"
@@ -744,7 +744,6 @@ class SmartCacheStrategy:
                 print(f"⌛ [CACHE] Expired locally. Re-creating...")
 
         # 3. VERIFICATION AVANT CREATION (Anti-400)
-        # On ne le fait qu'en cas de Miss, pour éviter une latence réseau à chaque hit.
         print(f"🔄 [CACHE] Miss. Verifying token count...")
         
         real_tokens = await self.mgr.count_tokens(model, system_inst, contents, tools)
@@ -754,9 +753,13 @@ class SmartCacheStrategy:
             
         print(f"📊 [CHECK] Real: {real_tokens} vs Required: {threshold}")
         
+        # Gestion explicite des erreurs de comptage (-1)
+        if real_tokens == -1:
+             return None, "⚠️ [CACHE] Count Failed (Timeout/Network)"
+
         if real_tokens < threshold:
             print(f"🚫 [CACHE] Aborted. Tokens ({real_tokens}) < Threshold ({threshold}).")
-            return None, None
+            return None, f"⚠️ [CACHE] Too small ({real_tokens} < {threshold})"
 
         # 4. Création (Si check OK)
         name, error = await self.mgr.create(model, system_inst, contents, ttl)
