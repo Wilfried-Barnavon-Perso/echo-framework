@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.10 - Token Priority Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.11 - Context Gauge Fix)
 author: Wilfried BARNAVON
-version: 135.10
-description: v135.10: Correctif priorité métriques. Restauration de la précédence `response.usageMetadata` > `usageMetadata` et mise à jour continue des stats pour corriger le bug 0/0 tokens.
+version: 135.11
+description: v135.11: Rétablissement de la persistance des stats JSON sur disque (fix `context_gauge.py`).
 """
 
 # ==============================================================================
@@ -679,6 +679,13 @@ class StreamProcessor:
             self.usage_stats = data["response"]["usageMetadata"]
         elif "usageMetadata" in data:
             self.usage_stats = data["usageMetadata"]
+        
+        if self.usage_stats and self.chat_id:
+             try:
+                safe_id = "".join(x for x in str(self.chat_id) if x.isalnum() or x in "-_")
+                with open(f"{self.stats_dir}/{safe_id}.json", "w") as f:
+                    json.dump(self.usage_stats, f)
+             except: pass
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
