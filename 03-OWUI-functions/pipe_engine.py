@@ -1,13 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.02 - Auditable CAS)
+title: Gemini Pro Unified System (Platinum Agentic V135.03 - Stable CAS)
 author: Wilfried BARNAVON
-version: 135.02
-description: v135.02: Version de production entièrement documentée pour audit. 
-Architecture :
-1. Auth Hybride : Simulation Google Code Assist via PKCE pour accès aux quotas Enterprise.
-2. Gestion Fichiers (CAS) : Les fichiers binaires sont identifiés par SHA256, uploadés une seule fois sur Google File API, et référencés par URI.
-3. Cache Contextuel : Activé uniquement sur l'historique textuel (> 4k tokens).
-4. Fallback : Robustesse totale en cas d'échec API ou Cache.
+version: 135.03
+description: v135.03: Version de production validée. Intègre l'architecture CAS (Content-Addressable Storage) pour les fichiers lourds via Google File API. Les fichiers sont uploadés une seule fois et référencés par URI. Restauration de la gestion complète des Outils (Tool Calls/Responses) et des Signatures de Pensée. Cache textuel optimisé.
 """
 
 # ==============================================================================
@@ -31,15 +26,11 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
 
 # --- CONSTANTES DE CONFIGURATION GOOGLE ---
-# Identifiants OAuth2 hardcodés imitant l'extension VSCode officielle.
-# Cela permet d'obtenir un token utilisateur "Cloud Platform" légitime.
 GOOGLE_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = "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"
 GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 GOOGLE_REDIRECT_URI = "https://codeassist.google.com/authcode"
-
-# Endpoints API
 GOOGLE_API_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal" # API Interne (Fallback/Chat)
 GOOGLE_UPLOAD_BASE_URL = "https://generativelanguage.googleapis.com/upload/v1beta/files" # API Publique (Upload fichiers)
 
@@ -51,16 +42,13 @@ GOOGLE_SCOPES = [
 ]
 
 # --- REGISTRE DE CACHE GLOBAL (Stockage Volatile) ---
-# Sert à mémoriser les caches TEXTUELS actifs pour éviter les appels de création redondants.
 _LOCAL_CACHE_REGISTRY = {}
 
 # --- CONSTANTES MAGIQUES ---
 MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator" # Bypass interne pour CoT
-MIN_ABSOLUTE_TOKENS_PRO = 4096 # Seuil d'activation du cache textuel (API limit)
+MIN_ABSOLUTE_TOKENS_PRO = 4096 # Seuil d'activation du cache textuel
 
 # Filet de sécurité pour la détection de texte.
-# Dans certains environnements Docker restreints, mimetypes.guess_type() peut échouer.
-# Cette liste force le traitement "Inline Text" pour les fichiers de code courants.
 TEXT_EXTENSIONS = {
     '.py', '.js', '.html', '.css', '.java', '.c', '.cpp', '.h', '.hpp', '.rs', '.go', '.ts', 
     '.json', '.yaml', '.yml', '.toml', '.xml', '.md', '.txt', '.sh', '.bat', '.ps1', 
@@ -71,8 +59,6 @@ TEXT_EXTENSIONS = {
 # ==============================================================================
 # SECTION 1 : DÉPENDANCES OPTIONNELLES
 # ==============================================================================
-# Le script est conçu en "Zero-Dependency" pour fonctionner sans installation pip.
-# Cependant, si les libs google-auth sont présentes, elles peuvent être utilisées (futur).
 try:
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import Flow
@@ -104,13 +90,6 @@ OFFICIAL_CLIENT_CONFIG = {
 # SECTION 3 : SERVICE D'AUTHENTIFICATION (IDENTITY PROVIDER)
 # ==============================================================================
 class AuthService:
-    """
-    Gestionnaire d'Identité Hybride.
-    Implémente le flux OAuth2 PKCE (Proof Key for Code Exchange) manuellement
-    pour s'affranchir des librairies externes.
-    
-    Rôle : Fournir un Access Token valide avec les scopes 'cloud-platform'.
-    """
     def __init__(self, data_dir: str):
         self.token_path = f"{data_dir}/gemini_official_token.json"
         self.pkce_path = f"{data_dir}/gemini_pkce_verifier.txt"
@@ -118,7 +97,6 @@ class AuthService:
         self.base_url = GOOGLE_API_BASE_URL
 
     def _generate_pkce(self):
-        """Génère le couple Verifier/Challenge cryptographique."""
         verifier = secrets.token_urlsafe(64)
         digest = hashlib.sha256(verifier.encode("utf-8")).digest()
         import base64
@@ -126,14 +104,7 @@ class AuthService:
         return verifier, challenge
 
     def get_auth_url(self) -> str:
-        """
-        Génère l'URL d'authentification utilisateur.
-        Stocke le 'verifier' temporairement sur disque pour survivre au restart du container
-        entre le moment où l'utilisateur clique et le moment où il revient avec le code.
-        """
         if not HAS_GOOGLE_LIBS: return "❌ **Erreur** : Librairies `google-auth` manquantes."
-        
-        # Logique de persistance du verifier (5 min de validité)
         should_generate_new = True
         if os.path.exists(self.pkce_path):
             try:
@@ -148,7 +119,6 @@ class AuthService:
                 with open(self.pkce_path, "w") as f: f.write(verifier)
             except Exception as e: return f"❌ Erreur IO: {str(e)}"
         else:
-            # Réutilisation du verifier existant pour régénérer le challenge
             with open(self.pkce_path, "r") as f: verifier = f.read().strip()
             digest = hashlib.sha256(verifier.encode("utf-8")).digest()
             challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
@@ -159,7 +129,6 @@ class AuthService:
         return f"### 🔐 Authentification Requise\n\n1. **[Cliquez ici]({url})**\n2. Connectez-vous.\n3. Copiez le code `4/...`.\n4. **Collez-le ici**."
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
-        """Échange le code d'autorisation (4/...) contre les tokens finaux."""
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
         try:
             with open(self.pkce_path, "r") as f: verifier = f.read().strip()
@@ -172,10 +141,6 @@ class AuthService:
         except Exception as e: return False, str(e)
 
     def get_valid_credentials(self):
-        """
-        Récupère les identifiants stockés.
-        Gère le rafraîchissement automatique (Refresh Token) si expiré.
-        """
         creds = None
         if os.path.exists(self.token_path):
             try: creds = Credentials.from_authorized_user_file(self.token_path, GOOGLE_SCOPES)
@@ -188,10 +153,6 @@ class AuthService:
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
-        """
-        Récupère l'ID du 'Shadow Project' Google Cloud associé à l'utilisateur.
-        Cet ID est indispensable pour signer les requêtes vers l'API Interne.
-        """
         if os.path.exists(self.internal_project_cache) and not debug_mode:
             with open(self.internal_project_cache, "r") as f: return f.read().strip(), "Cache."
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
@@ -213,17 +174,36 @@ class AuthService:
             if os.path.exists(p): os.remove(p)
 
 # ==============================================================================
-# SECTION 4 : GESTIONNAIRE DE FICHIERS & REGISTRE CAS (v135)
+# SECTION 4 : GESTIONNAIRE DE FICHIERS, REGISTRE CAS & SIGNATURES
 # ==============================================================================
+class SignatureManager:
+    """Gère la persistance des signatures de pensée (CoT) pour assurer la continuité des conversations."""
+    def __init__(self, data_dir: str):
+        self.sig_dir = os.path.join(data_dir, "signatures")
+        os.makedirs(self.sig_dir, exist_ok=True)
+
+    def save_signature(self, chat_id: str, signature: str):
+        if not chat_id or not signature: return
+        try:
+            path = os.path.join(self.sig_dir, f"{chat_id}.txt")
+            with open(path, "w") as f: f.write(signature)
+        except Exception as e: pass
+
+    def get_signature(self, chat_id: str) -> Optional[str]:
+        if not chat_id: return None
+        try:
+            path = os.path.join(self.sig_dir, f"{chat_id}.txt")
+            if os.path.exists(path):
+                os.utime(path, None)
+                with open(path, "r") as f: return f.read().strip()
+        except: pass
+        return None
+
 class FileRegistry:
     """
-    Registre CAS (Content-Addressable Storage).
-    Gère la persistance de l'état des fichiers uploadés via un fichier JSON par chat.
-    
-    Principe :
-    - On ne se fie pas au nom du fichier ou à son ID Open WebUI (qui change).
-    - On se fie au SHA256 de son contenu.
-    - Si le SHA256 est connu et valide (<48h), on réutilise l'URI distante.
+    Registre local (JSON) des fichiers uploadés sur Google.
+    - Clé primaire : SHA256 (Content-Addressable).
+    - Permet la déduplication et le respect du TTL (48h).
     """
     def __init__(self, data_dir: str, chat_id: str):
         self.chat_id = chat_id if chat_id else "global"
@@ -250,7 +230,6 @@ class FileRegistry:
             if (time.time() - upload_ts) < (47 * 3600):
                 return entry
             else:
-                # Expiré : on supprime l'entrée pour forcer un ré-upload
                 del self.registry[sha256]
                 self._save()
         return None
@@ -270,22 +249,16 @@ class GoogleFileManager:
     """
     Client HTTP pour l'API Google Files.
     Gère le protocole 'Resumable Upload' obligatoire pour les gros fichiers.
-    N'utilise pas le SDK pour garantir la compatibilité Zero-Dependency.
     """
     def __init__(self, auth_token: str):
         self.auth_token = auth_token
         self.upload_base_url = GOOGLE_UPLOAD_BASE_URL
 
     async def upload_file(self, file_path: str, mime_type: str) -> Optional[str]:
-        """
-        Orchestre l'upload en 2 temps :
-        1. POST initial avec métadonnées -> Récupération URL de session.
-        2. PUT/POST du contenu binaire -> Récupération URI final.
-        """
         file_size = os.path.getsize(file_path)
         display_name = os.path.basename(file_path)
 
-        # 1. Initialisation de la session d'upload
+        # 1. Initialisation
         headers_init = {
             "Authorization": f"Bearer {self.auth_token}",
             "X-Goog-Upload-Protocol": "resumable",
@@ -306,8 +279,7 @@ class GoogleFileManager:
                 upload_url = resp_init.headers.get("x-goog-upload-url")
                 if not upload_url: return None
 
-                # 2. Transfert du contenu (Lecture binaire brute)
-                # Pas de base64 ici -> gain de 33% de bande passante et CPU
+                # 2. Transfert
                 with open(file_path, "rb") as f:
                     file_data = f.read()
 
@@ -317,7 +289,7 @@ class GoogleFileManager:
                     "X-Goog-Upload-Command": "upload, finalize"
                 }
 
-                # Timeout généreux (10min) pour les gros fichiers (vidéo 300Mo+)
+                # Timeout généreux (10min) pour les gros fichiers
                 resp_upload = await client.post(upload_url, headers=headers_upload, content=file_data, timeout=600)
                 
                 if resp_upload.status_code == 200:
@@ -337,13 +309,6 @@ class GoogleFileManager:
 # SECTION 5 : ORCHESTRATEUR (LOGIQUE MÉTIER)
 # ==============================================================================
 class Orchestrator:
-    """
-    Composant central qui :
-    1. Analyse les messages entrants.
-    2. Détecte et catégorise les fichiers (Texte vs Binaire).
-    3. Pilote l'upload via GoogleFileManager si nécessaire.
-    4. Construit l'objet JSON final pour l'API Gemini.
-    """
     def __init__(self, valves, data_dir):
         self.valves = valves
         self.data_dir = data_dir
@@ -351,7 +316,7 @@ class Orchestrator:
         self.tool_map = {}
         self.sig_manager = SignatureManager(data_dir)
         self.debug_log = []
-        self.files_processed_info = [] # Pour feedback UI
+        self.files_processed_info = []
 
     def check_for_auth_code(self, messages: List[Dict]) -> Optional[str]:
         if not messages: return None
@@ -389,26 +354,19 @@ class Orchestrator:
         except Exception as e: return f"❌ Error: {str(e)}"
 
     def _resolve_local_path(self, provided_path: str, f_id: str, f_name: str) -> Optional[str]:
-        """Résout le chemin physique du fichier sur le disque Open WebUI."""
         if provided_path and os.path.exists(provided_path):
             self.debug_log.append(f"✅ Direct: {provided_path}")
             return provided_path
         
-        # Reconstruction heuristique du chemin (Open WebUI renomme les fichiers)
         if f_name:
             clean_name = f_name.replace("/", "_").replace("\\", "_")
             candidate = os.path.join(self.uploads_dir, f"{f_id}_{clean_name}")
             if os.path.exists(candidate): return candidate
-            # Fallback Glob
             matches = glob.glob(os.path.join(self.uploads_dir, f"{f_id}_*"))
             if matches: return matches[0]
         return None
 
     def _get_file_info(self, f_id: str, f_name: str, owui_path: str) -> Tuple[str, bool, str, Optional[str]]:
-        """
-        Détermine la nature du fichier et son type MIME.
-        Retourne : mime_type, is_text, error_msg, real_path
-        """
         if not f_id: return "", False, "No ID", None
         real_path = self._resolve_local_path(owui_path, f_id, f_name)
         if not real_path: return "", False, f"Not Found: {f_id}", None
@@ -417,11 +375,9 @@ class Orchestrator:
         ext = os.path.splitext(real_path)[1].lower()
 
         is_text = False
-        # Détection Textuelle (MIME + Extension Fallback)
         if mime_type and (mime_type.startswith("text/") or mime_type in ["application/json", "application/javascript", "application/xml"]): is_text = True
         if not is_text and ext in TEXT_EXTENSIONS: is_text = True
 
-        # Détection Binaire par défaut si MIME inconnu
         if not mime_type:
             if ext == '.pdf': mime_type = "application/pdf"
             elif ext in ['.mp4', '.mov', '.avi']: mime_type = "video/mp4"
@@ -431,12 +387,6 @@ class Orchestrator:
         return mime_type, is_text, "", real_path
 
     async def prepare_context(self, body: Dict, chat_id: str, auth_token: str, extra_files: Any = None) -> List[Dict]:
-        """
-        Méthode principale de préparation.
-        Logique de décision :
-        - Si Texte : Lecture disque -> Injection Inline dans le prompt.
-        - Si Binaire : Calcul Hash -> Lookup Registre -> Upload si nécessaire -> Injection URI.
-        """
         self.files_processed_info = []
         messages = body.get("messages", [])
         contents = []
@@ -444,7 +394,6 @@ class Orchestrator:
         file_registry = FileRegistry(self.data_dir, chat_id)
         file_manager = GoogleFileManager(auth_token) if auth_token else None
         
-        # Extraction des definitions d'outils pour le post-traitement
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -461,7 +410,6 @@ class Orchestrator:
             role = m["role"]
             if role == "system": i+=1; continue
 
-            # --- 1. GESTION DES OUTILS (TOOL RESPONSE) ---
             if role == "tool":
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
@@ -471,25 +419,19 @@ class Orchestrator:
                     except: val = {"result": str(tm.get("content", ""))}
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
-                
-                if contents and contents[-1]["role"] == "user":
-                    contents[-1]["parts"].extend(parts)
-                else:
-                    contents.append({"role": "user", "parts": parts})
+                if contents and contents[-1]["role"] == "user": contents[-1]["parts"].extend(parts)
+                else: contents.append({"role": "user", "parts": parts})
                 continue
 
-            # --- 2. GESTION MODEL (ASSISTANT) ---
             elif role in ["assistant", "model"]:
                 parts = []
                 txt = m.get("content", "")
                 if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
                 
-                # Nettoyage
                 txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL).strip()
                 txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL).strip()
                 if txt: parts.append({"text": txt})
 
-                # Gestion CoT & Function Call
                 found_in_band_sig = None
                 tool_calls_in_msg = False
                 if m.get("tool_calls"):
@@ -503,7 +445,6 @@ class Orchestrator:
                 
                 if not parts: parts.append({"text": " "})
                 
-                # Injection Signature de Pensée
                 is_last_model_msg = True
                 for j in range(i + 1, len(messages)):
                     if messages[j]["role"] in ["assistant", "model"]: is_last_model_msg = False; break
@@ -514,18 +455,14 @@ class Orchestrator:
                     if not sig_to_use and tool_calls_in_msg: sig_to_use = MAGIC_KEY_SKIP_VALIDATION
                     if sig_to_use and parts:
                          for part in parts: part["thoughtSignature"] = sig_to_use
-                
                 contents.append({"role": "model", "parts": parts})
             
-            # --- 3. GESTION USER & FICHIERS ---
-            else: 
+            else: # USER
                 parts = []
                 files_to_process = []
                 
-                # Agrégation des fichiers (Message + Filtre Global)
                 raw_list = []
                 if "files" in m and isinstance(m["files"], list): raw_list.extend(m["files"])
-                
                 if i == last_user_idx:
                     if body.get("raw_files_from_filter"): raw_list.extend(body.get("raw_files_from_filter"))
                     if extra_files: 
@@ -538,7 +475,6 @@ class Orchestrator:
                     if fid and fid not in seen_ids:
                         files_to_process.append(f); seen_ids.add(fid)
 
-                # BOUCLE DE TRAITEMENT DES FICHIERS
                 for f_obj in files_to_process:
                     f_real = f_obj.get("file", f_obj)
                     f_id = f_real.get("id")
@@ -551,8 +487,6 @@ class Orchestrator:
                         if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ {f_name}: {err}")
                         continue
 
-                    # TYPE A : FICHIER TEXTE (CODE, LOGS)
-                    # -> Lecture et injection directe dans le prompt (Inline)
                     if is_text:
                         try:
                             with open(real_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -562,47 +496,37 @@ class Orchestrator:
                         except: pass
                         continue
 
-                    # TYPE B : FICHIER BINAIRE (VIDEO, PDF)
-                    # -> Stratégie CAS (Upload Unique)
                     if not file_manager:
                         parts.append({"text": f"[Error: Auth required for file {f_name}]"})
                         continue
 
                     file_size = os.path.getsize(real_path)
                     
-                    # 1. Calcul du Hash SHA256 (Identifiant Unique du contenu)
-                    # Permet de reconnaître le fichier même si son file_id change
                     with open(real_path, "rb") as f:
                         file_hash = hashlib.sha256(f.read()).hexdigest()
 
-                    # 2. Vérification dans le registre local
                     entry = file_registry.get_entry(file_hash)
                     final_uri = None
                     status_ui = "Unknown"
 
                     if entry:
-                        # HIT : Le fichier est déjà chez Google
                         final_uri = entry["uri"]
                         status_ui = "Cache HIT ⚡"
                         if self.valves.DEBUG_MODE: self.debug_log.append(f"⚡ CAS HIT: {f_name}")
                     else:
-                        # MISS : Upload nécessaire
                         if self.valves.DEBUG_MODE: self.debug_log.append(f"🔼 Uploading {f_name} ({file_size} bytes)...")
                         uri = await file_manager.upload_file(real_path, mime)
                         if uri:
                             final_uri = uri
-                            # Mise à jour du registre
                             file_registry.add_entry(file_hash, uri, mime, file_size, f_name)
                             status_ui = "Uploaded 🔼"
                         else:
                             status_ui = "Failed ❌"
 
-                    # 3. Injection de la référence URI
                     if final_uri:
                         parts.append({"file_data": {"mime_type": mime, "file_uri": final_uri}})
                         self.files_processed_info.append({"name": f_name, "type": mime.split('/')[-1].upper(), "size": file_size, "status": status_ui})
 
-                # Ajout du texte de l'utilisateur
                 content_txt = m.get("content", "")
                 if isinstance(content_txt, str) and content_txt.strip():
                     parts.append({"text": content_txt})
@@ -616,7 +540,6 @@ class Orchestrator:
         return contents
 
     def estimate_tokens(self, contents: List[Dict]) -> int:
-        """Estimation rapide pour décider du cache textuel."""
         total = 0
         for item in contents:
             for part in item.get("parts", []):
@@ -624,16 +547,14 @@ class Orchestrator:
         return total
 
 # ==============================================================================
-# SECTION 6 : CACHE MANAGER (TEXTE UNIQUEMENT)
+# SECTION 6 : CACHE MANAGER (TEXTE) & ADAPTERS
 # ==============================================================================
 class ContextCacheManager:
-    """Gère le cache contextuel de l'historique conversationnel (Texte)."""
     def __init__(self, auth_token: str):
         self.auth_token = auth_token
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
     async def count_tokens(self, model: str, system_inst: dict, contents: list, tools: list = None) -> int:
-        """Vérifie le volume réel auprès de l'API pour éviter les erreurs 400."""
         real_model = model if model.startswith("models/") else f"models/{model}"
         url = f"{self.base_url}/{real_model}:countTokens"
         payload = {"contents": contents, "systemInstruction": system_inst}
@@ -659,14 +580,12 @@ class ContextCacheManager:
         except Exception as e: return None, str(e)
 
 class SmartCacheStrategy:
-    """Orchestre la décision de mise en cache et le fingerprinting (Hash)."""
     def __init__(self, cache_manager):
         self.mgr = cache_manager
         global _LOCAL_CACHE_REGISTRY
         self.registry = _LOCAL_CACHE_REGISTRY
 
     def _compute_hash(self, model: str, system_inst: Dict, contents: List[Dict]) -> str:
-        # Note : system_inst est exclu pour stabiliser le hash face aux changements d'heure
         data = {"model": model, "contents": contents}
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
@@ -678,7 +597,6 @@ class SmartCacheStrategy:
             entry = self.registry[current_hash]
             if now < entry["expires_at"]: return entry["name"], None
 
-        # Pre-flight Check
         real_tokens = await self.mgr.count_tokens(model, system_inst, contents, tools)
         if real_tokens < MIN_ABSOLUTE_TOKENS_PRO: return None, None
 
@@ -688,7 +606,6 @@ class SmartCacheStrategy:
         return name, err
 
 class PublicGeminiOAuthAdapter:
-    """Adaptateur pour requêtes avec Cache actif (API Publique)."""
     def __init__(self, auth_token: str):
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
         self.auth_token = auth_token
@@ -701,7 +618,6 @@ class PublicGeminiOAuthAdapter:
         return {"url": url, "headers": {"Content-Type": "application/json", "Authorization": f"Bearer {self.auth_token}"}, "json": payload}
 
 class GeminiAdapter:
-    """Adaptateur Standard (Fallback API Interne)."""
     def __init__(self, base_url):
         self.base_url = base_url
 
@@ -723,7 +639,6 @@ class GeminiAdapter:
 # SECTION 7 : STREAM PROCESSOR
 # ==============================================================================
 class StreamProcessor:
-    """Gère le streaming SSE, l'extraction des chunks, et l'affichage des stats UI."""
     def __init__(self, debug=False, chat_id=None, show_metrics=False, context_window=1000000, initial_label="Réponse", file_stats=None):
         self.debug = debug
         self.chat_id = chat_id
@@ -761,7 +676,7 @@ class StreamProcessor:
                                     yield txt
                                 elif func_call:
                                     if in_think: yield "\n</think>\n"; in_think = False
-                                    # Les Tools Calls ne sont pas affichés directement à l'utilisateur
+                                    # Streaming Tool Call display if needed
                                     pass 
                                 elif "text" in part:
                                     if in_think: yield "\n</think>\n"; in_think = False
@@ -772,7 +687,6 @@ class StreamProcessor:
         if self.show_metrics and (self.usage_stats or self.file_stats):
             stats_content = ""
             
-            # 1. Tableau Fichiers (Nouveau v135)
             if self.file_stats:
                 stats_content += "\n\n**📁 Fichiers Traités**\n"
                 stats_content += "| Fichier | Type | Taille | Statut |\n| :--- | :--- | :--- | :--- |\n"
@@ -780,7 +694,6 @@ class StreamProcessor:
                     size_mb = f['size'] / (1024*1024)
                     stats_content += f"| {f['name']} | {f['type']} | {size_mb:.2f} MB | {f['status']} |\n"
             
-            # 2. Métriques Tokens
             if self.usage_stats:
                 p_tok = self.usage_stats.get("promptTokenCount", 0)
                 c_tok = self.usage_stats.get("candidatesTokenCount", 0)
@@ -811,7 +724,7 @@ class Pipe:
         DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
         
-        ENABLE_CACHING: bool = Field(default=True, description="🧠 Smart Cache (Text Only)")
+        ENABLE_CACHING: bool = Field(default=True, description="🧠 Smart Cache (Text)")
         CACHE_TTL: int = Field(default=604800, description="⏱️ Durée Cache (sec)")
         MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens (Text)")
         
@@ -836,7 +749,7 @@ class Pipe:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
         
-        # 1. AUTHENTIFICATION (OBLIGATOIRE POUR UPLOAD)
+        # 1. AUTHENTIFICATION
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = self.auth.exchange_code(ac)
@@ -846,10 +759,9 @@ class Pipe:
         if not creds: yield self.auth.get_auth_url(); return
         pid, _ = self.auth.get_project_id(creds, self.valves.DEBUG_MODE)
 
-        # 2. PRÉPARATION CONTEXTE (Avec Orchestration Fichiers CAS)
+        # 2. PRÉPARATION CONTEXTE
         tools = orch.convert_owui_tools(body.get("tools"))
         files = body.get("files") or kwargs.get("__files__")
-        # Note : On passe le token pour que l'orchestrateur puisse faire les uploads
         context = await orch.prepare_context(body, chat_id, creds.token, extra_files=files)
 
         if self.valves.DEBUG_MODE and orch.debug_log:
@@ -859,12 +771,11 @@ class Pipe:
         if body.get("messages") and body.get("messages")[-1].get("role") == "tool":
             initial_label = "Post-Action"
 
-        # 3. DÉCISION DE CACHE (TEXTE UNIQUEMENT)
+        # 3. DÉCISION DE CACHE (TEXTE)
         req = None
         estimated_tokens = orch.estimate_tokens(context)
         
         if self.valves.ENABLE_CACHING and estimated_tokens >= self.valves.MIN_CACHE_TOKENS:
-             # On isole l'historique purement textuel pour le cache
              history_to_cache = []
              for msg in context[:-1]:
                   clean_parts = [p for p in msg.get("parts", []) if "text" in p]
@@ -888,7 +799,7 @@ class Pipe:
                      adapter = PublicGeminiOAuthAdapter(creds.token)
                      req = adapter.build(self.valves.MODEL_SELECTION, trigger_content, self.valves.TEMPERATURE, self.valves.MAX_TOKENS, cache_name, tools)
 
-        # 4. FALLBACK (API Standard)
+        # 4. FALLBACK
         if not req:
             adapter = GeminiAdapter(self.base_url)
             req = adapter.build(pid, context, orch.get_system_instruction(), self.valves.TEMPERATURE, self.valves.MAX_TOKENS, self.valves.THINKING_LEVEL, self.valves.MODEL_SELECTION, tools)
@@ -905,7 +816,7 @@ class Pipe:
             self.valves.SHOW_METRICS, 
             self.valves.MAX_CONTEXT_SIZE,
             initial_label=initial_label,
-            file_stats=orch.files_processed_info # Transmission des stats fichiers
+            file_stats=orch.files_processed_info
         )
 
         try:
