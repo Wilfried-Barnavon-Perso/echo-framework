@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.08 - Final Token Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.09 - Final Token Fix)
 author: Wilfried BARNAVON
-version: 135.08
-description: v135.08: Correction définitive du bug 0/0/0. Application de la fusion intelligente des métadonnées (Smart Merge) dans le bloc de sécurité du buffer résiduel. Empêche l'écrasement des stats par le dernier paquet partiel.
+version: 135.09
+description: v135.09: Correction critique (ajout méthode manquante _update_stats). Rétablissement de l'affichage des tokens (0/0/0 fix).
 """
 
 # ==============================================================================
@@ -673,6 +673,12 @@ class StreamProcessor:
         self.current_sig = None
         self.stats_dir = "/app/backend/data/stats"
         os.makedirs(self.stats_dir, exist_ok=True)
+
+    def _update_stats(self, data):
+        if "usageMetadata" in data:
+            self.usage_stats = data["usageMetadata"]
+        elif "response" in data and "usageMetadata" in data["response"]:
+            self.usage_stats = data["response"]["usageMetadata"]
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
