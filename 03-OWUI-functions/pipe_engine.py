@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.04 - SSE Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.05 - Hybrid CAS + Agentic)
 author: Wilfried BARNAVON
-version: 135.04
-description: v135.04: Correctif critique du StreamProcessor. Rétablissement de la gestion de buffer persistant pour le flux SSE. Cela corrige le bug d'affichage des tokens (0/0/0) causé par le découpage des paquets JSON réseau.
+version: 135.05
+description: v135.05: Fusion complète. Système CAS (Content Addressable Storage) pour les fichiers, Buffer SSE persistant pour la stabilité réseau, et restauration de l'intelligence agentique (Signatures, Tools, Usage Stats).
 """
 
 # ==============================================================================
@@ -661,17 +661,23 @@ class GeminiAdapter:
 # SECTION 7 : STREAM PROCESSOR
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, debug=False, chat_id=None, show_metrics=False, context_window=1000000, initial_label="Réponse", file_stats=None):
+    def __init__(self, debug=False, chat_id=None, sig_manager=None, show_metrics=False, context_window=1000000, initial_label="Réponse", file_stats=None):
         self.debug = debug
         self.chat_id = chat_id
+        self.sig_manager = sig_manager
         self.show_metrics = show_metrics
         self.context_window = context_window
         self.initial_label = initial_label
         self.usage_stats = None
         self.file_stats = file_stats or []
+        self.current_sig = None
+        self.stats_dir = "/app/backend/data/stats"
+        os.makedirs(self.stats_dir, exist_ok=True)
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
+        tool_index = 0
+        step_label = self.initial_label
         ct = response.headers.get("content-type", "")
         if "application/json" in ct:
             yield f"⚠️ API Error: {await response.aread()}"
@@ -698,13 +704,38 @@ class StreamProcessor:
                                 txt = part.get("text", "")
                                 func_call = part.get("functionCall")
 
+                                # 1. Capture Signature (Restauré)
+                                if "thoughtSignature" in part:
+                                    self.current_sig = part["thoughtSignature"]
+                                    if self.chat_id and self.sig_manager:
+                                        self.sig_manager.save_signature(self.chat_id, self.current_sig)
+
                                 if part.get("thought"):
                                     if not in_think: yield "<think>\n"; in_think = True
                                     yield txt
+                                
+                                # 2. Tool Calls (Restauré)
                                 elif func_call:
+                                    step_label = f"Pré-{func_call.get('name', 'Action')}"
                                     if in_think: yield "\n</think>\n"; in_think = False
-                                    # Streaming Tool Call display if needed
-                                    pass 
+                                    
+                                    args = func_call.get("args", {})
+                                    if self.current_sig: args["_thought_signature"] = self.current_sig
+                                    
+                                    yield {
+                                        "choices": [{
+                                            "index": 0, "delta": {
+                                                "tool_calls": [{
+                                                    "index": tool_index, 
+                                                    "id": f"call_{secrets.token_hex(8)}",
+                                                    "type": "function", 
+                                                    "function": {"name": func_call["name"], "arguments": json.dumps(args)}
+                                                }]
+                                            }, "finish_reason": "tool_calls"
+                                        }]
+                                    }
+                                    tool_index += 1
+
                                 elif "text" in part:
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     yield txt
@@ -731,7 +762,7 @@ class StreamProcessor:
                 cache_row = f"| **Cache (Hit)** | {cache_tok:,} |\n" if cache_tok > 0 else ""
                 
                 stats_content += f"""\n<details>
-<summary>⚡ Contexte [{self.initial_label}]: {pct:.1f}% {bar}</summary>
+<summary>⚡ Contexte [{step_label}]: {pct:.1f}% {bar}</summary>
 
 | Métrique | Valeur |
 | :--- | :--- |
@@ -739,7 +770,17 @@ class StreamProcessor:
 {cache_row}| **Réponse** | {c_tok:,} |
 | **Total** | {t_tok:,} / {self.context_window:,} |
 </details>\n"""
-            yield stats_content
+                yield stats_content
+
+        # 3. Yield Final Usage (Restauré)
+        if self.usage_stats:
+            yield {
+                "usage": {
+                    "prompt_tokens": self.usage_stats.get("promptTokenCount", 0),
+                    "completion_tokens": self.usage_stats.get("candidatesTokenCount", 0),
+                    "total_tokens": self.usage_stats.get("totalTokenCount", 0)
+                }
+            }
 
 # ==============================================================================
 # SECTION 8 : LE PIPE (POINT D'ENTRÉE)
@@ -840,8 +881,9 @@ class Pipe:
         proc = StreamProcessor(
             self.valves.DEBUG_MODE, 
             chat_id, 
-            self.valves.SHOW_METRICS, 
-            self.valves.MAX_CONTEXT_SIZE,
+            sig_manager=orch.sig_manager,
+            show_metrics=self.valves.SHOW_METRICS, 
+            context_window=self.valves.MAX_CONTEXT_SIZE,
             initial_label=initial_label,
             file_stats=orch.files_processed_info
         )
