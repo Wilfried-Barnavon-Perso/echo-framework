@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.09 - Final Token Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.10 - Token Priority Fix)
 author: Wilfried BARNAVON
-version: 135.09
-description: v135.09: Correction critique (ajout méthode manquante _update_stats). Rétablissement de l'affichage des tokens (0/0/0 fix).
+version: 135.10
+description: v135.10: Correctif priorité métriques. Restauration de la précédence `response.usageMetadata` > `usageMetadata` et mise à jour continue des stats pour corriger le bug 0/0 tokens.
 """
 
 # ==============================================================================
@@ -675,10 +675,10 @@ class StreamProcessor:
         os.makedirs(self.stats_dir, exist_ok=True)
 
     def _update_stats(self, data):
-        if "usageMetadata" in data:
-            self.usage_stats = data["usageMetadata"]
-        elif "response" in data and "usageMetadata" in data["response"]:
+        if "response" in data and "usageMetadata" in data["response"]:
             self.usage_stats = data["response"]["usageMetadata"]
+        elif "usageMetadata" in data:
+            self.usage_stats = data["usageMetadata"]
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
@@ -700,9 +700,7 @@ class StreamProcessor:
                     if line.startswith("data:"):
                         data = json.loads(line[6:])
                         
-                        if "usageMetadata" in data: self.usage_stats = data["usageMetadata"]
-                        if not self.usage_stats and "response" in data and "usageMetadata" in data["response"]:
-                             self.usage_stats = data["response"]["usageMetadata"]
+                        self._update_stats(data)
 
                         cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
                         if cand and cand[0].get("content"):
