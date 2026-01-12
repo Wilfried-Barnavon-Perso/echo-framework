@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.03 - Stable CAS)
+title: Gemini Pro Unified System (Platinum Agentic V135.04 - SSE Fix)
 author: Wilfried BARNAVON
-version: 135.03
-description: v135.03: Version de production validée. Intègre l'architecture CAS (Content-Addressable Storage) pour les fichiers lourds via Google File API. Les fichiers sont uploadés une seule fois et référencés par URI. Restauration de la gestion complète des Outils (Tool Calls/Responses) et des Signatures de Pensée. Cache textuel optimisé.
+version: 135.04
+description: v135.04: Correctif critique du StreamProcessor. Rétablissement de la gestion de buffer persistant pour le flux SSE. Cela corrige le bug d'affichage des tokens (0/0/0) causé par le découpage des paquets JSON réseau.
 """
 
 # ==============================================================================
@@ -41,14 +41,13 @@ GOOGLE_SCOPES = [
     "openid",
 ]
 
-# --- REGISTRE DE CACHE GLOBAL (Stockage Volatile) ---
+# --- REGISTRE DE CACHE GLOBAL ---
 _LOCAL_CACHE_REGISTRY = {}
 
 # --- CONSTANTES MAGIQUES ---
-MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator" # Bypass interne pour CoT
-MIN_ABSOLUTE_TOKENS_PRO = 4096 # Seuil d'activation du cache textuel
+MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator"
+MIN_ABSOLUTE_TOKENS_PRO = 4096
 
-# Filet de sécurité pour la détection de texte.
 TEXT_EXTENSIONS = {
     '.py', '.js', '.html', '.css', '.java', '.c', '.cpp', '.h', '.hpp', '.rs', '.go', '.ts', 
     '.json', '.yaml', '.yml', '.toml', '.xml', '.md', '.txt', '.sh', '.bat', '.ps1', 
@@ -87,7 +86,7 @@ OFFICIAL_CLIENT_CONFIG = {
 }
 
 # ==============================================================================
-# SECTION 3 : SERVICE D'AUTHENTIFICATION (IDENTITY PROVIDER)
+# SECTION 3 : SERVICE D'AUTHENTIFICATION
 # ==============================================================================
 class AuthService:
     def __init__(self, data_dir: str):
@@ -367,6 +366,7 @@ class Orchestrator:
         return None
 
     def _get_file_info(self, f_id: str, f_name: str, owui_path: str) -> Tuple[str, bool, str, Optional[str]]:
+        """Identifie le type de fichier (Texte vs Binaire) et son chemin."""
         if not f_id: return "", False, "No ID", None
         real_path = self._resolve_local_path(owui_path, f_id, f_name)
         if not real_path: return "", False, f"Not Found: {f_id}", None
@@ -387,6 +387,11 @@ class Orchestrator:
         return mime_type, is_text, "", real_path
 
     async def prepare_context(self, body: Dict, chat_id: str, auth_token: str, extra_files: Any = None) -> List[Dict]:
+        """
+        Prépare la liste 'contents' pour Gemini.
+        - Texte : injecté directement.
+        - Fichiers Binaires : Uploadé si nécessaire (CAS), puis injecté via fileData (URI).
+        """
         self.files_processed_info = []
         messages = body.get("messages", [])
         contents = []
@@ -394,6 +399,7 @@ class Orchestrator:
         file_registry = FileRegistry(self.data_dir, chat_id)
         file_manager = GoogleFileManager(auth_token) if auth_token else None
         
+        # Mapping des tools pour le décodage des réponses
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -410,6 +416,7 @@ class Orchestrator:
             role = m["role"]
             if role == "system": i+=1; continue
 
+            # --- GESTION DES TOOLS (Réintégrée) ---
             if role == "tool":
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
@@ -419,8 +426,12 @@ class Orchestrator:
                     except: val = {"result": str(tm.get("content", ""))}
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
-                if contents and contents[-1]["role"] == "user": contents[-1]["parts"].extend(parts)
-                else: contents.append({"role": "user", "parts": parts})
+                
+                # Attacher la réponse au dernier message utilisateur (Gemini requirement)
+                if contents and contents[-1]["role"] == "user":
+                    contents[-1]["parts"].extend(parts)
+                else:
+                    contents.append({"role": "user", "parts": parts})
                 continue
 
             elif role in ["assistant", "model"]:
@@ -428,10 +439,12 @@ class Orchestrator:
                 txt = m.get("content", "")
                 if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
                 
+                # Nettoyage
                 txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL).strip()
                 txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL).strip()
                 if txt: parts.append({"text": txt})
 
+                # Gestion CoT & Function Call (Réintégrée)
                 found_in_band_sig = None
                 tool_calls_in_msg = False
                 if m.get("tool_calls"):
@@ -455,14 +468,17 @@ class Orchestrator:
                     if not sig_to_use and tool_calls_in_msg: sig_to_use = MAGIC_KEY_SKIP_VALIDATION
                     if sig_to_use and parts:
                          for part in parts: part["thoughtSignature"] = sig_to_use
+                
                 contents.append({"role": "model", "parts": parts})
             
             else: # USER
                 parts = []
                 files_to_process = []
                 
+                # Récupération de tous les fichiers
                 raw_list = []
                 if "files" in m and isinstance(m["files"], list): raw_list.extend(m["files"])
+                
                 if i == last_user_idx:
                     if body.get("raw_files_from_filter"): raw_list.extend(body.get("raw_files_from_filter"))
                     if extra_files: 
@@ -487,6 +503,7 @@ class Orchestrator:
                         if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ {f_name}: {err}")
                         continue
 
+                    # Cas 1 : Texte -> Inline
                     if is_text:
                         try:
                             with open(real_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -496,12 +513,14 @@ class Orchestrator:
                         except: pass
                         continue
 
+                    # Cas 2 : Binaire -> CAS (Upload Unique)
                     if not file_manager:
                         parts.append({"text": f"[Error: Auth required for file {f_name}]"})
                         continue
 
                     file_size = os.path.getsize(real_path)
                     
+                    # Hashage pour identifier le contenu de manière unique
                     with open(real_path, "rb") as f:
                         file_hash = hashlib.sha256(f.read()).hexdigest()
 
@@ -510,10 +529,12 @@ class Orchestrator:
                     status_ui = "Unknown"
 
                     if entry:
+                        # HIT : Déjà uploadé et valide
                         final_uri = entry["uri"]
                         status_ui = "Cache HIT ⚡"
                         if self.valves.DEBUG_MODE: self.debug_log.append(f"⚡ CAS HIT: {f_name}")
                     else:
+                        # MISS : Upload nécessaire
                         if self.valves.DEBUG_MODE: self.debug_log.append(f"🔼 Uploading {f_name} ({file_size} bytes)...")
                         uri = await file_manager.upload_file(real_path, mime)
                         if uri:
@@ -524,6 +545,7 @@ class Orchestrator:
                             status_ui = "Failed ❌"
 
                     if final_uri:
+                        # Utilisation de l'URI Google au lieu du Base64
                         parts.append({"file_data": {"mime_type": mime, "file_uri": final_uri}})
                         self.files_processed_info.append({"name": f_name, "type": mime.split('/')[-1].upper(), "size": file_size, "status": status_ui})
 
@@ -655,12 +677,17 @@ class StreamProcessor:
             yield f"⚠️ API Error: {await response.aread()}"
             return
 
+        buffer = ""
         async for chunk in response.aiter_bytes():
             try:
-                buffer = chunk.decode("utf-8", errors="ignore")
-                for line in buffer.split("\n"):
+                buffer += chunk.decode("utf-8", errors="ignore")
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+                    if not line: continue
                     if line.startswith("data:"):
                         data = json.loads(line[6:])
+                        
                         if "usageMetadata" in data: self.usage_stats = data["usageMetadata"]
                         if not self.usage_stats and "response" in data and "usageMetadata" in data["response"]:
                              self.usage_stats = data["response"]["usageMetadata"]
