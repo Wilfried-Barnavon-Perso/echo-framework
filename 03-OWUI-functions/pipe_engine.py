@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.05 - Hybrid CAS + Agentic)
+title: Gemini Pro Unified System (Platinum Agentic V135.07 - Ultimate Stability)
 author: Wilfried BARNAVON
-version: 135.05
-description: v135.05: Fusion complète. Système CAS (Content Addressable Storage) pour les fichiers, Buffer SSE persistant pour la stabilité réseau, et restauration de l'intelligence agentique (Signatures, Tools, Usage Stats).
+version: 135.07
+description: v135.07: Version finale de stabilité. Combine la "Smart Metadata Merge" pour protéger les stats contre l'écrasement, ET le "Buffer Flush" pour garantir la lecture du dernier paquet réseau.
 """
 
 # ==============================================================================
@@ -740,6 +740,18 @@ class StreamProcessor:
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     yield txt
             except: pass
+        
+        # --- CORRECTIF CRITIQUE : TRAITEMENT DU RELIQUAT DE BUFFER ---
+        # Les métadonnées arrivent souvent dans le dernier chunk qui peut ne pas avoir de \n final.
+        if buffer and buffer.strip().startswith("data:"):
+            try:
+                line = buffer.strip()
+                data = json.loads(line[6:])
+                if "usageMetadata" in data: self.usage_stats = data["usageMetadata"]
+                if not self.usage_stats and "response" in data and "usageMetadata" in data["response"]:
+                        self.usage_stats = data["response"]["usageMetadata"]
+            except: pass
+
         if in_think: yield "\n</think>\n"
 
         if self.show_metrics and (self.usage_stats or self.file_stats):
