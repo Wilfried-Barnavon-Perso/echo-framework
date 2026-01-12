@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.85 - Documented)
+title: Gemini Pro Unified System (Platinum Agentic V134.86 - Debug Cache)
 author: Wilfried BARNAVON
-version: 134.85
-description: v134.85: Version entièrement documentée. Ajout de commentaires explicatifs sur l'architecture (Auth Hybride, Smart Cache, Split Strategy) pour auditabilité et maintenance. Fonctionnalités identiques à la v134.84.
+version: 134.86
+description: v134.86: Ajout de la remontée d'erreurs explicite pour le Cache. En cas d'échec de création (Cache Miss), le code d'erreur API et le message brut sont renvoyés dans le flux de chat (mode Debug) pour diagnostic immédiat.
 """
 
 # ==============================================================================
@@ -660,7 +660,7 @@ class ContextCacheManager:
             print(f"⚠️ [COUNT] Connection Error: {str(e)}")
             return -1
 
-    async def create(self, model: str, system_inst: dict, contents: list, ttl: int = 600) -> Optional[str]:
+    async def create(self, model: str, system_inst: dict, contents: list, ttl: int = 600) -> Tuple[Optional[str], Optional[str]]:
         """Crée le cache contextuel sur les serveurs de Google et retourne son Resource Name."""
         url = f"{self.base_url}/cachedContents"
         real_model = model if model.startswith("models/") else f"models/{model}"
@@ -683,14 +683,16 @@ class ContextCacheManager:
                 if resp.status_code == 200:
                     data = resp.json()
                     name = data.get("name")
-                    print(f"✅ [CACHE] Created: {name} (Valid: {ttl}s)")
-                    return name
+                    # print(f"✅ [CACHE] Created: {name} (Valid: {ttl}s)")
+                    return name, None
                 else:
-                    print(f"⚠️ [CACHE] Failed: {resp.status_code} - {resp.text}")
-                    return None
+                    error_msg = f"⚠️ [CACHE] Failed: {resp.status_code} - {resp.text}"
+                    print(error_msg)
+                    return None, error_msg
         except Exception as e:
-            print(f"⚠️ [CACHE] Connection Error: {str(e)}")
-            return None
+            error_msg = f"⚠️ [CACHE] Connection Error: {str(e)}"
+            print(error_msg)
+            return None, error_msg
 
 class SmartCacheStrategy:
     """
@@ -725,7 +727,7 @@ class SmartCacheStrategy:
         dump = json.dumps(data, sort_keys=True)
         return hashlib.sha256(dump.encode()).hexdigest()
 
-    async def get_or_create_cache(self, model: str, system_inst: dict, contents: list, ttl: int = 600, tools: list = None) -> Optional[str]:
+    async def get_or_create_cache(self, model: str, system_inst: dict, contents: list, ttl: int = 600, tools: list = None) -> Tuple[Optional[str], Optional[str]]:
         """Méthode principale : Tente de récupérer un cache existant, ou en crée un nouveau si nécessaire."""
         self._cleanup()
         
@@ -738,7 +740,7 @@ class SmartCacheStrategy:
             entry = self.registry[current_hash]
             if now < entry["expires_at"]:
                 print(f"⚡ [CACHE] Hit! Using {entry['name']}")
-                return entry["name"]
+                return entry["name"], None
             else:
                 print(f"⌛ [CACHE] Expired locally. Re-creating...")
 
@@ -755,10 +757,10 @@ class SmartCacheStrategy:
         
         if real_tokens < threshold:
             print(f"🚫 [CACHE] Aborted. Tokens ({real_tokens}) < Threshold ({threshold}).")
-            return None
+            return None, None
 
         # 4. Création (Si check OK)
-        name = await self.mgr.create(model, system_inst, contents, ttl)
+        name, error = await self.mgr.create(model, system_inst, contents, ttl)
 
         if name:
             # On stocke avec une marge de sécurité de 30s
@@ -767,7 +769,7 @@ class SmartCacheStrategy:
                 "expires_at": now + ttl - 30 
             }
 
-        return name
+        return name, error
 
 class PublicGeminiOAuthAdapter:
     """
@@ -1123,7 +1125,7 @@ class Pipe:
                 strategy = SmartCacheStrategy(cache_mgr)
 
                 # Tentative de récupération ou création du cache (avec Pre-flight Check réel)
-                cache_name = await strategy.get_or_create_cache(
+                cache_name, cache_error = await strategy.get_or_create_cache(
                     self.valves.MODEL_SELECTION,
                     orch.get_system_instruction(),
                     history_to_cache,
@@ -1144,6 +1146,8 @@ class Pipe:
                         tools=tools
                     )
                 elif self.valves.DEBUG_MODE:
+                    if cache_error:
+                        yield f"{cache_error}\n"
                     yield f"⏩ **CACHE SKIPPED**: Fallback to standard generation.\n"
 
         # ==============================================================================
