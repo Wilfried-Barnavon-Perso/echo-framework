@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.89 - Timeout Fix)
+title: Gemini Pro Unified System (Platinum Agentic V134.90 - Text Only Cache)
 author: Wilfried BARNAVON
-version: 134.89
-description: v134.89: Correction critique des Timeouts. Augmentation du délai de "Pre-flight Check" (:countTokens) à 120s pour supporter l'upload de gros fichiers (vidéos > 100Mo) sans échouer silencieusement. Amélioration des messages d'erreur de cache pour le débogage.
+version: 134.90
+description: v134.90: Simplification de la stratégie de Cache. Le cache est désormais réservé strictement à l'historique TEXTUEL. Les fichiers (PDF, Vidéo, etc.) sont exclus du cache et transitent systématiquement via la requête standard (Trigger), éliminant les effets de bord liés aux uploads partiels ou aux timeouts de comptage.
 """
 
 # ==============================================================================
@@ -411,7 +411,7 @@ class Orchestrator:
         """
         Estimation heuristique locale rapide des tokens.
         - Texte : 1 token ~= 4 caractères.
-        - Image : ~258 tokens (standard Gemini 2.0).
+        - Les fichiers binaires ne sont PAS comptés ici car ils sont exclus du cache.
         """
         total = 0
         for item in contents:
@@ -419,8 +419,6 @@ class Orchestrator:
             for p in parts:
                 if "text" in p:
                     total += len(p["text"]) // 4
-                elif "inlineData" in p:
-                    total += 258 
         return total
 
     def prepare_context(self, body: Dict, chat_id: str, extra_files: Any = None) -> List[Dict]:
@@ -645,8 +643,8 @@ class ContextCacheManager:
         }
 
         try:
-            # Augmentation du timeout à 120s pour supporter l'upload de gros fichiers (300MB+) lors du comptage
-            async with httpx.AsyncClient(timeout=120) as client:
+            # Utilisation de httpx pour éviter dépendance au SDK google-genai
+            async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -677,12 +675,12 @@ class ContextCacheManager:
         }
 
         try:
-            # Timeout généreux pour la création effective du cache (upload lourd)
             async with httpx.AsyncClient(timeout=300) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
                     name = data.get("name")
+                    # print(f"✅ [CACHE] Created: {name} (Valid: {ttl}s)")
                     return name, None
                 else:
                     error_msg = f"⚠️ [CACHE] Failed: {resp.status_code} - {resp.text}"
@@ -744,6 +742,7 @@ class SmartCacheStrategy:
                 print(f"⌛ [CACHE] Expired locally. Re-creating...")
 
         # 3. VERIFICATION AVANT CREATION (Anti-400)
+        # On ne le fait qu'en cas de Miss, pour éviter une latence réseau à chaque hit.
         print(f"🔄 [CACHE] Miss. Verifying token count...")
         
         real_tokens = await self.mgr.count_tokens(model, system_inst, contents, tools)
@@ -753,13 +752,9 @@ class SmartCacheStrategy:
             
         print(f"📊 [CHECK] Real: {real_tokens} vs Required: {threshold}")
         
-        # Gestion explicite des erreurs de comptage (-1)
-        if real_tokens == -1:
-             return None, "⚠️ [CACHE] Count Failed (Timeout/Network)"
-
         if real_tokens < threshold:
             print(f"🚫 [CACHE] Aborted. Tokens ({real_tokens}) < Threshold ({threshold}).")
-            return None, f"⚠️ [CACHE] Too small ({real_tokens} < {threshold})"
+            return None, None
 
         # 4. Création (Si check OK)
         name, error = await self.mgr.create(model, system_inst, contents, ttl)
@@ -1069,74 +1064,33 @@ class Pipe:
                 yield f"{log}\n"
 
         # ==============================================================================
-        # LOGIQUE DE CACHING INTELLIGENT (Souveraineté Tokens + Split Universel)
+        # LOGIQUE DE CACHING INTELLIGENT (Texte Uniquement)
         # ==============================================================================
         req = None
         
-        # 1. Analyse : Présence Fichiers Lourds & Estimation Texte
-        has_active_files = False
-        for msg in context:
-            for part in msg.get("parts", []):
-                if "inlineData" in part:
-                    # Détection précise : Vidéo, Audio, PDF
-                    mime = part["inlineData"].get("mimeType", "")
-                    if any(t in mime for t in ["video/", "audio/", "application/pdf"]):
-                        has_active_files = True
-                        break
-                if "text" in part and "--- FILE:" in part["text"]:
-                    has_active_files = True; break
-            if has_active_files: break
-
+        # 1. Estimation (Texte uniquement)
         estimated_tokens = orch.estimate_tokens(context)
         user_threshold = self.valves.MIN_CACHE_TOKENS
         
-        # Condition d'activation : Fichiers OU Volume Texte > Seuil
-        attempt_cache = self.valves.ENABLE_CACHING and (has_active_files or estimated_tokens >= user_threshold)
+        attempt_cache = self.valves.ENABLE_CACHING and (estimated_tokens >= user_threshold)
         
         if self.valves.DEBUG_MODE:
-            yield f"📊 **CACHE PRE-CHECK**: Attempt={attempt_cache} (Files={has_active_files}, Est={estimated_tokens})\n"
+            yield f"📊 **CACHE DECISION**: Attempt={attempt_cache} (Est={estimated_tokens})\n"
 
         if attempt_cache:
-            # --- STRATÉGIE SPLIT ---
-            # Le "Problème du dernier message" : L'API Cache demande un historique.
-            # Si le fichier lourd est dans le dernier message, il n'est pas caché.
-            # SOLUTION : On déplace dynamiquement les parties lourdes du dernier message vers l'historique caché.
+            # Préparation de l'historique TEXTE seulement
+            history_to_cache = []
+            for msg in context[:-1]:
+                # On ne garde que les parties texte
+                clean_parts = [p for p in msg.get("parts", []) if "text" in p]
+                if clean_parts:
+                    history_to_cache.append({"role": msg["role"], "parts": clean_parts})
             
-            history_to_cache = list(context[:-1]) 
-            trigger_content = list(context[-1:]) 
+            # Le dernier message (Trigger) contient tout (Texte + Fichiers du tour courant)
+            # On ne fait plus de split "Fichier vers Historique"
+            trigger_content = [context[-1]]
             
-            if context:
-                last_msg = context[-1]
-                last_parts = last_msg.get("parts", [])
-                cacheable_parts = []
-                trigger_parts = []
-                
-                for p in last_parts:
-                    # Critère de Split : Fichier binaire OU Texte très long
-                    is_heavy = False
-                    if "inlineData" in p: is_heavy = True
-                    elif "text" in p:
-                        if "--- FILE:" in p["text"]: is_heavy = True
-                        elif len(p["text"]) > 1000: is_heavy = True
-                    
-                    if is_heavy:
-                        cacheable_parts.append(p)
-                    else:
-                        trigger_parts.append(p)
-                
-                # Application du Split si nécessaire
-                if cacheable_parts:
-                    heavy_msg = {"role": last_msg["role"], "parts": cacheable_parts}
-                    history_to_cache.append(heavy_msg)
-                    
-                    if not trigger_parts: trigger_parts = [{"text": " "}]
-                    trigger_content = [{"role": last_msg["role"], "parts": trigger_parts}]
-                    
-                    if self.valves.DEBUG_MODE: yield f"🔪 **CACHE SPLIT**: Moved heavy parts to history. Trigger light.\n"
-
-            # ----------------------------------------------------------------------------------
-
-            if history_to_cache and trigger_content:
+            if history_to_cache:
                 cache_mgr = ContextCacheManager(creds.token)
                 strategy = SmartCacheStrategy(cache_mgr)
 
@@ -1155,7 +1109,7 @@ class Pipe:
                     adapter = PublicGeminiOAuthAdapter(creds.token)
                     req = adapter.build(
                         self.valves.MODEL_SELECTION,
-                        trigger_content, # On envoie uniquement le trigger léger
+                        trigger_content, # On envoie le trigger complet (avec fichiers potentiels)
                         self.valves.TEMPERATURE,
                         self.valves.MAX_TOKENS,
                         cached_name=cache_name,
