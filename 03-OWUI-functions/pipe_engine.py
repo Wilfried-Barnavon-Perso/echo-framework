@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.91 - Hash Stabilizer)
+title: Gemini Pro Unified System (Platinum Agentic V134.92 - Cache Visibility)
 author: Wilfried BARNAVON
-version: 134.91
-description: v134.91: Correctif critique de stabilité. Exclusion de `system_inst` (qui contient l'heure dynamique) du calcul du Hash de cache. Cela permet enfin le Cache HIT sur des contextes identiques à des moments différents. Stratégie "Text Only" conservée.
+version: 134.92
+description: v134.92: Amélioration de la visibilité du Cache. Le tableau de métriques affiche désormais explicitement une ligne "Cache (Hit)" avec le nombre de tokens économisés si l'API confirme l'utilisation du contexte caché (via `cachedContentTokenCount`).
 """
 
 # ==============================================================================
@@ -959,8 +959,9 @@ class StreamProcessor:
             p_tok = self.usage_stats.get("promptTokenCount", 0)
             c_tok = self.usage_stats.get("candidatesTokenCount", 0)
             t_tok = self.usage_stats.get("totalTokenCount", 0)
+            cached_tok = self.usage_stats.get("cachedContentTokenCount", 0)
             
-            if self.debug: yield f"\n🐞 **DEBUG** Injecting Stats: P={p_tok}, C={c_tok}, T={t_tok}\n"
+            if self.debug: yield f"\n🐞 **DEBUG** Injecting Stats: P={p_tok}, C={c_tok}, T={t_tok}, Cached={cached_tok}\n"
 
             if self.show_metrics:
                 percent = 0
@@ -969,6 +970,11 @@ class StreamProcessor:
                 
                 filled = int(percent / 10)
                 bar = "█" * filled + "░" * (10 - filled)
+                
+                # Ligne conditionnelle pour le cache
+                cache_row = ""
+                if cached_tok > 0:
+                    cache_row = f"| **Cache (Hit)** | {cached_tok:,} |\n"
 
                 stats_md = f"""\n\n<details>
 <summary>⚡ Contexte [{step_label}]: {percent:.1f}% {bar}</summary>
@@ -976,7 +982,7 @@ class StreamProcessor:
 | Métrique | Valeur |
 | :--- | :--- |
 | **Prompt** | {p_tok:,} |
-| **Réponse** | {c_tok:,} |
+{cache_row}| **Réponse** | {c_tok:,} |
 | **Total** | {t_tok:,} / {self.context_window:,} |
 </details>\n"""
                 yield stats_md
