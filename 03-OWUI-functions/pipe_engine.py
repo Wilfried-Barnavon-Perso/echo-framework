@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.86 - Debug Cache)
+title: Gemini Pro Unified System (Platinum Agentic V134.88 - Explicit Trigger)
 author: Wilfried BARNAVON
-version: 134.86
-description: v134.86: Ajout de la remontée d'erreurs explicite pour le Cache. En cas d'échec de création (Cache Miss), le code d'erreur API et le message brut sont renvoyés dans le flux de chat (mode Debug) pour diagnostic immédiat.
+version: 134.88
+description: v134.88: Retour à la logique "Explicite". Suppression du hack d'estimation (5000 tokens). La présence de fichiers lourds (PDF, Vidéo, Audio) déclenche désormais directement et obligatoirement le "Pre-flight Check" (API countTokens), indépendamment de l'estimation locale.
 """
 
 # ==============================================================================
@@ -412,7 +412,6 @@ class Orchestrator:
         Estimation heuristique locale rapide des tokens.
         - Texte : 1 token ~= 4 caractères.
         - Image : ~258 tokens (standard Gemini 2.0).
-        Sert à prendre une décision rapide "Cache or Not" avant validation précise.
         """
         total = 0
         for item in contents:
@@ -1071,14 +1070,28 @@ class Pipe:
         # ==============================================================================
         req = None
         
-        # Estimation locale rapide pour décider si on TENTE le cache
+        # 1. Analyse : Présence Fichiers Lourds & Estimation Texte
+        has_active_files = False
+        for msg in context:
+            for part in msg.get("parts", []):
+                if "inlineData" in part:
+                    # Détection précise : Vidéo, Audio, PDF
+                    mime = part["inlineData"].get("mimeType", "")
+                    if any(t in mime for t in ["video/", "audio/", "application/pdf"]):
+                        has_active_files = True
+                        break
+                if "text" in part and "--- FILE:" in part["text"]:
+                    has_active_files = True; break
+            if has_active_files: break
+
         estimated_tokens = orch.estimate_tokens(context)
         user_threshold = self.valves.MIN_CACHE_TOKENS
         
-        attempt_cache = self.valves.ENABLE_CACHING and (estimated_tokens >= user_threshold)
+        # Condition d'activation : Fichiers OU Volume Texte > Seuil
+        attempt_cache = self.valves.ENABLE_CACHING and (has_active_files or estimated_tokens >= user_threshold)
         
         if self.valves.DEBUG_MODE:
-            yield f"📊 **CACHE PRE-CHECK**: Attempt={attempt_cache} (Est={estimated_tokens})\n"
+            yield f"📊 **CACHE PRE-CHECK**: Attempt={attempt_cache} (Files={has_active_files}, Est={estimated_tokens})\n"
 
         if attempt_cache:
             # --- STRATÉGIE SPLIT ---
