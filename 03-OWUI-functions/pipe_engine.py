@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V134.90 - Text Only Cache)
+title: Gemini Pro Unified System (Platinum Agentic V134.91 - Hash Stabilizer)
 author: Wilfried BARNAVON
-version: 134.90
-description: v134.90: Simplification de la stratégie de Cache. Le cache est désormais réservé strictement à l'historique TEXTUEL. Les fichiers (PDF, Vidéo, etc.) sont exclus du cache et transitent systématiquement via la requête standard (Trigger), éliminant les effets de bord liés aux uploads partiels ou aux timeouts de comptage.
+version: 134.91
+description: v134.91: Correctif critique de stabilité. Exclusion de `system_inst` (qui contient l'heure dynamique) du calcul du Hash de cache. Cela permet enfin le Cache HIT sur des contextes identiques à des moments différents. Stratégie "Text Only" conservée.
 """
 
 # ==============================================================================
@@ -714,10 +714,14 @@ class SmartCacheStrategy:
             del self.registry[h]
 
     def _compute_hash(self, model: str, system_inst: Dict, contents: List[Dict]) -> str:
-        """Génère une empreinte SHA256 unique du contexte (incluant les fichiers binaires)."""
+        """
+        Génère une empreinte stable.
+        On ignore 'system_inst' car il contient l'heure (change chaque minute) => Hash instable.
+        On se concentre sur le modèle et l'historique des contenus.
+        """
         data = {
             "model": model,
-            "system": system_inst,
+            # "system": system_inst, # EXCLU POUR STABILITÉ DU CACHE
             "contents": contents
         }
         # sort_keys=True est crucial pour garantir le même hash quel que soit l'ordre des clés
