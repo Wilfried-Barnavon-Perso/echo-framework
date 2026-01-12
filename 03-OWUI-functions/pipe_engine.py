@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.07 - Ultimate Stability)
+title: Gemini Pro Unified System (Platinum Agentic V135.08 - Final Token Fix)
 author: Wilfried BARNAVON
-version: 135.07
-description: v135.07: Version finale de stabilité. Combine la "Smart Metadata Merge" pour protéger les stats contre l'écrasement, ET le "Buffer Flush" pour garantir la lecture du dernier paquet réseau.
+version: 135.08
+description: v135.08: Correction définitive du bug 0/0/0. Application de la fusion intelligente des métadonnées (Smart Merge) dans le bloc de sécurité du buffer résiduel. Empêche l'écrasement des stats par le dernier paquet partiel.
 """
 
 # ==============================================================================
@@ -747,9 +747,7 @@ class StreamProcessor:
             try:
                 line = buffer.strip()
                 data = json.loads(line[6:])
-                if "usageMetadata" in data: self.usage_stats = data["usageMetadata"]
-                if not self.usage_stats and "response" in data and "usageMetadata" in data["response"]:
-                        self.usage_stats = data["response"]["usageMetadata"]
+                self._update_stats(data) # Application de la fusion intelligente (Fix v135.08)
             except: pass
 
         if in_think: yield "\n</think>\n"
