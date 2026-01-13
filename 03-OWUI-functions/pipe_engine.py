@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.17 - Auth Fix & Debug)
+title: Gemini Pro Unified System (Platinum Agentic V135.19 - Stable)
 author: Wilfried BARNAVON
-version: 135.17
-description: v135.17: Correction critique de la régression sur le Reset Auth. Amélioration des logs d'erreur pour la récupération du Project ID (affiche désormais le code HTTP et la raison exacte du rejet par Google au lieu de "Fail").
+version: 135.19
+description: v135.19: VERSION STABLE. Validation des mécanismes critiques : Auth PKCE (anti-collision), Gestion avancée des Outils, Métriques de contexte temps réel et Persistance des Signatures de pensée.
 """
 
 # ==============================================================================
@@ -106,6 +106,7 @@ class AuthService:
     def get_auth_url(self) -> str:
         if not HAS_GOOGLE_LIBS: return "❌ **Erreur** : Librairies `google-auth` manquantes."
         should_generate_new = True
+        # Vérification Anti-Double Token : Si un verifier existe depuis moins de 5 min, on le garde.
         if os.path.exists(self.pkce_path):
             try:
                 if time.time() - os.path.getmtime(self.pkce_path) < 300:
@@ -168,14 +169,20 @@ class AuthService:
                 data = resp.json()
                 raw = data.get("cloudaicompanionProject")
                 pid = raw.get("id") if isinstance(raw, dict) else raw
+                
                 if pid:
                     pid = pid.replace("projects/", "")
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
                     return pid, "API OK."
                 else:
-                    return None, f"JSON invalide: {str(data)[:100]}"
+                    # Affichage complet du JSON pour débogage (v135.18+)
+                    try:
+                        error_dump = json.dumps(data, indent=2)
+                    except:
+                        error_dump = str(data)
+                        
+                    return None, f"**JSON inattendu** (Project ID introuvable) :\n```json\n{error_dump}\n```"
             else:
-                # Amélioration v135.17 : Retourne le code erreur précis
                 return None, f"HTTP {resp.status_code}: {resp.text}"
                 
         except Exception as e: return None, str(e)
