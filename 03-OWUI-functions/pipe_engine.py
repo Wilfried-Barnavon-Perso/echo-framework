@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.16 - Robust Stream & Refactor)
+title: Gemini Pro Unified System (Platinum Agentic V135.17 - Auth Fix & Debug)
 author: Wilfried BARNAVON
-version: 135.16
-description: v135.16: Optimisation majeure (Code Review). Décodage de flux robuste via IncrementalDecoder et réduction de la complexité cyclomatique (extraction _process_files_for_message).
+version: 135.17
+description: v135.17: Correction critique de la régression sur le Reset Auth. Amélioration des logs d'erreur pour la récupération du Project ID (affiche désormais le code HTTP et la raison exacte du rejet par Google au lieu de "Fail").
 """
 
 # ==============================================================================
@@ -153,11 +153,17 @@ class AuthService:
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
+        # Si le cache existe, on l'utilise (sauf si debug forcé pour voir ce qui se passe)
         if os.path.exists(self.internal_project_cache) and not debug_mode:
             with open(self.internal_project_cache, "r") as f: return f.read().strip(), "Cache."
+            
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+        # Payload standard pour simuler l'IDE
+        payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
+        
         try:
-            resp = httpx.post(f"{self.base_url}:loadCodeAssist", headers=headers, json={"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}, timeout=10)
+            resp = httpx.post(f"{self.base_url}:loadCodeAssist", headers=headers, json=payload, timeout=10)
+            
             if resp.status_code == 200:
                 data = resp.json()
                 raw = data.get("cloudaicompanionProject")
@@ -166,8 +172,13 @@ class AuthService:
                     pid = pid.replace("projects/", "")
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
                     return pid, "API OK."
+                else:
+                    return None, f"JSON invalide: {str(data)[:100]}"
+            else:
+                # Amélioration v135.17 : Retourne le code erreur précis
+                return None, f"HTTP {resp.status_code}: {resp.text}"
+                
         except Exception as e: return None, str(e)
-        return None, "Fail."
 
     def reset_storage(self):
         for p in [self.token_path, self.pkce_path, self.internal_project_cache]:
@@ -899,9 +910,16 @@ class Pipe:
             success, msg = self.auth.exchange_code(ac)
             yield f"✅ **{msg}**" if success else f"❌ **Échec** : `{msg}`"; return
         
+        # --- FIX 135.17 : Rétablissement de la valve RESET ---
+        if self.valves.FORCE_RESET_AUTH:
+            self.auth.reset_storage(); yield "🔄 **Reset.**"; return
+        
         creds = self.auth.get_valid_credentials()
         if not creds: yield self.auth.get_auth_url(); return
-        pid, _ = self.auth.get_project_id(creds, self.valves.DEBUG_MODE)
+        pid, debug_log = self.auth.get_project_id(creds, self.valves.DEBUG_MODE)
+        
+        if not pid: 
+             yield f"❌ **Erreur Projet**\n{debug_log}"; return
 
         # 2. PRÉPARATION CONTEXTE
         tools = orch.convert_owui_tools(body.get("tools"))
