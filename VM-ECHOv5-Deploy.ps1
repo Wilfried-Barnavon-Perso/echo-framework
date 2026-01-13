@@ -1,8 +1,8 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.4.6
-# DATE           : 2026-01-11
+# SCRIPT VERSION : 5.5.0
+# DATE           : 2026-01-13
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -41,7 +41,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.4.1"
+$SCRIPT_VERSION = "5.5.0"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
@@ -82,6 +82,11 @@ Write-Host "🖥️  VM Name         : $VMName" -ForegroundColor Yellow
 
 $SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
 $ISOPath = "D:\ISO\ubuntu-24.04.3-live-server-amd64.iso" 
+
+# Validation de l'ISO avant d'aller plus loin
+if (-not (Test-Path $ISOPath)) {
+  Pause-OnError "Fichier ISO introuvable : $ISOPath"
+} 
 $VMPath = "D:\Virtual Machines"
 $VHDPath = "$VMPath\Virtual Hard Drives\$VMName.vhdx"
 $SeedPath = "$VMPath\Virtual Hard Drives\$VMName-seed.vhdx"
@@ -143,7 +148,8 @@ Write-Host "✅ Tous les fichiers critiques sont présents." -ForegroundColor Gr
 # --- 4. AUTO-ELEVATION ADMIN ---
 # Requis car Hyper-V nécessite des privilèges Administrateur
 if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  Start-Process powershell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}"`" -f $PSCommandPath) -Verb RunAs
+  # CORRECTION V5.4.7 : Simplification de la syntaxe d'arguments pour éviter les erreurs de parsing sur les chemins avec espaces
+  Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
   Exit
 }
 
