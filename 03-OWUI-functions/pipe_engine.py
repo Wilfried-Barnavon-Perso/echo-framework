@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.11 - Context Gauge Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.13 - CamelCase Payload Fix)
 author: Wilfried BARNAVON
-version: 135.11
-description: v135.11: Rétablissement de la persistance des stats JSON sur disque (fix `context_gauge.py`).
+version: 135.13
+description: v135.13: Correction critique du format JSON pour l'injection de fichiers (fileData/CamelCase). Auth inchangée.
 """
 
 # ==============================================================================
@@ -33,6 +33,11 @@ GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 GOOGLE_REDIRECT_URI = "https://codeassist.google.com/authcode"
 GOOGLE_API_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal" # API Interne (Fallback/Chat)
 GOOGLE_UPLOAD_BASE_URL = "https://generativelanguage.googleapis.com/upload/v1beta/files" # API Publique (Upload fichiers)
+
+# --- CLÉ API OPTIONNELLE POUR L'UPLOAD (PROJET DÉDIÉ) ---
+# Si définie, l'upload utilisera cette clé au lieu du token OAuth du pipe.
+# Cela permet de séparer l'auth du chat (Interne) de l'auth des fichiers (Projet dédié).
+GOOGLE_UPLOAD_API_KEY = "" 
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",
@@ -247,33 +252,43 @@ class FileRegistry:
 class GoogleFileManager:
     """
     Client HTTP pour l'API Google Files.
-    Gère le protocole 'Resumable Upload' obligatoire pour les gros fichiers.
+    Gère le protocole 'Resumable Upload'.
+    Peut utiliser le token OAuth (Auth interne) ou une API Key (Projet dédié).
     """
     def __init__(self, auth_token: str):
         self.auth_token = auth_token
+        self.api_key = GOOGLE_UPLOAD_API_KEY
         self.upload_base_url = GOOGLE_UPLOAD_BASE_URL
 
     async def upload_file(self, file_path: str, mime_type: str) -> Optional[str]:
         file_size = os.path.getsize(file_path)
         display_name = os.path.basename(file_path)
+        
+        # Détermine l'URL (avec ou sans API Key)
+        url = self.upload_base_url
+        if self.api_key:
+            url += f"?key={self.api_key}"
 
         # 1. Initialisation
         headers_init = {
-            "Authorization": f"Bearer {self.auth_token}",
             "X-Goog-Upload-Protocol": "resumable",
             "X-Goog-Upload-Command": "start",
             "X-Goog-Upload-Header-Content-Length": str(file_size),
             "X-Goog-Upload-Header-Content-Type": mime_type,
             "Content-Type": "application/json"
         }
-        meta_body = {"file": {"displayName": display_name}}
+        
+        # Ajout Auth si pas d'API Key (ou si besoin des deux, mais généralement l'un ou l'autre)
+        if not self.api_key:
+            headers_init["Authorization"] = f"Bearer {self.auth_token}"
+        
+        meta_body = {"file": {"display_name": display_name}}
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                resp_init = await client.post(self.upload_base_url, headers=headers_init, json=meta_body)
+                resp_init = await client.post(url, headers=headers_init, json=meta_body)
                 if resp_init.status_code != 200:
                     print(f"❌ [UPLOAD INIT FAIL] {resp_init.status_code}: {resp_init.text}")
-                    # Retourne le texte de l'erreur pour affichage utilisateur potentiel via debug log
                     return None
                 
                 upload_url = resp_init.headers.get("x-goog-upload-url")
@@ -566,7 +581,9 @@ class Orchestrator:
 
                     if final_uri:
                         # Utilisation de l'URI Google au lieu du Base64
-                        parts.append({"file_data": {"mime_type": mime, "file_uri": final_uri}})
+                        # Correction format API Google (CamelCase requis pour le payload JSON)
+                        # Clés corrigées : fileData, mimeType, fileUri
+                        parts.append({"fileData": {"mimeType": mime, "fileUri": final_uri}})
                         self.files_processed_info.append({"name": f_name, "type": mime.split('/')[-1].upper(), "size": file_size, "status": status_ui})
 
                 content_txt = m.get("content", "")
