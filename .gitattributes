@@ -19,8 +19,8 @@
 # Le fichier VERSION doit être strict
 VERSION text eol=lf
 
-# PowerShell reste en CRLF (natif Windows) ou LF, mais Git gère mieux en auto
-*.ps1 text auto
+# PowerShell force CRLF (Windows Native)
+*.ps1 text eol=crlf
 
 # Images (Binaires)
 *.png binary

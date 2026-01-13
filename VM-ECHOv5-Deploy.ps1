@@ -52,7 +52,7 @@ $VersionFile = "$ScriptDir\VERSION"
 $BRANCHE = "dev" 
 
 Write-Host "🚀 ECHO INFRASTRUCTURE DEPLOYER [Script v$SCRIPT_VERSION]" -ForegroundColor Cyan
-Write-Host "=========================================================="
+Write-Host "==========================================================" 
 
 # Vérification Stricte du Fichier VERSION (Source de vérité de la Stack)
 if (-not (Test-Path $VersionFile)) {
@@ -92,7 +92,7 @@ $AutoUser = "echo"
 $AppPassword = "password" 
 $AutoHostname = $VMName.ToLower() -replace '\s', ''
 # Hash généré pour 'password' (SHA-512)
-$HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0' 
+$HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0'
 
 # --- 3. VERIFICATION DES FICHIERS (MAPPING STRICT) ---
 # Dictionnaire : Source Windows => Destination Linux
@@ -143,7 +143,7 @@ Write-Host "✅ Tous les fichiers critiques sont présents." -ForegroundColor Gr
 # --- 4. AUTO-ELEVATION ADMIN ---
 # Requis car Hyper-V nécessite des privilèges Administrateur
 if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  Start-Process powershell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`"" -f $PSCommandPath) -Verb RunAs
+  Start-Process powershell.exe -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -File `"{0}"`" -f $PSCommandPath) -Verb RunAs
   Exit
 }
 
@@ -179,7 +179,7 @@ foreach ($DestPath in $FilesMap.Keys) {
 # Traçabilité du Script de Déploiement
 $ScriptVerContent = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($SCRIPT_VERSION))
 $WriteFilesBlock += "      - path: /opt/echo_deploy_script_version`n"
-$WriteFilesBlock += "        permissions: '0444'`n" # Lecture seule
+$WriteFilesBlock += "        permissions: '0444'" # Lecture seule
 $WriteFilesBlock += "        encoding: b64`n"
 $WriteFilesBlock += "        content: $ScriptVerContent`n"
 
@@ -197,7 +197,7 @@ $UserDataContent = @"
 #cloud-config
 autoinstall:
   version: 1
-  identity: {hostname: $AutoHostname, password: "$HashPassword", username: $AutoUser}
+  identity: {hostname: $AutoHostname, password: \"$HashPassword\", username: $AutoUser}
   keyboard: {layout: fr}
   locale: fr_FR.UTF-8
   timezone: Europe/Paris
@@ -260,7 +260,7 @@ New-VHD -Path $SeedPath -SizeBytes 100MB -Dynamic | Out-Null
 $Disk = Mount-VHD -Path $SeedPath -Passthru
 $Disk | Initialize-Disk -PartitionStyle MBR -PassThru | New-Partition -UseMaximumSize -AssignDriveLetter | Format-Volume -FileSystem FAT32 -NewFileSystemLabel "CIDATA" | Out-Null
 Start-Sleep -Seconds 2
-$DriveLetter = ($Disk | Get-Partition | Get-Volume).DriveLetter + ":\"
+$DriveLetter = ($Disk | Get-Partition | Get-Volume).DriveLetter + ":\" 
 
 # Ecriture config
 [System.IO.File]::WriteAllText("${DriveLetter}user-data", ($UserDataContent -replace "`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
@@ -289,4 +289,4 @@ if (-not (Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
 else {
   Write-Warning "⚠️  La VM $VMName existe déjà. Aucune action effectuée."
   Pause-OnError "Veuillez supprimer la VM existante ou incrémenter la version du fichier VERSION."
-} 
+}
