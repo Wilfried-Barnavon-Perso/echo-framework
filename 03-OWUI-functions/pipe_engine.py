@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.13 - CamelCase Payload Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.15 - REST Spec Align)
 author: Wilfried BARNAVON
-version: 135.13
-description: v135.13: Correction critique du format JSON pour l'injection de fichiers (fileData/CamelCase). Auth inchangée.
+version: 135.15
+description: v135.15: Alignement strict sur la doc REST Files API (Header x-goog-api-key). Maintien du CamelCase pour le payload JSON (Requis en prod).
 """
 
 # ==============================================================================
@@ -31,13 +31,8 @@ GOOGLE_CLIENT_SECRET = "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"
 GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 GOOGLE_REDIRECT_URI = "https://codeassist.google.com/authcode"
-GOOGLE_API_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal" # API Interne (Fallback/Chat)
-GOOGLE_UPLOAD_BASE_URL = "https://generativelanguage.googleapis.com/upload/v1beta/files" # API Publique (Upload fichiers)
-
-# --- CLÉ API OPTIONNELLE POUR L'UPLOAD (PROJET DÉDIÉ) ---
-# Si définie, l'upload utilisera cette clé au lieu du token OAuth du pipe.
-# Cela permet de séparer l'auth du chat (Interne) de l'auth des fichiers (Projet dédié).
-GOOGLE_UPLOAD_API_KEY = "" 
+GOOGLE_API_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal" # API Interne (Chat)
+GOOGLE_UPLOAD_BASE_URL = "https://generativelanguage.googleapis.com/upload/v1beta/files" # API Publique (Upload)
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",
@@ -253,22 +248,17 @@ class GoogleFileManager:
     """
     Client HTTP pour l'API Google Files.
     Gère le protocole 'Resumable Upload'.
-    Peut utiliser le token OAuth (Auth interne) ou une API Key (Projet dédié).
+    Accepte soit un Token OAuth (Interne), soit une API Key (Projet Dédié).
     """
-    def __init__(self, auth_token: str):
+    def __init__(self, auth_token: str, api_key: str = None):
         self.auth_token = auth_token
-        self.api_key = GOOGLE_UPLOAD_API_KEY
+        self.api_key = api_key
         self.upload_base_url = GOOGLE_UPLOAD_BASE_URL
 
     async def upload_file(self, file_path: str, mime_type: str) -> Optional[str]:
         file_size = os.path.getsize(file_path)
         display_name = os.path.basename(file_path)
         
-        # Détermine l'URL (avec ou sans API Key)
-        url = self.upload_base_url
-        if self.api_key:
-            url += f"?key={self.api_key}"
-
         # 1. Initialisation
         headers_init = {
             "X-Goog-Upload-Protocol": "resumable",
@@ -278,15 +268,18 @@ class GoogleFileManager:
             "Content-Type": "application/json"
         }
         
-        # Ajout Auth si pas d'API Key (ou si besoin des deux, mais généralement l'un ou l'autre)
-        if not self.api_key:
+        # AUTH: Gestion clé API via header x-goog-api-key (conforme REST docs) ou Bearer token
+        if self.api_key:
+            headers_init["x-goog-api-key"] = self.api_key
+        else:
             headers_init["Authorization"] = f"Bearer {self.auth_token}"
         
-        meta_body = {"file": {"display_name": display_name}}
+        meta_body = {"file": {"displayName": display_name}}
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                resp_init = await client.post(url, headers=headers_init, json=meta_body)
+                # Init Request
+                resp_init = await client.post(self.upload_base_url, headers=headers_init, json=meta_body)
                 if resp_init.status_code != 200:
                     print(f"❌ [UPLOAD INIT FAIL] {resp_init.status_code}: {resp_init.text}")
                     return None
@@ -294,7 +287,7 @@ class GoogleFileManager:
                 upload_url = resp_init.headers.get("x-goog-upload-url")
                 if not upload_url: return None
 
-                # 2. Transfert
+                # 2. Transfert (Binaire)
                 with open(file_path, "rb") as f:
                     file_data = f.read()
 
@@ -425,14 +418,17 @@ class Orchestrator:
         """
         Prépare la liste 'contents' pour Gemini.
         - Texte : injecté directement.
-        - Fichiers Binaires : Uploadé si nécessaire (CAS), puis injecté via fileData (URI).
+        - Fichiers Binaires : Uploadé (CAS), puis injecté via fileData (URI).
         """
         self.files_processed_info = []
         messages = body.get("messages", [])
         contents = []
 
         file_registry = FileRegistry(self.data_dir, chat_id)
-        file_manager = GoogleFileManager(auth_token) if auth_token else None
+        
+        # INSTANTIATION AVEC CLÉ API SI PRÉSENTE (HYBRID AUTH)
+        files_api_key = getattr(self.valves, "FILES_API_KEY", "").strip()
+        file_manager = GoogleFileManager(auth_token, files_api_key)
         
         # Mapping des tools pour le décodage des réponses
         for m in messages:
@@ -549,10 +545,8 @@ class Orchestrator:
                         continue
 
                     # Cas 2 : Binaire -> CAS (Upload Unique)
-                    if not file_manager:
-                        parts.append({"text": f"[Error: Auth required for file {f_name}]"})
-                        continue
-
+                    # Note: Le File Manager est maintenant instancié plus haut avec la clé API potentielle
+                    
                     file_size = os.path.getsize(real_path)
                     
                     # Hashage pour identifier le contenu de manière unique
@@ -580,9 +574,8 @@ class Orchestrator:
                             status_ui = "Failed ❌"
 
                     if final_uri:
-                        # Utilisation de l'URI Google au lieu du Base64
-                        # Correction format API Google (CamelCase requis pour le payload JSON)
-                        # Clés corrigées : fileData, mimeType, fileUri
+                        # Utilisation de l'URI Google
+                        # Utilisation impérative du CAMELCASE pour l'API REST (requis par v1beta endpoint)
                         parts.append({"fileData": {"mimeType": mime, "fileUri": final_uri}})
                         self.files_processed_info.append({"name": f_name, "type": mime.split('/')[-1].upper(), "size": file_size, "status": status_ui})
 
@@ -790,25 +783,26 @@ class StreamProcessor:
             except: pass
         
         # --- CORRECTIF CRITIQUE : TRAITEMENT DU RELIQUAT DE BUFFER ---
-        # Les métadonnées arrivent souvent dans le dernier chunk qui peut ne pas avoir de \n final.
         if buffer and buffer.strip().startswith("data:"):
             try:
                 line = buffer.strip()
                 data = json.loads(line[6:])
-                self._update_stats(data) # Application de la fusion intelligente (Fix v135.08)
+                self._update_stats(data) 
             except: pass
 
         if in_think: yield "\n</think>\n"
 
         if self.show_metrics and (self.usage_stats or self.file_stats):
-            stats_content = ""
+            # Affichage nettoyé avec espacement pour éviter le bug d'affichage
+            stats_content = "\n\n" 
             
             if self.file_stats:
-                stats_content += "\n\n**📁 Fichiers Traités**\n"
+                stats_content += "**📁 Fichiers Traités**\n\n"
                 stats_content += "| Fichier | Type | Taille | Statut |\n| :--- | :--- | :--- | :--- |\n"
                 for f in self.file_stats:
                     size_mb = f['size'] / (1024*1024)
                     stats_content += f"| {f['name']} | {f['type']} | {size_mb:.2f} MB | {f['status']} |\n"
+                stats_content += "\n"
             
             if self.usage_stats:
                 p_tok = self.usage_stats.get("promptTokenCount", 0)
@@ -819,7 +813,7 @@ class StreamProcessor:
                 bar = "█" * int(pct/10) + "░" * (10 - int(pct/10))
                 cache_row = f"| **Cache (Hit)** | {cache_tok:,} |\n" if cache_tok > 0 else ""
                 
-                stats_content += f"""\n<details>
+                stats_content += f"""<details>
 <summary>⚡ Contexte [{step_label}]: {pct:.1f}% {bar}</summary>
 
 | Métrique | Valeur |
@@ -830,7 +824,7 @@ class StreamProcessor:
 </details>\n"""
                 yield stats_content
 
-        # 3. Yield Final Usage (Restauré)
+        # 3. Yield Final Usage
         if self.usage_stats:
             yield {
                 "usage": {
@@ -845,6 +839,8 @@ class StreamProcessor:
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
+        FILES_API_KEY: str = Field(default="", description="🔑 API Key Google (Projet Files)")
+        
         RUN_DIAGNOSTICS: bool = Field(default=False, description="🚑 DIAGNOSTICS")
         FORCE_RESET_AUTH: bool = Field(default=False, description="🔴 RESET AUTH")
         DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
