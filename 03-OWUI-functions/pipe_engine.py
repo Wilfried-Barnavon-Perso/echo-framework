@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.15 - REST Spec Align)
+title: Gemini Pro Unified System (Platinum Agentic V135.16 - Robust Stream & Refactor)
 author: Wilfried BARNAVON
-version: 135.15
-description: v135.15: Alignement strict sur la doc REST Files API (Header x-goog-api-key). Maintien du CamelCase pour le payload JSON (Requis en prod).
+version: 135.16
+description: v135.16: Optimisation majeure (Code Review). Décodage de flux robuste via IncrementalDecoder et réduction de la complexité cyclomatique (extraction _process_files_for_message).
 """
 
 # ==============================================================================
@@ -21,6 +21,7 @@ import httpx
 import base64
 import mimetypes
 import glob
+import codecs
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
@@ -414,6 +415,78 @@ class Orchestrator:
 
         return mime_type, is_text, "", real_path
 
+    async def _process_files_for_message(self, files_raw: List[Dict], file_registry: FileRegistry, file_manager: Optional[GoogleFileManager]) -> List[Dict]:
+        parts = []
+        files_to_process = []
+        seen_ids = set()
+
+        # Deduplication des fichiers dans le message
+        for f in files_raw:
+            fid = f.get("id") or f.get("file", {}).get("id")
+            if fid and fid not in seen_ids:
+                files_to_process.append(f); seen_ids.add(fid)
+
+        for f_obj in files_to_process:
+            f_real = f_obj.get("file", f_obj)
+            f_id = f_real.get("id")
+            f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
+            f_path = f_real.get("path")
+
+            mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path)
+
+            if err:
+                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ {f_name}: {err}")
+                continue
+
+            # Cas 1 : Texte -> Inline
+            if is_text:
+                try:
+                    with open(real_path, "r", encoding="utf-8", errors="ignore") as f:
+                        data = f.read()
+                    parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
+                    self.files_processed_info.append({"name": f_name, "type": "Text", "status": "Embedded 📄"})
+                except: pass
+                continue
+
+            # Cas 2 : Binaire -> CAS (Upload Unique)
+            if not file_manager:
+                parts.append({"text": f"[Error: Auth required for file {f_name}]"})
+                continue
+
+            file_size = os.path.getsize(real_path)
+            
+            # Hashage pour identifier le contenu de manière unique
+            with open(real_path, "rb") as f:
+                file_hash = hashlib.sha256(f.read()).hexdigest()
+
+            entry = file_registry.get_entry(file_hash)
+            final_uri = None
+            status_ui = "Unknown"
+
+            if entry:
+                # HIT : Déjà uploadé et valide
+                final_uri = entry["uri"]
+                status_ui = "Cache HIT ⚡"
+                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚡ CAS HIT: {f_name}")
+            else:
+                # MISS : Upload nécessaire
+                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔼 Uploading {f_name} ({file_size} bytes)...")
+                uri = await file_manager.upload_file(real_path, mime)
+                if uri:
+                    final_uri = uri
+                    file_registry.add_entry(file_hash, uri, mime, file_size, f_name)
+                    status_ui = "Uploaded 🔼"
+                else:
+                    status_ui = "Failed ❌"
+
+            if final_uri:
+                # Utilisation de l'URI Google
+                # Utilisation impérative du CAMELCASE pour l'API REST (requis par v1beta endpoint)
+                parts.append({"fileData": {"mimeType": mime, "fileUri": final_uri}})
+                self.files_processed_info.append({"name": f_name, "type": mime.split('/')[-1].upper(), "size": file_size, "status": status_ui})
+        
+        return parts
+
     async def prepare_context(self, body: Dict, chat_id: str, auth_token: str, extra_files: Any = None) -> List[Dict]:
         """
         Prépare la liste 'contents' pour Gemini.
@@ -504,7 +577,6 @@ class Orchestrator:
             
             else: # USER
                 parts = []
-                files_to_process = []
                 
                 # Récupération de tous les fichiers
                 raw_list = []
@@ -516,68 +588,9 @@ class Orchestrator:
                         ex = extra_files if isinstance(extra_files, list) else [extra_files]
                         raw_list.extend(ex)
 
-                seen_ids = set()
-                for f in raw_list:
-                    fid = f.get("id") or f.get("file", {}).get("id")
-                    if fid and fid not in seen_ids:
-                        files_to_process.append(f); seen_ids.add(fid)
-
-                for f_obj in files_to_process:
-                    f_real = f_obj.get("file", f_obj)
-                    f_id = f_real.get("id")
-                    f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
-                    f_path = f_real.get("path")
-
-                    mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path)
-
-                    if err:
-                        if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ {f_name}: {err}")
-                        continue
-
-                    # Cas 1 : Texte -> Inline
-                    if is_text:
-                        try:
-                            with open(real_path, "r", encoding="utf-8", errors="ignore") as f:
-                                data = f.read()
-                            parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
-                            self.files_processed_info.append({"name": f_name, "type": "Text", "status": "Embedded 📄"})
-                        except: pass
-                        continue
-
-                    # Cas 2 : Binaire -> CAS (Upload Unique)
-                    # Note: Le File Manager est maintenant instancié plus haut avec la clé API potentielle
-                    
-                    file_size = os.path.getsize(real_path)
-                    
-                    # Hashage pour identifier le contenu de manière unique
-                    with open(real_path, "rb") as f:
-                        file_hash = hashlib.sha256(f.read()).hexdigest()
-
-                    entry = file_registry.get_entry(file_hash)
-                    final_uri = None
-                    status_ui = "Unknown"
-
-                    if entry:
-                        # HIT : Déjà uploadé et valide
-                        final_uri = entry["uri"]
-                        status_ui = "Cache HIT ⚡"
-                        if self.valves.DEBUG_MODE: self.debug_log.append(f"⚡ CAS HIT: {f_name}")
-                    else:
-                        # MISS : Upload nécessaire
-                        if self.valves.DEBUG_MODE: self.debug_log.append(f"🔼 Uploading {f_name} ({file_size} bytes)...")
-                        uri = await file_manager.upload_file(real_path, mime)
-                        if uri:
-                            final_uri = uri
-                            file_registry.add_entry(file_hash, uri, mime, file_size, f_name)
-                            status_ui = "Uploaded 🔼"
-                        else:
-                            status_ui = "Failed ❌"
-
-                    if final_uri:
-                        # Utilisation de l'URI Google
-                        # Utilisation impérative du CAMELCASE pour l'API REST (requis par v1beta endpoint)
-                        parts.append({"fileData": {"mimeType": mime, "fileUri": final_uri}})
-                        self.files_processed_info.append({"name": f_name, "type": mime.split('/')[-1].upper(), "size": file_size, "status": status_ui})
+                # Appel à la nouvelle méthode dédiée pour traiter les fichiers
+                file_parts = await self._process_files_for_message(raw_list, file_registry, file_manager)
+                parts.extend(file_parts)
 
                 content_txt = m.get("content", "")
                 if isinstance(content_txt, str) and content_txt.strip():
@@ -726,10 +739,15 @@ class StreamProcessor:
             yield f"⚠️ API Error: {await response.aread()}"
             return
 
+        # Utilisation de IncrementalDecoder pour gérer les césures de caractères multi-octets
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
         buffer = ""
+        
         async for chunk in response.aiter_bytes():
             try:
-                buffer += chunk.decode("utf-8", errors="ignore")
+                # Décodage robuste du flux
+                buffer += decoder.decode(chunk, final=False)
+                
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     line = line.strip()
@@ -783,6 +801,10 @@ class StreamProcessor:
             except: pass
         
         # --- CORRECTIF CRITIQUE : TRAITEMENT DU RELIQUAT DE BUFFER ---
+        # On force le vidage du décodeur et on traite le reste du buffer
+        remaining = decoder.decode(b"", final=True)
+        buffer += remaining
+        
         if buffer and buffer.strip().startswith("data:"):
             try:
                 line = buffer.strip()
