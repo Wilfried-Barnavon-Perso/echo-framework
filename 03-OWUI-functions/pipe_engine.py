@@ -273,6 +273,7 @@ class GoogleFileManager:
                 resp_init = await client.post(self.upload_base_url, headers=headers_init, json=meta_body)
                 if resp_init.status_code != 200:
                     print(f"❌ [UPLOAD INIT FAIL] {resp_init.status_code}: {resp_init.text}")
+                    # Retourne le texte de l'erreur pour affichage utilisateur potentiel via debug log
                     return None
                 
                 upload_url = resp_init.headers.get("x-goog-upload-url")
@@ -357,12 +358,31 @@ class Orchestrator:
             self.debug_log.append(f"✅ Direct: {provided_path}")
             return provided_path
         
+        # Recherche par ID et Nom (Standard OWUI)
+        candidates = []
         if f_name:
             clean_name = f_name.replace("/", "_").replace("\\", "_")
-            candidate = os.path.join(self.uploads_dir, f"{f_id}_{clean_name}")
-            if os.path.exists(candidate): return candidate
-            matches = glob.glob(os.path.join(self.uploads_dir, f"{f_id}_*"))
-            if matches: return matches[0]
+            # Pattern 1: ID_Nom (Standard)
+            candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
+            # Pattern 2: Nom seul (Parfois utilisé par l'upload direct)
+            candidates.append(os.path.join(self.uploads_dir, clean_name))
+            
+        # Pattern 3: ID_* (Fallback)
+        matches = glob.glob(os.path.join(self.uploads_dir, f"{f_id}_*"))
+        candidates.extend(matches)
+
+        for cand in candidates:
+            if os.path.exists(cand):
+                return cand
+
+        # Debug failure
+        try:
+            files_in_dir = os.listdir(self.uploads_dir)
+            self.debug_log.append(f"❌ File Not Found. Looking for ID: {f_id}, Name: {f_name}")
+            self.debug_log.append(f"📂 Content of {self.uploads_dir} ({len(files_in_dir)} files): {str(files_in_dir)[:300]}...")
+        except Exception as e:
+            self.debug_log.append(f"❌ Cannot list {self.uploads_dir}: {str(e)}")
+            
         return None
 
     def _get_file_info(self, f_id: str, f_name: str, owui_path: str) -> Tuple[str, bool, str, Optional[str]]:
