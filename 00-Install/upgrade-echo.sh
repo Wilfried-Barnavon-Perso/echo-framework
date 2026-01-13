@@ -136,7 +136,8 @@ sync_mirror() {
 
 sync_mirror "$SRC_DIR/00-Install"       "/opt/owui-scripts"
 sync_mirror "$SRC_DIR/04-OWUI-tools"    "/opt/owui-tools"
-sync_mirror "$SRC_DIR/03-OWUI-functions" "/opt/owui-functions"
+sync_mirror "$SRC_DIR/03-OWUI-pipes"    "/opt/owui-pipes"
+sync_mirror "$SRC_DIR/07-OWUI-actions"  "/opt/owui-actions"
 sync_mirror "$SRC_DIR/05-OWUI-filters"  "/opt/owui-filters"
 
 # VERSIONING UPDATE : Copie forcée

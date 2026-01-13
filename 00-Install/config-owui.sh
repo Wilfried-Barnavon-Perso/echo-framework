@@ -6,9 +6,10 @@
 # - Gestion UTF-8 BOM (Nettoyage)
 # - Gestion Create/Update (Idempotence) avec FIX URL (/id/)
 # - Configuration Native Pipe "ECHO Engine" & Activation Tools/Filters
-# - FIX v5.4 : Smart Toggle (Vérification d'état avant bascule)
-# - FIX v5.6 : HARD RESET ECHO Engine (Delete/Create) pour purger User Valves
-# - UPDATE v5.13 : Activation globale systématique des filtres (Bypass RAG etc.)
+# - FIX V5.4 : Smart Toggle (Vérification d'état avant bascule)
+# - FIX V5.6 : HARD RESET ECHO Engine (Delete/Create) pour purger User Valves
+# - UPDATE V5.13 : Activation globale systématique des filtres (Bypass RAG etc.)
+# - UPDATE V5.14 : Support Architecture Modular (Pipes + Actions)
 # ==============================================================================
 
 OWUI_URL="http://localhost:8080"
@@ -172,7 +173,7 @@ if [ -d "$FILTERS_DIR" ]; then
                   --arg id "$FILTER_ID" \
                   --arg name "$FILTER_ID" \
                   --arg content "$CONTENT" \
-                  '{
+                  '{ 
                     id: $id, 
                     name: $name, 
                     content: ($content | fromjson), 
@@ -190,11 +191,11 @@ if [ -d "$FILTERS_DIR" ]; then
     done
 fi
 
-# --- 6. IMPORT FONCTIONS (PIPES) - ECHO ENGINE ---
-echo "🧩 [FUNCTIONS] Traitement du Pipe Engine..."
-FUNCS_DIR="/opt/owui-functions"
-if [ -d "$FUNCS_DIR" ]; then
-    for file in $FUNCS_DIR/*.py; do
+# --- 6. IMPORT PIPES (ECHO ENGINE) ---
+echo "🧩 [PIPES] Traitement du Pipe Engine..."
+PIPES_DIR="/opt/owui-pipes"
+if [ -d "$PIPES_DIR" ]; then
+    for file in $PIPES_DIR/*.py; do
         [ -e "$file" ] || continue
         FILENAME=$(basename "$file")
         FUNC_ID="${FILENAME%.*}"
@@ -213,7 +214,7 @@ if [ -d "$FUNCS_DIR" ]; then
             PAYLOAD=$(jq -n \
                 --arg id "$FUNC_ID" \
                 --arg content "$CONTENT" \
-                '{
+                '{ 
                   id: $id,
                   name: "ECHO Engine",
                   content: ($content | fromjson),
@@ -254,10 +255,42 @@ if [ -d "$FUNCS_DIR" ]; then
 
         api_upsert "functions" "$FUNC_ID" "$PAYLOAD" "Fonction (Pipe)"
         
-        # --- FIX V5.4 : Smart Toggle ---
         if [ "$FUNC_ID" == "pipe_engine" ]; then
              ensure_active "functions" "$FUNC_ID"
         fi
+    done
+fi
+
+# --- 7. IMPORT ACTIONS (NOUVEAU V5.14) ---
+echo "🎬 [ACTIONS] Traitement des Actions UI..."
+ACTIONS_DIR="/opt/owui-actions"
+if [ -d "$ACTIONS_DIR" ]; then
+    for file in $ACTIONS_DIR/*.py; do
+        [ -e "$file" ] || continue
+        FILENAME=$(basename "$file")
+        ACTION_ID="${FILENAME%.*}"
+        echo "   -> Traitement de $ACTION_ID..."
+        
+        CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
+        
+        PAYLOAD=$(jq -n \
+                  --arg id "$ACTION_ID" \
+                  --arg name "$ACTION_ID" \
+                  --arg content "$CONTENT" \
+                  '{ 
+                    id: $id, 
+                    name: $name, 
+                    content: ($content | fromjson), 
+                    type: "action", 
+                    is_active: true,
+                    meta: {
+                        description: "ECHO Action", 
+                        manifest: {}
+                    }
+                  }')
+        
+        api_upsert "functions" "$ACTION_ID" "$PAYLOAD" "Action"
+        ensure_active "functions" "$ACTION_ID"
     done
 fi
 

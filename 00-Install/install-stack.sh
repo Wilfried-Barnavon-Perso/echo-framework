@@ -185,9 +185,10 @@ echo "🧠 Démarrage Open WebUI (:main)..."
 docker run -d --name open-webui --network ai-net --restart always \
   -p 3000:8080 \
   -v open-webui:/app/backend/data \
-  -v /opt/owui-functions:/opt/owui-functions \
+  -v /opt/owui-pipes:/opt/owui-pipes \
   -v /opt/owui-tools:/opt/owui-tools \
   -v /opt/owui-filters:/opt/owui-filters \
+  -v /opt/owui-actions:/opt/owui-actions \
   -v /opt/owui-scripts:/opt/owui-scripts \
   ghcr.io/open-webui/open-webui:main
 

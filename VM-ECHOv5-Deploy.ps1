@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
 # SCRIPT VERSION : 5.4.6
@@ -109,7 +109,7 @@ $FilesMap = @{
   "/opt/browser-agent/browser_api.py"             = "$ScriptDir\06-docker-browser-agent\browser_api.py"
 
   # 3. CŒUR COGNITIF
-  "/opt/owui-functions/pipe_engine.py"            = "$ScriptDir\03-OWUI-functions\pipe_engine.py"
+  "/opt/owui-pipes/pipe_engine.py"                = "$ScriptDir\03-OWUI-pipes\pipe_engine.py"
   
   # 4. OUTILS
   "/opt/owui-tools/python_code_executor.py"       = "$ScriptDir\04-OWUI-tools\python_code_executor.py"
@@ -118,7 +118,10 @@ $FilesMap = @{
   "/opt/owui-tools/api_client.py"                 = "$ScriptDir\04-OWUI-tools\api_client.py"
   "/opt/owui-tools/context_gauge.py"              = "$ScriptDir\04-OWUI-tools\context_gauge.py"
 
-  # 5. FILTRES
+  # 5. ACTIONS
+  "/opt/owui-actions/reset_auth_action.py"        = "$ScriptDir\07-OWUI-actions\reset_auth_action.py"
+
+  # 6. FILTRES
   "/opt/owui-filters/bypass_rag.py"               = "$ScriptDir\05-OWUI-filters\bypass_rag.py"
   
   # 6. VERSIONING

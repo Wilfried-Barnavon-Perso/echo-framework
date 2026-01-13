@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.20 - Stable)
+title: Gemini Pro Unified System (Platinum Agentic V135.22 - Clean Core)
 author: Wilfried BARNAVON
-version: 135.20
-description: v135.20: CORRECTIF CRITIQUE AUTH. Ajout d'un fallback sur le cache si l'API ne renvoie pas de Project ID (fix 'allowedTiers'). Restauration de la boucle de retry PKCE pour la robustesse.
+version: 135.22
+description: v135.22: NETTOYAGE. Suppression des commandes '/reset' et des valves de diagnostic/reset obsolètes. La gestion de l'auth se fait désormais via l'Action Function dédiée.
 """
 
 # ==============================================================================
@@ -899,8 +899,7 @@ class Pipe:
     class Valves(BaseModel):
         FILES_API_KEY: str = Field(default="", description="🔑 API Key Google (Projet Files)")
         
-        RUN_DIAGNOSTICS: bool = Field(default=False, description="🚑 DIAGNOSTICS")
-        FORCE_RESET_AUTH: bool = Field(default=False, description="🔴 RESET AUTH")
+        # Valves supprimées : RUN_DIAGNOSTICS, FORCE_RESET_AUTH
         DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
         
@@ -929,15 +928,14 @@ class Pipe:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
         
+        # NOTE: Suppression des commandes /reset et de la valve FORCE_RESET_AUTH
+        # La gestion de l'auth se fait désormais via l'Action Function action_echo_auth.py
+
         # 1. AUTHENTIFICATION
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = self.auth.exchange_code(ac)
             yield f"✅ **{msg}**" if success else f"❌ **Échec** : `{msg}`"; return
-        
-        # --- FIX 135.17 : Rétablissement de la valve RESET ---
-        if self.valves.FORCE_RESET_AUTH:
-            self.auth.reset_storage(); yield "🔄 **Reset.**"; return
         
         creds = self.auth.get_valid_credentials()
         if not creds: yield self.auth.get_auth_url(); return

@@ -14,10 +14,11 @@ L'intelligence est appuyée par une stack logicielle modulaire, orchestrée par 
 | :--- | :--- | :--- |
 | **Admin Manager** | `01-docker-admin-manager` | Dashboard d'administration et monitoring système. |
 | **Python Worker** | `02-docker-python-worker` | Sandbox Docker pour l'exécution sécurisée de code Python. |
-| **ECHO Engine** | `03-OWUI-functions` | Le "Cerveau" (Pipe). Injecte la constitution et gère le contexte. |
+| **ECHO Pipes** | `03-OWUI-pipes` | Le "Cerveau" (Manifold). Injecte la constitution et gère le contexte. |
 | **Agent Tools** | `04-OWUI-tools` | Les "Bras". Outils spécialisés (Recherche Web, Exécution Code). |
 | **Filtres** | `05-OWUI-filters` | **Infrastructure (Bypass RAG - Requis)**. |
 | **Browser Agent** | `06-docker-browser-agent` | Agent de navigation autonome. |
+| **Actions UI** | `07-OWUI-actions` | Boutons d'interaction UI (ex: Reset Auth). |
 
 > **Note Critique :** Le filtre `bypass_rag.py` est **obligatoire** pour le bon fonctionnement du `pipe_engine`. Il intercepte les fichiers avant le traitement RAG natif d'Open WebUI, permettant au moteur ECHO de gérer le contexte de manière autonome.
 
@@ -39,4 +40,4 @@ L'installation et le déploiement sont gérés par des scripts automatisés.
 - **Legacy** : Les concepts de la v4 sont archivés dans `_v4-legacy-concept/`.
 
 ---
-*Version actuelle : v5.4.x (Stable)*
+*Version actuelle : v5.5.x (Stable)*
