@@ -266,7 +266,7 @@ class GoogleFileManager:
             "X-Goog-Upload-Header-Content-Type": mime_type,
             "Content-Type": "application/json"
         }
-        meta_body = {"file": {"display_name": display_name}}
+        meta_body = {"file": {"displayName": display_name}}
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
