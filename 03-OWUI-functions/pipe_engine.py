@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.19 - Stable)
+title: Gemini Pro Unified System (Platinum Agentic V135.20 - Stable)
 author: Wilfried BARNAVON
-version: 135.19
-description: v135.19: VERSION STABLE. Validation des mécanismes critiques : Auth PKCE (anti-collision), Gestion avancée des Outils, Métriques de contexte temps réel et Persistance des Signatures de pensée.
+version: 135.20
+description: v135.20: CORRECTIF CRITIQUE AUTH. Ajout d'un fallback sur le cache si l'API ne renvoie pas de Project ID (fix 'allowedTiers'). Restauration de la boucle de retry PKCE pour la robustesse.
 """
 
 # ==============================================================================
@@ -131,6 +131,14 @@ class AuthService:
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
+        
+        # 1. Tentative de récupération PKCE (avec Retry v134)
+        if not os.path.exists(self.pkce_path):
+             for _ in range(3):
+                if self.get_valid_credentials(): return True, "Succès (Récupéré via cache)."
+                time.sleep(0.5)
+             return False, "Session expirée (PKCE introuvable)."
+
         try:
             with open(self.pkce_path, "r") as f: verifier = f.read().strip()
             flow = Flow.from_client_config(OFFICIAL_CLIENT_CONFIG, scopes=GOOGLE_SCOPES, autogenerate_code_verifier=False)
@@ -154,11 +162,20 @@ class AuthService:
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
-        # Si le cache existe, on l'utilise (sauf si debug forcé pour voir ce qui se passe)
-        if os.path.exists(self.internal_project_cache) and not debug_mode:
-            with open(self.internal_project_cache, "r") as f: return f.read().strip(), "Cache."
+        # Lecture du cache disponible
+        cached_pid = None
+        if os.path.exists(self.internal_project_cache):
+             with open(self.internal_project_cache, "r") as f: cached_pid = f.read().strip()
+
+        # Si le cache existe et qu'on n'est pas en debug, on l'utilise
+        if cached_pid and not debug_mode:
+            return cached_pid, "Cache."
             
-        headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Bearer {creds.token}", 
+            "Content-Type": "application/json",
+            "User-Agent": "GeminiCLI/0.20.0" # Ajout UA pour robustesse API
+        }
         # Payload standard pour simuler l'IDE
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
         
@@ -175,12 +192,13 @@ class AuthService:
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
                     return pid, "API OK."
                 else:
+                    # FALLBACK CRITIQUE (v135.20) : Si l'API échoue (ex: allowedTiers) mais qu'on a un cache, on l'utilise !
+                    if cached_pid:
+                         return cached_pid, f"API Fail (Partial Response), Fallback to Cache. JSON: {str(data)[:50]}"
+
                     # Affichage complet du JSON pour débogage (v135.18+)
-                    try:
-                        error_dump = json.dumps(data, indent=2)
-                    except:
-                        error_dump = str(data)
-                        
+                    try: error_dump = json.dumps(data, indent=2)
+                    except: error_dump = str(data)
                     return None, f"**JSON inattendu** (Project ID introuvable) :\n```json\n{error_dump}\n```"
             else:
                 return None, f"HTTP {resp.status_code}: {resp.text}"
