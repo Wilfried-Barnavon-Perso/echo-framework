@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.25 - Stealth Metrics)
+title: Gemini Pro Unified System (Platinum Agentic V135.26 - Stealth Metrics)
 author: Wilfried BARNAVON
-version: 135.25
-description: v135.25: AFFICHAGE DISCRET. Le tableau des "Fichiers Traités" et les logs de Fallback sont désormais strictement masqués si le DEBUG_MODE est désactivé. Seules les métriques de tokens restent visibles (si activées).
+version: 135.26
+description: v135.26: Réorganisation cosmétique des Valves. DEBUG_MODE déplacé en fin de liste.
 """
 
 # ==============================================================================
@@ -965,7 +965,7 @@ class Pipe:
         ENABLE_UPLOAD_FALLBACK: bool = Field(default=False, description="⚠️ Fallback Base64 si Upload impossible")
         # --------------------------------------
 
-        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
+        
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
         
         ENABLE_CACHING: bool = Field(default=True, description="🧠 Smart Cache (Text)")
@@ -981,6 +981,8 @@ class Pipe:
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
         OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu")
+
+        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
 
     def __init__(self):
         self.valves = self.Valves()
