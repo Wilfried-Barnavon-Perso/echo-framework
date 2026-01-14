@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.26 - Stealth Metrics)
+title: Gemini Pro Unified System (Platinum Agentic V135.27 - Input Probe)
 author: Wilfried BARNAVON
-version: 135.26
-description: v135.26: Réorganisation cosmétique des Valves. DEBUG_MODE déplacé en fin de liste.
+version: 135.27
+description: v135.27: AJOUT SONDE DÉBOGAGE. Ajout d'un log critique "INPUT PROBE" pour inspecter le JSON brut entrant d'OWUI et localiser les images collées (Paste).
 """
 
 # ==============================================================================
@@ -599,6 +599,22 @@ class Orchestrator:
         files_api_key = getattr(self.valves, "FILES_API_KEY", "").strip()
         file_manager = GoogleFileManager(files_api_key) if files_api_key else None
         
+        # --- NOUVEAU: INPUT PROBE POUR LE DÉBOGAGE "PASTE" ---
+        if self.valves.DEBUG_MODE:
+            # On loggue la structure des messages utilisateur pour voir comment l'image est passée
+            debug_dump = []
+            for m in messages:
+                if m["role"] == "user":
+                    # On tronque le contenu pour la lisibilité
+                    content_preview = str(m.get("content", ""))[:200] + "..." if len(str(m.get("content", ""))) > 200 else str(m.get("content", ""))
+                    files_info = [f.get("name", "unnamed") for f in m.get("files", [])] if "files" in m else "No 'files' key"
+                    debug_dump.append(f"UserMsg: Content='{content_preview}', Files={files_info}")
+            
+            self.debug_log.append("🕵️ **INPUT PROBE** (Check for Paste):")
+            for line in debug_dump:
+                self.debug_log.append(f"`{line}`")
+            # -----------------------------------------------------
+
         # Mapping des tools pour le décodage des réponses
         for m in messages:
             if m.get("tool_calls"):
