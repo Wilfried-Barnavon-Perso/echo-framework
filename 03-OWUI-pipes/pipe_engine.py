@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.47 - Unified Identity Scope)
+title: Gemini Pro Unified System (Platinum Agentic V135.48 - Internal Protocol Fix)
 author: Wilfried BARNAVON
-version: 135.47
-description: v135.47: Implémentation de la stratégie "Identité Unifiée". 1) Extension du scope OAuth2 avec 'generative-language' pour permettre au token utilisateur de gérer les fichiers. 2) L'upload utilise ce token OAuth (Identité A) au lieu de la clé API seule, alignant ainsi le propriétaire du fichier avec l'émetteur de la requête de chat. Base code: v135.43 (Debug Verbeux).
+version: 135.48
+description: v135.48: Correction double. 1) Suppression du scope 'generative-language' pour résoudre l'erreur 403 (Client ID restreint). 2) Passage du protocole JSON en strict camelCase ('fileData', 'inlineData', 'functionCall') pour l'API Interne. L'erreur 400 précédente était probablement due à l'envoi de snake_case ('file_data') que l'API interne ne reconnait pas.
 """
 
 # ==============================================================================
@@ -41,7 +41,8 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid",
-    "https://www.googleapis.com/auth/generative-language" # <--- AJOUT CRITIQUE (Identité Unifiée)
+    # Scope retiré car bloqué par le Client ID (Erreur 403 restricted_client)
+    # "https://www.googleapis.com/auth/generative-language" 
 ]
 
 # --- REGISTRE DE CACHE GLOBAL ---
@@ -122,7 +123,7 @@ class AuthService:
         flow = Flow.from_client_config(OFFICIAL_CLIENT_CONFIG, scopes=GOOGLE_SCOPES, autogenerate_code_verifier=False)
         flow.redirect_uri = GOOGLE_REDIRECT_URI
         url, _ = flow.authorization_url(prompt="consent", access_type="offline", code_challenge=challenge, code_challenge_method="S256")
-        return f"### 🔐 Authentification Requise (Mise à jour Scopes)\n\n1. **[Cliquez ici]({url})**\n2. Connectez-vous.\n3. Copiez le code `4/...`.\n4. **Collez-le ici**."
+        return f"### 🔐 Authentification Requise\n\n1. **[Cliquez ici]({url})**\n2. Connectez-vous.\n3. Copiez le code `4/...`.\n4. **Collez-le ici**."
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
@@ -149,11 +150,6 @@ class AuthService:
         if os.path.exists(self.token_path):
             try: creds = Credentials.from_authorized_user_file(self.token_path, GOOGLE_SCOPES)
             except: pass
-        
-        # Vérification si les scopes ont changé (Force re-auth pour v135.47)
-        if creds and set(creds.scopes) != set(GOOGLE_SCOPES):
-            return None 
-
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(GoogleAuthRequest())
@@ -174,7 +170,7 @@ class AuthService:
         headers = {
             "Authorization": f"Bearer {creds.token}", 
             "Content-Type": "application/json",
-            "User-Agent": "GeminiCLI/0.24.0" # Ajout UA 0.24.0
+            "User-Agent": "GeminiCLI/0.24.0" # UA 0.24.0 conservé
         }
         # Payload standard pour simuler l'IDE
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
@@ -192,11 +188,10 @@ class AuthService:
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
                     return pid, "API OK."
                 else:
-                    # FALLBACK CRITIQUE (v135.20) : Si l'API échoue (ex: allowedTiers) mais qu'on a un cache, on l'utilise !
+                    # FALLBACK CRITIQUE
                     if cached_pid:
                          return cached_pid, f"API Fail (Partial Response), Fallback to Cache. JSON: {str(data)[:50]}"
 
-                    # Affichage complet du JSON pour débogage (v135.18+)
                     try: error_dump = json.dumps(data, indent=2)
                     except: error_dump = str(data)
                     return None, f"**JSON inattendu** (Project ID introuvable) :\n```json\n{error_dump}\n```"
@@ -285,29 +280,16 @@ class GoogleFileManager:
     """
     Client HTTP pour l'API Google Files.
     Gère le protocole 'Resumable Upload'.
-    Supporte désormais l'Auth Token (OAuth) en priorité, et l'API Key en fallback.
+    Utilise API Key uniquement (scope generative-language inaccessible via token).
     """
-    def __init__(self, api_key: str, auth_token: str = None):
+    def __init__(self, api_key: str):
         self.api_key = api_key
-        self.auth_token = auth_token
         self.upload_base_url = GOOGLE_UPLOAD_BASE_URL
-
-    def _get_headers(self) -> Dict[str, str]:
-        """Génère les headers d'auth : Token (User A) > API Key (User B)."""
-        headers = {}
-        if self.auth_token:
-            headers["Authorization"] = f"Bearer {self.auth_token}"
-            # On ajoute aussi la clé API si dispo, pour le quota projet
-            if self.api_key:
-                headers["x-goog-api-key"] = self.api_key
-        elif self.api_key:
-            headers["x-goog-api-key"] = self.api_key
-        return headers
 
     async def _check_state(self, name: str) -> str:
         """Vérifie l'état de traitement d'un fichier (PROCESSING vs ACTIVE)."""
         url = f"https://generativelanguage.googleapis.com/v1beta/{name}"
-        headers = self._get_headers()
+        headers = {"x-goog-api-key": self.api_key}
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(url, headers=headers)
@@ -317,22 +299,22 @@ class GoogleFileManager:
         return "UNKNOWN"
 
     async def upload_file(self, file_path: str, mime_type: str) -> Optional[str]:
-        if not self.api_key and not self.auth_token:
-             print("❌ [UPLOAD] Aucune accréditation (Ni Token, ni Key).")
+        if not self.api_key:
+             print("❌ [UPLOAD] API Key manquante.")
              return None
 
         file_size = os.path.getsize(file_path)
         display_name = os.path.basename(file_path)
         
         # 1. Initialisation
-        headers_init = self._get_headers()
-        headers_init.update({
+        headers_init = {
             "X-Goog-Upload-Protocol": "resumable",
             "X-Goog-Upload-Command": "start",
             "X-Goog-Upload-Header-Content-Length": str(file_size),
             "X-Goog-Upload-Header-Content-Type": mime_type,
-            "Content-Type": "application/json"
-        })
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key
+        }
         
         meta_body = {"file": {"displayName": display_name}}
 
@@ -366,8 +348,7 @@ class GoogleFileManager:
                     file_uri = file_data.get("uri")
                     file_name = file_data.get("name") # files/abc-123
                     
-                    auth_mode = "OAuth Token" if self.auth_token else "API Key"
-                    print(f"✅ [UPLOAD SUCCESS] URI: {file_uri} (via {auth_mode})")
+                    print(f"✅ [UPLOAD SUCCESS] URI: {file_uri}")
                     
                     # 3. Attente active du traitement (Processing)
                     if file_name:
@@ -577,7 +558,7 @@ class Orchestrator:
                         raw_data = f.read()
                         b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
                     
-                    # RESTORATION V135.40 : camelCase
+                    # PROTOCOL CORRECTION : camelCase pour l'API Interne
                     parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
                     self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"})
                     continue # Succès, fichier suivant
@@ -586,8 +567,7 @@ class Orchestrator:
                     # On ne continue pas ici, on laisse une chance au Flux C (Upload) si configuré, ou on passe au suivant.
 
             # --- FLUX C : UPLOAD API ou FALLBACK ---
-            # NOTE v135.45: Le file_manager contient maintenant le token d'auth s'il est dispo.
-            can_upload = (file_manager is not None) and (file_manager.api_key or file_manager.auth_token)
+            can_upload = file_manager and file_manager.api_key
             use_fallback = getattr(self.valves, "ENABLE_UPLOAD_FALLBACK", False)
 
             if not can_upload:
@@ -598,7 +578,7 @@ class Orchestrator:
                             raw_data = f.read()
                             b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
                         
-                        # RESTORATION V135.40 : camelCase
+                        # PROTOCOL CORRECTION : camelCase
                         parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
                         self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64 Fallback)", "size": file_size, "status": "Embedded ⚠️"})
                         if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Fallback Base64 utilisé pour {f_name}")
@@ -607,7 +587,7 @@ class Orchestrator:
                         parts.append({"text": f"[Error processing file {f_name}: {str(e)}]"})
                     continue
                 else:
-                    parts.append({"text": f"[Error: File {f_name} too large for inline ({file_size/1024:.0f}KB) and no API Key/Token for Upload]"})
+                    parts.append({"text": f"[Error: File {f_name} too large for inline ({file_size/1024:.0f}KB) and no API Key for Upload]"})
                     continue
             
             # Hashage pour identifier le contenu (Si Upload possible)
@@ -625,9 +605,7 @@ class Orchestrator:
                 if self.valves.DEBUG_MODE: self.debug_log.append(f"⚡ CAS HIT: {f_name}")
             else:
                 # MISS : Upload nécessaire
-                auth_mode_log = "Token OAuth" if file_manager.auth_token else "API Key"
-                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔼 Uploading {f_name} ({file_size} bytes) via {auth_mode_log}...")
-                
+                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔼 Uploading {f_name} ({file_size} bytes)...")
                 uri = await file_manager.upload_file(real_path, mime)
                 if uri:
                     final_uri = uri
@@ -637,8 +615,8 @@ class Orchestrator:
                     status_ui = "Failed ❌"
 
             if final_uri:
-                # RESTORATION V135.40 : snake_case pour file_data (Exception confirmée par l'erreur 400)
-                parts.append({"file_data": {"mime_type": mime, "file_uri": final_uri}})
+                # PROTOCOL CORRECTION : camelCase pour l'API Interne (Hypothèse Fix 400)
+                parts.append({"fileData": {"mimeType": mime, "fileUri": final_uri}})
                 self.files_processed_info.append({"name": f_name, "type": f"{mime.split('/')[-1].upper()} (Cloud)", "size": file_size, "status": status_ui})
         
         return parts
@@ -657,10 +635,9 @@ class Orchestrator:
 
         file_registry = FileRegistry(self.data_dir, chat_id)
         
-        # INSTANTIATION AVEC CLÉ API ET TOKEN D'AUTH (Unified Identity)
+        # INSTANTIATION AVEC CLÉ API UNIQUEMENT (STRICT)
         files_api_key = getattr(self.valves, "FILES_API_KEY", "").strip()
-        # Ici on passe le token OAuth2 récupéré du flux principal
-        file_manager = GoogleFileManager(files_api_key, auth_token) if (files_api_key or auth_token) else None
+        file_manager = GoogleFileManager(files_api_key) if files_api_key else None
         
         # Mapping des tools pour le décodage des réponses
         for m in messages:
@@ -687,7 +664,7 @@ class Orchestrator:
                     tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
                     try: val = json.loads(tm.get("content", "{}"))
                     except: val = {"result": str(tm.get("content", ""))}
-                    # RESTORATION V135.40 : functionResponse
+                    # PROTOCOL CORRECTION : functionResponse (camelCase)
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
                 
@@ -716,7 +693,7 @@ class Orchestrator:
                         try:
                             args = json.loads(tc["function"]["arguments"])
                             if "_thought_signature" in args: found_in_band_sig = args.pop("_thought_signature")
-                            # RESTORATION V135.40 : functionCall
+                            # PROTOCOL CORRECTION : functionCall (camelCase)
                             parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
                         except: pass
                 
@@ -743,7 +720,7 @@ class Orchestrator:
                 if "files" in m and isinstance(m["files"], list): raw_list.extend(m["files"])
                 
                 if i == last_user_idx:
-                    # --- DEBUG DIAGNOSTIC COMPLET (v135.35) ---
+                    # --- DEBUG DIAGNOSTIC COMPLET ---
                     if self.valves.DEBUG_MODE:
                         raw_filter = body.get("raw_files_from_filter")
                         std_files = body.get("files")
@@ -780,25 +757,22 @@ class Orchestrator:
                 if isinstance(content_txt, str) and content_txt.strip():
                     parts.append({"text": content_txt})
                 
-                # --- CORRECTION CRITIQUE V135.36 : GESTION DES IMAGES INLINE ---
+                # --- GESTION DES IMAGES INLINE ---
                 elif isinstance(content_txt, list):
                     for item in content_txt:
                          if item.get("type") == "text": 
                              parts.append({"text": item.get("text", "")})
                          elif item.get("type") == "image_url":
-                             # Support des images converties en inline par OWUI (Base64)
                              url = item.get("image_url", {}).get("url", "")
                              if url.startswith("data:"):
                                  try:
                                      header, b64_data = url.split(",", 1)
-                                     # Extract mime from "data:image/png;base64"
                                      mime_type = header.split(":")[1].split(";")[0]
-                                     # RESTORATION V135.40 : inlineData (camelCase)
+                                     # PROTOCOL CORRECTION : inlineData (camelCase)
                                      parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
                                      if self.valves.DEBUG_MODE: self.debug_log.append(f"📸 **INLINE IMAGE DETECTED**: {mime_type}")
                                  except Exception as e:
                                      if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Inline Image Error: {e}")
-                # ---------------------------------------------------------------
                 
                 if parts: contents.append({"role": "user", "parts": parts})
             
@@ -1139,8 +1113,8 @@ class Pipe:
                  # On ne filtre plus uniquement "text". On garde tout ce qui est pertinent pour le modèle.
                  clean_parts = []
                  for p in msg.get("parts", []):
-                     # RESTORATION V135.40 : camelCase
-                     if "text" in p or "inlineData" in p or "file_data" in p or "functionCall" in p or "functionResponse" in p:
+                     # PROTOCOL CORRECTION : camelCase
+                     if "text" in p or "inlineData" in p or "fileData" in p or "functionCall" in p or "functionResponse" in p:
                          clean_parts.append(p)
                  # --------------------------------------------------------
                  
