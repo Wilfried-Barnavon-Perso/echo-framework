@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.37 - The Combiner)
+title: Gemini Pro Unified System (Platinum Agentic V135.38 - Multimodal Smart Cache)
 author: Wilfried BARNAVON
-version: 135.37
-description: v135.37: VERSION DE SYNTHÈSE STABLE. Combine toutes les avancées récentes : 1) Valves JSON pour le mapping MIME flexible. 2) Debug Profond des entrées fichiers. 3) Support natif des images inline (image_url) envoyées par OWUI en Base64.
+version: 135.38
+description: v135.38: Activation du cache multimodal complet. Le Smart Cache inclut désormais les données binaires (Images Base64/Inline et Fichiers Cloud) en plus du texte. Cela permet de maintenir le contexte visuel sur plusieurs tours de conversation, indispensable pour un agent multimodal.
 """
 
 # ==============================================================================
@@ -167,7 +167,7 @@ class AuthService:
         headers = {
             "Authorization": f"Bearer {creds.token}", 
             "Content-Type": "application/json",
-            "User-Agent": "GeminiCLI/0.24.0" # Ajout UA pour robustesse API
+            "User-Agent": "GeminiCLI/0.20.0" # Ajout UA pour robustesse API
         }
         # Payload standard pour simuler l'IDE
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
@@ -1072,14 +1072,21 @@ class Pipe:
         if body.get("messages") and body.get("messages")[-1].get("role") == "tool":
             initial_label = "Post-Action"
 
-        # 3. DÉCISION DE CACHE (TEXTE)
+        # 3. DÉCISION DE CACHE (TEXTE + MULTIMODAL)
         req = None
         estimated_tokens = orch.estimate_tokens(context)
         
         if self.valves.ENABLE_CACHING and estimated_tokens >= self.valves.MIN_CACHE_TOKENS:
              history_to_cache = []
              for msg in context[:-1]:
-                 clean_parts = [p for p in msg.get("parts", []) if "text" in p]
+                 # --- MODIFICATION CRITIQUE V135.38 : CACHE MULTIMODAL ---
+                 # On ne filtre plus uniquement "text". On garde tout ce qui est pertinent pour le modèle.
+                 clean_parts = []
+                 for p in msg.get("parts", []):
+                     if "text" in p or "inlineData" in p or "fileData" in p or "functionCall" in p or "functionResponse" in p:
+                         clean_parts.append(p)
+                 # --------------------------------------------------------
+                 
                  if clean_parts: history_to_cache.append({"role": msg["role"], "parts": clean_parts})
              
              trigger_content = [context[-1]]
@@ -1096,7 +1103,7 @@ class Pipe:
                  )
                  
                  if cache_name:
-                     if self.valves.DEBUG_MODE: yield f"✅ **TEXT CACHE LOCKED**: `{cache_name}`\n"
+                     if self.valves.DEBUG_MODE: yield f"✅ **SMART CACHE LOCKED**: `{cache_name}`\n"
                      adapter = PublicGeminiOAuthAdapter(creds.token)
                      req = adapter.build(self.valves.MODEL_SELECTION, trigger_content, self.valves.TEMPERATURE, self.valves.MAX_TOKENS, cache_name, tools)
 
