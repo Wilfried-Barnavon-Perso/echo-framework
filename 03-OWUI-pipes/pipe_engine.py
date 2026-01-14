@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.32 - Stable Tri-Flow Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.33 - JSON Valves MIME Fix)
 author: Wilfried BARNAVON
-version: 135.32
-description: v135.32: VERSION CORRECTIVE. Basée sur la v135.26. Correction unique du bug critique (TypeError) dans l'appel de _get_file_info qui empêchait le traitement des fichiers. Architecture Tri-Flux maintenue sans logique superflue.
+version: 135.33
+description: v135.33: Correctif Gestion Images & Mimes. Remplacement des listes CSV par des Valves JSON configurables pour le mapping MIME. Priorité absolue aux Valves sur la détection système. Rétablissement du support inline pour les images.
 """
 
 # ==============================================================================
@@ -48,37 +48,6 @@ _LOCAL_CACHE_REGISTRY = {}
 # --- CONSTANTES MAGIQUES ---
 MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator"
 MIN_ABSOLUTE_TOKENS_PRO = 4096
-
-# --- MAPPING MIME STRICT GEMINI ---
-GEMINI_MIME_MAPPING = {
-    # Video
-    '.flv': 'video/x-flv',
-    '.mov': 'video/quicktime',
-    '.mpeg': 'video/mpeg',
-    '.mpegps': 'video/mpegps',
-    '.mpg': 'video/mpg',
-    '.mp4': 'video/mp4',
-    '.webm': 'video/webm',
-    '.wmv': 'video/wmv',
-    '.3gpp': 'video/3gpp',
-    # Audio
-    '.aac': 'audio/aac',
-    '.flac': 'audio/flac',
-    '.mp3': 'audio/mp3',
-    '.mpa': 'audio/m4a', # Souvent m4a
-    '.m4a': 'audio/m4a',
-    '.mpga': 'audio/mpga',
-    '.opus': 'audio/opus',
-    '.pcm': 'audio/pcm',
-    '.wav': 'audio/wav',
-    # Image
-    '.png': 'image/png',
-    '.jpeg': 'image/jpeg',
-    '.jpg': 'image/jpeg',
-    '.webp': 'image/webp',
-    '.heic': 'image/heic',
-    '.heif': 'image/heif'
-}
 
 # ==============================================================================
 # SECTION 1 : DÉPENDANCES OPTIONNELLES
@@ -198,7 +167,7 @@ class AuthService:
         headers = {
             "Authorization": f"Bearer {creds.token}", 
             "Content-Type": "application/json",
-            "User-Agent": "GeminiCLI/0.20.0" # Ajout UA pour robustesse API
+            "User-Agent": "GeminiCLI/0.24.0" # Ajout UA pour robustesse API
         }
         # Payload standard pour simuler l'IDE
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
@@ -452,26 +421,56 @@ class Orchestrator:
             
         return None
 
-    def _get_file_info(self, f_id: str, f_name: str, owui_path: str, text_exts: set, media_exts: set) -> Tuple[str, bool, str, Optional[str]]:
-        """Identifie le type de fichier (Texte vs Binaire) et son chemin."""
+    def _parse_mime_valves(self) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """Convertit les JSON valves en dictionnaires inversés {ext: mime}."""
+        txt_map = {}
+        bin_map = {}
+        
+        # Parsing Texte
+        try:
+            raw_txt = json.loads(self.valves.GEMINI_MIME_MAPPING_TXT)
+            for mime, exts in raw_txt.items():
+                for ext in exts:
+                    txt_map[ext.lower().strip()] = mime
+        except Exception as e:
+            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Erreur JSON TXT: {e}")
+
+        # Parsing Binaire
+        try:
+            raw_bin = json.loads(self.valves.GEMINI_MIME_MAPPING_BIN)
+            for mime, exts in raw_bin.items():
+                for ext in exts:
+                    bin_map[ext.lower().strip()] = mime
+        except Exception as e:
+            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Erreur JSON BIN: {e}")
+            
+        return txt_map, bin_map
+
+    def _get_file_info(self, f_id: str, f_name: str, owui_path: str, txt_map: Dict, bin_map: Dict) -> Tuple[str, bool, str, Optional[str]]:
+        """
+        Identifie le type et le mime via les Maps configurables (Priorité Valve > Système).
+        """
         if not f_id: return "", False, "No ID", None
         real_path = self._resolve_local_path(owui_path, f_id, f_name)
         if not real_path: return "", False, f"Not Found: {f_id}", None
 
         ext = os.path.splitext(real_path)[1].lower()
         
-        # 1. Vérification Mime Forcée (Gemini Strict)
-        if ext in GEMINI_MIME_MAPPING:
-            return GEMINI_MIME_MAPPING[ext], False, "", real_path
+        # 1. Vérification Directe dans les Valves (Autorité Suprême)
+        if ext in txt_map:
+            return txt_map[ext], True, "", real_path
+            
+        if ext in bin_map:
+            return bin_map[ext], False, "", real_path
 
-        # 2. Détection Système Standard (Fallback)
+        # 2. Détection Système (Fallback pour extensions inconnues des valves)
         mime_type, _ = mimetypes.guess_type(real_path)
-
+        
         is_text = False
-        if mime_type and (mime_type.startswith("text/") or mime_type in ["application/json", "application/javascript", "application/xml"]): is_text = True
-        if not is_text and ext in text_exts: is_text = True
-
-        if not mime_type:
+        if mime_type:
+            if mime_type.startswith("text/") or mime_type in ["application/json", "application/javascript", "application/xml"]:
+                is_text = True
+        else:
             mime_type = "application/octet-stream"
 
         return mime_type, is_text, "", real_path
@@ -481,9 +480,8 @@ class Orchestrator:
         files_to_process = []
         seen_ids = set()
 
-        # CONFIGURATION DES FLUX
-        text_exts = {x.strip().lower() for x in self.valves.TEXT_EXTENSIONS.split(',')}
-        media_exts = {x.strip().lower() for x in self.valves.INLINE_MEDIA_EXTENSIONS.split(',')}
+        # CONFIGURATION DES FLUX VIA VALVES JSON
+        txt_map, bin_map = self._parse_mime_valves()
         max_inline_bytes = self.valves.MAX_INLINE_SIZE_KB * 1024
 
         # Deduplication
@@ -498,15 +496,14 @@ class Orchestrator:
             f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
             f_path = f_real.get("path")
 
-            # --- CORRECTIF CRITIQUE : AJOUT DU 5ème ARGUMENT media_exts ---
-            mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path, text_exts, media_exts)
+            # --- APPEL AVEC LES NOUVELLES MAPS ---
+            mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path, txt_map, bin_map)
 
             if err:
                 if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ {f_name}: {err}")
                 continue
             
             file_size = os.path.getsize(real_path)
-            ext = os.path.splitext(real_path)[1].lower()
             
             # --- FLUX A : TEXTE (INLINE) ---
             if is_text:
@@ -519,8 +516,9 @@ class Orchestrator:
                 continue
 
             # --- FLUX B : BINAIRE INLINE (Petit Fichier) ---
-            # Condition : Mime Supporté par Gemini (via Mapping ou Détection) ET Taille < Limite
-            if (ext in media_exts or mime in GEMINI_MIME_MAPPING.values()) and (file_size < max_inline_bytes):
+            # Condition : Extension connue dans BIN_MAP (donc mime valide) OU détectée par système
+            # ET taille inférieure à la limite.
+            if (file_size < max_inline_bytes):
                 try:
                     with open(real_path, "rb") as f:
                         raw_data = f.read()
@@ -528,9 +526,10 @@ class Orchestrator:
                     
                     parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
                     self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"})
+                    continue # Succès, fichier suivant
                 except Exception as e:
                     if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Base64 Error {f_name}: {str(e)}")
-                continue
+                    # On ne continue pas ici, on laisse une chance au Flux C (Upload) si configuré, ou on passe au suivant.
 
             # --- FLUX C : UPLOAD API ou FALLBACK ---
             can_upload = file_manager and file_manager.api_key
@@ -962,13 +961,19 @@ class Pipe:
     class Valves(BaseModel):
         FILES_API_KEY: str = Field(default="", description="🔑 API Key Google (Projet Files)")
         
-        # --- NOUVELLES VALVES POUR TRI-FLUX ---
-        TEXT_EXTENSIONS: str = Field(default=".bat,.c,.conf,.cpp,.cs,.css,.csv,.dockerfile,.editorconfig,.env,.gitignore,.go,.h,.hpp,.html,.ini,.java,.js,.json,.kt,.lua,.md,.php,.pl,.ps1,.py,.r,.rb,.rs,.sh,.sql,.swift,.toml,.ts,.txt,.vb,.xml,.yaml,.yml,dockerfile", description="Extensions Texte (CSV)")
-        INLINE_MEDIA_EXTENSIONS: str = Field(default=".3gpp,.aac,.flac,.flv,.heic,.heif,.jpeg,.jpg,.mov,.mp3,.mp4,.mpa,.mpe,.mpeg,.mpegps,.mpg,.mpga,.opus,.pcm,.png,.wav,.webm,.webp,.wmv", description="Extensions Média Supportées (CSV)")
+        # --- NOUVELLES VALVES DE MAPPING (JSON) ---
+        GEMINI_MIME_MAPPING_TXT: str = Field(
+            default='{"text/plain": [".bat",".c",".conf",".cpp",".cs",".css",".csv",".dockerfile",".editorconfig",".env",".gitignore",".go",".h",".hpp",".ini",".java",".js",".json",".kt",".lua",".md",".php",".pl",".ps1",".py",".r",".rb",".rs",".sh",".sql",".swift",".toml",".ts",".txt",".vb",".xml",".yaml",".yml","dockerfile"], "text/html": [".html", ".htm"]}',
+            description="📄 Mapping Texte (JSON: Mime -> [Exts])"
+        )
+        
+        GEMINI_MIME_MAPPING_BIN: str = Field(
+            default='{"video/x-flv": [".flv"], "video/quicktime": [".mov"], "video/mpeg": [".mpeg", ".mpg", ".mpe"], "video/mpegps": [".mpegps"], "video/mp4": [".mp4"], "video/webm": [".webm"], "video/wmv": [".wmv"], "video/3gpp": [".3gpp"], "audio/aac": [".aac"], "audio/flac": [".flac"], "audio/mp3": [".mp3"], "audio/m4a": [".m4a", ".mpa"], "audio/mpga": [".mpga"], "audio/opus": [".opus"], "audio/pcm": [".pcm"], "audio/wav": [".wav"], "image/png": [".png"], "image/jpeg": [".jpeg", ".jpg"], "image/webp": [".webp"], "image/heic": [".heic"], "image/heif": [".heif"], "application/pdf": [".pdf"]}',
+            description="🖼️ Mapping Binaire (JSON: Mime -> [Exts])"
+        )
+        
         MAX_INLINE_SIZE_KB: int = Field(default=4096, description="Taille Max Inline (Ko)")
         ENABLE_UPLOAD_FALLBACK: bool = Field(default=False, description="⚠️ Fallback Base64 si Upload impossible")
-        # --------------------------------------
-
         
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
         
