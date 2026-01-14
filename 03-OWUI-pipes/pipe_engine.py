@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.34 - Debug Raw Files)
+title: Gemini Pro Unified System (Platinum Agentic V135.35 - Deep Diagnostic)
 author: Wilfried BARNAVON
-version: 135.34
-description: v135.34: Ajout d'un log debug profond pour inspecter les dictionnaires de fichiers bruts provenant du filtre Bypass RAG. Permet de diagnostiquer les problèmes de métadonnées ou de chemin sur les images.
+version: 135.35
+description: v135.35: Renforcement du diagnostic de fichiers. En mode DEBUG, le système affiche désormais l'état exhaustif des entrées fichiers (Bypass RAG, Body Standard, Metadata) même si elles sont vides, pour comprendre pourquoi les images peuvent être ignorées.
 """
 
 # ==============================================================================
@@ -681,14 +681,29 @@ class Orchestrator:
                 if "files" in m and isinstance(m["files"], list): raw_list.extend(m["files"])
                 
                 if i == last_user_idx:
+                    # --- DEBUG DIAGNOSTIC COMPLET (v135.35) ---
+                    if self.valves.DEBUG_MODE:
+                        raw_filter = body.get("raw_files_from_filter")
+                        std_files = body.get("files")
+                        meta_files = body.get("metadata", {}).get("files") if body.get("metadata") else None
+                        
+                        diag = [f"🕵️ **[DEBUG FILES INPUT]** (User Message Index: {i})"]
+                        diag.append(f"- `raw_files_from_filter`: Type={type(raw_filter).__name__}, Len={len(raw_filter) if raw_filter else 0}")
+                        diag.append(f"- `body.files` (OWUI Standard): Type={type(std_files).__name__}, Len={len(std_files) if std_files else 0}")
+                        diag.append(f"- `metadata.files` (Legacy): Type={type(meta_files).__name__}, Len={len(meta_files) if meta_files else 0}")
+                        
+                        if raw_filter:
+                             try: dump = json.dumps(raw_filter, indent=2, default=str)
+                             except: dump = str(raw_filter)
+                             diag.append(f"📦 **Content of raw_files_from_filter:**\n```json\n{dump}\n```")
+                        else:
+                             diag.append("⚠️ `raw_files_from_filter` est VIDE ou NULL.")
+
+                        self.debug_log.append("\n".join(diag))
+                    # ------------------------------------------------
+
                     raw_from_filter = body.get("raw_files_from_filter")
                     if raw_from_filter:
-                        # --- DEBUG: Log des fichiers bruts du filtre ---
-                        if self.valves.DEBUG_MODE:
-                            try: dump = json.dumps(raw_from_filter, indent=2, default=str)
-                            except: dump = str(raw_from_filter)
-                            self.debug_log.append(f"📦 **[DEBUG RAW FILES]** (Bypass RAG):\n```json\n{dump}\n```")
-                        # -----------------------------------------------
                         raw_list.extend(raw_from_filter)
 
                     if extra_files: 
