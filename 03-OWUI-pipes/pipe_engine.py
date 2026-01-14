@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.40 - API REST Protocol Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.43 - Hyper Debug)
 author: Wilfried BARNAVON
-version: 135.40
-description: v135.40: Correctif Protocolaire API. L'erreur 400 sur les fichiers uploadés était due à une erreur de casse dans les clés JSON. L'API REST attend 'file_data' (snake_case) et non 'fileData' (camelCase). Correction appliquée pour respecter strictement la documentation officielle.
+version: 135.43
+description: v135.43: Mode DEBUG Verbeux. Affiche le JSON complet de la requête API (en masquant les gros blocs Base64) et l'URL exacte appelée pour diagnostiquer les erreurs 400. En cas d'erreur, dump complet du corps de réponse avec l'URL ciblée.
 """
 
 # ==============================================================================
@@ -557,6 +557,7 @@ class Orchestrator:
                         raw_data = f.read()
                         b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
                     
+                    # RESTORATION V135.40 : camelCase
                     parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
                     self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"})
                     continue # Succès, fichier suivant
@@ -576,6 +577,7 @@ class Orchestrator:
                             raw_data = f.read()
                             b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
                         
+                        # RESTORATION V135.40 : camelCase
                         parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
                         self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64 Fallback)", "size": file_size, "status": "Embedded ⚠️"})
                         if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Fallback Base64 utilisé pour {f_name}")
@@ -612,7 +614,7 @@ class Orchestrator:
                     status_ui = "Failed ❌"
 
             if final_uri:
-                # CORRECTIF REST API: utilisation de "file_data" (snake_case)
+                # RESTORATION V135.40 : snake_case pour file_data (Exception confirmée par l'erreur 400)
                 parts.append({"file_data": {"mime_type": mime, "file_uri": final_uri}})
                 self.files_processed_info.append({"name": f_name, "type": f"{mime.split('/')[-1].upper()} (Cloud)", "size": file_size, "status": status_ui})
         
@@ -661,6 +663,7 @@ class Orchestrator:
                     tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
                     try: val = json.loads(tm.get("content", "{}"))
                     except: val = {"result": str(tm.get("content", ""))}
+                    # RESTORATION V135.40 : functionResponse
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
                 
@@ -689,6 +692,7 @@ class Orchestrator:
                         try:
                             args = json.loads(tc["function"]["arguments"])
                             if "_thought_signature" in args: found_in_band_sig = args.pop("_thought_signature")
+                            # RESTORATION V135.40 : functionCall
                             parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
                         except: pass
                 
@@ -765,6 +769,7 @@ class Orchestrator:
                                      header, b64_data = url.split(",", 1)
                                      # Extract mime from "data:image/png;base64"
                                      mime_type = header.split(":")[1].split(";")[0]
+                                     # RESTORATION V135.40 : inlineData (camelCase)
                                      parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
                                      if self.valves.DEBUG_MODE: self.debug_log.append(f"📸 **INLINE IMAGE DETECTED**: {mime_type}")
                                  except Exception as e:
@@ -1117,7 +1122,8 @@ class Pipe:
                  # On ne filtre plus uniquement "text". On garde tout ce qui est pertinent pour le modèle.
                  clean_parts = []
                  for p in msg.get("parts", []):
-                     if "text" in p or "inlineData" in p or "fileData" in p or "functionCall" in p or "functionResponse" in p:
+                     # RESTORATION V135.40 : camelCase
+                     if "text" in p or "inlineData" in p or "file_data" in p or "functionCall" in p or "functionResponse" in p:
                          clean_parts.append(p)
                  # --------------------------------------------------------
                  
@@ -1148,8 +1154,24 @@ class Pipe:
             req["headers"]["Authorization"] = f"Bearer {creds.token}"
 
         if self.valves.DEBUG_MODE:
+             # Clone pour affichage propre
              log_req = json.loads(json.dumps(req['json']))
-             yield f"🐞 **API REQ**\n`{json.dumps(log_req)[:500]}...`\n"
+             
+             # Masquage intelligent du Base64 pour ne pas flooder le chat
+             contents = log_req.get("contents", [])
+             # Handle structure difference between adapter types if any (GeminiAdapter puts contents in 'request')
+             if "request" in log_req: contents = log_req["request"].get("contents", [])
+             
+             for c in contents:
+                 for p in c.get("parts", []):
+                     if "inlineData" in p: 
+                         len_b64 = len(p["inlineData"].get("data", ""))
+                         p["inlineData"]["data"] = f"<BASE64_BLOB_LEN_{len_b64}>"
+                     if "inline_data" in p: 
+                         len_b64 = len(p["inline_data"].get("data", ""))
+                         p["inline_data"]["data"] = f"<BASE64_BLOB_LEN_{len_b64}>"
+            
+             yield f"🐞 **API REQ** `[{req['url']}]`\n```json\n{json.dumps(log_req, indent=2)}\n```\n"
 
         # 5. EXECUTION
         proc = StreamProcessor(
@@ -1167,7 +1189,13 @@ class Pipe:
                 async with client.stream("POST", req["url"], json=req["json"], headers=req["headers"]) as r:
                     if r.status_code != 200:
                         err = await r.aread()
-                        yield f"⚠️ **API ERROR {r.status_code}**\n`{err.decode(errors='ignore')}`"
+                        err_text = err.decode(errors='ignore')
+                        
+                        # Affichage verbeux de l'erreur
+                        if self.valves.DEBUG_MODE:
+                            yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
+                        else:
+                            yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
                         return
                     async for token in proc.process(r): yield token
         except Exception as e: yield f"🔥 **CRASH** : `{str(e)}`"
