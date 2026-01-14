@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.39 - Video Processing Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.40 - API REST Protocol Fix)
 author: Wilfried BARNAVON
-version: 135.39
-description: v135.39: Correctif critique pour les vidéos. Ajout d'une boucle d'attente (polling) post-upload pour vérifier que l'état du fichier est 'ACTIVE' côté Google avant de l'envoyer au modèle. Cela évite l'erreur 400 INVALID_ARGUMENT sur les gros fichiers qui nécessitent un temps de traitement.
+version: 135.40
+description: v135.40: Correctif Protocolaire API. L'erreur 400 sur les fichiers uploadés était due à une erreur de casse dans les clés JSON. L'API REST attend 'file_data' (snake_case) et non 'fileData' (camelCase). Correction appliquée pour respecter strictement la documentation officielle.
 """
 
 # ==============================================================================
@@ -350,10 +350,8 @@ class GoogleFileManager:
                     print(f"✅ [UPLOAD SUCCESS] URI: {file_uri}")
                     
                     # 3. Attente active du traitement (Processing)
-                    # Uniquement si on a le nom de ressource (files/...)
                     if file_name:
                         print(f"⏳ [UPLOAD] Vérification état ({file_name})...")
-                        # 30 itérations * 2 sec = 60 secondes max d'attente
                         for _ in range(30):
                             state = await self._check_state(file_name)
                             if state == "ACTIVE":
@@ -614,7 +612,8 @@ class Orchestrator:
                     status_ui = "Failed ❌"
 
             if final_uri:
-                parts.append({"fileData": {"mimeType": mime, "fileUri": final_uri}})
+                # CORRECTIF REST API: utilisation de "file_data" (snake_case)
+                parts.append({"file_data": {"mime_type": mime, "file_uri": final_uri}})
                 self.files_processed_info.append({"name": f_name, "type": f"{mime.split('/')[-1].upper()} (Cloud)", "size": file_size, "status": status_ui})
         
         return parts
