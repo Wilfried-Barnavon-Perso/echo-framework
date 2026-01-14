@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.48 - Internal Protocol Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.49 - Hyper Debug)
 author: Wilfried BARNAVON
-version: 135.48
-description: v135.48: Correction double. 1) Suppression du scope 'generative-language' pour résoudre l'erreur 403 (Client ID restreint). 2) Passage du protocole JSON en strict camelCase ('fileData', 'inlineData', 'functionCall') pour l'API Interne. L'erreur 400 précédente était probablement due à l'envoi de snake_case ('file_data') que l'API interne ne reconnait pas.
+version: 135.49
+description: v135.49: Retour à la v135.43 : Mode DEBUG Verbeux. Affiche le JSON complet de la requête API (en masquant les gros blocs Base64) et l'URL exacte appelée pour diagnostiquer les erreurs 400. En cas d'erreur, dump complet du corps de réponse avec l'URL ciblée.
 """
 
 # ==============================================================================
@@ -41,8 +41,6 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid",
-    # Scope retiré car bloqué par le Client ID (Erreur 403 restricted_client)
-    # "https://www.googleapis.com/auth/generative-language" 
 ]
 
 # --- REGISTRE DE CACHE GLOBAL ---
@@ -170,7 +168,7 @@ class AuthService:
         headers = {
             "Authorization": f"Bearer {creds.token}", 
             "Content-Type": "application/json",
-            "User-Agent": "GeminiCLI/0.24.0" # UA 0.24.0 conservé
+            "User-Agent": "GeminiCLI/0.24.0" # Ajout UA pour robustesse API
         }
         # Payload standard pour simuler l'IDE
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
@@ -188,10 +186,11 @@ class AuthService:
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
                     return pid, "API OK."
                 else:
-                    # FALLBACK CRITIQUE
+                    # FALLBACK CRITIQUE (v135.20) : Si l'API échoue (ex: allowedTiers) mais qu'on a un cache, on l'utilise !
                     if cached_pid:
                          return cached_pid, f"API Fail (Partial Response), Fallback to Cache. JSON: {str(data)[:50]}"
 
+                    # Affichage complet du JSON pour débogage (v135.18+)
                     try: error_dump = json.dumps(data, indent=2)
                     except: error_dump = str(data)
                     return None, f"**JSON inattendu** (Project ID introuvable) :\n```json\n{error_dump}\n```"
@@ -280,7 +279,7 @@ class GoogleFileManager:
     """
     Client HTTP pour l'API Google Files.
     Gère le protocole 'Resumable Upload'.
-    Utilise API Key uniquement (scope generative-language inaccessible via token).
+    Désormais strictement dépendant d'une Clé API (Projet Dédié).
     """
     def __init__(self, api_key: str):
         self.api_key = api_key
@@ -558,7 +557,7 @@ class Orchestrator:
                         raw_data = f.read()
                         b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
                     
-                    # PROTOCOL CORRECTION : camelCase pour l'API Interne
+                    # RESTORATION V135.40 : camelCase
                     parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
                     self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"})
                     continue # Succès, fichier suivant
@@ -578,7 +577,7 @@ class Orchestrator:
                             raw_data = f.read()
                             b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
                         
-                        # PROTOCOL CORRECTION : camelCase
+                        # RESTORATION V135.40 : camelCase
                         parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
                         self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64 Fallback)", "size": file_size, "status": "Embedded ⚠️"})
                         if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Fallback Base64 utilisé pour {f_name}")
@@ -615,8 +614,8 @@ class Orchestrator:
                     status_ui = "Failed ❌"
 
             if final_uri:
-                # PROTOCOL CORRECTION : camelCase pour l'API Interne (Hypothèse Fix 400)
-                parts.append({"fileData": {"mimeType": mime, "fileUri": final_uri}})
+                # RESTORATION V135.40 : snake_case pour file_data (Exception confirmée par l'erreur 400)
+                parts.append({"file_data": {"mime_type": mime, "file_uri": final_uri}})
                 self.files_processed_info.append({"name": f_name, "type": f"{mime.split('/')[-1].upper()} (Cloud)", "size": file_size, "status": status_ui})
         
         return parts
@@ -664,7 +663,7 @@ class Orchestrator:
                     tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
                     try: val = json.loads(tm.get("content", "{}"))
                     except: val = {"result": str(tm.get("content", ""))}
-                    # PROTOCOL CORRECTION : functionResponse (camelCase)
+                    # RESTORATION V135.40 : functionResponse
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
                 
@@ -693,7 +692,7 @@ class Orchestrator:
                         try:
                             args = json.loads(tc["function"]["arguments"])
                             if "_thought_signature" in args: found_in_band_sig = args.pop("_thought_signature")
-                            # PROTOCOL CORRECTION : functionCall (camelCase)
+                            # RESTORATION V135.40 : functionCall
                             parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
                         except: pass
                 
@@ -720,7 +719,7 @@ class Orchestrator:
                 if "files" in m and isinstance(m["files"], list): raw_list.extend(m["files"])
                 
                 if i == last_user_idx:
-                    # --- DEBUG DIAGNOSTIC COMPLET ---
+                    # --- DEBUG DIAGNOSTIC COMPLET (v135.35) ---
                     if self.valves.DEBUG_MODE:
                         raw_filter = body.get("raw_files_from_filter")
                         std_files = body.get("files")
@@ -757,22 +756,25 @@ class Orchestrator:
                 if isinstance(content_txt, str) and content_txt.strip():
                     parts.append({"text": content_txt})
                 
-                # --- GESTION DES IMAGES INLINE ---
+                # --- CORRECTION CRITIQUE V135.36 : GESTION DES IMAGES INLINE ---
                 elif isinstance(content_txt, list):
                     for item in content_txt:
                          if item.get("type") == "text": 
                              parts.append({"text": item.get("text", "")})
                          elif item.get("type") == "image_url":
+                             # Support des images converties en inline par OWUI (Base64)
                              url = item.get("image_url", {}).get("url", "")
                              if url.startswith("data:"):
                                  try:
                                      header, b64_data = url.split(",", 1)
+                                     # Extract mime from "data:image/png;base64"
                                      mime_type = header.split(":")[1].split(";")[0]
-                                     # PROTOCOL CORRECTION : inlineData (camelCase)
+                                     # RESTORATION V135.40 : inlineData (camelCase)
                                      parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
                                      if self.valves.DEBUG_MODE: self.debug_log.append(f"📸 **INLINE IMAGE DETECTED**: {mime_type}")
                                  except Exception as e:
                                      if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Inline Image Error: {e}")
+                # ---------------------------------------------------------------
                 
                 if parts: contents.append({"role": "user", "parts": parts})
             
@@ -873,17 +875,24 @@ class GeminiAdapter:
             "request": {"systemInstruction": system_instr, "contents": contents, "generationConfig": gen_config}
         }
         if tools: payload["request"]["tools"] = tools; payload["request"]["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
-        return {"url": f"{self.base_url}:streamGenerateContent?alt=sse", "headers": {"Content-Type": "application/json", "User-Agent": "GeminiCLI/0.24.0"}, "json": payload}
+        return {"url": f"{self.base_url}:streamGenerateContent?alt=sse", "headers": {"Content-Type": "application/json", "User-Agent": "GeminiCLI"}, "json": payload}
 
 # ==============================================================================
 # SECTION 7 : STREAM PROCESSOR
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, debug, chat_id, sig_mgr, show_metrics, win_size, lbl, f_stats):
-        self.debug = debug; self.chat_id = chat_id; self.sig_mgr = sig_mgr
-        self.show = show_metrics; self.win = win_size; self.lbl = lbl; self.f_stats = f_stats
-        self.usage = None; self.cur_sig = None
-        self.stats_dir = "/app/backend/data/stats"; os.makedirs(self.stats_dir, exist_ok=True)
+    def __init__(self, debug=False, chat_id=None, sig_manager=None, show_metrics=False, context_window=1000000, initial_label="Réponse", file_stats=None):
+        self.debug = debug
+        self.chat_id = chat_id
+        self.sig_manager = sig_manager
+        self.show_metrics = show_metrics
+        self.context_window = context_window
+        self.initial_label = initial_label
+        self.usage_stats = None
+        self.file_stats = file_stats or []
+        self.current_sig = None
+        self.stats_dir = "/app/backend/data/stats"
+        os.makedirs(self.stats_dir, exist_ok=True)
 
     def _update_stats(self, data):
         if "response" in data and "usageMetadata" in data["response"]:
@@ -1113,8 +1122,8 @@ class Pipe:
                  # On ne filtre plus uniquement "text". On garde tout ce qui est pertinent pour le modèle.
                  clean_parts = []
                  for p in msg.get("parts", []):
-                     # PROTOCOL CORRECTION : camelCase
-                     if "text" in p or "inlineData" in p or "fileData" in p or "functionCall" in p or "functionResponse" in p:
+                     # RESTORATION V135.40 : camelCase
+                     if "text" in p or "inlineData" in p or "file_data" in p or "functionCall" in p or "functionResponse" in p:
                          clean_parts.append(p)
                  # --------------------------------------------------------
                  
