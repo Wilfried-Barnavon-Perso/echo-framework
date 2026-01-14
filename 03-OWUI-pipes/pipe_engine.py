@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.27 - Input Probe)
+title: Gemini Pro Unified System (Platinum Agentic V135.32 - Stable Tri-Flow Fix)
 author: Wilfried BARNAVON
-version: 135.27
-description: v135.27: AJOUT SONDE DÉBOGAGE. Ajout d'un log critique "INPUT PROBE" pour inspecter le JSON brut entrant d'OWUI et localiser les images collées (Paste).
+version: 135.32
+description: v135.32: VERSION CORRECTIVE. Basée sur la v135.26. Correction unique du bug critique (TypeError) dans l'appel de _get_file_info qui empêchait le traitement des fichiers. Architecture Tri-Flux maintenue sans logique superflue.
 """
 
 # ==============================================================================
@@ -452,7 +452,7 @@ class Orchestrator:
             
         return None
 
-    def _get_file_info(self, f_id: str, f_name: str, owui_path: str, text_exts: set) -> Tuple[str, bool, str, Optional[str]]:
+    def _get_file_info(self, f_id: str, f_name: str, owui_path: str, text_exts: set, media_exts: set) -> Tuple[str, bool, str, Optional[str]]:
         """Identifie le type de fichier (Texte vs Binaire) et son chemin."""
         if not f_id: return "", False, "No ID", None
         real_path = self._resolve_local_path(owui_path, f_id, f_name)
@@ -483,6 +483,7 @@ class Orchestrator:
 
         # CONFIGURATION DES FLUX
         text_exts = {x.strip().lower() for x in self.valves.TEXT_EXTENSIONS.split(',')}
+        media_exts = {x.strip().lower() for x in self.valves.INLINE_MEDIA_EXTENSIONS.split(',')}
         max_inline_bytes = self.valves.MAX_INLINE_SIZE_KB * 1024
 
         # Deduplication
@@ -497,13 +498,15 @@ class Orchestrator:
             f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
             f_path = f_real.get("path")
 
-            mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path, text_exts)
+            # --- CORRECTIF CRITIQUE : AJOUT DU 5ème ARGUMENT media_exts ---
+            mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path, text_exts, media_exts)
 
             if err:
                 if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ {f_name}: {err}")
                 continue
             
             file_size = os.path.getsize(real_path)
+            ext = os.path.splitext(real_path)[1].lower()
             
             # --- FLUX A : TEXTE (INLINE) ---
             if is_text:
@@ -516,7 +519,8 @@ class Orchestrator:
                 continue
 
             # --- FLUX B : BINAIRE INLINE (Petit Fichier) ---
-            if file_size < max_inline_bytes:
+            # Condition : Mime Supporté par Gemini (via Mapping ou Détection) ET Taille < Limite
+            if (ext in media_exts or mime in GEMINI_MIME_MAPPING.values()) and (file_size < max_inline_bytes):
                 try:
                     with open(real_path, "rb") as f:
                         raw_data = f.read()
@@ -599,22 +603,6 @@ class Orchestrator:
         files_api_key = getattr(self.valves, "FILES_API_KEY", "").strip()
         file_manager = GoogleFileManager(files_api_key) if files_api_key else None
         
-        # --- NOUVEAU: INPUT PROBE POUR LE DÉBOGAGE "PASTE" ---
-        if self.valves.DEBUG_MODE:
-            # On loggue la structure des messages utilisateur pour voir comment l'image est passée
-            debug_dump = []
-            for m in messages:
-                if m["role"] == "user":
-                    # On tronque le contenu pour la lisibilité
-                    content_preview = str(m.get("content", ""))[:200] + "..." if len(str(m.get("content", ""))) > 200 else str(m.get("content", ""))
-                    files_info = [f.get("name", "unnamed") for f in m.get("files", [])] if "files" in m else "No 'files' key"
-                    debug_dump.append(f"UserMsg: Content='{content_preview}', Files={files_info}")
-            
-            self.debug_log.append("🕵️ **INPUT PROBE** (Check for Paste):")
-            for line in debug_dump:
-                self.debug_log.append(f"`{line}`")
-            # -----------------------------------------------------
-
         # Mapping des tools pour le décodage des réponses
         for m in messages:
             if m.get("tool_calls"):
