@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.24 - Tri-Flow + Fallback)
+title: Gemini Pro Unified System (Platinum Agentic V135.25 - Stealth Metrics)
 author: Wilfried BARNAVON
-version: 135.24
-description: v135.24: Ajout du mécanisme de Fallback Base64 sécurisé par valve. Si l'upload API échoue (pas de clé), on peut forcer le Base64.
+version: 135.25
+description: v135.25: AFFICHAGE DISCRET. Le tableau des "Fichiers Traités" et les logs de Fallback sont désormais strictement masqués si le DEBUG_MODE est désactivé. Seules les métriques de tokens restent visibles (si activées).
 """
 
 # ==============================================================================
@@ -903,17 +903,22 @@ class StreamProcessor:
 
         if in_think: yield "\n</think>\n"
 
-        if self.show_metrics and (self.usage_stats or self.file_stats):
+        # --- LOGIQUE D'AFFICHAGE DES MÉTRIQUES ---
+        if self.show_metrics:
             stats_content = "\n\n" 
-            
-            if self.file_stats:
+            has_content = False
+
+            # SECTION 1: TABLEAU DES FICHIERS (Seulement si DEBUG est activé)
+            if self.file_stats and self.debug:
                 stats_content += "**📁 Fichiers Traités**\n\n"
                 stats_content += "| Fichier | Type | Taille | Statut |\n| :--- | :--- | :--- | :--- |\n"
                 for f in self.file_stats:
                     size_mb = f['size'] / (1024*1024)
                     stats_content += f"| {f['name']} | {f['type']} | {size_mb:.2f} MB | {f['status']} |\n"
                 stats_content += "\n"
+                has_content = True
             
+            # SECTION 2: USAGE TOKENS (Toujours si SHOW_METRICS est activé)
             if self.usage_stats:
                 p_tok = self.usage_stats.get("promptTokenCount", 0)
                 c_tok = self.usage_stats.get("candidatesTokenCount", 0)
@@ -932,6 +937,9 @@ class StreamProcessor:
 {cache_row}| **Réponse** | {c_tok:,} |
 | **Total** | {t_tok:,} / {self.context_window:,} |
 </details>\n"""
+                has_content = True
+
+            if has_content:
                 yield stats_content
 
         if self.usage_stats:
