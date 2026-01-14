@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.22 - Clean Core)
+title: Gemini Pro Unified System (Platinum Agentic V135.23 - Tri-Flow Architecture)
 author: Wilfried BARNAVON
-version: 135.22
-description: v135.22: NETTOYAGE. Suppression des commandes '/reset' et des valves de diagnostic/reset obsolètes. La gestion de l'auth se fait désormais via l'Action Function dédiée.
+version: 135.23
+description: v135.23: ARCHITECTURE TRI-FLUX. Introduction de la gestion hybride des fichiers : Flux A (Texte Inline), Flux B (Média Base64 < 2Mo), Flux C (Upload CAS > 2Mo). Nettoyage strict de l'auth Files API.
 """
 
 # ==============================================================================
@@ -49,11 +49,35 @@ _LOCAL_CACHE_REGISTRY = {}
 MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator"
 MIN_ABSOLUTE_TOKENS_PRO = 4096
 
-TEXT_EXTENSIONS = {
-    '.py', '.js', '.html', '.css', '.java', '.c', '.cpp', '.h', '.hpp', '.rs', '.go', '.ts', 
-    '.json', '.yaml', '.yml', '.toml', '.xml', '.md', '.txt', '.sh', '.bat', '.ps1', 
-    '.dockerfile', 'dockerfile', '.env', '.gitignore', '.editorconfig', '.conf', '.ini',
-    '.rb', '.php', '.pl', '.swift', '.kt', '.cs', '.vb', '.lua', '.r', '.sql'
+# --- MAPPING MIME STRICT GEMINI ---
+GEMINI_MIME_MAPPING = {
+    # Video
+    '.flv': 'video/x-flv',
+    '.mov': 'video/quicktime',
+    '.mpeg': 'video/mpeg',
+    '.mpegps': 'video/mpegps',
+    '.mpg': 'video/mpg',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.wmv': 'video/wmv',
+    '.3gpp': 'video/3gpp',
+    # Audio
+    '.aac': 'audio/aac',
+    '.flac': 'audio/flac',
+    '.mp3': 'audio/mp3',
+    '.mpa': 'audio/m4a', # Souvent m4a
+    '.m4a': 'audio/m4a',
+    '.mpga': 'audio/mpga',
+    '.opus': 'audio/opus',
+    '.pcm': 'audio/pcm',
+    '.wav': 'audio/wav',
+    # Image
+    '.png': 'image/png',
+    '.jpeg': 'image/jpeg',
+    '.jpg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.heic': 'image/heic',
+    '.heif': 'image/heif'
 }
 
 # ==============================================================================
@@ -174,7 +198,7 @@ class AuthService:
         headers = {
             "Authorization": f"Bearer {creds.token}", 
             "Content-Type": "application/json",
-            "User-Agent": "GeminiCLI/0.20.0" # Ajout UA pour robustesse API
+            "User-Agent": "GeminiCLI/0.23.0" # Ajout UA pour robustesse API
         }
         # Payload standard pour simuler l'IDE
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
@@ -285,14 +309,17 @@ class GoogleFileManager:
     """
     Client HTTP pour l'API Google Files.
     Gère le protocole 'Resumable Upload'.
-    Accepte soit un Token OAuth (Interne), soit une API Key (Projet Dédié).
+    Désormais strictement dépendant d'une Clé API (Projet Dédié).
     """
-    def __init__(self, auth_token: str, api_key: str = None):
-        self.auth_token = auth_token
+    def __init__(self, api_key: str):
         self.api_key = api_key
         self.upload_base_url = GOOGLE_UPLOAD_BASE_URL
 
     async def upload_file(self, file_path: str, mime_type: str) -> Optional[str]:
+        if not self.api_key:
+             print("❌ [UPLOAD] API Key manquante.")
+             return None
+
         file_size = os.path.getsize(file_path)
         display_name = os.path.basename(file_path)
         
@@ -302,14 +329,9 @@ class GoogleFileManager:
             "X-Goog-Upload-Command": "start",
             "X-Goog-Upload-Header-Content-Length": str(file_size),
             "X-Goog-Upload-Header-Content-Type": mime_type,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key
         }
-        
-        # AUTH: Gestion clé API via header x-goog-api-key (conforme REST docs) ou Bearer token
-        if self.api_key:
-            headers_init["x-goog-api-key"] = self.api_key
-        else:
-            headers_init["Authorization"] = f"Bearer {self.auth_token}"
         
         meta_body = {"file": {"displayName": display_name}}
 
@@ -430,24 +452,27 @@ class Orchestrator:
             
         return None
 
-    def _get_file_info(self, f_id: str, f_name: str, owui_path: str) -> Tuple[str, bool, str, Optional[str]]:
+    def _get_file_info(self, f_id: str, f_name: str, owui_path: str, text_exts: set) -> Tuple[str, bool, str, Optional[str]]:
         """Identifie le type de fichier (Texte vs Binaire) et son chemin."""
         if not f_id: return "", False, "No ID", None
         real_path = self._resolve_local_path(owui_path, f_id, f_name)
         if not real_path: return "", False, f"Not Found: {f_id}", None
 
-        mime_type, _ = mimetypes.guess_type(real_path)
         ext = os.path.splitext(real_path)[1].lower()
+        
+        # 1. Vérification Mime Forcée (Gemini Strict)
+        if ext in GEMINI_MIME_MAPPING:
+            return GEMINI_MIME_MAPPING[ext], False, "", real_path
+
+        # 2. Détection Système Standard (Fallback)
+        mime_type, _ = mimetypes.guess_type(real_path)
 
         is_text = False
         if mime_type and (mime_type.startswith("text/") or mime_type in ["application/json", "application/javascript", "application/xml"]): is_text = True
-        if not is_text and ext in TEXT_EXTENSIONS: is_text = True
+        if not is_text and ext in text_exts: is_text = True
 
         if not mime_type:
-            if ext == '.pdf': mime_type = "application/pdf"
-            elif ext in ['.mp4', '.mov', '.avi']: mime_type = "video/mp4"
-            elif ext in ['.mp3', '.wav']: mime_type = "audio/mp3"
-            else: mime_type = "application/octet-stream"
+            mime_type = "application/octet-stream"
 
         return mime_type, is_text, "", real_path
 
@@ -456,7 +481,11 @@ class Orchestrator:
         files_to_process = []
         seen_ids = set()
 
-        # Deduplication des fichiers dans le message
+        # CONFIGURATION DES FLUX
+        text_exts = {x.strip().lower() for x in self.valves.TEXT_EXTENSIONS.split(',')}
+        max_inline_bytes = self.valves.MAX_INLINE_SIZE_KB * 1024
+
+        # Deduplication
         for f in files_raw:
             fid = f.get("id") or f.get("file", {}).get("id")
             if fid and fid not in seen_ids:
@@ -468,30 +497,47 @@ class Orchestrator:
             f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
             f_path = f_real.get("path")
 
-            mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path)
+            mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path, text_exts)
 
             if err:
                 if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ {f_name}: {err}")
                 continue
-
-            # Cas 1 : Texte -> Inline
+            
+            file_size = os.path.getsize(real_path)
+            
+            # --- FLUX A : TEXTE (INLINE) ---
             if is_text:
                 try:
                     with open(real_path, "r", encoding="utf-8", errors="ignore") as f:
                         data = f.read()
                     parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
-                    self.files_processed_info.append({"name": f_name, "type": "Text", "status": "Embedded 📄"})
+                    self.files_processed_info.append({"name": f_name, "type": "Text (Inline)", "size": file_size, "status": "Embedded 📄"})
                 except: pass
                 continue
 
-            # Cas 2 : Binaire -> CAS (Upload Unique)
-            if not file_manager:
-                parts.append({"text": f"[Error: Auth required for file {f_name}]"})
+            # --- FLUX B & C : BINAIRE (TRI PAR TAILLE) ---
+            # Condition : Mime Supporté par Gemini (via Mapping ou Détection)
+            # Les fichiers inconnus tomberont ici mais seront peut-être rejetés par l'API si le mime est incorrect.
+            
+            # FLUX B : Base64 (Petit Fichier)
+            if file_size < max_inline_bytes:
+                try:
+                    with open(real_path, "rb") as f:
+                        raw_data = f.read()
+                        b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
+                    
+                    parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
+                    self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"})
+                except Exception as e:
+                    if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Base64 Error {f_name}: {str(e)}")
                 continue
 
-            file_size = os.path.getsize(real_path)
+            # FLUX C : Upload API (Gros Fichier)
+            if not file_manager or not file_manager.api_key:
+                parts.append({"text": f"[Error: File {f_name} too large for inline ({file_size/1024:.0f}KB) and no API Key for Upload]"})
+                continue
             
-            # Hashage pour identifier le contenu de manière unique
+            # Hashage pour identifier le contenu
             with open(real_path, "rb") as f:
                 file_hash = hashlib.sha256(f.read()).hexdigest()
 
@@ -516,18 +562,18 @@ class Orchestrator:
                     status_ui = "Failed ❌"
 
             if final_uri:
-                # Utilisation de l'URI Google
-                # Utilisation impérative du CAMELCASE pour l'API REST (requis par v1beta endpoint)
                 parts.append({"fileData": {"mimeType": mime, "fileUri": final_uri}})
-                self.files_processed_info.append({"name": f_name, "type": mime.split('/')[-1].upper(), "size": file_size, "status": status_ui})
+                self.files_processed_info.append({"name": f_name, "type": f"{mime.split('/')[-1].upper()} (Cloud)", "size": file_size, "status": status_ui})
         
         return parts
 
     async def prepare_context(self, body: Dict, chat_id: str, auth_token: str, extra_files: Any = None) -> List[Dict]:
         """
         Prépare la liste 'contents' pour Gemini.
-        - Texte : injecté directement.
-        - Fichiers Binaires : Uploadé (CAS), puis injecté via fileData (URI).
+        Architecture Tri-Flux :
+        1. Texte -> Inline
+        2. Media < Limite -> Base64
+        3. Media > Limite -> Upload (si API Key présente)
         """
         self.files_processed_info = []
         messages = body.get("messages", [])
@@ -535,9 +581,9 @@ class Orchestrator:
 
         file_registry = FileRegistry(self.data_dir, chat_id)
         
-        # INSTANTIATION AVEC CLÉ API SI PRÉSENTE (HYBRID AUTH)
+        # INSTANTIATION AVEC CLÉ API UNIQUEMENT (STRICT)
         files_api_key = getattr(self.valves, "FILES_API_KEY", "").strip()
-        file_manager = GoogleFileManager(auth_token, files_api_key)
+        file_manager = GoogleFileManager(files_api_key) if files_api_key else None
         
         # Mapping des tools pour le décodage des réponses
         for m in messages:
@@ -556,7 +602,7 @@ class Orchestrator:
             role = m["role"]
             if role == "system": i+=1; continue
 
-            # --- GESTION DES TOOLS (Réintégrée) ---
+            # --- GESTION DES TOOLS ---
             if role == "tool":
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
@@ -567,7 +613,6 @@ class Orchestrator:
                     parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     i += 1
                 
-                # Attacher la réponse au dernier message utilisateur (Gemini requirement)
                 if contents and contents[-1]["role"] == "user":
                     contents[-1]["parts"].extend(parts)
                 else:
@@ -584,7 +629,7 @@ class Orchestrator:
                 txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL).strip()
                 if txt: parts.append({"text": txt})
 
-                # Gestion CoT & Function Call (Réintégrée)
+                # Gestion CoT & Function Call
                 found_in_band_sig = None
                 tool_calls_in_msg = False
                 if m.get("tool_calls"):
@@ -624,7 +669,7 @@ class Orchestrator:
                         ex = extra_files if isinstance(extra_files, list) else [extra_files]
                         raw_list.extend(ex)
 
-                # Appel à la nouvelle méthode dédiée pour traiter les fichiers
+                # Appel à la nouvelle méthode dédiée pour traiter les fichiers (TRI-FLUX)
                 file_parts = await self._process_files_for_message(raw_list, file_registry, file_manager)
                 parts.extend(file_parts)
 
@@ -775,13 +820,11 @@ class StreamProcessor:
             yield f"⚠️ API Error: {await response.aread()}"
             return
 
-        # Utilisation de IncrementalDecoder pour gérer les césures de caractères multi-octets
         decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
         buffer = ""
         
         async for chunk in response.aiter_bytes():
             try:
-                # Décodage robuste du flux
                 buffer += decoder.decode(chunk, final=False)
                 
                 while "\n" in buffer:
@@ -799,7 +842,6 @@ class StreamProcessor:
                                 txt = part.get("text", "")
                                 func_call = part.get("functionCall")
 
-                                # 1. Capture Signature (Restauré)
                                 if "thoughtSignature" in part:
                                     self.current_sig = part["thoughtSignature"]
                                     if self.chat_id and self.sig_manager:
@@ -809,7 +851,6 @@ class StreamProcessor:
                                     if not in_think: yield "<think>\n"; in_think = True
                                     yield txt
                                 
-                                # 2. Tool Calls (Restauré)
                                 elif func_call:
                                     step_label = f"Pré-{func_call.get('name', 'Action')}"
                                     if in_think: yield "\n</think>\n"; in_think = False
@@ -836,8 +877,6 @@ class StreamProcessor:
                                     yield txt
             except: pass
         
-        # --- CORRECTIF CRITIQUE : TRAITEMENT DU RELIQUAT DE BUFFER ---
-        # On force le vidage du décodeur et on traite le reste du buffer
         remaining = decoder.decode(b"", final=True)
         buffer += remaining
         
@@ -851,7 +890,6 @@ class StreamProcessor:
         if in_think: yield "\n</think>\n"
 
         if self.show_metrics and (self.usage_stats or self.file_stats):
-            # Affichage nettoyé avec espacement pour éviter le bug d'affichage
             stats_content = "\n\n" 
             
             if self.file_stats:
@@ -882,7 +920,6 @@ class StreamProcessor:
 </details>\n"""
                 yield stats_content
 
-        # 3. Yield Final Usage
         if self.usage_stats:
             yield {
                 "usage": {
@@ -899,12 +936,17 @@ class Pipe:
     class Valves(BaseModel):
         FILES_API_KEY: str = Field(default="", description="🔑 API Key Google (Projet Files)")
         
-        # Valves supprimées : RUN_DIAGNOSTICS, FORCE_RESET_AUTH
+        # --- NOUVELLES VALVES POUR TRI-FLUX ---
+        TEXT_EXTENSIONS: str = Field(default=".bat,.c,.conf,.cpp,.cs,.css,.csv,.dockerfile,.editorconfig,.env,.gitignore,.go,.h,.hpp,.html,.ini,.java,.js,.json,.kt,.lua,.md,.php,.pl,.ps1,.py,.r,.rb,.rs,.sh,.sql,.swift,.toml,.ts,.txt,.vb,.xml,.yaml,.yml,dockerfile", description="Extensions Texte (CSV)")
+        INLINE_MEDIA_EXTENSIONS: str = Field(default=".3gpp,.aac,.flac,.flv,.heic,.heif,.jpeg,.jpg,.mov,.mp3,.mp4,.mpa,.mpe,.mpeg,.mpegps,.mpg,.mpga,.opus,.pcm,.png,.wav,.webm,.webp,.wmv", description="Extensions Média Supportées (CSV)")
+        MAX_INLINE_SIZE_KB: int = Field(default=4096, description="Taille Max Inline (Ko)")
+        # --------------------------------------
+
         DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
         
         ENABLE_CACHING: bool = Field(default=True, description="🧠 Smart Cache (Text)")
-        CACHE_TTL: int = Field(default=604800, description="⏱️ Durée Cache (sec)")
+        CACHE_TTL: int = Field(default=3600, description="⏱️ Durée Cache (sec)") # Optimisé à 1h
         MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens (Text)")
         
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
@@ -928,10 +970,7 @@ class Pipe:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
         
-        # NOTE: Suppression des commandes /reset et de la valve FORCE_RESET_AUTH
-        # La gestion de l'auth se fait désormais via l'Action Function action_echo_auth.py
-
-        # 1. AUTHENTIFICATION
+        # 1. AUTHENTIFICATION (Interne Chat)
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = self.auth.exchange_code(ac)
@@ -944,9 +983,12 @@ class Pipe:
         if not pid: 
              yield f"❌ **Erreur Projet**\n{debug_log}"; return
 
-        # 2. PRÉPARATION CONTEXTE
+        # 2. PRÉPARATION CONTEXTE (Tri-Flux Fichiers)
         tools = orch.convert_owui_tools(body.get("tools"))
         files = body.get("files") or kwargs.get("__files__")
+        
+        # Note : On passe creds.token pour l'auth interne, mais l'Orchestrator n'utilisera plus 
+        # que la clé API pour l'upload (gérée en interne de prepare_context)
         context = await orch.prepare_context(body, chat_id, creds.token, extra_files=files)
 
         if self.valves.DEBUG_MODE and orch.debug_log:
@@ -963,8 +1005,8 @@ class Pipe:
         if self.valves.ENABLE_CACHING and estimated_tokens >= self.valves.MIN_CACHE_TOKENS:
              history_to_cache = []
              for msg in context[:-1]:
-                  clean_parts = [p for p in msg.get("parts", []) if "text" in p]
-                  if clean_parts: history_to_cache.append({"role": msg["role"], "parts": clean_parts})
+                 clean_parts = [p for p in msg.get("parts", []) if "text" in p]
+                 if clean_parts: history_to_cache.append({"role": msg["role"], "parts": clean_parts})
              
              trigger_content = [context[-1]]
              
@@ -984,7 +1026,7 @@ class Pipe:
                      adapter = PublicGeminiOAuthAdapter(creds.token)
                      req = adapter.build(self.valves.MODEL_SELECTION, trigger_content, self.valves.TEMPERATURE, self.valves.MAX_TOKENS, cache_name, tools)
 
-        # 4. FALLBACK
+        # 4. FALLBACK (Pas de cache)
         if not req:
             adapter = GeminiAdapter(self.base_url)
             req = adapter.build(pid, context, orch.get_system_instruction(), self.valves.TEMPERATURE, self.valves.MAX_TOKENS, self.valves.THINKING_LEVEL, self.valves.MODEL_SELECTION, tools)
