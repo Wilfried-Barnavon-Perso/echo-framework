@@ -942,22 +942,24 @@ class Pipe:
         MAX_INLINE_SIZE_KB: int = Field(default=4096, description="Taille Max Inline (Ko)")
         # --------------------------------------
 
-        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
+       
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
         
         ENABLE_CACHING: bool = Field(default=True, description="🧠 Smart Cache (Text)")
         CACHE_TTL: int = Field(default=3600, description="⏱️ Durée Cache (sec)") # Optimisé à 1h
-        MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens (Text)")
+        MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens Requis (Text)")
         
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
         TEMPERATURE: float = Field(default=1.0, description="Température")
-        MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
+        MAX_TOKENS: int = Field(default=65536, description="Max Tokens en Sortie")
         MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
         THINKING_LEVEL: Literal["DYNAMIC", "LOW", "HIGH"] = Field(default="DYNAMIC", description="Niveau de réflexion")
         SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système")
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
         OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu")
+
+        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
 
     def __init__(self):
         self.valves = self.Valves()
