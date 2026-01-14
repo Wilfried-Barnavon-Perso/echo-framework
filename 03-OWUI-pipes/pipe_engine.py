@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.38 - Multimodal Smart Cache)
+title: Gemini Pro Unified System (Platinum Agentic V135.39 - Video Processing Fix)
 author: Wilfried BARNAVON
-version: 135.38
-description: v135.38: Activation du cache multimodal complet. Le Smart Cache inclut désormais les données binaires (Images Base64/Inline et Fichiers Cloud) en plus du texte. Cela permet de maintenir le contexte visuel sur plusieurs tours de conversation, indispensable pour un agent multimodal.
+version: 135.39
+description: v135.39: Correctif critique pour les vidéos. Ajout d'une boucle d'attente (polling) post-upload pour vérifier que l'état du fichier est 'ACTIVE' côté Google avant de l'envoyer au modèle. Cela évite l'erreur 400 INVALID_ARGUMENT sur les gros fichiers qui nécessitent un temps de traitement.
 """
 
 # ==============================================================================
@@ -22,6 +22,7 @@ import base64
 import mimetypes
 import glob
 import codecs
+import asyncio
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
@@ -167,7 +168,7 @@ class AuthService:
         headers = {
             "Authorization": f"Bearer {creds.token}", 
             "Content-Type": "application/json",
-            "User-Agent": "GeminiCLI/0.20.0" # Ajout UA pour robustesse API
+            "User-Agent": "GeminiCLI/0.24.0" # Ajout UA pour robustesse API
         }
         # Payload standard pour simuler l'IDE
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
@@ -284,6 +285,18 @@ class GoogleFileManager:
         self.api_key = api_key
         self.upload_base_url = GOOGLE_UPLOAD_BASE_URL
 
+    async def _check_state(self, name: str) -> str:
+        """Vérifie l'état de traitement d'un fichier (PROCESSING vs ACTIVE)."""
+        url = f"https://generativelanguage.googleapis.com/v1beta/{name}"
+        headers = {"x-goog-api-key": self.api_key}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    return resp.json().get("state", "UNKNOWN")
+        except: pass
+        return "UNKNOWN"
+
     async def upload_file(self, file_path: str, mime_type: str) -> Optional[str]:
         if not self.api_key:
              print("❌ [UPLOAD] API Key manquante.")
@@ -330,8 +343,30 @@ class GoogleFileManager:
                 
                 if resp_upload.status_code == 200:
                     result = resp_upload.json()
-                    file_uri = result.get("file", {}).get("uri")
+                    file_data = result.get("file", {})
+                    file_uri = file_data.get("uri")
+                    file_name = file_data.get("name") # files/abc-123
+                    
                     print(f"✅ [UPLOAD SUCCESS] URI: {file_uri}")
+                    
+                    # 3. Attente active du traitement (Processing)
+                    # Uniquement si on a le nom de ressource (files/...)
+                    if file_name:
+                        print(f"⏳ [UPLOAD] Vérification état ({file_name})...")
+                        # 30 itérations * 2 sec = 60 secondes max d'attente
+                        for _ in range(30):
+                            state = await self._check_state(file_name)
+                            if state == "ACTIVE":
+                                print(f"✅ [UPLOAD] Fichier ACTIVE.")
+                                return file_uri
+                            elif state == "FAILED":
+                                print(f"❌ [UPLOAD] Traitement échoué (FAILED).")
+                                return None
+                            # Si PROCESSING, on attend
+                            await asyncio.sleep(2)
+                        
+                        print("⚠️ [UPLOAD] Timeout attente traitement. Envoi quand même.")
+                    
                     return file_uri
                 else:
                     print(f"❌ [UPLOAD DATA FAIL] {resp_upload.status_code}: {resp_upload.text}")
