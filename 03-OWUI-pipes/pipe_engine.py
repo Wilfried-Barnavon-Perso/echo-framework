@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.33 - JSON Valves MIME Fix)
+title: Gemini Pro Unified System (Platinum Agentic V135.34 - Debug Raw Files)
 author: Wilfried BARNAVON
-version: 135.33
-description: v135.33: Correctif Gestion Images & Mimes. Remplacement des listes CSV par des Valves JSON configurables pour le mapping MIME. Priorité absolue aux Valves sur la détection système. Rétablissement du support inline pour les images.
+version: 135.34
+description: v135.34: Ajout d'un log debug profond pour inspecter les dictionnaires de fichiers bruts provenant du filtre Bypass RAG. Permet de diagnostiquer les problèmes de métadonnées ou de chemin sur les images.
 """
 
 # ==============================================================================
@@ -681,7 +681,16 @@ class Orchestrator:
                 if "files" in m and isinstance(m["files"], list): raw_list.extend(m["files"])
                 
                 if i == last_user_idx:
-                    if body.get("raw_files_from_filter"): raw_list.extend(body.get("raw_files_from_filter"))
+                    raw_from_filter = body.get("raw_files_from_filter")
+                    if raw_from_filter:
+                        # --- DEBUG: Log des fichiers bruts du filtre ---
+                        if self.valves.DEBUG_MODE:
+                            try: dump = json.dumps(raw_from_filter, indent=2, default=str)
+                            except: dump = str(raw_from_filter)
+                            self.debug_log.append(f"📦 **[DEBUG RAW FILES]** (Bypass RAG):\n```json\n{dump}\n```")
+                        # -----------------------------------------------
+                        raw_list.extend(raw_from_filter)
+
                     if extra_files: 
                         ex = extra_files if isinstance(extra_files, list) else [extra_files]
                         raw_list.extend(ex)
