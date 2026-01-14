@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.23 - Tri-Flow Architecture)
+title: Gemini Pro Unified System (Platinum Agentic V135.24 - Tri-Flow + Fallback)
 author: Wilfried BARNAVON
-version: 135.23
-description: v135.23: ARCHITECTURE TRI-FLUX. Introduction de la gestion hybride des fichiers : Flux A (Texte Inline), Flux B (Média Base64 < 2Mo), Flux C (Upload CAS > 2Mo). Nettoyage strict de l'auth Files API.
+version: 135.24
+description: v135.24: Ajout du mécanisme de Fallback Base64 sécurisé par valve. Si l'upload API échoue (pas de clé), on peut forcer le Base64.
 """
 
 # ==============================================================================
@@ -198,7 +198,7 @@ class AuthService:
         headers = {
             "Authorization": f"Bearer {creds.token}", 
             "Content-Type": "application/json",
-            "User-Agent": "GeminiCLI/0.23.0" # Ajout UA pour robustesse API
+            "User-Agent": "GeminiCLI/0.20.0" # Ajout UA pour robustesse API
         }
         # Payload standard pour simuler l'IDE
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
@@ -515,11 +515,7 @@ class Orchestrator:
                 except: pass
                 continue
 
-            # --- FLUX B & C : BINAIRE (TRI PAR TAILLE) ---
-            # Condition : Mime Supporté par Gemini (via Mapping ou Détection)
-            # Les fichiers inconnus tomberont ici mais seront peut-être rejetés par l'API si le mime est incorrect.
-            
-            # FLUX B : Base64 (Petit Fichier)
+            # --- FLUX B : BINAIRE INLINE (Petit Fichier) ---
             if file_size < max_inline_bytes:
                 try:
                     with open(real_path, "rb") as f:
@@ -532,12 +528,30 @@ class Orchestrator:
                     if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Base64 Error {f_name}: {str(e)}")
                 continue
 
-            # FLUX C : Upload API (Gros Fichier)
-            if not file_manager or not file_manager.api_key:
-                parts.append({"text": f"[Error: File {f_name} too large for inline ({file_size/1024:.0f}KB) and no API Key for Upload]"})
-                continue
+            # --- FLUX C : UPLOAD API ou FALLBACK ---
+            can_upload = file_manager and file_manager.api_key
+            use_fallback = getattr(self.valves, "ENABLE_UPLOAD_FALLBACK", False)
+
+            if not can_upload:
+                if use_fallback:
+                    # FALLBACK : Force Base64 malgré la taille
+                    try:
+                        with open(real_path, "rb") as f:
+                            raw_data = f.read()
+                            b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
+                        
+                        parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
+                        self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64 Fallback)", "size": file_size, "status": "Embedded ⚠️"})
+                        if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Fallback Base64 utilisé pour {f_name}")
+                    except Exception as e:
+                        if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Base64 Fallback Error {f_name}: {str(e)}")
+                        parts.append({"text": f"[Error processing file {f_name}: {str(e)}]"})
+                    continue
+                else:
+                    parts.append({"text": f"[Error: File {f_name} too large for inline ({file_size/1024:.0f}KB) and no API Key for Upload]"})
+                    continue
             
-            # Hashage pour identifier le contenu
+            # Hashage pour identifier le contenu (Si Upload possible)
             with open(real_path, "rb") as f:
                 file_hash = hashlib.sha256(f.read()).hexdigest()
 
@@ -940,26 +954,25 @@ class Pipe:
         TEXT_EXTENSIONS: str = Field(default=".bat,.c,.conf,.cpp,.cs,.css,.csv,.dockerfile,.editorconfig,.env,.gitignore,.go,.h,.hpp,.html,.ini,.java,.js,.json,.kt,.lua,.md,.php,.pl,.ps1,.py,.r,.rb,.rs,.sh,.sql,.swift,.toml,.ts,.txt,.vb,.xml,.yaml,.yml,dockerfile", description="Extensions Texte (CSV)")
         INLINE_MEDIA_EXTENSIONS: str = Field(default=".3gpp,.aac,.flac,.flv,.heic,.heif,.jpeg,.jpg,.mov,.mp3,.mp4,.mpa,.mpe,.mpeg,.mpegps,.mpg,.mpga,.opus,.pcm,.png,.wav,.webm,.webp,.wmv", description="Extensions Média Supportées (CSV)")
         MAX_INLINE_SIZE_KB: int = Field(default=4096, description="Taille Max Inline (Ko)")
+        ENABLE_UPLOAD_FALLBACK: bool = Field(default=False, description="⚠️ Fallback Base64 si Upload impossible")
         # --------------------------------------
 
-       
+        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
         
         ENABLE_CACHING: bool = Field(default=True, description="🧠 Smart Cache (Text)")
         CACHE_TTL: int = Field(default=3600, description="⏱️ Durée Cache (sec)") # Optimisé à 1h
-        MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens Requis (Text)")
+        MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens (Text)")
         
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
         TEMPERATURE: float = Field(default=1.0, description="Température")
-        MAX_TOKENS: int = Field(default=65536, description="Max Tokens en Sortie")
+        MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
         MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
         THINKING_LEVEL: Literal["DYNAMIC", "LOW", "HIGH"] = Field(default="DYNAMIC", description="Niveau de réflexion")
         SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système")
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
         OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu")
-
-        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
 
     def __init__(self):
         self.valves = self.Valves()
