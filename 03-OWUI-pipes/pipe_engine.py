@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.43 - Hyper Debug)
+title: Gemini Pro Unified System (Platinum Agentic V135.47 - Unified Identity Scope)
 author: Wilfried BARNAVON
-version: 135.43
-description: v135.43: Mode DEBUG Verbeux. Affiche le JSON complet de la requête API (en masquant les gros blocs Base64) et l'URL exacte appelée pour diagnostiquer les erreurs 400. En cas d'erreur, dump complet du corps de réponse avec l'URL ciblée.
+version: 135.47
+description: v135.47: Implémentation de la stratégie "Identité Unifiée". 1) Extension du scope OAuth2 avec 'generative-language' pour permettre au token utilisateur de gérer les fichiers. 2) L'upload utilise ce token OAuth (Identité A) au lieu de la clé API seule, alignant ainsi le propriétaire du fichier avec l'émetteur de la requête de chat. Base code: v135.43 (Debug Verbeux).
 """
 
 # ==============================================================================
@@ -41,6 +41,7 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid",
+    "https://www.googleapis.com/auth/generative-language" # <--- AJOUT CRITIQUE (Identité Unifiée)
 ]
 
 # --- REGISTRE DE CACHE GLOBAL ---
@@ -121,7 +122,7 @@ class AuthService:
         flow = Flow.from_client_config(OFFICIAL_CLIENT_CONFIG, scopes=GOOGLE_SCOPES, autogenerate_code_verifier=False)
         flow.redirect_uri = GOOGLE_REDIRECT_URI
         url, _ = flow.authorization_url(prompt="consent", access_type="offline", code_challenge=challenge, code_challenge_method="S256")
-        return f"### 🔐 Authentification Requise\n\n1. **[Cliquez ici]({url})**\n2. Connectez-vous.\n3. Copiez le code `4/...`.\n4. **Collez-le ici**."
+        return f"### 🔐 Authentification Requise (Mise à jour Scopes)\n\n1. **[Cliquez ici]({url})**\n2. Connectez-vous.\n3. Copiez le code `4/...`.\n4. **Collez-le ici**."
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
@@ -148,6 +149,11 @@ class AuthService:
         if os.path.exists(self.token_path):
             try: creds = Credentials.from_authorized_user_file(self.token_path, GOOGLE_SCOPES)
             except: pass
+        
+        # Vérification si les scopes ont changé (Force re-auth pour v135.47)
+        if creds and set(creds.scopes) != set(GOOGLE_SCOPES):
+            return None 
+
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(GoogleAuthRequest())
@@ -168,7 +174,7 @@ class AuthService:
         headers = {
             "Authorization": f"Bearer {creds.token}", 
             "Content-Type": "application/json",
-            "User-Agent": "GeminiCLI/0.24.0" # Ajout UA pour robustesse API
+            "User-Agent": "GeminiCLI/0.24.0" # Ajout UA 0.24.0
         }
         # Payload standard pour simuler l'IDE
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
@@ -279,16 +285,29 @@ class GoogleFileManager:
     """
     Client HTTP pour l'API Google Files.
     Gère le protocole 'Resumable Upload'.
-    Désormais strictement dépendant d'une Clé API (Projet Dédié).
+    Supporte désormais l'Auth Token (OAuth) en priorité, et l'API Key en fallback.
     """
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, auth_token: str = None):
         self.api_key = api_key
+        self.auth_token = auth_token
         self.upload_base_url = GOOGLE_UPLOAD_BASE_URL
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Génère les headers d'auth : Token (User A) > API Key (User B)."""
+        headers = {}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+            # On ajoute aussi la clé API si dispo, pour le quota projet
+            if self.api_key:
+                headers["x-goog-api-key"] = self.api_key
+        elif self.api_key:
+            headers["x-goog-api-key"] = self.api_key
+        return headers
 
     async def _check_state(self, name: str) -> str:
         """Vérifie l'état de traitement d'un fichier (PROCESSING vs ACTIVE)."""
         url = f"https://generativelanguage.googleapis.com/v1beta/{name}"
-        headers = {"x-goog-api-key": self.api_key}
+        headers = self._get_headers()
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(url, headers=headers)
@@ -298,22 +317,22 @@ class GoogleFileManager:
         return "UNKNOWN"
 
     async def upload_file(self, file_path: str, mime_type: str) -> Optional[str]:
-        if not self.api_key:
-             print("❌ [UPLOAD] API Key manquante.")
+        if not self.api_key and not self.auth_token:
+             print("❌ [UPLOAD] Aucune accréditation (Ni Token, ni Key).")
              return None
 
         file_size = os.path.getsize(file_path)
         display_name = os.path.basename(file_path)
         
         # 1. Initialisation
-        headers_init = {
+        headers_init = self._get_headers()
+        headers_init.update({
             "X-Goog-Upload-Protocol": "resumable",
             "X-Goog-Upload-Command": "start",
             "X-Goog-Upload-Header-Content-Length": str(file_size),
             "X-Goog-Upload-Header-Content-Type": mime_type,
-            "Content-Type": "application/json",
-            "x-goog-api-key": self.api_key
-        }
+            "Content-Type": "application/json"
+        })
         
         meta_body = {"file": {"displayName": display_name}}
 
@@ -347,7 +366,8 @@ class GoogleFileManager:
                     file_uri = file_data.get("uri")
                     file_name = file_data.get("name") # files/abc-123
                     
-                    print(f"✅ [UPLOAD SUCCESS] URI: {file_uri}")
+                    auth_mode = "OAuth Token" if self.auth_token else "API Key"
+                    print(f"✅ [UPLOAD SUCCESS] URI: {file_uri} (via {auth_mode})")
                     
                     # 3. Attente active du traitement (Processing)
                     if file_name:
@@ -566,7 +586,8 @@ class Orchestrator:
                     # On ne continue pas ici, on laisse une chance au Flux C (Upload) si configuré, ou on passe au suivant.
 
             # --- FLUX C : UPLOAD API ou FALLBACK ---
-            can_upload = file_manager and file_manager.api_key
+            # NOTE v135.45: Le file_manager contient maintenant le token d'auth s'il est dispo.
+            can_upload = (file_manager is not None) and (file_manager.api_key or file_manager.auth_token)
             use_fallback = getattr(self.valves, "ENABLE_UPLOAD_FALLBACK", False)
 
             if not can_upload:
@@ -586,7 +607,7 @@ class Orchestrator:
                         parts.append({"text": f"[Error processing file {f_name}: {str(e)}]"})
                     continue
                 else:
-                    parts.append({"text": f"[Error: File {f_name} too large for inline ({file_size/1024:.0f}KB) and no API Key for Upload]"})
+                    parts.append({"text": f"[Error: File {f_name} too large for inline ({file_size/1024:.0f}KB) and no API Key/Token for Upload]"})
                     continue
             
             # Hashage pour identifier le contenu (Si Upload possible)
@@ -604,7 +625,9 @@ class Orchestrator:
                 if self.valves.DEBUG_MODE: self.debug_log.append(f"⚡ CAS HIT: {f_name}")
             else:
                 # MISS : Upload nécessaire
-                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔼 Uploading {f_name} ({file_size} bytes)...")
+                auth_mode_log = "Token OAuth" if file_manager.auth_token else "API Key"
+                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔼 Uploading {f_name} ({file_size} bytes) via {auth_mode_log}...")
+                
                 uri = await file_manager.upload_file(real_path, mime)
                 if uri:
                     final_uri = uri
@@ -634,9 +657,10 @@ class Orchestrator:
 
         file_registry = FileRegistry(self.data_dir, chat_id)
         
-        # INSTANTIATION AVEC CLÉ API UNIQUEMENT (STRICT)
+        # INSTANTIATION AVEC CLÉ API ET TOKEN D'AUTH (Unified Identity)
         files_api_key = getattr(self.valves, "FILES_API_KEY", "").strip()
-        file_manager = GoogleFileManager(files_api_key) if files_api_key else None
+        # Ici on passe le token OAuth2 récupéré du flux principal
+        file_manager = GoogleFileManager(files_api_key, auth_token) if (files_api_key or auth_token) else None
         
         # Mapping des tools pour le décodage des réponses
         for m in messages:
@@ -875,24 +899,17 @@ class GeminiAdapter:
             "request": {"systemInstruction": system_instr, "contents": contents, "generationConfig": gen_config}
         }
         if tools: payload["request"]["tools"] = tools; payload["request"]["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
-        return {"url": f"{self.base_url}:streamGenerateContent?alt=sse", "headers": {"Content-Type": "application/json", "User-Agent": "GeminiCLI"}, "json": payload}
+        return {"url": f"{self.base_url}:streamGenerateContent?alt=sse", "headers": {"Content-Type": "application/json", "User-Agent": "GeminiCLI/0.24.0"}, "json": payload}
 
 # ==============================================================================
 # SECTION 7 : STREAM PROCESSOR
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, debug=False, chat_id=None, sig_manager=None, show_metrics=False, context_window=1000000, initial_label="Réponse", file_stats=None):
-        self.debug = debug
-        self.chat_id = chat_id
-        self.sig_manager = sig_manager
-        self.show_metrics = show_metrics
-        self.context_window = context_window
-        self.initial_label = initial_label
-        self.usage_stats = None
-        self.file_stats = file_stats or []
-        self.current_sig = None
-        self.stats_dir = "/app/backend/data/stats"
-        os.makedirs(self.stats_dir, exist_ok=True)
+    def __init__(self, debug, chat_id, sig_mgr, show_metrics, win_size, lbl, f_stats):
+        self.debug = debug; self.chat_id = chat_id; self.sig_mgr = sig_mgr
+        self.show = show_metrics; self.win = win_size; self.lbl = lbl; self.f_stats = f_stats
+        self.usage = None; self.cur_sig = None
+        self.stats_dir = "/app/backend/data/stats"; os.makedirs(self.stats_dir, exist_ok=True)
 
     def _update_stats(self, data):
         if "response" in data and "usageMetadata" in data["response"]:
