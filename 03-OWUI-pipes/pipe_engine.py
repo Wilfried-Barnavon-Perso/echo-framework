@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.35 - Deep Diagnostic)
+title: Gemini Pro Unified System (Platinum Agentic V135.37 - The Combiner)
 author: Wilfried BARNAVON
-version: 135.35
-description: v135.35: Renforcement du diagnostic de fichiers. En mode DEBUG, le système affiche désormais l'état exhaustif des entrées fichiers (Bypass RAG, Body Standard, Metadata) même si elles sont vides, pour comprendre pourquoi les images peuvent être ignorées.
+version: 135.37
+description: v135.37: VERSION DE SYNTHÈSE STABLE. Combine toutes les avancées récentes : 1) Valves JSON pour le mapping MIME flexible. 2) Debug Profond des entrées fichiers. 3) Support natif des images inline (image_url) envoyées par OWUI en Base64.
 """
 
 # ==============================================================================
@@ -717,9 +717,25 @@ class Orchestrator:
                 content_txt = m.get("content", "")
                 if isinstance(content_txt, str) and content_txt.strip():
                     parts.append({"text": content_txt})
+                
+                # --- CORRECTION CRITIQUE V135.36 : GESTION DES IMAGES INLINE ---
                 elif isinstance(content_txt, list):
                     for item in content_txt:
-                         if item.get("type") == "text": parts.append({"text": item.get("text", "")})
+                         if item.get("type") == "text": 
+                             parts.append({"text": item.get("text", "")})
+                         elif item.get("type") == "image_url":
+                             # Support des images converties en inline par OWUI (Base64)
+                             url = item.get("image_url", {}).get("url", "")
+                             if url.startswith("data:"):
+                                 try:
+                                     header, b64_data = url.split(",", 1)
+                                     # Extract mime from "data:image/png;base64"
+                                     mime_type = header.split(":")[1].split(";")[0]
+                                     parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
+                                     if self.valves.DEBUG_MODE: self.debug_log.append(f"📸 **INLINE IMAGE DETECTED**: {mime_type}")
+                                 except Exception as e:
+                                     if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Inline Image Error: {e}")
+                # ---------------------------------------------------------------
                 
                 if parts: contents.append({"role": "user", "parts": parts})
             
