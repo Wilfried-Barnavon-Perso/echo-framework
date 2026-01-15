@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh
-# VERSION : v5.3.2
+# VERSION : 5.6.0
 # AUTEUR  : Wilfried BARNAVON
-# DATE    : 2026-01-02
+# DATE    : 2026-01-15
 #
 # ROLE : ORCHESTRATION DU DÉPLOIEMENT DES CONTENEURS DOCKER
 # ==============================================================================
@@ -27,162 +27,65 @@
 #
 # --- COMMENT (HOW - ALGO) ---
 # 1. PRE-REQUIS : Vérifie Docker, les permissions, et le réseau 'ai-net'.
-# 2. VERSIONING : Synchronise le fichier version local avec le système (/opt/ECHO_VERSION).
-# 3. DÉPLOIEMENT SÉQUENTIEL : Pour chaque service :
-#    a. Stop & Remove l'ancien conteneur.
-#    b. Run le nouveau avec les bons volumes montés.
-# 4. POST-INSTALL : Attend le Healthcheck de OWUI et injecte la configuration interne.
+# 2. VERSIONING : Synchronise le fichier VERSION local.
+# 3. DÉPLOIEMENT : Boucle sur chaque service pour le lancer.
+# 4. CONFIGURATION : Attend que Open WebUI soit UP, puis injecte les configurations
+#    et les dépendances critiques (orjson pour la stratégie Turbo).
 # ==============================================================================
 
-# --- ETAPE 0 : GESTION DE LA VERSION SYSTÈME ---
-# But : Garantir que la VM "sait" quelle version elle fait tourner.
-# La source de vérité est le fichier VERSION dans le dépôt git local.
-REPO_ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"
-SOURCE_VERSION_FILE="$REPO_ROOT/VERSION"
-SYSTEM_VERSION_FILE="/opt/ECHO_VERSION"
+# --- CONFIGURATION ---
+NETWORK_NAME="ai-net"
+ECHO_VERSION=$(cat /opt/ECHO_VERSION 2>/dev/null || echo "5.6.0")
 
-# Copie atomique de la version pour que les autres scripts (Admin, Shell) puissent la lire
-if [ -f "$SOURCE_VERSION_FILE" ]; then
-    cp "$SOURCE_VERSION_FILE" "$SYSTEM_VERSION_FILE"
-    # Permission 644 : Lecture autorisée pour tout le monde (User 'echo', 'www-data', etc.)
-    chmod 644 "$SYSTEM_VERSION_FILE"
-fi
+echo "==============================================="
+echo "   ECHO FRAMEWORK INSTALLER - $ECHO_VERSION"
+echo "==============================================="
 
-# Lecture pour l'affichage utilisateur (Feedback immédiat)
-if [ -f "$SYSTEM_VERSION_FILE" ]; then
-    ECHO_VERSION=$(cat "$SYSTEM_VERSION_FILE")
-    # Nettoyage cosmétique : on retire le 'v' s'il est présent pour l'affichage propre
-    ECHO_VERSION=$(echo "$ECHO_VERSION" | sed 's/^v//')
+# 1. RÉSEAU
+if ! docker network ls | grep -q "$NETWORK_NAME"; then
+    echo "🌐 Création du réseau Docker : $NETWORK_NAME"
+    docker network create $NETWORK_NAME
 else
-    ECHO_VERSION="unknown"
-    echo "⚠️  Attention : Fichier de version introuvable ($SYSTEM_VERSION_FILE)."
+    echo "✅ Réseau $NETWORK_NAME existant."
 fi
 
-# --- CONFIGURATION BRANCHE DYNAMIQUE (V133+) ---
-# Permet de savoir sur quelle branche git on se trouve pour le log
-BRANCH_FILE="/opt/ECHO_BRANCH"
-TARGET_BRANCH="main" # Défaut
-if [ -f "$BRANCH_FILE" ]; then
-    TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]')
-fi
-
-echo "🚀 ECHO FRAMEWORK INSTALLER [v$ECHO_VERSION] sur branche [$TARGET_BRANCH]"
-echo "==========================================================="
-
-# ------------------------------------------------------------------------------
-# FONCTIONS UTILITAIRES (TOOLBOX)
-# ------------------------------------------------------------------------------
-
-# Fonction : wait_for_docker
-# But : Bloquer l'exécution tant que le démon Docker n'est pas prêt.
-# Utilité : Évite que le script plante au boot si Docker met du temps à démarrer.
-wait_for_docker() {
-    echo "⏳ Attente du démon Docker..."
-    until docker info > /dev/null 2>&1; do
-        sleep 2
-        echo -n "."
-    done
-    echo " OK."
-}
-
-# Fonction : cleanup_container
-# But : Nettoyer proprement un conteneur avant de le recréer.
-# Algo :
-# 1. Vérifie si un conteneur avec ce nom existe (en cours ou arrêté).
-# 2. Si oui, tente de l'arrêter (stop) en ignorant les erreurs si déjà stoppé.
-# 3. Supprime le conteneur (rm) pour libérer le nom.
+# Fonction Helper
 cleanup_container() {
-    local container_name=$1
-    if [ "$(docker ps -aq -f name=^/${container_name}$)" ]; then
-        echo "♻️  Reset conteneur $container_name..."
-        docker stop $container_name >/dev/null 2>&1 || true
-        docker rm $container_name >/dev/null 2>&1 || true
+    local name=$1
+    if docker ps -a --format '{{.Names}}' | grep -Eq "^${name}\$"; then
+        echo "♻️  Nettoyage ancien conteneur : $name"
+        docker rm -f $name >/dev/null
     fi
 }
 
-# ------------------------------------------------------------------------------
-# PRÉPARATION DU SYSTÈME (PRE-FLIGHT CHECKS)
-# ------------------------------------------------------------------------------
-
-wait_for_docker
-
-# Rendre les scripts exécutables est vital. 
-# Si on oublie ça, les 'docker exec' plus bas échoueront avec 'Permission denied'.
-chmod +x /opt/owui-scripts/*.sh 2>/dev/null || true
-
-# Création du réseau Docker 'ai-net' s'il n'existe pas.
-# Ce réseau 'bridge' permet aux conteneurs de se parler par leur nom DNS (ex: ping python-worker).
-# Isolation : Les conteneurs ne sont pas exposés sur le réseau hôte par défaut (sauf ports publiés).
-docker network inspect ai-net >/dev/null 2>&1 || docker network create ai-net
-
-# ------------------------------------------------------------------------------
-# DÉPLOIEMENT DES CONTENEURS (SERVICES)
-# ------------------------------------------------------------------------------
-
-# --- 1. WATCHTOWER (AUTO-UPDATE) ---
-# Rôle : Surveiller les images Docker et les mettre à jour automatiquement.
-# Config : Vérifie toutes les heures (3600s). Supprime les vieilles images (--cleanup).
-# Volume : A besoin du socket Docker (/var/run/docker.sock) pour piloter le démon.
+# 2. SERVICES BACKEND
 cleanup_container "watchtower"
-docker run -d --name watchtower --network ai-net --restart always \
+docker run -d --name watchtower --network $NETWORK_NAME \
   -v /var/run/docker.sock:/var/run/docker.sock \
   containrrr/watchtower --interval 3600 --cleanup
 
-# --- 2. PYTHON WORKER (SANDBOX CODE) ---
-# Rôle : Exécuter du code Python généré par l'IA dans un environnement isolé.
-# Image : python:3.11-slim (Léger mais suffisant).
-# Cmd : Installe les libs de Data Science au démarrage puis lance l'API.
-# Volumes :
-# - Code : /opt/python-worker/worker_api.py (Le serveur Flask)
-# - Data : echo-worker-data (Volume persistant pour stocker les fichiers générés/analysés)
 cleanup_container "python-worker"
-docker run -d --name python-worker --network ai-net --restart always \
-  -v /opt/python-worker/worker_api.py:/app/app.py \
-  -v echo-worker-data:/app/data \
-  python:3.11-slim \
-  /bin/bash -c "pip install --no-cache-dir flask flask-cors requests pandas numpy scipy scikit-learn matplotlib seaborn yfinance beautifulsoup4 openpyxl regex sympy && python /app/app.py"
+docker run -d --name python-worker --network $NETWORK_NAME --restart always \
+  -v /opt/python-worker:/app \
+  python:3.11-slim python /app/worker_api.py
 
-# --- 3. BROWSER AGENT (NAVIGATION WEB) ---
-# Rôle : Naviguer sur le web réel via un Chrome headless piloté par DrissionPage.
-# Dépendances : Installation lourde (chromium, fonts, libs graphiques) requise dans l'image.
-# IPC=host : Nécessaire pour éviter les crashs de mémoire partagée de Chrome (/dev/shm).
 cleanup_container "browser-agent"
-docker run -d --name browser-agent --network ai-net --restart always \
-  --ipc=host \
-  -v /opt/browser-agent/browser_api.py:/app/app.py \
-  -v echo-browser-data:/app/data \
-  -e PIP_ROOT_USER_ACTION=ignore \
-  python:3.11-slim \
-  /bin/bash -c "apt-get update && apt-get install -y chromium fonts-liberation libasound2 libnss3 libgbm1 libnspr4 xdg-utils && pip install --no-cache-dir flask flask-cors DrissionPage && python /app/app.py"
+docker run -d --name browser-agent --network $NETWORK_NAME --restart always \
+  -v /opt/browser-agent:/app \
+  python:3.11-slim python /app/browser_api.py
 
-# --- 4. ADMIN MANAGER (OPS & MONITORING) ---
-# Rôle : Dashboard d'administration, Backups, et Maintenance des Signatures Gemini.
-# Volumes Critiques :
-# - /var/run/docker.sock : Pour redémarrer les autres conteneurs.
-# - /app/backend/data : Montage du volume 'open-webui' pour nettoyer les signatures périmées.
-# - /backups : Volume dédié pour stocker les archives .tar.gz.
 cleanup_container "admin-manager"
-docker run -d --name admin-manager --network ai-net --restart always \
-  -p 3001:3001 \
-  --add-host=host.docker.internal:host-gateway \
+docker run -d --name admin-manager --network $NETWORK_NAME --restart always \
+  -v /opt/admin-manager:/app \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /opt/admin-manager/server.py:/app/server.py \
-  -v echo-backups:/backups \
-  -v open-webui:/data \
-  -v open-webui:/app/backend/data \
-  python:3.11 \
-  /bin/bash -c "pip install --no-cache-dir flask flask-cors docker psutil paramiko APScheduler schedule && python /app/server.py"
+  python:3.11-slim python /app/server.py
 
-# --- 5. OPEN WEBUI (INTERFACE PRINCIPALE) ---
-# Rôle : Le frontend Chat, la gestion RAG, et le moteur d'inférence via Pipe.
-# Image : ghcr.io/open-webui/open-webui:main (Version Edge/Dev pour les features récentes).
-# Volumes "Injection" :
-# On monte nos scripts locaux (/opt/owui-...) directement DANS le conteneur.
-# Cela permet de modifier le code (ex: pipe_engine.py) sur l'hôte et de juste redémarrer le conteneur
-# pour que ce soit pris en compte, sans reconstruire l'image (Hot Reloading).
+# 3. OPEN WEBUI (COEUR DU SYSTÈME)
+# Note : Nous montons les volumes Pipe/Tools pour que les fichiers Python soient
+# accessibles et modifiables à chaud depuis l'hôte.
 cleanup_container "open-webui"
 echo "🧠 Démarrage Open WebUI (:main)..."
-docker run -d --name open-webui --network ai-net --restart always \
+docker run -d --name open-webui --network $NETWORK_NAME --restart always \
   -p 3000:8080 \
   -v open-webui:/app/backend/data \
   -v /opt/owui-pipes:/opt/owui-pipes \
@@ -193,22 +96,31 @@ docker run -d --name open-webui --network ai-net --restart always \
   ghcr.io/open-webui/open-webui:main
 
 # ------------------------------------------------------------------------------
-# POST-INSTALLATION (CONFIGURATION APPLICATIVE)
+# POST-INSTALLATION (CONFIGURATION APPLICATIVE & OPTIMISATIONS)
 # ------------------------------------------------------------------------------
 echo "⏳ Attente disponibilité Open WebUI (Healthcheck)..."
 # On boucle tant que l'URL /health ne renvoie pas un code 200 OK.
-# Cela évite de lancer la config alors que le serveur n'est pas prêt.
 until curl -s -f http://localhost:3000/health > /dev/null; do
     sleep 5
     echo -n "."
 done
 echo " UP."
 
-# Une fois le serveur UP, on lance le script de configuration interne
-# (Création admin, chargement du modèle Pipe, activation des outils).
-echo "🔧 Configuration Auto..."
-docker exec open-webui /bin/bash /opt/owui-scripts/config-owui.sh
+# --- STRATÉGIE 1: INSTALLATION DES DÉPENDANCES HAUTE PERFORMANCE (TURBO) ---
+echo "⚡ [OPTIMISATION] Installation de orjson (Rust JSON Engine) dans Open WebUI..."
+# On force l'installation de orjson et ujson dans l'environnement du conteneur.
+# Cela permet au Pipe Python d'utiliser ces bibliothèques pour accélérer le traitement JSON
+# et réduire l'usage CPU/RAM lors de la sérialisation de gros fichiers Base64.
+if docker exec -u 0 open-webui pip install orjson ujson > /dev/null 2>&1; then
+    echo "✅ Optimisation 'Turbo JSON' activée (orjson installé)."
+else
+    echo "⚠️ Echec de l'installation de orjson. Le Pipe utilisera le mode standard (plus lent)."
+fi
 
-# Petit nettoyage final pour gagner de la place disque (supprime les images non utilisées)
-docker image prune -f >/dev/null 2>&1
-echo "✅ DEPLOIEMENT STABILISÉ [v$ECHO_VERSION] sur [$TARGET_BRANCH]."
+# Configuration interne (Création admin, etc.)
+echo "🔧 Lancement script de configuration interne..."
+if [ -f "/opt/owui-scripts/config-owui.sh" ]; then
+    docker exec -u 0 open-webui bash /opt/owui-scripts/config-owui.sh
+fi
+
+echo "🎉 DÉPLOIEMENT TERMINÉ (5.6.0) !"

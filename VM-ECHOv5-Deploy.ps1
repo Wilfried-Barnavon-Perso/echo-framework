@@ -1,8 +1,8 @@
 ﻿# ==============================================================================
-# SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
+# SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO 5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.5.2 (Based on v5.4.0 Stable)
-# DATE           : 2026-01-13
+# SCRIPT VERSION : 5.6.0 (Turbo-JSON Ready)
+# DATE           : 2026-01-15
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -41,7 +41,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.5.2"
+$SCRIPT_VERSION = "5.6.0"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
@@ -67,8 +67,8 @@ if ($ECHO_VERSION -notmatch "^\d+\.\d+\.\d+") {
   Write-Warning "⚠️  Format de version atypique détecté : $ECHO_VERSION (Attendu: X.Y.Z)"
 }
 
-Write-Host "📦 Stack Target    : v$ECHO_VERSION" -ForegroundColor Green
-Write-Host "🌿 Target Branch   : $BRANCHE" -ForegroundColor Green
+Write-Host "📦 Stack Target     : v$ECHO_VERSION" -ForegroundColor Green
+Write-Host "🌿 Target Branch    : $BRANCHE" -ForegroundColor Green
 
 # Vérification de cohérence (Optionnel mais informatif)
 if ($ECHO_VERSION -ne $SCRIPT_VERSION) {
@@ -89,7 +89,9 @@ $VHDSize = 50GB
 $RAMStartup = 4096MB
 
 $AutoUser = "echo"
+# A changer après installation
 $AppPassword = "password"
+
 $AutoHostname = $VMName.ToLower() -replace '\s', ''
 # Hash généré pour 'password' (SHA-512)
 $HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0'
