@@ -1,126 +1,255 @@
-#!/bin/bash
 # ==============================================================================
-# SCRIPT : install-stack.sh
-# VERSION : 5.6.0
-# AUTEUR  : Wilfried BARNAVON
-# DATE    : 2026-01-15
-#
-# ROLE : ORCHESTRATION DU DÉPLOIEMENT DES CONTENEURS DOCKER
+# SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO 5 INFRASTRUCTURE"
+# ==============================================================================
+# SCRIPT VERSION : 5.6.0 (Turbo-JSON Ready - Path Fix)
+# DATE           : 2026-01-15
+# AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
 # --- QUOI (WHAT) ---
-# Ce script est le point d'entrée principal pour lancer ou relancer la stack ECHO.
-# Il déploie 5 conteneurs interconnectés :
-# 1. Watchtower (Mise à jour auto des images)
-# 2. Python Worker (Exécution code sandboxé)
-# 3. Browser Agent (Navigation web headless)
-# 4. Admin Manager (Monitoring, Backups, Maintenance)
-# 5. Open WebUI (Interface Chat, RAG, Auth)
+# Ce script PowerShell automatise la création d'une VM Linux sur Hyper-V et y déploie
+# toute la stack ECHO (Docker, Scripts, Configs) en une seule opération "One-Click".
 #
 # --- POURQUOI (WHY) ---
-# Pourquoi un script Bash plutôt qu'un Docker Compose ?
-# 1. Gestion dynamique : Permet de lire des fichiers de version ou de configuration
-#    avant de lancer les conteneurs (ex: ECHO_VERSION).
-# 2. Nettoyage conditionnel : La fonction cleanup_container permet de gérer proprement
-#    le redémarrage sans erreurs "Name already in use".
-# 3. Séquencement strict : On s'assure que le réseau est prêt avant les conteneurs.
+# Le déploiement manuel d'une infrastructure IA est complexe, lent et sujet aux erreurs humaines.
+# L'automatisation garantit :
+# 1. Reproductibilité : Chaque VM est identique au bit près.
+# 2. Vitesse : 2 minutes pour avoir un environnement de prod complet.
+# 3. Traçabilité : On sait exactement quelle version du code tourne où.
 #
 # --- COMMENT (HOW - ALGO) ---
-# 1. PRE-REQUIS : Vérifie Docker, les permissions, et le réseau 'ai-net'.
-# 2. VERSIONING : Synchronise le fichier VERSION local.
-# 3. DÉPLOIEMENT : Boucle sur chaque service pour le lancer.
-# 4. CONFIGURATION : Attend que Open WebUI soit UP, puis injecte les configurations
-#    et les dépendances critiques (orjson pour la stratégie Turbo).
+# 1. PRE-FLIGHT : Vérifie que le fichier VERSION et les scripts sources sont présents localement.
+# 2. CONFIGURATION : Définit les ressources VM (CPU, RAM, Disque).
+# 3. ENCODAGE : Lit tous les fichiers locaux (scripts .sh, python .py), les encode en Base64.
+# 4. CLOUD-INIT : Génère un fichier 'user-data' énorme qui contient :
+#    - La config utilisateur (login/pass).
+#    - Les paquets à installer (docker, git, curl).
+#    - Les fichiers encodés à écrire sur le disque (/opt/...). 
+#    - Les commandes à lancer au premier boot (runcmd) : permissions, git clone, install-stack.sh.
+# 5. HYPER-V : Crée le disque virtuel, attache l'ISO seed (cloud-init), et lance la VM.
 # ==============================================================================
 
-# --- CONFIGURATION ---
-NETWORK_NAME="ai-net"
-ECHO_VERSION=$(cat /opt/ECHO_VERSION 2>/dev/null || echo "5.6.0")
-
-echo "==============================================="
-echo "   ECHO FRAMEWORK INSTALLER - $ECHO_VERSION"
-echo "==============================================="
-
-# 1. RÉSEAU
-if ! docker network ls | grep -q "$NETWORK_NAME"; then
-    echo "🌐 Création du réseau Docker : $NETWORK_NAME"
-    docker network create $NETWORK_NAME
-else
-    echo "✅ Réseau $NETWORK_NAME existant."
-fi
-
-# Fonction Helper
-cleanup_container() {
-    local name=$1
-    if docker ps -a --format '{{.Names}}' | grep -Eq "^${name}\$"; then
-        echo "♻️  Nettoyage ancien conteneur : $name"
-        docker rm -f $name >/dev/null
-    fi
+# --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
+function Pause-OnError {
+  param([string]$Message)
+  Write-Error "❌ ERREUR CRITIQUE : $Message"
+  Write-Host "Appuyez sur Entrée pour quitter..." -ForegroundColor Red
+  Read-Host
+  Exit 1
 }
 
-# 2. SERVICES BACKEND
-cleanup_container "watchtower"
-docker run -d --name watchtower --network $NETWORK_NAME \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  containrrr/watchtower --interval 3600 --cleanup
+# --- 1. INITIALISATION & VERSIONING ---
+$SCRIPT_VERSION = "5.6.0"
+$ScriptDir = $PSScriptRoot  # CORRECTION: On utilise la racine du script comme base
+$VersionFile = "$ScriptDir\VERSION"
 
-cleanup_container "python-worker"
-docker run -d --name python-worker --network $NETWORK_NAME --restart always \
-  -v /opt/python-worker:/app \
-  python:3.11-slim python /app/worker_api.py
+# --- CONFIGURATION BRANCHE ---
+$BRANCHE = "dev"
 
-cleanup_container "browser-agent"
-docker run -d --name browser-agent --network $NETWORK_NAME --restart always \
-  -v /opt/browser-agent:/app \
-  python:3.11-slim python /app/browser_api.py
+Write-Host "🚀 ECHO INFRASTRUCTURE DEPLOYER [Script v$SCRIPT_VERSION]" -ForegroundColor Cyan
+Write-Host "==========================================================" 
 
-cleanup_container "admin-manager"
-docker run -d --name admin-manager --network $NETWORK_NAME --restart always \
-  -v /opt/admin-manager:/app \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  python:3.11-slim python /app/server.py
+if (-not (Test-Path $VersionFile)) {
+  Pause-OnError "Fichier 'VERSION' introuvable à la racine ($VersionFile). Requis pour la stack."
+}
 
-# 3. OPEN WEBUI (COEUR DU SYSTÈME)
-# Note : Nous montons les volumes Pipe/Tools pour que les fichiers Python soient
-# accessibles et modifiables à chaud depuis l'hôte.
-cleanup_container "open-webui"
-echo "🧠 Démarrage Open WebUI (:main)..."
-docker run -d --name open-webui --network $NETWORK_NAME --restart always \
-  -p 3000:8080 \
-  -v open-webui:/app/backend/data \
-  -v /opt/owui-pipes:/opt/owui-pipes \
-  -v /opt/owui-tools:/opt/owui-tools \
-  -v /opt/owui-filters:/opt/owui-filters \
-  -v /opt/owui-actions:/opt/owui-actions \
-  -v /opt/owui-scripts:/opt/owui-scripts \
-  ghcr.io/open-webui/open-webui:main
+$RAW_VERSION = (Get-Content -Path $VersionFile -Raw).Trim()
+$ECHO_VERSION = $RAW_VERSION -replace "^v", ""
 
-# ------------------------------------------------------------------------------
-# POST-INSTALLATION (CONFIGURATION APPLICATIVE & OPTIMISATIONS)
-# ------------------------------------------------------------------------------
-echo "⏳ Attente disponibilité Open WebUI (Healthcheck)..."
-# On boucle tant que l'URL /health ne renvoie pas un code 200 OK.
-until curl -s -f http://localhost:3000/health > /dev/null; do
-    sleep 5
-    echo -n "."
-done
-echo " UP."
+if ($ECHO_VERSION -notmatch "^\d+\.\d+\.\d+") {
+  Write-Warning "⚠️  Format de version atypique détecté : $ECHO_VERSION (Attendu: X.Y.Z)"
+}
 
-# --- STRATÉGIE 1: INSTALLATION DES DÉPENDANCES HAUTE PERFORMANCE (TURBO) ---
-echo "⚡ [OPTIMISATION] Installation de orjson (Rust JSON Engine) dans Open WebUI..."
-# On force l'installation de orjson et ujson dans l'environnement du conteneur.
-# Cela permet au Pipe Python d'utiliser ces bibliothèques pour accélérer le traitement JSON
-# et réduire l'usage CPU/RAM lors de la sérialisation de gros fichiers Base64.
-if docker exec -u 0 open-webui pip install orjson ujson > /dev/null 2>&1; then
-    echo "✅ Optimisation 'Turbo JSON' activée (orjson installé)."
-else
-    echo "⚠️ Echec de l'installation de orjson. Le Pipe utilisera le mode standard (plus lent)."
-fi
+Write-Host "📦 Stack Target     : v$ECHO_VERSION" -ForegroundColor Green
+Write-Host "🌿 Target Branch    : $BRANCHE" -ForegroundColor Green
 
-# Configuration interne (Création admin, etc.)
-echo "🔧 Lancement script de configuration interne..."
-if [ -f "/opt/owui-scripts/config-owui.sh" ]; then
-    docker exec -u 0 open-webui bash /opt/owui-scripts/config-owui.sh
-fi
+if ($ECHO_VERSION -ne $SCRIPT_VERSION) {
+  Write-Warning "⚠️  Attention : La version du script ($SCRIPT_VERSION) diffère de la version cible ($ECHO_VERSION)."
+}
 
-echo "🎉 DÉPLOIEMENT TERMINÉ (5.6.0) !"
+# --- 2. CONFIGURATION VM DYNAMIQUE ---
+$VMName = "ECHO-v$ECHO_VERSION-$BRANCHE"
+Write-Host "🖥️  VM Name         : $VMName" -ForegroundColor Yellow
+
+$SwitchName = "Bridge LAN" 
+$ISOPath = "D:\ISO\ubuntu-24.04.3-live-server-amd64.iso"
+$VMPath = "D:\Virtual Machines"
+$VHDPath = "$VMPath\Virtual Hard Drives\$VMName.vhdx"
+$SeedPath = "$VMPath\Virtual Hard Drives\$VMName-seed.vhdx"
+$VHDSize = 50GB
+$RAMStartup = 4096MB
+
+$AutoUser = "echo"
+$AppPassword = "password"
+$AutoHostname = $VMName.ToLower() -replace '\s', ''
+$HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0'
+
+# --- 3. VERIFICATION DES FICHIERS (MAPPING STRICT) ---
+# CORRECTION: Chemins relatifs basés sur $ScriptDir (Structure Plate/Repo)
+$FilesMap = @{
+  # 1. SCRIPTS D'INSTALLATION
+  "/opt/owui-scripts/install-stack.sh"            = "$ScriptDir\00-Install\install-stack.sh"
+  "/opt/owui-scripts/update-echo.sh"              = "$ScriptDir\00-Install\update-echo.sh"
+  "/opt/owui-scripts/upgrade-echo.sh"             = "$ScriptDir\00-Install\upgrade-echo.sh"
+  "/opt/owui-scripts/config-owui.sh"              = "$ScriptDir\00-Install\config-owui.sh"
+
+  # 2. SERVICES BACKEND
+  "/opt/admin-manager/server.py"                  = "$ScriptDir\01-docker-admin-manager\server.py"
+  "/opt/python-worker/worker_api.py"              = "$ScriptDir\02-docker-python-worker\worker_api.py"
+  "/opt/browser-agent/browser_api.py"             = "$ScriptDir\06-docker-browser-agent\browser_api.py"
+
+  # 3. CŒUR COGNITIF
+  "/opt/owui-pipes/pipe_engine.py"                = "$ScriptDir\03-OWUI-pipes\pipe_engine.py"
+
+  # 4. OUTILS
+  "/opt/owui-tools/python_code_executor.py"       = "$ScriptDir\04-OWUI-tools\python_code_executor.py"
+  "/opt/owui-tools/gemini_internal_web_search.py" = "$ScriptDir\04-OWUI-tools\gemini_internal_web_search.py"
+  "/opt/owui-tools/web_browser_advanced.py"       = "$ScriptDir\04-OWUI-tools\web_browser_advanced.py"
+  "/opt/owui-tools/api_client.py"                 = "$ScriptDir\04-OWUI-tools\api_client.py"
+  "/opt/owui-tools/context_gauge.py"              = "$ScriptDir\04-OWUI-tools\context_gauge.py"
+
+  # 5. FILTRES & ACTIONS
+  "/opt/owui-filters/bypass_rag.py"               = "$ScriptDir\05-OWUI-filters\bypass_rag.py"
+  "/opt/owui-actions/reset_auth_action.py"        = "$ScriptDir\07-OWUI-actions\reset_auth_action.py"
+
+  # 6. VERSIONING
+  "/opt/ECHO_VERSION"                             = "$ScriptDir\VERSION"
+}
+
+Write-Host "🔍 Vérification de l'intégrité des fichiers sources..."
+foreach ($Key in $FilesMap.Keys) {
+  if ($Key -eq "/opt/echo-manifest.json" -and -not (Test-Path $FilesMap[$Key])) { continue }
+
+  if (-not (Test-Path $FilesMap[$Key])) {
+    Pause-OnError "Fichier manquant : $($FilesMap[$Key]) (Destination: $Key)"
+  }
+}
+Write-Host "✅ Tous les fichiers critiques sont présents." -ForegroundColor Green
+
+# --- 4. AUTO-ELEVATION ADMIN ---
+if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+  Exit
+}
+
+# --- 5. GENERATION BLOC WRITE_FILES (CLOUD-INIT) ---
+$WriteFilesBlock = ""
+
+foreach ($DestPath in $FilesMap.Keys) {
+  if (Test-Path $FilesMap[$DestPath]) {
+    $LocalPath = $FilesMap[$DestPath]
+    $RawContent = [System.IO.File]::ReadAllText($LocalPath, [System.Text.Encoding]::UTF8)
+
+    if ($DestPath -eq "/opt/owui-scripts/install-stack.sh") {
+      $RawContent = $RawContent.Replace('${AutoUser}', $AutoUser)
+    }
+
+    $B64Content = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($RawContent.Replace("`r`n", "`n")))
+
+    $WriteFilesBlock += "      - path: $DestPath`n"
+    $WriteFilesBlock += "        permissions: '0755'`n"
+    $WriteFilesBlock += "        encoding: b64`n"
+    $WriteFilesBlock += "        content: $B64Content`n"
+  }
+}
+
+$ScriptVerContent = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($SCRIPT_VERSION))
+$WriteFilesBlock += "      - path: /opt/echo_deploy_script_version`n"
+$WriteFilesBlock += "        permissions: '0444'`n"
+$WriteFilesBlock += "        encoding: b64`n"
+$WriteFilesBlock += "        content: $ScriptVerContent`n"
+
+$BrancheContent = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($BRANCHE))
+$WriteFilesBlock += "      - path: /opt/ECHO_BRANCH`n"
+$WriteFilesBlock += "        permissions: '0644'`n"
+$WriteFilesBlock += "        encoding: b64`n"
+$WriteFilesBlock += "        content: $BrancheContent`n"
+
+
+# --- 6. USER-DATA CLOUD-INIT ---
+$UserDataContent = @"
+#cloud-config
+autoinstall:
+  version: 1
+  identity: {hostname: $AutoHostname, password: "$HashPassword", username: $AutoUser}
+  keyboard: {layout: fr}
+  locale: fr_FR.UTF-8
+  timezone: Europe/Paris
+  ssh: {install-server: true, allow-pw: true}
+  storage: {layout: {name: direct}}
+  late-commands:
+    - "sed -i 's/XKBLAYOUT=\"us\"/XKBLAYOUT=\"fr\"/g' /target/etc/default/keyboard"
+  user-data:
+    chpasswd:
+      list: |
+        ${AutoUser}:${AppPassword}
+      expire: False
+    package_update: true
+    package_upgrade: true
+    packages:
+      - curl
+      - ca-certificates
+      - gnupg
+      - jq
+      - git
+      - linux-cloud-tools-virtual
+      - net-tools
+      - chrony
+      - docker.io
+      - docker-compose
+    write_files:
+      - path: /etc/chrony/conf.d/hyperv.conf
+        content: |
+          refclock PHC /dev/ptp0 poll 3 dpoll -2 offset 0
+$WriteFilesBlock
+    runcmd:
+      - [chown, -R, "${AutoUser}:${AutoUser}", "/home/${AutoUser}"]
+      - [systemctl restart chrony]
+      - [chmod, +x, /opt/owui-scripts/install-stack.sh]
+      - [chmod, +x, /opt/owui-scripts/update-echo.sh]
+      - [chmod, +x, /opt/owui-scripts/upgrade-echo.sh]
+      - [chmod, +x, /opt/owui-scripts/config-owui.sh]
+      - [ln, -s, /opt/owui-scripts/update-echo.sh, /usr/local/bin/update-echo]
+      - [ln, -s, /opt/owui-scripts/upgrade-echo.sh, /usr/local/bin/upgrade-echo]
+      - [git, clone, "https://github.com/Wilfried-Barnavon-Perso/echo-framework.git", "/opt/echo-framework-source"]
+      - [/opt/owui-scripts/install-stack.sh]
+"@
+
+# --- 7. CREATION DISQUES & VM (HYPER-V) ---
+$MetaDataContent = "instance-id: $VMName"
+
+if (Test-Path $SeedPath) { Remove-Item $SeedPath -Force }
+if (Test-Path $VHDPath) { Remove-Item $VHDPath -Force }
+
+New-VHD -Path $SeedPath -SizeBytes 100MB -Dynamic | Out-Null
+$Disk = Mount-VHD -Path $SeedPath -Passthru
+$Disk | Initialize-Disk -PartitionStyle MBR -PassThru | New-Partition -UseMaximumSize -AssignDriveLetter | Format-Volume -FileSystem FAT32 -NewFileSystemLabel "CIDATA" | Out-Null
+Start-Sleep -Seconds 2
+$DriveLetter = ($Disk | Get-Partition | Get-Volume).DriveLetter + ":\" 
+
+[System.IO.File]::WriteAllText("${DriveLetter}user-data", ($UserDataContent -replace "`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+[System.IO.File]::WriteAllText("${DriveLetter}meta-data", $MetaDataContent, [System.Text.UTF8Encoding]::new($false))
+New-Item -Path "${DriveLetter}vendor-data" -ItemType File | Out-Null
+
+Start-Sleep -Seconds 2
+Dismount-VHD -Path $SeedPath
+
+if (-not (Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
+  Write-Host "🔨 Création de la VM Hyper-V : $VMName"
+  New-VM -Name $VMName -MemoryStartupBytes $RAMStartup -Generation 2 -SwitchName $SwitchName -NoVHD
+  Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes 2048MB -MemoryMaximumBytes 8192MB -ProcessorCount 4
+  Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
+  New-VHD -Path $VHDPath -SizeBytes $VHDSize -Dynamic | Out-Null
+  Add-VMHardDiskDrive -VMName $VMName -Path $VHDPath
+  Add-VMDvdDrive -VMName $VMName -Path $ISOPath
+  Add-VMHardDiskDrive -VMName $VMName -Path $SeedPath
+  Set-VMFirmware -VMName $VMName -FirstBootDevice (Get-VMDvdDrive -VMName $VMName)
+
+  Write-Host "✅ VM Prête ! Lancement..."
+  Start-VM -Name $VMName
+  Start-Process -FilePath "vmconnect.exe" -ArgumentList "localhost $VMName"
+}
+else {
+  Write-Warning "⚠️  La VM $VMName existe déjà. Aucune action effectuée."
+  Pause-OnError "Veuillez supprimer la VM existante ou incrémenter la version du fichier VERSION."
+}
