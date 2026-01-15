@@ -4,9 +4,9 @@ Ce document définit les règles de versioning pour l'infrastructure ECHO v5.
 
 ## 1\. Version de la Stack (Infrastructure Globale)
 
-La version globale d'ECHO suit le format **SemVer** (`vX.Y.Z`). Elle représente un état stable et testé de l'ensemble des composants.
+La version globale d'ECHO suit le format **SemVer** (`X.Y.Z`). Elle représente un état stable et testé de l'ensemble des composants.
 
--   **Format** : `v5.Y.Z`
+-   **Format** : `5.Y.Z`
 -   **Emplacement** : Fichier `VERSION` à la racine du dépôt.
 
 **Type**
@@ -19,27 +19,27 @@ La version globale d'ECHO suit le format **SemVer** (`vX.Y.Z`). Elle représente
 
 **Majeur**
 
-`v6.0.0`
+`6.0.0`
 
 Refonte architecturale complète (ex: changement d'orchestrateur, abandon de Docker).
 
-v5 -> v6
+5 -> 6
 
 **Mineur**
 
-`v5.3.0`
+`5.3.0`
 
 Ajout d'un nouveau service (conteneur), changement d'OS de base, nouvelles fonctionnalités clés.
 
-v5.2 -> v5.3
+5.2 -> 5.3
 
 **Patch**
 
-`v5.2.1`
+`5.2.1`
 
 Correctifs de scripts, mise à jour de configuration, update de dépendances mineures.
 
-v5.2.0 -> v5.2.1
+5.2.0 -> 5.2.1
 
 ## 2\. Versioning des Composants (Modules)
 

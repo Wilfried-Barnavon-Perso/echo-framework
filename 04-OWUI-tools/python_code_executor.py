@@ -1,7 +1,7 @@
 """
 title: Python Code Executor (Sidecar)
 author: Wilfried BARNAVON
-version: v4.1
+version: 4.1
 """
 import requests, json
 from pydantic import BaseModel, Field

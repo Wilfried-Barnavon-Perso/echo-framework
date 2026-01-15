@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.50 - No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 135.50 - No Upload)
 author: Wilfried BARNAVON
 version: 135.50
-description: v135.50: Version allégée sans module d'upload. Tous les fichiers passent désormais en mode Base64 (inline). Maintien du mode DEBUG Verbeux et de l'authentification OAuth.
+description: 135.50: Version allégée sans module d'upload. Tous les fichiers passent désormais en mode Base64 (inline). Maintien du mode DEBUG Verbeux et de l'authentification OAuth.
 """
 
 # ==============================================================================

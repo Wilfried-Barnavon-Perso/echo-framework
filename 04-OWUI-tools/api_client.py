@@ -1,7 +1,7 @@
 """
 title: Universal API Client
 author: Wilfried BARNAVON
-version: v1.0
+version: 1.0
 description: Permet d'effectuer des appels API REST (GET, POST, etc.) vers des services externes.
 """
 

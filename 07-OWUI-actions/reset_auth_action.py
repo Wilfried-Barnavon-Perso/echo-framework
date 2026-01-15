@@ -1,7 +1,7 @@
 """
 title: ECHO Auth Manager
 author: ECHO Team
-version: v1.0.0
+version: 1.0.0
 description: Ajoute un bouton d'action pour réinitialiser l'authentification Google (Tokens & Cache) directement depuis l'interface, avec confirmation.
 """
 

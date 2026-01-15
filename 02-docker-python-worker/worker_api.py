@@ -3,7 +3,7 @@ import sys, io, contextlib, traceback, multiprocessing, tempfile, os
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : v1.1 (Sandbox Core)
+VERSION : 1.1 (Sandbox Core)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-01-15
 ================================================================================

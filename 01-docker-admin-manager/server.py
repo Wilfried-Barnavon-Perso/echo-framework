@@ -2,7 +2,7 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : v2.7 (Audit Ready)
+VERSION : 2.7 (Audit Ready)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-01-15
 
