@@ -2,9 +2,9 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : v2.6.1 (Audit Ready)
+VERSION : v2.7 (Audit Ready)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-01-02
+DATE MAJ : 2026-01-15
 
 --- DESCRIPTION ARCHITECTURALE ---
 Ce micro-service Flask agit comme le "Concierge" de l'infrastructure ECHO.

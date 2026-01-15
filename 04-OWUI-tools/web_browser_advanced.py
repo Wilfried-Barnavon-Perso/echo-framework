@@ -1,7 +1,7 @@
 """
 title: Advanced Web Browser
 author: Wilfried BARNAVON
-version: 1.1
+version: v1.1
 description: Navigateur persistant capable de cliquer, remplir des formulaires et lire le contenu (via Browser Agent).
 """
 

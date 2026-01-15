@@ -1,7 +1,7 @@
 """
 title: Context Gauge (Strict)
 author: Wilfried BARNAVON
-version: 1.3
+version: v1.3
 description: Outil d'introspection permettant au modèle de vérifier son niveau d'occupation de la fenêtre de contexte (Données réelles uniquement).
 """
 

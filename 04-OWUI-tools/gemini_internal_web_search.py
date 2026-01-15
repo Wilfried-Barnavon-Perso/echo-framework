@@ -1,7 +1,7 @@
 """
 title: Gemini Internal Web Search
 author: Wilfried BARNAVON
-version: 9.1
+version: v9.1
 """
 import json, os, requests, uuid, random
 from pydantic import BaseModel, Field

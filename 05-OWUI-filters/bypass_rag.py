@@ -1,7 +1,7 @@
 """
 title: Bypass RAG (Audit Aligned - Root Key Only)
 author: Wilfried BARNAVON
-version: 1.10
+version: v1.10
 description: v1.10: Correctif de stabilité. Sécurisation des itérateurs pour éviter l'erreur 'NoneType object is not iterable' lorsque les champs 'files' ou 'metadata' sont présents mais nuls.
 """
 
