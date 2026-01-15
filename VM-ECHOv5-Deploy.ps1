@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO 5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.6.0 (Turbo-JSON Ready)
+# SCRIPT VERSION : 5.6.0 (Based on v5.5.2 Stable - Turbo Ready)
 # DATE           : 2026-01-15
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -51,8 +51,8 @@ $VersionFile = "$ScriptDir\VERSION"
 #$BRANCHE = "main"
 $BRANCHE = "dev"
 
-Write-Host "🚀 ECHO INFRASTRUCTURE DEPLOYER [Script v$SCRIPT_VERSION]" -ForegroundColor Cyan
-Write-Host "==========================================================" 
+Write-Host "🚀 ECHO INFRASTRUCTURE DEPLOYER [Script $SCRIPT_VERSION]" -ForegroundColor Cyan
+Write-Host "========================================================" 
 
 # Vérification Stricte du Fichier VERSION (Source de vérité de la Stack)
 if (-not (Test-Path $VersionFile)) {
@@ -67,7 +67,7 @@ if ($ECHO_VERSION -notmatch "^\d+\.\d+\.\d+") {
   Write-Warning "⚠️  Format de version atypique détecté : $ECHO_VERSION (Attendu: X.Y.Z)"
 }
 
-Write-Host "📦 Stack Target     : v$ECHO_VERSION" -ForegroundColor Green
+Write-Host "📦 Stack Target     : $ECHO_VERSION" -ForegroundColor Green
 Write-Host "🌿 Target Branch    : $BRANCHE" -ForegroundColor Green
 
 # Vérification de cohérence (Optionnel mais informatif)
@@ -89,12 +89,10 @@ $VHDSize = 50GB
 $RAMStartup = 4096MB
 
 $AutoUser = "echo"
-# A changer après installation
 $AppPassword = "password"
-
 $AutoHostname = $VMName.ToLower() -replace '\s', ''
 # Hash généré pour 'password' (SHA-512)
-$HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0'
+$HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0'
 
 # --- 3. VERIFICATION DES FICHIERS (MAPPING STRICT - MIS A JOUR v5.5) ---
 # Dictionnaire : Source Windows => Destination Linux

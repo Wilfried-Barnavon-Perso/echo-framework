@@ -42,21 +42,44 @@ echo "🚀 Démarrage de la mise à jour ECHO 5.6.0..."
 DATE_TAG=$(date +%Y%m%d_%H%M)
 BACKUP_DIR="/opt/backups/pre_upgrade_$DATE_TAG"
 mkdir -p "$BACKUP_DIR"
+# Sauvegarde des éléments critiques
 cp /opt/owui-pipes/*.py "$BACKUP_DIR/" 2>/dev/null || true
 echo "💾 Sauvegarde préventive des Pipes dans $BACKUP_DIR"
 
 # --- ETAPE 2 : SYNCHRONISATION CODE (GIT PULL FORCE) ---
 # Note : En prod réelle, on ferait un git pull. Ici on simule la copie depuis /opt sources.
-# On suppose que les nouveaux fichiers ont été déposés (ex: via scp ou le script deploy).
-SRC_DIR="/opt/echo-framework-src" # Chemin théorique
+# CORRECTION : Alignement avec le chemin défini dans VM-ECHOv5-Deploy.ps1
+SRC_DIR="/opt/echo-framework-source"
+
 if [ -d "$SRC_DIR" ]; then
     echo "📂 Synchronisation des scripts depuis $SRC_DIR..."
+    
+    # 1. Mise à jour du dépôt
+    cd "$SRC_DIR" || exit
+    git fetch --all
+    # Récupération de la branche cible (définie lors du déploiement)
+    TARGET_BRANCH=$(cat /opt/ECHO_BRANCH 2>/dev/null || echo "main")
+    git reset --hard "origin/$TARGET_BRANCH"
+    
+    # 2. Copie des fichiers vers l'arborescence de prod (/opt/owui-...)
+    # Scripts système
     cp -r "$SRC_DIR/00-Install/"* /opt/owui-scripts/
+    
+    # Composants Open WebUI
     cp -r "$SRC_DIR/03-OWUI-pipes/"* /opt/owui-pipes/
     cp -r "$SRC_DIR/04-OWUI-tools/"* /opt/owui-tools/
+    
+    # CORRECTION : Ajout des dossiers manquants (Filters & Actions)
+    mkdir -p /opt/owui-filters /opt/owui-actions
+    cp -r "$SRC_DIR/05-OWUI-filters/"* /opt/owui-filters/
+    cp -r "$SRC_DIR/07-OWUI-actions/"* /opt/owui-actions/
+    
+    echo "✅ Fichiers synchronisés."
+else
+    echo "⚠️  Dossier source $SRC_DIR introuvable. Mise à jour code ignorée."
 fi
 
-# Helper function
+# Helper function pour les micro-services
 sync_mirror_file() {
     local src_file=$1
     local dest_dir=$2
@@ -66,6 +89,7 @@ sync_mirror_file() {
     fi
 }
 
+# Mise à jour des Workers Python
 sync_mirror_file "$SRC_DIR/01-docker-admin-manager/server.py"     "/opt/admin-manager"
 sync_mirror_file "$SRC_DIR/02-docker-python-worker/worker_api.py" "/opt/python-worker"
 sync_mirror_file "$SRC_DIR/06-docker-browser-agent/browser_api.py" "/opt/browser-agent"
