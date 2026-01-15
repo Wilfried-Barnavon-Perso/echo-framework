@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic V135.49 - Hyper Debug)
+title: Gemini Pro Unified System (Platinum Agentic V135.50 - No Upload)
 author: Wilfried BARNAVON
-version: 135.49
-description: v135.49: Retour à la v135.43 : Mode DEBUG Verbeux. Affiche le JSON complet de la requête API (en masquant les gros blocs Base64) et l'URL exacte appelée pour diagnostiquer les erreurs 400. En cas d'erreur, dump complet du corps de réponse avec l'URL ciblée.
+version: 135.50
+description: v135.50: Version allégée sans module d'upload. Tous les fichiers passent désormais en mode Base64 (inline). Maintien du mode DEBUG Verbeux et de l'authentification OAuth.
 """
 
 # ==============================================================================
@@ -34,7 +34,6 @@ GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 GOOGLE_REDIRECT_URI = "https://codeassist.google.com/authcode"
 GOOGLE_API_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal" # API Interne (Chat)
-GOOGLE_UPLOAD_BASE_URL = "https://generativelanguage.googleapis.com/upload/v1beta/files" # API Publique (Upload)
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",
@@ -204,7 +203,7 @@ class AuthService:
             if os.path.exists(p): os.remove(p)
 
 # ==============================================================================
-# SECTION 4 : GESTIONNAIRE DE FICHIERS, REGISTRE CAS & SIGNATURES
+# SECTION 4 : REGISTRE CAS & SIGNATURES (FILE MANAGER REMOVED)
 # ==============================================================================
 class SignatureManager:
     """Gère la persistance des signatures de pensée (CoT) pour assurer la continuité des conversations."""
@@ -228,151 +227,6 @@ class SignatureManager:
                 with open(path, "r") as f: return f.read().strip()
         except: pass
         return None
-
-class FileRegistry:
-    """
-    Registre local (JSON) des fichiers uploadés sur Google.
-    - Clé primaire : SHA256 (Content-Addressable).
-    - Permet la déduplication et le respect du TTL (48h).
-    """
-    def __init__(self, data_dir: str, chat_id: str):
-        self.chat_id = chat_id if chat_id else "global"
-        self.path = os.path.join(data_dir, f"{self.chat_id}_files.json")
-        self.registry = self._load()
-
-    def _load(self) -> Dict:
-        if os.path.exists(self.path):
-            try:
-                with open(self.path, "r") as f: return json.load(f)
-            except: pass
-        return {}
-
-    def _save(self):
-        try:
-            with open(self.path, "w") as f: json.dump(self.registry, f, indent=2)
-        except: pass
-
-    def get_entry(self, sha256: str) -> Optional[Dict]:
-        """Vérifie si le fichier existe et si son URI est encore valide (< 47h pour marge sécu)."""
-        if sha256 in self.registry:
-            entry = self.registry[sha256]
-            upload_ts = entry.get("upload_ts", 0)
-            if (time.time() - upload_ts) < (47 * 3600):
-                return entry
-            else:
-                del self.registry[sha256]
-                self._save()
-        return None
-
-    def add_entry(self, sha256: str, uri: str, mime: str, size: int, name: str):
-        """Enregistre un nouveau fichier uploadé avec son timestamp."""
-        self.registry[sha256] = {
-            "uri": uri,
-            "mime": mime,
-            "size": size,
-            "name": name,
-            "upload_ts": time.time()
-        }
-        self._save()
-
-class GoogleFileManager:
-    """
-    Client HTTP pour l'API Google Files.
-    Gère le protocole 'Resumable Upload'.
-    Désormais strictement dépendant d'une Clé API (Projet Dédié).
-    """
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.upload_base_url = GOOGLE_UPLOAD_BASE_URL
-
-    async def _check_state(self, name: str) -> str:
-        """Vérifie l'état de traitement d'un fichier (PROCESSING vs ACTIVE)."""
-        url = f"https://generativelanguage.googleapis.com/v1beta/{name}"
-        headers = {"x-goog-api-key": self.api_key}
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code == 200:
-                    return resp.json().get("state", "UNKNOWN")
-        except: pass
-        return "UNKNOWN"
-
-    async def upload_file(self, file_path: str, mime_type: str) -> Optional[str]:
-        if not self.api_key:
-             print("❌ [UPLOAD] API Key manquante.")
-             return None
-
-        file_size = os.path.getsize(file_path)
-        display_name = os.path.basename(file_path)
-        
-        # 1. Initialisation
-        headers_init = {
-            "X-Goog-Upload-Protocol": "resumable",
-            "X-Goog-Upload-Command": "start",
-            "X-Goog-Upload-Header-Content-Length": str(file_size),
-            "X-Goog-Upload-Header-Content-Type": mime_type,
-            "Content-Type": "application/json",
-            "x-goog-api-key": self.api_key
-        }
-        
-        meta_body = {"file": {"displayName": display_name}}
-
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                # Init Request
-                resp_init = await client.post(self.upload_base_url, headers=headers_init, json=meta_body)
-                if resp_init.status_code != 200:
-                    print(f"❌ [UPLOAD INIT FAIL] {resp_init.status_code}: {resp_init.text}")
-                    return None
-                
-                upload_url = resp_init.headers.get("x-goog-upload-url")
-                if not upload_url: return None
-
-                # 2. Transfert (Binaire)
-                with open(file_path, "rb") as f:
-                    file_data = f.read()
-
-                headers_upload = {
-                    "Content-Length": str(file_size),
-                    "X-Goog-Upload-Offset": "0",
-                    "X-Goog-Upload-Command": "upload, finalize"
-                }
-
-                # Timeout généreux (10min) pour les gros fichiers
-                resp_upload = await client.post(upload_url, headers=headers_upload, content=file_data, timeout=600)
-                
-                if resp_upload.status_code == 200:
-                    result = resp_upload.json()
-                    file_data = result.get("file", {})
-                    file_uri = file_data.get("uri")
-                    file_name = file_data.get("name") # files/abc-123
-                    
-                    print(f"✅ [UPLOAD SUCCESS] URI: {file_uri}")
-                    
-                    # 3. Attente active du traitement (Processing)
-                    if file_name:
-                        print(f"⏳ [UPLOAD] Vérification état ({file_name})...")
-                        for _ in range(30):
-                            state = await self._check_state(file_name)
-                            if state == "ACTIVE":
-                                print(f"✅ [UPLOAD] Fichier ACTIVE.")
-                                return file_uri
-                            elif state == "FAILED":
-                                print(f"❌ [UPLOAD] Traitement échoué (FAILED).")
-                                return None
-                            # Si PROCESSING, on attend
-                            await asyncio.sleep(2)
-                        
-                        print("⚠️ [UPLOAD] Timeout attente traitement. Envoi quand même.")
-                    
-                    return file_uri
-                else:
-                    print(f"❌ [UPLOAD DATA FAIL] {resp_upload.status_code}: {resp_upload.text}")
-                    return None
-
-        except Exception as e:
-            print(f"❌ [UPLOAD EXCEPTION] {str(e)}")
-            return None
 
 # ==============================================================================
 # SECTION 5 : ORCHESTRATEUR (LOGIQUE MÉTIER)
@@ -508,15 +362,14 @@ class Orchestrator:
 
         return mime_type, is_text, "", real_path
 
-    async def _process_files_for_message(self, files_raw: List[Dict], file_registry: FileRegistry, file_manager: Optional[GoogleFileManager]) -> List[Dict]:
+    async def _process_files_for_message(self, files_raw: List[Dict]) -> List[Dict]:
         parts = []
         files_to_process = []
         seen_ids = set()
 
         # CONFIGURATION DES FLUX VIA VALVES JSON
         txt_map, bin_map = self._parse_mime_valves()
-        max_inline_bytes = self.valves.MAX_INLINE_SIZE_KB * 1024
-
+        
         # Deduplication
         for f in files_raw:
             fid = f.get("id") or f.get("file", {}).get("id")
@@ -548,96 +401,38 @@ class Orchestrator:
                 except: pass
                 continue
 
-            # --- FLUX B : BINAIRE INLINE (Petit Fichier) ---
-            # Condition : Extension connue dans BIN_MAP (donc mime valide) OU détectée par système
-            # ET taille inférieure à la limite.
-            if (file_size < max_inline_bytes):
-                try:
-                    with open(real_path, "rb") as f:
-                        raw_data = f.read()
-                        b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
-                    
-                    # RESTORATION V135.40 : camelCase
-                    parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
-                    self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"})
-                    continue # Succès, fichier suivant
-                except Exception as e:
-                    if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Base64 Error {f_name}: {str(e)}")
-                    # On ne continue pas ici, on laisse une chance au Flux C (Upload) si configuré, ou on passe au suivant.
+            # --- FLUX B : BINAIRE (TOUT EN BASE64) ---
+            # Désormais, tout ce qui n'est pas texte est traité en Base64.
+            # L'upload a été supprimé.
+            try:
+                with open(real_path, "rb") as f:
+                    raw_data = f.read()
+                    b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
+                
+                parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
+                self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"})
+                
+                # Warning si la taille est colossale (juste pour info)
+                if file_size > (self.valves.MAX_INLINE_SIZE_KB * 1024):
+                    if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ File {f_name} large ({file_size/1024:.0f}KB) but sent as Base64 (No Upload Mode).")
 
-            # --- FLUX C : UPLOAD API ou FALLBACK ---
-            can_upload = file_manager and file_manager.api_key
-            use_fallback = getattr(self.valves, "ENABLE_UPLOAD_FALLBACK", False)
-
-            if not can_upload:
-                if use_fallback:
-                    # FALLBACK : Force Base64 malgré la taille
-                    try:
-                        with open(real_path, "rb") as f:
-                            raw_data = f.read()
-                            b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
-                        
-                        # RESTORATION V135.40 : camelCase
-                        parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
-                        self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64 Fallback)", "size": file_size, "status": "Embedded ⚠️"})
-                        if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Fallback Base64 utilisé pour {f_name}")
-                    except Exception as e:
-                        if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Base64 Fallback Error {f_name}: {str(e)}")
-                        parts.append({"text": f"[Error processing file {f_name}: {str(e)}]"})
-                    continue
-                else:
-                    parts.append({"text": f"[Error: File {f_name} too large for inline ({file_size/1024:.0f}KB) and no API Key for Upload]"})
-                    continue
-            
-            # Hashage pour identifier le contenu (Si Upload possible)
-            with open(real_path, "rb") as f:
-                file_hash = hashlib.sha256(f.read()).hexdigest()
-
-            entry = file_registry.get_entry(file_hash)
-            final_uri = None
-            status_ui = "Unknown"
-
-            if entry:
-                # HIT : Déjà uploadé et valide
-                final_uri = entry["uri"]
-                status_ui = "Cache HIT ⚡"
-                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚡ CAS HIT: {f_name}")
-            else:
-                # MISS : Upload nécessaire
-                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔼 Uploading {f_name} ({file_size} bytes)...")
-                uri = await file_manager.upload_file(real_path, mime)
-                if uri:
-                    final_uri = uri
-                    file_registry.add_entry(file_hash, uri, mime, file_size, f_name)
-                    status_ui = "Uploaded 🔼"
-                else:
-                    status_ui = "Failed ❌"
-
-            if final_uri:
-                # RESTORATION V135.40 : snake_case pour file_data (Exception confirmée par l'erreur 400)
-                parts.append({"file_data": {"mime_type": mime, "file_uri": final_uri}})
-                self.files_processed_info.append({"name": f_name, "type": f"{mime.split('/')[-1].upper()} (Cloud)", "size": file_size, "status": status_ui})
+            except Exception as e:
+                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Base64 Error {f_name}: {str(e)}")
+                parts.append({"text": f"[Error processing binary file {f_name}: {str(e)}]"})
         
         return parts
 
     async def prepare_context(self, body: Dict, chat_id: str, auth_token: str, extra_files: Any = None) -> List[Dict]:
         """
         Prépare la liste 'contents' pour Gemini.
-        Architecture Tri-Flux :
+        Architecture Bi-Flux (No Upload):
         1. Texte -> Inline
-        2. Media < Limite -> Base64
-        3. Media > Limite -> Upload (si API Key présente)
+        2. Media -> Base64
         """
         self.files_processed_info = []
         messages = body.get("messages", [])
         contents = []
 
-        file_registry = FileRegistry(self.data_dir, chat_id)
-        
-        # INSTANTIATION AVEC CLÉ API UNIQUEMENT (STRICT)
-        files_api_key = getattr(self.valves, "FILES_API_KEY", "").strip()
-        file_manager = GoogleFileManager(files_api_key) if files_api_key else None
-        
         # Mapping des tools pour le décodage des réponses
         for m in messages:
             if m.get("tool_calls"):
@@ -748,8 +543,8 @@ class Orchestrator:
                         ex = extra_files if isinstance(extra_files, list) else [extra_files]
                         raw_list.extend(ex)
 
-                # Appel à la nouvelle méthode dédiée pour traiter les fichiers (TRI-FLUX)
-                file_parts = await self._process_files_for_message(raw_list, file_registry, file_manager)
+                # Appel à la nouvelle méthode simplifiée (BI-FLUX)
+                file_parts = await self._process_files_for_message(raw_list)
                 parts.extend(file_parts)
 
                 content_txt = m.get("content", "")
@@ -824,7 +619,6 @@ class ContextCacheManager:
 class SmartCacheStrategy:
     def __init__(self, cache_manager):
         self.mgr = cache_manager
-        global _LOCAL_CACHE_REGISTRY
         self.registry = _LOCAL_CACHE_REGISTRY
 
     def _compute_hash(self, model: str, system_inst: Dict, contents: List[Dict]) -> str:
@@ -1038,8 +832,6 @@ class StreamProcessor:
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
-        FILES_API_KEY: str = Field(default="", description="🔑 API Key Google (Projet Files)")
-        
         # --- NOUVELLES VALVES DE MAPPING (JSON) ---
         GEMINI_MIME_MAPPING_TXT: str = Field(
             default='{"text/plain": [".bat",".c",".conf",".cpp",".cs",".css",".csv",".dockerfile",".editorconfig",".env",".gitignore",".go",".h",".hpp",".ini",".java",".js",".json",".kt",".lua",".md",".php",".pl",".ps1",".py",".r",".rb",".rs",".sh",".sql",".swift",".toml",".ts",".txt",".vb",".xml",".yaml",".yml","dockerfile"], "text/html": [".html", ".htm"]}',
@@ -1051,8 +843,7 @@ class Pipe:
             description="🖼️ Mapping Binaire (JSON: Mime -> [Exts])"
         )
         
-        MAX_INLINE_SIZE_KB: int = Field(default=4096, description="Taille Max Inline (Ko)")
-        ENABLE_UPLOAD_FALLBACK: bool = Field(default=False, description="⚠️ Fallback Base64 si Upload impossible")
+        MAX_INLINE_SIZE_KB: int = Field(default=10240, description="Seuil d'alerte taille (Ko)")
         
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
         
@@ -1096,12 +887,10 @@ class Pipe:
         if not pid: 
              yield f"❌ **Erreur Projet**\n{debug_log}"; return
 
-        # 2. PRÉPARATION CONTEXTE (Tri-Flux Fichiers)
+        # 2. PRÉPARATION CONTEXTE (Bi-Flux Fichiers)
         tools = orch.convert_owui_tools(body.get("tools"))
         files = body.get("files") or kwargs.get("__files__")
         
-        # Note : On passe creds.token pour l'auth interne, mais l'Orchestrator n'utilisera plus 
-        # que la clé API pour l'upload (gérée en interne de prepare_context)
         context = await orch.prepare_context(body, chat_id, creds.token, extra_files=files)
 
         if self.valves.DEBUG_MODE and orch.debug_log:
