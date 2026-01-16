@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.6.1
+# VERSION : 5.6.2
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE
 # ==============================================================================
@@ -107,6 +107,8 @@ done
 echo " UP."
 
 echo "🔧 Configuration Auto (API)..."
+# Utilisation de docker-compose exec pour cibler le SERVICE 'open-webui' défini dans le YAML.
+# Note: Le conteneur réel s'appelle 'echo-webui-core', mais compose utilise le nom du service.
 docker-compose -f "$COMPOSE_FILE" exec -T open-webui /bin/bash /opt/owui-scripts/config-owui.sh
 
 # Nettoyage
