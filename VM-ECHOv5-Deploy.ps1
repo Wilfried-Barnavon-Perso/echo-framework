@@ -81,7 +81,7 @@ $VMName = "ECHO-v$ECHO_VERSION-$BRANCHE"
 Write-Host "🖥️  VM Name         : $VMName" -ForegroundColor Yellow
 
 $SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
-$ISOPath = "D:\ISO\ubuntu-24.04.3-live-server-amd64.iso"
+$ISOPath = "D:\ISO\ubuntu-24.04.3-live-server-amd64-autoinstall.iso"
 $VMPath = "D:\Virtual Machines"
 $VHDPath = "$VMPath\Virtual Hard Drives\$VMName.vhdx"
 $SeedPath = "$VMPath\Virtual Hard Drives\$VMName-seed.vhdx"
