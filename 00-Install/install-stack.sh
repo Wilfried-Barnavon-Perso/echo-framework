@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh
-# VERSION : v5.3.2
+# VERSION : 5.6.0
 # AUTEUR  : Wilfried BARNAVON
-# DATE    : 2026-01-02
+# DATE    : 2026-01-16
 #
 # ROLE : ORCHESTRATION DU DÉPLOIEMENT DES CONTENEURS DOCKER
 # ==============================================================================

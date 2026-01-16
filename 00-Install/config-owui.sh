@@ -1,15 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# CONFIGURATION AUTOMATIQUE OPEN WEBUI (API-BASED v5.13 - ECHO ENGINE)
-# AUTEUR : Wilfried BARNAVON
-# ==============================================================================
-# - Gestion UTF-8 BOM (Nettoyage)
-# - Gestion Create/Update (Idempotence) avec FIX URL (/id/)
-# - Configuration Native Pipe "ECHO Engine" & Activation Tools/Filters
-# - FIX V5.4 : Smart Toggle (Vérification d'état avant bascule)
-# - FIX V5.6 : HARD RESET ECHO Engine (Delete/Create) pour purger User Valves
-# - UPDATE V5.13 : Activation globale systématique des filtres (Bypass RAG etc.)
-# - UPDATE V5.14 : Support Architecture Modular (Pipes + Actions)
+# CONFIGURATION AUTOMATIQUE OPEN WEBUI (API-BASED)
+# VERSION : 5.6.0
+# AUTEUR  : Wilfried BARNAVON
+# DATE    : 2026-01-16
 # ==============================================================================
 
 OWUI_URL="http://localhost:8080"
