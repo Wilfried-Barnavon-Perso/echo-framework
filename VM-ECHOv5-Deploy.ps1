@@ -1,8 +1,8 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.6.0
-# DATE           : 2026-01-13
+# SCRIPT VERSION : 5.6.1
+# DATE           : 2026-01-16
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -41,14 +41,13 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.6.0"
+$SCRIPT_VERSION = "5.6.1"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
-# --- CONFIGURATION BRANCHE (NOUVEAU) ---
+# --- CONFIGURATION BRANCHE ---
 # Permet de définir quelle branche git sera suivie par la VM.
-# Modifiez cette valeur si vous souhaitez déployer une branche de dev (ex: "dev", "feature-x").
-#$BRANCHE = "main"
+# Modifiez cette valeur si vous souhaitez déployer une branche de dev.
 $BRANCHE = "dev"
 
 Write-Host "🚀 ECHO INFRASTRUCTURE DEPLOYER [Script v$SCRIPT_VERSION]" -ForegroundColor Cyan
@@ -94,7 +93,7 @@ $AutoHostname = $VMName.ToLower() -replace '\s', ''
 # Hash généré pour 'password' (SHA-512)
 $HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0'
 
-# --- 3. VERIFICATION DES FICHIERS (MAPPING STRICT - MIS A JOUR v5.5) ---
+# --- 3. VERIFICATION DES FICHIERS (MAPPING STRICT) ---
 # Dictionnaire : Source Windows => Destination Linux
 $FilesMap = @{
   # 1. SCRIPTS D'INSTALLATION
@@ -103,12 +102,15 @@ $FilesMap = @{
   "/opt/owui-scripts/upgrade-echo.sh"             = "$ScriptDir\00-Install\upgrade-echo.sh"
   "/opt/owui-scripts/config-owui.sh"              = "$ScriptDir\00-Install\config-owui.sh"
 
+  # === NOUVEAU : DOCKER COMPOSE ===
+  "/opt/owui-scripts/docker-compose.yml"          = "$ScriptDir\00-Install\docker-compose.yml"
+
   # 2. SERVICES BACKEND
   "/opt/admin-manager/server.py"                  = "$ScriptDir\01-docker-admin-manager\server.py"
   "/opt/python-worker/worker_api.py"              = "$ScriptDir\02-docker-python-worker\worker_api.py"
   "/opt/browser-agent/browser_api.py"             = "$ScriptDir\06-docker-browser-agent\browser_api.py"
 
-  # 3. CŒUR COGNITIF (UPDATED PATH v5.5: pipes instead of functions)
+  # 3. CŒUR COGNITIF
   "/opt/owui-pipes/pipe_engine.py"                = "$ScriptDir\03-OWUI-pipes\pipe_engine.py"
 
   # 4. OUTILS
@@ -118,7 +120,7 @@ $FilesMap = @{
   "/opt/owui-tools/api_client.py"                 = "$ScriptDir\04-OWUI-tools\api_client.py"
   "/opt/owui-tools/context_gauge.py"              = "$ScriptDir\04-OWUI-tools\context_gauge.py"
 
-  # 5. FILTRES & ACTIONS (UPDATED v5.5)
+  # 5. FILTRES & ACTIONS
   "/opt/owui-filters/bypass_rag.py"               = "$ScriptDir\05-OWUI-filters\bypass_rag.py"
   "/opt/owui-actions/reset_auth_action.py"        = "$ScriptDir\07-OWUI-actions\reset_auth_action.py"
 
@@ -141,8 +143,7 @@ Write-Host "✅ Tous les fichiers critiques sont présents." -ForegroundColor Gr
 # --- 4. AUTO-ELEVATION ADMIN ---
 # Requis car Hyper-V nécessite des privilèges Administrateur
 if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  # FIX: Utilisation de l'interpolation simple pour supporter les chemins avec espaces (Google Drives)
-  # La syntaxe complexe de la v5.4.0 causait l'erreur "Jeton inattendu" sur les chemins longs
+  # FIX: Utilisation de l'interpolation simple pour supporter les chemins avec espaces
   Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
   Exit
 }
@@ -178,7 +179,7 @@ $WriteFilesBlock += "        permissions: '0444'`n" # Lecture seule
 $WriteFilesBlock += "        encoding: b64`n"
 $WriteFilesBlock += "        content: $ScriptVerContent`n"
 
-# --- INJECTION DE LA BRANCHE (NOUVEAU) ---
+# --- INJECTION DE LA BRANCHE ---
 # On écrit la variable $BRANCHE dans /opt/ECHO_BRANCH
 $BrancheContent = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($BRANCHE))
 $WriteFilesBlock += "      - path: /opt/ECHO_BRANCH`n"
@@ -188,7 +189,6 @@ $WriteFilesBlock += "        content: $BrancheContent`n"
 
 
 # --- 6. USER-DATA CLOUD-INIT ---
-# REVERT TO 5.4.0 STRUCTURE (Strict Copy of working Logic)
 $UserDataContent = @"
 #cloud-config
 autoinstall:

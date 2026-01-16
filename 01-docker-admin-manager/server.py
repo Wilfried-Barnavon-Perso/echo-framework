@@ -2,13 +2,13 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 2.7 (Audit Ready)
+VERSION : 2.8 (Compose Ready)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-01-15
+DATE MAJ : 2026-01-16
 
 --- DESCRIPTION ARCHITECTURALE ---
 Ce micro-service Flask agit comme le "Concierge" de l'infrastructure ECHO.
-Il s'exécute dans un conteneur Docker dédié (admin-manager) sur le port 3001.
+Il s'exécute dans un conteneur Docker dédié (echo-admin-manager) sur le port 3001.
 
 --- POURQUOI CE MODULE ? ---
 1. Sécurité : Isoler les opérations priviligiées (accès Docker.sock, Backups)
@@ -120,7 +120,8 @@ def set_charset(response):
 # Toute modification ici doit être répercutée dans le script d'installation.
 
 # Cible principale pour les backups (c'est le conteneur qu'on va arrêter/démarrer)
-TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'open-webui')
+# UPDATE v5.6 : Adaptation au nommage Docker Compose (echo-webui-core)
+TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'echo-webui-core')
 
 # Volume dédié aux backups (isolé des données pour pouvoir supprimer les données sans perdre les backups)
 BACKUP_DIR = "/backups"
