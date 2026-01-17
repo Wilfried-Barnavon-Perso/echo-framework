@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.6.4
+# VERSION : 5.6.5
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE
 # ==============================================================================
@@ -102,6 +102,17 @@ fi
 
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull --quiet
+
+# --- FIX COMPATIBILITÉ DOCKER-COMPOSE 1.x ---
+# Si on utilise l'ancien docker-compose, on force la suppression du conteneur
+# pour éviter l'erreur 'KeyError: ContainerConfig' lors de la recreation.
+if [ "$DOCKER_COMPOSE_CMD" = "docker-compose" ]; then
+    if docker ps -a --format '{{.Names}}' | grep -q "^echo-webui-core$"; then
+        echo "⚠️  [Compatibilité v1] Suppression préventive du conteneur echo-webui-core pour éviter le crash..."
+        docker rm -f echo-webui-core >/dev/null 2>&1
+    fi
+fi
+
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
 
 if [ $? -eq 0 ]; then
