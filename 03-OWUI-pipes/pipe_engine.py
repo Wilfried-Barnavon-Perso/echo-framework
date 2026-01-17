@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.19 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.20 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.19
-description: 136.19: GZIP Upstream activé par défaut (Smart Auto-Off > 10MB). Architecture Stateless optimisée pour Code Assist API.
+version: 136.20
+description: 136.20: Seuil GZIP (Threshold) passé en Ko (KB) pour plus de granularité. Architecture Stateless optimisée pour Code Assist API.
 """
 
 # ==============================================================================
@@ -37,7 +37,7 @@ except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(
         f"❌ Module critique manquant : '{missing_module}'. "
-        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.19. "
+        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.20. "
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
 
@@ -791,7 +791,7 @@ class Pipe:
         
         ENABLE_UPSTREAM_GZIP: bool = Field(default=True, description="📦 Activer Compression GZIP Upstream")
         GZIP_LEVEL: int = Field(default=1, description="🎚️ Niveau Compression GZIP (1-9)")
-        GZIP_THRESHOLD_MB: int = Field(default=10, description="🚫 Désactiver GZIP si > MB (Evite overhead binaire)")
+        GZIP_THRESHOLD_KB: int = Field(default=10240, description="🚫 Désactiver GZIP si > Ko (Evite overhead binaire)")
 
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
@@ -880,13 +880,13 @@ class Pipe:
             # --- UPSTREAM GZIP COMPRESSION (SMART) ---
             if self.valves.ENABLE_UPSTREAM_GZIP:
                 # Check size before compressing to avoid "Zip Bomb" limits or useless CPU usage on binaries
-                if len(req_content) < (self.valves.GZIP_THRESHOLD_MB * 1024 * 1024):
+                if len(req_content) < (self.valves.GZIP_THRESHOLD_KB * 1024):
                     req_content = gzip.compress(req_content, compresslevel=self.valves.GZIP_LEVEL)
                     req["headers"]["Content-Encoding"] = "gzip"
                     if self.valves.DEBUG_MODE:
                         yield f"📦 **GZIP Encoded** (Level {self.valves.GZIP_LEVEL})\n"
                 elif self.valves.DEBUG_MODE:
-                     yield f"⏭️ **GZIP Skipped** (Size > {self.valves.GZIP_THRESHOLD_MB}MB)\n"
+                     yield f"⏭️ **GZIP Skipped** (Size > {self.valves.GZIP_THRESHOLD_KB}KB)\n"
 
             # Utilisation de client.stream pour le pooling
             async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
