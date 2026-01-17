@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.17 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.19 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.17
-description: 136.17: Activation HTTP/2 (Multiplexing). Support natif du GZIP Upstream et Optimisations I/O. Fallback HTTP/1.1 automatique.
+version: 136.19
+description: 136.19: GZIP Upstream activé par défaut (Smart Auto-Off > 10MB). Architecture Stateless optimisée pour Code Assist API.
 """
 
 # ==============================================================================
@@ -37,7 +37,7 @@ except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(
         f"❌ Module critique manquant : '{missing_module}'. "
-        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.17. "
+        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.19. "
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
 
@@ -789,8 +789,9 @@ class Pipe:
         HTTP_CLIENT_TIMEOUT: int = Field(default=300, description="⏱️ Autokill Client HTTP (sec)")
         ENABLE_HTTP2: bool = Field(default=True, description="🚀 Activer HTTP/2 (Multiplexing)")
         
-        ENABLE_UPSTREAM_GZIP: bool = Field(default=False, description="📦 Activer Compression GZIP Upstream")
+        ENABLE_UPSTREAM_GZIP: bool = Field(default=True, description="📦 Activer Compression GZIP Upstream")
         GZIP_LEVEL: int = Field(default=1, description="🎚️ Niveau Compression GZIP (1-9)")
+        GZIP_THRESHOLD_MB: int = Field(default=10, description="🚫 Désactiver GZIP si > MB (Evite overhead binaire)")
 
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
@@ -876,12 +877,16 @@ class Pipe:
             # --- TURBO OPTIMIZATION (Strict orjson) ---
             req_content = orjson.dumps(req["json"])
             
-            # --- UPSTREAM GZIP COMPRESSION (NEW) ---
+            # --- UPSTREAM GZIP COMPRESSION (SMART) ---
             if self.valves.ENABLE_UPSTREAM_GZIP:
-                req_content = gzip.compress(req_content, compresslevel=self.valves.GZIP_LEVEL)
-                req["headers"]["Content-Encoding"] = "gzip"
-                if self.valves.DEBUG_MODE:
-                    yield f"📦 **GZIP Encoded** (Level {self.valves.GZIP_LEVEL})\n"
+                # Check size before compressing to avoid "Zip Bomb" limits or useless CPU usage on binaries
+                if len(req_content) < (self.valves.GZIP_THRESHOLD_MB * 1024 * 1024):
+                    req_content = gzip.compress(req_content, compresslevel=self.valves.GZIP_LEVEL)
+                    req["headers"]["Content-Encoding"] = "gzip"
+                    if self.valves.DEBUG_MODE:
+                        yield f"📦 **GZIP Encoded** (Level {self.valves.GZIP_LEVEL})\n"
+                elif self.valves.DEBUG_MODE:
+                     yield f"⏭️ **GZIP Skipped** (Size > {self.valves.GZIP_THRESHOLD_MB}MB)\n"
 
             # Utilisation de client.stream pour le pooling
             async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
