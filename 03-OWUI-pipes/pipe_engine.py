@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.16 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.17 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.16
-description: 136.16: Ajout compression GZIP Upstream (Optimisation latence envoi). Niveau de compression configurable (Défaut: 1 - Fastest).
+version: 136.17
+description: 136.17: Activation HTTP/2 (Multiplexing). Support natif du GZIP Upstream et Optimisations I/O. Fallback HTTP/1.1 automatique.
 """
 
 # ==============================================================================
@@ -37,7 +37,7 @@ except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(
         f"❌ Module critique manquant : '{missing_module}'. "
-        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.16. "
+        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.17. "
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
 
@@ -60,7 +60,7 @@ GOOGLE_SCOPES = [
 _SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
 _LAST_CLIENT_ACCESS: float = 0.0
 
-async def _get_global_client(idle_timeout: int = 300) -> httpx.AsyncClient:
+async def _get_global_client(idle_timeout: int = 300, enable_http2: bool = True) -> httpx.AsyncClient:
     """Récupère ou crée un client HTTP asynchrone partagé pour le Connection Pooling."""
     global _SHARED_ASYNC_CLIENT, _LAST_CLIENT_ACCESS
     
@@ -76,10 +76,19 @@ async def _get_global_client(idle_timeout: int = 300) -> httpx.AsyncClient:
 
     if _SHARED_ASYNC_CLIENT is None or _SHARED_ASYNC_CLIENT.is_closed:
         # Configuration optimisée pour le streaming et la réutilisation
-        _SHARED_ASYNC_CLIENT = httpx.AsyncClient(
-            timeout=300,
-            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100, keepalive_expiry=300)
-        )
+        limits = httpx.Limits(max_keepalive_connections=20, max_connections=100, keepalive_expiry=300)
+        
+        try:
+            # Tentative d'initialisation avec HTTP/2 si demandé
+            _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=enable_http2)
+        except ImportError:
+            # Fallback de sécurité si la librairie 'h2' est absente malgré la config
+            # Cela garantit la non-régression.
+            print("⚠️ Module 'h2' manquant pour HTTP/2. Fallback sur HTTP/1.1.")
+            _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=False)
+        except Exception:
+            # Autre erreur imprévue lors de l'init
+            _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=False)
     
     _LAST_CLIENT_ACCESS = now
     return _SHARED_ASYNC_CLIENT
@@ -778,6 +787,7 @@ class Pipe:
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
 
         HTTP_CLIENT_TIMEOUT: int = Field(default=300, description="⏱️ Autokill Client HTTP (sec)")
+        ENABLE_HTTP2: bool = Field(default=True, description="🚀 Activer HTTP/2 (Multiplexing)")
         
         ENABLE_UPSTREAM_GZIP: bool = Field(default=False, description="📦 Activer Compression GZIP Upstream")
         GZIP_LEVEL: int = Field(default=1, description="🎚️ Niveau Compression GZIP (1-9)")
@@ -861,7 +871,7 @@ class Pipe:
         try:
             # --- CONNECTION POOLING OPTIMIZATION ---
             # On récupère le client partagé au lieu d'en créer un nouveau
-            client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT)
+            client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.ENABLE_HTTP2)
             
             # --- TURBO OPTIMIZATION (Strict orjson) ---
             req_content = orjson.dumps(req["json"])
