@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.20 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.21 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.20
-description: 136.20: Seuil GZIP (Threshold) passé en Ko (KB) pour plus de granularité. Architecture Stateless optimisée pour Code Assist API.
+version: 136.21
+description: 136.21: Optimisation Compression via mgzip (Drop-in replacement multithread). Fallback sur gzip standard assuré. Aucune régression.
 """
 
 # ==============================================================================
@@ -21,7 +21,6 @@ import mimetypes
 import glob
 import codecs
 import asyncio
-import gzip # Standard & Performant (C-based zlib)
 import json as std_json 
 from datetime import datetime
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
@@ -37,9 +36,16 @@ except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(
         f"❌ Module critique manquant : '{missing_module}'. "
-        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.20. "
+        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.21. "
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
+
+# --- OPTIMISATION COMPRESSION (DROP-IN REPLACEMENT) ---
+# Tente d'utiliser mgzip (Multithread) sinon fallback sur gzip standard
+try:
+    import mgzip as gzip
+except ImportError:
+    import gzip
 
 # --- CONSTANTES DE CONFIGURATION GOOGLE ---
 GOOGLE_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
@@ -884,7 +890,15 @@ class Pipe:
                     req_content = gzip.compress(req_content, compresslevel=self.valves.GZIP_LEVEL)
                     req["headers"]["Content-Encoding"] = "gzip"
                     if self.valves.DEBUG_MODE:
-                        yield f"📦 **GZIP Encoded** (Level {self.valves.GZIP_LEVEL})\n"
+                        # Petite info pour savoir si on est en multi-thread
+                        try:
+                            import mgzip
+                            is_mgzip = (gzip == mgzip)
+                        except:
+                            is_mgzip = False
+                        
+                        engine_name = "mgzip (Multi-threaded)" if is_mgzip else "gzip (Standard)"
+                        yield f"📦 **GZIP Encoded** ({engine_name}, Level {self.valves.GZIP_LEVEL})\n"
                 elif self.valves.DEBUG_MODE:
                      yield f"⏭️ **GZIP Skipped** (Size > {self.valves.GZIP_THRESHOLD_KB}KB)\n"
 
