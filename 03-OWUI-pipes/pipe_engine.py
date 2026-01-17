@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.15 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.16 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.15
-description: 136.15: Architecture Pure Stateless. Code de caching supprimé (Incompatible OAuth). Optimisations I/O Parallèle, Réseau & Encodage actives.
+version: 136.16
+description: 136.16: Ajout compression GZIP Upstream (Optimisation latence envoi). Niveau de compression configurable (Défaut: 1 - Fastest).
 """
 
 # ==============================================================================
@@ -21,6 +21,7 @@ import mimetypes
 import glob
 import codecs
 import asyncio
+import gzip # Standard & Performant (C-based zlib)
 import json as std_json 
 from datetime import datetime
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
@@ -36,7 +37,7 @@ except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(
         f"❌ Module critique manquant : '{missing_module}'. "
-        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.15. "
+        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.16. "
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
 
@@ -778,6 +779,9 @@ class Pipe:
 
         HTTP_CLIENT_TIMEOUT: int = Field(default=300, description="⏱️ Autokill Client HTTP (sec)")
         
+        ENABLE_UPSTREAM_GZIP: bool = Field(default=False, description="📦 Activer Compression GZIP Upstream")
+        GZIP_LEVEL: int = Field(default=1, description="🎚️ Niveau Compression GZIP (1-9)")
+
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
         OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu")
@@ -861,6 +865,14 @@ class Pipe:
             
             # --- TURBO OPTIMIZATION (Strict orjson) ---
             req_content = orjson.dumps(req["json"])
+            
+            # --- UPSTREAM GZIP COMPRESSION (NEW) ---
+            if self.valves.ENABLE_UPSTREAM_GZIP:
+                req_content = gzip.compress(req_content, compresslevel=self.valves.GZIP_LEVEL)
+                req["headers"]["Content-Encoding"] = "gzip"
+                if self.valves.DEBUG_MODE:
+                    yield f"📦 **GZIP Encoded** (Level {self.valves.GZIP_LEVEL})\n"
+
             # Utilisation de client.stream pour le pooling
             async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
                 if r.status_code != 200:
