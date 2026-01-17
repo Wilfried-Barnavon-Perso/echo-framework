@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.9 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.10 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.9
-description: 136.9: Vérification centralisée des dépendances critiques. Stratégie Cache Hybride (API pour fichiers, Ratio pour texte).
+version: 136.10
+description: 136.10: Parallélisation I/O (Async/Threads) pour le traitement des fichiers. Stratégie Cache Hybride Sûre.
 """
 
 # ==============================================================================
@@ -36,7 +36,7 @@ except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(
         f"❌ Module critique manquant : '{missing_module}'. "
-        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.9. "
+        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.10. "
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
 
@@ -383,6 +383,49 @@ class Orchestrator:
 
         return mime_type, is_text, "", real_path
 
+    def _process_single_file_sync(self, f_obj: Dict, txt_map: Dict, bin_map: Dict) -> Tuple[Optional[Dict], Optional[Dict]]:
+        """Worker synchrone pour traiter un seul fichier : I/O Disque + Encodage CPU."""
+        f_real = f_obj.get("file", f_obj)
+        f_id = f_real.get("id")
+        f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
+        f_path = f_real.get("path")
+
+        mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path, txt_map, bin_map)
+
+        if err:
+            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ {f_name}: {err}")
+            return None, None
+        
+        file_size = os.path.getsize(real_path)
+        info_entry = None
+        part = None
+
+        if is_text:
+            try:
+                with open(real_path, "r", encoding="utf-8", errors="ignore") as f:
+                    data = f.read()
+                part = {"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"}
+                info_entry = {"name": f_name, "type": "Text (Inline)", "size": file_size, "status": "Embedded 📄"}
+            except: pass
+        else:
+            try:
+                with open(real_path, "rb") as f:
+                    raw_data = f.read()
+                    # Utilisation native pybase64
+                    b64_data = fast_b64encode(raw_data)
+                
+                part = {"inlineData": {"mimeType": mime, "data": b64_data}}
+                info_entry = {"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"}
+                
+                if file_size > (self.valves.MAX_INLINE_SIZE_KB * 1024):
+                    if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ File {f_name} large ({file_size/1024:.0f}KB) but sent as Base64 (No Upload Mode).")
+
+            except Exception as e:
+                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Base64 Error {f_name}: {str(e)}")
+                part = {"text": f"[Error processing binary file {f_name}: {str(e)}]"}
+
+        return part, info_entry
+
     async def _process_files_for_message(self, files_raw: List[Dict]) -> List[Dict]:
         parts = []
         files_to_process = []
@@ -390,49 +433,28 @@ class Orchestrator:
 
         txt_map, bin_map = self._parse_mime_valves()
         
+        # 1. Deduplication et préparation
         for f in files_raw:
             fid = f.get("id") or f.get("file", {}).get("id")
             if fid and fid not in seen_ids:
                 files_to_process.append(f); seen_ids.add(fid)
 
+        # 2. Lancement parallèle (Threads pour I/O + CPU)
+        tasks = []
         for f_obj in files_to_process:
-            f_real = f_obj.get("file", f_obj)
-            f_id = f_real.get("id")
-            f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
-            f_path = f_real.get("path")
-
-            mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path, txt_map, bin_map)
-
-            if err:
-                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ {f_name}: {err}")
-                continue
+            # On déporte le travail lourd dans un thread séparé
+            tasks.append(asyncio.to_thread(self._process_single_file_sync, f_obj, txt_map, bin_map))
+        
+        # 3. Attente non-bloquante de tous les fichiers
+        if tasks:
+            results = await asyncio.gather(*tasks)
             
-            file_size = os.path.getsize(real_path)
-            
-            if is_text:
-                try:
-                    with open(real_path, "r", encoding="utf-8", errors="ignore") as f:
-                        data = f.read()
-                    parts.append({"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"})
-                    self.files_processed_info.append({"name": f_name, "type": "Text (Inline)", "size": file_size, "status": "Embedded 📄"})
-                except: pass
-                continue
-
-            try:
-                with open(real_path, "rb") as f:
-                    raw_data = f.read()
-                    # Utilisation native pybase64
-                    b64_data = fast_b64encode(raw_data)
-                
-                parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
-                self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"})
-                
-                if file_size > (self.valves.MAX_INLINE_SIZE_KB * 1024):
-                    if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ File {f_name} large ({file_size/1024:.0f}KB) but sent as Base64 (No Upload Mode).")
-
-            except Exception as e:
-                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Base64 Error {f_name}: {str(e)}")
-                parts.append({"text": f"[Error processing binary file {f_name}: {str(e)}]"})
+            # 4. Assemblage ordonné des résultats
+            for part, info in results:
+                if part:
+                    parts.append(part)
+                if info:
+                    self.files_processed_info.append(info)
         
         return parts
 
