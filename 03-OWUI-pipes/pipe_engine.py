@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.12 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.15 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.12
-description: 136.12: Alignement critique des endpoints Cache sur GOOGLE_API_BASE_URL (Internal API). Fixe le problème de cache introuvable/refusé.
+version: 136.15
+description: 136.15: Architecture Pure Stateless. Code de caching supprimé (Incompatible OAuth). Optimisations I/O Parallèle, Réseau & Encodage actives.
 """
 
 # ==============================================================================
@@ -36,7 +36,7 @@ except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(
         f"❌ Module critique manquant : '{missing_module}'. "
-        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.12. "
+        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.15. "
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
 
@@ -54,9 +54,6 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid",
 ]
-
-# --- REGISTRE DE CACHE GLOBAL ---
-_LOCAL_CACHE_REGISTRY = {}
 
 # --- GESTIONNAIRE DE CONNEXION PARTAGÉ (CONNECTION POOLING) ---
 _SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
@@ -93,7 +90,6 @@ def fast_b64encode(data: bytes) -> str:
 
 # --- CONSTANTES MAGIQUES ---
 MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator"
-MIN_ABSOLUTE_TOKENS_PRO = 4096
 
 # ==============================================================================
 # SECTION 1 : DÉPENDANCES OPTIONNELLES
@@ -584,161 +580,8 @@ class Orchestrator:
         return total
 
 # ==============================================================================
-# SECTION 6 : CACHE MANAGER (TEXTE) & ADAPTERS
+# SECTION 6 : ADAPTER STANDARD
 # ==============================================================================
-class ContextCacheManager:
-    def __init__(self, auth_token: str, idle_timeout: int = 300):
-        self.auth_token = auth_token
-        self.idle_timeout = idle_timeout
-        self.base_url = GOOGLE_API_BASE_URL # <-- ALIGNEMENT SUR API INTERNE
-
-    async def count_tokens(self, model: str, system_inst: dict, contents: list, tools: list = None) -> Tuple[int, Optional[str]]:
-        real_model = model if model.startswith("models/") else f"models/{model}"
-        url = f"{self.base_url}/{real_model}:countTokens"
-        payload = {"contents": contents, "systemInstruction": system_inst}
-        if tools: payload["tools"] = tools
-        
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.auth_token}"}
-        try:
-            client = await _get_global_client(self.idle_timeout)
-            resp = await client.post(url, json=payload, headers=headers, timeout=10)
-            if resp.status_code == 200: 
-                return int(resp.json().get("totalTokens", 0)), None
-            return -1, f"HTTP {resp.status_code} {resp.text}"
-        except Exception as e: 
-            return -1, str(e)
-
-    async def create(self, model: str, system_inst: dict, contents: list, ttl: int = 600) -> Tuple[Optional[str], Optional[str]]:
-        real_model = model if model.startswith("models/") else f"models/{model}"
-        url = f"{self.base_url}/cachedContents"
-        payload = {"model": real_model, "contents": contents, "systemInstruction": system_inst, "ttl": f"{ttl}s"}
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.auth_token}"}
-        try:
-            client = await _get_global_client(self.idle_timeout)
-            # Utilisation native orjson (Bytes)
-            resp = await client.post(url, content=orjson.dumps(payload), headers=headers, timeout=300)
-                
-            if resp.status_code == 200: return resp.json().get("name"), None
-            return None, f"HTTP {resp.status_code}: {resp.text}"
-        except Exception as e: return None, str(e)
-
-class SmartCacheStrategy:
-    def __init__(self, cache_manager, data_dir, ratio_trigger=2.0, min_tokens=4096, debug_log=None):
-        self.mgr = cache_manager
-        self.registry = _LOCAL_CACHE_REGISTRY
-        self.data_dir = data_dir
-        self.ratio_trigger = ratio_trigger
-        self.min_tokens = min_tokens
-        self.debug_log = debug_log if debug_log is not None else []
-
-    def _compute_hash(self, model: str, system_inst: Dict, contents: List[Dict]) -> str:
-        data = {"model": model, "contents": contents}
-        # Utilisation native orjson
-        dump = orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
-        return hashlib.sha256(dump).hexdigest()
-
-    def _get_last_token_count(self, chat_id: str) -> Optional[int]:
-        if not chat_id: return None
-        try:
-            safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
-            path = f"{self.data_dir}/stats/{safe_id}.json"
-            if os.path.exists(path):
-                with open(path, "r") as f:
-                    data = std_json.load(f)
-                    p = data.get("promptTokenCount", 0)
-                    c = data.get("candidatesTokenCount", 0)
-                    return p + c
-        except: pass
-        return None
-
-    def _has_files(self, contents: List[Dict]) -> bool:
-        for msg in contents:
-            for part in msg.get("parts", []):
-                if "inlineData" in part: return True
-        return False
-
-    def _estimate_text_only(self, contents: List[Dict]) -> int:
-        total = 0
-        for item in contents:
-            for part in item.get("parts", []):
-                if "text" in part: total += len(part["text"]) // 4
-        return total
-
-    async def get_or_create_cache(self, model: str, system_inst: dict, contents: list, ttl: int, chat_id: str = None, tools: list = None) -> Tuple[Optional[str], Optional[str]]:
-        current_hash = self._compute_hash(model, system_inst, contents)
-        now = time.time()
-        
-        if current_hash in self.registry:
-            entry = self.registry[current_hash]
-            if now < entry["expires_at"]: 
-                if self.debug_log is not None: self.debug_log.append(f"🧠 Cache Hit (Local Registry): {entry['name']}")
-                return entry["name"], None
-
-        # --- LOGIQUE HYBRIDE SÉCURISÉE ---
-        
-        has_files = self._has_files(contents)
-        should_check_api = True # Par défaut, on vérifie (Sécurité)
-        debug_reason = "Init"
-
-        if has_files:
-            # CAS 1 : Fichiers présents -> API CHECK SYSTEMATIQUE
-            should_check_api = True
-            debug_reason = "Fichiers présents (Check API requis)"
-        
-        else:
-            # CAS 2 : Texte seul -> Optimisation possible
-            last_count = self._get_last_token_count(chat_id)
-            est_tokens = self._estimate_text_only(contents)
-            
-            # Si on a une mémoire fiable, on l'utilise comme base
-            if last_count and last_count > 0:
-                if est_tokens < last_count: est_tokens = last_count # Plancher
-            
-            # Application du Ratio
-            if est_tokens > (self.min_tokens * self.ratio_trigger):
-                should_check_api = False # Zone Verte -> Cache Direct
-                debug_reason = f"Texte seul & Ratio OK (Est: {est_tokens} > {self.min_tokens*self.ratio_trigger})"
-            elif est_tokens < self.min_tokens:
-                if self.debug_log is not None: self.debug_log.append(f"⚪ Pas de Cache: Trop petit (Est: {est_tokens} < {self.min_tokens})")
-                return None, None # Trop petit
-            else:
-                should_check_api = True # Zone Grise
-                debug_reason = f"Zone Grise (Est: {est_tokens})"
-
-        # Exécution
-        if should_check_api:
-            if self.debug_log is not None: self.debug_log.append(f"🔍 Checking API Tokens ({debug_reason})...")
-            real_tokens, err = await self.mgr.count_tokens(model, system_inst, contents, tools)
-            
-            if err:
-                if self.debug_log is not None: self.debug_log.append(f"⚠️ Erreur CountTokens: {err}")
-                return None, err
-
-            if real_tokens < self.min_tokens: 
-                if self.debug_log is not None: self.debug_log.append(f"⚪ Pas de Cache: API Count ({real_tokens}) < Min ({self.min_tokens})")
-                return None, None
-        
-        # Création
-        name, err = await self.mgr.create(model, system_inst, contents, ttl)
-        if name:
-            self.registry[current_hash] = {"name": name, "expires_at": now + ttl - 60}
-        elif err and self.debug_log is not None:
-            self.debug_log.append(f"❌ Erreur Création Cache: {err}")
-            
-        return name, err
-
-class PublicGeminiOAuthAdapter:
-    def __init__(self, auth_token: str):
-        self.base_url = GOOGLE_API_BASE_URL # <-- ALIGNEMENT SUR API INTERNE
-        self.auth_token = auth_token
-
-    def build(self, model, contents, temp, max_tok, cached_name, tools=None):
-        real_model = model if model.startswith("models/") else f"models/{model}"
-        url = f"{self.base_url}/{real_model}:streamGenerateContent?alt=sse"
-        payload = {"contents": contents, "cachedContent": cached_name, "generationConfig": {"temperature": temp, "maxOutputTokens": max_tok}}
-        if tools: payload["tools"] = tools
-        return {"url": url, "headers": {"Content-Type": "application/json", "Authorization": f"Bearer {self.auth_token}"}, "json": payload}
-
 class GeminiAdapter:
     def __init__(self, base_url):
         self.base_url = base_url
@@ -882,10 +725,9 @@ class StreamProcessor:
                 p_tok = self.usage_stats.get("promptTokenCount", 0)
                 c_tok = self.usage_stats.get("candidatesTokenCount", 0)
                 t_tok = self.usage_stats.get("totalTokenCount", 0)
-                cache_tok = self.usage_stats.get("cachedContentTokenCount", 0)
+                # Cache supprimé : on ne l'affiche plus dans les stats
                 pct = (t_tok / self.context_window) * 100
                 bar = "█" * int(pct/10) + "░" * (10 - int(pct/10))
-                cache_row = f"| **Cache (Hit)** | {cache_tok:,} |\n" if cache_tok > 0 else ""
                 
                 stats_content += f"""<details>
 <summary>⚡ Contexte [{step_label}]: {pct:.1f}% {bar}</summary>
@@ -893,7 +735,7 @@ class StreamProcessor:
 | Métrique | Valeur |
 | :--- | :--- |
 | **Prompt** | {p_tok:,} |
-{cache_row}| **Réponse** | {c_tok:,} |
+| **Réponse** | {c_tok:,} |
 | **Total** | {t_tok:,} / {self.context_window:,} |
 </details>\n"""
                 has_content = True
@@ -936,11 +778,6 @@ class Pipe:
 
         HTTP_CLIENT_TIMEOUT: int = Field(default=300, description="⏱️ Autokill Client HTTP (sec)")
         
-        ENABLE_CACHING: bool = Field(default=True, description="🧠 Smart Cache (Text)")
-        CACHE_TTL: int = Field(default=3600, description="⏱️ Durée Cache (sec)") 
-        MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens (Text)")
-        CACHE_RATIO_TRIGGER: float = Field(default=2.0, description="⚡ Ratio Cache Force (ex: 2.0 = 2x Min)")
-
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
         OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu")
@@ -983,42 +820,10 @@ class Pipe:
         if body.get("messages") and body.get("messages")[-1].get("role") == "tool":
             initial_label = "Post-Action"
 
-        req = None
-        estimated_tokens = orch.estimate_tokens(context)
-        
-        if self.valves.ENABLE_CACHING and estimated_tokens >= self.valves.MIN_CACHE_TOKENS:
-             history_to_cache = []
-             for msg in context[:-1]:
-                 clean_parts = []
-                 for p in msg.get("parts", []):
-                     if "text" in p or "inlineData" in p or "file_data" in p or "functionCall" in p or "functionResponse" in p:
-                         clean_parts.append(p)
-                 if clean_parts: history_to_cache.append({"role": msg["role"], "parts": clean_parts})
-             
-             trigger_content = [context[-1]]
-             
-             if history_to_cache:
-                 cache_mgr = ContextCacheManager(creds.token, self.valves.HTTP_CLIENT_TIMEOUT)
-                 # Injection de orch.debug_log pour remonter les erreurs
-                 strategy = SmartCacheStrategy(cache_mgr, self.data_dir, self.valves.CACHE_RATIO_TRIGGER, self.valves.MIN_CACHE_TOKENS, orch.debug_log)
-                 cache_name, _ = await strategy.get_or_create_cache(
-                     self.valves.MODEL_SELECTION,
-                     orch.get_system_instruction(),
-                     history_to_cache,
-                     self.valves.CACHE_TTL,
-                     chat_id,
-                     tools
-                 )
-                 
-                 if cache_name:
-                     if self.valves.DEBUG_MODE: yield f"✅ **SMART CACHE LOCKED**: `{cache_name}`\n"
-                     adapter = PublicGeminiOAuthAdapter(creds.token)
-                     req = adapter.build(self.valves.MODEL_SELECTION, trigger_content, self.valves.TEMPERATURE, self.valves.MAX_TOKENS, cache_name, tools)
-
-        if not req:
-            adapter = GeminiAdapter(self.base_url)
-            req = adapter.build(pid, context, orch.get_system_instruction(), self.valves.TEMPERATURE, self.valves.MAX_TOKENS, self.valves.THINKING_LEVEL, self.valves.MODEL_SELECTION, tools)
-            req["headers"]["Authorization"] = f"Bearer {creds.token}"
+        # --- ADAPTER STANDARD ---
+        adapter = GeminiAdapter(self.base_url)
+        req = adapter.build(pid, context, orch.get_system_instruction(), self.valves.TEMPERATURE, self.valves.MAX_TOKENS, self.valves.THINKING_LEVEL, self.valves.MODEL_SELECTION, tools)
+        req["headers"]["Authorization"] = f"Bearer {creds.token}"
 
         if self.valves.DEBUG_MODE:
              # Utilisation native orjson (Bytes)
