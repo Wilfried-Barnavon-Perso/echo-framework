@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.3 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.5 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.3
-description: 136.3: Réorganisation cosmétique des Valves pour une meilleure UX.
+version: 136.5
+description: 136.5: Stratégie Cache Hybride Sûre. Binaires = Comptage API systématique. Texte seul = Optimisation Ratio & Stateful. Connection Pooling actif.
 """
 
 # ==============================================================================
@@ -590,9 +590,12 @@ class ContextCacheManager:
         except Exception as e: return None, str(e)
 
 class SmartCacheStrategy:
-    def __init__(self, cache_manager):
+    def __init__(self, cache_manager, data_dir, ratio_trigger=2.0, min_tokens=4096):
         self.mgr = cache_manager
         self.registry = _LOCAL_CACHE_REGISTRY
+        self.data_dir = data_dir
+        self.ratio_trigger = ratio_trigger
+        self.min_tokens = min_tokens
 
     def _compute_hash(self, model: str, system_inst: Dict, contents: List[Dict]) -> str:
         data = {"model": model, "contents": contents}
@@ -602,7 +605,34 @@ class SmartCacheStrategy:
             dump = std_json.dumps(data, sort_keys=True).encode()
         return hashlib.sha256(dump).hexdigest()
 
-    async def get_or_create_cache(self, model: str, system_inst: dict, contents: list, ttl: int, tools: list = None) -> Tuple[Optional[str], Optional[str]]:
+    def _get_last_token_count(self, chat_id: str) -> Optional[int]:
+        if not chat_id: return None
+        try:
+            safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
+            path = f"{self.data_dir}/stats/{safe_id}.json"
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    data = std_json.load(f)
+                    p = data.get("promptTokenCount", 0)
+                    c = data.get("candidatesTokenCount", 0)
+                    return p + c
+        except: pass
+        return None
+
+    def _has_files(self, contents: List[Dict]) -> bool:
+        for msg in contents:
+            for part in msg.get("parts", []):
+                if "inlineData" in part: return True
+        return False
+
+    def _estimate_text_only(self, contents: List[Dict]) -> int:
+        total = 0
+        for item in contents:
+            for part in item.get("parts", []):
+                if "text" in part: total += len(part["text"]) // 4
+        return total
+
+    async def get_or_create_cache(self, model: str, system_inst: dict, contents: list, ttl: int, chat_id: str = None, tools: list = None) -> Tuple[Optional[str], Optional[str]]:
         current_hash = self._compute_hash(model, system_inst, contents)
         now = time.time()
         
@@ -610,9 +640,38 @@ class SmartCacheStrategy:
             entry = self.registry[current_hash]
             if now < entry["expires_at"]: return entry["name"], None
 
-        real_tokens = await self.mgr.count_tokens(model, system_inst, contents, tools)
-        if real_tokens < MIN_ABSOLUTE_TOKENS_PRO: return None, None
+        # --- LOGIQUE HYBRIDE SÉCURISÉE ---
+        
+        has_files = self._has_files(contents)
+        should_check_api = True # Par défaut, on vérifie (Sécurité)
 
+        if has_files:
+            # CAS 1 : Fichiers présents -> API CHECK SYSTEMATIQUE
+            should_check_api = True
+        
+        else:
+            # CAS 2 : Texte seul -> Optimisation possible
+            last_count = self._get_last_token_count(chat_id)
+            est_tokens = self._estimate_text_only(contents)
+            
+            # Si on a une mémoire fiable, on l'utilise comme base
+            if last_count and last_count > 0:
+                if est_tokens < last_count: est_tokens = last_count # Plancher
+            
+            # Application du Ratio
+            if est_tokens > (self.min_tokens * self.ratio_trigger):
+                should_check_api = False # Zone Verte -> Cache Direct
+            elif est_tokens < self.min_tokens:
+                return None, None # Trop petit
+            else:
+                should_check_api = True # Zone Grise
+
+        # Exécution
+        if should_check_api:
+            real_tokens = await self.mgr.count_tokens(model, system_inst, contents, tools)
+            if real_tokens < self.min_tokens: return None, None
+        
+        # Création
         name, err = await self.mgr.create(model, system_inst, contents, ttl)
         if name:
             self.registry[current_hash] = {"name": name, "expires_at": now + ttl - 60}
@@ -830,7 +889,7 @@ class Pipe:
         ENABLE_CACHING: bool = Field(default=True, description="🧠 Smart Cache (Text)")
         CACHE_TTL: int = Field(default=3600, description="⏱️ Durée Cache (sec)") 
         MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens (Text)")
-        
+        CACHE_RATIO_TRIGGER: float = Field(default=2.0, description="⚡ Ratio Cache Force (ex: 2.0 = 2x Min)")
 
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
@@ -890,12 +949,13 @@ class Pipe:
              
              if history_to_cache:
                  cache_mgr = ContextCacheManager(creds.token, self.valves.HTTP_CLIENT_TIMEOUT)
-                 strategy = SmartCacheStrategy(cache_mgr)
+                 strategy = SmartCacheStrategy(cache_mgr, self.data_dir, self.valves.CACHE_RATIO_TRIGGER, self.valves.MIN_CACHE_TOKENS)
                  cache_name, _ = await strategy.get_or_create_cache(
                      self.valves.MODEL_SELECTION,
                      orch.get_system_instruction(),
                      history_to_cache,
                      self.valves.CACHE_TTL,
+                     chat_id,
                      tools
                  )
                  
