@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.5 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.9 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.5
-description: 136.5: Stratégie Cache Hybride Sûre. Binaires = Comptage API systématique. Texte seul = Optimisation Ratio & Stateful. Connection Pooling actif.
+version: 136.9
+description: 136.9: Vérification centralisée des dépendances critiques. Stratégie Cache Hybride (API pour fichiers, Ratio pour texte).
 """
 
 # ==============================================================================
@@ -16,24 +16,29 @@ import random
 import re
 import time
 import uuid
-import httpx
 import base64
 import mimetypes
 import glob
 import codecs
 import asyncio
 import json as std_json 
-
-# --- OPTIMISATION ORJSON (TURBO MODE) ---
-try:
-    import orjson
-    HAS_ORJSON = True
-except ImportError:
-    HAS_ORJSON = False
-
 from datetime import datetime
-from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
+
+# --- IMPORTATIONS TIERCES CRITIQUES ---
+# Vérification stricte des modules requis pour le fonctionnement du Pipe
+try:
+    import httpx
+    import orjson
+    import pybase64
+    from pydantic import BaseModel, Field
+except ImportError as e:
+    missing_module = e.name or "inconnu"
+    raise ImportError(
+        f"❌ Module critique manquant : '{missing_module}'. "
+        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.9. "
+        f"Veuillez l'installer dans l'environnement Python."
+    ) from e
 
 # --- CONSTANTES DE CONFIGURATION GOOGLE ---
 GOOGLE_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
@@ -80,6 +85,11 @@ async def _get_global_client(idle_timeout: int = 300) -> httpx.AsyncClient:
     
     _LAST_CLIENT_ACCESS = now
     return _SHARED_ASYNC_CLIENT
+
+# --- FONCTION UTILITAIRE BASE64 RAPIDE ---
+def fast_b64encode(data: bytes) -> str:
+    """Encode des bytes en base64 string via pybase64 (SIMD)."""
+    return pybase64.b64encode(data).decode("utf-8")
 
 # --- CONSTANTES MAGIQUES ---
 MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator"
@@ -411,7 +421,8 @@ class Orchestrator:
             try:
                 with open(real_path, "rb") as f:
                     raw_data = f.read()
-                    b64_data = base64.standard_b64encode(raw_data).decode("utf-8")
+                    # Utilisation native pybase64
+                    b64_data = fast_b64encode(raw_data)
                 
                 parts.append({"inlineData": {"mimeType": mime, "data": b64_data}})
                 self.files_processed_info.append({"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"})
@@ -580,10 +591,8 @@ class ContextCacheManager:
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.auth_token}"}
         try:
             client = await _get_global_client(self.idle_timeout)
-            if HAS_ORJSON:
-                resp = await client.post(url, content=orjson.dumps(payload), headers=headers, timeout=300)
-            else:
-                resp = await client.post(url, json=payload, headers=headers, timeout=300)
+            # Utilisation native orjson (Bytes)
+            resp = await client.post(url, content=orjson.dumps(payload), headers=headers, timeout=300)
                 
             if resp.status_code == 200: return resp.json().get("name"), None
             return None, f"HTTP {resp.status_code}: {resp.text}"
@@ -599,10 +608,8 @@ class SmartCacheStrategy:
 
     def _compute_hash(self, model: str, system_inst: Dict, contents: List[Dict]) -> str:
         data = {"model": model, "contents": contents}
-        if HAS_ORJSON:
-            dump = orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
-        else:
-            dump = std_json.dumps(data, sort_keys=True).encode()
+        # Utilisation native orjson
+        dump = orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
         return hashlib.sha256(dump).hexdigest()
 
     def _get_last_token_count(self, chat_id: str) -> Optional[int]:
@@ -970,11 +977,8 @@ class Pipe:
             req["headers"]["Authorization"] = f"Bearer {creds.token}"
 
         if self.valves.DEBUG_MODE:
-             # Clone pour affichage propre (Utilise orjson si dispo pour ne pas bloquer le thread)
-             if HAS_ORJSON:
-                 log_req = orjson.loads(orjson.dumps(req['json']))
-             else:
-                 log_req = std_json.loads(std_json.dumps(req['json']))
+             # Utilisation native orjson (Bytes)
+             log_req = orjson.loads(orjson.dumps(req['json']))
 
              contents = log_req.get("contents", [])
              if "request" in log_req: contents = log_req["request"].get("contents", [])
@@ -989,7 +993,7 @@ class Pipe:
                          p["inline_data"]["data"] = f"<BASE64_BLOB_LEN_{len_b64}>"
             
              yield f"🐞 **API REQ** `[{req['url']}]`\n```json\n{std_json.dumps(log_req, indent=2)}\n```\n"
-             if HAS_ORJSON: yield "🚀 **Turbo JSON (orjson)** Active\n"
+             yield "🚀 **Turbo JSON (orjson)** Active\n"
 
         proc = StreamProcessor(
             self.valves.DEBUG_MODE, 
@@ -1006,32 +1010,18 @@ class Pipe:
             # On récupère le client partagé au lieu d'en créer un nouveau
             client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT)
             
-            # --- TURBO OPTIMIZATION ---
-            # Si orjson est disponible, on pré-serialise les données en bytes
-            if HAS_ORJSON:
-                req_content = orjson.dumps(req["json"])
-                # Utilisation de client.stream pour le pooling
-                async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
-                    if r.status_code != 200:
-                        err = await r.aread()
-                        err_text = err.decode(errors='ignore')
-                        if self.valves.DEBUG_MODE:
-                            yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
-                        else:
-                            yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
-                        return
-                    async for token in proc.process(r): yield token
-            else:
-                # Fallback standard
-                async with client.stream("POST", req["url"], json=req["json"], headers=req["headers"]) as r:
-                    if r.status_code != 200:
-                        err = await r.aread()
-                        err_text = err.decode(errors='ignore')
-                        if self.valves.DEBUG_MODE:
-                            yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
-                        else:
-                            yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
-                        return
-                    async for token in proc.process(r): yield token
+            # --- TURBO OPTIMIZATION (Strict orjson) ---
+            req_content = orjson.dumps(req["json"])
+            # Utilisation de client.stream pour le pooling
+            async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
+                if r.status_code != 200:
+                    err = await r.aread()
+                    err_text = err.decode(errors='ignore')
+                    if self.valves.DEBUG_MODE:
+                        yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
+                    else:
+                        yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
+                    return
+                async for token in proc.process(r): yield token
 
         except Exception as e: yield f"🔥 **CRASH** : `{str(e)}`"
