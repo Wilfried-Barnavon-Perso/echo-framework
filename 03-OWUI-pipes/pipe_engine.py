@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.0 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.3 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.0
-description: 136.0: Version allégée (No Upload) optimisée avec orjson pour les performances. Supporte les gros payloads Base64 sans bloquer la VM.
+version: 136.3
+description: 136.3: Réorganisation cosmétique des Valves pour une meilleure UX.
 """
 
 # ==============================================================================
@@ -52,6 +52,34 @@ GOOGLE_SCOPES = [
 
 # --- REGISTRE DE CACHE GLOBAL ---
 _LOCAL_CACHE_REGISTRY = {}
+
+# --- GESTIONNAIRE DE CONNEXION PARTAGÉ (CONNECTION POOLING) ---
+_SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
+_LAST_CLIENT_ACCESS: float = 0.0
+
+async def _get_global_client(idle_timeout: int = 300) -> httpx.AsyncClient:
+    """Récupère ou crée un client HTTP asynchrone partagé pour le Connection Pooling."""
+    global _SHARED_ASYNC_CLIENT, _LAST_CLIENT_ACCESS
+    
+    now = time.time()
+    
+    # Autokill (Nettoyage) si inactif depuis trop longtemps
+    if _SHARED_ASYNC_CLIENT and (now - _LAST_CLIENT_ACCESS > idle_timeout):
+        old_client = _SHARED_ASYNC_CLIENT
+        _SHARED_ASYNC_CLIENT = None # Détachement immédiat pour éviter les race conditions
+        try:
+            await old_client.aclose()
+        except: pass
+
+    if _SHARED_ASYNC_CLIENT is None or _SHARED_ASYNC_CLIENT.is_closed:
+        # Configuration optimisée pour le streaming et la réutilisation
+        _SHARED_ASYNC_CLIENT = httpx.AsyncClient(
+            timeout=300,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100, keepalive_expiry=300)
+        )
+    
+    _LAST_CLIENT_ACCESS = now
+    return _SHARED_ASYNC_CLIENT
 
 # --- CONSTANTES MAGIQUES ---
 MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator"
@@ -526,8 +554,9 @@ class Orchestrator:
 # SECTION 6 : CACHE MANAGER (TEXTE) & ADAPTERS
 # ==============================================================================
 class ContextCacheManager:
-    def __init__(self, auth_token: str):
+    def __init__(self, auth_token: str, idle_timeout: int = 300):
         self.auth_token = auth_token
+        self.idle_timeout = idle_timeout
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
     async def count_tokens(self, model: str, system_inst: dict, contents: list, tools: list = None) -> int:
@@ -538,9 +567,9 @@ class ContextCacheManager:
         
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.auth_token}"}
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                if resp.status_code == 200: return int(resp.json().get("totalTokens", 0))
+            client = await _get_global_client(self.idle_timeout)
+            resp = await client.post(url, json=payload, headers=headers, timeout=10)
+            if resp.status_code == 200: return int(resp.json().get("totalTokens", 0))
         except: pass
         return -1
 
@@ -550,14 +579,14 @@ class ContextCacheManager:
         payload = {"model": real_model, "contents": contents, "systemInstruction": system_inst, "ttl": f"{ttl}s"}
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.auth_token}"}
         try:
-            async with httpx.AsyncClient(timeout=300) as client:
-                if HAS_ORJSON:
-                    resp = await client.post(url, content=orjson.dumps(payload), headers=headers)
-                else:
-                    resp = await client.post(url, json=payload, headers=headers)
-                    
-                if resp.status_code == 200: return resp.json().get("name"), None
-                return None, f"HTTP {resp.status_code}: {resp.text}"
+            client = await _get_global_client(self.idle_timeout)
+            if HAS_ORJSON:
+                resp = await client.post(url, content=orjson.dumps(payload), headers=headers, timeout=300)
+            else:
+                resp = await client.post(url, json=payload, headers=headers, timeout=300)
+                
+            if resp.status_code == 200: return resp.json().get("name"), None
+            return None, f"HTTP {resp.status_code}: {resp.text}"
         except Exception as e: return None, str(e)
 
 class SmartCacheStrategy:
@@ -777,6 +806,13 @@ class StreamProcessor:
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
+        MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
+        SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système")
+        THINKING_LEVEL: Literal["DYNAMIC", "LOW", "HIGH"] = Field(default="DYNAMIC", description="Niveau de réflexion")
+        TEMPERATURE: float = Field(default=1.0, description="Température")
+        MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
+        MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
+
         GEMINI_MIME_MAPPING_TXT: str = Field(
             default='{"text/plain": [".bat",".c",".conf",".cpp",".cs",".css",".csv",".dockerfile",".editorconfig",".env",".gitignore",".go",".h",".hpp",".ini",".java",".js",".json",".kt",".lua",".md",".php",".pl",".ps1",".py",".r",".rb",".rs",".sh",".sql",".swift",".toml",".ts",".txt",".vb",".xml",".yaml",".yml","dockerfile"], "text/html": [".html", ".htm"]}',
             description="📄 Mapping Texte (JSON: Mime -> [Exts])"
@@ -787,25 +823,21 @@ class Pipe:
             description="🖼️ Mapping Binaire (JSON: Mime -> [Exts])"
         )
         
-        MAX_INLINE_SIZE_KB: int = Field(default=10240, description="Seuil d'alerte taille (Ko)")
-        
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
+
+        HTTP_CLIENT_TIMEOUT: int = Field(default=300, description="⏱️ Autokill Client HTTP (sec)")
         
         ENABLE_CACHING: bool = Field(default=True, description="🧠 Smart Cache (Text)")
         CACHE_TTL: int = Field(default=3600, description="⏱️ Durée Cache (sec)") 
         MIN_CACHE_TOKENS: int = Field(default=4096, description="⚖️ Min Tokens (Text)")
         
-        MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
-        TEMPERATURE: float = Field(default=1.0, description="Température")
-        MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
-        MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
-        THINKING_LEVEL: Literal["DYNAMIC", "LOW", "HIGH"] = Field(default="DYNAMIC", description="Niveau de réflexion")
-        SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système")
+
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
         OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu")
 
         DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
+        MAX_INLINE_SIZE_KB: int = Field(default=10240, description="Seuil d'alerte taille (Ko)")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -857,7 +889,7 @@ class Pipe:
              trigger_content = [context[-1]]
              
              if history_to_cache:
-                 cache_mgr = ContextCacheManager(creds.token)
+                 cache_mgr = ContextCacheManager(creds.token, self.valves.HTTP_CLIENT_TIMEOUT)
                  strategy = SmartCacheStrategy(cache_mgr)
                  cache_name, _ = await strategy.get_or_create_cache(
                      self.valves.MODEL_SELECTION,
@@ -910,34 +942,36 @@ class Pipe:
         )
 
         try:
-            async with httpx.AsyncClient(timeout=300) as client:
-                # --- TURBO OPTIMIZATION ---
-                # Si orjson est disponible, on pré-serialise les données en bytes
-                # pour éviter que httpx n'utilise le json.dumps standard (lent & bloquant).
-                if HAS_ORJSON:
-                    req_content = orjson.dumps(req["json"])
-                    # On passe 'content' (bytes) au lieu de 'json' (dict)
-                    async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
-                        if r.status_code != 200:
-                            err = await r.aread()
-                            err_text = err.decode(errors='ignore')
-                            if self.valves.DEBUG_MODE:
-                                yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
-                            else:
-                                yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
-                            return
-                        async for token in proc.process(r): yield token
-                else:
-                    # Fallback standard
-                    async with client.stream("POST", req["url"], json=req["json"], headers=req["headers"]) as r:
-                        if r.status_code != 200:
-                            err = await r.aread()
-                            err_text = err.decode(errors='ignore')
-                            if self.valves.DEBUG_MODE:
-                                yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
-                            else:
-                                yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
-                            return
-                        async for token in proc.process(r): yield token
+            # --- CONNECTION POOLING OPTIMIZATION ---
+            # On récupère le client partagé au lieu d'en créer un nouveau
+            client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT)
+            
+            # --- TURBO OPTIMIZATION ---
+            # Si orjson est disponible, on pré-serialise les données en bytes
+            if HAS_ORJSON:
+                req_content = orjson.dumps(req["json"])
+                # Utilisation de client.stream pour le pooling
+                async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
+                    if r.status_code != 200:
+                        err = await r.aread()
+                        err_text = err.decode(errors='ignore')
+                        if self.valves.DEBUG_MODE:
+                            yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
+                        else:
+                            yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
+                        return
+                    async for token in proc.process(r): yield token
+            else:
+                # Fallback standard
+                async with client.stream("POST", req["url"], json=req["json"], headers=req["headers"]) as r:
+                    if r.status_code != 200:
+                        err = await r.aread()
+                        err_text = err.decode(errors='ignore')
+                        if self.valves.DEBUG_MODE:
+                            yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
+                        else:
+                            yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
+                        return
+                    async for token in proc.process(r): yield token
 
         except Exception as e: yield f"🔥 **CRASH** : `{str(e)}`"
