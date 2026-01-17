@@ -1,14 +1,27 @@
 #!/bin/bash
 # ==============================================================================
-# SCRIPT : update-echo.sh (VERSION COMPOSE)
-# VERSION : 5.6.1
+# SCRIPT : update-echo.sh (VERSION COMPOSE / HYBRIDE V2)
+# VERSION : 5.6.4
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR DU CODE (SCRIPTS, TOOLS, PIPES) + HOT RELOAD
 #
-# NOTE : La logique Git et la copie de fichiers restent identiques.
-# Seule la commande de redémarrage change pour utiliser Docker Compose.
+# NOTE : Restauration de la logique sync_mirror et hot-reload.
+# Intégration de la détection Docker Compose V2 pour compatibilité.
 # ==============================================================================
+
+# --- DETECTION DOCKER COMPOSE V2 (FIX COMPATIBILITÉ) ---
+if docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker compose"
+else
+    if command -v docker-compose >/dev/null 2>&1; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+    else
+        # Fallback critique (ne devrait pas arriver si install-stack a marché)
+        echo "⚠️ Docker Compose introuvable. Tentative avec 'docker-compose'."
+        DOCKER_COMPOSE_CMD="docker-compose"
+    fi
+fi
 
 GIT_REPO="https://github.com/Wilfried-Barnavon-Perso/echo-framework.git"
 SRC_DIR="/opt/echo-framework-source"
@@ -81,8 +94,21 @@ echo "📂 [2/4] DEPLOIEMENT FICHIERS..."
 
 sync_mirror() {
     local src="$1"; local dest="$2"
-    if [[ "$dest" == /opt/* ]]; then mkdir -p "$dest"; rm -rf "$dest"/*; cp -rf "$src"/. "$dest"/; fi
+    # Protection contre les chemins vides
+    if [ -z "$src" ] || [ -z "$dest" ]; then return; fi
+    
+    if [[ "$dest" == /opt/* ]]; then 
+        mkdir -p "$dest"
+        # On utilise rsync si dispo pour plus de propreté, sinon rm/cp
+        if command -v rsync >/dev/null 2>&1; then
+            rsync -a --delete "$src/" "$dest/"
+        else
+            rm -rf "$dest"/*
+            cp -rf "$src"/. "$dest"/
+        fi
+    fi
 }
+
 sync_mirror_file() {
     local src="$1"; local dest="$2"
     if [[ "$dest" == /opt/* ]]; then mkdir -p "$dest"; cp -f "$src" "$dest/"; fi
@@ -94,34 +120,36 @@ sync_mirror "$SRC_DIR/03-OWUI-pipes"    "/opt/owui-pipes"
 sync_mirror "$SRC_DIR/07-OWUI-actions"  "/opt/owui-actions"
 sync_mirror "$SRC_DIR/05-OWUI-filters"  "/opt/owui-filters"
 
+# Mise à jour des scripts Python des conteneurs
 sync_mirror_file "$SRC_DIR/01-docker-admin-manager/server.py"     "/opt/admin-manager"
 sync_mirror_file "$SRC_DIR/02-docker-python-worker/worker_api.py" "/opt/python-worker"
 sync_mirror_file "$SRC_DIR/06-docker-browser-agent/browser_api.py" "/opt/browser-agent"
 
 if [ -f "$SRC_DIR/VERSION" ]; then cp "$SRC_DIR/VERSION" "/opt/ECHO_VERSION"; chmod 644 "/opt/ECHO_VERSION"; fi
 
-# Nettoyage Windows
+# Nettoyage Windows et permissions
 find /opt/owui-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
 find /opt/owui-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i 's/\r$//' {} +
 chmod +x /opt/owui-scripts/*.sh
 
-# --- 3. HOT RELOAD (VIA COMPOSE) ---
+# --- 3. HOT RELOAD (VIA COMPOSE V2 ou V1) ---
 echo "⚡ [3/4] HOT RELOAD SERVICES..."
 
 if [ -f "$COMPOSE_FILE" ]; then
     # On restart pour prendre en compte le nouveau code Python
     # Note: On restart les services dont le code a changé
-    docker-compose -f "$COMPOSE_FILE" restart admin-manager python-worker browser-agent
+    # Utilisation de la commande détectée ($DOCKER_COMPOSE_CMD) au lieu de docker-compose en dur
+    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" restart admin-manager python-worker browser-agent
 else
-    echo "⚠️ Docker Compose introuvable. Fallback manuel."
+    echo "⚠️ Docker Compose introuvable ($COMPOSE_FILE). Fallback manuel."
     docker restart echo-admin-manager echo-python-worker echo-browser-agent
 fi
 
 # --- 4. CONFIG API ---
 echo "🤖 [4/4] CONFIG API OPEN WEBUI..."
 # On vérifie si le service est up via compose ps
-if docker-compose -f "$COMPOSE_FILE" ps -q open-webui >/dev/null 2>&1; then
-    docker-compose -f "$COMPOSE_FILE" exec -T open-webui /bin/bash /opt/owui-scripts/config-owui.sh
+if $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" ps -q open-webui >/dev/null 2>&1; then
+    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" exec -T open-webui /bin/bash /opt/owui-scripts/config-owui.sh
 fi
 
 echo "✅ UPDATE TERMINÉ."

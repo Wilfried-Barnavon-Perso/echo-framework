@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.6.2
+# VERSION : 5.6.4
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE
 # ==============================================================================
@@ -29,7 +29,20 @@ if [ -f "$BRANCH_FILE" ]; then
     TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]')
 fi
 
+# --- DETECTION DOCKER COMPOSE V2 (FIX KeyError: 'ContainerConfig') ---
+if docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker compose"
+else
+    if command -v docker-compose >/dev/null 2>&1; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+    else
+        echo "❌ Erreur : Ni 'docker compose' (v2) ni 'docker-compose' (v1) ne sont installés."
+        exit 1
+    fi
+fi
+
 echo "🚀 ECHO FRAMEWORK [COMPOSE LAUNCHER] v$ECHO_VERSION (Branche: $TARGET_BRANCH)"
+echo "   Moteur Compose : $DOCKER_COMPOSE_CMD"
 echo "==========================================================="
 
 # --- TOOLBOX ---
@@ -88,8 +101,8 @@ if [ ! -f "$COMPOSE_FILE" ]; then
 fi
 
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."
-docker-compose -f "$COMPOSE_FILE" pull --quiet
-docker-compose -f "$COMPOSE_FILE" up -d --remove-orphans
+$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull --quiet
+$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
 
 if [ $? -eq 0 ]; then
     echo "✅ Stack Docker Compose active."
@@ -109,7 +122,7 @@ echo " UP."
 echo "🔧 Configuration Auto (API)..."
 # Utilisation de docker-compose exec pour cibler le SERVICE 'open-webui' défini dans le YAML.
 # Note: Le conteneur réel s'appelle 'echo-webui-core', mais compose utilise le nom du service.
-docker-compose -f "$COMPOSE_FILE" exec -T open-webui /bin/bash /opt/owui-scripts/config-owui.sh
+$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" exec -T open-webui /bin/bash /opt/owui-scripts/config-owui.sh
 
 # Nettoyage
 docker image prune -f >/dev/null 2>&1

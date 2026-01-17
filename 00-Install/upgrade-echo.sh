@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION COMPOSE)
-# VERSION : 5.6.1
+# VERSION : 5.6.3
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES + CODE)
@@ -34,6 +34,18 @@ echo "    Branche cible : $TARGET_BRANCH"
 read -p "Tapez 'CONFIRMER' : " CONFIRM
 [ "$CONFIRM" != "CONFIRMER" ] && exit 1
 
+# --- DETECTION DOCKER COMPOSE V2 (FIX KeyError) ---
+if docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker compose"
+else
+    if command -v docker-compose >/dev/null 2>&1; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+    else
+        echo "❌ Erreur : Docker Compose introuvable."
+        exit 1
+    fi
+fi
+
 # --- 1. SYNC GITHUB ---
 echo "🔄 [1/4] SYNC GITHUB..."
 if [ ! -d "$SRC_DIR/.git" ]; then
@@ -63,7 +75,7 @@ chmod +x /opt/owui-scripts/*.sh
 echo "🐳 [3/4] DOCKER COMPOSE PULL..."
 if [ -f "$COMPOSE_FILE" ]; then
     # Télécharge les nouvelles images définies dans le YAML (si changées)
-    docker-compose -f "$COMPOSE_FILE" pull
+    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull
 else
     echo "❌ Critique : docker-compose.yml introuvable après copie."
     exit 1
