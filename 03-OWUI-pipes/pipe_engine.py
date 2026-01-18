@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.26 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.27 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.26
-description: 136.26: Fix "Stuttering" (Repetition) by merging consecutive model messages (Text + ToolCall) into single API turns.
+version: 136.27
+description: 136.27: Implementation of "Session Cache Approach" (Deep Research Strategy 2). Persists thoughtSignatures mapped to tool_call_ids to prevent reasoning drift and stuttering.
 """
 
 # ==============================================================================
@@ -26,7 +26,6 @@ from datetime import datetime
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
-# Vérification stricte des modules requis pour le fonctionnement du Pipe
 try:
     import httpx
     import orjson
@@ -40,8 +39,7 @@ except ImportError as e:
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
 
-# --- OPTIMISATION COMPRESSION (DROP-IN REPLACEMENT) ---
-# Tente d'utiliser mgzip (Multithread) sinon fallback sur gzip standard
+# --- OPTIMISATION COMPRESSION ---
 try:
     import mgzip as gzip
 except ImportError:
@@ -62,21 +60,16 @@ GOOGLE_SCOPES = [
     "openid",
 ]
 
-# --- GESTIONNAIRE DE CONNEXION PARTAGÉ (CONNECTION POOLING) ---
+# --- GESTIONNAIRE DE CONNEXION PARTAGÉ ---
 _SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
 _LAST_CLIENT_ACCESS: float = 0.0
 
 async def _get_global_client(idle_timeout: int = 300, enable_http2: bool = True) -> httpx.AsyncClient:
-    """Récupère ou crée un client HTTP asynchrone partagé pour le Connection Pooling."""
     global _SHARED_ASYNC_CLIENT, _LAST_CLIENT_ACCESS
-    
     now = time.time()
     
-    # Sécurisation Event Loop (v136.23)
-    # Si la loop qui a créé le client est fermée (cas du Hot Reload), on doit recréer le client.
     try:
         if _SHARED_ASYNC_CLIENT and not _SHARED_ASYNC_CLIENT.is_closed:
-            # Vérification bas niveau de la loop attachée au transport
             if hasattr(_SHARED_ASYNC_CLIENT, "_transport") and hasattr(_SHARED_ASYNC_CLIENT._transport, "_pool"):
                  client_loop = getattr(_SHARED_ASYNC_CLIENT._transport._pool, "_loop", None)
                  if client_loop and client_loop != asyncio.get_running_loop():
@@ -85,39 +78,29 @@ async def _get_global_client(idle_timeout: int = 300, enable_http2: bool = True)
     except:
         _SHARED_ASYNC_CLIENT = None
 
-    # Autokill (Nettoyage) si inactif depuis trop longtemps
     if _SHARED_ASYNC_CLIENT and (now - _LAST_CLIENT_ACCESS > idle_timeout):
         old_client = _SHARED_ASYNC_CLIENT
-        _SHARED_ASYNC_CLIENT = None # Détachement immédiat pour éviter les race conditions
+        _SHARED_ASYNC_CLIENT = None 
         try:
             await old_client.aclose()
         except: pass
 
     if _SHARED_ASYNC_CLIENT is None or _SHARED_ASYNC_CLIENT.is_closed:
-        # Configuration optimisée pour le streaming et la réutilisation
         limits = httpx.Limits(max_keepalive_connections=20, max_connections=100, keepalive_expiry=300)
-        
         try:
-            # Tentative d'initialisation avec HTTP/2 si demandé
             _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=enable_http2)
         except ImportError:
-            # Fallback de sécurité si la librairie 'h2' est absente malgré la config
-            # Cela garantit la non-régression.
             print("⚠️ Module 'h2' manquant pour HTTP/2. Fallback sur HTTP/1.1.")
             _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=False)
         except Exception:
-            # Autre erreur imprévue lors de l'init
             _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=False)
     
     _LAST_CLIENT_ACCESS = now
     return _SHARED_ASYNC_CLIENT
 
-# --- FONCTION UTILITAIRE BASE64 RAPIDE ---
 def fast_b64encode(data: bytes) -> str:
-    """Encode des bytes en base64 string via pybase64 (SIMD)."""
     return pybase64.b64encode(data).decode("utf-8")
 
-# --- CONSTANTES MAGIQUES ---
 MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator"
 
 # ==============================================================================
@@ -194,13 +177,11 @@ class AuthService:
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
-        
         if not os.path.exists(self.pkce_path):
              for _ in range(3):
                 if self.get_valid_credentials(): return True, "Succès (Récupéré via cache)."
                 time.sleep(0.5)
              return False, "Session expirée (PKCE introuvable)."
-
         try:
             with open(self.pkce_path, "r") as f: verifier = f.read().strip()
             flow = Flow.from_client_config(OFFICIAL_CLIENT_CONFIG, scopes=GOOGLE_SCOPES, autogenerate_code_verifier=False)
@@ -227,32 +208,26 @@ class AuthService:
         cached_pid = None
         if os.path.exists(self.internal_project_cache):
              with open(self.internal_project_cache, "r") as f: cached_pid = f.read().strip()
-
         if cached_pid and not debug_mode:
             return cached_pid, "Cache."
-            
         headers = {
             "Authorization": f"Bearer {creds.token}", 
             "Content-Type": "application/json",
             "User-Agent": "GeminiCLI/0.24.0" 
         }
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
-        
         try:
             resp = httpx.post(f"{self.base_url}:loadCodeAssist", headers=headers, json=payload, timeout=10)
-            
             if resp.status_code == 200:
                 data = resp.json()
                 raw = data.get("cloudaicompanionProject")
                 pid = raw.get("id") if isinstance(raw, dict) else raw
-                
                 if pid:
                     pid = pid.replace("projects/", "")
                     with open(self.internal_project_cache, "w") as f: f.write(pid)
                     return pid, "API OK."
                 else:
-                    if cached_pid:
-                         return cached_pid, f"API Fail (Partial Response), Fallback to Cache. JSON: {str(data)[:50]}"
+                    if cached_pid: return cached_pid, f"API Fail (Partial Response), Fallback to Cache. JSON: {str(data)[:50]}"
                     try: error_dump = std_json.dumps(data, indent=2)
                     except: error_dump = str(data)
                     return None, f"**JSON inattendu** (Project ID introuvable) :\n```json\n{error_dump}\n```"
@@ -265,27 +240,64 @@ class AuthService:
             if os.path.exists(p): os.remove(p)
 
 # ==============================================================================
-# SECTION 4 : REGISTRE CAS & SIGNATURES
+# SECTION 4 : REGISTRE CAS & SIGNATURES (STATEFUL SESSION CACHE)
 # ==============================================================================
 class SignatureManager:
     def __init__(self, data_dir: str):
         self.sig_dir = os.path.join(data_dir, "signatures")
         os.makedirs(self.sig_dir, exist_ok=True)
 
-    def save_signature(self, chat_id: str, signature: str):
+    def _get_cache_path(self, chat_id: str) -> str:
+        safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
+        return os.path.join(self.sig_dir, f"{safe_id}.json")
+
+    def save_signature(self, chat_id: str, signature: str, tool_call_id: Optional[str] = None):
+        """
+        Stratégie 2.2: Persist thoughtSignature mapped to context.
+        """
         if not chat_id or not signature: return
+        path = self._get_cache_path(chat_id)
+        
         try:
-            path = os.path.join(self.sig_dir, f"{chat_id}.txt")
-            with open(path, "w") as f: f.write(signature)
+            cache = {}
+            if os.path.exists(path):
+                with open(path, "r") as f: cache = std_json.load(f)
+            
+            # Stockage "Global" (Fallback pour le texte)
+            cache["_latest"] = signature
+            
+            # Stockage "Spécifique" (Mappé au tool_call_id pour Agentic Workflow)
+            if tool_call_id:
+                cache[tool_call_id] = signature
+                
+            # Rotation simple (Keep last 50 entries to avoid bloat)
+            if len(cache) > 50:
+                # Keep latest and last 49
+                latest = cache.get("_latest")
+                keys = list(cache.keys())[-49:]
+                new_cache = {k: cache[k] for k in keys}
+                if latest: new_cache["_latest"] = latest
+                cache = new_cache
+
+            with open(path, "w") as f: std_json.dump(cache, f)
         except Exception as e: pass
 
-    def get_signature(self, chat_id: str) -> Optional[str]:
+    def get_signature(self, chat_id: str, tool_call_id: Optional[str] = None) -> Optional[str]:
+        """
+        Récupère la signature exacte pour un outil donné, ou la dernière connue.
+        """
         if not chat_id: return None
+        path = self._get_cache_path(chat_id)
         try:
-            path = os.path.join(self.sig_dir, f"{chat_id}.txt")
             if os.path.exists(path):
-                os.utime(path, None)
-                with open(path, "r") as f: return f.read().strip()
+                with open(path, "r") as f: cache = std_json.load(f)
+                
+                # 1. Priorité absolue : Signature liée à cet appel d'outil spécifique
+                if tool_call_id and tool_call_id in cache:
+                    return cache[tool_call_id]
+                
+                # 2. Fallback : Dernière signature connue (pour le texte ou si ID introuvable)
+                return cache.get("_latest")
         except: pass
         return None
 
@@ -409,7 +421,6 @@ class Orchestrator:
         return mime_type, is_text, "", real_path
 
     def _process_single_file_sync(self, f_obj: Dict, txt_map: Dict, bin_map: Dict) -> Tuple[Optional[Dict], Optional[Dict]]:
-        """Worker synchrone pour traiter un seul fichier : I/O Disque + Encodage CPU."""
         f_real = f_obj.get("file", f_obj)
         f_id = f_real.get("id")
         f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
@@ -426,13 +437,11 @@ class Orchestrator:
         part = None
 
         if is_text:
-            # v136.23: Fallback Encoding (UTF-8 -> Latin-1)
             content_str = None
             try:
                 with open(real_path, "r", encoding="utf-8") as f:
                     content_str = f.read()
             except UnicodeDecodeError:
-                # Fallback de sécurité (ne plante jamais sur les bytes)
                 try:
                     with open(real_path, "r", encoding="latin-1") as f:
                         content_str = f.read()
@@ -446,7 +455,6 @@ class Orchestrator:
             try:
                 with open(real_path, "rb") as f:
                     raw_data = f.read()
-                    # Utilisation native pybase64
                     b64_data = fast_b64encode(raw_data)
                 
                 part = {"inlineData": {"mimeType": mime, "data": b64_data}}
@@ -467,30 +475,20 @@ class Orchestrator:
         seen_ids = set()
 
         txt_map, bin_map = self._parse_mime_valves()
-        
-        # 1. Deduplication et préparation
         for f in files_raw:
             fid = f.get("id") or f.get("file", {}).get("id")
             if fid and fid not in seen_ids:
                 files_to_process.append(f); seen_ids.add(fid)
 
-        # 2. Lancement parallèle (Threads pour I/O + CPU)
         tasks = []
         for f_obj in files_to_process:
-            # On déporte le travail lourd dans un thread séparé
             tasks.append(asyncio.to_thread(self._process_single_file_sync, f_obj, txt_map, bin_map))
         
-        # 3. Attente non-bloquante de tous les fichiers
         if tasks:
             results = await asyncio.gather(*tasks)
-            
-            # 4. Assemblage ordonné des résultats
             for part, info in results:
-                if part:
-                    parts.append(part)
-                if info:
-                    self.files_processed_info.append(info)
-        
+                if part: parts.append(part)
+                if info: self.files_processed_info.append(info)
         return parts
 
     async def prepare_context(self, body: Dict, chat_id: str, auth_token: str, extra_files: Any = None) -> List[Dict]:
@@ -498,6 +496,7 @@ class Orchestrator:
         messages = body.get("messages", [])
         contents = []
 
+        # Map tool IDs for functionResponse matching
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -531,10 +530,9 @@ class Orchestrator:
                 continue
 
             elif role in ["assistant", "model"]:
-                # v136.26: FIX STUTTERING/REPETITION
-                # Merge consecutive model messages (Text + FunctionCall) into a single API turn.
+                # STRATEGY 2.2: Rehydration from Server-Side Cache
+                # We merge consecutive model messages into a single API turn.
                 parts = []
-                found_in_band_sig = None
                 
                 # Consolidate consecutive model messages
                 while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
@@ -544,59 +542,59 @@ class Orchestrator:
                     txt = sub_m.get("content", "")
                     if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
                     
-                    # Clean tags
                     txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL).strip()
                     txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL).strip()
                     if txt: parts.append({"text": txt})
 
-                    # 2. Tool Calls
+                    # 2. Tool Calls (With Signature Rehydration)
                     if sub_m.get("tool_calls"):
                         for tc in sub_m["tool_calls"]:
                             try:
                                 args = std_json.loads(tc["function"]["arguments"])
-                                # Extract signature if present
-                                if "_thought_signature" in args: 
-                                    found_in_band_sig = args.pop("_thought_signature")
-                                parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
+                                part_data = {"functionCall": {"name": tc["function"]["name"], "args": args}}
+                                
+                                # Attempt to find signature in the tool call itself (from Open-WebUI)
+                                sig = args.pop("_thought_signature", None)
+                                
+                                # If not found, look in the SERVER-SIDE CACHE (The Magic Fix)
+                                if not sig and chat_id:
+                                    call_id = tc.get("id")
+                                    sig = self.sig_manager.get_signature(chat_id, call_id)
+                                
+                                if sig: part_data["thoughtSignature"] = sig
+                                
+                                parts.append(part_data)
                             except: pass
                     
                     i += 1
                 
-                # Fallback text if empty
                 if not parts: parts.append({"text": " "})
 
-                # Signature Logic (Applied to the merged block)
-                tool_calls_in_msg = any("functionCall" in p for p in parts)
+                # v136.24 Logic: Signature on FIRST FunctionCall Only
+                found_first_fc = False
+                for part in parts:
+                    if "functionCall" in part:
+                        if not found_first_fc:
+                            # If no signature was attached during rehydration, check latest fallback
+                            if "thoughtSignature" not in part and chat_id:
+                                fallback_sig = self.sig_manager.get_signature(chat_id)
+                                if fallback_sig: part["thoughtSignature"] = fallback_sig
+                            elif "thoughtSignature" not in part:
+                                # Last ditch: prevent 400 error
+                                part["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION
+                            
+                            found_first_fc = True
+                        else:
+                            # Ensure subsequent calls do NOT have signature
+                            if "thoughtSignature" in part: del part["thoughtSignature"]
                 
-                # Check if this merged block is the LAST model turn in the history
-                # (i is already at the next message or end)
-                is_last_model_msg = True
-                for j in range(i, len(messages)):
-                    if messages[j]["role"] in ["assistant", "model"]: 
-                        is_last_model_msg = False
-                        break
+                # If no function calls, attach signature to last text part (Recommended by Google)
+                if not found_first_fc and parts and "text" in parts[-1] and chat_id:
+                     latest_sig = self.sig_manager.get_signature(chat_id)
+                     if latest_sig: parts[-1]["thoughtSignature"] = latest_sig
 
-                if tool_calls_in_msg or is_last_model_msg:
-                    sig_to_use = found_in_band_sig
-                    if not sig_to_use and chat_id: sig_to_use = self.sig_manager.get_signature(chat_id)
-                    if not sig_to_use and tool_calls_in_msg: sig_to_use = MAGIC_KEY_SKIP_VALIDATION
-                    
-                    if sig_to_use and parts:
-                         # v136.24 CRITICAL FIX: Signature Pollution Prevention.
-                         if tool_calls_in_msg:
-                             found_first_fc = False
-                             for part in parts:
-                                 if "functionCall" in part:
-                                     if not found_first_fc:
-                                         part["thoughtSignature"] = sig_to_use
-                                         found_first_fc = True
-                                     # Do NOT add signature to subsequent parallel function calls
-                         else:
-                             # Text only response: Add to the last part (usually text)
-                             parts[-1]["thoughtSignature"] = sig_to_use
-                
                 contents.append({"role": "model", "parts": parts})
-                continue # Continue outer loop (i was incremented in inner loop)
+                continue
             
             else: # USER
                 parts = []
@@ -621,10 +619,6 @@ class Orchestrator:
 
                 file_parts = await self._process_files_for_message(raw_list)
                 parts.extend(file_parts)
-                
-                # REVERT v136.25: Suppression de la déduplication d'images sur demande utilisateur.
-                # On traite systématiquement les images provenant du contenu (historique)
-                # même si des fichiers ont déjà été traités.
 
                 content_txt = m.get("content", "")
                 if isinstance(content_txt, str) and content_txt.strip():
@@ -652,11 +646,8 @@ class Orchestrator:
         total = 0
         for item in contents:
             for part in item.get("parts", []):
-                if "text" in part: 
-                    total += len(part["text"]) // 4
-                elif "inlineData" in part:
-                    # Estimation pour Gemini 3 (High Res / Default) = ~1120 tokens
-                    total += 1120
+                if "text" in part: total += len(part["text"]) // 4
+                elif "inlineData" in part: total += 1120
         return total
 
 # ==============================================================================
@@ -696,6 +687,8 @@ class StreamProcessor:
         self.current_sig = None
         self.stats_dir = "/app/backend/data/stats"
         os.makedirs(self.stats_dir, exist_ok=True)
+        # Capture buffer for tool calls
+        self.pending_tool_calls = {} 
 
     def _update_stats(self, data):
         if "response" in data and "usageMetadata" in data["response"]:
@@ -725,14 +718,12 @@ class StreamProcessor:
         async for chunk in response.aiter_bytes():
             try:
                 buffer += decoder.decode(chunk, final=False)
-                
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     line = line.strip()
                     if not line: continue
                     if line.startswith("data:"):
                         data = std_json.loads(line[6:])
-                        
                         self._update_stats(data)
 
                         cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
@@ -741,10 +732,15 @@ class StreamProcessor:
                                 txt = part.get("text", "")
                                 func_call = part.get("functionCall")
 
+                                # CAPTURE STRATEGY: Grab signature whenever it appears
                                 if "thoughtSignature" in part:
                                     self.current_sig = part["thoughtSignature"]
                                     if self.chat_id and self.sig_manager:
+                                        # Save as 'latest' fallback
                                         self.sig_manager.save_signature(self.chat_id, self.current_sig)
+                                        # Associate with any pending tool calls in this turn
+                                        for tc_id in self.pending_tool_calls:
+                                            self.sig_manager.save_signature(self.chat_id, self.current_sig, tc_id)
 
                                 if part.get("thought"):
                                     if not in_think: yield "<think>\n"; in_think = True
@@ -754,7 +750,18 @@ class StreamProcessor:
                                     step_label = f"Pré-{func_call.get('name', 'Action')}"
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     
+                                    # Create Open-WebUI tool ID
+                                    tc_id = f"call_{secrets.token_hex(8)}"
+                                    
+                                    # Track this ID to map signature later
+                                    self.pending_tool_calls[tc_id] = True
+                                    
+                                    # If we already have a signature, map it immediately
+                                    if self.current_sig and self.chat_id and self.sig_manager:
+                                        self.sig_manager.save_signature(self.chat_id, self.current_sig, tc_id)
+
                                     args = func_call.get("args", {})
+                                    # Still tunnel via args as backup strategy 1
                                     if self.current_sig: args["_thought_signature"] = self.current_sig
                                     
                                     yield {
@@ -762,7 +769,7 @@ class StreamProcessor:
                                             "index": 0, "delta": {
                                                 "tool_calls": [{
                                                     "index": tool_index, 
-                                                    "id": f"call_{secrets.token_hex(8)}",
+                                                    "id": tc_id,
                                                     "type": "function", 
                                                     "function": {"name": func_call["name"], "arguments": std_json.dumps(args)}
                                                 }]
@@ -778,7 +785,6 @@ class StreamProcessor:
         
         remaining = decoder.decode(b"", final=True)
         buffer += remaining
-        
         if buffer and buffer.strip().startswith("data:"):
             try:
                 line = buffer.strip()
@@ -791,7 +797,6 @@ class StreamProcessor:
         if self.show_metrics:
             stats_content = "\n\n" 
             has_content = False
-
             if self.file_stats and self.debug:
                 stats_content += "**📁 Fichiers Traités**\n\n"
                 stats_content += "| Fichier | Type | Taille | Statut |\n| :--- | :--- | :--- | :--- |\n"
@@ -800,15 +805,12 @@ class StreamProcessor:
                     stats_content += f"| {f['name']} | {f['type']} | {size_mb:.2f} MB | {f['status']} |\n"
                 stats_content += "\n"
                 has_content = True
-            
             if self.usage_stats:
                 p_tok = self.usage_stats.get("promptTokenCount", 0)
                 c_tok = self.usage_stats.get("candidatesTokenCount", 0)
                 t_tok = self.usage_stats.get("totalTokenCount", 0)
-                # Cache supprimé : on ne l'affiche plus dans les stats
                 pct = (t_tok / self.context_window) * 100
                 bar = "█" * int(pct/10) + "░" * (10 - int(pct/10))
-                
                 stats_content += f"""<details>
 <summary>⚡ Contexte [{step_label}]: {pct:.1f}% {bar}</summary>
 
@@ -819,9 +821,7 @@ class StreamProcessor:
 | **Total** | {t_tok:,} / {self.context_window:,} |
 </details>\n"""
                 has_content = True
-
-            if has_content:
-                yield stats_content
+            if has_content: yield stats_content
 
         if self.usage_stats:
             yield {
@@ -942,7 +942,6 @@ class Pipe:
 
         try:
             # --- CONNECTION POOLING OPTIMIZATION ---
-            # On récupère le client partagé au lieu d'en créer un nouveau
             client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.ENABLE_HTTP2)
             
             # --- TURBO OPTIMIZATION (Strict orjson) ---
@@ -950,44 +949,35 @@ class Pipe:
             
             # --- UPSTREAM GZIP COMPRESSION (SMART) ---
             if self.valves.ENABLE_UPSTREAM_GZIP:
-                # Check size before compressing to avoid "Zip Bomb" limits or useless CPU usage on binaries
                 if len(req_content) < (self.valves.GZIP_THRESHOLD_KB * 1024):
                     req_content = gzip.compress(req_content, compresslevel=self.valves.GZIP_LEVEL)
                     req["headers"]["Content-Encoding"] = "gzip"
                     if self.valves.DEBUG_MODE:
-                        # Petite info pour savoir si on est en multi-thread
                         try:
                             import mgzip
                             is_mgzip = (gzip == mgzip)
                         except:
                             is_mgzip = False
-                        
                         engine_name = "mgzip (Multi-threaded)" if is_mgzip else "gzip (Standard)"
                         yield f"📦 **GZIP Encoded** ({engine_name}, Level {self.valves.GZIP_LEVEL})\n"
                 elif self.valves.DEBUG_MODE:
                      yield f"⏭️ **GZIP Skipped** (Size > {self.valves.GZIP_THRESHOLD_KB}KB)\n"
 
             # RETRY LOOP (Native, v136.23)
-            # Utilisation de client.stream pour le pooling
             for attempt in range(self.valves.API_RETRY_COUNT):
                 try:
                     async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
                         if r.status_code == 200:
-                            # Succès, on stream et on sort de la boucle
                             async for token in proc.process(r): yield token
                             break
                         
-                        # Gestion des erreurs "Retentables" (429, 5xx)
                         if r.status_code in [429, 500, 502, 503, 504]:
                              err = await r.aread()
                              err_text = err.decode(errors='ignore')
                              yield f"⚠️ Erreur {r.status_code} ({err_text[:100]}...), tentative {attempt+1}/{self.valves.API_RETRY_COUNT}...\n"
-                             
-                             # Backoff exponentiel simple (1s, 2s, 3s...)
                              await asyncio.sleep(1 * (attempt + 1))
                              continue
                         
-                        # Erreur Fatale (400, 401, 403, 404...) -> On s'arrête
                         err = await r.aread()
                         err_text = err.decode(errors='ignore')
                         if self.valves.DEBUG_MODE:
@@ -997,11 +987,10 @@ class Pipe:
                         return
 
                 except Exception as e:
-                    # Erreur réseau de bas niveau (ConnectionReset, Timeout...)
                     if attempt < self.valves.API_RETRY_COUNT - 1:
                          yield f"⚠️ Erreur Réseau: {str(e)}, tentative {attempt+1}/{self.valves.API_RETRY_COUNT}...\n"
                          await asyncio.sleep(1)
                     else:
-                         raise e # On laisse planter si c'était la dernière chance
+                         raise e 
 
         except Exception as e: yield f"🔥 **CRASH** : `{str(e)}`"
