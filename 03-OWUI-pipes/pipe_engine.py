@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.23 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.25 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.23
-description: 136.23: Hardening (Retry API, Fallback Encoding Latin-1, Fix Token Count Images, Secure Async Loop).
+version: 136.25
+description: 136.25: Revert Image Deduplication (User Request). Preserves CRITICAL Fixes: Signature Pollution, Async Loop Hardening, API Retry.
 """
 
 # ==============================================================================
@@ -560,8 +560,21 @@ class Orchestrator:
                     sig_to_use = found_in_band_sig
                     if not sig_to_use and chat_id: sig_to_use = self.sig_manager.get_signature(chat_id)
                     if not sig_to_use and tool_calls_in_msg: sig_to_use = MAGIC_KEY_SKIP_VALIDATION
+                    
                     if sig_to_use and parts:
-                         for part in parts: part["thoughtSignature"] = sig_to_use
+                         # v136.24 CRITICAL FIX: Signature Pollution Prevention.
+                         # Gemini 3 requires signature ONLY on the FIRST function call of a turn.
+                         if tool_calls_in_msg:
+                             found_first_fc = False
+                             for part in parts:
+                                 if "functionCall" in part:
+                                     if not found_first_fc:
+                                         part["thoughtSignature"] = sig_to_use
+                                         found_first_fc = True
+                                     # Do NOT add signature to subsequent parallel function calls
+                         else:
+                             # Text only response: Add to the last part (usually text)
+                             parts[-1]["thoughtSignature"] = sig_to_use
                 
                 contents.append({"role": "model", "parts": parts})
             
@@ -588,6 +601,10 @@ class Orchestrator:
 
                 file_parts = await self._process_files_for_message(raw_list)
                 parts.extend(file_parts)
+                
+                # REVERT v136.25: Suppression de la déduplication d'images sur demande utilisateur.
+                # On traite systématiquement les images provenant du contenu (historique)
+                # même si des fichiers ont déjà été traités.
 
                 content_txt = m.get("content", "")
                 if isinstance(content_txt, str) and content_txt.strip():
