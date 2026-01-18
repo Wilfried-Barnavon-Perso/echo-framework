@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.25 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.26 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.25
-description: 136.25: Revert Image Deduplication (User Request). Preserves CRITICAL Fixes: Signature Pollution, Async Loop Hardening, API Retry.
+version: 136.26
+description: 136.26: Fix "Stuttering" (Repetition) by merging consecutive model messages (Text + ToolCall) into single API turns.
 """
 
 # ==============================================================================
@@ -531,30 +531,50 @@ class Orchestrator:
                 continue
 
             elif role in ["assistant", "model"]:
+                # v136.26: FIX STUTTERING/REPETITION
+                # Merge consecutive model messages (Text + FunctionCall) into a single API turn.
                 parts = []
-                txt = m.get("content", "")
-                if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
-                
-                txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL).strip()
-                txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL).strip()
-                if txt: parts.append({"text": txt})
-
                 found_in_band_sig = None
-                tool_calls_in_msg = False
-                if m.get("tool_calls"):
-                    tool_calls_in_msg = True
-                    for tc in m["tool_calls"]:
-                        try:
-                            args = std_json.loads(tc["function"]["arguments"])
-                            if "_thought_signature" in args: found_in_band_sig = args.pop("_thought_signature")
-                            parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
-                        except: pass
                 
+                # Consolidate consecutive model messages
+                while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
+                    sub_m = messages[i]
+                    
+                    # 1. Text Content
+                    txt = sub_m.get("content", "")
+                    if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
+                    
+                    # Clean tags
+                    txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL).strip()
+                    txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL).strip()
+                    if txt: parts.append({"text": txt})
+
+                    # 2. Tool Calls
+                    if sub_m.get("tool_calls"):
+                        for tc in sub_m["tool_calls"]:
+                            try:
+                                args = std_json.loads(tc["function"]["arguments"])
+                                # Extract signature if present
+                                if "_thought_signature" in args: 
+                                    found_in_band_sig = args.pop("_thought_signature")
+                                parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
+                            except: pass
+                    
+                    i += 1
+                
+                # Fallback text if empty
                 if not parts: parts.append({"text": " "})
+
+                # Signature Logic (Applied to the merged block)
+                tool_calls_in_msg = any("functionCall" in p for p in parts)
                 
+                # Check if this merged block is the LAST model turn in the history
+                # (i is already at the next message or end)
                 is_last_model_msg = True
-                for j in range(i + 1, len(messages)):
-                    if messages[j]["role"] in ["assistant", "model"]: is_last_model_msg = False; break
+                for j in range(i, len(messages)):
+                    if messages[j]["role"] in ["assistant", "model"]: 
+                        is_last_model_msg = False
+                        break
 
                 if tool_calls_in_msg or is_last_model_msg:
                     sig_to_use = found_in_band_sig
@@ -563,7 +583,6 @@ class Orchestrator:
                     
                     if sig_to_use and parts:
                          # v136.24 CRITICAL FIX: Signature Pollution Prevention.
-                         # Gemini 3 requires signature ONLY on the FIRST function call of a turn.
                          if tool_calls_in_msg:
                              found_first_fc = False
                              for part in parts:
@@ -577,6 +596,7 @@ class Orchestrator:
                              parts[-1]["thoughtSignature"] = sig_to_use
                 
                 contents.append({"role": "model", "parts": parts})
+                continue # Continue outer loop (i was incremented in inner loop)
             
             else: # USER
                 parts = []
