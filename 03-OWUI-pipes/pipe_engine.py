@@ -1,8 +1,8 @@
 """
 title: Gemini Pro Unified System (Platinum Agentic 136.21 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.21
-description: 136.21: Optimisation Compression via mgzip (Drop-in replacement multithread). Fallback sur gzip standard assuré. Aucune régression.
+version: 136.22
+description: 136.22: Suppression d'une valeur par défaut dans le stream processor (pas fan du defensive programming).
 """
 
 # ==============================================================================
@@ -620,7 +620,7 @@ class GeminiAdapter:
 # SECTION 7 : STREAM PROCESSOR
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, debug=False, chat_id=None, sig_manager=None, show_metrics=False, context_window=1000000, initial_label="Réponse", file_stats=None):
+    def __init__(self, context_window: int, debug=False, chat_id=None, sig_manager=None, show_metrics=False, initial_label="Réponse", file_stats=None):
         self.debug = debug
         self.chat_id = chat_id
         self.sig_manager = sig_manager
@@ -866,11 +866,11 @@ class Pipe:
              yield "🚀 **Turbo JSON (orjson)** Active\n"
 
         proc = StreamProcessor(
+            self.valves.MAX_CONTEXT_SIZE,
             self.valves.DEBUG_MODE, 
             chat_id, 
             sig_manager=orch.sig_manager,
             show_metrics=self.valves.SHOW_METRICS, 
-            context_window=self.valves.MAX_CONTEXT_SIZE,
             initial_label=initial_label,
             file_stats=orch.files_processed_info
         )
