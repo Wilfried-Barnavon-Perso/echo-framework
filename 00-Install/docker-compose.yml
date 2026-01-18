@@ -94,7 +94,7 @@ services:
       - /opt/owui-actions:/opt/owui-actions
       - /opt/owui-scripts:/opt/owui-scripts
     # Installation de mgzip au démarrage avant de lancer le serveur
-    command: /bin/bash -c "pip install mgzip && ./start.sh"
+    command: /bin/bash -c "pip install mgzip"
 
 # ==============================================================================
 # RESSOURCES EXTERNES (PROVISIONNÉES PAR INSTALL-STACK.SH)
