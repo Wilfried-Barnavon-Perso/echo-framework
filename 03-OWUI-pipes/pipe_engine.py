@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.21 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.23 - Turbo No Upload)
 author: Wilfried BARNAVON
-version: 136.22
-description: 136.22: Suppression d'une valeur par défaut dans le stream processor (pas fan du defensive programming).
+version: 136.23
+description: 136.23: Hardening (Retry API, Fallback Encoding Latin-1, Fix Token Count Images, Secure Async Loop).
 """
 
 # ==============================================================================
@@ -36,7 +36,7 @@ except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(
         f"❌ Module critique manquant : '{missing_module}'. "
-        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.21. "
+        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.21+. "
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
 
@@ -72,6 +72,19 @@ async def _get_global_client(idle_timeout: int = 300, enable_http2: bool = True)
     
     now = time.time()
     
+    # Sécurisation Event Loop (v136.23)
+    # Si la loop qui a créé le client est fermée (cas du Hot Reload), on doit recréer le client.
+    try:
+        if _SHARED_ASYNC_CLIENT and not _SHARED_ASYNC_CLIENT.is_closed:
+            # Vérification bas niveau de la loop attachée au transport
+            if hasattr(_SHARED_ASYNC_CLIENT, "_transport") and hasattr(_SHARED_ASYNC_CLIENT._transport, "_pool"):
+                 client_loop = getattr(_SHARED_ASYNC_CLIENT._transport._pool, "_loop", None)
+                 if client_loop and client_loop != asyncio.get_running_loop():
+                     await _SHARED_ASYNC_CLIENT.aclose()
+                     _SHARED_ASYNC_CLIENT = None
+    except:
+        _SHARED_ASYNC_CLIENT = None
+
     # Autokill (Nettoyage) si inactif depuis trop longtemps
     if _SHARED_ASYNC_CLIENT and (now - _LAST_CLIENT_ACCESS > idle_timeout):
         old_client = _SHARED_ASYNC_CLIENT
@@ -413,12 +426,22 @@ class Orchestrator:
         part = None
 
         if is_text:
+            # v136.23: Fallback Encoding (UTF-8 -> Latin-1)
+            content_str = None
             try:
-                with open(real_path, "r", encoding="utf-8", errors="ignore") as f:
-                    data = f.read()
-                part = {"text": f"--- FILE: {f_name} ---\n{data}\n--- END FILE ---\n"}
+                with open(real_path, "r", encoding="utf-8") as f:
+                    content_str = f.read()
+            except UnicodeDecodeError:
+                # Fallback de sécurité (ne plante jamais sur les bytes)
+                try:
+                    with open(real_path, "r", encoding="latin-1") as f:
+                        content_str = f.read()
+                except: pass
+            except Exception: pass
+            
+            if content_str is not None:
+                part = {"text": f"--- FILE: {f_name} ---\n{content_str}\n--- END FILE ---\n"}
                 info_entry = {"name": f_name, "type": "Text (Inline)", "size": file_size, "status": "Embedded 📄"}
-            except: pass
         else:
             try:
                 with open(real_path, "rb") as f:
@@ -592,7 +615,11 @@ class Orchestrator:
         total = 0
         for item in contents:
             for part in item.get("parts", []):
-                if "text" in part: total += len(part["text"]) // 4
+                if "text" in part: 
+                    total += len(part["text"]) // 4
+                elif "inlineData" in part:
+                    # Estimation pour Gemini 3 (High Res / Default) = ~1120 tokens
+                    total += 1120
         return total
 
 # ==============================================================================
@@ -791,6 +818,7 @@ class Pipe:
         )
         
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
+        API_RETRY_COUNT: int = Field(default=3, description="🔄 Nombre d'essais en cas d'erreur API")
 
         HTTP_CLIENT_TIMEOUT: int = Field(default=300, description="⏱️ Autokill Client HTTP (sec)")
         ENABLE_HTTP2: bool = Field(default=True, description="🚀 Activer HTTP/2 (Multiplexing)")
@@ -902,16 +930,41 @@ class Pipe:
                 elif self.valves.DEBUG_MODE:
                      yield f"⏭️ **GZIP Skipped** (Size > {self.valves.GZIP_THRESHOLD_KB}KB)\n"
 
+            # RETRY LOOP (Native, v136.23)
             # Utilisation de client.stream pour le pooling
-            async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
-                if r.status_code != 200:
-                    err = await r.aread()
-                    err_text = err.decode(errors='ignore')
-                    if self.valves.DEBUG_MODE:
-                        yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
+            for attempt in range(self.valves.API_RETRY_COUNT):
+                try:
+                    async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
+                        if r.status_code == 200:
+                            # Succès, on stream et on sort de la boucle
+                            async for token in proc.process(r): yield token
+                            break
+                        
+                        # Gestion des erreurs "Retentables" (429, 5xx)
+                        if r.status_code in [429, 500, 502, 503, 504]:
+                             err = await r.aread()
+                             err_text = err.decode(errors='ignore')
+                             yield f"⚠️ Erreur {r.status_code} ({err_text[:100]}...), tentative {attempt+1}/{self.valves.API_RETRY_COUNT}...\n"
+                             
+                             # Backoff exponentiel simple (1s, 2s, 3s...)
+                             await asyncio.sleep(1 * (attempt + 1))
+                             continue
+                        
+                        # Erreur Fatale (400, 401, 403, 404...) -> On s'arrête
+                        err = await r.aread()
+                        err_text = err.decode(errors='ignore')
+                        if self.valves.DEBUG_MODE:
+                            yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
+                        else:
+                            yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
+                        return
+
+                except Exception as e:
+                    # Erreur réseau de bas niveau (ConnectionReset, Timeout...)
+                    if attempt < self.valves.API_RETRY_COUNT - 1:
+                         yield f"⚠️ Erreur Réseau: {str(e)}, tentative {attempt+1}/{self.valves.API_RETRY_COUNT}...\n"
+                         await asyncio.sleep(1)
                     else:
-                        yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
-                    return
-                async for token in proc.process(r): yield token
+                         raise e # On laisse planter si c'était la dernière chance
 
         except Exception as e: yield f"🔥 **CRASH** : `{str(e)}`"
