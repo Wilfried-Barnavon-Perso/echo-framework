@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION COMPOSE)
-# VERSION : 5.6.3
+# VERSION : 5.6.7
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES + CODE)
@@ -34,17 +34,7 @@ echo "    Branche cible : $TARGET_BRANCH"
 read -p "Tapez 'CONFIRMER' : " CONFIRM
 [ "$CONFIRM" != "CONFIRMER" ] && exit 1
 
-# --- DETECTION DOCKER COMPOSE V2 (FIX KeyError) ---
-if docker compose version >/dev/null 2>&1; then
-    DOCKER_COMPOSE_CMD="docker compose"
-else
-    if command -v docker-compose >/dev/null 2>&1; then
-        DOCKER_COMPOSE_CMD="docker-compose"
-    else
-        echo "❌ Erreur : Docker Compose introuvable."
-        exit 1
-    fi
-fi
+DOCKER_COMPOSE_CMD="docker-compose"
 
 # --- 1. SYNC GITHUB ---
 echo "🔄 [1/4] SYNC GITHUB..."

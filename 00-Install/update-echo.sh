@@ -1,27 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : update-echo.sh (VERSION COMPOSE / HYBRIDE V2)
-# VERSION : 5.6.4
+# VERSION : 5.6.7
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR DU CODE (SCRIPTS, TOOLS, PIPES) + HOT RELOAD
-#
-# NOTE : Restauration de la logique sync_mirror et hot-reload.
-# Intégration de la détection Docker Compose V2 pour compatibilité.
 # ==============================================================================
 
-# --- DETECTION DOCKER COMPOSE V2 (FIX COMPATIBILITÉ) ---
-if docker compose version >/dev/null 2>&1; then
-    DOCKER_COMPOSE_CMD="docker compose"
-else
-    if command -v docker-compose >/dev/null 2>&1; then
-        DOCKER_COMPOSE_CMD="docker-compose"
-    else
-        # Fallback critique (ne devrait pas arriver si install-stack a marché)
-        echo "⚠️ Docker Compose introuvable. Tentative avec 'docker-compose'."
-        DOCKER_COMPOSE_CMD="docker-compose"
-    fi
-fi
+DOCKER_COMPOSE_CMD="docker-compose"
 
 GIT_REPO="https://github.com/Wilfried-Barnavon-Perso/echo-framework.git"
 SRC_DIR="/opt/echo-framework-source"

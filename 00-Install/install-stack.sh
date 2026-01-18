@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.6.5
+# VERSION : 5.6.7
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE
 # ==============================================================================
@@ -29,17 +29,7 @@ if [ -f "$BRANCH_FILE" ]; then
     TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]')
 fi
 
-# --- DETECTION DOCKER COMPOSE V2 (FIX KeyError: 'ContainerConfig') ---
-if docker compose version >/dev/null 2>&1; then
-    DOCKER_COMPOSE_CMD="docker compose"
-else
-    if command -v docker-compose >/dev/null 2>&1; then
-        DOCKER_COMPOSE_CMD="docker-compose"
-    else
-        echo "❌ Erreur : Ni 'docker compose' (v2) ni 'docker-compose' (v1) ne sont installés."
-        exit 1
-    fi
-fi
+DOCKER_COMPOSE_CMD="docker-compose"
 
 echo "🚀 ECHO FRAMEWORK [COMPOSE LAUNCHER] v$ECHO_VERSION (Branche: $TARGET_BRANCH)"
 echo "   Moteur Compose : $DOCKER_COMPOSE_CMD"
