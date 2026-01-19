@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.27 - Turbo No Upload)
+title: Gemini Pro Unified System (Platinum Agentic 136.28 - Debug & Stability)
 author: Wilfried BARNAVON
-version: 136.27
-description: 136.27: Implementation of "Session Cache Approach" (Deep Research Strategy 2). Persists thoughtSignatures mapped to tool_call_ids to prevent reasoning drift and stuttering.
+version: 136.28
+description: 136.28: Add Full Debug Logging (Request/Response dump), fix parallel tool signature injection order, capture ResponseID.
 """
 
 # ==============================================================================
@@ -60,6 +60,29 @@ GOOGLE_SCOPES = [
     "openid",
 ]
 
+# --- LOGGER DEBUG (NOUVEAU) ---
+class DebugLogger:
+    def __init__(self, data_dir: str, chat_id: str):
+        self.log_dir = os.path.join(data_dir, "debug_logs")
+        os.makedirs(self.log_dir, exist_ok=True)
+        # Sanitize chat_id
+        safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_") if chat_id else "unknown_chat"
+        self.log_path = os.path.join(self.log_dir, f"debug_{safe_id}.json")
+
+    def log(self, event_type: str, payload: Any, metadata: Dict = None):
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "type": event_type,
+            "metadata": metadata or {},
+            "data": payload
+        }
+        try:
+            # Use NDJSON (JSON Lines) for robustness
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                f.write(std_json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass # Fail silently to avoid interrupting flow
+
 # --- GESTIONNAIRE DE CONNEXION PARTAGÉ ---
 _SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
 _LAST_CLIENT_ACCESS: float = 0.0
@@ -90,7 +113,6 @@ async def _get_global_client(idle_timeout: int = 300, enable_http2: bool = True)
         try:
             _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=enable_http2)
         except ImportError:
-            print("⚠️ Module 'h2' manquant pour HTTP/2. Fallback sur HTTP/1.1.")
             _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=False)
         except Exception:
             _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=False)
@@ -531,10 +553,11 @@ class Orchestrator:
 
             elif role in ["assistant", "model"]:
                 # STRATEGY 2.2: Rehydration from Server-Side Cache
-                # We merge consecutive model messages into a single API turn.
+                # Fix 136.28: We iterate sub-messages carefully to preserve order (Text -> Tools)
+                # This prevents "repetition" where the model forgets its own introduction text.
                 parts = []
                 
-                # Consolidate consecutive model messages
+                # Consolidate consecutive model messages into one TURN
                 while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
                     sub_m = messages[i]
                     
@@ -544,6 +567,8 @@ class Orchestrator:
                     
                     txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL).strip()
                     txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL).strip()
+                    
+                    # Append Text Part IMMEDIATELY to preserve order in history
                     if txt: parts.append({"text": txt})
 
                     # 2. Tool Calls (With Signature Rehydration)
@@ -556,7 +581,7 @@ class Orchestrator:
                                 # Attempt to find signature in the tool call itself (from Open-WebUI)
                                 sig = args.pop("_thought_signature", None)
                                 
-                                # If not found, look in the SERVER-SIDE CACHE (The Magic Fix)
+                                # If not found, look in the SERVER-SIDE CACHE
                                 if not sig and chat_id:
                                     call_id = tc.get("id")
                                     sig = self.sig_manager.get_signature(chat_id, call_id)
@@ -570,7 +595,8 @@ class Orchestrator:
                 
                 if not parts: parts.append({"text": " "})
 
-                # v136.24 Logic: Signature on FIRST FunctionCall Only
+                # v136.24 Logic: Signature on FIRST FunctionCall Only (for Gemini 3)
+                # This must be applied to the *reconstructed* list of parts.
                 found_first_fc = False
                 for part in parts:
                     if "functionCall" in part:
@@ -585,13 +611,13 @@ class Orchestrator:
                             
                             found_first_fc = True
                         else:
-                            # Ensure subsequent calls do NOT have signature
+                            # Ensure subsequent calls do NOT have signature (Parallel calls rule)
                             if "thoughtSignature" in part: del part["thoughtSignature"]
                 
                 # If no function calls, attach signature to last text part (Recommended by Google)
                 if not found_first_fc and parts and "text" in parts[-1] and chat_id:
-                     latest_sig = self.sig_manager.get_signature(chat_id)
-                     if latest_sig: parts[-1]["thoughtSignature"] = latest_sig
+                      latest_sig = self.sig_manager.get_signature(chat_id)
+                      if latest_sig: parts[-1]["thoughtSignature"] = latest_sig
 
                 contents.append({"role": "model", "parts": parts})
                 continue
@@ -675,7 +701,7 @@ class GeminiAdapter:
 # SECTION 7 : STREAM PROCESSOR
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, context_window: int, debug=False, chat_id=None, sig_manager=None, show_metrics=False, initial_label="Réponse", file_stats=None):
+    def __init__(self, context_window: int, debug=False, chat_id=None, sig_manager=None, show_metrics=False, initial_label="Réponse", file_stats=None, logger=None):
         self.debug = debug
         self.chat_id = chat_id
         self.sig_manager = sig_manager
@@ -686,15 +712,25 @@ class StreamProcessor:
         self.file_stats = file_stats or []
         self.current_sig = None
         self.stats_dir = "/app/backend/data/stats"
+        self.logger = logger # DebugLogger
         os.makedirs(self.stats_dir, exist_ok=True)
         # Capture buffer for tool calls
         self.pending_tool_calls = {} 
+        
+        # Capture full response for debug log
+        self.full_response_accumulator = []
+        self.response_id = None
 
     def _update_stats(self, data):
         if "response" in data and "usageMetadata" in data["response"]:
             self.usage_stats = data["response"]["usageMetadata"]
         elif "usageMetadata" in data:
             self.usage_stats = data["usageMetadata"]
+        
+        # Capture Response ID
+        if not self.response_id:
+            if "responseId" in data: self.response_id = data["responseId"]
+            elif "response" in data and "id" in data["response"]: self.response_id = data["response"]["id"]
         
         if self.usage_stats and self.chat_id:
              try:
@@ -725,6 +761,9 @@ class StreamProcessor:
                     if line.startswith("data:"):
                         data = std_json.loads(line[6:])
                         self._update_stats(data)
+                        
+                        # Accumulate for debug
+                        self.full_response_accumulator.append(data)
 
                         cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
                         if cand and cand[0].get("content"):
@@ -790,9 +829,14 @@ class StreamProcessor:
                 line = buffer.strip()
                 data = std_json.loads(line[6:])
                 self._update_stats(data) 
+                self.full_response_accumulator.append(data)
             except: pass
 
         if in_think: yield "\n</think>\n"
+
+        # Log full response at end
+        if self.logger:
+            self.logger.log("api_response", self.full_response_accumulator, metadata={"response_id": self.response_id})
 
         if self.show_metrics:
             stats_content = "\n\n" 
@@ -882,6 +926,11 @@ class Pipe:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, self.data_dir)
         
+        # Init Debug Logger
+        debug_logger = None
+        if self.valves.DEBUG_MODE:
+            debug_logger = DebugLogger(self.data_dir, chat_id)
+
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = self.auth.exchange_code(ac)
@@ -914,6 +963,10 @@ class Pipe:
         if self.valves.DEBUG_MODE:
              # Utilisation native orjson (Bytes)
              log_req = orjson.loads(orjson.dumps(req['json']))
+             
+             # Log Request to file
+             if debug_logger:
+                 debug_logger.log("api_request", log_req)
 
              contents = log_req.get("contents", [])
              if "request" in log_req: contents = log_req["request"].get("contents", [])
@@ -937,7 +990,8 @@ class Pipe:
             sig_manager=orch.sig_manager,
             show_metrics=self.valves.SHOW_METRICS, 
             initial_label=initial_label,
-            file_stats=orch.files_processed_info
+            file_stats=orch.files_processed_info,
+            logger=debug_logger
         )
 
         try:
