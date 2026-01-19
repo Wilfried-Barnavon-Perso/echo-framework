@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.29 - Debug & Integrity)
+title: Gemini Pro Unified System (Platinum Agentic 136.30 - Pure mgzip)
 author: Wilfried BARNAVON
-version: 136.29
-description: 136.29: Fix repetition bug (intro text preservation), capture responseId in logs, full request/response debug dumping.
+version: 136.30
+description: 136.30: Enforce mgzip as the sole compression engine for multi-threading performance.
 """
 
 # ==============================================================================
@@ -30,6 +30,7 @@ try:
     import httpx
     import orjson
     import pybase64
+    import mgzip as gzip
     from pydantic import BaseModel, Field
 except ImportError as e:
     missing_module = e.name or "inconnu"
@@ -38,12 +39,6 @@ except ImportError as e:
         f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.21+. "
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
-
-# --- OPTIMISATION COMPRESSION ---
-try:
-    import mgzip as gzip
-except ImportError:
-    import gzip
 
 # --- CONSTANTES DE CONFIGURATION GOOGLE ---
 GOOGLE_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
@@ -685,12 +680,18 @@ class GeminiAdapter:
     def __init__(self, base_url):
         self.base_url = base_url
 
+    def _get_thinking_budget_2_5(self, level: str) -> int:
+        return 32768 if level == "HIGH" else -1
+
     def build(self, project_id, contents, system_instr, temp, max_tok, think_level, model_id, tools=None):
         gen_config = {"temperature": temp, "maxOutputTokens": max_tok}
+        
         if "gemini-3" in model_id:
-            t_level = think_level.lower()
-            if t_level == "dynamic": t_level = "high"
-            gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": t_level}
+            gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": think_level.lower()}
+        elif "gemini-2.5" in model_id:
+            budget = self._get_thinking_budget_2_5(think_level)
+            if budget > 0:
+                gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingBudget": budget}
         
         payload = {
             "model": model_id, "project": project_id,
@@ -885,7 +886,7 @@ class Pipe:
     class Valves(BaseModel):
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
         SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système")
-        THINKING_LEVEL: Literal["DYNAMIC", "LOW", "HIGH"] = Field(default="DYNAMIC", description="Niveau de réflexion")
+        THINKING_LEVEL: Literal["LOW", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion")
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
         MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
