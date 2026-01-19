@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.30 - Pure mgzip)
+title: Gemini Pro Unified System (Platinum Agentic 136.33 - UI Restored)
 author: Wilfried BARNAVON
-version: 136.30
-description: 136.30: Enforce mgzip as the sole compression engine for multi-threading performance.
+version: 136.33
+description: 136.33: Revert to 136.30 base + Fix Tool UI regression (remove premature finish_reason in tool loop) to restore collapsible widgets.
 """
 
 # ==============================================================================
@@ -806,6 +806,7 @@ class StreamProcessor:
                                     # Still tunnel via args as backup strategy 1
                                     if self.current_sig: args["_thought_signature"] = self.current_sig
                                     
+                                    # FIX 136.31: REMOVED "finish_reason": "tool_calls" to prevent premature UI stop
                                     yield {
                                         "choices": [{
                                             "index": 0, "delta": {
@@ -815,7 +816,7 @@ class StreamProcessor:
                                                     "type": "function", 
                                                     "function": {"name": func_call["name"], "arguments": std_json.dumps(args)}
                                                 }]
-                                            }, "finish_reason": "tool_calls"
+                                            }
                                         }]
                                     }
                                     tool_index += 1
