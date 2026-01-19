@@ -1,4 +1,4 @@
-version: '3.9'
+version: '3.10'
 
 # ==============================================================================
 # ECHO FRAMEWORK v5 - INFRASTRUCTURE DEFINITION
@@ -50,7 +50,7 @@ services:
       - /opt/browser-agent/browser_api.py:/app/app.py
       - echo-browser-data:/app/data
     command: >
-      /bin/bash -c "apt-get update && apt-get install -y chromium fonts-liberation libasound2 libnss3 libgbm1 libnspr4 xdg-utils && pip install --no-cache-dir flask flask-cors DrissionPage && python /app/app.py"
+      /bin/bash -c "apt-get update && apt-get install -y chromium fonts-liberation libasound2 libnss3 libgbm1 libnspr4 xdg-utils && pip install --no-cache-dir flask flask-cors DrissionPage html2text && python /app/app.py"
 
   # --- 4. ADMIN MANAGER (OPS & MONITORING) ---
   admin-manager:
