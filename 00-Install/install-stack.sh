@@ -100,6 +100,7 @@ if [ "$DOCKER_COMPOSE_CMD" = "docker-compose" ]; then
     if docker ps -a --format '{{.Names}}' | grep -q "^echo-webui-core$"; then
         echo "⚠️  [Compatibilité v1] Suppression préventive du conteneur echo-webui-core pour éviter le crash..."
         docker rm -f echo-webui-core >/dev/null 2>&1
+        sleep 10 # on attend 10 secondes la mort du conteneur
     fi
 fi
 
