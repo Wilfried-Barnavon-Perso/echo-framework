@@ -2,7 +2,7 @@
 title: ECHO Auth Manager (User Isolation Compatible)
 author: ECHO Team
 version: 2.0
-description: 2.0: Réinitialise l'authentification Google (Tokens & Cache) de l'utilisateur courant. Compatible avec l'architecture multi-utilisateurs v137.0+.
+description: 2.0: Réinitialise l'authentification Google (Tokens & Cache) de l'utilisateur courant.
 """
 
 import os

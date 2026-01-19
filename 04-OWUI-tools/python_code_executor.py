@@ -2,7 +2,7 @@
 title: Python Code Executor (Sidecar - User Aware)
 author: Wilfried BARNAVON
 version: 5.0
-description: 5.0: Exécution de code Python via micro-service worker. Compatible multi-utilisateurs (Propagation Header X-User-ID).
+description: 5.0: Exécution de code Python via micro-service worker.
 """
 import requests, json
 from pydantic import BaseModel, Field

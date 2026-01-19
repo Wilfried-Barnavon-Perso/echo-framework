@@ -2,7 +2,7 @@
 title: Gemini Internal Web Search (User Isolation Compatible)
 author: Wilfried BARNAVON
 version: 10.0
-description: 10.0: Recherche Google via API Gemini interne. Compatible architecture multi-utilisateurs (Tokens isolés).
+description: 10.0: Recherche Google via API Gemini interne.
 """
 import json, os, requests, uuid, random
 from pydantic import BaseModel, Field

@@ -6,138 +6,218 @@ import uuid
 import os
 import shutil
 import traceback
+import logging
+
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API
-VERSION : 1.0
+VERSION : 2.0 (Multi-Session & User Isolation)
 AUTEUR : Wilfried BARNAVON
+DATE MAJ : 2026-01-20
+
+CHANGELOG 2.0 :
+- Support multi-sessions concurrentes (Isolation complète).
+- Profils Chromium uniques par session (Isolation Cookies/Cache).
+- Nettoyage automatique des ressources orphelines.
+- Logging de l'identité utilisateur (avec messages FR restaurés).
 ================================================================================
 """
 
+# Configuration Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 
-# --- CONFIGURATION DRISSIONPAGE ---
-IDLE_TIMEOUT = 900   # Secondes avant de tuer le processus Chromium inutile
+# --- CONFIGURATION ---
+IDLE_TIMEOUT = 900   # 15 minutes d'inactivité max par session (RAM Saver)
+MAX_SESSIONS = 5     # Limite hard pour ne pas faire exploser le conteneur
 
-class BrowserManager:
-    def __init__(self):
+# Stockage des sessions actives : {session_id: BrowserSession}
+SESSIONS = {}
+SESSIONS_LOCK = threading.Lock()
+
+class BrowserSession:
+    def __init__(self, user_id):
+        self.session_id = str(uuid.uuid4())
+        self.user_id = user_id
         self.page = None
         self.lock = threading.Lock()
-        self.timer = None
-        self.last_activity = 0
+        self.last_activity = time.time()
+        self.profile_dir = f"/app/data/profiles/{self.session_id}"
         
-        # Configuration des options Chromium pour Docker (HARDENED)
+        # Options Chromium Isolées
         self.co = ChromiumOptions()
         self.co.headless(True)
-        # Arguments critiques pour la stabilité dans Docker
-        self.co.set_argument('--no-sandbox') 
+        self.co.set_argument('--no-sandbox')
         self.co.set_argument('--disable-gpu')
-        self.co.set_argument('--disable-dev-shm-usage') # Vital pour /dev/shm limité
+        self.co.set_argument('--disable-dev-shm-usage')
         self.co.set_argument('--disable-setuid-sandbox')
-        self.co.set_argument('--no-zygote')
-        self.co.set_argument('--single-process') # Fallback ultime si crash mémoire
+        self.co.set_argument('--single-process')
         self.co.set_argument('--mute-audio')
         self.co.set_argument('--ignore-certificate-errors')
-        
-        # Chemin standard sur Debian/Ubuntu slim (installé via apt-get)
         self.co.set_paths(browser_path='/usr/bin/chromium')
+        
+        # ISOLATION CRITIQUE : Dossier de profil unique
+        self.co.set_user_data_path(self.profile_dir)
 
     def get_page(self, mode='s'):
         """
-        Récupère l'instance WebPage.
-        Mode 's' (Session/Requests) = Ultra-léger.
-        Mode 'd' (Driver/Chromium) = Lourd.
+        Récupère ou initialise l'instance WebPage pour cette session.
+        Gère le switch de mode (s <-> d) de manière thread-safe pour cette session.
         """
         with self.lock:
             self.last_activity = time.time()
-            self._schedule_shutdown()
-
+            
             if self.page is None:
-                print(f"[Drission] 🌱 Initialisation WebPage (Mode: {mode})")
+                logger.info(f"[{self.session_id}] 🌱 Initialisation WebPage (Mode: {mode}) pour {self.user_id}")
                 try:
-                    # Démarrage direct avec options durcies
                     self.page = WebPage(mode=mode, chromium_options=self.co)
                 except Exception as e:
-                    print(f"[Drission] ❌ CRASH INIT: {e}")
-                    # On renvoie l'erreur pour que l'API puisse la catcher
-                    raise RuntimeError(f"Impossible de lancer Chromium. Erreur: {e}")
+                    logger.error(f"[{self.session_id}] ❌ CRASH INIT: {e}")
+                    raise RuntimeError(f"Browser Init Failed: {e}")
             
-            # Gestion du changement de mode (si instance existe déjà)
+            # Gestion du changement de mode
             if mode == 'd' and self.page.mode == 's':
-                print("[Drission] 🔥 Passage en Mode Driver (Chromium Start)")
+                logger.info(f"[{self.session_id}] 🔥 Passage en Mode Driver (Chromium Start)")
                 try:
                     self.page.change_mode('d')
                 except Exception as e:
-                    print(f"[Drission] ❌ CRASH SWITCH MODE: {e}")
-                    # Tentative de récupération : on tue et on relance
-                    try:
-                        self.page.quit()
+                    logger.error(f"[{self.session_id}] ❌ CRASH SWITCH MODE: {e}")
+                    # Recovery: Kill & Restart
+                    try: self.page.quit()
                     except: pass
-                    self.page = None
                     self.page = WebPage(mode='d', chromium_options=self.co)
             
             return self.page
 
-    def _shutdown_chromium(self):
-        """Arrête le processus Chromium si inactif."""
+    def close(self):
+        """Arrêt propre du navigateur et suppression des fichiers temporaires."""
         with self.lock:
-            if self.page and self.page.mode == 'd':
-                if time.time() - self.last_activity < IDLE_TIMEOUT:
-                    self._schedule_shutdown() # Report si activité récente
-                    return
-                
-                print("[Drission] ❄️ Extinction Chromium (RAM Saver)...")
+            if self.page:
                 try:
-                    # On repasse en mode session pour fermer le browser proprement
-                    self.page.change_mode('s') 
+                    self.page.quit()
+                except: pass
+                self.page = None
+            
+            # Nettoyage du profil disque
+            if os.path.exists(self.profile_dir):
+                try:
+                    shutil.rmtree(self.profile_dir)
+                    logger.info(f"[{self.session_id}] 🧹 Profil nettoyé (Suppression cache)")
                 except Exception as e:
-                    print(f"Error closing browser: {e}")
+                    logger.error(f"[{self.session_id}] ⚠️ Erreur nettoyage profil: {e}")
 
-    def _schedule_shutdown(self):
-        if self.timer: self.timer.cancel()
-        self.timer = threading.Timer(IDLE_TIMEOUT, self._shutdown_chromium)
-        self.timer.start()
+# --- GESTIONNAIRE DE TÂCHES DE FOND ---
 
-MANAGER = BrowserManager()
+def cleanup_loop():
+    """Thread de maintenance qui tue les sessions inactives."""
+    while True:
+        time.sleep(60)
+        now = time.time()
+        to_remove = []
+        
+        with SESSIONS_LOCK:
+            for sid, session in SESSIONS.items():
+                if (now - session.last_activity) > IDLE_TIMEOUT:
+                    to_remove.append(sid)
+        
+        for sid in to_remove:
+            logger.info(f"⏰ Timeout Session {sid} (Inactivité > {IDLE_TIMEOUT}s)")
+            stop_session_internal(sid)
+
+def stop_session_internal(session_id):
+    """Logique d'arrêt interne thread-safe."""
+    session = None
+    with SESSIONS_LOCK:
+        if session_id in SESSIONS:
+            session = SESSIONS.pop(session_id)
+    
+    if session:
+        session.close()
+        return True
+    return False
+
+# Démarrage du thread de nettoyage
+t = threading.Thread(target=cleanup_loop, daemon=True)
+t.start()
+
+# --- ROUTES API ---
 
 @app.route('/start_session', methods=['POST'])
 def start_session():
+    user_id = request.headers.get('X-OpenWebUI-User-Id', 'anonymous')
+    
+    with SESSIONS_LOCK:
+        # 1. Vérification des quotas
+        if len(SESSIONS) >= MAX_SESSIONS:
+            # Tentative de nettoyage d'urgence (sessions orphelines ?)
+            return jsonify({"error": "Serveur occupé (Max sessions atteintes). Réessayez plus tard."}), 503
+        
+        # 2. Création Session
+        session = BrowserSession(user_id)
+        SESSIONS[session.session_id] = session
+    
+    # 3. Préchauffage (Optionnel, mode 's' léger)
     try:
-        # On tente d'initialiser une page (mode léger par défaut) pour vérifier que le moteur répond
-        MANAGER.get_page(mode='s')
-        return jsonify({"session_id": "global_drission_session", "status": "ready", "engine": "DrissionPage"})
+        session.get_page(mode='s')
+        logger.info(f"✅ Session Démarrée: {session.session_id} | User: {user_id}")
+        return jsonify({
+            "session_id": session.session_id, 
+            "status": "ready", 
+            "engine": "DrissionPage",
+            "isolation": "active"
+        })
     except Exception as e:
-        return jsonify({"error": f"Echec démarrage moteur: {str(e)}", "trace": traceback.format_exc()}), 500
+        stop_session_internal(session.session_id)
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/stop_session', methods=['POST'])
 def stop_session():
-    return jsonify({"status": "acknowledged"})
+    data = request.json
+    sid = data.get("session_id")
+    if stop_session_internal(sid):
+        return jsonify({"status": "closed"})
+    return jsonify({"status": "not_found"}), 404
 
 @app.route('/action', methods=['POST'])
 def browser_action():
     data = request.json
+    sid = data.get("session_id")
     action = data.get("action")
     params = data.get("params", {})
+    user_id = request.headers.get('X-OpenWebUI-User-Id', 'anonymous')
     
+    session = None
+    with SESSIONS_LOCK:
+        session = SESSIONS.get(sid)
+    
+    if not session:
+        return jsonify({"error": "Session invalide ou expirée"}), 404
+    
+    # Vérification basique de propriété (Optionnelle, mais bonne pratique)
+    if session.user_id != 'anonymous' and user_id != 'anonymous' and session.user_id != user_id:
+        logger.warning(f"⛔ Access Denied: User {user_id} tried to use session of {session.user_id}")
+        return jsonify({"error": "Access Denied"}), 403
+
     result = {"status": "success"}
 
     try:
         # Détermine le mode nécessaire
-        # goto/read peuvent se faire en mode 's' (léger) SAUF si JS requis explicitement
         required_mode = 'd' if action in ['click', 'type', 'screenshot', 'evaluate'] else 's'
         
-        # Obtention de la page (peut lever une exception si Chromium est cassé)
-        page = MANAGER.get_page(mode=required_mode)
+        # Récupération de la page (Thread-Safe via la session)
+        page = session.get_page(mode=required_mode)
         
         if action == "goto":
             url = params.get("url")
             page.get(url)
             # Petit hack: si le mode session ne renvoie rien (JS required), on switch en d
             if required_mode == 's' and (not page.html or len(page.html) < 500):
-                 print("[Drission] ⚠️ Page vide/JS détecté, upgrade en Mode Driver...")
-                 page = MANAGER.get_page(mode='d')
+                 logger.info(f"[{sid}] ⚠️ Page vide/JS détecté, upgrade en Mode Driver...")
+                 page = session.get_page(mode='d')
                  page.get(url)
-                 
+            
             result["title"] = page.title
             result["url"] = page.url
 
@@ -155,7 +235,7 @@ def browser_action():
             result["mode_used"] = page.mode
 
         elif action == "screenshot":
-            filename = f"screenshot_{int(time.time())}.png"
+            filename = f"screenshot_{sid}_{int(time.time())}.png"
             path = f"/app/data/{filename}"
             page.get_screenshot(path=path, full_page=True)
             result["path"] = path
@@ -168,11 +248,12 @@ def browser_action():
             return jsonify({"error": "Action inconnue"}), 400
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        return jsonify({"error": f"Drission Error: {str(e)}"}), 500
+        logger.error(f"[{sid}] Erreur Action: {e}")
+        return jsonify({"error": f"Browser Error: {str(e)}"}), 500
 
     return jsonify(result)
 
 if __name__ == '__main__':
-    # Mode debug=False pour stabilité production
-    app.run(host='0.0.0.0', port=5002, debug=False)
+    # threaded=True permet de gérer les requêtes concurrentes sur le Flask
+    # (Chaque requête manipule sa propre session via SESSIONS dict)
+    app.run(host='0.0.0.0', port=5002, debug=False, threaded=True)
