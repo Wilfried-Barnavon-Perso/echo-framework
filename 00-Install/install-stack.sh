@@ -93,16 +93,19 @@ fi
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull --quiet
 
-# --- FIX COMPATIBILITÉ DOCKER-COMPOSE 1.x ---
-# Si on utilise l'ancien docker-compose, on force la suppression du conteneur
-# pour éviter l'erreur 'KeyError: ContainerConfig' lors de la recreation.
-if [ "$DOCKER_COMPOSE_CMD" = "docker-compose" ]; then
-    if docker ps -a --format '{{.Names}}' | grep -q "^echo-webui-core$"; then
-        echo "⚠️  [Compatibilité v1] Suppression préventive du conteneur echo-webui-core pour éviter le crash..."
-        docker rm -f echo-webui-core >/dev/null 2>&1
-        sleep 10 # on attend 10 secondes la mort du conteneur
-    fi
+#Suppression forcée des dockers
+for d in $(docker ps -a --format '{{.Names}}') ; do 
+    echo "⚠️ Suppression préventive du conteneur $d pour éviter un crash..."
+    docker rm -f $d >/dev/null 2>&1
 fi
+
+# on attend 10 secondes la morts du conteneurs
+for ((d=1 ; d < 11  ; d++ )) ; do
+    echo "$((10-$d))" secondes avant construction..."
+    [ -z "$(docker ps -a --format '{{.Names}}')" ] && break
+    sleep 1 
+done
+
 
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
 
