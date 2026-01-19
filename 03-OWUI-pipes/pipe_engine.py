@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.28 - Debug & Stability)
+title: Gemini Pro Unified System (Platinum Agentic 136.29 - Debug & Integrity)
 author: Wilfried BARNAVON
-version: 136.28
-description: 136.28: Add Full Debug Logging (Request/Response dump), fix parallel tool signature injection order, capture ResponseID.
+version: 136.29
+description: 136.29: Fix repetition bug (intro text preservation), capture responseId in logs, full request/response debug dumping.
 """
 
 # ==============================================================================
@@ -565,8 +565,10 @@ class Orchestrator:
                     txt = sub_m.get("content", "")
                     if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
                     
-                    txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL).strip()
-                    txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL).strip()
+                    # Fix 136.29: Safer stripping to prevent removing meaningful single-line intros
+                    txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL)
+                    txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL)
+                    txt = txt.strip()
                     
                     # Append Text Part IMMEDIATELY to preserve order in history
                     if txt: parts.append({"text": txt})
@@ -980,8 +982,8 @@ class Pipe:
                          len_b64 = len(p["inline_data"].get("data", ""))
                          p["inline_data"]["data"] = f"<BASE64_BLOB_LEN_{len_b64}>"
             
-             yield f"🐞 **API REQ** `[{req['url']}]`\n```json\n{std_json.dumps(log_req, indent=2)}\n```\n"
-             yield "🚀 **Turbo JSON (orjson)** Active\n"
+             # yield f"🐞 **API REQ** `[{req['url']}]`\n```json\n{std_json.dumps(log_req, indent=2)}\n```\n"
+             # yield "🚀 **Turbo JSON (orjson)** Active\n"
 
         proc = StreamProcessor(
             self.valves.MAX_CONTEXT_SIZE,
@@ -1013,9 +1015,9 @@ class Pipe:
                         except:
                             is_mgzip = False
                         engine_name = "mgzip (Multi-threaded)" if is_mgzip else "gzip (Standard)"
-                        yield f"📦 **GZIP Encoded** ({engine_name}, Level {self.valves.GZIP_LEVEL})\n"
+                        # yield f"📦 **GZIP Encoded** ({engine_name}, Level {self.valves.GZIP_LEVEL})\n"
                 elif self.valves.DEBUG_MODE:
-                     yield f"⏭️ **GZIP Skipped** (Size > {self.valves.GZIP_THRESHOLD_KB}KB)\n"
+                     pass # yield f"⏭️ **GZIP Skipped** (Size > {self.valves.GZIP_THRESHOLD_KB}KB)\n"
 
             # RETRY LOOP (Native, v136.23)
             for attempt in range(self.valves.API_RETRY_COUNT):
