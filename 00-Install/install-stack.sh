@@ -100,8 +100,8 @@ for d in $(docker ps -a --format '{{.Names}}') ; do
 done
 
 # on attend 10 secondes la morts du conteneurs
-for ((d=1 ; d < 11  ; d++ )) ; do
-    echo "$((10-$d))" secondes avant construction..."
+for ((d=1 ; d < 11 ; d++ )) ; do
+    echo "$((10-$d)) secondes avant construction..."
     [ -z "$(docker ps -a --format '{{.Names}}')" ] && break
     sleep 1 
 done
