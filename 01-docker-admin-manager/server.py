@@ -2,7 +2,7 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 3.2 (Security & Config Update)
+VERSION : 3.3 (UI/UX Fixes)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-01-20
 
@@ -10,10 +10,11 @@ DATE MAJ : 2026-01-20
 Ce micro-service Flask agit comme le "Concierge" de l'infrastructure ECHO.
 Il s'exécute dans un conteneur Docker dédié (echo-admin-manager) sur le port 3001.
 
---- CHANGELOG 3.2 ---
-- Ajout de la fonctionnalité "Changer Mot de Passe" (SSH Interactif).
-- Introduction de DEFAULT_BACKUP_CONFIG pour une configuration propre.
-- Uniformisation des rétentions en "jours" pour simplifier la lecture.
+--- CHANGELOG 3.3 ---
+- Restauration de l'interface de programmation des backups (Auto-Pilot).
+- Ajout de la confirmation de mot de passe (Double saisie).
+- Fix du bug d'affichage (Calque sombre/Loader bloqué au login).
+- Ajout généralisé des Tooltips d'aide sur les boutons et champs.
 
 --- RESPONSABILITÉS ---
 1. MONITORING : Exposition des métriques (CPU/RAM/Disque).
@@ -90,7 +91,6 @@ HOST_GATEWAY = "host.docker.internal"
 SETTINGS_FILE = os.path.join(BACKUP_DIR, "settings.json")
 OWUI_DATA_ROOT = "/app/backend/data"
 
-# Dossiers gérés par la maintenance
 DIRS = {
     "signatures": os.path.join(OWUI_DATA_ROOT, "signatures"),
     "stats": os.path.join(OWUI_DATA_ROOT, "stats"),
@@ -104,27 +104,25 @@ DATA_DIR_FOR_BACKUP = OWUI_DATA_ROOT
 
 # --- CONFIGURATIONS PAR DEFAUT (Constantes) ---
 
-# Configuration des Backups (v3.2)
 DEFAULT_BACKUP_CONFIG = {
     "auto_backup": True,
     "auto_cleanup": True,
-    "cleanup_mode": "count",  # 'count' ou 'days'
-    "cleanup_value": 5,       # Garder 5 fichiers ou 5 jours
+    "cleanup_mode": "count",
+    "cleanup_value": 5,
     "backup_time": "03:00",
     "interval_days": 1
 }
 
-# Configuration de la Maintenance (v3.2 - Tout en jours)
 DEFAULT_MAINT_CONFIG = {
     "cleanup_hour": "03:00",
     "last_run": "Never",
     "file_count_trigger": 100000, 
     "retention": {
-        "signatures_days": 1095,  # 3 ans
-        "stats_days": 30,         # 1 mois
-        "uploads_days": 1095,     # 3 ans
-        "debug_days": 14,         # 14 jours
-        "tokens_days": 30         # 1 mois (Auth inactive)
+        "signatures_days": 1095,
+        "stats_days": 30,
+        "uploads_days": 1095,
+        "debug_days": 14,
+        "tokens_days": 30
     }
 }
 
@@ -149,14 +147,12 @@ if HAS_SCHEDULER:
 # ==============================================================================
 
 def load_maint_config():
-    """Charge la configuration de maintenance."""
     config = DEFAULT_MAINT_CONFIG.copy()
     if os.path.exists(MAINT_CONFIG_FILE):
         try:
             with open(MAINT_CONFIG_FILE, 'r', encoding='utf-8') as f:
                 loaded = json.load(f)
                 config.update(loaded)
-                # Ensure nested dict exists and merge defaults
                 if "retention" in loaded:
                     for k, v in DEFAULT_MAINT_CONFIG["retention"].items():
                         if k not in config["retention"]: config["retention"][k] = v
@@ -180,9 +176,7 @@ def get_dir_stats(path):
     except: return {"count": 0, "size": 0, "size_fmt": "Err"}
 
 def cleanup_directory(dir_key, retention_days):
-    """Nettoyage basé sur l'âge des fichiers (jours)."""
     if retention_days == -1: return 0
-    
     path = DIRS.get(dir_key)
     if not path or not os.path.exists(path): return 0
     
@@ -200,7 +194,7 @@ def cleanup_directory(dir_key, retention_days):
             except: pass
     except Exception as e:
         print(f"Error cleaning {dir_key}: {e}")
-        
+    
     if deleted > 0: print(f"🧹 [Maintenance] {dir_key}: {deleted} fichiers supprimés (> {retention_days} jours).")
     return deleted
 
@@ -210,14 +204,11 @@ def run_global_maintenance():
     ret = config["retention"]
     total_deleted = 0
     
-    # Signatures : Check trigger volumétrique
     sig_stats = get_dir_stats(DIRS["signatures"])
     if sig_stats["count"] > config.get("file_count_trigger", 100000):
-        # Utilisation de signatures_days (v3.2) ou fallback sur semaines (legacy) converties
         days = ret.get("signatures_days", ret.get("signatures_weeks", 156) * 7)
         total_deleted += cleanup_directory("signatures", days)
     
-    # Autres dossiers
     total_deleted += cleanup_directory("stats", ret["stats_days"])
     total_deleted += cleanup_directory("uploads", ret["uploads_days"])
     total_deleted += cleanup_directory("debug_logs", ret["debug_days"])
@@ -255,7 +246,6 @@ def human_size(size):
     return f"{size:.1f} PB"
 
 def load_settings():
-    """Charge les paramètres de backup en utilisant DEFAULT_BACKUP_CONFIG."""
     config = DEFAULT_BACKUP_CONFIG.copy()
     if os.path.exists(SETTINGS_FILE):
         try: 
@@ -327,53 +317,33 @@ except: pass
 # ==============================================================================
 
 def change_system_password(username, current_pwd, new_pwd):
-    """
-    Change le mot de passe de l'utilisateur hôte via SSH interactif.
-    Utilise 'passwd' et gère les prompts standards Linux.
-    """
     if not DOCKER_AVAILABLE: return False, "Module SSH manquant"
-    
     try:
-        # Connexion SSH
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(HOST_GATEWAY, username=username, password=current_pwd, timeout=10)
         
-        # Ouverture d'un shell interactif (PTY)
-        # Nécessaire car 'passwd' refuse de lire depuis stdin non-TTY par sécurité
         channel = ssh.invoke_shell()
-        time.sleep(1) # Attente initialisation shell
-        
-        # Envoi de la commande
+        time.sleep(1)
         channel.send('passwd\n')
         time.sleep(1)
-        
-        # Le prompt dépend de la config (root ou user standard)
-        # Cas standard: "Current password:" -> "New password:" -> "Retype new password:"
-        # On envoie les séquences avec des pauses
-        
         channel.send(f'{current_pwd}\n')
         time.sleep(0.5)
-        
         channel.send(f'{new_pwd}\n')
         time.sleep(0.5)
-        
         channel.send(f'{new_pwd}\n')
         time.sleep(1)
         
-        # Lecture de la sortie pour vérifier le succès
         output = channel.recv(4096).decode('utf-8', errors='ignore')
         ssh.close()
         
         if "updated successfully" in output or "mis à jour avec succès" in output:
             return True, "Mot de passe modifié avec succès."
         elif "BAD PASSWORD" in output:
-            return False, "Le nouveau mot de passe est trop faible (Dictionnaire/Court)."
+            return False, "Mot de passe trop faible."
         elif "Authentication token manipulation error" in output:
-            return False, "Erreur système (Permissions/Shadow)."
+            return False, "Erreur système (Permissions)."
         else:
-            # Fallback optimiste si on ne parse pas le message exact mais pas d'erreur flagrante
-            # Mais souvent si ça échoue 'passwd' le dit.
             return True, "Commande envoyée (Vérifiez la connexion)."
             
     except Exception as e:
@@ -410,7 +380,7 @@ def login():
         ssh.connect(HOST_GATEWAY, username=username, password=password, timeout=5)
         ssh.close()
         session['logged_in'] = True
-        session['username'] = username # Stockage pour le changement de mdp
+        session['username'] = username
         return redirect(url_for('index'))
     except Exception as e:
         flash(f'Échec authentification: {str(e)}', 'danger')
@@ -420,8 +390,6 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for('index'))
-
-# --- API ---
 
 @app.route('/api/stats')
 def stats():
@@ -453,8 +421,6 @@ def containers():
         return jsonify(cl)
     except Exception as e: return jsonify({"error": str(e)})
 
-# --- ACTIONS ---
-
 @app.route('/settings/maintenance', methods=['POST'])
 def update_maintenance_settings():
     if not session.get('logged_in'): return redirect(url_for('index'))
@@ -462,8 +428,6 @@ def update_maintenance_settings():
     try:
         config["cleanup_hour"] = request.form.get("cleanup_hour", "03:00")
         config["file_count_trigger"] = int(request.form.get("file_count_trigger", 100000))
-        
-        # Rétentions (Jours)
         config["retention"]["signatures_days"] = int(request.form.get("ret_sigs", 1095))
         config["retention"]["stats_days"] = int(request.form.get("ret_stats", 30))
         config["retention"]["uploads_days"] = int(request.form.get("ret_uploads", 1095))
@@ -499,24 +463,24 @@ def global_auth_reset():
 
 @app.route('/action/security/passwd', methods=['POST'])
 def passwd_change():
-    """Route pour le changement de mot de passe."""
     if not session.get('logged_in'): return redirect(url_for('index'))
     
     current_pwd = request.form.get('current_password')
     new_pwd = request.form.get('new_password')
+    confirm_pwd = request.form.get('confirm_password')
     username = session.get('username')
     
     if not username:
-        flash('Erreur session: Utilisateur inconnu. Reconnectez-vous.', 'danger')
+        flash('Erreur session. Reconnectez-vous.', 'danger')
+        return redirect(url_for('index'))
+        
+    if new_pwd != confirm_pwd:
+        flash('❌ Erreur: Les mots de passe ne correspondent pas.', 'danger')
         return redirect(url_for('index'))
         
     success, msg = change_system_password(username, current_pwd, new_pwd)
-    
-    if success:
-        flash(f'✅ {msg}', 'success')
-    else:
-        flash(f'❌ Erreur: {msg}', 'danger')
-        
+    if success: flash(f'✅ {msg}', 'success')
+    else: flash(f'❌ Erreur: {msg}', 'danger')
     return redirect(url_for('index'))
 
 @app.route('/action/<action_type>', methods=['POST'])
@@ -607,12 +571,25 @@ HTML_LOGIN = """
                 {% if messages %}{% for category, message in messages %}<div class="alert alert-{{ category }}">{{ message }}</div>{% endfor %}{% endif %}
             {% endwith %}
             <form method="POST">
-                <div class="mb-3"><label class="form-label">Utilisateur</label><input type="text" name="username" class="form-control" required autofocus></div>
-                <div class="mb-3"><label class="form-label">Mot de Passe</label><input type="password" name="password" class="form-control" required></div>
-                <button type="submit" class="btn btn-primary w-100">Se connecter</button>
+                <div class="mb-3">
+                    <label class="form-label">Utilisateur</label>
+                    <input type="text" name="username" class="form-control" required autofocus data-bs-toggle="tooltip" title="Nom d'utilisateur du compte système hôte">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Mot de Passe</label>
+                    <input type="password" name="password" class="form-control" required data-bs-toggle="tooltip" title="Mot de passe système SSH">
+                </div>
+                <button type="submit" class="btn btn-primary w-100" data-bs-toggle="tooltip" title="Connexion sécurisée via SSH local">Se connecter</button>
             </form>
         </div>
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+            var tooltipList = tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el) })
+        });
+    </script>
 </body>
 </html>
 """
@@ -648,7 +625,7 @@ HTML_DASHBOARD = """
             <span class="navbar-brand mb-0 h1"><i class="bi bi-cpu-fill text-primary"></i> ECHO Admin <span class="ms-3 badge bg-secondary fw-normal" style="font-size:0.8rem">{{ server_time }}</span></span>
             <div class="d-flex align-items-center gap-3">
                 <span class="text-muted small"><i class="bi bi-person-circle"></i> {{ current_user }}</span>
-                <a href="/logout" class="btn btn-outline-danger btn-sm"><i class="bi bi-box-arrow-right"></i></a>
+                <a href="/logout" class="btn btn-outline-danger btn-sm" data-bs-toggle="tooltip" title="Déconnexion"><i class="bi bi-box-arrow-right"></i></a>
             </div>
         </div>
     </nav>
@@ -674,10 +651,10 @@ HTML_DASHBOARD = """
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <span><i class="bi bi-archive"></i> Sauvegardes</span>
                         <div class="d-flex gap-2">
-                             <button class="btn btn-sm btn-link text-white p-0 me-2" onclick="refreshBackups()"><i class="bi bi-arrow-repeat fs-5"></i></button>
-                             <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('uploadInput').click()"><i class="bi bi-upload"></i></button>
+                             <button class="btn btn-sm btn-link text-white p-0 me-2" onclick="refreshBackups()" data-bs-toggle="tooltip" title="Actualiser la liste des backups"><i class="bi bi-arrow-repeat fs-5"></i></button>
+                             <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('uploadInput').click()" data-bs-toggle="tooltip" title="Importer un fichier .tar.gz"><i class="bi bi-upload"></i></button>
                              <form action="/action/backup" method="post" style="display:inline" onsubmit="showLoader('Création du backup...')">
-                                <button class="btn btn-sm btn-success"><i class="bi bi-plus-lg"></i> Backup</button>
+                                <button class="btn btn-sm btn-success" data-bs-toggle="tooltip" title="Lancer une sauvegarde immédiate"><i class="bi bi-plus-lg"></i> Backup</button>
                              </form>
                         </div>
                     </div>
@@ -696,7 +673,38 @@ HTML_DASHBOARD = """
             <!-- DROITE : Maintenance & Config -->
             <div class="col-lg-5">
                 
-                <!-- SECURITE COMPTE (NOUVEAU v3.2) -->
+                <!-- AUTO-PILOT BACKUPS (Restauré v3.3) -->
+                <div class="card mb-4">
+                    <div class="card-header"><i class="bi bi-robot"></i> Auto-Pilot (Backups)</div>
+                    <div class="card-body">
+                        {% if not has_scheduler %}<div class="alert alert-warning small">Module 'APScheduler' manquant.</div>{% endif %}
+                        <form action="/settings" method="post">
+                            <div class="form-check form-switch mb-3 p-2 border rounded bg-dark border-secondary">
+                                <input class="form-check-input ms-0 me-2" type="checkbox" name="auto_backup" id="autoBackup" {% if settings.auto_backup %}checked{% endif %}>
+                                <label class="form-check-label" for="autoBackup">Backup Auto</label>
+                            </div>
+                            <div class="row g-2 mb-3">
+                                <div class="col-6"><label class="form-label text-muted small mb-1">Jours</label><input type="number" name="interval_days" class="form-control bg-dark text-white border-secondary" value="{{ settings.interval_days }}" min="1" data-bs-toggle="tooltip" title="Fréquence en jours"></div>
+                                <div class="col-6"><label class="form-label text-muted small mb-1">Heure</label><input type="time" name="backup_time" class="form-control bg-dark text-white border-secondary" value="{{ settings.backup_time }}" data-bs-toggle="tooltip" title="Heure d'exécution"></div>
+                            </div>
+                            <hr class="border-secondary my-3">
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" name="auto_cleanup" id="autoCleanup" {% if settings.auto_cleanup %}checked{% endif %}>
+                                <label class="form-check-label" for="autoCleanup">Nettoyage Vieux Backups</label>
+                            </div>
+                            <div class="input-group mb-2">
+                                <select name="cleanup_mode" class="form-select form-select-sm bg-dark text-white border-secondary" data-bs-toggle="tooltip" title="Critère de suppression">
+                                    <option value="count" {% if settings.cleanup_mode == 'count' %}selected{% endif %}>Garder X derniers</option>
+                                    <option value="days" {% if settings.cleanup_mode == 'days' %}selected{% endif %}>Supprimer > X jours</option>
+                                </select>
+                            </div>
+                            <div class="input-group mb-3"><input type="number" name="cleanup_value" class="form-control form-control-sm bg-dark text-white border-secondary" value="{{ settings.cleanup_value }}" min="1" data-bs-toggle="tooltip" title="Valeur du seuil"></div>
+                            <button type="submit" class="btn btn-primary w-100" data-bs-toggle="tooltip" title="Enregistrer la configuration des backups">Enregistrer</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- SECURITE COMPTE (v3.3: Confirm) -->
                 <div class="card mb-4 border-warning">
                     <div class="card-header text-warning"><i class="bi bi-key"></i> Sécurité Compte</div>
                     <div class="card-body">
@@ -704,10 +712,13 @@ HTML_DASHBOARD = """
                         <div class="collapse mt-2" id="passwdForm">
                             <form action="/action/security/passwd" method="post" class="bg-dark p-3 rounded border border-secondary">
                                 <div class="mb-2">
-                                    <input type="password" name="current_password" class="form-control form-control-sm bg-black text-white border-secondary" placeholder="Mot de passe ACTUEL" required>
+                                    <input type="password" name="current_password" class="form-control form-control-sm bg-black text-white border-secondary" placeholder="Mot de passe ACTUEL" required data-bs-toggle="tooltip" title="Mot de passe actuel pour validation">
                                 </div>
                                 <div class="mb-2">
-                                    <input type="password" name="new_password" class="form-control form-control-sm bg-black text-white border-secondary" placeholder="NOUVEAU Mot de passe" required>
+                                    <input type="password" name="new_password" class="form-control form-control-sm bg-black text-white border-secondary" placeholder="NOUVEAU Mot de passe" required data-bs-toggle="tooltip" title="Nouveau mot de passe">
+                                </div>
+                                <div class="mb-2">
+                                    <input type="password" name="confirm_password" class="form-control form-control-sm bg-black text-white border-secondary" placeholder="Confirmer le nouveau" required data-bs-toggle="tooltip" title="Retapez le nouveau mot de passe">
                                 </div>
                                 <button type="submit" class="btn btn-warning btn-sm w-100" onclick="showLoader('Changement en cours...')">Valider</button>
                             </form>
@@ -740,29 +751,29 @@ HTML_DASHBOARD = """
                             <div class="card card-body bg-dark border-secondary p-2 mb-2">
                                 <form action="/settings/maintenance" method="post">
                                     <div class="row g-2 mb-2">
-                                        <div class="col-6"><label class="form-label small text-muted mb-0">Signatures</label><input type="number" name="ret_sigs" class="form-control form-control-sm bg-black text-white border-secondary" value="{{ maint_config.retention.signatures_days }}"></div>
-                                        <div class="col-6"><label class="form-label small text-muted mb-0">Uploads</label><input type="number" name="ret_uploads" class="form-control form-control-sm bg-black text-white border-secondary" value="{{ maint_config.retention.uploads_days }}"></div>
-                                        <div class="col-6"><label class="form-label small text-muted mb-0">Logs</label><input type="number" name="ret_debug" class="form-control form-control-sm bg-black text-white border-secondary" value="{{ maint_config.retention.debug_days }}"></div>
-                                        <div class="col-6"><label class="form-label small text-muted mb-0">Tokens</label><input type="number" name="ret_tokens" class="form-control form-control-sm bg-black text-white border-secondary" value="{{ maint_config.retention.tokens_days }}"></div>
+                                        <div class="col-6"><label class="form-label small text-muted mb-0">Signatures</label><input type="number" name="ret_sigs" class="form-control form-control-sm bg-black text-white border-secondary" value="{{ maint_config.retention.signatures_days }}" data-bs-toggle="tooltip" title="Rétention en jours"></div>
+                                        <div class="col-6"><label class="form-label small text-muted mb-0">Uploads</label><input type="number" name="ret_uploads" class="form-control form-control-sm bg-black text-white border-secondary" value="{{ maint_config.retention.uploads_days }}" data-bs-toggle="tooltip" title="Rétention en jours"></div>
+                                        <div class="col-6"><label class="form-label small text-muted mb-0">Logs</label><input type="number" name="ret_debug" class="form-control form-control-sm bg-black text-white border-secondary" value="{{ maint_config.retention.debug_days }}" data-bs-toggle="tooltip" title="Rétention en jours"></div>
+                                        <div class="col-6"><label class="form-label small text-muted mb-0">Tokens</label><input type="number" name="ret_tokens" class="form-control form-control-sm bg-black text-white border-secondary" value="{{ maint_config.retention.tokens_days }}" data-bs-toggle="tooltip" title="Rétention en jours"></div>
                                     </div>
-                                    <div class="mb-2"><label class="form-label small text-muted mb-0">Heure du Clean</label><input type="time" name="cleanup_hour" class="form-control form-control-sm bg-black text-white border-secondary" value="{{ maint_config.cleanup_hour }}"></div>
+                                    <div class="mb-2"><label class="form-label small text-muted mb-0">Heure du Clean</label><input type="time" name="cleanup_hour" class="form-control form-control-sm bg-black text-white border-secondary" value="{{ maint_config.cleanup_hour }}" data-bs-toggle="tooltip" title="Heure d'exécution quotidienne"></div>
                                     <input type="hidden" name="file_count_trigger" value="{{ maint_config.file_count_trigger }}">
                                     <input type="hidden" name="ret_stats" value="{{ maint_config.retention.stats_days }}">
-                                    <button type="submit" class="btn btn-sm btn-success w-100">Enregistrer</button>
+                                    <button type="submit" class="btn btn-sm btn-success w-100" data-bs-toggle="tooltip" title="Enregistrer les politiques de rétention">Enregistrer</button>
                                 </form>
                             </div>
                         </div>
 
                         <div class="d-flex gap-2">
-                            <form action="/action/maintenance/run" method="post" class="flex-grow-1"><button type="submit" class="btn btn-sm btn-info w-100"><i class="bi bi-stars"></i> Nettoyer Tout</button></form>
-                            <form action="/action/auth/reset" method="post" onsubmit="return confirm('⚠️ ATTENTION : Déconnexion de TOUS les utilisateurs. Confirmer ?')"><button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-trash3"></i> Reset Auth</button></form>
+                            <form action="/action/maintenance/run" method="post" class="flex-grow-1"><button type="submit" class="btn btn-sm btn-info w-100" data-bs-toggle="tooltip" title="Forcer le nettoyage immédiat"><i class="bi bi-stars"></i> Nettoyer Tout</button></form>
+                            <form action="/action/auth/reset" method="post" onsubmit="return confirm('⚠️ ATTENTION : Déconnexion de TOUS les utilisateurs. Confirmer ?')"><button type="submit" class="btn btn-sm btn-danger" data-bs-toggle="tooltip" title="Supprimer tous les tokens Google"><i class="bi bi-trash3"></i> Reset Auth</button></form>
                         </div>
                     </div>
                 </div>
 
                 <!-- DOCKER SERVICES -->
                 <div class="card">
-                    <div class="card-header d-flex justify-content-between"><span><i class="bi bi-box-seam"></i> Services</span><button onclick="refreshContainers()" class="btn btn-sm btn-link text-white p-0"><i class="bi bi-arrow-repeat"></i></button></div>
+                    <div class="card-header d-flex justify-content-between"><span><i class="bi bi-box-seam"></i> Services</span><button onclick="refreshContainers()" class="btn btn-sm btn-link text-white p-0" data-bs-toggle="tooltip" title="Rafraîchir"><i class="bi bi-arrow-repeat"></i></button></div>
                     <ul class="list-group list-group-flush" id="container-list"></ul>
                 </div>
             </div>
@@ -774,6 +785,12 @@ HTML_DASHBOARD = """
         document.addEventListener("DOMContentLoaded", function() {
             var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
             var tooltipList = tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el) })
+            
+            // Fix Loader stuck on BF Cache restoration (Back button)
+            window.addEventListener('pageshow', function(event) {
+                document.getElementById('loader').style.display = 'none';
+            });
+
             function showLoader(msg) { document.getElementById('loader-msg').innerText = msg; document.getElementById('loader').style.display = 'flex'; }
             window.showLoader = showLoader; 
             window.confirmRestore = function() { if(confirm("RESTAURATION DESTRUCTIVE ! Confirmer ?")) { showLoader("Restauration..."); return true; } return false; };
@@ -795,8 +812,10 @@ HTML_DASHBOARD = """
                     list.innerHTML = '';
                     if(data.length === 0) { list.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted">Vide</td></tr>'; return; }
                     data.forEach(b => {
-                        list.innerHTML += `<tr><td><i class="bi bi-file-earmark-zip text-warning me-2"></i>${b.name}</td><td>${b.date}</td><td><span class="badge bg-secondary">${b.size}</span></td><td class="text-end"><a href="/download/${b.name}" class="btn btn-outline-primary btn-sm"><i class="bi bi-download"></i></a><form action="/action/restore" method="post" onsubmit="return confirmRestore()" style="display:inline"><input type="hidden" name="filename" value="${b.name}"><button class="btn btn-outline-warning btn-sm mx-1"><i class="bi bi-arrow-counterclockwise"></i></button></form><form action="/action/delete" method="post" onsubmit="return confirm('Supprimer ?')" style="display:inline"><input type="hidden" name="filename" value="${b.name}"><button class="btn btn-danger btn-sm"><i class="bi bi-trash3-fill"></i></button></form></td></tr>`;
+                        list.innerHTML += `<tr><td><i class="bi bi-file-earmark-zip text-warning me-2"></i>${b.name}</td><td>${b.date}</td><td><span class="badge bg-secondary">${b.size}</span></td><td class="text-end"><a href="/download/${b.name}" class="btn btn-outline-primary btn-sm" data-bs-toggle="tooltip" title="Télécharger"><i class="bi bi-download"></i></a><form action="/action/restore" method="post" onsubmit="return confirmRestore()" style="display:inline"><input type="hidden" name="filename" value="${b.name}"><button class="btn btn-outline-warning btn-sm mx-1" data-bs-toggle="tooltip" title="Restaurer"><i class="bi bi-arrow-counterclockwise"></i></button></form><form action="/action/delete" method="post" onsubmit="return confirm('Supprimer ?')" style="display:inline"><input type="hidden" name="filename" value="${b.name}"><button class="btn btn-danger btn-sm" data-bs-toggle="tooltip" title="Supprimer"><i class="bi bi-trash3-fill"></i></button></form></td></tr>`;
                     });
+                    // Re-init tooltips for dynamic content
+                    [].slice.call(list.querySelectorAll('[data-bs-toggle="tooltip"]')).map(function (el) { return new bootstrap.Tooltip(el) });
                 } catch(e) { console.error("Backup Error:", e); }
             }
             async function refreshContainers() {
@@ -808,8 +827,9 @@ HTML_DASHBOARD = """
                     data.forEach(c => {
                         const isUp = c.status.startsWith('Up');
                         const color = isUp ? 'bg-success' : 'bg-danger';
-                        list.innerHTML += `<li class="list-group-item bg-transparent border-secondary text-light d-flex justify-content-between align-items-center"><div><div class="fw-bold"><span class="status-badge ${color}"></span>${c.name}</div><div class="small text-muted" style="font-size:0.75rem">${c.status}</div></div><form action="/action/restart" method="post" onsubmit="showLoader('Redémarrage...')"><input type="hidden" name="container" value="${c.id}"><button class="btn btn-sm btn-outline-secondary py-0"><i class="bi bi-power"></i></button></form></li>`;
+                        list.innerHTML += `<li class="list-group-item bg-transparent border-secondary text-light d-flex justify-content-between align-items-center"><div><div class="fw-bold"><span class="status-badge ${color}"></span>${c.name}</div><div class="small text-muted" style="font-size:0.75rem">${c.status}</div></div><form action="/action/restart" method="post" onsubmit="showLoader('Redémarrage...')"><input type="hidden" name="container" value="${c.id}"><button class="btn btn-sm btn-outline-secondary py-0" data-bs-toggle="tooltip" title="Redémarrer"><i class="bi bi-power"></i></button></form></li>`;
                     });
+                    [].slice.call(list.querySelectorAll('[data-bs-toggle="tooltip"]')).map(function (el) { return new bootstrap.Tooltip(el) });
                 } catch(e) { console.error("Container Error:", e); }
             }
             updateStats(); refreshBackups(); refreshContainers();
