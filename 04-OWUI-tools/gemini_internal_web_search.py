@@ -1,7 +1,8 @@
 """
-title: Gemini Internal Web Search
+title: Gemini Internal Web Search (User Isolation Compatible)
 author: Wilfried BARNAVON
-version: 9.1
+version: 10.0
+description: 10.0: Recherche Google via API Gemini interne. Compatible architecture multi-utilisateurs (Tokens isolés).
 """
 import json, os, requests, uuid, random
 from pydantic import BaseModel, Field
@@ -16,10 +17,26 @@ class Tools:
         self.valves = self.Valves()
         self.base_url = "https://cloudcode-pa.googleapis.com/v1internal"
 
-    def gemini_internal_search_web(self, query: str, current_date: str, current_time: str, location: str) -> str:
-        if self.valves.debug_mode: print(f"\n[SEARCH v9.1] Query='{query}'")
+    def gemini_internal_search_web(self, query: str, current_date: str, current_time: str, location: str, __user__: dict = {}) -> str:
+        """
+        Effectue une recherche Google via l'API interne Gemini en utilisant les identifiants de l'utilisateur courant.
+        """
+        if self.valves.debug_mode: print(f"\n[SEARCH v137.0] Query='{query}' User={__user__.get('id', 'Unknown')}")
+        
+        # 1. Vérification User Isolation
+        if not __user__ or "id" not in __user__:
+             return json.dumps({"error": "Erreur critique: Utilisateur non identifié. Impossible d'accéder aux tokens personnels."}, ensure_ascii=False)
+
+        user_id = __user__["id"]
+        safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+        
         data_dir = "/app/backend/data"
-        token_path, proj_path = os.path.join(data_dir, "gemini_official_token.json"), os.path.join(data_dir, "gemini_internal_project.txt")
+        tokens_dir = os.path.join(data_dir, "tokens")
+        
+        # Chemins dynamiques alignés sur pipe_engine v137.0
+        token_path = os.path.join(tokens_dir, f"gemini_official_token_{safe_uid}.json")
+        proj_path = os.path.join(tokens_dir, f"gemini_project_{safe_uid}.txt")
+        
         token, project_id = None, None
         try:
             if os.path.exists(token_path):
@@ -27,7 +44,9 @@ class Tools:
             if os.path.exists(proj_path):
                 with open(proj_path, "r") as f: project_id = f.read().strip()
         except Exception as e: return json.dumps({"error": f"Erreur lecture config: {str(e)}"}, ensure_ascii=False)
-        if not token or not project_id: return json.dumps({"error": "Auth manquante."}, ensure_ascii=False)
+        
+        if not token or not project_id: 
+            return json.dumps({"error": "Authentification Google manquante pour votre compte. Veuillez envoyer un message standard au modèle pour initier l'authentification."}, ensure_ascii=False)
 
         context_prompt = f"Contexte: Nous sommes à {location}, le {current_date} et il est {current_time}.\nRequête: {query}\nConsigne: Effectue la recherche Google nécessaire et synthétise la réponse en français."
         clean_project_id = project_id.replace("projects/", "")
