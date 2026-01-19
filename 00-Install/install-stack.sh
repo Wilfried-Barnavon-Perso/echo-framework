@@ -97,7 +97,7 @@ $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull --quiet
 for d in $(docker ps -a --format '{{.Names}}') ; do 
     echo "⚠️ Suppression préventive du conteneur $d pour éviter un crash..."
     docker rm -f $d >/dev/null 2>&1
-fi
+done
 
 # on attend 10 secondes la morts du conteneurs
 for ((d=1 ; d < 11  ; d++ )) ; do
