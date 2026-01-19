@@ -1,8 +1,8 @@
 """
 title: Gemini Internal Web Search (User Isolation Compatible)
 author: Wilfried BARNAVON
-version: 10.0
-description: 10.0: Recherche Google via API Gemini interne.
+version: 10.1
+description: 10.1: Recherche Google via API Gemini interne
 """
 import json, os, requests, uuid, random
 from pydantic import BaseModel, Field
@@ -19,9 +19,17 @@ class Tools:
 
     def gemini_internal_search_web(self, query: str, current_date: str, current_time: str, location: str, __user__: dict = {}) -> str:
         """
-        Effectue une recherche Google via l'API interne Gemini en utilisant les identifiants de l'utilisateur courant.
+        [SEARCH ENGINE] Performs a Google Search to retrieve real-time information, news, weather, or facts.
+        
+        Use this tool when:
+        - You need up-to-date information (news, sports scores, weather).
+        - You need to verify a fact.
+        - You need a summary of a topic from multiple sources.
+        
+        Do NOT use this tool to browse a specific URL (use Advanced Web Browser for that).
+        Returns a synthesized summary in French with source links.
         """
-        if self.valves.debug_mode: print(f"\n[SEARCH v137.0] Query='{query}' User={__user__.get('id', 'Unknown')}")
+        if self.valves.debug_mode: print(f"\n[SEARCH v10.1] Query='{query}' User={__user__.get('id', 'Unknown')}")
         
         # 1. Vérification User Isolation
         if not __user__ or "id" not in __user__:
@@ -33,7 +41,6 @@ class Tools:
         data_dir = "/app/backend/data"
         tokens_dir = os.path.join(data_dir, "tokens")
         
-        # Chemins dynamiques alignés sur pipe_engine v137.0
         token_path = os.path.join(tokens_dir, f"gemini_official_token_{safe_uid}.json")
         proj_path = os.path.join(tokens_dir, f"gemini_project_{safe_uid}.txt")
         

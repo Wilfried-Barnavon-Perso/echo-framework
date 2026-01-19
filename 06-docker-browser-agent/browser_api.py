@@ -11,11 +11,13 @@ import logging
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API
-VERSION : 2.0 (Multi-Session & User Isolation)
+VERSION : 2.1 (Enhanced Vision & Smart Click - FR LOGS)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-01-20
 
-CHANGELOG 2.0 :
+CHANGELOG 2.1 :
+- Ajout de l'action 'highlight' pour le Set-of-Mark Prompting (Vision Augmentée).
+- Amélioration de l'action 'click' avec stratégie de repli (Smart Click).
 - Support multi-sessions concurrentes (Isolation complète).
 - Profils Chromium uniques par session (Isolation Cookies/Cache).
 - Nettoyage automatique des ressources orphelines.
@@ -32,6 +34,52 @@ app = Flask(__name__)
 # --- CONFIGURATION ---
 IDLE_TIMEOUT = 900   # 15 minutes d'inactivité max par session (RAM Saver)
 MAX_SESSIONS = 5     # Limite hard pour ne pas faire exploser le conteneur
+
+# Script JS pour la "Vision Augmentée" (Set-of-Mark)
+HIGHLIGHT_JS = """
+(function() {
+    // 1. Nettoyage des anciens marqueurs
+    document.querySelectorAll('.echo-marker').forEach(e => e.remove());
+    
+    // 2. Sélection des éléments interactifs
+    let items = document.querySelectorAll('a, button, input, textarea, select, [role="button"], [onclick]');
+    let count = 0;
+    
+    items.forEach(el => {
+        let rect = el.getBoundingClientRect();
+        // Vérification de visibilité basique
+        if (rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden') {
+            
+            // Création du marqueur visuel
+            let marker = document.createElement('div');
+            marker.className = 'echo-marker';
+            marker.innerText = count;
+            
+            // Style "High Contrast" pour la vision artificielle
+            marker.style.position = 'absolute';
+            marker.style.left = (rect.left + window.scrollX) + 'px';
+            marker.style.top = (rect.top + window.scrollY) + 'px';
+            marker.style.zIndex = '2147483647'; // Max Z-Index
+            marker.style.backgroundColor = '#ff0000'; // Rouge vif
+            marker.style.color = '#ffffff';
+            marker.style.fontWeight = 'bold';
+            marker.style.fontSize = '14px';
+            marker.style.padding = '2px 6px';
+            marker.style.borderRadius = '4px';
+            marker.style.border = '2px solid white';
+            marker.style.boxShadow = '0 2px 4px rgba(0,0,0,0.5)';
+            marker.style.pointerEvents = 'none'; // Click through
+            
+            document.body.appendChild(marker);
+            
+            // Marquage de l'élément DOM pour le clic par index
+            el.setAttribute('data-echo-index', count);
+            count++;
+        }
+    });
+    return count;
+})();
+"""
 
 # Stockage des sessions actives : {session_id: BrowserSession}
 SESSIONS = {}
@@ -204,7 +252,8 @@ def browser_action():
 
     try:
         # Détermine le mode nécessaire
-        required_mode = 'd' if action in ['click', 'type', 'screenshot', 'evaluate'] else 's'
+        # 'highlight' nécessite 'd' pour exécuter le JS sur le DOM
+        required_mode = 'd' if action in ['click', 'type', 'screenshot', 'evaluate', 'highlight'] else 's'
         
         # Récupération de la page (Thread-Safe via la session)
         page = session.get_page(mode=required_mode)
@@ -222,7 +271,33 @@ def browser_action():
             result["url"] = page.url
 
         elif action == "click":
-            page.ele(params.get("selector")).click()
+            selector = params.get("selector")
+            ele = None
+            try:
+                # 1. Essai direct (CSS / XPath / Drission syntax)
+                ele = page.ele(selector)
+            except: pass
+
+            # 2. Smart Fallback : Si pas trouvé, on essaie des stratégies floues
+            if not ele:
+                # a. Est-ce un numéro généré par 'highlight' ? ex: "12" ou "#12"
+                clean_sel = selector.replace("#", "")
+                if clean_sel.isdigit():
+                    logger.info(f"[{sid}] 💡 Smart Click: Recherche par index Vision {clean_sel}")
+                    try: ele = page.ele(f'@data-echo-index={clean_sel}')
+                    except: pass
+                
+                # b. Est-ce du texte simple ? ex: "Connexion"
+                if not ele and " " not in selector and not selector.startswith((".", "//", "[")):
+                    logger.info(f"[{sid}] 💡 Smart Click: Recherche par texte '{selector}'")
+                    try: ele = page.ele(f'text:{selector}')
+                    except: pass
+
+            if ele:
+                ele.click()
+                result["message"] = "Clic effectué"
+            else:
+                return jsonify({"error": f"Element introuvable: {selector}"}), 404
             
         elif action == "type":
             page.ele(params.get("selector")).input(params.get("text"))
@@ -234,7 +309,17 @@ def browser_action():
             result["url"] = page.url
             result["mode_used"] = page.mode
 
+        elif action == "highlight":
+            # NOUVEAU : Injection de marqueurs visuels (Vision Augmentée)
+            count = page.run_js(HIGHLIGHT_JS)
+            result["message"] = f"Vision Augmentée activée : {count} éléments marqués."
+            result["count"] = count
+
         elif action == "screenshot":
+            # Support optionnel de l'overlay highlight avant capture
+            if params.get("overlay", False):
+                page.run_js(HIGHLIGHT_JS)
+                
             filename = f"screenshot_{sid}_{int(time.time())}.png"
             path = f"/app/data/{filename}"
             page.get_screenshot(path=path, full_page=True)
