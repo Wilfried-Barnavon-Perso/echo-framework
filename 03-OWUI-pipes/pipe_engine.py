@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 136.33 - UI Restored)
+title: Gemini Pro Unified System (Platinum Agentic 137.0 - User Isolation)
 author: Wilfried BARNAVON
-version: 136.33
-description: 136.33: Revert to 136.30 base + Fix Tool UI regression (remove premature finish_reason in tool loop) to restore collapsible widgets.
+version: 137.0
+description: 137.0: Architecture Multi-User Native. Isolation des tokens d'authentification par utilisateur (AuthService contextuel) et séparation des Valves (Admin vs User).
 """
 
 # ==============================================================================
@@ -151,13 +151,22 @@ OFFICIAL_CLIENT_CONFIG = {
 }
 
 # ==============================================================================
-# SECTION 3 : SERVICE D'AUTHENTIFICATION
+# SECTION 3 : SERVICE D'AUTHENTIFICATION (CONTEXTUALISÉ)
 # ==============================================================================
 class AuthService:
-    def __init__(self, data_dir: str):
-        self.token_path = f"{data_dir}/gemini_official_token.json"
-        self.pkce_path = f"{data_dir}/gemini_pkce_verifier.txt"
-        self.internal_project_cache = f"{data_dir}/gemini_internal_project.txt"
+    def __init__(self, data_dir: str, user_id: str):
+        # Création du sous-dossier tokens s'il n'existe pas
+        self.tokens_dir = os.path.join(data_dir, "tokens")
+        os.makedirs(self.tokens_dir, exist_ok=True)
+        
+        # Sécurisation de l'ID utilisateur pour le nom de fichier
+        safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+        
+        # Chemins isolés par utilisateur
+        self.token_path = os.path.join(self.tokens_dir, f"gemini_official_token_{safe_uid}.json")
+        self.pkce_path = os.path.join(self.tokens_dir, f"gemini_pkce_{safe_uid}.txt")
+        self.internal_project_cache = os.path.join(self.tokens_dir, f"gemini_project_{safe_uid}.txt")
+        
         self.base_url = GOOGLE_API_BASE_URL
 
     def _generate_pkce(self):
@@ -252,10 +261,6 @@ class AuthService:
                 return None, f"HTTP {resp.status_code}: {resp.text}"
         except Exception as e: return None, str(e)
 
-    def reset_storage(self):
-        for p in [self.token_path, self.pkce_path, self.internal_project_cache]:
-            if os.path.exists(p): os.remove(p)
-
 # ==============================================================================
 # SECTION 4 : REGISTRE CAS & SIGNATURES (STATEFUL SESSION CACHE)
 # ==============================================================================
@@ -322,8 +327,9 @@ class SignatureManager:
 # SECTION 5 : ORCHESTRATEUR (LOGIQUE MÉTIER)
 # ==============================================================================
 class Orchestrator:
-    def __init__(self, valves, data_dir):
+    def __init__(self, valves, user_valves, data_dir):
         self.valves = valves
+        self.user_valves = user_valves
         self.data_dir = data_dir
         self.uploads_dir = "/app/backend/data/uploads" 
         self.tool_map = {}
@@ -339,7 +345,8 @@ class Orchestrator:
         return match.group(1) if match and len(match.group(1)) > 30 else None
 
     def _get_geo_info(self) -> Tuple[str, str]:
-        loc, tz = "Paris, France", "Europe/Paris"
+        loc = getattr(self.user_valves, "OVERRIDE_LOCATION", "") or "Paris, France"
+        tz = "Europe/Paris"
         return loc, tz
 
     def convert_owui_tools(self, tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
@@ -353,7 +360,7 @@ class Orchestrator:
 
     def get_system_instruction(self) -> Dict:
         sys_prompt_text = self.valves.SYSTEM_PROMPT
-        if getattr(self.valves, "ENABLE_DATE_TIME", True):
+        if getattr(self.user_valves, "ENABLE_DATE_TIME", True):
             loc, tz = self._get_geo_info()
             try: now = datetime.now(ZoneInfo(tz)) if HAS_ZONEINFO else datetime.now()
             except: now = datetime.now()
@@ -885,50 +892,64 @@ class StreamProcessor:
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
-        MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
-        SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système")
-        THINKING_LEVEL: Literal["LOW", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion")
-        TEMPERATURE: float = Field(default=1.0, description="Température")
-        MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
-        MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
-
+        # --- CONFIGURATION ADMIN / SYSTEME (Globale) ---
+        SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système (Global)")
+        
         GEMINI_MIME_MAPPING_TXT: str = Field(
             default='{"text/plain": [".bat",".c",".conf",".cpp",".cs",".css",".csv",".dockerfile",".editorconfig",".env",".gitignore",".go",".h",".hpp",".ini",".java",".js",".json",".kt",".lua",".md",".php",".pl",".ps1",".py",".r",".rb",".rs",".sh",".sql",".swift",".toml",".ts",".txt",".vb",".xml",".yaml",".yml","dockerfile"], "text/html": [".html", ".htm"]}',
-            description="📄 Mapping Texte (JSON: Mime -> [Exts])"
+            description="📄 Mapping Texte (JSON)"
         )
         
         GEMINI_MIME_MAPPING_BIN: str = Field(
             default='{"video/x-flv": [".flv"], "video/quicktime": [".mov"], "video/mpeg": [".mpeg", ".mpg", ".mpe"], "video/mpegps": [".mpegps"], "video/mp4": [".mp4"], "video/webm": [".webm"], "video/wmv": [".wmv"], "video/3gpp": [".3gpp"], "audio/aac": [".aac"], "audio/flac": [".flac"], "audio/mp3": [".mp3"], "audio/m4a": [".m4a", ".mpa"], "audio/mpga": [".mpga"], "audio/opus": [".opus"], "audio/pcm": [".pcm"], "audio/wav": [".wav"], "image/png": [".png"], "image/jpeg": [".jpeg", ".jpg"], "image/webp": [".webp"], "image/heic": [".heic"], "image/heif": [".heif"], "application/pdf": [".pdf"]}',
-            description="🖼️ Mapping Binaire (JSON: Mime -> [Exts])"
+            description="🖼️ Mapping Binaire (JSON)"
         )
         
-        SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
-        API_RETRY_COUNT: int = Field(default=3, description="🔄 Nombre d'essais en cas d'erreur API")
-
+        API_RETRY_COUNT: int = Field(default=3, description="🔄 Nombre d'essais API")
         HTTP_CLIENT_TIMEOUT: int = Field(default=300, description="⏱️ Autokill Client HTTP (sec)")
-        ENABLE_HTTP2: bool = Field(default=True, description="🚀 Activer HTTP/2 (Multiplexing)")
-        
-        ENABLE_UPSTREAM_GZIP: bool = Field(default=True, description="📦 Activer Compression GZIP Upstream")
-        GZIP_LEVEL: int = Field(default=1, description="🎚️ Niveau Compression GZIP (1-9)")
-        GZIP_THRESHOLD_KB: int = Field(default=10240, description="🚫 Désactiver GZIP si > Ko (Evite overhead binaire)")
+        ENABLE_HTTP2: bool = Field(default=True, description="🚀 Activer HTTP/2")
+        ENABLE_UPSTREAM_GZIP: bool = Field(default=True, description="📦 Activer Compression GZIP")
+        GZIP_LEVEL: int = Field(default=1, description="🎚️ Niveau GZIP (1-9)")
+        GZIP_THRESHOLD_KB: int = Field(default=10240, description="🚫 Désactiver GZIP si > Ko")
+        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
+        MAX_INLINE_SIZE_KB: int = Field(default=10240, description="Seuil d'alerte taille (Ko)")
+        MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
 
+    class UserValves(BaseModel):
+        # --- PREFERENCES UTILISATEUR (Individuelles) ---
+        MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
+        THINKING_LEVEL: Literal["LOW", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion")
+        TEMPERATURE: float = Field(default=1.0, description="Température")
+        MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
+        SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
         ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
         ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
         OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu")
 
-        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
-        MAX_INLINE_SIZE_KB: int = Field(default=10240, description="Seuil d'alerte taille (Ko)")
-
     def __init__(self):
         self.valves = self.Valves()
         self.data_dir = "/app/backend/data"
-        os.makedirs(self.data_dir, exist_ok=True)
-        self.auth = AuthService(self.data_dir)
-        self.base_url = GOOGLE_API_BASE_URL
+        # AuthService n'est plus instancié ici
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
+        # --- VERIFICATION CRITIQUE UTILISATEUR ---
+        if not __user__ or "id" not in __user__:
+             # Selon instructions : pas de fallback, on considère OWUI solide.
+             # Si cela arrive, c'est une erreur critique d'intégration.
+             yield "❌ **Erreur Critique** : Impossible d'identifier l'utilisateur (Objet `__user__` manquant ou incomplet)."; return
+
+        user_id = __user__["id"]
+        # Récupération sécurisée des UserValves injectées par OWUI
+        # Si OWUI n'injecte rien (premier lancement), on utilise les défauts
+        user_valves = __user__.get("valves")
+        if not user_valves:
+            user_valves = self.UserValves()
+
+        # Instanciation dynamique des services par utilisateur
+        auth = AuthService(self.data_dir, user_id)
+        orch = Orchestrator(self.valves, user_valves, self.data_dir)
+        
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
-        orch = Orchestrator(self.valves, self.data_dir)
         
         # Init Debug Logger
         debug_logger = None
@@ -937,12 +958,12 @@ class Pipe:
 
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
-            success, msg = self.auth.exchange_code(ac)
+            success, msg = auth.exchange_code(ac)
             yield f"✅ **{msg}**" if success else f"❌ **Échec** : `{msg}`"; return
         
-        creds = self.auth.get_valid_credentials()
-        if not creds: yield self.auth.get_auth_url(); return
-        pid, debug_log = self.auth.get_project_id(creds, self.valves.DEBUG_MODE)
+        creds = auth.get_valid_credentials()
+        if not creds: yield auth.get_auth_url(); return
+        pid, debug_log = auth.get_project_id(creds, self.valves.DEBUG_MODE)
         
         if not pid: 
              yield f"❌ **Erreur Projet**\n{debug_log}"; return
@@ -960,8 +981,18 @@ class Pipe:
             initial_label = "Post-Action"
 
         # --- ADAPTER STANDARD ---
-        adapter = GeminiAdapter(self.base_url)
-        req = adapter.build(pid, context, orch.get_system_instruction(), self.valves.TEMPERATURE, self.valves.MAX_TOKENS, self.valves.THINKING_LEVEL, self.valves.MODEL_SELECTION, tools)
+        # Note: on utilise user_valves pour les params modèle
+        adapter = GeminiAdapter(auth.base_url)
+        req = adapter.build(
+            pid, 
+            context, 
+            orch.get_system_instruction(), 
+            user_valves.TEMPERATURE, 
+            user_valves.MAX_TOKENS, 
+            user_valves.THINKING_LEVEL, 
+            user_valves.MODEL_SELECTION, 
+            tools
+        )
         req["headers"]["Authorization"] = f"Bearer {creds.token}"
 
         if self.valves.DEBUG_MODE:
@@ -971,28 +1002,13 @@ class Pipe:
              # Log Request to file
              if debug_logger:
                  debug_logger.log("api_request", log_req)
-
-             contents = log_req.get("contents", [])
-             if "request" in log_req: contents = log_req["request"].get("contents", [])
-             
-             for c in contents:
-                 for p in c.get("parts", []):
-                     if "inlineData" in p: 
-                         len_b64 = len(p["inlineData"].get("data", ""))
-                         p["inlineData"]["data"] = f"<BASE64_BLOB_LEN_{len_b64}>"
-                     if "inline_data" in p: 
-                         len_b64 = len(p["inline_data"].get("data", ""))
-                         p["inline_data"]["data"] = f"<BASE64_BLOB_LEN_{len_b64}>"
-            
-             # yield f"🐞 **API REQ** `[{req['url']}]`\n```json\n{std_json.dumps(log_req, indent=2)}\n```\n"
-             # yield "🚀 **Turbo JSON (orjson)** Active\n"
-
+        
         proc = StreamProcessor(
             self.valves.MAX_CONTEXT_SIZE,
             self.valves.DEBUG_MODE, 
             chat_id, 
             sig_manager=orch.sig_manager,
-            show_metrics=self.valves.SHOW_METRICS, 
+            show_metrics=user_valves.SHOW_METRICS, 
             initial_label=initial_label,
             file_stats=orch.files_processed_info,
             logger=debug_logger
@@ -1010,17 +1026,7 @@ class Pipe:
                 if len(req_content) < (self.valves.GZIP_THRESHOLD_KB * 1024):
                     req_content = gzip.compress(req_content, compresslevel=self.valves.GZIP_LEVEL)
                     req["headers"]["Content-Encoding"] = "gzip"
-                    if self.valves.DEBUG_MODE:
-                        try:
-                            import mgzip
-                            is_mgzip = (gzip == mgzip)
-                        except:
-                            is_mgzip = False
-                        engine_name = "mgzip (Multi-threaded)" if is_mgzip else "gzip (Standard)"
-                        # yield f"📦 **GZIP Encoded** ({engine_name}, Level {self.valves.GZIP_LEVEL})\n"
-                elif self.valves.DEBUG_MODE:
-                     pass # yield f"⏭️ **GZIP Skipped** (Size > {self.valves.GZIP_THRESHOLD_KB}KB)\n"
-
+            
             # RETRY LOOP (Native, v136.23)
             for attempt in range(self.valves.API_RETRY_COUNT):
                 try:
