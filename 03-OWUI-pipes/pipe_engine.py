@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 137.3 - User Isolation)
+title: Gemini Pro Unified System (Platinum Agentic 137.5 - User Isolation)
 author: Wilfried BARNAVON
-version: 137.3
-description: 137.3: Architecture Multi-User Native. UI Tweak: Renommage de l'étape 'Post-Action' en 'Fenêtre de Contexte' pour plus de clarté.
+version: 137.5
+description: 137.5: Architecture Multi-User Native. Retour au Streaming Pur (SSE). Suppression du Buffer. La cohérence des réponses repose sur la réinjection stricte de l'historique dans le contexte (prepare_context).
 """
 
 # ==============================================================================
@@ -759,11 +759,10 @@ class StreamProcessor:
             return
 
         decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
-        buffer = ""
         
         async for chunk in response.aiter_bytes():
             try:
-                buffer += decoder.decode(chunk, final=False)
+                buffer = decoder.decode(chunk, final=False)
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     line = line.strip()
@@ -771,8 +770,6 @@ class StreamProcessor:
                     if line.startswith("data:"):
                         data = std_json.loads(line[6:])
                         self._update_stats(data, step_label)
-                        
-                        # Accumulate for debug
                         self.full_response_accumulator.append(data)
 
                         cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
