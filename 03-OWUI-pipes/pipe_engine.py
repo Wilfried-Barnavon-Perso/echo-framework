@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 137.5 - User Isolation)
+title: Gemini Pro Unified System (Platinum Agentic 137.6 - User Isolation)
 author: Wilfried BARNAVON
-version: 137.5
-description: 137.5: Architecture Multi-User Native. Retour au Streaming Pur (SSE). Suppression du Buffer. La cohérence des réponses repose sur la réinjection stricte de l'historique dans le contexte (prepare_context).
+version: 137.6
+description: 137.6: Architecture Multi-User Native. Conformité Stricte API Gemini 3. Gestion rigoureuse des Thought Signatures pour les appels d'outils (Règle du Premier Appel pour le parallèle, Fallback "context_engineering..." si signature perdue).
 """
 
 # ==============================================================================
@@ -118,7 +118,8 @@ async def _get_global_client(idle_timeout: int = 300, enable_http2: bool = True)
 def fast_b64encode(data: bytes) -> str:
     return pybase64.b64encode(data).decode("utf-8")
 
-MAGIC_KEY_SKIP_VALIDATION = "skip_thought_signature_validator"
+# Chaîne magique définie par Google pour le bypass de validation stricte
+MAGIC_KEY_SKIP_VALIDATION = "context_engineering_is_the_way_to_go"
 
 # ==============================================================================
 # SECTION 1 : DÉPENDANCES OPTIONNELLES
@@ -554,12 +555,10 @@ class Orchestrator:
                 continue
 
             elif role in ["assistant", "model"]:
-                # STRATEGY 2.2: Rehydration from Server-Side Cache
-                # Fix 136.28: We iterate sub-messages carefully to preserve order (Text -> Tools)
-                # This prevents "repetition" where the model forgets its own introduction text.
+                # STRATEGY 2.2: Rehydration from Server-Side Cache with Strict API Compliance
                 parts = []
                 
-                # Consolidate consecutive model messages into one TURN
+                # Consolidate consecutive model messages into one TURN (Required by API)
                 while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
                     sub_m = messages[i]
                     
@@ -567,62 +566,56 @@ class Orchestrator:
                     txt = sub_m.get("content", "")
                     if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
                     
-                    # Fix 136.29: Safer stripping to prevent removing meaningful single-line intros
+                    # Fix 136.29: Safer stripping
                     txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL)
                     txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL)
                     txt = txt.strip()
                     
-                    # Append Text Part IMMEDIATELY to preserve order in history
+                    # Append Text Part
                     if txt: parts.append({"text": txt})
 
-                    # 2. Tool Calls (With Signature Rehydration)
+                    # 2. Tool Calls (Strict Signature Logic)
                     if sub_m.get("tool_calls"):
-                        for tc in sub_m["tool_calls"]:
+                        for idx, tc in enumerate(sub_m["tool_calls"]):
                             try:
                                 args = std_json.loads(tc["function"]["arguments"])
                                 part_data = {"functionCall": {"name": tc["function"]["name"], "args": args}}
                                 
-                                # Attempt to find signature in the tool call itself (from Open-WebUI)
-                                sig = args.pop("_thought_signature", None)
+                                # Logic Strict Gemini 3:
+                                # - Single/Sequential: Signature required.
+                                # - Parallel: Signature ONLY on the first call of the list.
                                 
-                                # If not found, look in the SERVER-SIDE CACHE
-                                if not sig and chat_id:
+                                if idx == 0:
+                                    # Try to retrieve signature by ID
                                     call_id = tc.get("id")
-                                    sig = self.sig_manager.get_signature(chat_id, call_id)
+                                    sig = None
+                                    if chat_id:
+                                        sig = self.sig_manager.get_signature(chat_id, call_id)
+                                    
+                                    # Fallback: Latest known if not found by ID (Best effort)
+                                    if not sig and chat_id:
+                                         sig = self.sig_manager.get_signature(chat_id)
+
+                                    # Mandatory Fallback for strict validation (Migration/Legacy trace)
+                                    # Doc: "Missing signatures will result in a 400 error."
+                                    if not sig:
+                                        sig = MAGIC_KEY_SKIP_VALIDATION
+                                    
+                                    part_data["thoughtSignature"] = sig
                                 
-                                if sig: part_data["thoughtSignature"] = sig
-                                
+                                # If idx > 0 (Parallel calls 2, 3...), DO NOT include signature per doc.
                                 parts.append(part_data)
                             except: pass
                     
                     i += 1
                 
-                if not parts: parts.append({"text": " "})
-
-                # v136.24 Logic: Signature on FIRST FunctionCall Only (for Gemini 3)
-                # This must be applied to the *reconstructed* list of parts.
-                found_first_fc = False
-                for part in parts:
-                    if "functionCall" in part:
-                        if not found_first_fc:
-                            # If no signature was attached during rehydration, check latest fallback
-                            if "thoughtSignature" not in part and chat_id:
-                                fallback_sig = self.sig_manager.get_signature(chat_id)
-                                if fallback_sig: part["thoughtSignature"] = fallback_sig
-                            elif "thoughtSignature" not in part:
-                                # Last ditch: prevent 400 error
-                                part["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION
-                            
-                            found_first_fc = True
-                        else:
-                            # Ensure subsequent calls do NOT have signature (Parallel calls rule)
-                            if "thoughtSignature" in part: del part["thoughtSignature"]
-                
-                # If no function calls, attach signature to last text part (Recommended by Google)
-                if not found_first_fc and parts and "text" in parts[-1] and chat_id:
+                # If no function calls and just text, try to attach signature to text part if available
+                # (Recommended by doc for "Text/In-Context Reasoning")
+                if parts and "text" in parts[-1] and not any("functionCall" in p for p in parts) and chat_id:
                       latest_sig = self.sig_manager.get_signature(chat_id)
                       if latest_sig: parts[-1]["thoughtSignature"] = latest_sig
-
+                
+                if not parts: parts.append({"text": " "})
                 contents.append({"role": "model", "parts": parts})
                 continue
             
@@ -782,9 +775,9 @@ class StreamProcessor:
                                 if "thoughtSignature" in part:
                                     self.current_sig = part["thoughtSignature"]
                                     if self.chat_id and self.sig_manager:
-                                        # Save as 'latest' fallback
+                                        # Always save as latest fallback
                                         self.sig_manager.save_signature(self.chat_id, self.current_sig)
-                                        # Associate with any pending tool calls in this turn
+                                        # Map to pending calls if any
                                         for tc_id in self.pending_tool_calls:
                                             self.sig_manager.save_signature(self.chat_id, self.current_sig, tc_id)
 
@@ -799,10 +792,12 @@ class StreamProcessor:
                                     # Create Open-WebUI tool ID
                                     tc_id = f"call_{secrets.token_hex(8)}"
                                     
-                                    # Track this ID to map signature later
+                                    # Track this ID
                                     self.pending_tool_calls[tc_id] = True
                                     
-                                    # If we already have a signature, map it immediately
+                                    # If it is the FIRST tool call (tool_index == 0), associate the current signature
+                                    # Subsequent parallel calls share the signature of the turn but don't need explicit mapping
+                                    # for the 'first only' rule, though mapping doesn't hurt as prepare_context filters by index.
                                     if self.current_sig and self.chat_id and self.sig_manager:
                                         self.sig_manager.save_signature(self.chat_id, self.current_sig, tc_id)
 
@@ -810,7 +805,6 @@ class StreamProcessor:
                                     # Still tunnel via args as backup strategy 1
                                     if self.current_sig: args["_thought_signature"] = self.current_sig
                                     
-                                    # FIX 136.31: REMOVED "finish_reason": "tool_calls" to prevent premature UI stop
                                     yield {
                                         "choices": [{
                                             "index": 0, "delta": {
