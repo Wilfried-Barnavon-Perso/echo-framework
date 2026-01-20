@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 137.6 - User Isolation)
+title: Gemini Pro Unified System (Platinum Agentic 137.8 - User Isolation)
 author: Wilfried BARNAVON
-version: 137.6
-description: 137.6: Architecture Multi-User Native. Conformité Stricte API Gemini 3. Gestion rigoureuse des Thought Signatures pour les appels d'outils (Règle du Premier Appel pour le parallèle, Fallback "context_engineering..." si signature perdue).
+version: 137.8
+description: 137.8: Architecture Multi-User Native. Logic Upgrade: "Deferred Text Strategy". Le texte généré pendant les boucles d'outils est retiré du contexte immédiat (anti-bégaiement) mais accumulé et réinjecté concaténé dans la réponse finale du tour, garantissant la mémoire à long terme.
 """
 
 # ==============================================================================
@@ -532,6 +532,10 @@ class Orchestrator:
         for idx in range(len(messages) - 1, -1, -1):
             if messages[idx]["role"] == "user": last_user_idx = idx; break
 
+        # Buffer pour accumuler le texte (annonces/pensées) des messages contenant des outils
+        # afin de le réinjecter uniquement dans la réponse finale du tour.
+        deferred_text = ""
+
         i = 0
         while i < len(messages):
             m = messages[i]
@@ -562,7 +566,7 @@ class Orchestrator:
                 while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
                     sub_m = messages[i]
                     
-                    # 1. Text Content
+                    # 1. Text Content (Processed but conditionally appended)
                     txt = sub_m.get("content", "")
                     if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
                     
@@ -571,8 +575,25 @@ class Orchestrator:
                     txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL)
                     txt = txt.strip()
                     
-                    # Append Text Part
-                    if txt: parts.append({"text": txt})
+                    # LOGIC CHANGE 137.8: Deferred Text Strategy
+                    # Si le message contient des outils, on retire le texte (pour éviter le bégaiement)
+                    # MAIS on le sauvegarde (deferred_text) pour le réinjecter plus tard.
+                    if sub_m.get("tool_calls"):
+                        if txt:
+                            if deferred_text: deferred_text += "\n\n"
+                            deferred_text += txt
+                        # On n'ajoute PAS la partie texte ici (Strict API Compliance pour les Tool Calls)
+                    else:
+                        # Message texte pur (ou fin de chaîne).
+                        # C'est ici qu'on déverse tout le texte accumulé précédemment.
+                        if deferred_text:
+                            if txt:
+                                txt = deferred_text + "\n\n" + txt
+                            else:
+                                txt = deferred_text
+                            deferred_text = "" # Le tampon est consommé
+                        
+                        if txt: parts.append({"text": txt})
 
                     # 2. Tool Calls (Strict Signature Logic)
                     if sub_m.get("tool_calls"):
@@ -615,11 +636,18 @@ class Orchestrator:
                       latest_sig = self.sig_manager.get_signature(chat_id)
                       if latest_sig: parts[-1]["thoughtSignature"] = latest_sig
                 
+                # If parts is empty (e.g. tool call with no text kept), we must ensure we don't send empty content
+                # But here 'parts' will contain at least the functionCall if tools were present.
                 if not parts: parts.append({"text": " "})
+                
                 contents.append({"role": "model", "parts": parts})
                 continue
             
             else: # USER
+                # Nouveau tour utilisateur : on s'assure que le tampon est vide 
+                # (normalement il a été vidé dans la réponse finale du modèle, mais sécurité)
+                deferred_text = ""
+                
                 parts = []
                 raw_list = []
                 if "files" in m and isinstance(m["files"], list): raw_list.extend(m["files"])
