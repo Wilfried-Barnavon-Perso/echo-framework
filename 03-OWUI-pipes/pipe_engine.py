@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 137.0 - User Isolation)
+title: Gemini Pro Unified System (Platinum Agentic 137.3 - User Isolation)
 author: Wilfried BARNAVON
-version: 137.0
-description: 137.0: Architecture Multi-User Native. Isolation des tokens d'authentification par utilisateur (AuthService contextuel) et séparation des Valves (Admin vs User).
+version: 137.3
+description: 137.3: Architecture Multi-User Native. UI Tweak: Renommage de l'étape 'Post-Action' en 'Fenêtre de Contexte' pour plus de clarté.
 """
 
 # ==============================================================================
@@ -731,7 +731,7 @@ class StreamProcessor:
         self.full_response_accumulator = []
         self.response_id = None
 
-    def _update_stats(self, data):
+    def _update_stats(self, data, step_label=None):
         if "response" in data and "usageMetadata" in data["response"]:
             self.usage_stats = data["response"]["usageMetadata"]
         elif "usageMetadata" in data:
@@ -742,7 +742,7 @@ class StreamProcessor:
             if "responseId" in data: self.response_id = data["responseId"]
             elif "response" in data and "id" in data["response"]: self.response_id = data["response"]["id"]
         
-        if self.usage_stats and self.chat_id:
+        if self.usage_stats and self.chat_id and step_label == "Fenêtre de Contexte":
              try:
                 safe_id = "".join(x for x in str(self.chat_id) if x.isalnum() or x in "-_")
                 with open(f"{self.stats_dir}/{safe_id}.json", "w") as f:
@@ -770,7 +770,7 @@ class StreamProcessor:
                     if not line: continue
                     if line.startswith("data:"):
                         data = std_json.loads(line[6:])
-                        self._update_stats(data)
+                        self._update_stats(data, step_label)
                         
                         # Accumulate for debug
                         self.full_response_accumulator.append(data)
@@ -839,7 +839,7 @@ class StreamProcessor:
             try:
                 line = buffer.strip()
                 data = std_json.loads(line[6:])
-                self._update_stats(data) 
+                self._update_stats(data, step_label) 
                 self.full_response_accumulator.append(data)
             except: pass
 
@@ -860,13 +860,16 @@ class StreamProcessor:
                     stats_content += f"| {f['name']} | {f['type']} | {size_mb:.2f} MB | {f['status']} |\n"
                 stats_content += "\n"
                 has_content = True
+            
             if self.usage_stats:
-                p_tok = self.usage_stats.get("promptTokenCount", 0)
-                c_tok = self.usage_stats.get("candidatesTokenCount", 0)
-                t_tok = self.usage_stats.get("totalTokenCount", 0)
-                pct = (t_tok / self.context_window) * 100
-                bar = "█" * int(pct/10) + "░" * (10 - int(pct/10))
-                stats_content += f"""<details>
+                # 137.3 : Affichage conditionnel (Uniquement en Fenêtre de Contexte)
+                if step_label == "Fenêtre de Contexte":
+                    p_tok = self.usage_stats.get("promptTokenCount", 0)
+                    c_tok = self.usage_stats.get("candidatesTokenCount", 0)
+                    t_tok = self.usage_stats.get("totalTokenCount", 0)
+                    pct = (t_tok / self.context_window) * 100
+                    bar = "█" * int(pct/10) + "░" * (10 - int(pct/10))
+                    stats_content += f"""<details>
 <summary>⚡ Contexte [{step_label}]: {pct:.1f}% {bar}</summary>
 
 | Métrique | Valeur |
@@ -875,7 +878,8 @@ class StreamProcessor:
 | **Réponse** | {c_tok:,} |
 | **Total** | {t_tok:,} / {self.context_window:,} |
 </details>\n"""
-                has_content = True
+                    has_content = True
+            
             if has_content: yield stats_content
 
         if self.usage_stats:
@@ -978,7 +982,7 @@ class Pipe:
         
         initial_label = "Réponse"
         if body.get("messages") and body.get("messages")[-1].get("role") == "tool":
-            initial_label = "Post-Action"
+            initial_label = "Fenêtre de Contexte"
 
         # --- ADAPTER STANDARD ---
         # Note: on utilise user_valves pour les params modèle
