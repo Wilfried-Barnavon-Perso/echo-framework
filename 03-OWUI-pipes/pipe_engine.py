@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 137.9 - User Isolation)
+title: Gemini Pro Unified System (Platinum Agentic 137.11 - User Isolation)
 author: Wilfried BARNAVON
-version: 137.9
-description: 137.9: Architecture Multi-User Native. Logic Fix: Implémentation correcte de la stratégie "Texte Différé". Le texte généré pendant les boucles d'outils est masqué pendant le tour en cours, puis injecté (concaténé) à la fin du bloc Modèle lorsque le tour est terminé (avant le message Utilisateur suivant), garantissant la persistance de la mémoire.
+version: 137.11
+description: 137.11: Architecture Multi-User Native. Rétablissement de la logique 137.9 "Deferred Text" stricte. Le texte des étapes intermédiaires (outils) est masqué du contexte immédiat mais concaténé et injecté à la FIN de l'historique du tour, assurant la cohérence narrative pour le tour suivant.
 """
 
 # ==============================================================================
@@ -575,15 +575,17 @@ class Orchestrator:
                     txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL)
                     txt = txt.strip()
                     
-                    # LOGIC CHANGE 137.9: Correct Deferred Text Strategy
+                    # LOGIC CHANGE 137.11: Revert to 137.9 (End-of-Turn Injection)
                     # - If tool calls: Strip text from 'parts', append to 'deferred_text'.
-                    # - If no tool calls: This is a text response (maybe end of turn), prepend deferred_text.
+                    # - If no tool calls: This is a text response.
+                    #   - If deferred_text exists, prepend it here (assuming this is the end of the chain).
+                    #   - Consume deferred_text.
                     
                     if sub_m.get("tool_calls"):
                         if txt:
                             if deferred_text: deferred_text += "\n\n"
                             deferred_text += txt
-                        # Strict API Compliance: No text in FunctionCall parts
+                        # Strict API Compliance: No text in FunctionCall parts for immediate turn
                     else:
                         # Message texte pur. C'est ici qu'on déverse tout le texte accumulé.
                         if deferred_text:
@@ -646,14 +648,17 @@ class Orchestrator:
             
             else: # USER
                 # Nouveau tour utilisateur = Le tour Modèle précédent est terminé.
-                # FIX 137.9: Si deferred_text n'est pas vide, c'est qu'il restait du texte accumulé
-                # dans les étapes précédentes (FC) qui n'a pas été flushé par un message texte final.
-                # On doit l'injecter à la fin du dernier message Modèle pour garantir la mémoire.
+                # FIX 137.11: Injecter le texte différé à la FIN de l'historique du tour précédent.
                 if deferred_text:
-                    # Trouver le dernier message modèle
-                    if contents and contents[-1]["role"] == "model":
-                        # On ajoute une partie textuelle à ce message
-                        contents[-1]["parts"].append({"text": deferred_text})
+                    if contents:
+                        last_msg = contents[-1]
+                        if last_msg["role"] == "model":
+                            # Cas simple : le dernier message est un modèle, on ajoute le texte à la fin
+                            last_msg["parts"].append({"text": deferred_text})
+                        else:
+                            # Cas complexe : le dernier message est User/FunctionResponse
+                            # On doit créer un nouveau bloc modèle pour porter le texte
+                            contents.append({"role": "model", "parts": [{"text": deferred_text}]})
                     deferred_text = ""
                 
                 parts = []
