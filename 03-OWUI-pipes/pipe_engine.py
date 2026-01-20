@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 137.8 - User Isolation)
+title: Gemini Pro Unified System (Platinum Agentic 137.9 - User Isolation)
 author: Wilfried BARNAVON
-version: 137.8
-description: 137.8: Architecture Multi-User Native. Logic Upgrade: "Deferred Text Strategy". Le texte généré pendant les boucles d'outils est retiré du contexte immédiat (anti-bégaiement) mais accumulé et réinjecté concaténé dans la réponse finale du tour, garantissant la mémoire à long terme.
+version: 137.9
+description: 137.9: Architecture Multi-User Native. Logic Fix: Implémentation correcte de la stratégie "Texte Différé". Le texte généré pendant les boucles d'outils est masqué pendant le tour en cours, puis injecté (concaténé) à la fin du bloc Modèle lorsque le tour est terminé (avant le message Utilisateur suivant), garantissant la persistance de la mémoire.
 """
 
 # ==============================================================================
@@ -575,17 +575,17 @@ class Orchestrator:
                     txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL)
                     txt = txt.strip()
                     
-                    # LOGIC CHANGE 137.8: Deferred Text Strategy
-                    # Si le message contient des outils, on retire le texte (pour éviter le bégaiement)
-                    # MAIS on le sauvegarde (deferred_text) pour le réinjecter plus tard.
+                    # LOGIC CHANGE 137.9: Correct Deferred Text Strategy
+                    # - If tool calls: Strip text from 'parts', append to 'deferred_text'.
+                    # - If no tool calls: This is a text response (maybe end of turn), prepend deferred_text.
+                    
                     if sub_m.get("tool_calls"):
                         if txt:
                             if deferred_text: deferred_text += "\n\n"
                             deferred_text += txt
-                        # On n'ajoute PAS la partie texte ici (Strict API Compliance pour les Tool Calls)
+                        # Strict API Compliance: No text in FunctionCall parts
                     else:
-                        # Message texte pur (ou fin de chaîne).
-                        # C'est ici qu'on déverse tout le texte accumulé précédemment.
+                        # Message texte pur. C'est ici qu'on déverse tout le texte accumulé.
                         if deferred_text:
                             if txt:
                                 txt = deferred_text + "\n\n" + txt
@@ -607,10 +607,12 @@ class Orchestrator:
                                 # - Parallel: Signature ONLY on the first call of the list.
                                 
                                 if idx == 0:
-                                    # Try to retrieve signature by ID
+                                    # Try to retrieve signature from args first (Reliable)
+                                    sig = args.pop("_thought_signature", None)
+                                    
+                                    # Try to retrieve signature by ID (Cache)
                                     call_id = tc.get("id")
-                                    sig = None
-                                    if chat_id:
+                                    if not sig and chat_id:
                                         sig = self.sig_manager.get_signature(chat_id, call_id)
                                     
                                     # Fallback: Latest known if not found by ID (Best effort)
@@ -618,7 +620,6 @@ class Orchestrator:
                                          sig = self.sig_manager.get_signature(chat_id)
 
                                     # Mandatory Fallback for strict validation (Migration/Legacy trace)
-                                    # Doc: "Missing signatures will result in a 400 error."
                                     if not sig:
                                         sig = MAGIC_KEY_SKIP_VALIDATION
                                     
@@ -644,9 +645,16 @@ class Orchestrator:
                 continue
             
             else: # USER
-                # Nouveau tour utilisateur : on s'assure que le tampon est vide 
-                # (normalement il a été vidé dans la réponse finale du modèle, mais sécurité)
-                deferred_text = ""
+                # Nouveau tour utilisateur = Le tour Modèle précédent est terminé.
+                # FIX 137.9: Si deferred_text n'est pas vide, c'est qu'il restait du texte accumulé
+                # dans les étapes précédentes (FC) qui n'a pas été flushé par un message texte final.
+                # On doit l'injecter à la fin du dernier message Modèle pour garantir la mémoire.
+                if deferred_text:
+                    # Trouver le dernier message modèle
+                    if contents and contents[-1]["role"] == "model":
+                        # On ajoute une partie textuelle à ce message
+                        contents[-1]["parts"].append({"text": deferred_text})
+                    deferred_text = ""
                 
                 parts = []
                 raw_list = []
