@@ -1,5 +1,21 @@
 from flask import Flask, request, jsonify # pyright: ignore[reportMissingImports]
 from DrissionPage import WebPage, ChromiumOptions # pyright: ignore[reportMissingImports]
+try:
+    from DrissionPage.common import Keys # Mapping des touches spéciales
+except ImportError:
+    # Fallback pour compatibilité versions
+    class Keys:
+        ENTER = '\n'
+        TAB = '\t'
+        ESCAPE = '\uE00C'
+        BACKSPACE = '\b'
+        DELETE = '\uE017'
+        UP = '\uE013'
+        DOWN = '\uE015'
+        LEFT = '\uE012'
+        RIGHT = '\uE014'
+        SPACE = ' '
+
 import threading
 import time
 import uuid
@@ -12,15 +28,14 @@ import html2text # Hard requirement (Docker rebuild needed)
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API
-VERSION : 3.1 (Robust Vision & Interaction)
+VERSION : 3.3 (Debug Fixes)
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-01-20
 
-CHANGELOG 3.1 :
-- Hard requirement: html2text.
-- Restauration de l'action 'evaluate' (Regression Fix).
-- Smart Click (Index -> CSS -> Text).
-- Vision Augmentée v2.
+CHANGELOG 3.3 :
+- FIX: Action 'key' (press_key) fonctionnelle (Mapping Keys + action.type).
+- PERF: Optimisation du script 'highlight' (Évite querySelectorAll('*')).
+- Vision Augmentée v2.1.
 ================================================================================
 """
 
@@ -31,25 +46,50 @@ app = Flask(__name__)
 IDLE_TIMEOUT = 900 # 15 min
 MAX_SESSIONS = 10
 
-# --- JS VISION AUGMENTÉE V2 (Plus agressif) ---
+# Mapping des touches supportées par l'outil
+KEY_MAP = {
+    "ENTER": Keys.ENTER,
+    "TAB": Keys.TAB,
+    "ESCAPE": Keys.ESCAPE,
+    "BACKSPACE": Keys.BACKSPACE,
+    "DELETE": Keys.DELETE,
+    "UP": Keys.UP,
+    "DOWN": Keys.DOWN,
+    "LEFT": Keys.LEFT,
+    "RIGHT": Keys.RIGHT,
+    "SPACE": Keys.SPACE
+}
+
+# --- JS VISION AUGMENTÉE V2.1 (Optimisé) ---
+# Correction : Ne scanne plus '*' pour éviter le freeze sur les grosses pages (Wikipedia)
 HIGHLIGHT_JS = """
 (function() {
     document.querySelectorAll('.echo-marker').forEach(e => e.remove());
     
-    // Selecteurs standards + éléments avec curseur pointer (souvent cliquables)
-    let candidates = Array.from(document.querySelectorAll('a, button, input, textarea, select, [role="button"], [onclick]'));
+    // 1. Éléments interactifs standards (Rapide)
+    const stdSelectors = 'a, button, input, textarea, select, [role="button"], [onclick]';
+    let items = Array.from(document.querySelectorAll(stdSelectors));
     
-    // Ajout des éléments qui ressemblent à des boutons via CSS
-    let allInfo = Array.from(document.querySelectorAll('*')).filter(el => {
-        return window.getComputedStyle(el).cursor === 'pointer';
+    // 2. Éléments structurels potentiellement cliquables (Optimisé)
+    // On cible uniquement les conteneurs courants au lieu de tout le DOM
+    const structSelectors = 'div, span, li, tr, td, i, svg, img, h1, h2, h3, h4, h5, h6, p';
+    let structural = Array.from(document.querySelectorAll(structSelectors));
+    
+    // Filtre strict sur le curseur pointer
+    structural.forEach(el => {
+        if (!items.includes(el)) {
+            const style = window.getComputedStyle(el);
+            if (style.cursor === 'pointer') {
+                items.push(el);
+            }
+        }
     });
-    let items = [...new Set([...candidates, ...allInfo])];
     
     let count = 0;
     
     items.forEach(el => {
         let rect = el.getBoundingClientRect();
-        // Filtre : doit être visible et avoir une taille minimale (5x5px)
+        // Filtre de visibilité et taille
         if (rect.width > 5 && rect.height > 5 && window.getComputedStyle(el).visibility !== 'hidden' && window.getComputedStyle(el).display !== 'none') {
             
             let marker = document.createElement('div');
@@ -67,7 +107,7 @@ HIGHLIGHT_JS = """
             marker.style.fontSize = '12px';
             marker.style.padding = '1px 4px';
             marker.style.borderRadius = '2px';
-            marker.style.pointerEvents = 'none'; // Click through
+            marker.style.pointerEvents = 'none';
             marker.style.boxShadow = '0 2px 4px rgba(0,0,0,0.5)';
             
             document.body.appendChild(marker);
@@ -102,7 +142,6 @@ class BrowserSession:
         self.co.headless(True)
         self.co.set_argument('--no-sandbox')
         self.co.set_argument('--disable-gpu')
-        # Taille standard pour éviter les mises en page mobile
         self.co.set_argument('--window-size=1920,1080') 
         self.co.set_argument('--disable-dev-shm-usage')
         self.co.set_paths(browser_path='/usr/bin/chromium')
@@ -177,7 +216,6 @@ def browser_action():
         return jsonify({"error": "Access Denied"}), 403
     
     try:
-        # Actions nécessitant le mode Driver (Chrome réel)
         needs_driver = action in ['click', 'type', 'screenshot', 'highlight', 'key', 'scroll', 'evaluate']
         page = session.get_page(mode='d' if needs_driver else 's')
         
@@ -207,7 +245,6 @@ def browser_action():
                 except: pass
                 
             if ele:
-                # AMÉLIORATION : Scroll avant clic pour éviter les erreurs "not clickable"
                 try: ele.scroll.to_see(center=True)
                 except: pass
                 time.sleep(0.2)
@@ -222,23 +259,28 @@ def browser_action():
                 ele.scroll.to_see()
                 ele.input(params.get("text"))
             else:
-                # Fallback: essaye de taper dans l'élément actif
                 page.actions.type(params.get("text"))
         
         elif action == "key":
-            key = params.get("key", "ENTER")
-            page.actions.key(key)
-            result["message"] = f"Touche {key} pressée"
+            # FIX: Mapping et utilisation correcte de .type() au lieu de .key()
+            key_str = params.get("key", "ENTER").upper()
+            key = KEY_MAP.get(key_str, key_str)
+            try:
+                # Utilisation de actions.type qui gère les codes touches
+                page.actions.type(key)
+                result["message"] = f"Touche {key_str} pressée"
+            except Exception as e:
+                logger.error(f"Key Error: {e}")
+                return jsonify({"error": f"Erreur touche: {e}"}), 500
 
         elif action == "read":
-            # AMÉLIORATION : Conversion Markdown
             html = page.html
             try:
                 content = h2t.handle(html)
             except:
                 content = page.ele('body').text
                 
-            result["content"] = content[:20000] # Augmenté à 20k
+            result["content"] = content[:20000] 
             result["url"] = page.url
 
         elif action == "highlight":
