@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 138.6 - User Isolation)
+title: Gemini Pro Unified System (Platinum Agentic 138.8 - User Isolation)
 author: Wilfried BARNAVON
-version: 138.6
-description: 138.6: Architecture Multi-User Native. Logic Tweak: La valve OVERRIDE_LOCATION remplace désormais directement la valeur du champ "lieu_utilisateur" dans le prompt JSON (via regex), au lieu d'ajouter une mention de surcharge à la fin. Termes unifiés vers "lieu_utilisateur".
+version: 138.8
+description: 138.8: Architecture Multi-User Native. Full Client Context: Suppression totale du fallback "Contexte Serveur" (Date/Heure). Le contexte temporel et spatial repose désormais exclusivement sur les données injectées par Open WebUI. Nettoyage du code mort associé (_get_geo_info, ENABLE_DATE_TIME).
 """
 
 # ==============================================================================
@@ -373,7 +373,7 @@ class Orchestrator:
         # 2. Privacy Logic (v138.5) - Targeted JSON key
         # Si ENABLE_USER_NAME est OFF, on masque le nom dans le prompt système
         if not getattr(self.user_valves, "ENABLE_USER_NAME", False):
-            # Regex stricte pour "nom_utilisateur" (JSON style)
+            # Regex stricte pour ne cibler que "nom_utilisateur": "..." (format JSON)
             sys_prompt_text = re.sub(r'(?i)(\"nom_utilisateur\")\s*:\s*(\".*?\")', r'\1: "[Anonyme]"', sys_prompt_text)
 
         # 3. Location Override (v138.6) - Remplacement Strict
@@ -978,8 +978,7 @@ class Pipe:
         # 138.3: Nouvelle Valve de Confidentialité
         ENABLE_USER_NAME: bool = Field(default=False, description="🔒 Partager nom d'utilisateur (Si OFF, le nom est masqué)")
         
-        ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps (Fallback serveur si non fourni par client)")
-        ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu (Fallback serveur si non fourni par client)")
+        # 138.8: Suppression ENABLE_DATE_TIME (Full Client Context)
         OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu (Surcharge tout)")
 
     def __init__(self):
