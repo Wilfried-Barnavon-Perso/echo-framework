@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (API-BASED)
-# VERSION : 5.14.0
+# VERSION : 5.15.0
 # AUTEUR  : Wilfried BARNAVON
 # DATE    : 2026-01-21
 # ==============================================================================
@@ -332,17 +332,19 @@ MODEL_PAYLOAD=$(jq --arg system "$SYSTEM_PROMPT" '
     .is_active = true
 ' "$MODEL_CONFIG_FILE")
 
-# 3. Logique DELETE-then-CREATE pour éviter les erreurs 405 Method Not Allowed
+# 3. Logique DELETE-then-ADD (Adapté à la doc technique: /api/models/{id} sans /id/ et /add)
 echo "   -> Vérification existence modèle $MODEL_ID..."
-CHECK_MODEL=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/id/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+CHECK_MODEL=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
 
 if [ "$CHECK_MODEL" -eq 200 ]; then
-    echo "   ♻️  Modèle existant détecté. Suppression préalable..."
-    curl -s -X DELETE "$OWUI_URL/api/v1/models/id/$MODEL_ID" -H "Authorization: Bearer $TOKEN" > /dev/null
+    echo "   ♻️  Modèle existant détecté. Suppression préalable (Clean Slate)..."
+    # Note: L'endpoint de suppression est /api/v1/models/{id} (sans /id/ intermédiaire)
+    curl -s -X DELETE "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN" > /dev/null
 fi
 
-echo "   🆕 Création du modèle $MODEL_ID..."
-RESPONSE_MODEL=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/models/create" \
+echo "   🆕 Création du modèle $MODEL_ID (via /add)..."
+# Note: L'endpoint de création est /api/v1/models/add (et non /create)
+RESPONSE_MODEL=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/models/add" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d "$MODEL_PAYLOAD")
