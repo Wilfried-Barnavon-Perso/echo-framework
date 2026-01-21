@@ -1,8 +1,8 @@
 """
 title: Gemini Pro Unified System (Platinum Agentic 138.0 - User Isolation)
 author: Wilfried BARNAVON
-version: 138.0
-description: 138.0: Architecture Multi-User Native. Migration Gemini 3 Full Stack. Remplacement de Gemini 2.5 par Gemini 3 Flash. Séparation des contrôles de "Thinking Level" (Pro vs Flash). Suppression du code legacy (Budget 2.5). Maintien de la stratégie "Deferred Text".
+version: 138.1
+description: 138.1: Architecture Multi-User Native. Migration Gemini 3 Full Stack. Remplacement de Gemini 2.5 par Gemini 3 Flash. Séparation des contrôles de "Thinking Level" (Pro vs Flash). Suppression du code legacy (Budget 2.5). Maintien de la stratégie "Deferred Text".
 """
 
 # ==============================================================================
@@ -949,7 +949,7 @@ class Pipe:
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-3-flash-preview"] = Field(default="gemini-3-pro-preview", description="Modèle")
         
         PRO_THINKING_LEVEL: Literal["LOW", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion (Pro)")
-        FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="MEDIUM", description="Niveau de réflexion (Flash)")
+        FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion (Flash)")
         
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")

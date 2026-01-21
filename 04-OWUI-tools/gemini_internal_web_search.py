@@ -1,8 +1,8 @@
 """
 title: Gemini Internal Web Search (User Isolation Compatible)
 author: Wilfried BARNAVON
-version: 10.1
-description: 10.1: Recherche Google via API Gemini interne
+version: 11.0
+description: 11.0: Recherche Google via API Gemini interne, Grounding et sortie JSON
 """
 import json, os, requests, uuid, random
 from pydantic import BaseModel, Field
@@ -58,8 +58,8 @@ class Tools:
         context_prompt = f"Contexte: Nous sommes à {location}, le {current_date} et il est {current_time}.\nRequête: {query}\nConsigne: Effectue la recherche Google nécessaire et synthétise la réponse en français."
         clean_project_id = project_id.replace("projects/", "")
         endpoint = f"{self.base_url}:streamGenerateContent?alt=sse"
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "GeminiCLI/0.20.0", "x-goog-api-client": "gl-python/3.10"}
-        payload = {"model": self.valves.search_model_id, "project": clean_project_id, "user_prompt_id": hex(random.getrandbits(64))[2:], "request": {"contents": [{"role": "user", "parts": [{"text": context_prompt}]}], "session_id": str(uuid.uuid4()), "tools": [{"google_search": {}}], "generationConfig": {"temperature": 0.1, "maxOutputTokens": self.valves.max_output_tokens}}}
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "GeminiCLI/0.22.0", "x-goog-api-client": "gl-python/3.10"}
+        payload = {"model": self.valves.search_model_id, "project": clean_project_id, "user_prompt_id": hex(random.getrandbits(64))[2:], "request": {"contents": [{"role": "user", "parts": [{"text": context_prompt}]}], "session_id": str(uuid.uuid4()),  "tools": [{"google_search": {}}, {"urlContext": {}}], "generationConfig": {"temperature": 1.0, "maxOutputTokens": self.valves.max_output_tokens, "thinkingLevel": "HIGH"}, "responseMimeType": "application/json"}}
 
         try:
             response = requests.post(endpoint, json=payload, headers=headers, stream=True, timeout=30)
