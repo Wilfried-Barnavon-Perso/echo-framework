@@ -1,0 +1,57 @@
+[
+    {
+        "id": "pipe_engine",
+        "name": "ECHO Engine",
+        "object": "model",
+        "created": 1768579271,
+        "owned_by": "openai",
+        "pipe": {
+            "type": "pipe"
+        },
+        "has_user_valves": true,
+        "user_id": "08e8e0f8-1cf1-4bc0-8eea-59dae66b10c7",
+        "base_model_id": null,
+        "params": {
+            "function_calling": "native",
+            "system": "Tu t'appelles ECHO et tu agis en tant que spécialiste des sujets traités.\n"
+        },
+        "meta": {
+            "profile_image_url": "/static/favicon.png",
+            "description": null,
+            "capabilities": {
+                "file_context": true,
+                "vision": true,
+                "file_upload": true,
+                "web_search": false,
+                "image_generation": false,
+                "code_interpreter": false,
+                "citations": true,
+                "status_updates": true,
+                "usage": true,
+                "builtin_tools": false
+            },
+            "suggestion_prompts": null,
+            "tags": [],
+            "toolIds": [
+                "web_browser_advanced",
+                "api_client",
+                "context_gauge",
+                "gemini_internal_web_search",
+                "python_code_executor"
+            ],
+            "filterIds": [
+                "bypass_rag"
+            ],
+            "defaultFilterIds": [
+                "bypass_rag"
+            ],
+            "actionIds": [
+                "reset_auth_action"
+            ]
+        },
+        "access_control": {},
+        "is_active": true,
+        "updated_at": 1768579607,
+        "created_at": 1768579607
+    }
+]

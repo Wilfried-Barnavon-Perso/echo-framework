@@ -1,8 +1,8 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.6.1
-# DATE           : 2026-01-16
+# SCRIPT VERSION : 5.8.0
+# DATE           : 2026-01-21
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -41,7 +41,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.6.1"
+$SCRIPT_VERSION = "5.7.0"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
@@ -103,29 +103,34 @@ $FilesMap = @{
   "/opt/owui-scripts/upgrade-echo.sh"             = "$ScriptDir\00-Install\upgrade-echo.sh"
   "/opt/owui-scripts/config-owui.sh"              = "$ScriptDir\00-Install\config-owui.sh"
 
-  # === NOUVEAU : DOCKER COMPOSE ===
+  # 2. CONFIGURATIONS JSON (NOUVEAU v5.8.0)
+  # Ces fichiers seront utilisés par config-owui.sh pour paramétrer le modèle
+  "/opt/owui-scripts/model-config.json"           = "$ScriptDir\00-Install\model-config.json"
+  "/opt/owui-scripts/system-prompt.json"          = "$ScriptDir\00-Install\system-prompt.json"
+
+  # 3. DOCKER COMPOSE
   "/opt/owui-scripts/docker-compose.yml"          = "$ScriptDir\00-Install\docker-compose.yml"
 
-  # 2. SERVICES BACKEND
+  # 4. SERVICES BACKEND
   "/opt/admin-manager/server.py"                  = "$ScriptDir\01-docker-admin-manager\server.py"
   "/opt/python-worker/worker_api.py"              = "$ScriptDir\02-docker-python-worker\worker_api.py"
   "/opt/browser-agent/browser_api.py"             = "$ScriptDir\06-docker-browser-agent\browser_api.py"
 
-  # 3. CŒUR COGNITIF
+  # 5. CŒUR COGNITIF
   "/opt/owui-pipes/pipe_engine.py"                = "$ScriptDir\03-OWUI-pipes\pipe_engine.py"
 
-  # 4. OUTILS
+  # 6. OUTILS
   "/opt/owui-tools/python_code_executor.py"       = "$ScriptDir\04-OWUI-tools\python_code_executor.py"
   "/opt/owui-tools/gemini_internal_web_search.py" = "$ScriptDir\04-OWUI-tools\gemini_internal_web_search.py"
   "/opt/owui-tools/web_browser_advanced.py"       = "$ScriptDir\04-OWUI-tools\web_browser_advanced.py"
   "/opt/owui-tools/api_client.py"                 = "$ScriptDir\04-OWUI-tools\api_client.py"
   "/opt/owui-tools/context_gauge.py"              = "$ScriptDir\04-OWUI-tools\context_gauge.py"
 
-  # 5. FILTRES & ACTIONS
+  # 7. FILTRES & ACTIONS
   "/opt/owui-filters/bypass_rag.py"               = "$ScriptDir\05-OWUI-filters\bypass_rag.py"
   "/opt/owui-actions/reset_auth_action.py"        = "$ScriptDir\07-OWUI-actions\reset_auth_action.py"
 
-  # 6. VERSIONING
+  # 8. VERSIONING
   # NOTE: On copie le fichier VERSION local vers /opt/ECHO_VERSION sur la VM
   "/opt/ECHO_VERSION"                             = "$ScriptDir\VERSION"
 }

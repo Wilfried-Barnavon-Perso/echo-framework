@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 138.0 - User Isolation)
+title: Gemini Pro Unified System (Platinum Agentic 138.6 - User Isolation)
 author: Wilfried BARNAVON
-version: 138.1
-description: 138.1: Architecture Multi-User Native. Migration Gemini 3 Full Stack. Remplacement de Gemini 2.5 par Gemini 3 Flash. Séparation des contrôles de "Thinking Level" (Pro vs Flash). Suppression du code legacy (Budget 2.5). Maintien de la stratégie "Deferred Text".
+version: 138.6
+description: 138.6: Architecture Multi-User Native. Logic Tweak: La valve OVERRIDE_LOCATION remplace désormais directement la valeur du champ "lieu_utilisateur" dans le prompt JSON (via regex), au lieu d'ajouter une mention de surcharge à la fin. Termes unifiés vers "lieu_utilisateur".
 """
 
 # ==============================================================================
@@ -345,11 +345,6 @@ class Orchestrator:
         match = re.search(r"(4/[a-zA-Z0-9_-]+)", str(last_msg).strip())
         return match.group(1) if match and len(match.group(1)) > 30 else None
 
-    def _get_geo_info(self) -> Tuple[str, str]:
-        loc = getattr(self.user_valves, "OVERRIDE_LOCATION", "") or "Paris, France"
-        tz = "Europe/Paris"
-        return loc, tz
-
     def convert_owui_tools(self, tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
         if not tools: return None
         funcs = []
@@ -359,13 +354,34 @@ class Orchestrator:
                 funcs.append({"name": f.get("name"), "description": f.get("description", ""), "parameters": f.get("parameters", {"type": "object", "properties": {}})})
         return [{"functionDeclarations": funcs}] if funcs else None
 
-    def get_system_instruction(self) -> Dict:
-        sys_prompt_text = self.valves.SYSTEM_PROMPT
-        if getattr(self.user_valves, "ENABLE_DATE_TIME", True):
-            loc, tz = self._get_geo_info()
-            try: now = datetime.now(ZoneInfo(tz)) if HAS_ZONEINFO else datetime.now()
-            except: now = datetime.now()
-            sys_prompt_text += f"\n\n[CONTEXT]\nDate: {now.strftime('%A %d %B %Y')}\nTime: {now.strftime('%H:%M')}\nLocation: {loc}\n"
+    def get_system_instruction(self, client_context: Optional[str] = None) -> Dict:
+        """
+        Génère le prompt système final.
+        1. Utilise le contexte fourni par Open WebUI (client_context).
+        2. Applique la sanitization (Confidentialité) si nécessaire.
+        3. Applique l'Override Location si nécessaire (Remplacement strict).
+        """
+        sys_prompt_text = ""
+        
+        # 1. Utilisation du contexte Open WebUI (Template résolu)
+        if client_context:
+            sys_prompt_text = client_context
+        else:
+            # Fallback minimal
+            sys_prompt_text = "Tu es un assistant IA expert."
+
+        # 2. Privacy Logic (v138.5) - Targeted JSON key
+        # Si ENABLE_USER_NAME est OFF, on masque le nom dans le prompt système
+        if not getattr(self.user_valves, "ENABLE_USER_NAME", False):
+            # Regex stricte pour "nom_utilisateur" (JSON style)
+            sys_prompt_text = re.sub(r'(?i)(\"nom_utilisateur\")\s*:\s*(\".*?\")', r'\1: "[Anonyme]"', sys_prompt_text)
+
+        # 3. Location Override (v138.6) - Remplacement Strict
+        override_loc = getattr(self.user_valves, "OVERRIDE_LOCATION", "")
+        if override_loc:
+             # On remplace directement la valeur du champ "lieu_utilisateur"
+             sys_prompt_text = re.sub(r'(?i)(\"lieu_utilisateur\")\s*:\s*(\".*?\")', f'\\1: "{override_loc}"', sys_prompt_text)
+            
         return {"parts": [{"text": sys_prompt_text}]}
     
     def _probe_disk(self) -> str:
@@ -540,6 +556,9 @@ class Orchestrator:
         while i < len(messages):
             m = messages[i]
             role = m["role"]
+            
+            # 138.3: On ignore les messages système POUR LE FLUX PRINCIPAL
+            # (Car on les a déjà capturés pour le System Prompt)
             if role == "system": i+=1; continue
 
             if role == "tool":
@@ -922,7 +941,8 @@ class StreamProcessor:
 class Pipe:
     class Valves(BaseModel):
         # --- CONFIGURATION ADMIN / SYSTEME (Globale) ---
-        SYSTEM_PROMPT: str = Field(default="Tu es un assistant expert.", description="Prompt Système (Global)")
+        # 138.3: SUPPRESSION DE LA VALVE SYSTEM_PROMPT.
+        # Le prompt est désormais piloté par Open WebUI via le contexte client.
         
         GEMINI_MIME_MAPPING_TXT: str = Field(
             default='{"text/plain": [".bat",".c",".conf",".cpp",".cs",".css",".csv",".dockerfile",".editorconfig",".env",".gitignore",".go",".h",".hpp",".ini",".java",".js",".json",".kt",".lua",".md",".php",".pl",".ps1",".py",".r",".rb",".rs",".sh",".sql",".swift",".toml",".ts",".txt",".vb",".xml",".yaml",".yml","dockerfile"], "text/html": [".html", ".htm"]}',
@@ -954,9 +974,13 @@ class Pipe:
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
-        ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps")
-        ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu")
-        OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu")
+        
+        # 138.3: Nouvelle Valve de Confidentialité
+        ENABLE_USER_NAME: bool = Field(default=False, description="🔒 Partager nom d'utilisateur (Si OFF, le nom est masqué)")
+        
+        ENABLE_DATE_TIME: bool = Field(default=True, description="🕒 Injecter Temps (Fallback serveur si non fourni par client)")
+        ENABLE_AUTO_LOCATION: bool = Field(default=True, description="📍 Injecter Lieu (Fallback serveur si non fourni par client)")
+        OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu (Surcharge tout)")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -1003,7 +1027,16 @@ class Pipe:
         tools = orch.convert_owui_tools(body.get("tools"))
         files = body.get("files") or kwargs.get("__files__")
         
+        # 138.3: Extraction du Contexte Client depuis les messages système
+        # Ce sont les messages avec le rôle "system" envoyés par Open WebUI au début de la conversation.
+        system_messages = [m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]
+        client_context = "\n".join(system_messages) if system_messages else None
+        
+        # 138.2: On modifie l'appel pour passer le context client
         context = await orch.prepare_context(body, chat_id, creds.token, extra_files=files)
+        
+        # 138.2: Pass client_context to instruction generation (Sanitization + Overrides applied inside)
+        system_instruction = orch.get_system_instruction(client_context)
 
         if self.valves.DEBUG_MODE and orch.debug_log:
              for log in orch.debug_log: yield f"{log}\n"
@@ -1026,7 +1059,7 @@ class Pipe:
         req = adapter.build(
             pid, 
             context, 
-            orch.get_system_instruction(), 
+            system_instruction, # 138.2
             user_valves.TEMPERATURE, 
             user_valves.MAX_TOKENS, 
             selected_thinking_level,

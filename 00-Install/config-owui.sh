@@ -1,15 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (API-BASED)
-# VERSION : 5.6.0
+# VERSION : 5.12.0
 # AUTEUR  : Wilfried BARNAVON
-# DATE    : 2026-01-16
+# DATE    : 2026-01-21
 # ==============================================================================
 
 OWUI_URL="http://localhost:8080"
 ADMIN_EMAIL="admin@echo.local"
 ADMIN_PASSWORD="password" 
 ADMIN_NAME="ECHO Architect"
+
+# Répertoire du script courant (pour localiser les fichiers JSON config)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "🔧 [Config] Démarrage de l'initialisation ECHO..."
 
@@ -41,7 +44,7 @@ fi
 
 # Fonction intelligente Create ou Update
 api_upsert() {
-    local endpoint_base="$1" # ex: "tools" ou "functions"
+    local endpoint_base="$1" # ex: "tools", "functions", "models"
     local id="$2"
     local payload="$3"
     local type_desc="$4"
@@ -99,7 +102,7 @@ ensure_active() {
         curl -s -X POST "$OWUI_URL/api/v1/$endpoint_base/id/$id/toggle" -H "Authorization: Bearer $TOKEN" > /dev/null
     else
         # Si inactif -> ON une seule fois
-        echo "      🚀 Activation Forcée (ON)..."
+        echo "      🚀 Activation Forcée (ON)..."
         curl -s -X POST "$OWUI_URL/api/v1/$endpoint_base/id/$id/toggle" -H "Authorization: Bearer $TOKEN" > /dev/null
     fi
     
@@ -255,7 +258,7 @@ if [ -d "$PIPES_DIR" ]; then
     done
 fi
 
-# --- 7. IMPORT ACTIONS (NOUVEAU V5.14) ---
+# --- 7. IMPORT ACTIONS ---
 echo "🎬 [ACTIONS] Traitement des Actions UI..."
 ACTIONS_DIR="/opt/owui-actions"
 if [ -d "$ACTIONS_DIR" ]; then
@@ -287,5 +290,54 @@ if [ -d "$ACTIONS_DIR" ]; then
         ensure_active "functions" "$ACTION_ID"
     done
 fi
+
+# --- 8. CONFIGURATION DU MODELE (SYSTEM PROMPT & META) ---
+echo "🧠 [MODEL] Configuration du Prompt Système et des Métadonnées..."
+
+MODEL_CONFIG_FILE="$SCRIPT_DIR/model-config.json"
+SYSTEM_PROMPT_FILE="$SCRIPT_DIR/system-prompt.json"
+MODEL_ID="pipe_engine"
+
+# Vérification Stricte des Fichiers de Config
+if [ ! -f "$MODEL_CONFIG_FILE" ]; then
+    echo "❌ [FATAL] Fichier de configuration manquant : $MODEL_CONFIG_FILE"
+    echo "   Veuillez placer 'model-config.json' dans $SCRIPT_DIR"
+    exit 1
+fi
+
+if [ ! -f "$SYSTEM_PROMPT_FILE" ]; then
+    echo "❌ [FATAL] Fichier de prompt système manquant : $SYSTEM_PROMPT_FILE"
+    echo "   Veuillez placer 'system-prompt.json' dans $SCRIPT_DIR"
+    exit 1
+fi
+
+# 1. Lecture du Prompt Système (Extraction Intelligente ou Brute)
+echo "   📄 Lecture Prompt : $SYSTEM_PROMPT_FILE"
+# On essaie d'extraire des champs JSON connus, sinon on lit tout.
+EXTRACTED_PROMPT=$(jq -r '.content // .system_prompt // empty' "$SYSTEM_PROMPT_FILE" 2>/dev/null)
+
+if [ -n "$EXTRACTED_PROMPT" ]; then
+    SYSTEM_PROMPT="$EXTRACTED_PROMPT"
+else
+    # Fallback : Lecture intégrale du fichier comme chaîne de caractères
+    SYSTEM_PROMPT=$(cat "$SYSTEM_PROMPT_FILE")
+fi
+
+# 2. Lecture de la Config Modèle et Fusion
+echo "   📄 Lecture Config : $MODEL_CONFIG_FILE"
+
+# Extraction de la configuration de 'pipe_engine' depuis l'export JSON.
+# NETTOYAGE : On supprime les champs user_id, timestamps et access_control
+# REGLAGE : On écrase '.params.system' avec notre variable $SYSTEM_PROMPT.
+MODEL_PAYLOAD=$(jq --arg system "$SYSTEM_PROMPT" '
+    .[0] |
+    del(.user_id, .created, .updated_at, .created_at, .access_control) |
+    .params.system = $system |
+    .is_active = true
+' "$MODEL_CONFIG_FILE")
+
+# 3. Upsert du Modèle (Create ou Update automatique)
+echo "   -> Traitement du modèle $MODEL_ID..."
+api_upsert "models" "$MODEL_ID" "$MODEL_PAYLOAD" "Modèle"
 
 echo "✅ [Config] Terminé."
