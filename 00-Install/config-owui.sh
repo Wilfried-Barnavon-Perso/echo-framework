@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (API-BASED)
-# VERSION : 5.16.0
+# VERSION : 5.17.0
 # AUTEUR  : Wilfried BARNAVON
 # DATE    : 2026-01-21
 # ==============================================================================
@@ -42,7 +42,7 @@ if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
     exit 1
 fi
 
-# Fonction intelligente Create ou Update
+# Fonction intelligente Create ou Update (Outils/Fonctions/Filtres/Actions)
 api_upsert() {
     local endpoint_base="$1" # ex: "tools", "functions"
     local id="$2"
@@ -58,12 +58,11 @@ api_upsert() {
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1 | cut -d: -f2)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
-    # FIX 5.13.1 : Gestion de l'erreur 409 (Conflict/Already registered) pour déclencher l'update
+    # Gestion de l'erreur 409 (Conflict/Already registered) pour déclencher l'update
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $type_desc créé."
     elif echo "$BODY" | grep -q "already registered" || [ "$HTTP_CODE" -eq 409 ]; then
         # 2. Si existe déjà -> MISE A JOUR (Update)
-        # Note: Pour les fonctions/outils, le chemin est souvent /id/{id}/update
         echo "   🔄 $type_desc existe déjà. Mise à jour..."
         
         RESPONSE_UPD=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint_base/id/$id/update" \
@@ -332,22 +331,21 @@ MODEL_PAYLOAD=$(jq --arg system "$SYSTEM_PROMPT" '
     .is_active = true
 ' "$MODEL_CONFIG_FILE")
 
-# 3. Logique CREATE vs UPDATE (avec URL spécifique)
+# 3. Logique CREATE vs UPDATE (via endpoint spécifique /models/model/update)
 echo "   -> Vérification existence modèle $MODEL_ID..."
 CHECK_MODEL=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
-#DEBUG
-curl -s -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN"
+
 if [ "$CHECK_MODEL" -eq 200 ]; then
-    echo "   🔄 Modèle existant. Tentative de mise à jour (Endpoint Direct)..."
-    # Utilisation de l'endpoint spécifique: /api/v1/models/{id}/update
-    RESPONSE_MODEL=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/models/$MODEL_ID/update" \
+    echo "   🔄 Modèle existant. Tentative de mise à jour (Endpoint Structurel)..."
+    # Utilisation de l'endpoint "structurel" trouvé dans la doc non officielle
+    # /api/v1/models/model/update attend le JSON complet du modèle (avec l'ID dedans)
+    RESPONSE_MODEL=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/models/model/update" \
         -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/json" \
         -d "$MODEL_PAYLOAD")
 else
     echo "   🆕 Modèle introuvable ($CHECK_MODEL). Création..."
-    # Utilisation de l'endpoint générique: /api/v1/models/create (ou /add selon versions, mais create est standard v1)
-    RESPONSE_MODEL=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/models/create" \
+    RESPONSE_MODEL=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/models/add" \
         -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/json" \
         -d "$MODEL_PAYLOAD")
