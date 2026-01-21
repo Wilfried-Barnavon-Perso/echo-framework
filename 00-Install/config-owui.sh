@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (API-BASED)
-# VERSION : 5.12.0
+# VERSION : 5.13.1
 # AUTEUR  : Wilfried BARNAVON
 # DATE    : 2026-01-21
 # ==============================================================================
@@ -44,7 +44,7 @@ fi
 
 # Fonction intelligente Create ou Update
 api_upsert() {
-    local endpoint_base="$1" # ex: "tools", "functions", "models"
+    local endpoint_base="$1" # ex: "tools", "functions"
     local id="$2"
     local payload="$3"
     local type_desc="$4"
@@ -58,9 +58,10 @@ api_upsert() {
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1 | cut -d: -f2)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
+    # FIX 5.13.1 : Gestion de l'erreur 409 (Conflict/Already registered) pour déclencher l'update
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $type_desc créé."
-    elif echo "$BODY" | grep -q "already registered"; then
+    elif echo "$BODY" | grep -q "already registered" || [ "$HTTP_CODE" -eq 409 ]; then
         # 2. Si existe déjà -> MISE A JOUR (Update)
         echo "   🔄 $type_desc existe déjà. Mise à jour..."
         
@@ -313,7 +314,6 @@ fi
 
 # 1. Lecture du Prompt Système (Extraction Intelligente ou Brute)
 echo "   📄 Lecture Prompt : $SYSTEM_PROMPT_FILE"
-# On essaie d'extraire des champs JSON connus, sinon on lit tout.
 EXTRACTED_PROMPT=$(jq -r '.content // .system_prompt // empty' "$SYSTEM_PROMPT_FILE" 2>/dev/null)
 
 if [ -n "$EXTRACTED_PROMPT" ]; then
@@ -325,10 +325,7 @@ fi
 
 # 2. Lecture de la Config Modèle et Fusion
 echo "   📄 Lecture Config : $MODEL_CONFIG_FILE"
-
-# Extraction de la configuration de 'pipe_engine' depuis l'export JSON.
-# NETTOYAGE : On supprime les champs user_id, timestamps et access_control
-# REGLAGE : On écrase '.params.system' avec notre variable $SYSTEM_PROMPT.
+# JQ : .[0] car export est un tableau. Supprime champs inutiles. Injecte prompt.
 MODEL_PAYLOAD=$(jq --arg system "$SYSTEM_PROMPT" '
     .[0] |
     del(.user_id, .created, .updated_at, .created_at, .access_control) |
@@ -336,8 +333,29 @@ MODEL_PAYLOAD=$(jq --arg system "$SYSTEM_PROMPT" '
     .is_active = true
 ' "$MODEL_CONFIG_FILE")
 
-# 3. Upsert du Modèle (Create ou Update automatique)
-echo "   -> Traitement du modèle $MODEL_ID..."
-api_upsert "models" "$MODEL_ID" "$MODEL_PAYLOAD" "Modèle"
+# 3. Logique Create vs Update EXPLICITE pour le Modèle
+echo "   -> Vérification existence modèle $MODEL_ID..."
+CHECK_MODEL=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/id/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+
+if [ "$CHECK_MODEL" -eq 200 ]; then
+    echo "   🔄 Modèle existant détecté. Mode UPDATE."
+    ENDPOINT="$OWUI_URL/api/v1/models/id/$MODEL_ID/update"
+else
+    echo "   🆕 Modèle introuvable ($CHECK_MODEL). Mode CREATE."
+    ENDPOINT="$OWUI_URL/api/v1/models/create"
+fi
+
+RESPONSE_MODEL=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$ENDPOINT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$MODEL_PAYLOAD")
+
+HTTP_MODEL=$(echo "$RESPONSE_MODEL" | tail -n1 | cut -d: -f2)
+if [ "$HTTP_MODEL" -ge 200 ] && [ "$HTTP_MODEL" -lt 300 ]; then
+    echo "   ✅ Modèle configuré avec succès."
+else
+    BODY_MODEL=$(echo "$RESPONSE_MODEL" | sed '$d')
+    echo "   ❌ ECHEC CONFIG MODELE ($HTTP_MODEL): $BODY_MODEL"
+fi
 
 echo "✅ [Config] Terminé."
