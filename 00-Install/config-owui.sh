@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (API-BASED)
-# VERSION : 5.15.0
+# VERSION : 5.16.0
 # AUTEUR  : Wilfried BARNAVON
 # DATE    : 2026-01-21
 # ==============================================================================
@@ -63,6 +63,7 @@ api_upsert() {
         echo "   ✅ $type_desc créé."
     elif echo "$BODY" | grep -q "already registered" || [ "$HTTP_CODE" -eq 409 ]; then
         # 2. Si existe déjà -> MISE A JOUR (Update)
+        # Note: Pour les fonctions/outils, le chemin est souvent /id/{id}/update
         echo "   🔄 $type_desc existe déjà. Mise à jour..."
         
         RESPONSE_UPD=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint_base/id/$id/update" \
@@ -312,18 +313,17 @@ if [ ! -f "$SYSTEM_PROMPT_FILE" ]; then
     exit 1
 fi
 
-# 1. Lecture du Prompt Système (Extraction Intelligente ou Brute)
+# 1. Lecture du Prompt Système
 echo "   📄 Lecture Prompt : $SYSTEM_PROMPT_FILE"
 EXTRACTED_PROMPT=$(jq -r '.content // .system_prompt // empty' "$SYSTEM_PROMPT_FILE" 2>/dev/null)
 
 if [ -n "$EXTRACTED_PROMPT" ]; then
     SYSTEM_PROMPT="$EXTRACTED_PROMPT"
 else
-    # Fallback : Lecture intégrale du fichier comme chaîne de caractères
     SYSTEM_PROMPT=$(cat "$SYSTEM_PROMPT_FILE")
 fi
 
-# 2. Lecture de la Config Modèle et Fusion
+# 2. Lecture Config
 echo "   📄 Lecture Config : $MODEL_CONFIG_FILE"
 MODEL_PAYLOAD=$(jq --arg system "$SYSTEM_PROMPT" '
     .[0] |
@@ -332,22 +332,25 @@ MODEL_PAYLOAD=$(jq --arg system "$SYSTEM_PROMPT" '
     .is_active = true
 ' "$MODEL_CONFIG_FILE")
 
-# 3. Logique DELETE-then-ADD (Adapté à la doc technique: /api/models/{id} sans /id/ et /add)
+# 3. Logique CREATE vs UPDATE (avec URL spécifique)
 echo "   -> Vérification existence modèle $MODEL_ID..."
 CHECK_MODEL=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
 
 if [ "$CHECK_MODEL" -eq 200 ]; then
-    echo "   ♻️  Modèle existant détecté. Suppression préalable (Clean Slate)..."
-    # Note: L'endpoint de suppression est /api/v1/models/{id} (sans /id/ intermédiaire)
-    curl -s -X DELETE "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN" > /dev/null
+    echo "   🔄 Modèle existant. Tentative de mise à jour (Endpoint Direct)..."
+    # Utilisation de l'endpoint spécifique: /api/v1/models/{id}/update
+    RESPONSE_MODEL=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/models/$MODEL_ID/update" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$MODEL_PAYLOAD")
+else
+    echo "   🆕 Modèle introuvable ($CHECK_MODEL). Création..."
+    # Utilisation de l'endpoint générique: /api/v1/models/create (ou /add selon versions, mais create est standard v1)
+    RESPONSE_MODEL=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/models/create" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$MODEL_PAYLOAD")
 fi
-
-echo "   🆕 Création du modèle $MODEL_ID (via /add)..."
-# Note: L'endpoint de création est /api/v1/models/add (et non /create)
-RESPONSE_MODEL=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/models/add" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "$MODEL_PAYLOAD")
 
 HTTP_MODEL=$(echo "$RESPONSE_MODEL" | tail -n1 | cut -d: -f2)
 if [ "$HTTP_MODEL" -ge 200 ] && [ "$HTTP_MODEL" -lt 300 ]; then
