@@ -1,8 +1,8 @@
 """
-title: Gemini Pro Unified System (Platinum Agentic 137.11 - User Isolation)
+title: Gemini Pro Unified System (Platinum Agentic 138.0 - User Isolation)
 author: Wilfried BARNAVON
-version: 137.11
-description: 137.11: Architecture Multi-User Native. Rétablissement de la logique 137.9 "Deferred Text" stricte. Le texte des étapes intermédiaires (outils) est masqué du contexte immédiat mais concaténé et injecté à la FIN de l'historique du tour, assurant la cohérence narrative pour le tour suivant.
+version: 138.0
+description: 138.0: Architecture Multi-User Native. Migration Gemini 3 Full Stack. Remplacement de Gemini 2.5 par Gemini 3 Flash. Séparation des contrôles de "Thinking Level" (Pro vs Flash). Suppression du code legacy (Budget 2.5). Maintien de la stratégie "Deferred Text".
 """
 
 # ==============================================================================
@@ -721,18 +721,11 @@ class GeminiAdapter:
     def __init__(self, base_url):
         self.base_url = base_url
 
-    def _get_thinking_budget_2_5(self, level: str) -> int:
-        return 32768 if level == "HIGH" else -1
-
     def build(self, project_id, contents, system_instr, temp, max_tok, think_level, model_id, tools=None):
         gen_config = {"temperature": temp, "maxOutputTokens": max_tok}
         
-        if "gemini-3" in model_id:
-            gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": think_level.lower()}
-        elif "gemini-2.5" in model_id:
-            budget = self._get_thinking_budget_2_5(think_level)
-            if budget > 0:
-                gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingBudget": budget}
+        # Gemini 3 Logic (Pro & Flash)
+        gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": think_level.lower()}
         
         payload = {
             "model": model_id, "project": project_id,
@@ -953,8 +946,11 @@ class Pipe:
 
     class UserValves(BaseModel):
         # --- PREFERENCES UTILISATEUR (Individuelles) ---
-        MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-2.5-pro"] = Field(default="gemini-3-pro-preview", description="Modèle")
-        THINKING_LEVEL: Literal["LOW", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion")
+        MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-3-flash-preview"] = Field(default="gemini-3-pro-preview", description="Modèle")
+        
+        PRO_THINKING_LEVEL: Literal["LOW", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion (Pro)")
+        FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="MEDIUM", description="Niveau de réflexion (Flash)")
+        
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
@@ -1018,6 +1014,14 @@ class Pipe:
 
         # --- ADAPTER STANDARD ---
         # Note: on utilise user_valves pour les params modèle
+        
+        # Sélection du Thinking Level approprié selon le modèle
+        selected_thinking_level = "high" # Valeur par défaut de sécurité
+        if user_valves.MODEL_SELECTION == "gemini-3-pro-preview":
+            selected_thinking_level = user_valves.PRO_THINKING_LEVEL
+        elif user_valves.MODEL_SELECTION == "gemini-3-flash-preview":
+            selected_thinking_level = user_valves.FLASH_THINKING_LEVEL
+
         adapter = GeminiAdapter(auth.base_url)
         req = adapter.build(
             pid, 
@@ -1025,7 +1029,7 @@ class Pipe:
             orch.get_system_instruction(), 
             user_valves.TEMPERATURE, 
             user_valves.MAX_TOKENS, 
-            user_valves.THINKING_LEVEL, 
+            selected_thinking_level,
             user_valves.MODEL_SELECTION, 
             tools
         )
