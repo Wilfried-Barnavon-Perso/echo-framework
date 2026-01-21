@@ -59,7 +59,7 @@ class Tools:
         clean_project_id = project_id.replace("projects/", "")
         endpoint = f"{self.base_url}:streamGenerateContent?alt=sse"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "GeminiCLI/0.22.0", "x-goog-api-client": "gl-python/3.10"}
-        payload = {"model": self.valves.search_model_id, "project": clean_project_id, "user_prompt_id": hex(random.getrandbits(64))[2:], "request": {"contents": [{"role": "user", "parts": [{"text": context_prompt}]}], "session_id": str(uuid.uuid4()),  "tools": [{"google_search": {}}, {"urlContext": {}}], "generationConfig": {"temperature": 1.0, "maxOutputTokens": self.valves.max_output_tokens, "thinkingLevel": "HIGH"}, "responseMimeType": "application/json"}}
+        payload = {"model": self.valves.search_model_id, "project": clean_project_id, "user_prompt_id": hex(random.getrandbits(64))[2:], "request": {"contents": [{"role": "user", "parts": [{"text": context_prompt}]}], "session_id": str(uuid.uuid4()),  "tools": [{"google_search": {}}, {"urlContext": {}}], "generationConfig": {"temperature": 1.0, "maxOutputTokens": self.valves.max_output_tokens, "thinkingConfig": {"thinkingLevel": "HIGH"}, "responseMimeType": "application/json"}}}
 
         try:
             response = requests.post(endpoint, json=payload, headers=headers, stream=True, timeout=30)
