@@ -335,7 +335,8 @@ MODEL_PAYLOAD=$(jq --arg system "$SYSTEM_PROMPT" '
 # 3. Logique CREATE vs UPDATE (avec URL spécifique)
 echo "   -> Vérification existence modèle $MODEL_ID..."
 CHECK_MODEL=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
-
+#DEBUG
+curl -s -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN"
 if [ "$CHECK_MODEL" -eq 200 ]; then
     echo "   🔄 Modèle existant. Tentative de mise à jour (Endpoint Direct)..."
     # Utilisation de l'endpoint spécifique: /api/v1/models/{id}/update
