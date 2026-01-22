@@ -1,6 +1,6 @@
-version: '4.0'
+version: '3.8'
 # ==============================================================================
-# ECHO FRAMEWORK v4.0 - ARCHITECTURE SIMPLIFIÉE (HOST-DRIVEN CONFIG)
+# ECHO FRAMEWORK v5.1 - ARCHITECTURE SIMPLIFIÉE (HOST-DRIVEN CONFIG)
 # ==============================================================================
 
 services:

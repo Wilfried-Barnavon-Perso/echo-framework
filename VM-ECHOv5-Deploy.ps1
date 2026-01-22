@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.9.2
+# SCRIPT VERSION : 5.9.3
 # DATE           : 2026-01-21
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -60,7 +60,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.9.2"
+$SCRIPT_VERSION = "5.9.3"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
@@ -258,10 +258,10 @@ autoinstall:
 $WriteFilesBlock
     runcmd:
       - [chown, -R, "${AutoUser}:${AutoUser}", "/home/${AutoUser}"]
-      - [systemctl restart chrony]
+      - "systemctl restart chrony"
       # Permissions Exécutables (Syntaxe string pour supporter le wildcard *)
       - "chmod +x /opt/owui-scripts/*.sh"
-
+      
       # Liens Symboliques pour usage facile
       - [ln, -s, /opt/owui-scripts/update-echo.sh, /usr/local/bin/update-echo]
       - [ln, -s, /opt/owui-scripts/upgrade-echo.sh, /usr/local/bin/upgrade-echo]
