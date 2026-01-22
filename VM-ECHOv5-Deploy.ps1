@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.8.0
+# SCRIPT VERSION : 5.9.1
 # DATE           : 2026-01-21
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -32,6 +32,27 @@
 # --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
 # But : Empêcher la fenêtre de se fermer brutalement en cas d'erreur critique,
 # pour laisser le temps à l'utilisateur de lire le message d'erreur.
+
+$SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
+$ISOPath = "D:\ISO\ubuntu-24.04.3-live-server-amd64-autoinstall.iso"
+$VMPath = "D:\Virtual Machines"
+$VHDPath = "$VMPath\Virtual Hard Drives\$VMName.vhdx"
+$SeedPath = "$VMPath\Virtual Hard Drives\$VMName-seed.vhdx"
+$VHDSize = 50GB
+$RAMStartup = 4096MB
+
+# --- CONFIGURATION RESEAU (IP STATIQUE) ---
+$STATIC_IP_CIDR = "192.168.147.100/24"
+$GATEWAY_IP = "192.168.147.254"
+$DNS_SERVERS = "[86.54.11.100, 1.1.1.1, 8.8.8.8]"
+$SWITCH_NAME = "Bridge LAN"
+
+# --- CONFIGURATION BRANCHE ---
+# Permet de définir quelle branche git sera suivie par la VM.
+# Modifiez cette valeur si vous souhaitez déployer une branche de dev.
+$BRANCHE = "dev"
+#$BRANCHE = "main"
+
 function Pause-OnError {
   param([string]$Message)
   Write-Error "❌ ERREUR CRITIQUE : $Message"
@@ -41,15 +62,9 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.8.4"
+$SCRIPT_VERSION = "5.9.1"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
-
-# --- CONFIGURATION BRANCHE ---
-# Permet de définir quelle branche git sera suivie par la VM.
-# Modifiez cette valeur si vous souhaitez déployer une branche de dev.
-#$BRANCHE = "dev"
-$BRANCHE = "main"
 
 Write-Host "🚀 ECHO INFRASTRUCTURE DEPLOYER [Script v$SCRIPT_VERSION]" -ForegroundColor Cyan
 Write-Host "==========================================================" 
@@ -80,14 +95,6 @@ if ($ECHO_VERSION -ne $SCRIPT_VERSION) {
 $VMName = "ECHO-v$ECHO_VERSION-$BRANCHE"
 Write-Host "🖥️  VM Name         : $VMName" -ForegroundColor Yellow
 
-$SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
-$ISOPath = "D:\ISO\ubuntu-24.04.3-live-server-amd64-autoinstall.iso"
-$VMPath = "D:\Virtual Machines"
-$VHDPath = "$VMPath\Virtual Hard Drives\$VMName.vhdx"
-$SeedPath = "$VMPath\Virtual Hard Drives\$VMName-seed.vhdx"
-$VHDSize = 50GB
-$RAMStartup = 4096MB
-
 $AutoUser = "echo"
 $AppPassword = "password"
 $AutoHostname = $VMName.ToLower() -replace '\s', ''
@@ -97,41 +104,43 @@ $HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0
 # --- 3. VERIFICATION DES FICHIERS (MAPPING STRICT) ---
 # Dictionnaire : Source Windows => Destination Linux
 $FilesMap = @{
-  # 1. SCRIPTS D'INSTALLATION
+  # SCRIPTS
   "/opt/owui-scripts/install-stack.sh"            = "$ScriptDir\00-Install\install-stack.sh"
   "/opt/owui-scripts/update-echo.sh"              = "$ScriptDir\00-Install\update-echo.sh"
   "/opt/owui-scripts/upgrade-echo.sh"             = "$ScriptDir\00-Install\upgrade-echo.sh"
   "/opt/owui-scripts/config-owui.sh"              = "$ScriptDir\00-Install\config-owui.sh"
-
-  # 2. CONFIGURATIONS JSON (NOUVEAU v5.8.0)
-  # Ces fichiers seront utilisés par config-owui.sh pour paramétrer le modèle
+  
+  # CONFIGS JSON
   "/opt/owui-scripts/model-config.json"           = "$ScriptDir\00-Install\model-config.json"
   "/opt/owui-scripts/system-prompt.json"          = "$ScriptDir\00-Install\system-prompt.json"
-
-  # 3. DOCKER COMPOSE
+  
+  # DOCKER
   "/opt/owui-scripts/docker-compose.yml"          = "$ScriptDir\00-Install\docker-compose.yml"
-
-  # 4. SERVICES BACKEND
+  
+  # BACKEND
   "/opt/admin-manager/server.py"                  = "$ScriptDir\01-docker-admin-manager\server.py"
   "/opt/python-worker/worker_api.py"              = "$ScriptDir\02-docker-python-worker\worker_api.py"
   "/opt/browser-agent/browser_api.py"             = "$ScriptDir\06-docker-browser-agent\browser_api.py"
-
-  # 5. CŒUR COGNITIF
+  
+  # ECHO ENGINE
   "/opt/owui-pipes/pipe_engine.py"                = "$ScriptDir\03-OWUI-pipes\pipe_engine.py"
-
-  # 6. OUTILS
+  
+  # TOOLS
   "/opt/owui-tools/python_code_executor.py"       = "$ScriptDir\04-OWUI-tools\python_code_executor.py"
   "/opt/owui-tools/gemini_internal_web_search.py" = "$ScriptDir\04-OWUI-tools\gemini_internal_web_search.py"
   "/opt/owui-tools/web_browser_advanced.py"       = "$ScriptDir\04-OWUI-tools\web_browser_advanced.py"
   "/opt/owui-tools/api_client.py"                 = "$ScriptDir\04-OWUI-tools\api_client.py"
   "/opt/owui-tools/context_gauge.py"              = "$ScriptDir\04-OWUI-tools\context_gauge.py"
-
-  # 7. FILTRES & ACTIONS
+  
+  # FILTERS & ACTIONS
   "/opt/owui-filters/bypass_rag.py"               = "$ScriptDir\05-OWUI-filters\bypass_rag.py"
   "/opt/owui-actions/reset_auth_action.py"        = "$ScriptDir\07-OWUI-actions\reset_auth_action.py"
-
-  # 8. VERSIONING
-  # NOTE: On copie le fichier VERSION local vers /opt/ECHO_VERSION sur la VM
+  
+  # ASSETS (IMAGES) - Nouveau mapping
+  "/opt/echo-images/logo-echo.png"                = "$ScriptDir\_assets\images\logo-echo.png"
+  "/opt/echo-images/logo-echo-full.png"           = "$ScriptDir\_assets\images\logo-echo-full.png"
+  
+  # VERSION
   "/opt/ECHO_VERSION"                             = "$ScriptDir\VERSION"
 }
 
@@ -160,16 +169,21 @@ $WriteFilesBlock = ""
 foreach ($DestPath in $FilesMap.Keys) {
   if (Test-Path $FilesMap[$DestPath]) {
     $LocalPath = $FilesMap[$DestPath]
-    # FIX ENCODING: Force la lecture en UTF8 pour éviter les erreurs de caractères spéciaux
-    $RawContent = [System.IO.File]::ReadAllText($LocalPath, [System.Text.Encoding]::UTF8)
-
-    # Remplacement dynamique user dans install-stack.sh uniquement
-    if ($DestPath -eq "/opt/owui-scripts/install-stack.sh") {
-      $RawContent = $RawContent.Replace('${AutoUser}', $AutoUser)
+    
+    # Gestion Binaire vs Texte (CRITIQUE pour les images PNG)
+    if ($DestPath.EndsWith(".png")) {
+      # Lecture binaire
+      $RawBytes = [System.IO.File]::ReadAllBytes($LocalPath)
+      $B64Content = [Convert]::ToBase64String($RawBytes)
     }
-
-    # Encodage Base64 pour éviter problèmes caractères spéciaux dans YAML
-    $B64Content = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($RawContent.Replace("`r`n", "`n")))
+    else {
+      # Lecture texte avec correction UTF8/CRLF pour les scripts
+      $RawContent = [System.IO.File]::ReadAllText($LocalPath, [System.Text.Encoding]::UTF8)
+      if ($DestPath -eq "/opt/owui-scripts/install-stack.sh") {
+        $RawContent = $RawContent.Replace('${AutoUser}', $AutoUser)
+      }
+      $B64Content = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($RawContent.Replace("`r`n", "`n")))
+    }
 
     $WriteFilesBlock += "      - path: $DestPath`n"
     $WriteFilesBlock += "        permissions: '0755'`n"
@@ -199,6 +213,16 @@ $UserDataContent = @"
 #cloud-config
 autoinstall:
   version: 1
+  network:
+    version: 2
+    ethernets:
+      eth0:
+        dhcp4: false
+        addresses:
+          - $STATIC_IP_CIDR
+        gateway4: $GATEWAY_IP
+        nameservers:
+          addresses: $DNS_SERVERS
   identity: {hostname: $AutoHostname, password: "$HashPassword", username: $AutoUser}
   keyboard: {layout: fr}
   locale: fr_FR.UTF-8

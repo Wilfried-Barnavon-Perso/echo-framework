@@ -1,4 +1,4 @@
-version: '3.10'
+version: '3.11'
 
 # ==============================================================================
 # ECHO FRAMEWORK v5 - INFRASTRUCTURE DEFINITION
@@ -10,8 +10,52 @@ version: '3.10'
 # - Volume de données renommé en "echo-webui-data" pour cohérence.
 # - Tous les volumes et réseaux sont "external: true" et créés par install-stack.sh.
 # ==============================================================================
-
 services:
+# --- 0. LA FORTERESSE : BUNKERWEB (Proxy & Sécurité) ---
+  bunkerweb:
+    image: bunkerity/bunkerweb:1.5.8
+    container_name: echo-bunkerweb
+    restart: always
+    ports:
+      - "80:80"   # Port HTTP externe -> Port interne BW
+      - "443:443"  # Port HTTPS externe -> Port interne BW
+    environment:
+      - SERVER_NAME=echo-ai.eu www.echo-ai.eu
+      - AUTO_LETS_ENCRYPT=yes
+      - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
+      - USE_CLIENT_CACHE=yes
+      - USE_GZIP=yes
+      - USE_REVERSE_PROXY=yes
+      - USE_WAF=yes
+      # Optimisations WebSockets (Chat) & Uploads
+      - WS_PATH_1=/ws/
+      - MAX_CLIENT_BODY_SIZE=500m
+    labels:
+      - "bunkerweb.SERVER_NAME=echo-ai.eu"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL_1=/"
+      - "bunkerweb.REVERSE_PROXY_HOST_1=echo-webui-core"
+      - "bunkerweb.REVERSE_PROXY_PORT_1=8080"
+      - "bunkerweb.REVERSE_PROXY_HEADERS_1=X-Forwarded-Proto: https"
+    networks:
+      - ai-net
+    volumes:
+      - echo-bw-data:/data
+
+  # Scheduler BunkerWeb
+  bw-scheduler:
+    image: bunkerity/bunkerweb-scheduler:1.5.8
+    container_name: echo-bw-scheduler
+    restart: always
+    depends_on:
+      - bunkerweb
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - echo-bw-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - ai-net
   # --- 1. WATCHTOWER (AUTO-UPDATE) ---
   watchtower:
     image: containrrr/watchtower
@@ -31,7 +75,7 @@ services:
     networks:
       - ai-net
     volumes:
-      - /opt/python-worker/worker_api.py:/app/app.py
+      - /opt/python-worker/worker_api.py:/app/app.py:ro
       - echo-worker-data:/app/data
     command: >
       /bin/bash -c "pip install --no-cache-dir flask flask-cors requests pandas numpy scipy scikit-learn matplotlib seaborn yfinance beautifulsoup4 openpyxl regex sympy && python /app/app.py"
@@ -47,7 +91,7 @@ services:
     environment:
       - PIP_ROOT_USER_ACTION=ignore
     volumes:
-      - /opt/browser-agent/browser_api.py:/app/app.py
+      - /opt/browser-agent/browser_api.py:/app/app.py:ro
       - echo-browser-data:/app/data
     command: >
       /bin/bash -c "apt-get update && apt-get install -y chromium fonts-liberation libasound2 libnss3 libgbm1 libnspr4 xdg-utils && pip install --no-cache-dir flask flask-cors DrissionPage html2text && python /app/app.py"
@@ -65,7 +109,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /opt/admin-manager/server.py:/app/server.py
+      - /opt/admin-manager/server.py:/app/server.py:ro
       - echo-backups:/backups
       # --- CHANGEMENT DE NOM DU VOLUME ---
       # On mappe le nouveau volume standardisé vers les chemins attendus par le script
@@ -81,32 +125,36 @@ services:
     restart: always
     networks:
       - ai-net
-    ports:
-      - "3000:8080"
+    #ports:
+    # - "3000:8080"
     volumes:
       # --- CHANGEMENT DE NOM DU VOLUME ---
       # Stockage persistant renommé proprement
       - echo-webui-data:/app/backend/data
       # Montage des scripts et configurations "Hot Reload" depuis l'hôte
-      - /opt/owui-pipes:/opt/owui-pipes
-      - /opt/owui-tools:/opt/owui-tools
-      - /opt/owui-filters:/opt/owui-filters
-      - /opt/owui-actions:/opt/owui-actions
-      - /opt/owui-scripts:/opt/owui-scripts
+      - /opt/owui-pipes:/opt/owui-pipes:ro
+      - /opt/owui-tools:/opt/owui-tools:ro
+      - /opt/owui-filters:/opt/owui-filters:ro
+      - /opt/owui-actions:/opt/owui-actions:ro
+      - /opt/owui-scripts:/opt/owui-scripts:ro
+           # PERSONNALISATION (LOGOS & VERSION)
+      # Montage standardisé dans /opt/echo-images
+      - /opt/echo-images:/app/backend/data/images:ro
+      # Le fichier de version système pour le Pipe Engine
+      - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
     # Installation de mgzip au démarrage PUIS lancement du serveur (&& ./start.sh)
     # Sans ./start.sh, le conteneur s'arrête immédiatement après l'installation.
     command: >
       /bin/bash -c "pip install mgzip && ./start.sh"
 
 # ==============================================================================
-# RESSOURCES EXTERNES (PROVISIONNÉES PAR INSTALL-STACK.SH)
+# RESSOURCES EXTERNES
 # ==============================================================================
 networks:
   ai-net:
     external: true
 
 volumes:
-  # Nom standardisé. Correspond à "open-webui" dans l'ancienne version.
   echo-webui-data:
     external: true
   echo-worker-data:
@@ -114,4 +162,6 @@ volumes:
   echo-browser-data:
     external: true
   echo-backups:
+    external: true
+  echo-bw-data:
     external: true

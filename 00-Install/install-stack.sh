@@ -14,13 +14,13 @@ SYSTEM_VERSION_FILE="/opt/ECHO_VERSION"
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ -f "$SOURCE_VERSION_FILE" ]; then
-    cp "$SOURCE_VERSION_FILE" "$SYSTEM_VERSION_FILE"
+    cp -f "$SOURCE_VERSION_FILE" "$SYSTEM_VERSION_FILE"
     chmod 644 "$SYSTEM_VERSION_FILE"
 fi
 
 ECHO_VERSION="unknown"
 if [ -f "$SYSTEM_VERSION_FILE" ]; then
-    ECHO_VERSION=$(cat "$SYSTEM_VERSION_FILE" | sed 's/^v//')
+    ECHO_VERSION=$(cat "$SYSTEM_VERSION_FILE")
 fi
 
 BRANCH_FILE="/opt/ECHO_BRANCH"
@@ -81,6 +81,7 @@ ensure_volume "echo-worker-data"
 ensure_volume "echo-browser-data"
 ensure_volume "echo-backups"
 ensure_volume "watchtower"
+ensure_volume "echo-bw-data"
 
 # --- 3. LANCEMENT DOCKER COMPOSE ---
 COMPOSE_FILE="/opt/owui-scripts/docker-compose.yml"

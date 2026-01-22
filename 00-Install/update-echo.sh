@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : update-echo.sh (VERSION COMPOSE / HYBRIDE V2)
-# VERSION : 5.6.7
+# VERSION : 5.7.0
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR DU CODE (SCRIPTS, TOOLS, PIPES) + HOT RELOAD
@@ -105,6 +105,7 @@ sync_mirror "$SRC_DIR/04-OWUI-tools"    "/opt/owui-tools"
 sync_mirror "$SRC_DIR/03-OWUI-pipes"    "/opt/owui-pipes"
 sync_mirror "$SRC_DIR/07-OWUI-actions"  "/opt/owui-actions"
 sync_mirror "$SRC_DIR/05-OWUI-filters"  "/opt/owui-filters"
+sync_mirror "$SRC_DIR/_assets/images"  "/opt/owui-images"
 
 # Mise à jour des scripts Python des conteneurs
 sync_mirror_file "$SRC_DIR/01-docker-admin-manager/server.py"     "/opt/admin-manager"

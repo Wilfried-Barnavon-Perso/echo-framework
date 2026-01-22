@@ -55,7 +55,8 @@ cp -rf "$SRC_DIR/04-OWUI-tools/." "/opt/owui-tools/"
 cp -rf "$SRC_DIR/03-OWUI-pipes/." "/opt/owui-pipes/"
 cp -rf "$SRC_DIR/07-OWUI-actions/." "/opt/owui-actions/"
 cp -rf "$SRC_DIR/05-OWUI-filters/." "/opt/owui-filters/"
-cp "$SRC_DIR/VERSION" "/opt/ECHO_VERSION"
+cp -rf "$SRC_DIR/_assets/images"  "/opt/owui-images"
+cp -f "$SRC_DIR/VERSION" "/opt/ECHO_VERSION"
 
 # Clean Windows
 find /opt/owui-scripts -type f -exec sed -i 's/\r$//' {} +
