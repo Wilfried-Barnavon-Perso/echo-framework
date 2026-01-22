@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.6.8
+# VERSION : 5.10.3
 # ==============================================================================
-# ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE
+# ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (LEGACY V1)
 # ==============================================================================
 
 # --- ETAPE 0 : GESTION VERSION & ENV ---
@@ -13,6 +13,7 @@ SYSTEM_VERSION_FILE="/opt/ECHO_VERSION"
 
 export COMPOSE_PROJECT_NAME="echo"
 
+# Mise à jour du fichier de version système si une nouvelle source existe
 if [ -f "$SOURCE_VERSION_FILE" ]; then
     cp -f "$SOURCE_VERSION_FILE" "$SYSTEM_VERSION_FILE"
     chmod 644 "$SYSTEM_VERSION_FILE"
@@ -29,6 +30,7 @@ if [ -f "$BRANCH_FILE" ]; then
     TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]')
 fi
 
+# FORCE LEGACY - Pas de détection auto pour votre environnement
 DOCKER_COMPOSE_CMD="docker-compose"
 
 echo "🚀 ECHO FRAMEWORK [COMPOSE LAUNCHER] v$ECHO_VERSION (Branche: $TARGET_BRANCH)"
@@ -43,16 +45,6 @@ wait_for_docker() {
         echo -n "."
     done
     echo " OK."
-}
-
-ensure_network() {
-    local net_name=$1
-    if docker network inspect "$net_name" >/dev/null 2>&1; then
-        echo "✅ Réseau '$net_name' détecté."
-    else
-        echo "🆕 Création réseau '$net_name'..."
-        docker network create "$net_name"
-    fi
 }
 
 ensure_volume() {
@@ -72,15 +64,11 @@ chmod +x /opt/owui-scripts/*.sh 2>/dev/null || true
 # --- 2. PROVISIONING RESSOURCES ---
 echo "🏗️  Vérification de l'infrastructure persistante..."
 
-ensure_network "ai-net"
-
-# Volumes standardisés (Convention echo-*)
-# "open-webui" devient "echo-webui-data" pour cohérence globale
+# Volumes standardisés
 ensure_volume "echo-webui-data"
 ensure_volume "echo-worker-data"
 ensure_volume "echo-browser-data"
 ensure_volume "echo-backups"
-ensure_volume "watchtower"
 ensure_volume "echo-bw-data"
 
 # --- 3. LANCEMENT DOCKER COMPOSE ---
@@ -94,20 +82,22 @@ fi
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull --quiet
 
-#Suppression forcée des dockers
-for d in $(docker ps -a --format '{{.Names}}') ; do 
-    echo "⚠️ Suppression préventive du conteneur $d pour éviter un crash..."
+# --- SUPPRESSION PRÉVENTIVE (HARD CLEAN) ---
+# Boucle conservée pour forcer le nettoyage des conteneurs 'echo-'
+# Utile pour éviter les conflits de noms sans faire un 'down' complet qui supprime les réseaux
+for d in $(docker ps -a --format '{{.Names}}' | grep "echo-") ; do 
+    echo "⚠️ Suppression préventive du conteneur $d..."
     docker rm -f $d >/dev/null 2>&1
 done
 
-# on attend 10 secondes la morts du conteneurs
+# on attend 10 secondes la morts ddesconteneurs
 for ((d=1 ; d < 11 ; d++ )) ; do
     echo "$((10-$d)) secondes avant construction..."
     [ -z "$(docker ps -a --format '{{.Names}}')" ] && break
     sleep 1 
 done
 
-
+# Démarrage
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
 
 if [ $? -eq 0 ]; then
@@ -118,18 +108,31 @@ else
 fi
 
 # --- 4. POST-INSTALL (CONFIG) ---
-echo "⏳ Attente disponibilité Open WebUI (Healthcheck)..."
+echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:3000)..."
+# Ce check fonctionne grâce au port 3000 exposé sur l'hôte
+MAX_RETRIES=60
+COUNT=0
 until curl -s -f http://localhost:3000/health > /dev/null; do
-    sleep 5
+    sleep 2
+    ((COUNT++))
+    if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
+        echo "❌ Timeout attente Open WebUI."
+        # On continue quand même pour tenter la config, au cas où c'est juste lent
+        break
+    fi
     echo -n "."
 done
 echo " UP."
 
-echo "🔧 Configuration Auto (API)..."
-# Utilisation de docker-compose exec pour cibler le SERVICE 'open-webui' défini dans le YAML.
-# Note: Le conteneur réel s'appelle 'echo-webui-core', mais compose utilise le nom du service.
-$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" exec -T open-webui /bin/bash /opt/owui-scripts/config-owui.sh
+echo "🔧 Configuration Auto (API Host-Driven)..."
+# Exécution locale depuis l'hôte (Host-Driven)
+# config-owui.sh est configuré pour taper sur localhost:3000
+if [ -f "/opt/owui-scripts/config-owui.sh" ]; then
+    /bin/bash /opt/owui-scripts/config-owui.sh
+else
+    echo "⚠️ Script de configuration introuvable (/opt/owui-scripts/config-owui.sh)"
+fi
 
-# Nettoyage
+# Nettoyage images orphelines
 docker image prune -f >/dev/null 2>&1
 echo "✅ DEPLOIEMENT TERMINÉ."

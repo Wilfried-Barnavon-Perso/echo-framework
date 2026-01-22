@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.9.1
+# SCRIPT VERSION : 5.9.2
 # DATE           : 2026-01-21
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -60,7 +60,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.9.1"
+$SCRIPT_VERSION = "5.9.2"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
@@ -107,6 +107,7 @@ $HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0
 $FilesMap = @{
   # SCRIPTS
   "/opt/owui-scripts/install-stack.sh"            = "$ScriptDir\00-Install\install-stack.sh"
+  "/opt/owui-scripts/sync-echo.sh"                = "$ScriptDir\00-Install\sync-echo.sh"  
   "/opt/owui-scripts/update-echo.sh"              = "$ScriptDir\00-Install\update-echo.sh"
   "/opt/owui-scripts/upgrade-echo.sh"             = "$ScriptDir\00-Install\upgrade-echo.sh"
   "/opt/owui-scripts/config-owui.sh"              = "$ScriptDir\00-Install\config-owui.sh"
@@ -258,11 +259,8 @@ $WriteFilesBlock
     runcmd:
       - [chown, -R, "${AutoUser}:${AutoUser}", "/home/${AutoUser}"]
       - [systemctl restart chrony]
-      # Permissions Exécutables pour les scripts bash
-      - [chmod, +x, /opt/owui-scripts/install-stack.sh]
-      - [chmod, +x, /opt/owui-scripts/update-echo.sh]
-      - [chmod, +x, /opt/owui-scripts/upgrade-echo.sh]
-      - [chmod, +x, /opt/owui-scripts/config-owui.sh]
+      # Permissions Exécutables (Syntaxe string pour supporter le wildcard *)
+      - "chmod +x /opt/owui-scripts/*.sh"
 
       # Liens Symboliques pour usage facile
       - [ln, -s, /opt/owui-scripts/update-echo.sh, /usr/local/bin/update-echo]
