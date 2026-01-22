@@ -1,6 +1,7 @@
 version: '3.8'
+
 # ==============================================================================
-# ECHO FRAMEWORK v5.1 - ARCHITECTURE SIMPLIFIÉE (HOST-DRIVEN CONFIG)
+# ECHO FRAMEWORK v6.3 - FIX BUNKERWEB STABILITY
 # ==============================================================================
 
 services:
@@ -18,7 +19,11 @@ services:
       - "80:8080"
       - "443:8443"
     environment:
+      # Fix: On force l'IP du contrôleur pour éviter les erreurs de détection
+      - SERVER_NAME=echo-ai.eu
       - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+      - USE_REDIS=yes
+      - REDIS_HOST=bw-redis
     networks:
       - bw-control
       - bw-public
@@ -36,12 +41,15 @@ services:
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
       - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+      - USE_REDIS=yes
+      - REDIS_HOST=bw-redis
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - echo-bw-data:/data
     networks:
       - bw-control
 
-  # --- SCHEDULER ---
+  # --- SCHEDULER (MASTER DB) ---
   bw-scheduler:
     image: bunkerity/bunkerweb-scheduler:1.6.7
     container_name: echo-bw-scheduler
@@ -62,7 +70,8 @@ services:
       - LOG_LEVEL=info
       - USE_REDIS=yes
       - REDIS_HOST=bw-redis
-      - DATABASE_URI=sqlite:///var/lib/bunkerweb/db.sqlite3
+      # SQLite est la DB par défaut, pas besoin de la forcer si on utilise Redis pour le cache
+      - DATABASE_URI=sqlite:///data/db.sqlite3
     volumes:
       - echo-bw-data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -91,6 +100,7 @@ services:
       - USE_REDIS=yes
       - REDIS_HOST=bw-redis
       - UI_HOST=http://bw-ui:7000
+      - DATABASE_URI=sqlite:///data/db.sqlite3
     volumes:
       - echo-bw-data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -128,7 +138,6 @@ services:
       - "bunkerweb.REVERSE_PROXY_HEADERS_1=X-Forwarded-Proto: https"
     volumes:
       - echo-webui-data:/app/backend/data
-      # Volumes de scripts/tools supprimés ici car config-owui.sh tourne sur l'hôte
       - /opt/echo-images:/app/backend/data/images:ro
       - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
     command: >
