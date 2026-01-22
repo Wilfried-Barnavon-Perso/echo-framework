@@ -1,10 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.10.3
+# VERSION : 5.11 (ACL & Maintenance Patch)
+# AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (LEGACY V1)
 # ==============================================================================
+
+set -e # Arrêt en cas d'erreur critique
 
 # --- ETAPE 0 : GESTION VERSION & ENV ---
 REPO_ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"
@@ -61,7 +64,18 @@ ensure_volume() {
 wait_for_docker
 chmod +x /opt/owui-scripts/*.sh 2>/dev/null || true
 
-# --- 2. PROVISIONING RESSOURCES ---
+# --- 2. FIX PERMISSIONS SOCKET DOCKER (BUNKERWEB UID 101) ---
+# Nécessaire pour BunkerWeb 1.6.x+ sur Ubuntu pour éviter les boucles Autoconf
+echo "🔧 [FIX] Configuration des ACL pour le socket Docker (UID 101)..."
+if ! command -v setfacl >/dev/null 2>&1; then
+    echo "   📦 Installation du paquet 'acl'..."
+    apt-get update -qq && apt-get install -y -qq acl > /dev/null
+fi
+
+# Application de la permission RW pour l'utilisateur 101 (BunkerWeb)
+setfacl -m u:101:rw /var/run/docker.sock || echo "⚠️  Attention : Échec de l'application setfacl."
+
+# --- 3. PROVISIONING RESSOURCES ---
 echo "🏗️  Vérification de l'infrastructure persistante..."
 
 # Volumes standardisés
@@ -71,7 +85,7 @@ ensure_volume "echo-browser-data"
 ensure_volume "echo-backups"
 ensure_volume "echo-bw-data"
 
-# --- 3. LANCEMENT DOCKER COMPOSE ---
+# --- 4. LANCEMENT DOCKER COMPOSE ---
 COMPOSE_FILE="/opt/owui-scripts/docker-compose.yml"
 
 if [ ! -f "$COMPOSE_FILE" ]; then
@@ -84,18 +98,21 @@ $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull --quiet
 
 # --- SUPPRESSION PRÉVENTIVE (HARD CLEAN) ---
 # Boucle conservée pour forcer le nettoyage des conteneurs 'echo-'
-# Utile pour éviter les conflits de noms sans faire un 'down' complet qui supprime les réseaux
+set +e # Ne pas stopper le script si aucun conteneur n'est trouvé
 for d in $(docker ps -a --format '{{.Names}}' | grep "echo-") ; do 
     echo "⚠️ Suppression préventive du conteneur $d..."
     docker rm -f $d >/dev/null 2>&1
 done
 
-# on attend 10 secondes la morts ddesconteneurs
+# On attend 10 secondes la mort des conteneurs
 for ((d=1 ; d < 11 ; d++ )) ; do
     echo "$((10-$d)) secondes avant construction..."
-    [ -z "$(docker ps -a --format '{{.Names}}')" ] && break
+    # On vérifie s'il reste des conteneurs echo-
+    REMAINING=$(docker ps -a --format '{{.Names}}' | grep "echo-" || true)
+    [ -z "$REMAINING" ] && break
     sleep 1 
 done
+set -e
 
 # Démarrage
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
@@ -107,11 +124,12 @@ else
     exit 1
 fi
 
-# --- 4. POST-INSTALL (CONFIG) ---
+# --- 5. POST-INSTALL (CONFIG) ---
 echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:3000)..."
 # Ce check fonctionne grâce au port 3000 exposé sur l'hôte
 MAX_RETRIES=60
 COUNT=0
+set +e
 until curl -s -f http://localhost:3000/health > /dev/null; do
     sleep 2
     ((COUNT++))
@@ -122,11 +140,10 @@ until curl -s -f http://localhost:3000/health > /dev/null; do
     fi
     echo -n "."
 done
+set -e
 echo " UP."
 
 echo "🔧 Configuration Auto (API Host-Driven)..."
-# Exécution locale depuis l'hôte (Host-Driven)
-# config-owui.sh est configuré pour taper sur localhost:3000
 if [ -f "/opt/owui-scripts/config-owui.sh" ]; then
     /bin/bash /opt/owui-scripts/config-owui.sh
 else
