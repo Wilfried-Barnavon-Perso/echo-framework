@@ -40,6 +40,7 @@ services:
       # ------------------------------------------------------------------------
       # CONFIGURATION ADMIN INTERNE (Via Env - SANS SUFFIXES)
       # ------------------------------------------------------------------------
+    labels:
       - bunkerweb.USE_REVERSE_PROXY=yes
       - bunkerweb.REVERSE_PROXY_URL=/
       # URL complète requise ici selon la doc AIO
