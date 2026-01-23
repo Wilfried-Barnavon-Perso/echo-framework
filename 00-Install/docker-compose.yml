@@ -83,7 +83,7 @@ services:
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL_1=/"
       - "bunkerweb.REVERSE_PROXY_HOST_1=echo-webui-core"
-      - "bunkerweb.REVERSE_PROXY_PORT_1=3000"
+      - "bunkerweb.REVERSE_PROXY_PORT_1=8080"
       - "bunkerweb.REVERSE_PROXY_WS_1=yes"
       # SUSPICION 3 (MAJEURE) : La variable $host n'est pas interprétée correctement par Docker Compose.
       # Cela envoie un header vide et peut causer l'erreur 500 interne Nginx.
