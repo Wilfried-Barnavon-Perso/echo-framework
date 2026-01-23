@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : update-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 5.11
+# VERSION : 5.12
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR RAPIDE (CODE ONLY) + HOT RELOAD
@@ -36,7 +36,7 @@ else
 fi
 
 # RELANCE DU SCRIPT SI MIS A JOUR
-if [[ "$MY_OWN_ORIGIN" -nt "$CURRENT_SCRIPT" ]]; then
+if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then
     exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 

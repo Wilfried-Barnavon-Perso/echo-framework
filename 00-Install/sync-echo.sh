@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 3.0
+# VERSION : 3.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -116,7 +116,7 @@ find /opt/owui-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent 
 chmod +x /opt/owui-scripts/*.sh
 
 # RELANCE DU SCRIPT SI MIS A JOUR
-if [[ "$MY_OWN_ORIGIN" -nt "$CURRENT_SCRIPT" ]]; then
+if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then
     exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 

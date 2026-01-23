@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 5.12
+# VERSION : 5.13
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
@@ -49,7 +49,7 @@ else
 fi
 
 # RELANCE DU SCRIPT SI MIS A JOUR
-if [[ "$MY_OWN_ORIGIN" -nt "$CURRENT_SCRIPT" ]]; then
+if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then
     exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 
