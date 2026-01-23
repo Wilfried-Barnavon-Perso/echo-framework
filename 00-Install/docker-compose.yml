@@ -70,8 +70,8 @@ services:
     networks:
       - bw-public
     # SUSPICION 1 : Conflit de ports. On commente pour forcer le passage par BunkerWeb uniquement.
-    # ports:
-    #   - "3000:8080"
+    ports:
+      - "3000:8080"
     environment:
       - WEBUI_AUTH=True
     # --------------------------------------------------------------------------
