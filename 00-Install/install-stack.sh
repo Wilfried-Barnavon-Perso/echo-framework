@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.15 (Global Hard Clean Patch)
+# VERSION : 5.16 (Global Hard Clean Patch)
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (LEGACY V1)
@@ -140,7 +140,7 @@ fi
 # --- 6. POST-INSTALL (CONFIG) ---
 echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:3000)..."
 # Ce check fonctionne grâce au port 3000 exposé sur l'hôte
-MAX_RETRIES=60
+MAX_RETRIES=300
 COUNT=0
 set +e
 until curl -s -f http://localhost:3000/health > /dev/null; do
