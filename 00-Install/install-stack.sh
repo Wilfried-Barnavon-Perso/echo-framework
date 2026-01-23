@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.14 (Global Hard Clean Patch)
+# VERSION : 5.15 (Global Hard Clean Patch)
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (LEGACY V1)
@@ -70,8 +70,7 @@ BW_SECRET_FILE="/opt/.bw-setting-secret"
 if [ ! -f "$BW_SECRET_FILE" ]; then
     echo "🆕 Génération du secret BunkerWeb (Admin UI)..."
     # Génération d'un mot de passe complexe de 16 caractères
-    BW_PASS=$(LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16)
-    echo "$BW_PASS" > "$BW_SECRET_FILE"
+    LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16 > "$BW_SECRET_FILE"
     chmod 400 "$BW_SECRET_FILE"
 fi
 # Export global pour que docker-compose (pull et up) y ait accès
