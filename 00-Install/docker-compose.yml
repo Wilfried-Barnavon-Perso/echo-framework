@@ -1,7 +1,7 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v5.9.15 - ALL-IN-ONE ARCHITECTURE (DYNAMIC SECRETS)
+# ECHO FRAMEWORK v5.9.16 - ALL-IN-ONE ARCHITECTURE (DYNAMIC SECRETS)
 # ==============================================================================
 
 services:
@@ -69,22 +69,26 @@ services:
     restart: always
     networks:
       - bw-public
-    ports:
-      - "3000:8080"
+    # SUSPICION 1 : Conflit de ports. On commente pour forcer le passage par BunkerWeb uniquement.
+    # ports:
+    #   - "3000:8080"
     environment:
       - WEBUI_AUTH=True
     # --------------------------------------------------------------------------
     # ROUTAGE VIA LABELS (Renforcé)
     # --------------------------------------------------------------------------
     labels:
+      # SUSPICION 2 : On garde les 2 URLs car c'est valide, mais si ça plante encore, on en retirera une.
       - "bunkerweb.SERVER_NAME=echo-ai.eu www.echo-ai.eu"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL_1=/"
       - "bunkerweb.REVERSE_PROXY_HOST_1=echo-webui-core"
       - "bunkerweb.REVERSE_PROXY_PORT_1=8080"
       - "bunkerweb.REVERSE_PROXY_WS_1=yes"
-      # Ajout de X-Forwarded-Host pour éviter l'erreur 500 (Origin Mismatch)
-      - "bunkerweb.REVERSE_PROXY_HEADERS_1=X-Forwarded-Proto: https|X-Forwarded-Host: $host"
+      # SUSPICION 3 (MAJEURE) : La variable $host n'est pas interprétée correctement par Docker Compose.
+      # Cela envoie un header vide et peut causer l'erreur 500 interne Nginx.
+      # On commente cette ligne complexe. PASS_HOST en dessous fait déjà le travail.
+      # - "bunkerweb.REVERSE_PROXY_HEADERS_1=X-Forwarded-Proto: https|X-Forwarded-Host: $host"
       - "bunkerweb.REVERSE_PROXY_PASS_HOST_1=yes"
     volumes:
       - echo-webui-data:/app/backend/data
