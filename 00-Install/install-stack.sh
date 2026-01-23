@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.11 (ACL & Maintenance Patch)
+# VERSION : 5.13 (ACL & Maintenance Patch)
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (LEGACY V1)
@@ -85,6 +85,10 @@ ensure_volume "echo-browser-data"
 ensure_volume "echo-backups"
 ensure_volume "echo-bw-data"
 
+# FIX CRITIQUE PERMISSIONS AIO (UID 101)
+# On s'assure que le volume de données BunkerWeb est accessible en écriture pour l'utilisateur interne.
+docker run --rm -v echo-bw-data:/data alpine chown -R 101:101 /data
+
 # --- 4. LANCEMENT DOCKER COMPOSE ---
 COMPOSE_FILE="/opt/owui-scripts/docker-compose.yml"
 
@@ -97,22 +101,32 @@ echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_N
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull --quiet
 
 # --- SUPPRESSION PRÉVENTIVE (HARD CLEAN) ---
-# Boucle conservée pour forcer le nettoyage des conteneurs 'echo-'
-set +e # Ne pas stopper le script si aucun conteneur n'est trouvé
-for d in $(docker ps -a --format '{{.Names}}' | grep "echo-") ; do 
+# Suppression de TOUS les conteneurs pour garantir un état propre
+set +e 
+for d in $(docker ps -a --format '{{.Names}}') ; do 
     echo "⚠️ Suppression préventive du conteneur $d..."
     docker rm -f $d >/dev/null 2>&1
 done
 
-# On attend 10 secondes la mort des conteneurs
+# Attente de la libération des ressources (10s)
 for ((d=1 ; d < 11 ; d++ )) ; do
     echo "$((10-$d)) secondes avant construction..."
-    # On vérifie s'il reste des conteneurs echo-
     REMAINING=$(docker ps -a --format '{{.Names}}' | grep "echo-" || true)
     [ -z "$REMAINING" ] && break
     sleep 1 
 done
 set -e
+
+# --- 2. GESTION DES SECRETS D'INFRASTRUCTURE ---
+# A. Secret BunkerWeb (Basic Auth)
+BW_SECRET_FILE="/opt/.bw-setting-secret"
+if [ ! -f "$BW_SECRET_FILE" ]; then
+    echo "🆕 Génération du secret BunkerWeb (Admin UI)..."
+    BW_PASS=$(LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16)
+    echo "$BW_PASS" > "$BW_SECRET_FILE"
+    chmod 400 "$BW_SECRET_FILE"
+fi
+export BW_PASSWORD=$(cat "$BW_SECRET_FILE" | tr -d '[:space:]')
 
 # Démarrage
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
@@ -126,7 +140,6 @@ fi
 
 # --- 5. POST-INSTALL (CONFIG) ---
 echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:3000)..."
-# Ce check fonctionne grâce au port 3000 exposé sur l'hôte
 MAX_RETRIES=60
 COUNT=0
 set +e
@@ -135,7 +148,6 @@ until curl -s -f http://localhost:3000/health > /dev/null; do
     ((COUNT++))
     if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
         echo "❌ Timeout attente Open WebUI."
-        # On continue quand même pour tenter la config, au cas où c'est juste lent
         break
     fi
     echo -n "."
@@ -153,3 +165,8 @@ fi
 # Nettoyage images orphelines
 docker image prune -f >/dev/null 2>&1
 echo "✅ DEPLOIEMENT TERMINÉ."
+echo "-----------------------------------------------------------"
+echo "🔐 ACCÈS ADMIN BUNKERWEB (bw.echo-ai.eu) :"
+echo "   User : admin"
+echo "   Pass : $BW_PASSWORD"
+echo "-----------------------------------------------------------"

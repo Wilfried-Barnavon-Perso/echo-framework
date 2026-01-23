@@ -1,145 +1,62 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v6.5 - REMEDIATED & AI-OPTIMIZED (BUNKERWEB 1.6.7)
+# ECHO FRAMEWORK v6.6.4 - ALL-IN-ONE ARCHITECTURE (DYNAMIC SECRETS)
 # ==============================================================================
 
 services:
 
   # ============================================================================
-  # ZONE 1 : BUNKERWEB CONTROL PLANE (GATEWAY)
+  # ZONE 1 : BUNKERWEB ALL-IN-ONE (GATEWAY + UI + SCHEDULER)
   # ============================================================================
 
-  # --- PROXY FRONT-END (Data Plane) ---
   bunkerweb:
-    image: bunkerity/bunkerweb:1.6.7
+    image: bunkerity/bunkerweb-all-in-one:1.6.7
     container_name: echo-bunkerweb
     restart: always
     ports:
       - "80:8080"
       - "443:8443"
     environment:
-      - SERVER_NAME=echo-ai.eu www.echo-ai.eu
-      - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
-      - USE_REDIS=yes
-      - REDIS_HOST=bw-redis
-      - DATABASE_URI=sqlite:///data/db.sqlite3
-      - DISABLE_DEFAULT_SERVER=yes
-      - MAX_CLIENT_BODY_SIZE=500m
-    networks:
-      - bw-control
-      - bw-public
-    volumes:
-      - echo-bw-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # --- AUTOCONF (The Bridge) ---
-  bw-autoconf:
-    image: bunkerity/bunkerweb-autoconf:1.6.7
-    container_name: echo-bw-autoconf
-    restart: always
-    depends_on:
-      bunkerweb:
-        condition: service_healthy
-      bw-scheduler:
-        condition: service_started
-    environment:
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
-      - LOG_LEVEL=info
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - echo-bw-data:/data
-    networks:
-      - bw-control
-
-  # --- SCHEDULER (The Brain) ---
-  bw-scheduler:
-    image: bunkerity/bunkerweb-scheduler:1.6.7
-    container_name: echo-bw-scheduler
-    restart: always
-    depends_on:
-      bw-redis:
-        condition: service_healthy
-    environment:
-      - DOCKER_HOST=unix:///var/run/docker.sock
+      # WHITELIST : Seuls ces domaines sont acceptés par le proxy
+      - SERVER_NAME=echo-ai.eu www.echo-ai.eu bw.echo-ai.eu am.echo-ai.eu
       - MULTISITE=yes
+      - DISABLE_DEFAULT_SERVER=yes
       - AUTO_LETS_ENCRYPT=yes
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
-      - USE_CLIENT_CACHE=yes
-      - USE_GZIP=yes
-      - USE_WAF=yes
-      - MAX_CLIENT_BODY_SIZE=500m
       - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
-      - LOG_LEVEL=info
+      
+      # MODE AIO CONFIGURATION
+      - AUTOCONF_MODE=yes
+      - SERVICE_UI=yes
+      - SERVICE_SCHEDULER=yes
       - USE_REDIS=yes
-      - REDIS_HOST=bw-redis
-      - DATABASE_URI=sqlite:///data/db.sqlite3
+      
+      # OPTIMISATIONS IA
+      - MAX_CLIENT_BODY_SIZE=500m
+      - REVERSE_PROXY_TIMEOUT=300
+      - REVERSE_PROXY_BUFFERING=no
+      
+      # ROUTAGE SPECIFIQUE : bw.echo-ai.eu -> Interface Interne (port 7000)
+      - bw.echo-ai.eu_USE_REVERSE_PROXY=yes
+      - bw.echo-ai.eu_REVERSE_PROXY_URL_1=/
+      - bw.echo-ai.eu_REVERSE_PROXY_HOST_1=http://127.0.0.1:7000
+      - bw.echo-ai.eu_USE_WAF=no
+      - bw.echo-ai.eu_USE_AUTH_BASIC=yes
+      - bw.echo-ai.eu_AUTH_BASIC_USER=admin
+      # Utilise le mot de passe injecté par install-stack.sh
+      - bw.echo-ai.eu_AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+      
     volumes:
       - echo-bw-data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - bw-control
-
-  # --- REDIS (Session & Cache) ---
-  bw-redis:
-    image: redis:7-alpine
-    container_name: echo-bw-redis
-    restart: always
-    networks:
-      - bw-control
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save "" --appendonly no
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # --- UI CONFIGURATION (Dashboard) ---
-  bw-ui:
-    image: bunkerity/bunkerweb-ui:1.6.7
-    container_name: echo-bw-ui
-    restart: always
-    depends_on:
-      bw-scheduler:
-        condition: service_started
-      bw-redis:
-        condition: service_healthy
-    environment:
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - USE_REDIS=yes
-      - REDIS_HOST=bw-redis
-      - UI_HOST=http://bw-ui:7000
-      - DATABASE_URI=sqlite:///data/db.sqlite3
-      # FIX CRITIQUE: Mode monoprocessus pour éviter la boucle de redirection v1.6.7
-      - MAX_WORKERS=1
-    volumes:
-      - echo-bw-data:/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - bw-control
       - bw-public
-    labels:
-      - "bunkerweb.SERVER_NAME=bw.echo-ai.eu"
-      - "bunkerweb.USE_REVERSE_PROXY=yes"
-      - "bunkerweb.REVERSE_PROXY_URL_1=/"
-      - "bunkerweb.REVERSE_PROXY_HOST_1=echo-bw-ui"
-      - "bunkerweb.REVERSE_PROXY_PORT_1=7000"
-      - "bunkerweb.USE_WAF=no"
-      # SECURITE ADDITIONNELLE
-      - "bunkerweb.USE_AUTH_BASIC=yes"
-      - "bunkerweb.AUTH_BASIC_USER=admin"
-      - "bunkerweb.AUTH_BASIC_PASSWORD=changeme"
 
   # ============================================================================
-  # ZONE 2 : APPLICATIONS & WORKERS (AI Workload Optimized)
+  # ZONE 2 : APPLICATIONS & WORKERS
   # ============================================================================
 
-  # --- OPEN WEBUI ---
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: echo-webui-core
@@ -158,10 +75,6 @@ services:
       - "bunkerweb.REVERSE_PROXY_PORT_1=8080"
       - "bunkerweb.REVERSE_PROXY_WS_1=yes"
       - "bunkerweb.REVERSE_PROXY_HEADERS_1=X-Forwarded-Proto: https"
-      # OPTIMISATION IA : Streaming et uploads volumineux
-      - "bunkerweb.MAX_CLIENT_BODY_SIZE=0"
-      - "bunkerweb.REVERSE_PROXY_TIMEOUT=300"
-      - "bunkerweb.REVERSE_PROXY_BUFFERING=no"
     volumes:
       - echo-webui-data:/app/backend/data
       - /opt/echo-images:/app/backend/data/images:ro
@@ -169,7 +82,6 @@ services:
     command: >
       /bin/bash -c "pip install mgzip && ./start.sh"
 
-  # --- ADMIN MANAGER ---
   admin-manager:
     image: python:3.11
     container_name: echo-admin-manager
@@ -193,7 +105,6 @@ services:
     command: >
       /bin/bash -c "pip install --no-cache-dir flask flask-cors docker psutil paramiko APScheduler schedule && python /app/server.py"
 
-  # --- WORKER : SANDBOX CODE ---
   python-worker:
     image: python:3.11-slim
     container_name: echo-python-worker
@@ -206,7 +117,6 @@ services:
     command: >
       /bin/bash -c "pip install --no-cache-dir flask flask-cors requests pandas numpy scipy scikit-learn matplotlib seaborn yfinance beautifulsoup4 openpyxl regex sympy && python /app/app.py"
 
-  # --- WORKER : BROWSER AGENT ---
   browser-agent:
     image: python:3.11-slim
     container_name: echo-browser-agent
@@ -222,21 +132,17 @@ services:
     command: >
       /bin/bash -c "apt-get update && apt-get install -y chromium fonts-liberation libasound2 libnss3 libgbm1 libnspr4 xdg-utils && pip install --no-cache-dir flask flask-cors DrissionPage html2text && python /app/app.py"
 
-  # --- UTILS : WATCHTOWER ---
   watchtower:
     image: containrrr/watchtower
     container_name: echo-watchtower
     restart: always
     networks:
-      - bw-control
+      - bw-public
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --interval 3600 --cleanup
 
 networks:
-  bw-control:
-    driver: bridge
-    internal: false
   bw-public:
     driver: bridge
 
