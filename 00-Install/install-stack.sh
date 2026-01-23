@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.13 (ACL & Maintenance Patch)
+# VERSION : 5.14 (Global Hard Clean Patch)
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (LEGACY V1)
@@ -64,21 +64,29 @@ ensure_volume() {
 wait_for_docker
 chmod +x /opt/owui-scripts/*.sh 2>/dev/null || true
 
-# --- 2. FIX PERMISSIONS SOCKET DOCKER (BUNKERWEB UID 101) ---
-# Nécessaire pour BunkerWeb 1.6.x+ sur Ubuntu pour éviter les boucles Autoconf
+# --- 2. GESTION DES SECRETS D'INFRASTRUCTURE (AVANT TOUTE COMMANDE DOCKER) ---
+# A. Secret BunkerWeb (Basic Auth)
+BW_SECRET_FILE="/opt/.bw-setting-secret"
+if [ ! -f "$BW_SECRET_FILE" ]; then
+    echo "🆕 Génération du secret BunkerWeb (Admin UI)..."
+    # Génération d'un mot de passe complexe de 16 caractères
+    BW_PASS=$(LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16)
+    echo "$BW_PASS" > "$BW_SECRET_FILE"
+    chmod 400 "$BW_SECRET_FILE"
+fi
+# Export global pour que docker-compose (pull et up) y ait accès
+export BW_PASSWORD=$(cat "$BW_SECRET_FILE" | tr -d '[:space:]')
+
+# --- 3. FIX PERMISSIONS SOCKET DOCKER (BUNKERWEB UID 101) ---
 echo "🔧 [FIX] Configuration des ACL pour le socket Docker (UID 101)..."
 if ! command -v setfacl >/dev/null 2>&1; then
     echo "   📦 Installation du paquet 'acl'..."
     apt-get update -qq && apt-get install -y -qq acl > /dev/null
 fi
-
-# Application de la permission RW pour l'utilisateur 101 (BunkerWeb)
 setfacl -m u:101:rw /var/run/docker.sock || echo "⚠️  Attention : Échec de l'application setfacl."
 
-# --- 3. PROVISIONING RESSOURCES ---
+# --- 4. PROVISIONING RESSOURCES ---
 echo "🏗️  Vérification de l'infrastructure persistante..."
-
-# Volumes standardisés
 ensure_volume "echo-webui-data"
 ensure_volume "echo-worker-data"
 ensure_volume "echo-browser-data"
@@ -89,7 +97,7 @@ ensure_volume "echo-bw-data"
 # On s'assure que le volume de données BunkerWeb est accessible en écriture pour l'utilisateur interne.
 docker run --rm -v echo-bw-data:/data alpine chown -R 101:101 /data
 
-# --- 4. LANCEMENT DOCKER COMPOSE ---
+# --- 5. LANCEMENT DOCKER COMPOSE ---
 COMPOSE_FILE="/opt/owui-scripts/docker-compose.yml"
 
 if [ ! -f "$COMPOSE_FILE" ]; then
@@ -98,37 +106,29 @@ if [ ! -f "$COMPOSE_FILE" ]; then
 fi
 
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."
+# Maintenant que BW_PASSWORD est exporté, le pull ne lèvera plus de Warning
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull --quiet
 
-# --- SUPPRESSION PRÉVENTIVE (HARD CLEAN) ---
-# Suppression de TOUS les conteneurs pour garantir un état propre
+# --- SUPPRESSION PRÉVENTIVE (HARD CLEAN GLOBAL) ---
+# On vide TOUS les conteneurs de la machine pour garantir un déploiement sans conflit
+# Attention : Cette opération est destructive pour tout conteneur tiers sur la VM.
 set +e 
 for d in $(docker ps -a --format '{{.Names}}') ; do 
     echo "⚠️ Suppression préventive du conteneur $d..."
     docker rm -f $d >/dev/null 2>&1
 done
 
-# Attente de la libération des ressources (10s)
-for ((d=1 ; d < 11 ; d++ )) ; do
+# On attend jusqu'à 10 secondes la mort des conteneurs
+for ((d=0 ; d < 10 ; d++ )) ; do
     echo "$((10-$d)) secondes avant construction..."
-    REMAINING=$(docker ps -a --format '{{.Names}}' | grep "echo-" || true)
+    # On vérifie s'il reste encore des conteneurs actifs
+    REMAINING=$(docker ps -a --format '{{.Names}}' || true)
     [ -z "$REMAINING" ] && break
     sleep 1 
 done
 set -e
 
-# --- 2. GESTION DES SECRETS D'INFRASTRUCTURE ---
-# A. Secret BunkerWeb (Basic Auth)
-BW_SECRET_FILE="/opt/.bw-setting-secret"
-if [ ! -f "$BW_SECRET_FILE" ]; then
-    echo "🆕 Génération du secret BunkerWeb (Admin UI)..."
-    BW_PASS=$(LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16)
-    echo "$BW_PASS" > "$BW_SECRET_FILE"
-    chmod 400 "$BW_SECRET_FILE"
-fi
-export BW_PASSWORD=$(cat "$BW_SECRET_FILE" | tr -d '[:space:]')
-
-# Démarrage
+# Démarrage final
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
 
 if [ $? -eq 0 ]; then
@@ -138,8 +138,9 @@ else
     exit 1
 fi
 
-# --- 5. POST-INSTALL (CONFIG) ---
+# --- 6. POST-INSTALL (CONFIG) ---
 echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:3000)..."
+# Ce check fonctionne grâce au port 3000 exposé sur l'hôte
 MAX_RETRIES=60
 COUNT=0
 set +e
@@ -148,6 +149,7 @@ until curl -s -f http://localhost:3000/health > /dev/null; do
     ((COUNT++))
     if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
         echo "❌ Timeout attente Open WebUI."
+        # On continue quand même pour tenter la config, au cas où c'est juste lent
         break
     fi
     echo -n "."
@@ -156,6 +158,8 @@ set -e
 echo " UP."
 
 echo "🔧 Configuration Auto (API Host-Driven)..."
+# Exécution locale depuis l'hôte (Host-Driven)
+# config-owui.sh est configuré pour taper sur localhost:3000
 if [ -f "/opt/owui-scripts/config-owui.sh" ]; then
     /bin/bash /opt/owui-scripts/config-owui.sh
 else
