@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : update-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 5.12
+# VERSION : 5.14
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR RAPIDE (CODE ONLY) + HOT RELOAD
@@ -15,8 +15,8 @@ export COMPOSE_PROJECT_NAME="echo"
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
 # --- SELF RUN (Protection) ---
-MY_OWN_ORIGIN="/opt/owui-scripts/${0##*/}"
-CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${0##*/}"
+CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${CURRENT_SCRIPT##*/}"
+MY_OWN_ORIGIN="/opt/owui-scripts/${CURRENT_SCRIPT##*/}"
 if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
     cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
     exec "$TMP_SCRIPT" "$@"; exit 0

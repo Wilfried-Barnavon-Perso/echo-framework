@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 3.1
+# VERSION : 3.3
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -16,13 +16,12 @@ BRANCH_FILE="/opt/ECHO_BRANCH"
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
 # --- SELF RUN (Protection) ---
-MY_OWN_ORIGIN="/opt/owui-scripts/${0##*/}"
-CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${0##*/}"
+CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${CURRENT_SCRIPT##*/}"
+MY_OWN_ORIGIN="/opt/owui-scripts/${CURRENT_SCRIPT##*/}"
 if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
     cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
     exec "$TMP_SCRIPT" "$@"; exit 0
 fi
-
 
 
 # --- 1. DÉTERMINATION BRANCHE CIBLE ---
