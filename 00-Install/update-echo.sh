@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : update-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 5.14
+# VERSION : 5.15
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR RAPIDE (CODE ONLY) + HOT RELOAD
@@ -10,6 +10,7 @@
 DOCKER_COMPOSE_CMD="docker-compose"
 COMPOSE_FILE="/opt/owui-scripts/docker-compose.yml"
 SYNC_SCRIPT="/opt/owui-scripts/sync-echo.sh"
+BW_SECRET_FILE="/opt/.bw-setting-secret"
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
@@ -20,6 +21,11 @@ MY_OWN_ORIGIN="/opt/owui-scripts/${CURRENT_SCRIPT##*/}"
 if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
     cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
     exec "$TMP_SCRIPT" "$@"; exit 0
+fi
+
+# --- 0. CHARGEMENT DES SECRETS (Pour éviter les warnings Docker Compose) ---
+if [ -f "$BW_SECRET_FILE" ]; then
+    export BW_PASSWORD=$(cat "$BW_SECRET_FILE" | tr -d '[:space:]')
 fi
 
 
