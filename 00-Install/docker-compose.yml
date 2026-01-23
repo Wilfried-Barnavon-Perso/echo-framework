@@ -21,8 +21,10 @@ services:
       # ------------------------------------------------------------------------
       # CONFIGURATION GLOBALE
       # ------------------------------------------------------------------------
-      # On déclare UNIQUEMENT le domaine ici pour stabiliser le cœur
-      - SERVER_NAME=echo-ai.eu
+      # IMPORTANT : On ne liste ICI que le domaine géré par variables d'environnement.
+      # Les domaines gérés par LABELS (echo-ai.eu, am.echo-ai.eu) ne DOIVENT PAS être ici
+      # sinon BunkerWeb ignore les labels et sert une erreur 500.
+      - SERVER_NAME=bw.echo-ai.eu
       
       - MULTISITE=yes
       - DISABLE_DEFAULT_SERVER=yes
@@ -40,13 +42,11 @@ services:
       - REVERSE_PROXY_BUFFERING=no
 
       # ------------------------------------------------------------------------
-      # CONFIGURATION ADMIN INTERNE (Via Env pour stabilité maximale)
+      # CONFIGURATION ADMIN INTERNE (Via Env sans suffixes)
       # ------------------------------------------------------------------------
-      # Ceci répare l'accès à bw.echo-ai.eu et l'erreur "signed by example.com"
       - bw.echo-ai.eu_USE_REVERSE_PROXY=yes
-      - bw.echo-ai.eu_REVERSE_PROXY_URL_1=/
-      - bw.echo-ai.eu_REVERSE_PROXY_HOST_1=127.0.0.1
-      - bw.echo-ai.eu_REVERSE_PROXY_PORT_1=7000
+      - bw.echo-ai.eu_REVERSE_PROXY_URL=/
+      - bw.echo-ai.eu_REVERSE_PROXY_HOST=http://127.0.0.1:7000
       - bw.echo-ai.eu_USE_WAF=no
       - bw.echo-ai.eu_USE_AUTH_BASIC=yes
       - bw.echo-ai.eu_AUTH_BASIC_USER=admin
@@ -76,16 +76,16 @@ services:
     environment:
       - WEBUI_AUTH=True
     # --------------------------------------------------------------------------
-    # SORTIE 1 : ROUTAGE BUNKERWEB (Interne Docker)
+    # SORTIE 1 : ROUTAGE BUNKERWEB (Autoconf)
     # --------------------------------------------------------------------------
     labels:
+      # Suffixes _1 retirés pour simplifier la détection
       - "bunkerweb.SERVER_NAME=echo-ai.eu www.echo-ai.eu"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
-      - "bunkerweb.REVERSE_PROXY_URL_1=/"
-      - "bunkerweb.REVERSE_PROXY_HOST_1=echo-webui-core"
-      - "bunkerweb.REVERSE_PROXY_PORT_1=8080"
-      - "bunkerweb.REVERSE_PROXY_WS_1=yes"
-      # Configuration minimale et robuste : pas de headers complexes.
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=echo-webui-core"
+      - "bunkerweb.REVERSE_PROXY_PORT=8080"
+      - "bunkerweb.REVERSE_PROXY_WS=yes"
     volumes:
       - echo-webui-data:/app/backend/data
       - /opt/echo-images:/app/backend/data/images:ro
@@ -107,9 +107,9 @@ services:
     labels:
       - "bunkerweb.SERVER_NAME=am.echo-ai.eu"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
-      - "bunkerweb.REVERSE_PROXY_URL_1=/"
-      - "bunkerweb.REVERSE_PROXY_HOST_1=echo-admin-manager"
-      - "bunkerweb.REVERSE_PROXY_PORT_1=3001"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=echo-admin-manager"
+      - "bunkerweb.REVERSE_PROXY_PORT=3001"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/admin-manager/server.py:/app/server.py:ro
