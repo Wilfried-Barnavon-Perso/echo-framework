@@ -29,7 +29,7 @@ services:
       - DISABLE_DEFAULT_SERVER=yes
       - AUTO_LETS_ENCRYPT=yes
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
-      - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+      #- API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
       
       # MODE AIO & OPTIMISATIONS
       - AUTOCONF_MODE=yes
@@ -48,8 +48,10 @@ services:
       # URL complète requise ici selon la doc AIO
       - bw.echo-ai.eu_REVERSE_PROXY_HOST=http://127.0.0.1:7000
       - bw.echo-ai.eu_USE_WAF=no
-      # DÉSACTIVATION TOTALE DE L'AUTH BASIC (Conflit avec l'UI interne)
-      - bw.echo-ai.eu_USE_AUTH_BASIC=no
+      # ACTIVATION AUTH BASIC (Couche de sécurité supplémentaire)
+      - bw.echo-ai.eu_USE_AUTH_BASIC=yes
+      - bw.echo-ai.eu_AUTH_BASIC_USER=admin
+      - bw.echo-ai.eu_AUTH_BASIC_PASSWORD=${BW_PASSWORD}
 
     volumes:
       - echo-bw-data:/data
@@ -72,8 +74,6 @@ services:
     # --------------------------------------------------------------------------
     ports:
       - "3000:8080"
-    environment:
-      - WEBUI_AUTH=True
     # --------------------------------------------------------------------------
     # ROUTAGE BUNKERWEB (Labels - SANS SUFFIXES)
     # --------------------------------------------------------------------------
@@ -84,6 +84,8 @@ services:
       # CORRECTION : URL complète (http + host + port) comme dans la doc
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-webui-core:8080"
       - "bunkerweb.REVERSE_PROXY_WS=yes"
+      # FIX 500 (App) : On force le protocole HTTPS pour éviter les erreurs de contenu mixte
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Forwarded-Proto: https"
     volumes:
       - echo-webui-data:/app/backend/data
       - /opt/echo-images:/app/backend/data/images:ro
@@ -92,13 +94,15 @@ services:
       /bin/bash -c "pip install mgzip && ./start.sh"
 
   admin-manager:
+    ports:
+      - "3001:3001"
     image: python:3.11
     container_name: echo-admin-manager
     restart: always
     networks:
       - bw-public
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+#    extra_hosts:
+#      - "host.docker.internal:host-gateway"
     # --------------------------------------------------------------------------
     # ROUTAGE VIA LABELS (Labels - SANS SUFFIXES)
     # --------------------------------------------------------------------------
@@ -108,6 +112,11 @@ services:
       - "bunkerweb.REVERSE_PROXY_URL=/"
       # CORRECTION : URL complète (http + host + port)
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
+      # ACTIVATION AUTH BASIC (Couche de sécurité supplémentaire)
+      - bw.echo-ai.eu_USE_AUTH_BASIC=yes
+      - bw.echo-ai.eu_AUTH_BASIC_USER=admin
+      - bw.echo-ai.eu_AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/admin-manager/server.py:/app/server.py:ro
