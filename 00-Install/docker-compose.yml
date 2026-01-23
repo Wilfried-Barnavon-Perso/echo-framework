@@ -1,7 +1,7 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v6.6.4 - ALL-IN-ONE ARCHITECTURE (DYNAMIC SECRETS)
+# ECHO FRAMEWORK v5.9.14 - ALL-IN-ONE ARCHITECTURE (DYNAMIC SECRETS)
 # ==============================================================================
 
 services:
@@ -18,8 +18,12 @@ services:
       - "80:8080"
       - "443:8443"
     environment:
-      # WHITELIST : Seuls ces domaines sont acceptés par le proxy
-      - SERVER_NAME=echo-ai.eu www.echo-ai.eu bw.echo-ai.eu am.echo-ai.eu
+      # ------------------------------------------------------------------------
+      # CONFIGURATION GLOBALE
+      # ------------------------------------------------------------------------
+      # IMPORTANT : Ne lister ICI que les domaines gérés par variables d'environnement (bw.echo-ai.eu).
+      # Les domaines gérés par LABELS (echo-ai.eu, am.echo-ai.eu) seront détectés automatiquement.
+      - SERVER_NAME=bw.echo-ai.eu
       - MULTISITE=yes
       - DISABLE_DEFAULT_SERVER=yes
       - AUTO_LETS_ENCRYPT=yes
