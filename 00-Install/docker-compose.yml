@@ -47,10 +47,10 @@ services:
       - bunkerweb.REVERSE_PROXY_HOST=http://127.0.0.1:7000
       - bunkerweb.USE_WAF=no
       # ACTIVATION AUTH BASIC (Couche de sécurité supplémentaire)
-      - bunkerweb.USE_AUTH_BASIC=yes
-      - bunkerweb.AUTH_BASIC_LOCATION=sitewide
-      - bunkerweb.AUTH_BASIC_USER=admin
-      - bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+      #- bunkerweb.USE_AUTH_BASIC=yes
+      #- bunkerweb.AUTH_BASIC_LOCATION=sitewide
+      #- bunkerweb.AUTH_BASIC_USER=admin
+      #- bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}
 
     volumes:
       - echo-bw-data:/data
