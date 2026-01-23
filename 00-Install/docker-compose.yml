@@ -15,15 +15,14 @@ services:
     container_name: echo-bunkerweb
     restart: always
     ports:
-      - "80:8080"
-      - "443:8443"
+      - "80:8080/tcp"
+      - "443:8443/tcp"
+      - "443:8443/udp"
     environment:
       # ------------------------------------------------------------------------
       # CONFIGURATION GLOBALE
       # ------------------------------------------------------------------------
-      # IMPORTANT : On ne liste ICI que le domaine géré par variables d'environnement.
-      # Les domaines gérés par LABELS (echo-ai.eu, am.echo-ai.eu) ne DOIVENT PAS être ici
-      # sinon BunkerWeb ignore les labels et sert une erreur 500.
+      # Seul le domaine d'admin est déclaré ici (Env).
       - SERVER_NAME=bw.echo-ai.eu
       
       - MULTISITE=yes
@@ -42,15 +41,15 @@ services:
       - REVERSE_PROXY_BUFFERING=no
 
       # ------------------------------------------------------------------------
-      # CONFIGURATION ADMIN INTERNE (Via Env sans suffixes)
+      # CONFIGURATION ADMIN INTERNE (Via Env - SANS SUFFIXES)
       # ------------------------------------------------------------------------
       - bw.echo-ai.eu_USE_REVERSE_PROXY=yes
       - bw.echo-ai.eu_REVERSE_PROXY_URL=/
+      # URL complète requise ici selon la doc AIO
       - bw.echo-ai.eu_REVERSE_PROXY_HOST=http://127.0.0.1:7000
       - bw.echo-ai.eu_USE_WAF=no
-      - bw.echo-ai.eu_USE_AUTH_BASIC=yes
-      - bw.echo-ai.eu_AUTH_BASIC_USER=admin
-      - bw.echo-ai.eu_AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+      # DÉSACTIVATION TOTALE DE L'AUTH BASIC (Conflit avec l'UI interne)
+      - bw.echo-ai.eu_USE_AUTH_BASIC=no
 
     volumes:
       - echo-bw-data:/data
@@ -76,15 +75,14 @@ services:
     environment:
       - WEBUI_AUTH=True
     # --------------------------------------------------------------------------
-    # SORTIE 1 : ROUTAGE BUNKERWEB (Autoconf)
+    # ROUTAGE BUNKERWEB (Labels - SANS SUFFIXES)
     # --------------------------------------------------------------------------
     labels:
-      # Suffixes _1 retirés pour simplifier la détection
       - "bunkerweb.SERVER_NAME=echo-ai.eu www.echo-ai.eu"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
-      - "bunkerweb.REVERSE_PROXY_HOST=echo-webui-core"
-      - "bunkerweb.REVERSE_PROXY_PORT=8080"
+      # CORRECTION : URL complète (http + host + port) comme dans la doc
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-webui-core:8080"
       - "bunkerweb.REVERSE_PROXY_WS=yes"
     volumes:
       - echo-webui-data:/app/backend/data
@@ -102,14 +100,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # --------------------------------------------------------------------------
-    # ROUTAGE VIA LABELS
+    # ROUTAGE VIA LABELS (Labels - SANS SUFFIXES)
     # --------------------------------------------------------------------------
     labels:
       - "bunkerweb.SERVER_NAME=am.echo-ai.eu"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
-      - "bunkerweb.REVERSE_PROXY_HOST=echo-admin-manager"
-      - "bunkerweb.REVERSE_PROXY_PORT=3001"
+      # CORRECTION : URL complète (http + host + port)
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/admin-manager/server.py:/app/server.py:ro
