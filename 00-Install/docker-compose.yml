@@ -1,7 +1,7 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v5.9.14 - ALL-IN-ONE ARCHITECTURE (DYNAMIC SECRETS)
+# ECHO FRAMEWORK v5.9.15 - ALL-IN-ONE ARCHITECTURE (DYNAMIC SECRETS)
 # ==============================================================================
 
 services:
@@ -19,38 +19,40 @@ services:
       - "443:8443"
     environment:
       # ------------------------------------------------------------------------
-      # CONFIGURATION GLOBALE
+      # CONFIGURATION GLOBALE (Nettoyée)
       # ------------------------------------------------------------------------
-      # IMPORTANT : Ne lister ICI que les domaines gérés par variables d'environnement (bw.echo-ai.eu).
-      # Les domaines gérés par LABELS (echo-ai.eu, am.echo-ai.eu) seront détectés automatiquement.
-      - SERVER_NAME=bw.echo-ai.eu
+      # On retire SERVER_NAME pour laisser l'AutoConf gérer intégralement via les Labels
       - MULTISITE=yes
       - DISABLE_DEFAULT_SERVER=yes
       - AUTO_LETS_ENCRYPT=yes
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
       - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
       
-      # MODE AIO CONFIGURATION
+      # MODE AIO & OPTIMISATIONS
       - AUTOCONF_MODE=yes
       - SERVICE_UI=yes
       - SERVICE_SCHEDULER=yes
       - USE_REDIS=yes
-      
-      # OPTIMISATIONS IA
       - MAX_CLIENT_BODY_SIZE=500m
       - REVERSE_PROXY_TIMEOUT=300
       - REVERSE_PROXY_BUFFERING=no
       
-      # ROUTAGE SPECIFIQUE : bw.echo-ai.eu -> Interface Interne (port 7000)
-      - bw.echo-ai.eu_USE_REVERSE_PROXY=yes
-      - bw.echo-ai.eu_REVERSE_PROXY_URL_1=/
-      - bw.echo-ai.eu_REVERSE_PROXY_HOST_1=http://127.0.0.1:7000
-      - bw.echo-ai.eu_USE_WAF=no
-      - bw.echo-ai.eu_USE_AUTH_BASIC=yes
-      - bw.echo-ai.eu_AUTH_BASIC_USER=admin
-      # Utilise le mot de passe injecté par install-stack.sh
-      - bw.echo-ai.eu_AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+      # Note : La configuration de bw.echo-ai.eu est déplacée dans les LABELS ci-dessous
       
+    labels:
+      # ------------------------------------------------------------------------
+      # ROUTAGE 1 : BUNKERWEB UI (Auto-Labeling)
+      # ------------------------------------------------------------------------
+      - "bunkerweb.SERVER_NAME=bw.echo-ai.eu"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL_1=/"
+      - "bunkerweb.REVERSE_PROXY_HOST_1=127.0.0.1"
+      - "bunkerweb.REVERSE_PROXY_PORT_1=7000"
+      - "bunkerweb.USE_WAF=no"
+      - "bunkerweb.USE_AUTH_BASIC=yes"
+      - "bunkerweb.AUTH_BASIC_USER=admin"
+      - "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
+
     volumes:
       - echo-bw-data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -71,6 +73,9 @@ services:
       - "3000:8080"
     environment:
       - WEBUI_AUTH=True
+    # --------------------------------------------------------------------------
+    # ROUTAGE VIA LABELS (Renforcé)
+    # --------------------------------------------------------------------------
     labels:
       - "bunkerweb.SERVER_NAME=echo-ai.eu www.echo-ai.eu"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
@@ -78,7 +83,9 @@ services:
       - "bunkerweb.REVERSE_PROXY_HOST_1=echo-webui-core"
       - "bunkerweb.REVERSE_PROXY_PORT_1=8080"
       - "bunkerweb.REVERSE_PROXY_WS_1=yes"
-      - "bunkerweb.REVERSE_PROXY_HEADERS_1=X-Forwarded-Proto: https"
+      # Ajout de X-Forwarded-Host pour éviter l'erreur 500 (Origin Mismatch)
+      - "bunkerweb.REVERSE_PROXY_HEADERS_1=X-Forwarded-Proto: https|X-Forwarded-Host: $host"
+      - "bunkerweb.REVERSE_PROXY_PASS_HOST_1=yes"
     volumes:
       - echo-webui-data:/app/backend/data
       - /opt/echo-images:/app/backend/data/images:ro
@@ -94,6 +101,9 @@ services:
       - bw-public
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # --------------------------------------------------------------------------
+    # ROUTAGE VIA LABELS
+    # --------------------------------------------------------------------------
     labels:
       - "bunkerweb.SERVER_NAME=am.echo-ai.eu"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
