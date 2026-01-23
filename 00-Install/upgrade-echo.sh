@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 5.10
+# VERSION : 5.12
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
@@ -12,14 +12,17 @@ SYNC_SCRIPT="/opt/owui-scripts/sync-echo.sh"
 COMPOSE_FILE="/opt/owui-scripts/docker-compose.yml"
 export COMPOSE_PROJECT_NAME="echo"
 
+if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
+
 # --- SELF RUN (Protection) ---
-CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/upgrade-echo-running.sh"
+MY_OWN_ORIGIN="/opt/owui-scripts/${0##*/}"
+CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${0##*/}"
 if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
     cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
     exec "$TMP_SCRIPT" "$@"; exit 0
 fi
 
-if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
+
 
 # --- CONFIRMATION ---
 BRANCH_FILE="/opt/ECHO_BRANCH"
@@ -41,23 +44,13 @@ read -p "Tapez 'CONFIRMER' : " CONFIRM
 if [ -f "$SYNC_SCRIPT" ]; then
     /bin/bash "$SYNC_SCRIPT" || exit 1
 else
-    # Fallback critique : Si sync n'est pas là, on tente de le récupérer manuellement depuis le repo
-    echo "⚠️  Script sync introuvable. Tentative de récupération manuelle..."
-    SRC_DIR="/opt/echo-framework-source"
-    if [ ! -d "$SRC_DIR/.git" ]; then
-        git clone "https://github.com/Wilfried-Barnavon-Perso/echo-framework.git" "$SRC_DIR"
-    fi
-    cd "$SRC_DIR" || exit
-    git fetch origin
-    git reset --hard "origin/$TARGET_BRANCH"
-    
-    # Copie minimale pour avoir le sync
-    mkdir -p "/opt/owui-scripts"
-    cp "$SRC_DIR/00-Install/sync-echo.sh" "$SYNC_SCRIPT"
-    chmod +x "$SYNC_SCRIPT"
-    
-    # Exécution du sync maintenant qu'on l'a
-    /bin/bash "$SYNC_SCRIPT" || exit 1
+    echo "⚠️  Script de sync introuvable ($SYNC_SCRIPT). Installation corrompue ?"
+    exit 1
+fi
+
+# RELANCE DU SCRIPT SI MIS A JOUR
+if [[ "$MY_OWN_ORIGIN" -nt "$CURRENT_SCRIPT" ]]; then
+    exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 
 # --- 2. DOCKER COMPOSE PULL ---

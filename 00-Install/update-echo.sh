@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : update-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 5.10
+# VERSION : 5.11
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR RAPIDE (CODE ONLY) + HOT RELOAD
@@ -14,6 +14,15 @@ export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
+# --- SELF RUN (Protection) ---
+MY_OWN_ORIGIN="/opt/owui-scripts/${0##*/}"
+CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${0##*/}"
+if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
+    cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
+    exec "$TMP_SCRIPT" "$@"; exit 0
+fi
+
+
 echo "🚀 DÉMARRAGE MISE À JOUR RAPIDE (UPDATE)..."
 
 # --- 1. SYNC & DEPLOY (Centralisé) ---
@@ -24,6 +33,11 @@ if [ -f "$SYNC_SCRIPT" ]; then
 else
     echo "⚠️  Script de sync introuvable ($SYNC_SCRIPT). Installation corrompue ?"
     exit 1
+fi
+
+# RELANCE DU SCRIPT SI MIS A JOUR
+if [[ "$MY_OWN_ORIGIN" -nt "$CURRENT_SCRIPT" ]]; then
+    exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 
 # --- 2. HOT RELOAD ---

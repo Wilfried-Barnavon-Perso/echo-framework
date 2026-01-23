@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 2.0.0 (Git Sync + Deploy)
+# VERSION : 3.0
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -14,6 +14,16 @@ SRC_DIR="/opt/echo-framework-source"
 BRANCH_FILE="/opt/ECHO_BRANCH"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
+
+# --- SELF RUN (Protection) ---
+MY_OWN_ORIGIN="/opt/owui-scripts/${0##*/}"
+CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${0##*/}"
+if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
+    cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
+    exec "$TMP_SCRIPT" "$@"; exit 0
+fi
+
+
 
 # --- 1. DÉTERMINATION BRANCHE CIBLE ---
 TARGET_BRANCH="main"
@@ -104,5 +114,10 @@ echo "   🧹 Nettoyage des caractères Windows et permissions..."
 find /opt/owui-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
 find /opt/owui-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i 's/\r$//' {} +
 chmod +x /opt/owui-scripts/*.sh
+
+# RELANCE DU SCRIPT SI MIS A JOUR
+if [[ "$MY_OWN_ORIGIN" -nt "$CURRENT_SCRIPT" ]]; then
+    exec "$MY_OWN_ORIGIN" "$@"; exit 0
+fi
 
 echo "✅ [SYNC] Code source déployé avec succès."
