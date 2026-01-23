@@ -24,14 +24,11 @@ services:
       # ------------------------------------------------------------------------
       # Seul le domaine d'admin est déclaré ici (Env).
       - SERVER_NAME=bw.echo-ai.eu
-      
       - MULTISITE=yes
       - DISABLE_DEFAULT_SERVER=yes
       - AUTO_LETS_ENCRYPT=yes
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
       #- API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
-      
-      # MODE AIO & OPTIMISATIONS
       - AUTOCONF_MODE=yes
       - SERVICE_UI=yes
       - SERVICE_SCHEDULER=yes
@@ -43,15 +40,16 @@ services:
       # ------------------------------------------------------------------------
       # CONFIGURATION ADMIN INTERNE (Via Env - SANS SUFFIXES)
       # ------------------------------------------------------------------------
-      - bw.echo-ai.eu_USE_REVERSE_PROXY=yes
-      - bw.echo-ai.eu_REVERSE_PROXY_URL=/
+      - bunkerweb.USE_REVERSE_PROXY=yes
+      - bunkerweb.REVERSE_PROXY_URL=/
       # URL complète requise ici selon la doc AIO
-      - bw.echo-ai.eu_REVERSE_PROXY_HOST=http://127.0.0.1:7000
-      - bw.echo-ai.eu_USE_WAF=no
+      - bunkerweb.REVERSE_PROXY_HOST=http://127.0.0.1:7000
+      - bunkerweb.USE_WAF=no
       # ACTIVATION AUTH BASIC (Couche de sécurité supplémentaire)
-      - bw.echo-ai.eu_USE_AUTH_BASIC=yes
-      - bw.echo-ai.eu_AUTH_BASIC_USER=admin
-      - bw.echo-ai.eu_AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+      - bunkerweb.USE_AUTH_BASIC=yes
+      - bunkerweb.AUTH_BASIC_LOCATION = sitewide
+      - bunkerweb.AUTH_BASIC_USER=admin
+      - bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}
 
     volumes:
       - echo-bw-data:/data
@@ -113,9 +111,10 @@ services:
       # CORRECTION : URL complète (http + host + port)
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
       # ACTIVATION AUTH BASIC (Couche de sécurité supplémentaire)
-      - bw.echo-ai.eu_USE_AUTH_BASIC=yes
-      - bw.echo-ai.eu_AUTH_BASIC_USER=admin
-      - bw.echo-ai.eu_AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+      - bunkerweb.USE_AUTH_BASIC=yes
+      - bunkerweb.AUTH_BASIC_LOCATION = sitewide
+      - bunkerweb.AUTH_BASIC_USER=admin
+      - bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}
 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
