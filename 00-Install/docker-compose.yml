@@ -21,8 +21,8 @@ services:
       # ------------------------------------------------------------------------
       # CONFIGURATION GLOBALE
       # ------------------------------------------------------------------------
-      # On déclare UNIQUEMENT le domaine d'admin ici pour stabiliser le cœur
-      - SERVER_NAME=bw.echo-ai.eu
+      # On déclare UNIQUEMENT le domaine ici pour stabiliser le cœur
+      - SERVER_NAME=echo-ai.eu
       
       - MULTISITE=yes
       - DISABLE_DEFAULT_SERVER=yes
@@ -43,14 +43,14 @@ services:
       # CONFIGURATION ADMIN INTERNE (Via Env pour stabilité maximale)
       # ------------------------------------------------------------------------
       # Ceci répare l'accès à bw.echo-ai.eu et l'erreur "signed by example.com"
-      - bw.echo-ai.eu_USE_REVERSE_PROXY=yes
-      - bw.echo-ai.eu_REVERSE_PROXY_URL_1=/
-      - bw.echo-ai.eu_REVERSE_PROXY_HOST_1=127.0.0.1
-      - bw.echo-ai.eu_REVERSE_PROXY_PORT_1=7000
-      - bw.echo-ai.eu_USE_WAF=no
-      - bw.echo-ai.eu_USE_AUTH_BASIC=yes
-      - bw.echo-ai.eu_AUTH_BASIC_USER=admin
-      - bw.echo-ai.eu_AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+#      - bw.echo-ai.eu_USE_REVERSE_PROXY=yes
+#      - bw.echo-ai.eu_REVERSE_PROXY_URL_1=/
+#      - bw.echo-ai.eu_REVERSE_PROXY_HOST_1=127.0.0.1
+#      - bw.echo-ai.eu_REVERSE_PROXY_PORT_1=7000
+#      - bw.echo-ai.eu_USE_WAF=no
+#      - bw.echo-ai.eu_USE_AUTH_BASIC=yes
+#      - bw.echo-ai.eu_AUTH_BASIC_USER=admin
+#      - bw.echo-ai.eu_AUTH_BASIC_PASSWORD=${BW_PASSWORD}
 
     volumes:
       - echo-bw-data:/data
