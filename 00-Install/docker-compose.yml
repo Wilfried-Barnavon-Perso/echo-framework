@@ -73,7 +73,7 @@ services:
     # INTERNAL UI ROUTING (Via Labels on Self)
     # Routing the Admin UI (port 7000) through the WAF (port 8443)
     # --------------------------------------------------------------------------
-    labels:
+    #labels:
      # - "bunkerweb.SERVER_NAME=bw.echo-ai.eu"
      # - "bunkerweb.USE_REVERSE_PROXY=yes"
      # - "bunkerweb.REVERSE_PROXY_URL=/"
