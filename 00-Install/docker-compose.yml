@@ -49,19 +49,6 @@ services:
       - AUTO_LETS_ENCRYPT=yes
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
 
-      # BUNKERWEB PROTECTION
-      - SERVER_NAME=bw.echo-ai.eu"
-      - USE_REVERSE_PROXY=yes"
-      - REVERSE_PROXY_URL=/"
-      - REVERSE_PROXY_HOST=http://127.0.0.1:7000" # Loopback to internal UI
-      - USE_WAF=yes"
-      
-      # --- Auth Basic for Admin UI ---
-      - USE_AUTH_BASIC=yes"
-      - AUTH_BASIC_LOCATION=sitewide"
-      - AUTH_BASIC_USER=admin"
-      - AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
-
     # --------------------------------------------------------------------------
     # PERSISTENCE & ACCESS
     # --------------------------------------------------------------------------
@@ -69,7 +56,23 @@ services:
       - echo-bw-data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro # Required for Autoconf to work
 
-  
+    # --------------------------------------------------------------------------
+    # INTERNAL UI ROUTING (Via Labels on Self)
+    # Routing the Admin UI (port 7000) through the WAF (port 8443)
+    # --------------------------------------------------------------------------
+    labels:
+      - "bunkerweb.SERVER_NAME=bw.echo-ai.eu"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://127.0.0.1:7000" # Loopback to internal UI
+      - "bunkerweb.USE_WAF=yes"
+      
+      # --- Auth Basic for Admin UI ---
+      #- "bunkerweb.USE_AUTH_BASIC=yes"
+      #- "bunkerweb.AUTH_BASIC_LOCATION=sitewide"
+      #- "bunkerweb.AUTH_BASIC_USER=admin"
+      #- "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
+
   # ============================================================================
   # SERVICE 2: OPEN WEBUI (AI FRONTEND)
   # Role: Chat Interface. Accessed via echo-ai.eu
@@ -78,10 +81,10 @@ services:
     image: ghcr.io/open-webui/open-webui:main
     container_name: echo-webui-core
     restart: always
-    ports:
-      - 127.0.0.1:3000:8080
     networks:
       - bw-public
+    # SECURITY NOTE: Port 3000 removed. Access strictly via WAF.
+    
     volumes:
       - echo-webui-data:/app/backend/data
       - /opt/echo-images:/app/backend/data/images:ro
@@ -105,10 +108,10 @@ services:
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Forwarded-Proto: https" # Fix SSL detection 
       
       # --- Access Control ---
-      #- "bunkerweb.USE_AUTH_BASIC=yes"              # Enable Basic Auth 
-      #- "bunkerweb.AUTH_BASIC_LOCATION=sitewide"    # Protect all routes
-      #- "bunkerweb.AUTH_BASIC_USER=admin"
-      #- "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
+      - "bunkerweb.USE_AUTH_BASIC=yes"              # Enable Basic Auth 
+      - "bunkerweb.AUTH_BASIC_LOCATION=sitewide"    # Protect all routes
+      - "bunkerweb.AUTH_BASIC_USER=admin"
+      - "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
 
     command: >
       /bin/bash -c "pip install mgzip &&./start.sh"
@@ -169,8 +172,8 @@ services:
     networks:
       - bw-public
     ipc: host # Required for Chrome memory management
-    #environment:
-    #  - PIP_ROOT_USER_ACTION=ignore
+    environment:
+      - PIP_ROOT_USER_ACTION=ignore
     volumes:
       - /opt/browser-agent/browser_api.py:/app/app.py:ro
       - echo-browser-data:/app/data
