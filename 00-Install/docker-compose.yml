@@ -40,7 +40,7 @@ services:
       - USE_REDIS=yes               # Enables internal Redis for caching/rate-limiting [2]
       
       # --- Security & Network Defaults ---
-      #- API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+      - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
       - DISABLE_DEFAULT_SERVER=yes  # Security: Drops connections to undefined domains 
       - MAX_CLIENT_BODY_SIZE=500m   # Allow large file uploads for RAG/Images
       - REVERSE_PROXY_TIMEOUT=300   # 300s timeout for slow AI inference 
