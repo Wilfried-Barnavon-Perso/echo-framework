@@ -50,17 +50,17 @@ services:
       - AUTO_LETS_ENCRYPT=yes
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
 
-      - USE_REVERSE_PROXY=yes
-      - USE_REVERSE_PROXY=yes"
-      - REVERSE_PROXY_URL=/"
-      - REVERSE_PROXY_HOST=http://127.0.0.1:7000 # Loopback to internal UI
-      - "bunkerweb.USE_WAF=yes"
+      #- USE_REVERSE_PROXY=yes
+      #- USE_REVERSE_PROXY=yes"
+      #- REVERSE_PROXY_URL=/"
+      #- REVERSE_PROXY_HOST=http://127.0.0.1:7000 # Loopback to internal UI
+      #- "bunkerweb.USE_WAF=yes"
       
       # --- Auth Basic for Admin UI ---
-      - USE_AUTH_BASIC=yes"
-      - AUTH_BASIC_LOCATION=sitewide
-      - AUTH_BASIC_USER=admin
-      - AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+      #- USE_AUTH_BASIC=yes"
+      #- AUTH_BASIC_LOCATION=sitewide
+      #- AUTH_BASIC_USER=admin
+      #- AUTH_BASIC_PASSWORD=${BW_PASSWORD}
 
     # --------------------------------------------------------------------------
     # PERSISTENCE & ACCESS
