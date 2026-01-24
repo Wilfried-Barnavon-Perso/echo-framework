@@ -24,6 +24,7 @@ services:
       - "80:8080/tcp"    # HTTP Ingress
       - "443:8443/tcp"   # HTTPS Ingress
       - "443:8443/udp"   # HTTP/3 QUIC Support
+      - 7000:7000
     networks:
       - bw-public
 
@@ -49,18 +50,6 @@ services:
       - AUTO_LETS_ENCRYPT=yes
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
       
-      - SERVER_NAME=bw.echo-ai.eu
-      - bw.echo-ai.eu_USE_REVERSE_PROXY=yes
-      - bw.echo-ai.eu_REVERSE_PROXY_URL=/
-      - bw.echo-ai.eu_REVERSE_PROXY_HOST=http://127.0.0.1:7000 # Loopback to internal UI
-      - bw.echo-ai.eu_bunkerweb.USE_WAF=yes
-      
-      # --- Auth Basic for Admin UI ---
-      #- USE_AUTH_BASIC=yes"
-      #- AUTH_BASIC_LOCATION=sitewide
-      #- AUTH_BASIC_USER=admin
-      #- AUTH_BASIC_PASSWORD=${BW_PASSWORD}
-
     # --------------------------------------------------------------------------
     # PERSISTENCE & ACCESS
     # --------------------------------------------------------------------------
