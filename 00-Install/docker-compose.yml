@@ -10,7 +10,7 @@ services:
   # ZONE 1 : BUNKERWEB ALL-IN-ONE (GATEWAY + UI + SCHEDULER)
   # ============================================================================
 
-  bunkerweb:
+  bunkerweb-aio:
     image: bunkerity/bunkerweb-all-in-one:1.6.7
     container_name: echo-bunkerweb
     restart: always
@@ -25,10 +25,10 @@ services:
       # Seul le domaine d'admin est déclaré ici (Env).
       - SERVER_NAME=bw.echo-ai.eu
       - MULTISITE=yes
-      #- DISABLE_DEFAULT_SERVER=yes
+      - DISABLE_DEFAULT_SERVER=yes
       - AUTO_LETS_ENCRYPT=yes
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
-      #- API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+      - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
       - AUTOCONF_MODE=yes
       - SERVICE_UI=yes
       - SERVICE_SCHEDULER=yes
@@ -36,7 +36,6 @@ services:
       - MAX_CLIENT_BODY_SIZE=500m
       - REVERSE_PROXY_TIMEOUT=300
       - REVERSE_PROXY_BUFFERING=no
-
       # ------------------------------------------------------------------------
       # CONFIGURATION ADMIN INTERNE (Via Env - SANS SUFFIXES)
       # ------------------------------------------------------------------------
