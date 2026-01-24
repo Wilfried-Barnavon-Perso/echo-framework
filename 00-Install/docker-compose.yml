@@ -33,7 +33,6 @@ services:
     # --------------------------------------------------------------------------
     environment:
       # --- System Mode ---
-      - SERVER_NAME=bw.echo-ai.eu
       - AUTOCONF_MODE=yes           # Enables dynamic discovery of labels [1]
       - MULTISITE=yes               # Enables support for multiple server names [9]
       - SERVICE_UI=yes              # Enables the internal Admin UI on port 7000 [2]
@@ -41,7 +40,7 @@ services:
       - USE_REDIS=yes               # Enables internal Redis for caching/rate-limiting [2]
       
       # --- Security & Network Defaults ---
-      - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+      #- API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
       - DISABLE_DEFAULT_SERVER=yes  # Security: Drops connections to undefined domains 
       - MAX_CLIENT_BODY_SIZE=500m   # Allow large file uploads for RAG/Images
       - REVERSE_PROXY_TIMEOUT=300   # 300s timeout for slow AI inference 
@@ -49,12 +48,12 @@ services:
       # --- SSL/TLS Automation ---
       - AUTO_LETS_ENCRYPT=yes
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
-
-      #- USE_REVERSE_PROXY=yes
-      #- USE_REVERSE_PROXY=yes"
-      #- REVERSE_PROXY_URL=/"
-      #- REVERSE_PROXY_HOST=http://127.0.0.1:7000 # Loopback to internal UI
-      #- "bunkerweb.USE_WAF=yes"
+      
+      - SERVER_NAME=bw.echo-ai.eu
+      - bw.echo-ai.eu_USE_REVERSE_PROXY=yes
+      - bw.echo-ai.eu_REVERSE_PROXY_URL=/
+      - bw.echo-ai.eu_REVERSE_PROXY_HOST=http://127.0.0.1:7000 # Loopback to internal UI
+      - bw.echo-ai.eu_bunkerweb.USE_WAF=yes
       
       # --- Auth Basic for Admin UI ---
       #- USE_AUTH_BASIC=yes"
