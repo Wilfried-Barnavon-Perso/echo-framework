@@ -32,6 +32,7 @@ services:
     # Global settings only. No site-specific rules here.
     # --------------------------------------------------------------------------
     environment:
+      - SERVER_NAME=bw.echo-ai.eu
       # --- System Mode ---
       - AUTOCONF_MODE=yes           # Enables dynamic discovery of labels [1]
       - MULTISITE=yes               # Enables support for multiple server names [9]
@@ -82,7 +83,7 @@ services:
     container_name: echo-webui-core
     restart: always
     ports:
-      - 3000:8080
+      - 127.0.0.1:3000:8080
     networks:
       - bw-public
     volumes:
@@ -172,8 +173,8 @@ services:
     networks:
       - bw-public
     ipc: host # Required for Chrome memory management
-    environment:
-      - PIP_ROOT_USER_ACTION=ignore
+    #environment:
+    #  - PIP_ROOT_USER_ACTION=ignore
     volumes:
       - /opt/browser-agent/browser_api.py:/app/app.py:ro
       - echo-browser-data:/app/data
