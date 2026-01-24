@@ -261,10 +261,11 @@ $WriteFilesBlock
       - "systemctl restart chrony"
       # Permissions Exécutables (Syntaxe string pour supporter le wildcard *)
       - "chmod +x /opt/owui-scripts/*.sh"
-      
+
       # Liens Symboliques pour usage facile
       - [ln, -s, /opt/owui-scripts/update-echo.sh, /usr/local/bin/update-echo]
       - [ln, -s, /opt/owui-scripts/upgrade-echo.sh, /usr/local/bin/upgrade-echo]
+      - [ln, -s, /opt/owui-scripts/upgrade-echo.sh, /usr/local/bin/rebuild-echo]
 
       # --- GIT INIT ---
       # Clone du repo pour permettre les updates futurs.

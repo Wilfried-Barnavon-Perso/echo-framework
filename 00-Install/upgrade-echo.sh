@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 5.15
+# VERSION : 5.16
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
@@ -14,6 +14,22 @@ BW_SECRET_FILE="/opt/.bw-setting-secret"
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
+
+if "$0" == "/usr/local/bin/rebuild-echo" ; then
+    clear
+    echo "⚠️  RECONSTRUCTION COMPLETE DE LA STACK ECHO"
+    echo "    Cette opération va :"
+    echo "    1. Arrêter tous les services de la stack"
+    echo "    2. Supprimer TOUS LES VOLUMES des conteneurs"
+    echo "    3. Supprimer toutes les images dockerfile"
+    echo ""
+    read -p "Tapez 'CONFIRMER' : " CONFIRM
+    [ "$CONFIRM" != "CONFIRMER" ] && exit 1
+
+    docker stop $(docker ps -aq) > /dev/null 2>&1 && echo "Services arrêtés"
+    docker volume rm $(docker volume ls -q) > /dev/null 2>&1 && echo "Volumes actifs supprimés"
+    docker system prune -a --volumes -f > /dev/null 2>&1 && echo "Volumes orphelins et images supprimé"
+fi
 
 # --- SELF RUN (Protection) ---
 CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${CURRENT_SCRIPT##*/}"
@@ -35,7 +51,7 @@ TARGET_BRANCH="main"
 if [ -f "$BRANCH_FILE" ]; then TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]'); fi
 
 clear
-echo "⚠️  UPGRADE MAJEUR via DOCKER COMPOSE (LEGACY V1)"
+echo "⚠️  UPGRADE MAJEUR via DOCKER-COMPOSE"
 echo "    Cette opération va :"
 echo "    1. Synchroniser le code et écraser les modifications locales"
 echo "    2. Télécharger les dernières images Docker"

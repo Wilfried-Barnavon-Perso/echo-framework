@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 3.3
+# VERSION : 3.4
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -104,6 +104,12 @@ sync_resource "$SRC_DIR/_assets/images"   "/opt/owui-images"
 sync_resource "$SRC_DIR/01-docker-admin-manager/server.py"  "/opt/admin-manager"
 sync_resource "$SRC_DIR/02-docker-python-worker/worker_api.py" "/opt/python-worker"
 sync_resource "$SRC_DIR/06-docker-browser-agent/browser_api.py" "/opt/browser-agent"
+
+# Lien symboliques
+
+ln -sf /opt/owui-scripts/update-echo.sh /usr/local/bin/update-echo 
+ln -sf /opt/owui-scripts/upgrade-echo.sh /usr/local/bin/upgrade-echo
+ln -sf /opt/owui-scripts/upgrade-echo.sh /usr/local/bin/rebuild-echo
 
 # Versioning
 if [ -f "$SRC_DIR/VERSION" ]; then cp "$SRC_DIR/VERSION" "/opt/ECHO_VERSION"; chmod 644 "/opt/ECHO_VERSION"; fi

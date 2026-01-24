@@ -83,8 +83,8 @@ services:
     restart: always
     networks:
       - bw-public
-    # SECURITY NOTE: Port 3000 removed. Access strictly via WAF.
-    
+    ports:
+      - 127.0.0.1:3000:8080
     volumes:
       - echo-webui-data:/app/backend/data
       - /opt/echo-images:/app/backend/data/images:ro
