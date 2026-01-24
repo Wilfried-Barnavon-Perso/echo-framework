@@ -33,6 +33,7 @@ services:
     # --------------------------------------------------------------------------
     environment:
       # --- System Mode ---
+      - SERVER_NAME=bw.echo-ai.eu
       - AUTOCONF_MODE=yes           # Enables dynamic discovery of labels [1]
       - MULTISITE=yes               # Enables support for multiple server names [9]
       - SERVICE_UI=yes              # Enables the internal Admin UI on port 7000 [2]
@@ -49,6 +50,18 @@ services:
       - AUTO_LETS_ENCRYPT=yes
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
 
+      - USE_REVERSE_PROXY=yes
+      - USE_REVERSE_PROXY=yes"
+      - REVERSE_PROXY_URL=/"
+      - REVERSE_PROXY_HOST=http://127.0.0.1:7000 # Loopback to internal UI
+      - "bunkerweb.USE_WAF=yes"
+      
+      # --- Auth Basic for Admin UI ---
+      - USE_AUTH_BASIC=yes"
+      - AUTH_BASIC_LOCATION=sitewide
+      - AUTH_BASIC_USER=admin
+      - AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+
     # --------------------------------------------------------------------------
     # PERSISTENCE & ACCESS
     # --------------------------------------------------------------------------
@@ -61,17 +74,17 @@ services:
     # Routing the Admin UI (port 7000) through the WAF (port 8443)
     # --------------------------------------------------------------------------
     labels:
-      - "bunkerweb.SERVER_NAME=bw.echo-ai.eu"
-      - "bunkerweb.USE_REVERSE_PROXY=yes"
-      - "bunkerweb.REVERSE_PROXY_URL=/"
-      - "bunkerweb.REVERSE_PROXY_HOST=http://127.0.0.1:7000" # Loopback to internal UI
-      - "bunkerweb.USE_WAF=yes"
+     # - "bunkerweb.SERVER_NAME=bw.echo-ai.eu"
+     # - "bunkerweb.USE_REVERSE_PROXY=yes"
+     # - "bunkerweb.REVERSE_PROXY_URL=/"
+     # - "bunkerweb.REVERSE_PROXY_HOST=http://127.0.0.1:7000" # Loopback to internal UI
+     # - "bunkerweb.USE_WAF=yes"
       
       # --- Auth Basic for Admin UI ---
-      - "bunkerweb.USE_AUTH_BASIC=yes"
-      - "bunkerweb.AUTH_BASIC_LOCATION=sitewide"
-      - "bunkerweb.AUTH_BASIC_USER=admin"
-      - "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
+     # - "bunkerweb.USE_AUTH_BASIC=yes"
+     # - "bunkerweb.AUTH_BASIC_LOCATION=sitewide"
+     # - "bunkerweb.AUTH_BASIC_USER=admin"
+     # - "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
 
   # ============================================================================
   # SERVICE 2: OPEN WEBUI (AI FRONTEND)
