@@ -10,7 +10,7 @@ services:
   # ZONE 1 : BUNKERWEB ALL-IN-ONE (GATEWAY + UI + SCHEDULER)
   # ============================================================================
 
-  bunkerweb-aio:
+  bunkerweb:
     image: bunkerity/bunkerweb-all-in-one:1.6.7
     container_name: echo-bunkerweb
     restart: always
@@ -110,10 +110,10 @@ services:
       # CORRECTION : URL complète (http + host + port)
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
       # ACTIVATION AUTH BASIC (Couche de sécurité supplémentaire)
-      - bunkerweb.USE_AUTH_BASIC=yes
-      - bunkerweb.AUTH_BASIC_LOCATION=sitewide
-      - bunkerweb.AUTH_BASIC_USER=admin
-      - bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}
+      #- bunkerweb.USE_AUTH_BASIC=yes
+      #- bunkerweb.AUTH_BASIC_LOCATION=sitewide
+      #- bunkerweb.AUTH_BASIC_USER=admin
+      #- bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}
 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
