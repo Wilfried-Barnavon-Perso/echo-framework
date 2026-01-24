@@ -15,7 +15,7 @@ export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
-if "$0" == "/usr/local/bin/rebuild-echo" ; then
+if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
     clear
     echo "⚠️  RECONSTRUCTION COMPLETE DE LA STACK ECHO"
     echo "    Cette opération va :"
