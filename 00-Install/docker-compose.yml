@@ -68,10 +68,10 @@ services:
       - "bunkerweb.USE_WAF=yes"
       
       # --- Auth Basic for Admin UI ---
-      #- "bunkerweb.USE_AUTH_BASIC=yes"
-      #- "bunkerweb.AUTH_BASIC_LOCATION=sitewide"
-      #- "bunkerweb.AUTH_BASIC_USER=admin"
-      #- "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
+      - "bunkerweb.USE_AUTH_BASIC=yes"
+      - "bunkerweb.AUTH_BASIC_LOCATION=sitewide"
+      - "bunkerweb.AUTH_BASIC_USER=admin"
+      - "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
 
   # ============================================================================
   # SERVICE 2: OPEN WEBUI (AI FRONTEND)
