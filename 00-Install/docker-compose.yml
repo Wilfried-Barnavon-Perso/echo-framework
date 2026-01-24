@@ -1,129 +1,158 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v5.9.15 - ALL-IN-ONE ARCHITECTURE (STABLE)
+# ECHO FRAMEWORK - SECURE AI INFRASTRUCTURE
+# Optimized for BunkerWeb 1.6.7 All-In-One with Autoconf
 # ==============================================================================
 
 services:
 
   # ============================================================================
-  # ZONE 1 : BUNKERWEB ALL-IN-ONE (GATEWAY + UI + SCHEDULER)
+  # SERVICE 1: BUNKERWEB GATEWAY (INGRESS CONTROLLER)
+  # Role: WAF, SSL Termination, Authentication Enforcement
   # ============================================================================
-
   bunkerweb:
     image: bunkerity/bunkerweb-all-in-one:1.6.7
     container_name: echo-bunkerweb
     restart: always
+    
+    # --------------------------------------------------------------------------
+    # NETWORK EXPOSURE
+    # Only the WAF exposes ports to the outside world.
+    # --------------------------------------------------------------------------
     ports:
-      - "80:8080/tcp"
-      - "443:8443/tcp"
-      - "443:8443/udp"
-    environment:
-      # ------------------------------------------------------------------------
-      # CONFIGURATION GLOBALE
-      # ------------------------------------------------------------------------
-      # Seul le domaine d'admin est déclaré ici (Env).
-      - SERVER_NAME=bw.echo-ai.eu
-      - MULTISITE=yes
-      - DISABLE_DEFAULT_SERVER=yes
-      - AUTO_LETS_ENCRYPT=yes
-      - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
-      - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
-      - AUTOCONF_MODE=yes
-      - SERVICE_UI=yes
-      - SERVICE_SCHEDULER=yes
-      - USE_REDIS=yes
-      - MAX_CLIENT_BODY_SIZE=500m
-      - REVERSE_PROXY_TIMEOUT=300
-      - REVERSE_PROXY_BUFFERING=no
-      # ------------------------------------------------------------------------
-      # CONFIGURATION ADMIN INTERNE (Via Env - SANS SUFFIXES)
-      # ------------------------------------------------------------------------
-      - bw.echo-ai.eu_USE_REVERSE_PROXY=yes
-      - bw.echo-ai.eu_REVERSE_PROXY_URL=/
-      # URL complète requise ici selon la doc AIO
-      - bw.echo-ai.eu_REVERSE_PROXY_HOST=http://127.0.0.1:7000
-      - bw.echo-ai.eu_USE_WAF=no
-      # ACTIVATION AUTH BASIC (Couche de sécurité supplémentaire)
-      - bw.echo-ai.eu_USE_AUTH_BASIC=yes
-      - bw.echo-ai.eu_AUTH_BASIC_LOCATION=sitewide
-      - bw.echo-ai.eu_AUTH_BASIC_USER=admin
-      - bw.echo-ai.eu_AUTH_BASIC_PASSWORD=${BW_PASSWORD}
-
-    volumes:
-      - echo-bw-data:/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - "80:8080/tcp"    # HTTP Ingress
+      - "443:8443/tcp"   # HTTPS Ingress
+      - "443:8443/udp"   # HTTP/3 QUIC Support
     networks:
       - bw-public
 
-  # ============================================================================
-  # ZONE 2 : APPLICATIONS & WORKERS
-  # ============================================================================
+    # --------------------------------------------------------------------------
+    # INFRASTRUCTURE CONFIGURATION (Environment Variables)
+    # Global settings only. No site-specific rules here.
+    # --------------------------------------------------------------------------
+    environment:
+      # --- System Mode ---
+      - AUTOCONF_MODE=yes           # Enables dynamic discovery of labels [1]
+      - MULTISITE=yes               # Enables support for multiple server names [9]
+      - SERVICE_UI=yes              # Enables the internal Admin UI on port 7000 [2]
+      - SERVICE_SCHEDULER=yes       # Enables internal task scheduling
+      - USE_REDIS=yes               # Enables internal Redis for caching/rate-limiting [2]
+      
+      # --- Security & Network Defaults ---
+      - API_WHITELIST_IP=127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+      - DISABLE_DEFAULT_SERVER=yes  # Security: Drops connections to undefined domains 
+      - MAX_CLIENT_BODY_SIZE=500m   # Allow large file uploads for RAG/Images
+      - REVERSE_PROXY_TIMEOUT=300   # 300s timeout for slow AI inference 
+      
+      # --- SSL/TLS Automation ---
+      - AUTO_LETS_ENCRYPT=yes
+      - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
 
+    # --------------------------------------------------------------------------
+    # PERSISTENCE & ACCESS
+    # --------------------------------------------------------------------------
+    volumes:
+      - echo-bw-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Required for Autoconf to work
+
+    # --------------------------------------------------------------------------
+    # INTERNAL UI ROUTING (Via Labels on Self)
+    # Routing the Admin UI (port 7000) through the WAF (port 8443)
+    # --------------------------------------------------------------------------
+    labels:
+      - "bunkerweb.SERVER_NAME=bw.echo-ai.eu"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://127.0.0.1:7000" # Loopback to internal UI
+      - "bunkerweb.USE_WAF=yes"
+      
+      # --- Auth Basic for Admin UI ---
+      - "bunkerweb.USE_AUTH_BASIC=yes"
+      - "bunkerweb.AUTH_BASIC_LOCATION=sitewide"
+      - "bunkerweb.AUTH_BASIC_USER=admin"
+      - "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
+
+  # ============================================================================
+  # SERVICE 2: OPEN WEBUI (AI FRONTEND)
+  # Role: Chat Interface. Accessed via echo-ai.eu
+  # ============================================================================
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: echo-webui-core
     restart: always
+    ports:
+      - 3000:8080
     networks:
       - bw-public
-    # --------------------------------------------------------------------------
-    # SORTIE 2 : RESEAU HOST (Scripts locaux)
-    # --------------------------------------------------------------------------
-    ports:
-      - "3000:8080"
-    # --------------------------------------------------------------------------
-    # ROUTAGE BUNKERWEB (Labels - SANS SUFFIXES)
-    # --------------------------------------------------------------------------
-    labels:
-      - "bunkerweb.SERVER_NAME=echo-ai.eu www.echo-ai.eu"
-      - "bunkerweb.USE_REVERSE_PROXY=yes"
-      - "bunkerweb.REVERSE_PROXY_URL=/"
-      # CORRECTION : URL complète (http + host + port) comme dans la doc
-      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-webui-core:8080"
-      - "bunkerweb.REVERSE_PROXY_WS=yes"
-      # FIX 500 (App) : On force le protocole HTTPS pour éviter les erreurs de contenu mixte
-      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Forwarded-Proto: https"
     volumes:
       - echo-webui-data:/app/backend/data
       - /opt/echo-images:/app/backend/data/images:ro
       - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
-    command: >
-      /bin/bash -c "pip install mgzip && ./start.sh"
+    
+    # --------------------------------------------------------------------------
+    # AUTOCONF LABELS
+    # All routing and security logic for this app lives here.
+    # --------------------------------------------------------------------------
+    labels:
+      - "bunkerweb.SERVER_NAME=echo-ai.eu www.echo-ai.eu"
+      
+      # --- Reverse Proxy Configuration ---
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-webui-core:8080" # DNS resolution by container name
+      
+      # --- AI Traffic Optimization ---
+      - "bunkerweb.REVERSE_PROXY_WS=yes"            # Enable WebSockets [10]
+      - "bunkerweb.REVERSE_PROXY_BUFFERING=no"      # Disable buffering for token streaming [11]
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Forwarded-Proto: https" # Fix SSL detection 
+      
+      # --- Access Control ---
+      #- "bunkerweb.USE_AUTH_BASIC=yes"              # Enable Basic Auth 
+      #- "bunkerweb.AUTH_BASIC_LOCATION=sitewide"    # Protect all routes
+      #- "bunkerweb.AUTH_BASIC_USER=admin"
+      #- "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
 
+    command: >
+      /bin/bash -c "pip install mgzip &&./start.sh"
+
+  # ============================================================================
+  # SERVICE 3: ADMIN MANAGER
+  # Role: Backend Utility. Accessed via am.echo-ai.eu
+  # ============================================================================
   admin-manager:
-    ports:
-      - "3001:3001"
     image: python:3.11
     container_name: echo-admin-manager
     restart: always
     networks:
       - bw-public
-#    extra_hosts:
-#      - "host.docker.internal:host-gateway"
-    # --------------------------------------------------------------------------
-    # ROUTAGE VIA LABELS (Labels - SANS SUFFIXES)
-    # --------------------------------------------------------------------------
-    labels:
-      - "bunkerweb.SERVER_NAME=am.echo-ai.eu"
-      - "bunkerweb.USE_REVERSE_PROXY=yes"
-      - "bunkerweb.REVERSE_PROXY_URL=/"
-      # CORRECTION : URL complète (http + host + port)
-      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
-      # ACTIVATION AUTH BASIC (Couche de sécurité supplémentaire)
-      #- bunkerweb.USE_AUTH_BASIC=yes
-      #- bunkerweb.AUTH_BASIC_LOCATION=sitewide
-      #- bunkerweb.AUTH_BASIC_USER=admin
-      #- bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}
-
+    # SECURITY NOTE: Port 3001 removed.
+    
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/admin-manager/server.py:/app/server.py:ro
       - echo-backups:/backups
       - echo-webui-data:/data
-      - echo-webui-data:/app/backend/data
+    
+    labels:
+      - "bunkerweb.SERVER_NAME=am.echo-ai.eu"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
+      
+      # --- Access Control ---
+      - "bunkerweb.USE_AUTH_BASIC=yes"
+      - "bunkerweb.AUTH_BASIC_LOCATION=sitewide"
+      - "bunkerweb.AUTH_BASIC_USER=admin"
+      - "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
+
     command: >
       /bin/bash -c "pip install --no-cache-dir flask flask-cors docker psutil paramiko APScheduler schedule && python /app/server.py"
 
+  # ============================================================================
+  # INTERNAL WORKERS
+  # Not exposed via BunkerWeb. No ingress labels.
+  # ============================================================================
   python-worker:
     image: python:3.11-slim
     container_name: echo-python-worker
@@ -142,7 +171,7 @@ services:
     restart: always
     networks:
       - bw-public
-    ipc: host
+    ipc: host # Required for Chrome memory management
     environment:
       - PIP_ROOT_USER_ACTION=ignore
     volumes:
@@ -161,6 +190,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --interval 3600 --cleanup
 
+# ==============================================================================
+# NETWORKS & VOLUMES
+# ==============================================================================
 networks:
   bw-public:
     driver: bridge
