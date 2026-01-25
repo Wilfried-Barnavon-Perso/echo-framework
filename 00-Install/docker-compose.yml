@@ -1,7 +1,7 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v5.25 - DISTRIBUTED ARCHITECTURE (SECURE DB & UI ACCESS FIXED)
+# ECHO FRAMEWORK v5.26 - DISTRIBUTED ARCHITECTURE (LOCAL UI)
 # ==============================================================================
 
 services:
@@ -105,16 +105,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - bw-services
-    labels:
-      - "bunkerweb.SERVER_NAME=bw.echo-ai.eu"
-      - "bunkerweb.USE_REVERSE_PROXY=yes"
-      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-bw-ui:7000"
-      - "bunkerweb.REVERSE_PROXY_URL=/"
-      - "bunkerweb.USE_AUTH_BASIC=no"
-      # FIX ACCES UI : On désactive la sécurité WAF pour l'interface d'admin elle-même
-      - "bunkerweb.USE_MODSECURITY=no"
-      - "bunkerweb.LIMIT_REQ_RATE=0"
-      - "bunkerweb.USE_ANTIBOT=no"
+    # MODIFICATION : Exposition directe sur le port 7000 (Local/LAN) au lieu du Reverse Proxy
+    ports:
+      - "7000:7000"
 
   # ============================================================================
   # SECTION 2 : CHARGES APPLICATIVES (APPS & WORKERS)
