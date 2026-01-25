@@ -1,7 +1,7 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v5.25 - DISTRIBUTED ARCHITECTURE (SECURE DB)
+# ECHO FRAMEWORK v5.25 - DISTRIBUTED ARCHITECTURE (SECURE DB & UI ACCESS FIXED)
 # ==============================================================================
 
 services:
@@ -111,6 +111,10 @@ services:
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-bw-ui:7000"
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.USE_AUTH_BASIC=no"
+      # FIX ACCES UI : On désactive la sécurité WAF pour l'interface d'admin elle-même
+      - "bunkerweb.USE_MODSECURITY=no"
+      - "bunkerweb.LIMIT_REQ_RATE=0"
+      - "bunkerweb.USE_ANTIBOT=no"
 
   # ============================================================================
   # SECTION 2 : CHARGES APPLICATIVES (APPS & WORKERS)
