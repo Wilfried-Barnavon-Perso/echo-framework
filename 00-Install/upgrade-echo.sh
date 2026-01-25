@@ -25,7 +25,7 @@ if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
     echo ""
     read -p "Tapez 'CONFIRMER' : " CONFIRM
     [ "$CONFIRM" != "CONFIRMER" ] && exit 1
-
+    export CONFIRMED_YET="yes"
     docker stop $(docker ps -aq) > /dev/null 2>&1 && echo "Services arrêtés"
     docker volume rm $(docker volume ls -q) > /dev/null 2>&1 && echo "Volumes actifs supprimés"
     docker system prune -a --volumes -f > /dev/null 2>&1 && echo "Volumes orphelins et images supprimé"
@@ -58,8 +58,10 @@ echo "    2. Télécharger les dernières images Docker"
 echo "    3. Redémarrer toute la stack"
 echo "    Branche cible : $TARGET_BRANCH"
 echo ""
-read -p "Tapez 'CONFIRMER' : " CONFIRM
-[ "$CONFIRM" != "CONFIRMER" ] && exit 1
+[ -v CONFIRMED_YET ] || { 
+        read -p "Tapez 'CONFIRMER' : " CONFIRM
+        [ "$CONFIRM" != "CONFIRMER" ] && exit 1
+}
 
 # --- 1. SYNC & DEPLOY (Centralisé) ---
 if [ -f "$SYNC_SCRIPT" ]; then
