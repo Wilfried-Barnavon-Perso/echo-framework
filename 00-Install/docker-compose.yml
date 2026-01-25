@@ -1,15 +1,30 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v5.22 - DISTRIBUTED ARCHITECTURE WITH UI
+# ECHO FRAMEWORK v5.25 - DISTRIBUTED ARCHITECTURE (SECURE DB)
 # ==============================================================================
 
 services:
 
   # ============================================================================
-  # SECTION 1 : INFRASTRUCTURE BUNKERWEB (MODE DISTRIBUÉ)
+  # SECTION 1 : INFRASTRUCTURE BUNKERWEB (MODE DISTRIBUÉ + MARIADB)
   # ============================================================================
   
+  # 0. Base de données
+  bw-db:
+    image: mariadb:10.10
+    container_name: echo-bw-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_RANDOM_ROOT_PASSWORD=yes
+      - MYSQL_DATABASE=bunkerweb
+      - MYSQL_USER=bunkerweb
+      - MYSQL_PASSWORD=${BW_DB_PASSWORD}
+    networks:
+      - bw-services
+    volumes:
+      - bw-db-data:/var/lib/mysql
+
   # 1. BunkerWeb (Le Proxy / WAF Nginx)
   bunkerweb:
     image: bunkerity/bunkerweb:1.6.7
@@ -41,8 +56,9 @@ services:
     restart: unless-stopped
     depends_on:
       - bunkerweb
+      - bw-db
     environment:
-      - DATABASE_URI=sqlite:///data/db.sqlite3
+      - DATABASE_URI=mysql+pymysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/bunkerweb
       - DOCKER_HOST=unix:///var/run/docker.sock
       - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
       - AUTO_LETS_ENCRYPT=yes
@@ -61,8 +77,9 @@ services:
     depends_on:
       - bunkerweb
       - bw-scheduler
+      - bw-db
     environment:
-      - DATABASE_URI=sqlite:///data/db.sqlite3
+      - DATABASE_URI=mysql+pymysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/bunkerweb
       - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
       - bw-data:/data
@@ -78,8 +95,9 @@ services:
     restart: unless-stopped
     depends_on:
       - bw-scheduler
+      - bw-db
     environment:
-      - DATABASE_URI=sqlite:///data/db.sqlite3
+      - DATABASE_URI=mysql+pymysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/bunkerweb
       - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
       - bw-data:/data
@@ -215,6 +233,8 @@ volumes:
   bw-data:
     external: true
   bw-config:
+    external: true
+  bw-db-data:
     external: true
   echo-webui-data:
     external: true

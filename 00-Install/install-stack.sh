@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.23
+# VERSION : 5.24
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE DISTRIBUÉE)
@@ -99,11 +99,21 @@ docker pull alpine:latest >/dev/null 2>&1 || echo "⚠️  Impossible de téléc
 # A. Secret BunkerWeb (Basic Auth & Interne)
 BW_SECRET_FILE="/opt/.bw-setting-secret"
 if [ ! -f "$BW_SECRET_FILE" ]; then
-    echo "🆕 Génération du secret BunkerWeb..."
+    echo "🆕 Génération du secret BunkerWeb (Admin)..."
     LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16 > "$BW_SECRET_FILE"
     chmod 400 "$BW_SECRET_FILE"
 fi
 export BW_PASSWORD=$(cat "$BW_SECRET_FILE" | tr -d '[:space:]')
+
+# B. Secret MariaDB (Interne)
+BW_DB_SECRET_FILE="/opt/.bw-db-secret"
+if [ ! -f "$BW_DB_SECRET_FILE" ]; then
+    echo "🆕 Génération du secret Database (DB)..."
+    # IMPORTANT : Alphanumérique uniquement pour éviter de casser l'URI de connexion
+    LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 > "$BW_DB_SECRET_FILE"
+    chmod 400 "$BW_DB_SECRET_FILE"
+fi
+export BW_DB_PASSWORD=$(cat "$BW_DB_SECRET_FILE" | tr -d '[:space:]')
 
 # --- 3. FIX PERMISSIONS SOCKET DOCKER (UID 101) ---
 echo "🔧 [FIX] Configuration des ACL pour le socket Docker (UID 101)..."
