@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.22
+# VERSION : 5.23
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE DISTRIBUÉE)
@@ -147,6 +147,7 @@ fi
 echo "🔧 [FIX] Permissions volumes BunkerWeb (bw-data, bw-config)..."
 if docker volume inspect bw-data >/dev/null 2>&1; then
     docker run --rm -v bw-data:/data -v bw-config:/etc/nginx alpine chown -R 101:101 /data /etc/nginx
+    docker run --rm -v bw-data:/data -v bw-config:/etc/nginx alpine chmod -R 770 /data /etc/nginx 
 fi
 
 # --- 5. LANCEMENT DOCKER COMPOSE ---
