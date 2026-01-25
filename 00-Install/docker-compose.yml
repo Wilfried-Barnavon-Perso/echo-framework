@@ -1,7 +1,7 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v5.21 - DISTRIBUTED ARCHITECTURE WITH UI
+# ECHO FRAMEWORK v5.22 - DISTRIBUTED ARCHITECTURE WITH UI
 # ==============================================================================
 
 services:
@@ -72,7 +72,6 @@ services:
       - bw-services
 
   # 4. BunkerWeb UI (Interface Graphique & Logs)
-  # Rôle : Fournit le dashboard sur bw.echo-ai.eu
   bw-ui:
     image: bunkerity/bunkerweb-ui:1.6.7
     container_name: echo-bw-ui
@@ -93,7 +92,6 @@ services:
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-bw-ui:7000"
       - "bunkerweb.REVERSE_PROXY_URL=/"
-      # L'UI a sa propre authentification, pas besoin de Basic Auth ici
       - "bunkerweb.USE_AUTH_BASIC=no"
 
   # ============================================================================
@@ -122,8 +120,6 @@ services:
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-webui-core:8080"
       - "bunkerweb.REVERSE_PROXY_URL=/"
-      
-      # Optimisations Streaming & WebSockets (IA)
       - "bunkerweb.REVERSE_PROXY_WS=yes"
       - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600s"
       - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600s"
@@ -136,7 +132,6 @@ services:
       /bin/bash -c "pip install mgzip && ./start.sh"
 
   # 6. Admin Manager (Dashboard Système ECHO)
-  # Attention : C'est votre dashboard Python interne, différent de bw-ui
   admin-manager:
     image: python:3.11
     container_name: echo-admin-manager
@@ -157,8 +152,6 @@ services:
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
-      
-      # Sécurité d'accès
       - "bunkerweb.USE_AUTH_BASIC=yes"
       - "bunkerweb.AUTH_BASIC_LOCATION=sitewide"
       - "bunkerweb.AUTH_BASIC_USER=admin"
@@ -191,6 +184,7 @@ services:
       - bw-services
     ipc: host
     environment:
+      # Rétablissement demandé par l'utilisateur
       - PIP_ROOT_USER_ACTION=ignore
     volumes:
       - /opt/browser-agent/browser_api.py:/app/app.py:ro
@@ -218,12 +212,10 @@ networks:
     name: bw-services
 
 volumes:
-  # Volumes BunkerWeb (Partagés)
   bw-data:
     external: true
   bw-config:
     external: true
-  # Volumes Applicatifs
   echo-webui-data:
     external: true
   echo-worker-data:

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.20
+# VERSION : 5.22
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE DISTRIBUÉE)
@@ -90,6 +90,11 @@ if [ ! -f "$COMPOSE_FILE" ]; then
     exit 1
 fi
 
+# FIX : Téléchargement explicite de l'image alpine pour les outils de maintenance
+# Cela évite l'erreur "Unable to find image" si elle n'est pas présente.
+echo "📦 Vérification de l'image utilitaire (alpine)..."
+docker pull alpine:latest >/dev/null 2>&1 || echo "⚠️  Impossible de télécharger alpine:latest (déjà présent ?)"
+
 # --- 2. GESTION DES SECRETS D'INFRASTRUCTURE ---
 # A. Secret BunkerWeb (Basic Auth & Interne)
 BW_SECRET_FILE="/opt/.bw-setting-secret"
@@ -112,7 +117,6 @@ setfacl -m u:101:rw /var/run/docker.sock || echo "⚠️  Attention : Échec de 
 echo "🏗️  Analyse du fichier Docker Compose pour les ressources externes..."
 
 # 4.1 Réseaux Externes (Détection Dynamique)
-# On utilise awk pour isoler le bloc 'networks:' jusqu'à la prochaine clé racine
 echo "🔍 Recherche des réseaux externes définis dans $COMPOSE_FILE..."
 NETWORKS_BLOCK=$(awk '/^networks:/{flag=1; next} /^[a-z]/{flag=0} flag' "$COMPOSE_FILE")
 EXTERNAL_NETWORKS=$(echo "$NETWORKS_BLOCK" | grep -B 1 "external: true" | grep -v "external:" | grep -v "\-\-" | tr -d ': ')
@@ -126,7 +130,6 @@ else
 fi
 
 # 4.2 Volumes Externes (Détection Dynamique)
-# On utilise awk pour isoler le bloc 'volumes:'
 echo "🔍 Recherche des volumes externes définis dans $COMPOSE_FILE..."
 VOLUMES_BLOCK=$(awk '/^volumes:/{flag=1; next} /^[a-z]/{flag=0} flag' "$COMPOSE_FILE")
 EXTERNAL_VOLUMES=$(echo "$VOLUMES_BLOCK" | grep -B 1 "external: true" | grep -v "external:" | grep -v "\-\-" | tr -d ': ')
@@ -140,6 +143,7 @@ else
 fi
 
 # 4.3 Fix Permissions BunkerWeb (Critique UID 101)
+# On force les droits sur les volumes d'infra BunkerWeb pour éviter les CrashLoopBackOff.
 echo "🔧 [FIX] Permissions volumes BunkerWeb (bw-data, bw-config)..."
 if docker volume inspect bw-data >/dev/null 2>&1; then
     docker run --rm -v bw-data:/data -v bw-config:/etc/nginx alpine chown -R 101:101 /data /etc/nginx
