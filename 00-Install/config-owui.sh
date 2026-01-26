@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE SECRET-BASED)
-# VERSION : 6.7
+# VERSION : 6.8
 # AUTEUR  : Wilfried BARNAVON
 # DATE    : 2026-01-26
 # ==============================================================================
@@ -215,7 +215,6 @@ if [ -d "$FILTERS_DIR" ]; then
         DISPLAY_NAME=$(get_display_name "$file" "$FILTER_ID")
 
         echo "   -> Traitement de $FILTER_ID (Nom: $DISPLAY_NAME)..."
-        if [ "$FILTER_ID" == "bypass_rag" ]; then echo "      ⚠️  Filtre Critique détecté : Bypass RAG (Audit Aligned)"; fi
         CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
         PAYLOAD=$(jq -n --arg id "$FILTER_ID" --arg name "$DISPLAY_NAME" --arg content "$CONTENT" \
                   '{id: $id, name: $name, content: ($content | fromjson), type: "filter", meta: {description: "ECHO Filter", manifest: {}}, is_active: true, is_global: true}')
