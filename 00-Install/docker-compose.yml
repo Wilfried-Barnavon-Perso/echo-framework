@@ -1,7 +1,7 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v5.27 - DISTRIBUTED ARCHITECTURE (LOCAL UI)
+# ECHO FRAMEWORK v5.28 - DISTRIBUTED ARCHITECTURE (LOCAL UI)
 # ==============================================================================
 
 services:
