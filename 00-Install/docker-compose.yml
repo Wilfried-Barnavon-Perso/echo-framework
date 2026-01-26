@@ -1,7 +1,7 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v5.26 - DISTRIBUTED ARCHITECTURE (LOCAL UI)
+# ECHO FRAMEWORK v5.27 - DISTRIBUTED ARCHITECTURE (LOCAL UI)
 # ==============================================================================
 
 services:
@@ -60,7 +60,7 @@ services:
     environment:
       - DATABASE_URI=mysql+pymysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/bunkerweb
       - DOCKER_HOST=unix:///var/run/docker.sock
-      - EMAIL_LETS_ENCRYPT=wilfried.barnavon@live.fr
+      - EMAIL_LETS_ENCRYPT=letsencrypt@echo-ai.eu
       - AUTO_LETS_ENCRYPT=yes
     volumes:
       - bw-data:/data
@@ -88,26 +88,26 @@ services:
     networks:
       - bw-services
 
-  # 4. BunkerWeb UI (Interface Graphique & Logs)
-  bw-ui:
-    image: bunkerity/bunkerweb-ui:1.6.7
-    container_name: echo-bw-ui
-    restart: unless-stopped
-    depends_on:
-      - bw-scheduler
-      - bw-db
-    environment:
-      - DATABASE_URI=mysql+pymysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/bunkerweb
-      - DOCKER_HOST=unix:///var/run/docker.sock
-    volumes:
-      - bw-data:/data
-      - bw-config:/etc/nginx
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - bw-services
-    # MODIFICATION : Exposition directe sur le port 7000 (Local/LAN) au lieu du Reverse Proxy
-    ports:
-      - "7000:7000"
+ # # 4. BunkerWeb UI (Interface Graphique & Logs)
+ #bw-ui:
+ #   image: bunkerity/bunkerweb-ui:1.6.7
+ #   container_name: echo-bw-ui
+ #   restart: unless-stopped
+ #   depends_on:
+ #     - bw-scheduler
+ #     - bw-db
+ #   environment:
+ #     - DATABASE_URI=mysql+pymysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/bunkerweb
+ #     - DOCKER_HOST=unix:///var/run/docker.sock
+ #   volumes:
+ #     - bw-data:/data
+ #     - bw-config:/etc/nginx
+ #     - /var/run/docker.sock:/var/run/docker.sock:ro
+ #   networks:
+ #     - bw-services
+ #   # MODIFICATION : Exposition directe sur le port 7000 (Local/LAN) au lieu du Reverse Proxy
+ #   ports:
+ #     - "7000:7000"
 
   # ============================================================================
   # SECTION 2 : CHARGES APPLICATIVES (APPS & WORKERS)
