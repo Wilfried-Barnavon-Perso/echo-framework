@@ -1,13 +1,14 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE SECRET-BASED)
-# VERSION : 6.4 (Enhanced Password Security)
+# VERSION : 6.7
 # AUTEUR  : Wilfried BARNAVON
-# DATE    : 2026-01-22
+# DATE    : 2026-01-26
 # ==============================================================================
 
 # --- CONFIGURATION ---
-OWUI_URL="http://localhost:3000"
+# Port modifié à 8080 pour correspondre à la stack v6 (Standalone)
+OWUI_URL="http://localhost:8080"
 SECRET_FILE="/opt/.owui-setting-secret"
 
 # Compte de Service (Automate)
@@ -154,6 +155,20 @@ ensure_active() {
     fi
 }
 
+get_display_name() {
+    local file="$1"
+    local default_id="$2"
+    # Extrait la ligne '# ECHO CONFIG NAME : Mon Nom'
+    # Sécurité : Recherche limitée aux 10 premières lignes uniquement
+    local custom_name=$(head -n 10 "$file" | grep "^# ECHO CONFIG NAME :" | head -n 1 | sed 's/^# ECHO CONFIG NAME :[[:space:]]*//')
+    
+    if [ -n "$custom_name" ]; then
+        echo "$custom_name"
+    else
+        echo "$default_id"
+    fi
+}
+
 # --- 3. PARAMETRES GLOBAUX ---
 echo "⚙️ [SETTINGS] Configuration..."
 curl -s -X POST "$OWUI_URL/api/v1/admin/settings/update" \
@@ -161,7 +176,7 @@ curl -s -X POST "$OWUI_URL/api/v1/admin/settings/update" \
     -H "Content-Type: application/json" \
     -d '{
     "ui": { 
-        "banner": "ECHO v6 Infrastructure", 
+        "banner": "ECHO v5 Infrastructure", 
         "title": "ECHO Framework", 
         "show_admin_details": true,
         "default_model_id": "pipe_engine"
@@ -180,9 +195,11 @@ if [ -d "$TOOLS_DIR" ]; then
         [ -e "$file" ] || continue
         FILENAME=$(basename "$file")
         TOOL_ID="${FILENAME%.*}"
-        echo "   -> Traitement de $TOOL_ID..."
+        DISPLAY_NAME=$(get_display_name "$file" "$TOOL_ID")
+        
+        echo "   -> Traitement de $TOOL_ID (Nom: $DISPLAY_NAME)..."
         CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
-        PAYLOAD=$(jq -n --arg id "$TOOL_ID" --arg name "$TOOL_ID" --arg content "$CONTENT" \
+        PAYLOAD=$(jq -n --arg id "$TOOL_ID" --arg name "$DISPLAY_NAME" --arg content "$CONTENT" \
                   '{id: $id, name: $name, content: ($content | fromjson), meta: {description: "ECHO Tool", manifest: {}}}')
         api_upsert "tools" "$TOOL_ID" "$PAYLOAD" "Outil"
     done
@@ -195,10 +212,12 @@ if [ -d "$FILTERS_DIR" ]; then
         [ -e "$file" ] || continue
         FILENAME=$(basename "$file")
         FILTER_ID="${FILENAME%.*}"
-        echo "   -> Traitement de $FILTER_ID..."
+        DISPLAY_NAME=$(get_display_name "$file" "$FILTER_ID")
+
+        echo "   -> Traitement de $FILTER_ID (Nom: $DISPLAY_NAME)..."
         if [ "$FILTER_ID" == "bypass_rag" ]; then echo "      ⚠️  Filtre Critique détecté : Bypass RAG (Audit Aligned)"; fi
         CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
-        PAYLOAD=$(jq -n --arg id "$FILTER_ID" --arg name "$FILTER_ID" --arg content "$CONTENT" \
+        PAYLOAD=$(jq -n --arg id "$FILTER_ID" --arg name "$DISPLAY_NAME" --arg content "$CONTENT" \
                   '{id: $id, name: $name, content: ($content | fromjson), type: "filter", meta: {description: "ECHO Filter", manifest: {}}, is_active: true, is_global: true}')
         api_upsert "functions" "$FILTER_ID" "$PAYLOAD" "Filtre"
         ensure_active "functions" "$FILTER_ID"
@@ -212,9 +231,11 @@ if [ -d "$PIPES_DIR" ]; then
         [ -e "$file" ] || continue
         FILENAME=$(basename "$file")
         FUNC_ID="${FILENAME%.*}"
-        echo "   -> Traitement de $FUNC_ID..."
+        DISPLAY_NAME=$(get_display_name "$file" "$FUNC_ID")
+
+        echo "   -> Traitement de $FUNC_ID (Nom: $DISPLAY_NAME)..."
         CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
-        PAYLOAD=$(jq -n --arg id "$FUNC_ID" --arg name "$FUNC_ID" --arg content "$CONTENT" \
+        PAYLOAD=$(jq -n --arg id "$FUNC_ID" --arg name "$DISPLAY_NAME" --arg content "$CONTENT" \
                   '{id: $id, name: $name, content: ($content | fromjson), type: "pipe", meta: {description: "ECHO Pipe", manifest: {}}, is_active: true}')
         api_upsert "functions" "$FUNC_ID" "$PAYLOAD" "Fonction (Pipe)"
         ensure_active "functions" "$FUNC_ID"
@@ -228,9 +249,11 @@ if [ -d "$ACTIONS_DIR" ]; then
         [ -e "$file" ] || continue
         FILENAME=$(basename "$file")
         ACTION_ID="${FILENAME%.*}"
-        echo "   -> Traitement de $ACTION_ID..."
+        DISPLAY_NAME=$(get_display_name "$file" "$ACTION_ID")
+
+        echo "   -> Traitement de $ACTION_ID (Nom: $DISPLAY_NAME)..."
         CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
-        PAYLOAD=$(jq -n --arg id "$ACTION_ID" --arg name "$ACTION_ID" --arg content "$CONTENT" \
+        PAYLOAD=$(jq -n --arg id "$ACTION_ID" --arg name "$DISPLAY_NAME" --arg content "$CONTENT" \
                   '{id: $id, name: $name, content: ($content | fromjson), type: "action", is_active: true, meta: {description: "ECHO Action", manifest: {}}}')
         api_upsert "functions" "$ACTION_ID" "$PAYLOAD" "Action"
         ensure_active "functions" "$ACTION_ID"

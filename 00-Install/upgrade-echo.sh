@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 5.17
+# VERSION : 6.0
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
@@ -10,8 +10,6 @@
 DOCKER_COMPOSE_CMD="docker-compose"
 SYNC_SCRIPT="/opt/owui-scripts/sync-echo.sh"
 COMPOSE_FILE="/opt/owui-scripts/docker-compose.yml"
-BW_SECRET_FILE="/opt/.bw-setting-secret"
-BW_DB_SECRET_FILE="/opt/.bw-db-secret"
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
@@ -39,15 +37,6 @@ if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
     cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
     exec "$TMP_SCRIPT" "$@"; exit 0
 fi
-
-# --- 0. CHARGEMENT DES SECRETS (Pour éviter les warnings Docker Compose) ---
-if [ -f "$BW_SECRET_FILE" ]; then
-    export BW_PASSWORD=$(cat "$BW_SECRET_FILE" | tr -d '[:space:]')
-fi
-if [ -f "$BW_DB_SECRET_FILE" ]; then
-    export BW_DB_PASSWORD=$(cat "$BW_DB_SECRET_FILE" | tr -d '[:space:]')
-fi
-
 
 # --- CONFIRMATION ---
 BRANCH_FILE="/opt/ECHO_BRANCH"

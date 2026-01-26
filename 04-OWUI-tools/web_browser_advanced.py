@@ -1,9 +1,12 @@
 """
-title: Advanced Web Browser (Robuste 3.2)
+title: ECHO Web Browser
 author: Wilfried BARNAVON
 version: 3.2
 description: 3.2: Navigation web persistante, vision augmentée (Set-of-Mark), clics intelligents et support clavier. (Fonctions restaurées).
 """
+
+# ECHO CONFIG NAME : ECHO Web Browser
+
 import requests
 from pydantic import BaseModel, Field
 

@@ -1,9 +1,12 @@
 """
-title: Gemini Internal Web Search (User Isolation Compatible)
+title: Gemini Internal Web Search
 author: Wilfried BARNAVON
 version: 11.0
 description: 11.0: Recherche Google via API Gemini interne, Grounding et sortie JSON
 """
+
+# ECHO CONFIG NAME : ECHO Gemini Web Search Tool
+
 import json, os, requests, uuid, random
 from pydantic import BaseModel, Field
 

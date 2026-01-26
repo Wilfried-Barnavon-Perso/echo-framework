@@ -1,9 +1,11 @@
 """
-title: ECHO Auth Manager (User Isolation Compatible)
+title: ECHO Auth Manager
 author: ECHO Team
 version: 2.0
 description: 2.0: Réinitialise l'authentification Google (Tokens & Cache) de l'utilisateur courant.
 """
+
+# ECHO CONFIG NAME : Gemini Auth Reset Tool
 
 import os
 import re

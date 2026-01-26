@@ -1,119 +1,20 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v5.28 - DISTRIBUTED ARCHITECTURE (LOCAL UI)
+# ECHO FRAMEWORK v6.00 - STANDALONE APPLICATION SERVER
+# ==============================================================================
+# ARCHITECTURE :
+# Ce fichier ne gère QUE la couche applicative "ECHO".
+# La sécurité (SSL, WAF, Auth) est déléguée à une VM "Proxy" externe.
 # ==============================================================================
 
 services:
 
   # ============================================================================
-  # SECTION 1 : INFRASTRUCTURE BUNKERWEB (MODE DISTRIBUÉ + MARIADB)
-  # ============================================================================
-  
-  # 0. Base de données
-  bw-db:
-    image: mariadb:10.10
-    container_name: echo-bw-db
-    restart: unless-stopped
-    environment:
-      - MYSQL_RANDOM_ROOT_PASSWORD=yes
-      - MYSQL_DATABASE=bunkerweb
-      - MYSQL_USER=bunkerweb
-      - MYSQL_PASSWORD=${BW_DB_PASSWORD}
-    networks:
-      - bw-services
-    volumes:
-      - bw-db-data:/var/lib/mysql
-
-  # 1. BunkerWeb (Le Proxy / WAF Nginx)
-  bunkerweb:
-    image: bunkerity/bunkerweb:1.6.7
-    container_name: echo-bunkerweb
-    restart: unless-stopped
-    ports:
-      - "80:8080"
-      - "443:8443"
-      - "443:8443/udp"
-    labels:
-      - "bunkerweb.INSTANCE=yes"
-    environment:
-      - MULTISITE=yes
-      - SERVER_NAME=
-      - API_WHITELIST_IP=127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
-      - LOG_LEVEL=info
-      - USE_GZIP=yes
-      - USE_BROTLI=yes
-    networks:
-      - bw-services
-    volumes:
-      - bw-data:/data
-      - bw-config:/etc/nginx
-
-  # 2. Scheduler (Orchestrateur)
-  bw-scheduler:
-    image: bunkerity/bunkerweb-scheduler:1.6.7
-    container_name: echo-bw-scheduler
-    restart: unless-stopped
-    depends_on:
-      - bunkerweb
-      - bw-db
-    environment:
-      - DATABASE_URI=mysql+pymysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/bunkerweb
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - EMAIL_LETS_ENCRYPT=letsencrypt@echo-ai.eu
-      - AUTO_LETS_ENCRYPT=yes
-    volumes:
-      - bw-data:/data
-      - bw-config:/etc/nginx
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - bw-services
-
-  # 3. Autoconf (Cerveau Dynamique)
-  bw-autoconf:
-    image: bunkerity/bunkerweb-autoconf:1.6.7
-    container_name: echo-bw-autoconf
-    restart: unless-stopped
-    depends_on:
-      - bunkerweb
-      - bw-scheduler
-      - bw-db
-    environment:
-      - DATABASE_URI=mysql+pymysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/bunkerweb
-      - DOCKER_HOST=unix:///var/run/docker.sock
-    volumes:
-      - bw-data:/data
-      - bw-config:/etc/nginx
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - bw-services
-
- # # 4. BunkerWeb UI (Interface Graphique & Logs)
- #bw-ui:
- #   image: bunkerity/bunkerweb-ui:1.6.7
- #   container_name: echo-bw-ui
- #   restart: unless-stopped
- #   depends_on:
- #     - bw-scheduler
- #     - bw-db
- #   environment:
- #     - DATABASE_URI=mysql+pymysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/bunkerweb
- #     - DOCKER_HOST=unix:///var/run/docker.sock
- #   volumes:
- #     - bw-data:/data
- #     - bw-config:/etc/nginx
- #     - /var/run/docker.sock:/var/run/docker.sock:ro
- #   networks:
- #     - bw-services
- #   # MODIFICATION : Exposition directe sur le port 7000 (Local/LAN) au lieu du Reverse Proxy
- #   ports:
- #     - "7000:7000"
-
-  # ============================================================================
-  # SECTION 2 : CHARGES APPLICATIVES (APPS & WORKERS)
+  # SECTION 1 : APPLICATIONS PRINCIPALES
   # ============================================================================
 
-  # 5. Open WebUI (Application IA Principale)
+  # 1. Open WebUI (Application IA)
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: echo-webui-core
@@ -122,37 +23,27 @@ services:
       - echo-webui-data:/app/backend/data
       - /opt/echo-images:/app/backend/data/images:ro
       - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
+    # EXPOSITION : Port 8080 ouvert pour le Reverse Proxy distant
     ports:
-      - "127.0.0.1:3000:8080"
+      - "8080:8080"
     networks:
-      - bw-services
+      - echo-network
     environment:
+      # L'authentification interne reste active pour les utilisateurs de l'IA
       - WEBUI_AUTH=True
+      # URL publique gérée par le proxy externe
       - WEBUI_URL=https://www.echo-ai.eu
-    
-    labels:
-      - "bunkerweb.SERVER_NAME=www.echo-ai.eu"
-      - "bunkerweb.USE_REVERSE_PROXY=yes"
-      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-webui-core:8080"
-      - "bunkerweb.REVERSE_PROXY_URL=/"
-      - "bunkerweb.REVERSE_PROXY_WS=yes"
-      - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600s"
-      - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600s"
-      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Forwarded-Proto: https"
-      - "bunkerweb.LIMIT_REQ_RATE=0"
-      - "bunkerweb.USE_MODSECURITY=yes"
-      - "bunkerweb.MODSECURITY_DETECTION_ONLY=yes"
       
     command: >
       /bin/bash -c "pip install mgzip && ./start.sh"
 
-  # 6. Admin Manager (Dashboard Système ECHO)
+  # 2. Admin Manager (Dashboard Système ECHO)
   admin-manager:
     image: python:3.11
     container_name: echo-admin-manager
     restart: always
     networks:
-      - bw-services
+      - echo-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     
@@ -162,21 +53,16 @@ services:
       - echo-backups:/backups
       - echo-webui-data:/app/backend/data
     
-    labels:
-      - "bunkerweb.SERVER_NAME=am.echo-ai.eu"
-      - "bunkerweb.USE_REVERSE_PROXY=yes"
-      - "bunkerweb.REVERSE_PROXY_URL=/"
-      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
-      - "bunkerweb.USE_AUTH_BASIC=yes"
-      - "bunkerweb.AUTH_BASIC_LOCATION=sitewide"
-      - "bunkerweb.AUTH_BASIC_USER=admin"
-      - "bunkerweb.AUTH_BASIC_PASSWORD=${BW_PASSWORD}"
+    # EXPOSITION : Port 3001 ouvert pour le Reverse Proxy distant
+    # IMPORTANT : Ce service n'a PAS d'auth intégrée. Le Proxy DOIT le protéger.
+    ports:
+      - "3001:3001"
 
     command: >
       /bin/bash -c "pip install --no-cache-dir flask flask-cors docker psutil paramiko APScheduler schedule && python /app/server.py"
 
   # ============================================================================
-  # SECTION 3 : WORKERS INTERNES (BACKEND)
+  # SECTION 2 : WORKERS INTERNES (BACKEND)
   # ============================================================================
   
   python-worker:
@@ -184,7 +70,7 @@ services:
     container_name: echo-python-worker
     restart: always
     networks:
-      - bw-services
+      - echo-network
     volumes:
       - /opt/python-worker/worker_api.py:/app/app.py:ro
       - echo-worker-data:/app/data
@@ -196,10 +82,9 @@ services:
     container_name: echo-browser-agent
     restart: always
     networks:
-      - bw-services
+      - echo-network
     ipc: host
     environment:
-      # Rétablissement demandé par l'utilisateur
       - PIP_ROOT_USER_ACTION=ignore
     volumes:
       - /opt/browser-agent/browser_api.py:/app/app.py:ro
@@ -212,7 +97,7 @@ services:
     container_name: echo-watchtower
     restart: always
     networks:
-      - bw-services
+      - echo-network
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --interval 3600 --cleanup
@@ -222,17 +107,11 @@ services:
 # ==============================================================================
 
 networks:
-  bw-services:
+  echo-network:
     external: true
-    name: bw-services
+
 
 volumes:
-  bw-data:
-    external: true
-  bw-config:
-    external: true
-  bw-db-data:
-    external: true
   echo-webui-data:
     external: true
   echo-worker-data:

@@ -1,10 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.24
+# VERSION : 6.00
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
-# ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE DISTRIBUÉE)
+# ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
 
 set -e # Arrêt en cas d'erreur critique
@@ -95,38 +95,10 @@ fi
 echo "📦 Vérification de l'image utilitaire (alpine)..."
 docker pull alpine:latest >/dev/null 2>&1 || echo "⚠️  Impossible de télécharger alpine:latest (déjà présent ?)"
 
-# --- 2. GESTION DES SECRETS D'INFRASTRUCTURE ---
-# A. Secret BunkerWeb (Basic Auth & Interne)
-BW_SECRET_FILE="/opt/.bw-setting-secret"
-if [ ! -f "$BW_SECRET_FILE" ]; then
-    echo "🆕 Génération du secret BunkerWeb (Admin)..."
-    LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16 > "$BW_SECRET_FILE"
-    chmod 400 "$BW_SECRET_FILE"
-fi
-export BW_PASSWORD=$(cat "$BW_SECRET_FILE" | tr -d '[:space:]')
-
-# B. Secret MariaDB (Interne)
-BW_DB_SECRET_FILE="/opt/.bw-db-secret"
-if [ ! -f "$BW_DB_SECRET_FILE" ]; then
-    echo "🆕 Génération du secret Database (DB)..."
-    # IMPORTANT : Alphanumérique uniquement pour éviter de casser l'URI de connexion
-    LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 > "$BW_DB_SECRET_FILE"
-    chmod 400 "$BW_DB_SECRET_FILE"
-fi
-export BW_DB_PASSWORD=$(cat "$BW_DB_SECRET_FILE" | tr -d '[:space:]')
-
-# --- 3. FIX PERMISSIONS SOCKET DOCKER (UID 101) ---
-echo "🔧 [FIX] Configuration des ACL pour le socket Docker (UID 101)..."
-if ! command -v setfacl >/dev/null 2>&1; then
-    echo "   📦 Installation du paquet 'acl'..."
-    apt-get update -qq && apt-get install -y -qq acl > /dev/null
-fi
-setfacl -m u:101:rw /var/run/docker.sock || echo "⚠️  Attention : Échec de l'application setfacl."
-
-# --- 4. PROVISIONING RESSOURCES (AUTOMATIQUE) ---
+# --- 2. PROVISIONING RESSOURCES (AUTOMATIQUE) ---
 echo "🏗️  Analyse du fichier Docker Compose pour les ressources externes..."
 
-# 4.1 Réseaux Externes (Détection Dynamique)
+# 2.1 Réseaux Externes (Détection Dynamique)
 echo "🔍 Recherche des réseaux externes définis dans $COMPOSE_FILE..."
 NETWORKS_BLOCK=$(awk '/^networks:/{flag=1; next} /^[a-z]/{flag=0} flag' "$COMPOSE_FILE")
 EXTERNAL_NETWORKS=$(echo "$NETWORKS_BLOCK" | grep -B 1 "external: true" | grep -v "external:" | grep -v "\-\-" | tr -d ': ')
@@ -139,7 +111,7 @@ else
     done
 fi
 
-# 4.2 Volumes Externes (Détection Dynamique)
+# 2.2 Volumes Externes (Détection Dynamique)
 echo "🔍 Recherche des volumes externes définis dans $COMPOSE_FILE..."
 VOLUMES_BLOCK=$(awk '/^volumes:/{flag=1; next} /^[a-z]/{flag=0} flag' "$COMPOSE_FILE")
 EXTERNAL_VOLUMES=$(echo "$VOLUMES_BLOCK" | grep -B 1 "external: true" | grep -v "external:" | grep -v "\-\-" | tr -d ': ')
@@ -152,19 +124,12 @@ else
     done
 fi
 
-# 4.3 Fix Permissions BunkerWeb (Critique UID 101)
-# On force les droits sur les volumes d'infra BunkerWeb pour éviter les CrashLoopBackOff.
-echo "🔧 [FIX] Permissions volumes BunkerWeb (bw-data, bw-config)..."
-if docker volume inspect bw-data >/dev/null 2>&1; then
-    docker run --rm -v bw-data:/data -v bw-config:/etc/nginx alpine chown -R 101:101 /data /etc/nginx
-    docker run --rm -v bw-data:/data -v bw-config:/etc/nginx alpine chmod -R 770 /data /etc/nginx 
-fi
-
-# --- 5. LANCEMENT DOCKER COMPOSE ---
+# --- 3. LANCEMENT DOCKER COMPOSE ---
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull --quiet
 
 # --- SUPPRESSION PRÉVENTIVE (HARD CLEAN GLOBAL) ---
+# Nécessaire pour supprimer proprement les conteneurs BW obsolètes
 set +e 
 for d in $(docker ps -a --format '{{.Names}}') ; do 
     echo "⚠️ Suppression préventive du conteneur $d..."
@@ -190,12 +155,13 @@ else
     exit 1
 fi
 
-# --- 6. POST-INSTALL (CONFIG) ---
-echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:3000)..."
+# --- 4. POST-INSTALL (CONFIG) ---
+echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:8080)..."
+# Note: Port modifié à 8080 (Mapping direct) au lieu de 3000
 MAX_RETRIES=300
 COUNT=0
 set +e
-until curl -s -f http://localhost:3000/health > /dev/null; do
+until curl -s -f http://localhost:8080/health > /dev/null; do
     sleep 2
     ((COUNT++))
     if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
@@ -218,7 +184,7 @@ fi
 docker image prune -f >/dev/null 2>&1
 echo "✅ DEPLOIEMENT TERMINÉ."
 echo "-----------------------------------------------------------"
-echo "🔐 ACCÈS ADMIN BUNKERWEB (am.echo-ai.eu) :"
-echo "   User : admin"
-echo "   Pass : $BW_PASSWORD"
+echo "🌐 APPLICATION ECHO : http://IP-LOCALE:8080"
+echo "🔧 CONSOLE ADMIN    : http://IP-LOCALE:3001"
+echo "⚠️  N'oubliez pas de configurer votre PROXY EXTERNE !"
 echo "-----------------------------------------------------------"
