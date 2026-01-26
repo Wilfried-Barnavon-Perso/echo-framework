@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 3.4
+# VERSION : 3.5
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -17,7 +17,7 @@ if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
 # --- SELF RUN (Protection) ---
 CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${CURRENT_SCRIPT##*/}"
-MY_OWN_ORIGIN="/opt/owui-scripts/${CURRENT_SCRIPT##*/}"
+MY_OWN_ORIGIN="/opt/echo-scripts/${CURRENT_SCRIPT##*/}"
 if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
     cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
     exec "$TMP_SCRIPT" "$@"; exit 0
@@ -93,7 +93,7 @@ sync_resource() {
 }
 
 # Synchro Dossiers
-sync_resource "$SRC_DIR/00-Install"       "/opt/owui-scripts"
+sync_resource "$SRC_DIR/00-Install"       "/opt/echo-scripts"
 sync_resource "$SRC_DIR/04-OWUI-tools"    "/opt/owui-tools"
 sync_resource "$SRC_DIR/03-OWUI-pipes"    "/opt/owui-pipes"
 sync_resource "$SRC_DIR/07-OWUI-actions"  "/opt/owui-actions"
@@ -107,18 +107,18 @@ sync_resource "$SRC_DIR/06-docker-browser-agent/browser_api.py" "/opt/browser-ag
 
 # Lien symboliques
 
-ln -sf /opt/owui-scripts/update-echo.sh /usr/local/bin/update-echo 
-ln -sf /opt/owui-scripts/upgrade-echo.sh /usr/local/bin/upgrade-echo
-ln -sf /opt/owui-scripts/upgrade-echo.sh /usr/local/bin/rebuild-echo
+ln -sf /opt/echo-scripts/update-echo.sh /usr/local/bin/update-echo 
+ln -sf /opt/echo-scripts/upgrade-echo.sh /usr/local/bin/upgrade-echo
+ln -sf /opt/echo-scripts/upgrade-echo.sh /usr/local/bin/rebuild-echo
 
 # Versioning
 if [ -f "$SRC_DIR/VERSION" ]; then cp "$SRC_DIR/VERSION" "/opt/ECHO_VERSION"; chmod 644 "/opt/ECHO_VERSION"; fi
 
 # Nettoyage et Permissions (Fix Windows EOL)
 echo "   🧹 Nettoyage des caractères Windows et permissions..."
-find /opt/owui-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
-find /opt/owui-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i 's/\r$//' {} +
-chmod +x /opt/owui-scripts/*.sh
+find /opt/echo-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
+find /opt/echo-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i 's/\r$//' {} +
+chmod +x /opt/echo-scripts/*.sh
 
 # RELANCE DU SCRIPT SI MIS A JOUR
 if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then

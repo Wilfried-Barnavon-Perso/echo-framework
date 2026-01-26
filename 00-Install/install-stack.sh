@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.00
+# VERSION : 6.2
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -13,7 +13,7 @@ set -e # Arrêt en cas d'erreur critique
 REPO_ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"
 SOURCE_VERSION_FILE="$REPO_ROOT/VERSION"
 SYSTEM_VERSION_FILE="/opt/ECHO_VERSION"
-COMPOSE_FILE="/opt/owui-scripts/docker-compose.yml"
+COMPOSE_FILE="/opt/echo-scripts/docker-compose.yml"
 
 export COMPOSE_PROJECT_NAME="echo"
 
@@ -83,7 +83,7 @@ ensure_network() {
 
 # --- 1. PRE-FLIGHT CHECKS ---
 wait_for_docker
-chmod +x /opt/owui-scripts/*.sh 2>/dev/null || true
+chmod +x /opt/echo-scripts/*.sh 2>/dev/null || true
 
 if [ ! -f "$COMPOSE_FILE" ]; then
     echo "❌ CRITIQUE : Fichier $COMPOSE_FILE introuvable !"
@@ -174,10 +174,10 @@ set -e
 echo " UP."
 
 echo "🔧 Configuration Auto (API Host-Driven)..."
-if [ -f "/opt/owui-scripts/config-owui.sh" ]; then
-    /bin/bash /opt/owui-scripts/config-owui.sh
+if [ -f "/opt/echo-scripts/config-owui.sh" ]; then
+    /bin/bash /opt/echo-scripts/config-owui.sh
 else
-    echo "⚠️ Script de configuration introuvable (/opt/owui-scripts/config-owui.sh)"
+    echo "⚠️ Script de configuration introuvable (/opt/echo-scripts/config-owui.sh)"
 fi
 
 # Nettoyage images orphelines

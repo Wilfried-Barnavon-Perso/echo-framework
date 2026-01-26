@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.9.3
+# SCRIPT VERSION : 5.9.27
 # DATE           : 2026-01-21
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -106,18 +106,18 @@ $HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0
 # Dictionnaire : Source Windows => Destination Linux
 $FilesMap = @{
   # SCRIPTS
-  "/opt/owui-scripts/install-stack.sh"            = "$ScriptDir\00-Install\install-stack.sh"
-  "/opt/owui-scripts/sync-echo.sh"                = "$ScriptDir\00-Install\sync-echo.sh"  
-  "/opt/owui-scripts/update-echo.sh"              = "$ScriptDir\00-Install\update-echo.sh"
-  "/opt/owui-scripts/upgrade-echo.sh"             = "$ScriptDir\00-Install\upgrade-echo.sh"
-  "/opt/owui-scripts/config-owui.sh"              = "$ScriptDir\00-Install\config-owui.sh"
+  "/opt/echo-scripts/install-stack.sh"            = "$ScriptDir\00-Install\install-stack.sh"
+  "/opt/echo-scripts/sync-echo.sh"                = "$ScriptDir\00-Install\sync-echo.sh"  
+  "/opt/echo-scripts/update-echo.sh"              = "$ScriptDir\00-Install\update-echo.sh"
+  "/opt/echo-scripts/upgrade-echo.sh"             = "$ScriptDir\00-Install\upgrade-echo.sh"
+  "/opt/echo-scripts/config-owui.sh"              = "$ScriptDir\00-Install\config-owui.sh"
   
   # CONFIGS JSON
-  "/opt/owui-scripts/model-config.json"           = "$ScriptDir\00-Install\model-config.json"
-  "/opt/owui-scripts/system-prompt.json"          = "$ScriptDir\00-Install\system-prompt.json"
+  "/opt/echo-scripts/model-config.json"           = "$ScriptDir\00-Install\model-config.json"
+  "/opt/echo-scripts/system-prompt.json"          = "$ScriptDir\00-Install\system-prompt.json"
   
   # DOCKER
-  "/opt/owui-scripts/docker-compose.yml"          = "$ScriptDir\00-Install\docker-compose.yml"
+  "/opt/echo-scripts/docker-compose.yml"          = "$ScriptDir\00-Install\docker-compose.yml"
   
   # BACKEND
   "/opt/admin-manager/server.py"                  = "$ScriptDir\01-docker-admin-manager\server.py"
@@ -181,7 +181,7 @@ foreach ($DestPath in $FilesMap.Keys) {
     else {
       # Lecture texte avec correction UTF8/CRLF pour les scripts
       $RawContent = [System.IO.File]::ReadAllText($LocalPath, [System.Text.Encoding]::UTF8)
-      if ($DestPath -eq "/opt/owui-scripts/install-stack.sh") {
+      if ($DestPath -eq "/opt/echo-scripts/install-stack.sh") {
         $RawContent = $RawContent.Replace('${AutoUser}', $AutoUser)
       }
       $B64Content = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($RawContent.Replace("`r`n", "`n")))
@@ -260,19 +260,19 @@ $WriteFilesBlock
       - [chown, -R, "${AutoUser}:${AutoUser}", "/home/${AutoUser}"]
       - "systemctl restart chrony"
       # Permissions Exécutables (Syntaxe string pour supporter le wildcard *)
-      - "chmod +x /opt/owui-scripts/*.sh"
+      - "chmod +x /opt/echo-scripts/*.sh"
 
       # Liens Symboliques pour usage facile
-      - [ln, -s, /opt/owui-scripts/update-echo.sh, /usr/local/bin/update-echo]
-      - [ln, -s, /opt/owui-scripts/upgrade-echo.sh, /usr/local/bin/upgrade-echo]
-      - [ln, -s, /opt/owui-scripts/upgrade-echo.sh, /usr/local/bin/rebuild-echo]
+      - [ln, -s, /opt/echo-scripts/update-echo.sh, /usr/local/bin/update-echo]
+      - [ln, -s, /opt/echo-scripts/upgrade-echo.sh, /usr/local/bin/upgrade-echo]
+      - [ln, -s, /opt/echo-scripts/upgrade-echo.sh, /usr/local/bin/rebuild-echo]
 
       # --- GIT INIT ---
       # Clone du repo pour permettre les updates futurs.
       - [git, clone, "https://github.com/Wilfried-Barnavon-Perso/echo-framework.git", "/opt/echo-framework-source"]
 
       # Lancement Installation
-      - [/opt/owui-scripts/install-stack.sh]
+      - [/opt/echo-scripts/install-stack.sh]
 "@
 
 # --- 7. CREATION DISQUES & VM (HYPER-V) ---

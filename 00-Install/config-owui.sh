@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE SECRET-BASED)
-# VERSION : 6.8
+# VERSION : 6.9
 # AUTEUR  : Wilfried BARNAVON
 # DATE    : 2026-01-26
 # ==============================================================================
