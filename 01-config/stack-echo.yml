@@ -1,11 +1,10 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v6.2 - STANDALONE APPLICATION SERVER
+# ECHO FRAMEWORK v6.3 - STANDALONE APPLICATION SERVER
 # ==============================================================================
 # ARCHITECTURE :
 # Ce fichier ne gère QUE la couche applicative "ECHO".
-# La sécurité (SSL, WAF, Auth) est déléguée à une VM "Proxy" externe.
 # ==============================================================================
 
 services:
@@ -21,8 +20,8 @@ services:
     restart: unless-stopped
     volumes:
       - echo-webui-data:/app/backend/data
-      - /opt/echo-images:/app/backend/open_webui/static/echo:ro
       - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
+      - /opt/echo-images:/app/backend/open_webui/static/echo:ro
     # EXPOSITION : Port 8080 ouvert pour le Reverse Proxy distant
     ports:
       - "8080:8080"
