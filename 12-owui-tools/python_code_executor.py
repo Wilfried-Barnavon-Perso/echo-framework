@@ -1,9 +1,12 @@
 """
-title: Python Code Executor (Sidecar - User Aware)
+title: Python Code Executor
 author: Wilfried BARNAVON
 version: 5.0
 description: 5.0: Exécution de code Python via micro-service worker.
 """
+
+# ECHO CONFIG NAME : ECHO Python Sandbox
+
 import requests, json
 from pydantic import BaseModel, Field
 

@@ -1,0 +1,122 @@
+version: '3.8'
+
+# ==============================================================================
+# ECHO FRAMEWORK v6.00 - STANDALONE APPLICATION SERVER
+# ==============================================================================
+# ARCHITECTURE :
+# Ce fichier ne gère QUE la couche applicative "ECHO".
+# La sécurité (SSL, WAF, Auth) est déléguée à une VM "Proxy" externe.
+# ==============================================================================
+
+services:
+
+  # ============================================================================
+  # SECTION 1 : APPLICATIONS PRINCIPALES
+  # ============================================================================
+
+  # 1. Open WebUI (Application IA)
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: echo-webui-core
+    restart: unless-stopped
+    volumes:
+      - echo-webui-data:/app/backend/data
+      - /opt/echo-images:/app/backend/data/images:ro
+      - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
+    # EXPOSITION : Port 8080 ouvert pour le Reverse Proxy distant
+    ports:
+      - "8080:8080"
+    networks:
+      - echo-network
+    environment:
+      # L'authentification interne reste active pour les utilisateurs de l'IA
+      - WEBUI_AUTH=True
+      # URL publique gérée par le proxy externe
+      - WEBUI_URL=https://www.echo-ai.eu
+      
+    command: >
+      /bin/bash -c "pip install mgzip && ./start.sh"
+
+  # 2. Admin Manager (Dashboard Système ECHO)
+  admin-manager:
+    image: python:3.11
+    container_name: echo-admin-manager
+    restart: always
+    networks:
+      - echo-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/docker-admin-manager/server.py:/app/server.py:ro
+      - echo-backups:/backups
+      - echo-webui-data:/app/backend/data
+    
+    # EXPOSITION : Port 3001 ouvert pour le Reverse Proxy distant
+    # IMPORTANT : Ce service n'a PAS d'auth intégrée. Le Proxy DOIT le protéger.
+    ports:
+      - "3001:3001"
+
+    command: >
+      /bin/bash -c "pip install --no-cache-dir flask flask-cors docker psutil paramiko APScheduler schedule && python /app/server.py"
+
+  # ============================================================================
+  # SECTION 2 : WORKERS INTERNES (BACKEND)
+  # ============================================================================
+  
+  python-worker:
+    image: python:3.11-slim
+    container_name: echo-python-worker
+    restart: always
+    networks:
+      - echo-network
+    volumes:
+      - /opt/docker-python-worker/worker_api.py:/app/app.py:ro
+      - echo-worker-data:/app/data
+    command: >
+      /bin/bash -c "pip install --no-cache-dir flask flask-cors requests pandas numpy scipy scikit-learn matplotlib seaborn yfinance beautifulsoup4 openpyxl regex sympy && python /app/app.py"
+
+  browser-agent:
+    image: python:3.11-slim
+    container_name: echo-browser-agent
+    restart: always
+    networks:
+      - echo-network
+    ipc: host
+    environment:
+      - PIP_ROOT_USER_ACTION=ignore
+    volumes:
+      - /opt/docker-browser-agent/browser_api.py:/app/app.py:ro
+      - echo-browser-data:/app/data
+    command: >
+      /bin/bash -c "apt-get update && apt-get install -y chromium fonts-liberation libasound2 libnss3 libgbm1 libnspr4 xdg-utils && pip install --no-cache-dir flask flask-cors DrissionPage html2text && python /app/app.py"
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: echo-watchtower
+    restart: always
+    networks:
+      - echo-network
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 3600 --cleanup
+
+# ==============================================================================
+# NETWORKS & VOLUMES
+# ==============================================================================
+
+networks:
+  echo-network:
+    external: true
+
+
+volumes:
+  echo-webui-data:
+    external: true
+  echo-worker-data:
+    external: true
+  echo-browser-data:
+    external: true
+  echo-backups:
+    external: true
