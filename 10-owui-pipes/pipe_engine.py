@@ -1,12 +1,10 @@
 """
-title: Gemini Pipe Engine
+title: ECHO Engine
 author: Wilfried BARNAVON
 version: 138.8
 description: 138.8: Architecture Multi-User Native. Full Client Context: Suppression totale du fallback "Contexte Serveur" (Date/Heure). Le contexte temporel et spatial repose désormais exclusivement sur les données injectées par Open WebUI. Nettoyage du code mort associé (_get_geo_info, ENABLE_DATE_TIME).
 """
 
-# ECHO CONFIG NAME : ECHO Engine
-#
 # ==============================================================================
 # SECTION 0 : IMPORTATIONS & CONSTANTES GLOBALES
 # ==============================================================================

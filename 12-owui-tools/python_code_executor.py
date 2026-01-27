@@ -1,5 +1,5 @@
 """
-title: Python Code Executor
+title: ECHO Python Code Executor
 author: Wilfried BARNAVON
 version: 5.0
 description: 5.0: Exécution de code Python via micro-service worker.

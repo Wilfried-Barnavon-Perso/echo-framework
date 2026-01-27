@@ -1,5 +1,5 @@
 """
-title: Gemini Internal Web Search
+title: ECHO Gemini Web Search
 author: Wilfried BARNAVON
 version: 11.0
 description: 11.0: Recherche Google via API Gemini interne, Grounding et sortie JSON

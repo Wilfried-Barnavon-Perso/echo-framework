@@ -1,11 +1,10 @@
 """
-title: Bypass RAG Filter
+title: ECHO RAG File Bypass
 author: Wilfried BARNAVON
 version: 1.10
 description: 1.10: Correctif de stabilité. Sécurisation des itérateurs pour éviter l'erreur 'NoneType object is not iterable' lorsque les champs 'files' ou 'metadata' sont présents mais nuls.
 """
 
-# ECHO CONFIG NAME : ECHO RAG File Filter
 
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any

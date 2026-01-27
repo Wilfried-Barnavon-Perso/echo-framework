@@ -1,5 +1,5 @@
 """
-title: Universal API Client
+title: ECHO Universal API Client
 author: Wilfried BARNAVON
 version: 1.0
 description: Permet d'effectuer des appels API REST (GET, POST, etc.) vers des services externes.
