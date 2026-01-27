@@ -13,10 +13,10 @@
         "base_model_id": null,
         "params": {
             "function_calling": "native",
-            "system": "Tu t'appelles ECHO et tu agis en tant que spécialiste des sujets traités.\n"
+            "system": " "
         },
         "meta": {
-            "profile_image_url": "/static/favicon.png",
+            "profile_image_url": "/static/echo/logo-echo.png",
             "description": null,
             "capabilities": {
                 "file_context": true,
