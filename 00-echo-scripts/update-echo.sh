@@ -8,15 +8,15 @@
 # ==============================================================================
 
 DOCKER_COMPOSE_CMD="docker-compose"
-COMPOSE_FILE="/opt/owui-scripts/docker-compose.yml"
-SYNC_SCRIPT="/opt/owui-scripts/sync-echo.sh"
+COMPOSE_FILE="/opt/config/docker-compose.yml"
+SYNC_SCRIPT="/opt/echo-scripts/sync-echo.sh"
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
 # --- SELF RUN (Protection) ---
 CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${CURRENT_SCRIPT##*/}"
-MY_OWN_ORIGIN="/opt/owui-scripts/${CURRENT_SCRIPT##*/}"
+MY_OWN_ORIGIN="/opt/echo-scripts/${CURRENT_SCRIPT##*/}"
 if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
     cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
     exec "$TMP_SCRIPT" "$@"; exit 0
@@ -51,7 +51,7 @@ fi
 # --- 3. CONFIG API ---
 echo "🤖 [UPDATE] Configuration Open WebUI..."
 if $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" ps -q open-webui >/dev/null 2>&1; then
-    /bin/bash /opt/owui-scripts/config-owui.sh
+    /bin/bash /opt/echo-scripts/config-owui.sh
 fi
 
 echo "✨ UPDATE TERMINÉ."

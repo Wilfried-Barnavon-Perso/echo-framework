@@ -8,8 +8,8 @@
 # ==============================================================================
 
 DOCKER_COMPOSE_CMD="docker-compose"
-SYNC_SCRIPT="/opt/owui-scripts/sync-echo.sh"
-COMPOSE_FILE="/opt/owui-scripts/docker-compose.yml"
+SYNC_SCRIPT="/opt/echo-scripts/sync-echo.sh"
+COMPOSE_FILE="/opt/config/docker-compose.yml"
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
@@ -32,7 +32,7 @@ fi
 
 # --- SELF RUN (Protection) ---
 CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${CURRENT_SCRIPT##*/}"
-MY_OWN_ORIGIN="/opt/owui-scripts/${CURRENT_SCRIPT##*/}"
+MY_OWN_ORIGIN="/opt/echo-scripts/${CURRENT_SCRIPT##*/}"
 if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
     cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
     exec "$TMP_SCRIPT" "$@"; exit 0
@@ -80,6 +80,6 @@ fi
 
 # --- 3. REBUILD / RELAUNCH ---
 echo "🚀 [UPGRADE] Relance de la stack (via install-stack.sh)..."
-/bin/bash /opt/owui-scripts/install-stack.sh
+/bin/bash /opt/echo-scripts/install-stack.sh
 
 echo "✨ UPGRADE TERMINÉ."
