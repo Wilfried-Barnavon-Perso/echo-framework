@@ -9,7 +9,7 @@
 
 DOCKER_COMPOSE_CMD="docker-compose"
 SYNC_SCRIPT="/opt/echo-scripts/sync-echo.sh"
-COMPOSE_FILE="/opt/config/docker-compose.yml"
+COMPOSE_FILE="/opt/config/stack-echo.yml"
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
@@ -74,7 +74,7 @@ echo "🐳 [UPGRADE] Téléchargement des images Docker..."
 if [ -f "$COMPOSE_FILE" ]; then
     $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull
 else
-    echo "❌ Critique : docker-compose.yml introuvable."
+    echo "❌ Critique : stack-echo.yml introuvable."
     exit 1
 fi
 

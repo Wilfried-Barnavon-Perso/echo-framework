@@ -32,7 +32,7 @@ L'installation et le déploiement sont gérés par des scripts automatisés.
 
 - **Déploiement VM** : `deploy-on-hyperv.ps1` (Script maître PowerShell).
 - **Scripts Shell** : `00-echo-scripts/` contient les scripts de provisionning (`install-stack.sh`) et de maintenance.
-- **Configuration** : `01-config/` contient les fichiers de configuration (Docker Compose, Modèles, Prompts).
+- **Configuration** : `01-config/` contient les fichiers de configuration (`stack-echo.yml`, Modèles, Prompts).
 
 ## 📚 Documentation
 

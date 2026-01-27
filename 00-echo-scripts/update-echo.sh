@@ -8,7 +8,7 @@
 # ==============================================================================
 
 DOCKER_COMPOSE_CMD="docker-compose"
-COMPOSE_FILE="/opt/config/docker-compose.yml"
+COMPOSE_FILE="/opt/config/stack-echo.yml"
 SYNC_SCRIPT="/opt/echo-scripts/sync-echo.sh"
 export COMPOSE_PROJECT_NAME="echo"
 

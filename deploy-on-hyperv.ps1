@@ -115,7 +115,7 @@ $FilesMap = @{
   # CONFIG (JSON & YML)
   "/opt/config/model-config.json"                 = "$ScriptDir\01-config\model-config.json"
   "/opt/config/system-prompt.json"                = "$ScriptDir\01-config\system-prompt.json"
-  "/opt/config/docker-compose.yml"                = "$ScriptDir\01-config\docker-compose.yml"
+  "/opt/config/stack-echo.yml"                    = "$ScriptDir\01-config\stack-echo.yml"
   
   # BACKEND DOCKER
   "/opt/docker-admin-manager/server.py"           = "$ScriptDir\20-docker-admin-manager\server.py"
