@@ -13,7 +13,7 @@ set -e # Arrêt en cas d'erreur critique
 REPO_ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"
 SOURCE_VERSION_FILE="$REPO_ROOT/VERSION"
 SYSTEM_VERSION_FILE="/opt/ECHO_VERSION"
-COMPOSE_FILE="/opt/echo-scripts/docker-compose.yml"
+COMPOSE_FILE="/opt/config/docker-compose.yml"
 
 export COMPOSE_PROJECT_NAME="echo"
 

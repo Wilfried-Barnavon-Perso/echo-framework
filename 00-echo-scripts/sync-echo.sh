@@ -93,17 +93,18 @@ sync_resource() {
 }
 
 # Synchro Dossiers
-sync_resource "$SRC_DIR/00-Install"       "/opt/echo-scripts"
-sync_resource "$SRC_DIR/04-OWUI-tools"    "/opt/owui-tools"
-sync_resource "$SRC_DIR/03-OWUI-pipes"    "/opt/owui-pipes"
-sync_resource "$SRC_DIR/07-OWUI-actions"  "/opt/owui-actions"
-sync_resource "$SRC_DIR/05-OWUI-filters"  "/opt/owui-filters"
-sync_resource "$SRC_DIR/_assets/images"   "/opt/owui-images"
+sync_resource "$SRC_DIR/00-echo-scripts"       "/opt/echo-scripts"
+sync_resource "$SRC_DIR/01-config"             "/opt/config"
+sync_resource "$SRC_DIR/12-owui-tools"         "/opt/owui-tools"
+sync_resource "$SRC_DIR/10-owui-pipes"         "/opt/owui-pipes"
+sync_resource "$SRC_DIR/13-owui-actions"       "/opt/owui-actions"
+sync_resource "$SRC_DIR/11-owui-filters"       "/opt/owui-filters"
+sync_resource "$SRC_DIR/_assets/images"        "/opt/echo-images"
 
 # Synchro Fichiers (Code Python Containers)
-sync_resource "$SRC_DIR/01-docker-admin-manager/server.py"  "/opt/admin-manager"
-sync_resource "$SRC_DIR/02-docker-python-worker/worker_api.py" "/opt/python-worker"
-sync_resource "$SRC_DIR/06-docker-browser-agent/browser_api.py" "/opt/browser-agent"
+sync_resource "$SRC_DIR/20-docker-admin-manager/server.py"    "/opt/docker-admin-manager"
+sync_resource "$SRC_DIR/21-docker-python-worker/worker_api.py" "/opt/docker-python-worker"
+sync_resource "$SRC_DIR/22-docker-browser-agent/browser_api.py" "/opt/docker-browser-agent"
 
 # Lien symboliques
 
@@ -116,8 +117,8 @@ if [ -f "$SRC_DIR/VERSION" ]; then cp "$SRC_DIR/VERSION" "/opt/ECHO_VERSION"; ch
 
 # Nettoyage et Permissions (Fix Windows EOL)
 echo "   🧹 Nettoyage des caractères Windows et permissions..."
-find /opt/echo-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
-find /opt/echo-scripts /opt/admin-manager /opt/python-worker /opt/browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i 's/\r$//' {} +
+find /opt/echo-scripts /opt/config /opt/docker-admin-manager /opt/docker-python-worker /opt/docker-browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
+find /opt/echo-scripts /opt/config /opt/docker-admin-manager /opt/docker-python-worker /opt/docker-browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i 's/\r$//' {} +
 chmod +x /opt/echo-scripts/*.sh
 
 # RELANCE DU SCRIPT SI MIS A JOUR

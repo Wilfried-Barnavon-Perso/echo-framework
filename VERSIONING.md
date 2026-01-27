@@ -28,7 +28,7 @@ Chaque composant possède son propre cycle de vie et sa propre numérotation, do
 
 * `YY` : Correctif ou ajustement mineur (ex: 00).
 
-* **Fichier** : `03-OWUI-functions/pipe_engine.py`
+* **Fichier** : `10-owui-pipes/pipe_engine.py`
 
 * **Exemple** : `136.0` (No Upload / Base64 Mode + Turbo JSON).
 
@@ -36,7 +36,7 @@ Chaque composant possède son propre cycle de vie et sa propre numérotation, do
 
 * **Format** : `X.Y`
 
-* **Fichier** : `01-docker-admin-manager/server.py`
+* **Fichier** : `20-docker-admin-manager/server.py`
 
 * **Exemple** : `2.6` (Support UTF-8).
 

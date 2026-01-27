@@ -9,7 +9,7 @@
 # --- CONFIGURATION ---
 # Port modifié à 8080 pour correspondre à la stack v6 (Standalone)
 OWUI_URL="http://localhost:8080"
-SECRET_FILE="/opt/.owui-setting-secret"
+SECRET_FILE="/opt/config/.owui-setting-secret"
 
 # Compte de Service (Automate)
 SERVICE_EMAIL="install-stack@echo.local"
@@ -261,8 +261,8 @@ fi
 
 # --- 8. CONFIGURATION MODELE ---
 echo "🧠 [MODEL] Configuration du Modèle..."
-MODEL_CONFIG_FILE="$SCRIPT_DIR/model-config.json"
-SYSTEM_PROMPT_FILE="$SCRIPT_DIR/system-prompt.json"
+MODEL_CONFIG_FILE="/opt/config/model-config.json"
+SYSTEM_PROMPT_FILE="/opt/config/system-prompt.json"
 MODEL_ID="pipe_engine"
 
 if [ -f "$MODEL_CONFIG_FILE" ] && [ -f "$SYSTEM_PROMPT_FILE" ]; then

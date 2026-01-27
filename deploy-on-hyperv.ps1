@@ -1,8 +1,8 @@
-﻿# ==============================================================================
+# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.9.27
-# DATE           : 2026-01-21
+# SCRIPT VERSION : 6.0.0
+# DATE           : 2026-01-27
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -60,7 +60,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.9.3"
+$SCRIPT_VERSION = "6.0.0"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
@@ -106,39 +106,39 @@ $HashPassword = '$6$salt$Izj.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0.j/0
 # Dictionnaire : Source Windows => Destination Linux
 $FilesMap = @{
   # SCRIPTS
-  "/opt/echo-scripts/install-stack.sh"            = "$ScriptDir\00-Install\install-stack.sh"
-  "/opt/echo-scripts/sync-echo.sh"                = "$ScriptDir\00-Install\sync-echo.sh"  
-  "/opt/echo-scripts/update-echo.sh"              = "$ScriptDir\00-Install\update-echo.sh"
-  "/opt/echo-scripts/upgrade-echo.sh"             = "$ScriptDir\00-Install\upgrade-echo.sh"
-  "/opt/echo-scripts/config-owui.sh"              = "$ScriptDir\00-Install\config-owui.sh"
+  "/opt/echo-scripts/install-stack.sh"            = "$ScriptDir\00-echo-scripts\install-stack.sh"
+  "/opt/echo-scripts/sync-echo.sh"                = "$ScriptDir\00-echo-scripts\sync-echo.sh"  
+  "/opt/echo-scripts/update-echo.sh"              = "$ScriptDir\00-echo-scripts\update-echo.sh"
+  "/opt/echo-scripts/upgrade-echo.sh"             = "$ScriptDir\00-echo-scripts\upgrade-echo.sh"
+  "/opt/echo-scripts/config-owui.sh"              = "$ScriptDir\00-echo-scripts\config-owui.sh"
   
-  # CONFIGS JSON
-  "/opt/echo-scripts/model-config.json"           = "$ScriptDir\00-Install\model-config.json"
-  "/opt/echo-scripts/system-prompt.json"          = "$ScriptDir\00-Install\system-prompt.json"
+  # CONFIG (JSON & YML)
+  "/opt/config/model-config.json"                 = "$ScriptDir\01-config\model-config.json"
+  "/opt/config/system-prompt.json"                = "$ScriptDir\01-config\system-prompt.json"
+  "/opt/config/docker-compose.yml"                = "$ScriptDir\01-config\docker-compose.yml"
   
-  # DOCKER
-  "/opt/echo-scripts/docker-compose.yml"          = "$ScriptDir\00-Install\docker-compose.yml"
+  # BACKEND DOCKER
+  "/opt/docker-admin-manager/server.py"           = "$ScriptDir\20-docker-admin-manager\server.py"
+  "/opt/docker-python-worker/worker_api.py"       = "$ScriptDir\21-docker-python-worker\worker_api.py"
+  "/opt/docker-browser-agent/browser_api.py"      = "$ScriptDir\22-docker-browser-agent\browser_api.py"
   
-  # BACKEND
-  "/opt/admin-manager/server.py"                  = "$ScriptDir\01-docker-admin-manager\server.py"
-  "/opt/python-worker/worker_api.py"              = "$ScriptDir\02-docker-python-worker\worker_api.py"
-  "/opt/browser-agent/browser_api.py"             = "$ScriptDir\06-docker-browser-agent\browser_api.py"
+  # ECHO ENGINE (PIPES)
+  "/opt/owui-pipes/pipe_engine.py"                = "$ScriptDir\10-owui-pipes\pipe_engine.py"
   
-  # ECHO ENGINE
-  "/opt/owui-pipes/pipe_engine.py"                = "$ScriptDir\03-OWUI-pipes\pipe_engine.py"
+  # OWUI FILTERS
+  "/opt/owui-filters/bypass_rag.py"               = "$ScriptDir\11-owui-filters\bypass_rag.py"
+
+  # OWUI TOOLS
+  "/opt/owui-tools/python_code_executor.py"       = "$ScriptDir\12-owui-tools\python_code_executor.py"
+  "/opt/owui-tools/gemini_internal_web_search.py" = "$ScriptDir\12-owui-tools\gemini_internal_web_search.py"
+  "/opt/owui-tools/web_browser_advanced.py"       = "$ScriptDir\12-owui-tools\web_browser_advanced.py"
+  "/opt/owui-tools/api_client.py"                 = "$ScriptDir\12-owui-tools\api_client.py"
+  "/opt/owui-tools/context_gauge.py"              = "$ScriptDir\12-owui-tools\context_gauge.py"
   
-  # TOOLS
-  "/opt/owui-tools/python_code_executor.py"       = "$ScriptDir\04-OWUI-tools\python_code_executor.py"
-  "/opt/owui-tools/gemini_internal_web_search.py" = "$ScriptDir\04-OWUI-tools\gemini_internal_web_search.py"
-  "/opt/owui-tools/web_browser_advanced.py"       = "$ScriptDir\04-OWUI-tools\web_browser_advanced.py"
-  "/opt/owui-tools/api_client.py"                 = "$ScriptDir\04-OWUI-tools\api_client.py"
-  "/opt/owui-tools/context_gauge.py"              = "$ScriptDir\04-OWUI-tools\context_gauge.py"
+  # OWUI ACTIONS
+  "/opt/owui-actions/reset_auth_action.py"        = "$ScriptDir\13-owui-actions\reset_auth_action.py"
   
-  # FILTERS & ACTIONS
-  "/opt/owui-filters/bypass_rag.py"               = "$ScriptDir\05-OWUI-filters\bypass_rag.py"
-  "/opt/owui-actions/reset_auth_action.py"        = "$ScriptDir\07-OWUI-actions\reset_auth_action.py"
-  
-  # ASSETS (IMAGES) - Nouveau mapping
+  # ASSETS (IMAGES)
   "/opt/echo-images/logo-echo.png"                = "$ScriptDir\_assets\images\logo-echo.png"
   "/opt/echo-images/logo-echo-full.png"           = "$ScriptDir\_assets\images\logo-echo-full.png"
   

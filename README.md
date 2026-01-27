@@ -12,13 +12,13 @@ L'intelligence est appuyée par une stack logicielle modulaire, orchestrée par 
 
 | Composant | Dossier | Rôle |
 | :--- | :--- | :--- |
-| **Admin Manager** | `01-docker-admin-manager` | Dashboard d'administration et monitoring système. |
-| **Python Worker** | `02-docker-python-worker` | Sandbox Docker pour l'exécution sécurisée de code Python. |
-| **ECHO Pipes** | `03-OWUI-pipes` | Le "Cerveau" (Manifold). Injecte la constitution et gère le contexte. |
-| **Agent Tools** | `04-OWUI-tools` | Les "Bras". Outils spécialisés (Recherche Web, Exécution Code). |
-| **Filtres** | `05-OWUI-filters` | **Infrastructure (Bypass RAG - Requis)**. |
-| **Browser Agent** | `06-docker-browser-agent` | Agent de navigation autonome. |
-| **Actions UI** | `07-OWUI-actions` | Boutons d'interaction UI (ex: Reset Auth). |
+| **Admin Manager** | `20-docker-admin-manager` | Dashboard d'administration et monitoring système. |
+| **Python Worker** | `21-docker-python-worker` | Sandbox Docker pour l'exécution sécurisée de code Python. |
+| **ECHO Pipes** | `10-owui-pipes` | Le "Cerveau" (Manifold). Injecte la constitution et gère le contexte. |
+| **Agent Tools** | `12-owui-tools` | Les "Bras". Outils spécialisés (Recherche Web, Exécution Code). |
+| **Filtres** | `11-owui-filters` | **Infrastructure (Bypass RAG - Requis)**. |
+| **Browser Agent** | `22-docker-browser-agent` | Agent de navigation autonome. |
+| **Actions UI** | `13-owui-actions` | Boutons d'interaction UI (ex: Reset Auth). |
 
 > **Note Critique :** Le filtre `bypass_rag.py` est **obligatoire** pour le bon fonctionnement du `pipe_engine`. Il intercepte les fichiers avant le traitement RAG natif d'Open WebUI, permettant au moteur ECHO de gérer le contexte de manière autonome.
 
@@ -30,8 +30,9 @@ ECHO v5 implémente une **Hiérarchie des Normes** stricte via le `pipe_engine.p
 
 L'installation et le déploiement sont gérés par des scripts automatisés.
 
-- **Déploiement VM** : `VM-ECHOv5-Deploy.ps1` (Script maître PowerShell).
-- **Scripts Shell** : `00-Install/` contient les scripts de provisionning (`install-stack.sh`) et de mise à jour (`update-echo.sh`).
+- **Déploiement VM** : `deploy-on-hyperv.ps1` (Script maître PowerShell).
+- **Scripts Shell** : `00-echo-scripts/` contient les scripts de provisionning (`install-stack.sh`) et de maintenance.
+- **Configuration** : `01-config/` contient les fichiers de configuration (Docker Compose, Modèles, Prompts).
 
 ## 📚 Documentation
 
