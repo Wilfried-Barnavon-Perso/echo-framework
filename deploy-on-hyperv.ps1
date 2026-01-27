@@ -48,8 +48,8 @@ $SWITCH_NAME = "Bridge LAN"
 # --- CONFIGURATION BRANCHE ---
 # Permet de définir quelle branche git sera suivie par la VM.
 # Modifiez cette valeur si vous souhaitez déployer une branche de dev.
-#$BRANCHE = "dev"
-$BRANCHE = "main"
+$BRANCHE = "dev"
+#$BRANCHE = "main"
 
 function Pause-OnError {
   param([string]$Message)
