@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 3.5
+# VERSION : 3.6
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -111,6 +111,7 @@ sync_resource "$SRC_DIR/22-docker-browser-agent/browser_api.py" "/opt/docker-bro
 ln -sf /opt/echo-scripts/update-echo.sh /usr/local/bin/update-echo 
 ln -sf /opt/echo-scripts/upgrade-echo.sh /usr/local/bin/upgrade-echo
 ln -sf /opt/echo-scripts/upgrade-echo.sh /usr/local/bin/rebuild-echo
+ln -sf /opt/echo-scripts/show-echo-admin.sh /usr/local/bin/show-echo-admin
 
 # Versioning
 if [ -f "$SRC_DIR/VERSION" ]; then cp "$SRC_DIR/VERSION" "/opt/ECHO_VERSION"; chmod 644 "/opt/ECHO_VERSION"; fi
