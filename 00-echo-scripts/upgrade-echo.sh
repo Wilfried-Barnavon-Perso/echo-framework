@@ -27,6 +27,7 @@ if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
     [ "$CONFIRM" != "CONFIRMER" ] && exit 1
     export CONFIRMED_YET="yes"
     docker stop $(docker ps -aq) > /dev/null 2>&1 && echo "Services arrêtés"
+    docker rm $(docker ps -aq) > /dev/null 2>&1 && echo "Conteneurs supprimés"
     docker volume rm $(docker volume ls -q) > /dev/null 2>&1 && echo "Volumes actifs supprimés"
     docker system prune -a --volumes -f > /dev/null 2>&1 && echo "Volumes orphelins et images supprimé"
     rm -f /opt/config/.owui-setting-secret /opt/config/.owui-admin-secret && echo "Fichiers secrets supprimés"
