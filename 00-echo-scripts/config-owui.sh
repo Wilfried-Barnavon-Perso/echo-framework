@@ -143,15 +143,28 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
  do
             [ -e "$file" ] || continue
             ID=$(basename "$file" | cut -d. -f1)
+            
+            # Extraction du Nom (Title) pour affichage propre
+            # On récupère la première occurrence de "title:", on nettoie le préfixe et les espaces
+            TITLE_LINE=$(grep -m 1 "title:" "$file")
+            CLEAN_NAME=$(echo "$TITLE_LINE" | sed 's/.*title:[[:space:]]*//' | tr -d '\r')
+            
+            # Si pas de titre trouvé, on fallback sur l'ID
+            if [ -n "$CLEAN_NAME" ]; then
+                NAME="$CLEAN_NAME"
+            else
+                NAME="$ID"
+            fi
+
             CONTENT=$(jq -sR . "$file")
             
             if [[ "$API_ENDPOINT" == "tools" ]]; then
-                PAYLOAD=$(jq -n --arg id "$ID" --arg content "$CONTENT" \
-                    '{id: $id, name: $id, content: ($content|fromjson), meta: {}}')
+                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" \
+                    '{id: $id, name: $name, content: ($content|fromjson), meta: {}}')
             else
                 TYPE_VAL=$(echo "$DESC" | tr '[:upper:]' '[:lower:]')
-                PAYLOAD=$(jq -n --arg id "$ID" --arg content "$CONTENT" --arg type "$TYPE_VAL" \
-                    '{id: $id, name: $id, content: ($content|fromjson), type: $type, is_active: true, meta: {}}')
+                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" --arg type "$TYPE_VAL" \
+                    '{id: $id, name: $name, content: ($content|fromjson), type: $type, is_active: true, meta: {}}')
             fi
             api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
         done
