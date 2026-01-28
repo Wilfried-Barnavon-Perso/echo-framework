@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.7
+# VERSION : 7.8
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -34,17 +34,18 @@ echo "🔧 [Config] Démarrage initialisation ECHO..."
 SLEEP_TIME=2
 WAIT_LIMIT=600
 COUNT=0
-echo "⏳ [Config] Attente API open-webui (Max $(($WAIT_LIMIT*$SLEEP_TIME/60)) min)..."
+echo -n "⏳ [Config] Attente API open-webui (Max $(($WAIT_LIMIT*$SLEEP_TIME/60)) min)"
 
 until curl -s -f "$OWUI_URL/health" > /dev/null; do
     if [ "$COUNT" -ge "$WAIT_LIMIT" ]; then
         echo "❌ [FATAL] Timeout : L'API n'est pas disponible après $(($WAIT_LIMIT*$SLEEP_TIME/60)) minutes."
         exit 1
     fi
+    echo -n "."
     sleep $SLEEP_TIME
     ((COUNT++))
 done
-echo " OK."
+echo " OK après $(($COUNT*2)) secondes."
 
 # --- 2. AUTHENTIFICATION ---
 TOKEN=""
@@ -67,29 +68,36 @@ if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
     TOKEN=$(echo "$SIGNUP_RESP" | jq -r '.token // empty')
     
     if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+        touch "$SECRET_FILE"
+        chmod 600 "$SECRET_FILE"
         echo "$SERVICE_PWD" > "$SECRET_FILE"
         chmod 400 "$SECRET_FILE"
-        
-        # B. Création Compte Admin Humain (Si token service valide)
-        echo "🆕 [AUTH] Création compte Admin..."
-        # Génération mot de passe Admin (16 chars: Min/Maj/Num/Spec)
-        # Utilisation de tr pour filtrer et head pour limiter
-        ADMIN_PWD=$(LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16)
-        
-        # Sauvegarde sécurisée AVANT création
-        echo "$ADMIN_PWD" > "$ADMIN_SECRET_FILE"
-        chmod 400 "$ADMIN_SECRET_FILE"
-        
-        curl -s -X POST "$OWUI_URL/api/v1/auths/add" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"name\": \"$HUMAN_NAME\", \"email\": \"$HUMAN_EMAIL\", \"password\": \"$ADMIN_PWD\", \"role\": \"admin\"}" > /dev/null
-            
-        echo "   ✅ Admin créé. Credentials stockés dans $ADMIN_SECRET_FILE"
+        echo "   ✅ Compte service créé et authentifié."
     else
-        echo "❌ [FATAL] Echec Auth."
+        echo "❌ [FATAL] Echec création/authentification du compte service."
         exit 1
     fi
+fi
+
+# B. Création Compte Admin Humain (si nécessaire)
+if [ ! -s "$ADMIN_SECRET_FILE" ]; then
+    echo "🆕 [AUTH] Le fichier secret admin est manquant ou vide. Création d'un nouveau compte admin..."
+    ADMIN_PWD=$(LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16)
+    
+    # Sauvegarde sécurisée AVANT création
+    touch "$ADMIN_SECRET_FILE"
+    chmod 600 "$ADMIN_SECRET_FILE"
+    echo "$ADMIN_PWD" > "$ADMIN_SECRET_FILE"
+    chmod 400 "$ADMIN_SECRET_FILE"
+    
+    curl -s -X POST "$OWUI_URL/api/v1/auths/add" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"name\": \"$HUMAN_NAME\", \"email\": \"$HUMAN_EMAIL\", \"password\": \"$ADMIN_PWD\", \"role\": \"admin\"}" > /dev/null
+        
+    echo "   ✅ Admin créé. Credentials stockés dans $ADMIN_SECRET_FILE"
+else
+    echo "👍 [AUTH] Le compte admin existe déjà, pas de création nécessaire."
 fi
 
 # --- 3. IMPORT RESSOURCES (Legacy) ---

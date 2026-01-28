@@ -1,6 +1,8 @@
 #!/bin/bash
 # ==============================================================================
 # AFFICHAGE SECURISE DES IDENTIFIANTS ADMIN
+# Version : 1.1
+# Auteur : Wilfried BARNAVON
 # ==============================================================================
 
 ADMIN_SECRET_FILE="/opt/config/.owui-admin-secret"
@@ -14,9 +16,7 @@ fi
 
 ADMIN_PWD=$(cat "$ADMIN_SECRET_FILE")
 
-# Nettoyage écran (compatible clear)
-printf "\033c"
-
+echo ""
 echo "=========================================="
 echo "      🔐 ECHO ADMIN CREDENTIALS"
 echo "=========================================="
@@ -26,12 +26,15 @@ echo "Password : $ADMIN_PWD"
 echo ""
 echo "=========================================="
 echo "⚠️  ATTENTION : Ce mot de passe va être masqué."
+echo "⏯️ Faite ENTREE pour continuer."
 echo "⏳ Masquage automatique dans 30 secondes..."
 
-sleep 30
+timeout 30 --foreground read TMP$RANDOM
+
+# Effacement des 11 lignes précédentes (remonte le curseur et efface jusqu'à la fin)
+printf "\033[11A\033[0J"
 
 # Nettoyage et affichage masqué
-printf "\033c"
 echo "=========================================="
 echo "      🔐 ECHO ADMIN CREDENTIALS"
 echo "=========================================="
