@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.5
+# VERSION : 7.6
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -30,17 +30,18 @@ ACTIONS_DIR="/opt/owui-actions"
 echo "🔧 [Config] Démarrage initialisation ECHO..."
 
 # --- 1. ATTENTE API ---
-# Timeout fixé à 10 minutes (300 * 2s = 600s)
-WAIT_LIMIT=300
+# Timeout fixé 
+SLEEP_TIME=2
+WAIT_LIMIT=600
 COUNT=0
-echo "⏳ [Config] Attente API (Max 10 min)..."
+echo "⏳ [Config] Attente API open-webui (Max $(($WAIT_LIMIT*$SLEEP_TIME/60)) min)..."
 
 until curl -s -f "$OWUI_URL/health" > /dev/null; do
     if [ "$COUNT" -ge "$WAIT_LIMIT" ]; then
         echo "❌ [FATAL] Timeout : L'API n'est pas disponible après 10 minutes."
         exit 1
     fi
-    sleep 2
+    sleep $SLIP_TIME
     ((COUNT++))
 done
 echo " OK."

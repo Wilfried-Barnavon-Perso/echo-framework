@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.3
+# VERSION : 6.4
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -155,23 +155,6 @@ else
     exit 1
 fi
 
-# --- 4. POST-INSTALL (CONFIG) ---
-echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:3000)..."
-# Note: Port modifié à 3000 (Mapping direct) au lieu de 8080
-MAX_RETRIES=300
-COUNT=0
-set +e
-until curl -s -f http://localhost:3000/health > /dev/null; do
-    sleep 2
-    ((COUNT++))
-    if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
-        echo "❌ Timeout attente Open WebUI."
-        break
-    fi
-    echo -n "."
-done
-set -e
-echo " UP."
 
 echo "🔧 Configuration Auto (API Host-Driven)..."
 if [ -f "/opt/echo-scripts/config-owui.sh" ]; then
