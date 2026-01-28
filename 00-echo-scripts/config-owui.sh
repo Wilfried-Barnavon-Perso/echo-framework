@@ -75,6 +75,9 @@ if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
         echo "   ✅ Compte service créé et authentifié."
     else
         echo "❌ [FATAL] Echec création/authentification du compte service."
+        echo "   🔍 Debug Info:"
+        echo "   - URL: $OWUI_URL/api/v1/auths/signup"
+        echo "   - Réponse API: $SIGNUP_RESP"
         exit 1
     fi
 fi
