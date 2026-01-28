@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.0
+# VERSION : 6.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
@@ -21,6 +21,7 @@ if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
     echo "    1. Arrêter tous les services de la stack"
     echo "    2. Supprimer TOUS LES VOLUMES des conteneurs"
     echo "    3. Supprimer toutes les images dockerfile"
+    echo "    4. Supprimer les fichiers secrets locaux (Reset Auth)"
     echo ""
     read -p "Tapez 'CONFIRMER' : " CONFIRM
     [ "$CONFIRM" != "CONFIRMER" ] && exit 1
@@ -28,6 +29,7 @@ if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
     docker stop $(docker ps -aq) > /dev/null 2>&1 && echo "Services arrêtés"
     docker volume rm $(docker volume ls -q) > /dev/null 2>&1 && echo "Volumes actifs supprimés"
     docker system prune -a --volumes -f > /dev/null 2>&1 && echo "Volumes orphelins et images supprimé"
+    rm -f /opt/config/.owui-setting-secret /opt/config/.owui-admin-secret && echo "Fichiers secrets supprimés"
 fi
 
 # --- SELF RUN (Protection) ---
