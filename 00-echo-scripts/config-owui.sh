@@ -1,13 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.10
+# VERSION : 7.11
 # ==============================================================================
 
 # --- CONFIGURATION ---
 OWUI_URL="http://localhost:3000"
-SECRET_FILE="/opt/config/.owui-setting-secret"
-ADMIN_SECRET_FILE="/opt/config/.owui-admin-secret"
+SECRET_FILE="/opt/.owui-setting-secret"
+ADMIN_SECRET_FILE="/opt/.owui-admin-secret"
 
 # Fichiers de Configuration
 CONFIG_DIR="/opt/config"
