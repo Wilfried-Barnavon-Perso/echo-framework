@@ -1,7 +1,7 @@
 # ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.11.0
+# SCRIPT VERSION : 6.0.0
 # DATE           : 2026-01-28
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -119,7 +119,7 @@ try {
 
 }
 catch {
-  Pause-OnError "Echec lors de la création de l'archive ZIP : $_"
+  Pause-OnError "Echec lors de la création de l'archive ZIP : $_ "
 }
 finally {
   # NETTOYAGE IMMEDIAT
@@ -227,7 +227,7 @@ $WriteFilesBlock
 
       # 7. Lancement Installation de la Stack
       - "/opt/echo-scripts/install-stack.sh"
-@"
+@
 
 # --- 7. CREATION DISQUES & VM (HYPER-V) ---
 $MetaDataContent = "instance-id: $VMName"
