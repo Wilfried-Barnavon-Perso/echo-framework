@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.9
+# VERSION : 7.10
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -211,18 +211,24 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     fi
     
     # C. Envoi API
+    # FIX: Utilisation d'un fichier temporaire pour éviter "Argument list too long" sur le payload final
+    PAYLOAD_FILE="/tmp/owui_payload_$$.json"
+    echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
+
     CHECK=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     
     # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
     if [ "$CHECK" -eq 200 ]; then
         curl -s -X POST "$OWUI_URL/api/v1/models/model/update" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$FINAL_PAYLOAD" > /dev/null
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
         echo "   ✅ Modèle mis à jour."
     else
         curl -s -X POST "$OWUI_URL/api/v1/models/add" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$FINAL_PAYLOAD" > /dev/null
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
         echo "   ✅ Modèle créé."
     fi
+
+    rm -f "$PAYLOAD_FILE"
 fi
 
 echo "✅ [Config] Terminé avec succès."
