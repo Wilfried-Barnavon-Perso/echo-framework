@@ -111,6 +111,7 @@ $FilesMap = @{
   "/opt/echo-scripts/update-echo.sh"              = "$ScriptDir\00-echo-scripts\update-echo.sh"
   "/opt/echo-scripts/upgrade-echo.sh"             = "$ScriptDir\00-echo-scripts\upgrade-echo.sh"
   "/opt/echo-scripts/config-owui.sh"              = "$ScriptDir\00-echo-scripts\config-owui.sh"
+  "/opt/echo-scripts/show-echo-admin.sh"          = "$ScriptDir\00-echo-scripts\show-echo-admin.sh"
   
   # CONFIG (JSON & YML)
   "/opt/config/model-config.json"                 = "$ScriptDir\01-config\model-config.json"

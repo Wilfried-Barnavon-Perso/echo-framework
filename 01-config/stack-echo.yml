@@ -1,7 +1,7 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v6.3 - STANDALONE APPLICATION SERVER
+# ECHO FRAMEWORK v6.4 - STANDALONE APPLICATION SERVER
 # ==============================================================================
 # ARCHITECTURE :
 # Ce fichier ne gère QUE la couche applicative "ECHO".
@@ -21,7 +21,6 @@ services:
     volumes:
       - echo-webui-data:/app/backend/data
       - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
-      - /opt/echo-images:/app/backend/open_webui/static/echo:ro
     # EXPOSITION : Port 3000 ouvert pour le Reverse Proxy distant
     ports:
       - "3000:8080"
@@ -31,7 +30,7 @@ services:
       # L'authentification interne reste active pour les utilisateurs de l'IA
       - WEBUI_AUTH=True
       # URL publique gérée par le proxy externe
-      - WEBUI_URL=https://www.echo-ai.eu
+      # - WEBUI_URL=https://www.echo-ai.eu
       
     command: >
       /bin/bash -c "pip install mgzip && ./start.sh"
