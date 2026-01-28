@@ -30,37 +30,50 @@ if [ -f "$BRANCH_FILE" ]; then
     TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]')
 fi
 
-echo "🔄 [SYNC] 1/2 Synchronisation GitHub (Branche: $TARGET_BRANCH)..."
-
-# --- LOGIQUE GIT ROBUSTE ---
-if [ ! -d "$SRC_DIR/.git" ]; then
-    # Scénario A : Clonage Initial
-    echo "   🆕 Dépôt introuvable. Clonage propre..."
-    rm -rf "$SRC_DIR"
-    git clone "$GIT_REPO" "$SRC_DIR"
-    if [ $? -ne 0 ]; then echo "❌ Erreur critique : Impossible de cloner."; exit 1; fi
-    
-    cd "$SRC_DIR" || exit
-    if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
-        git checkout "$TARGET_BRANCH"
-    else
-        echo "❌ ERREUR : La branche '$TARGET_BRANCH' n'existe pas."
-        exit 1
+# Parsing Arguments
+LOCAL_ONLY="false"
+for arg in "$@"; do
+    if [ "$arg" == "--local-only" ]; then
+        LOCAL_ONLY="true"
     fi
+done
+
+if [ "$LOCAL_ONLY" == "true" ]; then
+    echo "🔄 [SYNC] 1/2 Mode LOCAL-ONLY détecté. Synchronisation Git ignorée."
+    echo "   📂 Utilisation des sources présentes dans : $SRC_DIR"
 else
-    # Scénario B : Mise à jour (Reset Hard pour intégrité totale)
-    echo "   📥 Alignement avec le dépôt distant..."
-    cd "$SRC_DIR" || exit
-    git fetch origin
-    git reset --hard HEAD
-    git clean -fd
-    
-    if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
-        git checkout "$TARGET_BRANCH"
-        git reset --hard "origin/$TARGET_BRANCH"
+    echo "🔄 [SYNC] 1/2 Synchronisation GitHub (Branche: $TARGET_BRANCH)..."
+
+    # --- LOGIQUE GIT ROBUSTE ---
+    if [ ! -d "$SRC_DIR/.git" ]; then
+        # Scénario A : Clonage Initial
+        echo "   🆕 Dépôt introuvable. Clonage propre..."
+        rm -rf "$SRC_DIR"
+        git clone "$GIT_REPO" "$SRC_DIR"
+        if [ $? -ne 0 ]; then echo "❌ Erreur critique : Impossible de cloner."; exit 1; fi
+        
+        cd "$SRC_DIR" || exit
+        if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+            git checkout "$TARGET_BRANCH"
+        else
+            echo "❌ ERREUR : La branche '$TARGET_BRANCH' n'existe pas."
+            exit 1
+        fi
     else
-        echo "❌ ERREUR : Branche distante '$TARGET_BRANCH' introuvable."
-        exit 1
+        # Scénario B : Mise à jour (Reset Hard pour intégrité totale)
+        echo "   📥 Alignement avec le dépôt distant..."
+        cd "$SRC_DIR" || exit
+        git fetch origin
+        git reset --hard HEAD
+        git clean -fd
+        
+        if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+            git checkout "$TARGET_BRANCH"
+            git reset --hard "origin/$TARGET_BRANCH"
+        else
+            echo "❌ ERREUR : Branche distante '$TARGET_BRANCH' introuvable."
+            exit 1
+        fi
     fi
 fi
 
