@@ -156,12 +156,12 @@ else
 fi
 
 # --- 4. POST-INSTALL (CONFIG) ---
-echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:8080)..."
-# Note: Port modifié à 8080 (Mapping direct) au lieu de 3000
+echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:3000)..."
+# Note: Port modifié à 3000 (Mapping direct) au lieu de 8080
 MAX_RETRIES=300
 COUNT=0
 set +e
-until curl -s -f http://localhost:8080/health > /dev/null; do
+until curl -s -f http://localhost:3000/health > /dev/null; do
     sleep 2
     ((COUNT++))
     if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
@@ -184,7 +184,7 @@ fi
 docker image prune -f >/dev/null 2>&1
 echo "✅ DEPLOIEMENT TERMINÉ."
 echo "-----------------------------------------------------------"
-echo "🌐 APPLICATION ECHO : http://IP-LOCALE:8080"
+echo "🌐 APPLICATION ECHO : http://IP-LOCALE:3000"
 echo "🔧 CONSOLE ADMIN    : http://IP-LOCALE:3001"
 echo "⚠️  N'oubliez pas de configurer votre PROXY EXTERNE !"
 echo "-----------------------------------------------------------"

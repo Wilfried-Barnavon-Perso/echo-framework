@@ -7,8 +7,8 @@
 # ==============================================================================
 
 # --- CONFIGURATION ---
-# Port modifié à 8080 pour correspondre à la stack v6 (Standalone)
-OWUI_URL="http://localhost:8080"
+# Port modifié à 3000 pour correspondre à la stack v6 (Standalone)
+OWUI_URL="http://localhost:3000"
 SECRET_FILE="/opt/config/.owui-setting-secret"
 
 # Compte de Service (Automate)

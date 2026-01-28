@@ -22,9 +22,9 @@ services:
       - echo-webui-data:/app/backend/data
       - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
       - /opt/echo-images:/app/backend/open_webui/static/echo:ro
-    # EXPOSITION : Port 8080 ouvert pour le Reverse Proxy distant
+    # EXPOSITION : Port 3000 ouvert pour le Reverse Proxy distant
     ports:
-      - "8080:8080"
+      - "3000:8080"
     networks:
       - echo-network
     environment:
