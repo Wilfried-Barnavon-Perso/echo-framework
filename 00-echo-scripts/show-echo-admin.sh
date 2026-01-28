@@ -29,7 +29,7 @@ echo "⚠️  ATTENTION : Ce mot de passe va être masqué."
 echo "⏯️ Faite ENTREE pour continuer."
 echo "⏳ Masquage automatique dans 30 secondes..."
 
-timeout 30 --foreground read TMP$RANDOM
+read -t 30 __junk
 
 # Effacement des 11 lignes précédentes (remonte le curseur et efface jusqu'à la fin)
 printf "\033[11A\033[0J"
