@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.8
+# VERSION : 7.9
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -198,8 +198,13 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
             B64_DATA=$(base64 -w 0 "$IMG_PATH")
             FULL_B64="data:$MIME;base64,$B64_DATA"
             
+            # FIX: Passage par fichier temporaire (avec PID) pour éviter "Argument list too long"
+            TMP_IMG_FILE="/tmp/owui_image_b64_$$.txt"
+            echo -n "$FULL_B64" > "$TMP_IMG_FILE"
+            
             # Remplacement dans le Payload
-            FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --arg img "$FULL_B64" '.meta.profile_image_url = $img | del(.local_image_filename)')
+            FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile img "$TMP_IMG_FILE" '.meta.profile_image_url = $img | del(.local_image_filename)')
+            rm -f "$TMP_IMG_FILE"
         else
             echo "   ⚠️ Image introuvable : $IMG_PATH"
         fi
