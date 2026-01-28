@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.1
+# VERSION : 6.3
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
@@ -14,8 +14,9 @@ export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
+clear
+
 if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
-    clear
     echo "⚠️  RECONSTRUCTION COMPLETE DE LA STACK ECHO"
     echo "    Cette opération va :"
     echo "    1. Arrêter tous les services de la stack"
@@ -46,7 +47,6 @@ BRANCH_FILE="/opt/ECHO_BRANCH"
 TARGET_BRANCH="main"
 if [ -f "$BRANCH_FILE" ]; then TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]'); fi
 
-clear
 echo "⚠️  UPGRADE MAJEUR via DOCKER-COMPOSE"
 echo "    Cette opération va :"
 echo "    1. Synchroniser le code et écraser les modifications locales"
