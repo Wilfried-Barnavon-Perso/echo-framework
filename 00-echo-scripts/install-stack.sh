@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.2
+# VERSION : 6.3
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -186,5 +186,5 @@ echo "✅ DEPLOIEMENT TERMINÉ."
 echo "-----------------------------------------------------------"
 echo "🌐 APPLICATION ECHO : http://IP-LOCALE:3000"
 echo "🔧 CONSOLE ADMIN    : http://IP-LOCALE:3001"
-echo "⚠️  N'oubliez pas de configurer votre PROXY EXTERNE !"
+echo "⚠️  N'oubliez pas de configurer votre WAF si public !"
 echo "-----------------------------------------------------------"
