@@ -34,7 +34,7 @@ echo "🔧 [Config] Démarrage initialisation ECHO..."
 SLEEP_TIME=2
 WAIT_LIMIT=600
 COUNT=0
-echo -n "⏳ [Config] Attente API open-webui (Max $(($WAIT_LIMIT*$SLEEP_TIME/60)) min)"
+echo -n "⏳ [Config] Attente API open-webui (Max $(($WAIT_LIMIT*$SLEEP_TIME/60)) min)."
 
 until curl -s -f "$OWUI_URL/health" > /dev/null; do
     if [ "$COUNT" -ge "$WAIT_LIMIT" ]; then
