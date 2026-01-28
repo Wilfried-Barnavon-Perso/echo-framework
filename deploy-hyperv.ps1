@@ -1,11 +1,19 @@
 ﻿# ==============================================================================
+
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
+
 # ==============================================================================
-# SCRIPT VERSION : 6.0.0
+
+# SCRIPT VERSION : 5.11.0
+
 # DATE           : 2026-01-28
+
 # AUTHOR         : Wilfried BARNAVON
+
 # ==============================================================================
+
 #
+
 # --- QUOI (WHAT) ---
 # Ce script PowerShell automatise la création d'une VM Linux sur Hyper-V et y déploie
 # toute la stack ECHO (Docker, Scripts, Configs) via injection d'archive ZIP.
@@ -118,9 +126,11 @@ try {
   $ZipB64Content = [Convert]::ToBase64String($RawBytes)
 
 }
+
 catch {
   Pause-OnError "Echec lors de la création de l'archive ZIP : $_ "
 }
+
 finally {
   # NETTOYAGE IMMEDIAT
   if (Test-Path $TempZipPath) { 
@@ -128,7 +138,6 @@ finally {
     Write-Host "   🧹 Fichier temporaire supprimé."
   }
 }
-
 
 # --- 5. GENERATION BLOC WRITE_FILES (CLOUD-INIT) ---
 $WriteFilesBlock = ""
@@ -152,7 +161,6 @@ $WriteFilesBlock += "      - path: /opt/ECHO_BRANCH`n"
 $WriteFilesBlock += "        permissions: '0644'`n"
 $WriteFilesBlock += "        encoding: b64`n"
 $WriteFilesBlock += "        content: $BrancheContent`n"
-
 
 # --- 6. USER-DATA CLOUD-INIT ---
 $UserDataContent = @"
@@ -227,7 +235,7 @@ $WriteFilesBlock
 
       # 7. Lancement Installation de la Stack
       - "/opt/echo-scripts/install-stack.sh"
-@
+"@
 
 # --- 7. CREATION DISQUES & VM (HYPER-V) ---
 $MetaDataContent = "instance-id: $VMName"
@@ -253,6 +261,7 @@ Dismount-VHD -Path $SeedPath
 # Construction VM
 if (-not (Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
   Write-Host "🔨 Création de la VM Hyper-V : $VMName"
+
   New-VM -Name $VMName -MemoryStartupBytes $RAMStartup -Generation 2 -SwitchName $SwitchName -NoVHD
   Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes 2048MB -MemoryMaximumBytes 8192MB -ProcessorCount 4
   Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
