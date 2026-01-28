@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.4
+# VERSION : 6.5
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -168,6 +168,7 @@ docker image prune -f >/dev/null 2>&1
 echo "✅ DEPLOIEMENT TERMINÉ."
 echo "-----------------------------------------------------------"
 echo "🌐 APPLICATION ECHO : http://IP-LOCALE:3000"
-echo "🔧 CONSOLE ADMIN    : http://IP-LOCALE:3001"
+echo "🔑 Tapez show-echo-admin pour le mot de passe"
+echo "🔧 CONSOLE ADMIN    : http://IP-LOCALE:3001 (login ssh)"
 echo "⚠️  N'oubliez pas de configurer votre WAF si public !"
 echo "-----------------------------------------------------------"
