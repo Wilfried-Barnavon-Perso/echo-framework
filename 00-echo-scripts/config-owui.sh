@@ -329,6 +329,9 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     REMOTE_MODEL=$(curl -s -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     
+    echo "🔍 DEBUG: Réponse API brute pour vérification :"
+    echo "$REMOTE_MODEL"
+    
     # Vérification JSON valide
     if echo "$REMOTE_MODEL" | jq -e . >/dev/null 2>&1; then
         R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.meta.toolIds | length // 0')
