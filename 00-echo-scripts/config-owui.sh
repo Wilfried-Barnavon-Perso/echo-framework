@@ -1,10 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.24
+# VERSION : 7.26
 # ==============================================================================
 
 # --- CONFIGURATION ---
+DEBUG_MODE="false"  # Mettre à "true" pour afficher les payloads JSON
 OWUI_URL="http://localhost:3000"
 SECRET_FILE="/opt/.owui-setting-secret"
 ADMIN_SECRET_FILE="/opt/.owui-admin-secret"
@@ -318,8 +319,10 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     # C. Envoi API
     # FIX: Utilisation d'un fichier temporaire pour éviter "Argument list too long" sur le payload final
-    echo "📤 DEBUG: Payload envoyé :"
-    echo "$FINAL_PAYLOAD"
+    if [ "$DEBUG_MODE" == "true" ]; then
+        echo "📤 DEBUG: Payload envoyé :"
+        echo "$FINAL_PAYLOAD"
+    fi
     
     PAYLOAD_FILE="/tmp/owui_payload_$$.json"
     echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
@@ -350,10 +353,12 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     # On cible .data[] car l'API retourne { "data": [ ... ] }
     REMOTE_MODEL=$(echo "$MODELS_LIST" | jq -r --arg id "$MODEL_ID" '.data[] | select(.id == $id)')
     
-    # echo "🔍 DEBUG: Modèle extrait :"
-    # echo "$REMOTE_MODEL"
-    # echo "🔍 DEBUG: Clés disponibles :"
-    # echo "$REMOTE_MODEL" | jq 'keys'
+    if [ "$DEBUG_MODE" == "true" ]; then
+        echo "🔍 DEBUG: Modèle extrait :"
+        echo "$REMOTE_MODEL"
+        echo "🔍 DEBUG: Clés disponibles :"
+        echo "$REMOTE_MODEL" | jq 'keys'
+    fi
     
     if [ -n "$REMOTE_MODEL" ] && [ "$REMOTE_MODEL" != "null" ]; then
         # Extraction des compteurs (Robustesse Multi-Chemins)
