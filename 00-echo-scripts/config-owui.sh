@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.23
+# VERSION : 7.24
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -262,12 +262,12 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     # Injection dans le Payload Final
     # On injecte filterIds ET defaultFilterIds (pour les activer par défaut)
-    # On tente toolIds et tool_ids pour couvrir les variations de l'API
+    # STANDARDISATION : On utilise uniquement toolIds (CamelCase) pour s'aligner avec filterIds/actionIds
     FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq \
         --argjson tools "$TOOL_IDS" \
         --argjson filters "$FILTER_IDS" \
         --argjson actions "$ACTION_IDS" \
-        '.meta.toolIds = $tools | .meta.tool_ids = $tools | .meta.filterIds = $filters | .meta.defaultFilterIds = $filters | .meta.actionIds = $actions')
+        '.meta.toolIds = $tools | .meta.filterIds = $filters | .meta.defaultFilterIds = $filters | .meta.actionIds = $actions')
         
     MODEL_ID=$(echo "$FINAL_PAYLOAD" | jq -r '.id')
     
@@ -356,7 +356,7 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
         # Extraction des compteurs (Robustesse Multi-Chemins)
         
         # Outils
-        R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.info.meta.toolIds | length // .info.meta.tool_ids | length // .meta.toolIds | length // .tools | length // 0')
+        R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.info.meta.toolIds | length // .meta.toolIds | length // .tools | length // 0')
         
         # Filtres
         R_FILTERS=$(echo "$REMOTE_MODEL" | jq '.filters | length // .info.meta.filterIds | length // 0')
