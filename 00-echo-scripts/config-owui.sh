@@ -329,10 +329,15 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     REMOTE_MODEL=$(curl -s -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     
-    # Extraction des longueurs (avec gestion safe si null -> 0)
-    R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.meta.toolIds | length // 0')
-    R_FILTERS=$(echo "$REMOTE_MODEL" | jq '.meta.filterIds | length // 0')
-    R_ACTIONS=$(echo "$REMOTE_MODEL" | jq '.meta.actionIds | length // 0')
+    # Vérification JSON valide
+    if echo "$REMOTE_MODEL" | jq -e . >/dev/null 2>&1; then
+        R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.meta.toolIds | length // 0')
+        R_FILTERS=$(echo "$REMOTE_MODEL" | jq '.meta.filterIds | length // 0')
+        R_ACTIONS=$(echo "$REMOTE_MODEL" | jq '.meta.actionIds | length // 0')
+    else
+        echo "   ⚠️  [WARNING] Impossible de lire la configuration distante du modèle (JSON invalide)."
+        R_TOOLS=0; R_FILTERS=0; R_ACTIONS=0
+    fi
     
     L_TOOLS=$(echo "$TOOL_IDS" | jq length)
     L_FILTERS=$(echo "$FILTER_IDS" | jq length)
@@ -349,69 +354,6 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     else
         echo "   ✨ Vérification Configuration : OK (Synchro Parfaite)"
     fi
-fi
-
-echo "✅ [Config] Terminé avec succès."
-
-# --- 5. AFFICHAGE ADMIN ---
-# Lancement du script d'affichage sécurisé (si présent)
-if [ -f "/opt/echo-scripts/show-echo-admin.sh" ]; then
-    bash "/opt/echo-scripts/show-echo-admin.sh"
-fi
-
-    
-    # A. Injection du System Prompt JSON
-    if [ -f "$SYSTEM_PROMPT_FILE" ]; then
-        echo "   📄 Injection du System Prompt JSON..."
-        # Utilisation de --rawfile pour injecter le JSON entier comme une string dans params.system
-        FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile prompt "$SYSTEM_PROMPT_FILE" '.params.system = $prompt')
-    fi
-    
-    # B. Injection de l'Image Locale
-    IMG_NAME=$(echo "$FINAL_PAYLOAD" | jq -r '.local_image_filename // empty')
-    if [ -n "$IMG_NAME" ] && [ "$IMG_NAME" != "null" ]; then
-        IMG_PATH="$IMAGE_BASE_DIR/$IMG_NAME"
-        if [ -f "$IMG_PATH" ]; then
-            echo "   🖼️  Encodage de l'image : $IMG_NAME"
-            MIME="image/png"
-            [[ "$IMG_PATH" == *.jpg || "$IMG_PATH" == *.jpeg ]] && MIME="image/jpeg"
-            [[ "$IMG_PATH" == *.webp ]] && MIME="image/webp"
-            
-            # Encodage Base64 (-w 0 pour linux/busybox)
-            B64_DATA=$(base64 -w 0 "$IMG_PATH")
-            FULL_B64="data:$MIME;base64,$B64_DATA"
-            
-            # FIX: Passage par fichier temporaire (avec PID) pour éviter "Argument list too long"
-            TMP_IMG_FILE="/tmp/owui_image_b64_$$.txt"
-            echo -n "$FULL_B64" > "$TMP_IMG_FILE"
-            
-            # Remplacement dans le Payload
-            FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile img "$TMP_IMG_FILE" '.meta.profile_image_url = $img | del(.local_image_filename)')
-            rm -f "$TMP_IMG_FILE"
-        else
-            echo "   ⚠️ Image introuvable : $IMG_PATH"
-        fi
-    fi
-    
-    # C. Envoi API
-    # FIX: Utilisation d'un fichier temporaire pour éviter "Argument list too long" sur le payload final
-    PAYLOAD_FILE="/tmp/owui_payload_$$.json"
-    echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
-
-    CHECK=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
-    
-    # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
-    if [ "$CHECK" -eq 200 ]; then
-        curl -s -X POST "$OWUI_URL/api/v1/models/model/update" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
-        echo "   ✅ Modèle mis à jour."
-    else
-        curl -s -X POST "$OWUI_URL/api/v1/models/add" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
-        echo "   ✅ Modèle créé."
-    fi
-
-    rm -f "$PAYLOAD_FILE"
 fi
 
 echo "✅ [Config] Terminé avec succès."
