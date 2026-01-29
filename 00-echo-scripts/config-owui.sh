@@ -329,6 +329,9 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     MODELS_LIST=$(curl -s -X GET "$OWUI_URL/api/v1/models" -H "Authorization: Bearer $TOKEN")
     
+    echo "🔍 DEBUG: Liste des modèles brute :"
+    echo "$MODELS_LIST" | head -c 500 # On affiche le début pour voir la structure
+    
     # Extraction du modèle spécifique
     REMOTE_MODEL=$(echo "$MODELS_LIST" | jq -r --arg id "$MODEL_ID" '.[] | select(.id == $id)')
     
