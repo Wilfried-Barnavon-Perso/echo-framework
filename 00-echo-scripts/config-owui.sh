@@ -271,11 +271,11 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
         
     MODEL_ID=$(echo "$FINAL_PAYLOAD" | jq -r '.id')
     
-    # A. Injection du System Prompt JSON (DESACTIVÉ TEMPORAIREMENT - Conflit possible avec Pipe)
-    # if [ -f "$SYSTEM_PROMPT_FILE" ]; then
-    #    echo "   📄 Injection du System Prompt JSON..."
-    #    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile prompt "$SYSTEM_PROMPT_FILE" '.params.system = $prompt')
-    # fi
+    # A. Injection du System Prompt JSON
+    if [ -f "$SYSTEM_PROMPT_FILE" ]; then
+       echo "   📄 Injection du System Prompt JSON..."
+       FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile prompt "$SYSTEM_PROMPT_FILE" '.params.system = $prompt')
+    fi
     
     # B. Injection de l'Image Locale
     IMG_NAME=$(echo "$FINAL_PAYLOAD" | jq -r '.local_image_filename // empty')
