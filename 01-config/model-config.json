@@ -9,13 +9,27 @@
         },
         "has_user_valves": true,
         "base_model_id": null,
+        
+        "_comment_image": "Defines the local image file in /opt/echo-images/ to be encoded/injected by the script.",
         "local_image_filename": "logo-echo.png",
+        
+        "_comment_params": "Standard LLM parameters. 'system' is auto-injected from system-prompt.json.",
         "params": {
-            "function_calling": "native",
-            "system": " "
+            "system": null,
+            "temperature": null,
+            "top_p": null,
+            "top_k": null,
+            "frequency_penalty": null,
+            "presence_penalty": null,
+            "repeat_penalty": null,
+            "max_tokens": null,
+            "seed": null,
+            "stop": null,
+            "function_calling": "native"
         },
+        
         "meta": {
-            "description": null,
+            "description": "ECHO Engine - Orchestrateur Cognitif",
             "capabilities": {
                 "file_context": true,
                 "vision": true,
@@ -30,23 +44,15 @@
             },
             "suggestion_prompts": null,
             "tags": [],
-            "toolIds": [
-                "web_browser_advanced",
-                "api_client",
-                "context_gauge",
-                "gemini_internal_web_search",
-                "python_code_executor"
-            ],
-            "filterIds": [
-                "bypass_rag"
-            ],
-            "defaultFilterIds": [
-                "bypass_rag"
-            ],
-            "actionIds": [
-                "reset_auth_action"
-            ]
+            
+            "_comment_resources": "AUTO-MANAGED by config-owui.sh. Do not edit IDs manually.",
+            "toolIds": [],
+            "filterIds": [],
+            "defaultFilterIds": [],
+            "actionIds": []
         },
-        "is_active": true
+        
+        "_comment_access": "Default (null) = Public Read / Owner Write. To restrict, use: {'read': {'group_ids': ['id']}, 'write': {'group_ids': ['id']}}",
+        "access_control": null
     }
 ]

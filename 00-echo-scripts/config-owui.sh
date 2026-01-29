@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.13
+# VERSION : 7.15
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -121,6 +121,32 @@ api_upsert() {
     fi
 }
 
+# Fonction pour vérifier et basculer l'état (Active/Global) si nécessaire
+toggle_state() {
+    local id="$1"
+    
+    # Récupération de l'état actuel
+    CURRENT_STATE=$(curl -s -X GET "$OWUI_URL/api/v1/functions/id/$id" \
+        -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json")
+    
+    IS_ACTIVE=$(echo "$CURRENT_STATE" | jq -r '.is_active')
+    IS_GLOBAL=$(echo "$CURRENT_STATE" | jq -r '.is_global')
+    
+    # Bascule Global si nécessaire (on veut Global = true)
+    if [ "$IS_GLOBAL" != "true" ]; then
+        curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle/global" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" > /dev/null
+        echo "      🌐 $id passé en Global."
+    fi
+    
+    # Bascule Active si nécessaire (on veut Active = true)
+    if [ "$IS_ACTIVE" != "true" ]; then
+        curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" > /dev/null
+        echo "      ⚡ $id activé."
+    fi
+}
+
 # Boucle générique de traitement des ressources
 # Format: "API_ENDPOINT:API_ENDPOINT:DESCRIPTION_HUMAINE"
 # $DESC est utilisé pour :
@@ -159,14 +185,22 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
             CONTENT=$(jq -sR . "$file")
             
             if [[ "$API_ENDPOINT" == "tools" ]]; then
+                # Tools: Payload strict sans is_active/is_global
                 PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" \
-                    '{id: $id, name: $name, content: ($content|fromjson), is_active: true, is_global: true, meta: {}}')
+                    '{id: $id, name: $name, content: ($content|fromjson), meta: {}}')
+                api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
+                
             else
+                # Functions: Payload strict, puis toggle
                 TYPE_VAL=$(echo "$DESC" | tr '[:upper:]' '[:lower:]')
                 PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" --arg type "$TYPE_VAL" \
-                    '{id: $id, name: $name, content: ($content|fromjson), type: $type, is_active: true, is_global: true, meta: {}}')
+                    '{id: $id, name: $name, content: ($content|fromjson), type: $type, meta: {}}')
+                
+                api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
+                
+                # Vérification et Forçage de l'état (Active + Global)
+                toggle_state "$ID"
             fi
-            api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
         done
     fi
 done
@@ -186,9 +220,113 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     fi
 
     # Nettoyage des champs système auto-générés pour éviter les conflits
-    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq 'del(.user_id, .created, .updated_at, .created_at, .access_control, .is_active, .is_global) | .is_active = true | .is_global = true')
-
+    # is_global est supprimé car non supporté dans le payload modèle
+    # access_control est conservé pour permettre la gestion des permissions
+    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq 'del(.user_id, .created, .updated_at, .created_at, .is_active, .is_global) | .is_active = true')
+    
+    # ------------------------------------------------------------------
+    # DÉCOUVERTE DYNAMIQUE DES RESSOURCES (Tools, Filters, Actions)
+    # ------------------------------------------------------------------
+    # On scanne les dossiers pour construire les tableaux JSON d'IDs
+    
+    # Découverte Tools
+    TOOL_IDS="[]"
+    if [ -d "$TOOLS_DIR" ]; then
+        IDS=$(find "$TOOLS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        TOOL_IDS=$IDS
+    fi
+    
+    # Découverte Filters
+    FILTER_IDS="[]"
+    if [ -d "$FILTERS_DIR" ]; then
+        IDS=$(find "$FILTERS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        FILTER_IDS=$IDS
+    fi
+    
+    # Découverte Actions
+    ACTION_IDS="[]"
+    if [ -d "$ACTIONS_DIR" ]; then
+        IDS=$(find "$ACTIONS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        ACTION_IDS=$IDS
+    fi
+    
+    echo "   🔗 Injection Dynamique :"
+    echo "      - Tools   : $(echo $TOOL_IDS | jq length)"
+    echo "      - Filters : $(echo $FILTER_IDS | jq length)"
+    echo "      - Actions : $(echo $ACTION_IDS | jq length)"
+    
+    # Injection dans le Payload Final
+    # On injecte filterIds ET defaultFilterIds (pour les activer par défaut)
+    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq \
+        --argjson tools "$TOOL_IDS" \
+        --argjson filters "$FILTER_IDS" \
+        --argjson actions "$ACTION_IDS" \
+        '.meta.toolIds = $tools | .meta.filterIds = $filters | .meta.defaultFilterIds = $filters | .meta.actionIds = $actions')
+        
     MODEL_ID=$(echo "$FINAL_PAYLOAD" | jq -r '.id')
+    
+    # A. Injection du System Prompt JSON
+    if [ -f "$SYSTEM_PROMPT_FILE" ]; then
+        echo "   📄 Injection du System Prompt JSON..."
+        # Utilisation de --rawfile pour injecter le JSON entier comme une string dans params.system
+        FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile prompt "$SYSTEM_PROMPT_FILE" '.params.system = $prompt')
+    fi
+    
+    # B. Injection de l'Image Locale
+    IMG_NAME=$(echo "$FINAL_PAYLOAD" | jq -r '.local_image_filename // empty')
+    if [ -n "$IMG_NAME" ] && [ "$IMG_NAME" != "null" ]; then
+        IMG_PATH="$IMAGE_BASE_DIR/$IMG_NAME"
+        if [ -f "$IMG_PATH" ]; then
+            echo "   🖼️  Encodage de l'image : $IMG_NAME"
+            MIME="image/png"
+            [[ "$IMG_PATH" == *.jpg || "$IMG_PATH" == *.jpeg ]] && MIME="image/jpeg"
+            [[ "$IMG_PATH" == *.webp ]] && MIME="image/webp"
+            
+            # Encodage Base64 (-w 0 pour linux/busybox)
+            B64_DATA=$(base64 -w 0 "$IMG_PATH")
+            FULL_B64="data:$MIME;base64,$B64_DATA"
+            
+            # FIX: Passage par fichier temporaire (avec PID) pour éviter "Argument list too long"
+            TMP_IMG_FILE="/tmp/owui_image_b64_$$.txt"
+            echo -n "$FULL_B64" > "$TMP_IMG_FILE"
+            
+            # Remplacement dans le Payload
+            FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile img "$TMP_IMG_FILE" '.meta.profile_image_url = $img | del(.local_image_filename)')
+            rm -f "$TMP_IMG_FILE"
+        else
+            echo "   ⚠️ Image introuvable : $IMG_PATH"
+        fi
+    fi
+    
+    # C. Envoi API
+    # FIX: Utilisation d'un fichier temporaire pour éviter "Argument list too long" sur le payload final
+    PAYLOAD_FILE="/tmp/owui_payload_$$.json"
+    echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
+
+    CHECK=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    
+    # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
+    if [ "$CHECK" -eq 200 ]; then
+        curl -s -X POST "$OWUI_URL/api/v1/models/model/update" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
+        echo "   ✅ Modèle mis à jour."
+    else
+        curl -s -X POST "$OWUI_URL/api/v1/models/add" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
+        echo "   ✅ Modèle créé."
+    fi
+
+    rm -f "$PAYLOAD_FILE"
+fi
+
+echo "✅ [Config] Terminé avec succès."
+
+# --- 5. AFFICHAGE ADMIN ---
+# Lancement du script d'affichage sécurisé (si présent)
+if [ -f "/opt/echo-scripts/show-echo-admin.sh" ]; then
+    bash "/opt/echo-scripts/show-echo-admin.sh"
+fi
+
     
     # A. Injection du System Prompt JSON
     if [ -f "$SYSTEM_PROMPT_FILE" ]; then
