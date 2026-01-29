@@ -295,8 +295,21 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
             TMP_IMG_FILE="/tmp/owui_image_b64_$$.txt"
             echo -n "$FULL_B64" > "$TMP_IMG_FILE"
             
+            if [ ! -s "$TMP_IMG_FILE" ]; then
+                 echo "   ⚠️  [WARNING] Le fichier temporaire image est vide !"
+            fi
+            
             # Remplacement dans le Payload
             FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile img "$TMP_IMG_FILE" '.meta.profile_image_url = $img | del(.local_image_filename)')
+            
+            # Vérification Injection Image
+            HAS_IMG=$(echo "$FINAL_PAYLOAD" | jq '.meta.profile_image_url != null')
+            if [ "$HAS_IMG" != "true" ]; then
+                echo "   ⚠️  [WARNING] Echec de l'injection de l'image dans le payload JSON."
+            else
+                echo "   ✅ Image injectée dans le payload."
+            fi
+            
             rm -f "$TMP_IMG_FILE"
         else
             echo "   ⚠️ Image introuvable : $IMG_PATH"
@@ -330,15 +343,14 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     MODELS_LIST=$(curl -s -X GET "$OWUI_URL/api/v1/models" -H "Authorization: Bearer $TOKEN")
     
-    echo "🔍 DEBUG: Liste des modèles brute :"
-    echo "$MODELS_LIST" | head -c 500 # On affiche le début pour voir la structure
-    
     # Extraction du modèle spécifique
     # On cible .data[] car l'API retourne { "data": [ ... ] }
     REMOTE_MODEL=$(echo "$MODELS_LIST" | jq -r --arg id "$MODEL_ID" '.data[] | select(.id == $id)')
     
     echo "🔍 DEBUG: Modèle extrait :"
     echo "$REMOTE_MODEL"
+    echo "🔍 DEBUG: Clés disponibles :"
+    echo "$REMOTE_MODEL" | jq 'keys'
     
     if [ -n "$REMOTE_MODEL" ] && [ "$REMOTE_MODEL" != "null" ]; then
         # Extraction des compteurs (Robustesse Multi-Chemins)
