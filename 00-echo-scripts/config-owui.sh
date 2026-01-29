@@ -169,6 +169,7 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
  do
             [ -e "$file" ] || continue
             ID=$(basename "$file" | cut -d. -f1)
+            echo "   👉 Découverte : $ID"
             
             # Extraction du Nom (Title) pour affichage propre
             # On récupère la première occurrence de "title:", on nettoie le préfixe et les espaces
@@ -251,9 +252,9 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     fi
     
     echo "   🔗 Injection Dynamique :"
-    echo "      - Tools   : $(echo $TOOL_IDS | jq length)"
-    echo "      - Filters : $(echo $FILTER_IDS | jq length)"
-    echo "      - Actions : $(echo $ACTION_IDS | jq length)"
+    echo "$TOOL_IDS" | jq -r '.[]' | while read id; do echo "      + Tool   : $id"; done
+    echo "$FILTER_IDS" | jq -r '.[]' | while read id; do echo "      + Filter : $id"; done
+    echo "$ACTION_IDS" | jq -r '.[]' | while read id; do echo "      + Action : $id"; done
     
     # Injection dans le Payload Final
     # On injecte filterIds ET defaultFilterIds (pour les activer par défaut)
