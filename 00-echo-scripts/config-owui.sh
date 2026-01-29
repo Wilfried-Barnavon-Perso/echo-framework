@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.16
+# VERSION : 7.17
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -325,37 +325,38 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     # ------------------------------------------------------------------
     # VÉRIFICATION POST-DÉPLOIEMENT
     # ------------------------------------------------------------------
-    # On récupère le modèle depuis l'API pour comparer les compteurs de ressources
+    # On récupère la liste complète des modèles pour trouver le nôtre
     
-    REMOTE_MODEL=$(curl -s -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    MODELS_LIST=$(curl -s -X GET "$OWUI_URL/api/v1/models" -H "Authorization: Bearer $TOKEN")
     
-    echo "🔍 DEBUG: Réponse API brute pour vérification :"
-    echo "$REMOTE_MODEL"
+    # Extraction du modèle spécifique
+    REMOTE_MODEL=$(echo "$MODELS_LIST" | jq -r --arg id "$MODEL_ID" '.[] | select(.id == $id)')
     
-    # Vérification JSON valide
-    if echo "$REMOTE_MODEL" | jq -e . >/dev/null 2>&1; then
+    if [ -n "$REMOTE_MODEL" ] && [ "$REMOTE_MODEL" != "null" ]; then
+        # Extraction des longueurs (avec gestion safe si null -> 0)
         R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.meta.toolIds | length // 0')
         R_FILTERS=$(echo "$REMOTE_MODEL" | jq '.meta.filterIds | length // 0')
         R_ACTIONS=$(echo "$REMOTE_MODEL" | jq '.meta.actionIds | length // 0')
+        
+        L_TOOLS=$(echo "$TOOL_IDS" | jq length)
+        L_FILTERS=$(echo "$FILTER_IDS" | jq length)
+        L_ACTIONS=$(echo "$ACTION_IDS" | jq length)
+        
+        # Comparaison
+        if [ "$R_TOOLS" -ne "$L_TOOLS" ] || [ "$R_FILTERS" -ne "$L_FILTERS" ] || [ "$R_ACTIONS" -ne "$L_ACTIONS" ]; then
+            echo "   ⚠️  [WARNING] Discrépance détectée dans la configuration du modèle !"
+            echo "       Attendu (Local) vs Reçu (API) :"
+            echo "       - Tools   : $L_TOOLS vs $R_TOOLS"
+            echo "       - Filters : $L_FILTERS vs $R_FILTERS"
+            echo "       - Actions : $L_ACTIONS vs $R_ACTIONS"
+            echo "       Cela peut indiquer que le modèle a été créé avant que les ressources ne soient prêtes."
+        else
+            echo "   ✨ Vérification Configuration : OK (Synchro Parfaite)"
+        fi
     else
-        echo "   ⚠️  [WARNING] Impossible de lire la configuration distante du modèle (JSON invalide)."
-        R_TOOLS=0; R_FILTERS=0; R_ACTIONS=0
-    fi
-    
-    L_TOOLS=$(echo "$TOOL_IDS" | jq length)
-    L_FILTERS=$(echo "$FILTER_IDS" | jq length)
-    L_ACTIONS=$(echo "$ACTION_IDS" | jq length)
-    
-    # Comparaison
-    if [ "$R_TOOLS" -ne "$L_TOOLS" ] || [ "$R_FILTERS" -ne "$L_FILTERS" ] || [ "$R_ACTIONS" -ne "$L_ACTIONS" ]; then
-        echo "   ⚠️  [WARNING] Discrépance détectée dans la configuration du modèle !"
-        echo "       Attendu (Local) vs Reçu (API) :"
-        echo "       - Tools   : $L_TOOLS vs $R_TOOLS"
-        echo "       - Filters : $L_FILTERS vs $R_FILTERS"
-        echo "       - Actions : $L_ACTIONS vs $R_ACTIONS"
-        echo "       Cela peut indiquer que le modèle a été créé avant que les ressources ne soient prêtes."
-    else
-        echo "   ✨ Vérification Configuration : OK (Synchro Parfaite)"
+        echo "   ⚠️  [WARNING] Impossible de vérifier le modèle : ID '$MODEL_ID' introuvable dans la liste API."
+        # Debug optionnel si échec total
+        # echo "DEBUG LIST: $MODELS_LIST" | head -c 200
     fi
 fi
 
