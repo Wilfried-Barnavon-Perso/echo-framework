@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.15
+# VERSION : 7.16
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -208,6 +208,9 @@ done
 
 # --- 4. CONFIGURATION MODELE (Assemblage) ---
 if [ -f "$MODEL_CONFIG_FILE" ]; then
+    echo "⏳ [MODEL] Attente de 2s pour stabilisation des index..."
+    sleep 2
+    
     echo "🧠 [MODEL] Assemblage et déploiement du modèle..."
     
     # Lecture Config (Gère si c'est un tableau [] ou un objet {})
@@ -318,6 +321,34 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     fi
 
     rm -f "$PAYLOAD_FILE"
+    
+    # ------------------------------------------------------------------
+    # VÉRIFICATION POST-DÉPLOIEMENT
+    # ------------------------------------------------------------------
+    # On récupère le modèle depuis l'API pour comparer les compteurs de ressources
+    
+    REMOTE_MODEL=$(curl -s -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    
+    # Extraction des longueurs (avec gestion safe si null -> 0)
+    R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.meta.toolIds | length // 0')
+    R_FILTERS=$(echo "$REMOTE_MODEL" | jq '.meta.filterIds | length // 0')
+    R_ACTIONS=$(echo "$REMOTE_MODEL" | jq '.meta.actionIds | length // 0')
+    
+    L_TOOLS=$(echo "$TOOL_IDS" | jq length)
+    L_FILTERS=$(echo "$FILTER_IDS" | jq length)
+    L_ACTIONS=$(echo "$ACTION_IDS" | jq length)
+    
+    # Comparaison
+    if [ "$R_TOOLS" -ne "$L_TOOLS" ] || [ "$R_FILTERS" -ne "$L_FILTERS" ] || [ "$R_ACTIONS" -ne "$L_ACTIONS" ]; then
+        echo "   ⚠️  [WARNING] Discrépance détectée dans la configuration du modèle !"
+        echo "       Attendu (Local) vs Reçu (API) :"
+        echo "       - Tools   : $L_TOOLS vs $R_TOOLS"
+        echo "       - Filters : $L_FILTERS vs $R_FILTERS"
+        echo "       - Actions : $L_ACTIONS vs $R_ACTIONS"
+        echo "       Cela peut indiquer que le modèle a été créé avant que les ressources ne soient prêtes."
+    else
+        echo "   ✨ Vérification Configuration : OK (Synchro Parfaite)"
+    fi
 fi
 
 echo "✅ [Config] Terminé avec succès."
