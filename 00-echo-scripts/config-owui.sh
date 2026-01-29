@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.11
+# VERSION : 7.13
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -160,11 +160,11 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
             
             if [[ "$API_ENDPOINT" == "tools" ]]; then
                 PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" \
-                    '{id: $id, name: $name, content: ($content|fromjson), meta: {}}')
+                    '{id: $id, name: $name, content: ($content|fromjson), is_active: true, is_global: true, meta: {}}')
             else
                 TYPE_VAL=$(echo "$DESC" | tr '[:upper:]' '[:lower:]')
                 PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" --arg type "$TYPE_VAL" \
-                    '{id: $id, name: $name, content: ($content|fromjson), type: $type, is_active: true, meta: {}}')
+                    '{id: $id, name: $name, content: ($content|fromjson), type: $type, is_active: true, is_global: true, meta: {}}')
             fi
             api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
         done
@@ -186,7 +186,7 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     fi
 
     # Nettoyage des champs système auto-générés pour éviter les conflits
-    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq 'del(.user_id, .created, .updated_at, .created_at, .access_control) | .is_active = true')
+    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq 'del(.user_id, .created, .updated_at, .created_at, .access_control, .is_active, .is_global) | .is_active = true | .is_global = true')
 
     MODEL_ID=$(echo "$FINAL_PAYLOAD" | jq -r '.id')
     
