@@ -226,8 +226,8 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     # Nettoyage des champs système auto-générés pour éviter les conflits
     # is_global est supprimé car non supporté dans le payload modèle
     # access_control est conservé pour permettre la gestion des permissions
-    # Suppression de params (causait des conflits avec le Pipe)
-    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq 'del(.user_id, .created, .updated_at, .created_at, .is_active, .is_global, .params) | .is_active = true')
+    # Params est conservé (vide ou peuplé)
+    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq 'del(.user_id, .created, .updated_at, .created_at, .is_active, .is_global) | .is_active = true')
     
     # ------------------------------------------------------------------
     # DÉCOUVERTE DYNAMIQUE DES RESSOURCES (Tools, Filters, Actions)
@@ -318,6 +318,9 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     # C. Envoi API
     # FIX: Utilisation d'un fichier temporaire pour éviter "Argument list too long" sur le payload final
+    echo "📤 DEBUG: Payload envoyé :"
+    echo "$FINAL_PAYLOAD"
+    
     PAYLOAD_FILE="/tmp/owui_payload_$$.json"
     echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
 
