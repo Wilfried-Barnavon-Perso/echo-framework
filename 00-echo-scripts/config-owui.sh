@@ -333,13 +333,14 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     echo "$MODELS_LIST" | head -c 500 # On affiche le début pour voir la structure
     
     # Extraction du modèle spécifique
-    REMOTE_MODEL=$(echo "$MODELS_LIST" | jq -r --arg id "$MODEL_ID" '.[] | select(.id == $id)')
+    # On cible .data[] car l'API retourne { "data": [ ... ] }
+    REMOTE_MODEL=$(echo "$MODELS_LIST" | jq -r --arg id "$MODEL_ID" '.data[] | select(.id == $id)')
     
     if [ -n "$REMOTE_MODEL" ] && [ "$REMOTE_MODEL" != "null" ]; then
-        # Extraction des longueurs (avec gestion safe si null -> 0)
-        R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.meta.toolIds | length // 0')
-        R_FILTERS=$(echo "$REMOTE_MODEL" | jq '.meta.filterIds | length // 0')
-        R_ACTIONS=$(echo "$REMOTE_MODEL" | jq '.meta.actionIds | length // 0')
+        # Extraction des compteurs (Structure stricte API v1)
+        R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.tools | length')
+        R_FILTERS=$(echo "$REMOTE_MODEL" | jq '.filters | length')
+        R_ACTIONS=$(echo "$REMOTE_MODEL" | jq '.actions | length')
         
         L_TOOLS=$(echo "$TOOL_IDS" | jq length)
         L_FILTERS=$(echo "$FILTER_IDS" | jq length)
