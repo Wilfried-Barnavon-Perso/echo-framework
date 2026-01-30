@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.29
+# VERSION : 7.30
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -112,6 +112,7 @@ api_upsert() {
     local desc="$4"
     
     # Capture complète (Body + Code HTTP à la fin)
+    # Fix: Utilisation de simple quotes pour éviter l'interpolation du %
     RESPONSE=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/$endpoint/create" \
         -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
     
@@ -345,11 +346,6 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     # C. Envoi API
     # FIX: Utilisation d'un fichier temporaire pour éviter "Argument list too long" sur le payload final
-    if [ "$DEBUG_MODE" == "true" ]; then
-        echo "📤 DEBUG: Payload envoyé :"
-        echo "$FINAL_PAYLOAD"
-    fi
-    
     PAYLOAD_FILE="/tmp/owui_payload_$$.json"
     echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
 
@@ -358,7 +354,8 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
     if [ "$CHECK" -eq 200 ]; then
         # Fix: Utilisation de simple quotes et du format HTTPSTATUS
-        RESPONSE_MODEL_UPD=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/models/model/update" \
+        # Update endpoint changed to /api/v1/models/{id}/update
+        RESPONSE_MODEL_UPD=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/models/$MODEL_ID/update" \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE")
         
         HTTP_CODE_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
@@ -366,16 +363,9 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
         
         if [ "$HTTP_CODE_M_UPD" -eq 200 ] || [ "$HTTP_CODE_M_UPD" -eq 201 ]; then
              echo "   ✅ Modèle mis à jour."
-             if [ "$DEBUG_MODE" == "true" ]; then
-                 echo "   📤 DEBUG: Réponse API Update Modèle :"
-                 echo "$BODY_M_UPD" | head -c 1000
-                 echo "..."
-             fi
         else
              echo "   ❌ [ERREUR] Update Modèle échoué (HTTP $HTTP_CODE_M_UPD)."
-             if [ "$DEBUG_MODE" == "true" ]; then
-                 echo "      Réponse : $BODY_M_UPD"
-             fi
+             echo "      Réponse : $BODY_M_UPD"
         fi
     else
         curl -s -X POST "$OWUI_URL/api/v1/models/add" \
