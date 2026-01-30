@@ -112,22 +112,23 @@ api_upsert() {
     local desc="$4"
     
     # Capture complète (Body + Code HTTP à la fin)
-    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
+    # Fix: Utilisation d'un délimiteur clair au lieu de \n au début
+    RESPONSE=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
         -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
     
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | sed '$d')
+    HTTP_CODE=$(echo "$RESPONSE" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+    BODY=$(echo "$RESPONSE" | sed -e 's/HTTPSTATUS:.*//')
 
     # Traitement 400 (Bad Request/Already Exists) comme un 409 (Conflict) pour tenter l'update
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $desc : $id créé."
     elif [ "$HTTP_CODE" -eq 409 ] || [ "$HTTP_CODE" -eq 400 ]; then
         # Tentative d'update
-        RESPONSE_UPD=$(curl -s -w "\n%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
+        RESPONSE_UPD=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
         
-        HTTP_CODE_UPD=$(echo "$RESPONSE_UPD" | tail -n1)
-        BODY_UPD=$(echo "$RESPONSE_UPD" | sed '$d')
+        HTTP_CODE_UPD=$(echo "$RESPONSE_UPD" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+        BODY_UPD=$(echo "$RESPONSE_UPD" | sed -e 's/HTTPSTATUS:.*//')
         
         if [ "$HTTP_CODE_UPD" -eq 200 ] || [ "$HTTP_CODE_UPD" -eq 201 ]; then
              echo "   🔄 $desc : $id mis à jour."
@@ -354,11 +355,11 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
     if [ "$CHECK" -eq 200 ]; then
-        RESPONSE_MODEL_UPD=$(curl -s -w "\n%{http_code}" -X POST "$OWUI_URL/api/v1/models/model/update" \
+        RESPONSE_MODEL_UPD=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST "$OWUI_URL/api/v1/models/model/update" \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE")
         
-        HTTP_CODE_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | tail -n1)
-        BODY_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | sed '$d')
+        HTTP_CODE_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+        BODY_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | sed -e 's/HTTPSTATUS:.*//')
         
         if [ "$HTTP_CODE_M_UPD" -eq 200 ] || [ "$HTTP_CODE_M_UPD" -eq 201 ]; then
              echo "   ✅ Modèle mis à jour."
