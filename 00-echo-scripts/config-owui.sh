@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.33
+# VERSION : 7.34
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -191,7 +191,7 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
     if [ -d "$TARGET_DIR" ]; then
         echo "📂 Traitement $DESC..."
         for file in "$TARGET_DIR"/*.py; 
- do
+do
             [ -e "$file" ] || continue
             ID=$(basename "$file" | cut -d. -f1)
             echo "   👉 Découverte : $ID"
