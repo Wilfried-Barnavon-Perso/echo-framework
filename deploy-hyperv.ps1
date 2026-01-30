@@ -4,7 +4,7 @@
 
 # ==============================================================================
 
-# SCRIPT VERSION : 5.11.0
+# SCRIPT VERSION : 5.11.13
 
 # DATE           : 2026-01-28
 
@@ -63,7 +63,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "6.0.0"
+$SCRIPT_VERSION = "5.11.13"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
