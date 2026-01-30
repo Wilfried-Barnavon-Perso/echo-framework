@@ -1,19 +1,11 @@
 ﻿# ==============================================================================
-
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
-
 # ==============================================================================
-
-# SCRIPT VERSION : 5.11.13
-
-# DATE           : 2026-01-28
-
+# SCRIPT VERSION : 5.12.00
+# DATE           : 2026-01-30
 # AUTHOR         : Wilfried BARNAVON
-
 # ==============================================================================
-
 #
-
 # --- QUOI (WHAT) ---
 # Ce script PowerShell automatise la création d'une VM Linux sur Hyper-V et y déploie
 # toute la stack ECHO (Docker, Scripts, Configs) via injection d'archive ZIP.
