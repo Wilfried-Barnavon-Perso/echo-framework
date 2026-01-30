@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
-# VERSION : 7.36
+# VERSION : 7.37
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -207,14 +207,14 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
     fi
 done
 
-# --- 4. CONFIGURATION MODELE (Merge & Update) ---
+# --- 4. CONFIGURATION MODELE (Assemblage & Déploiement) ---
 # Fonction d'affichage d'erreur API détaillée
 check_http_error() {
     local http_code="$1"
     local response_file="$2"
     local context="$3"
     
-    if [ "$http_code" -ne 200 ]; then
+    if [ "$http_code" -ne 200 ] && [ "$http_code" -ne 201 ]; then
         echo "❌ [API ERROR] $context (HTTP $http_code)"
         if [ -s "$response_file" ]; then
             echo "   🔍 Réponse API :"
@@ -237,66 +237,32 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     echo "🧠 [MODEL] Configuration du modèle : $MODEL_ID"
 
-    # 2. Récupération du Modèle Distant (Retry 3x)
-    MAX_RETRIES=3
-    COUNT=0
-    REMOTE_MODEL=""
+    # 2. Découverte Dynamique des Ressources
+    # On garantit que les variables sont des tableaux JSON valides "[]"
     
-    echo "   📥 Tentative de récupération de la configuration existante..."
-    TMP_RESP="/tmp/owui_get_model_$$.json"
-    
-    until [ "$COUNT" -ge "$MAX_RETRIES" ]; do
-        HTTP_CODE=$(curl -s -w "%{http_code}" -o "$TMP_RESP" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" \
-            -H "Authorization: Bearer $TOKEN")
-            
-        if [ "$HTTP_CODE" -eq 200 ]; then
-            REMOTE_MODEL=$(cat "$TMP_RESP")
-            echo "      ✅ Modèle trouvé (Tentative $(($COUNT+1))/$MAX_RETRIES)."
-            break
-        else
-            echo "      ⚠️  Modèle non trouvé ou non prêt (HTTP $HTTP_CODE). Nouvelle tentative dans 3s..."
-            sleep 3
-            ((COUNT++))
-        fi
-    done
-    rm -f "$TMP_RESP"
-
-    # 3. Arrêt si échec (Critique)
-    if [ -z "$REMOTE_MODEL" ]; then
-        echo "❌ [FATAL] Impossible de récupérer le modèle '$MODEL_ID' après $MAX_RETRIES tentatives."
-        echo "   💡 Le Pipe a été enregistré, mais le modèle associé n'est pas accessible."
-        echo "   💡 Vérifiez que le fichier 'pipe_engine.py' définit bien un modèle valide."
-        exit 1
-    fi
-    
-    # 4. Fusion & Injection (Merge Strategy)
-    # On prend le REMOTE comme base, et on applique le LOCAL par dessus.
-    # Cela permet de conserver les IDs internes ou champs cachés d'Open WebUI.
-    
-    echo "   🔨 Fusion de la configuration locale sur la configuration distante..."
-    
-    # Découverte Dynamique (Robustesse améliorée)
-    # FIX: On garantit que les variables restent "[]" si find ne retourne rien ou échoue
-    
-    # Découverte Tools
     TOOL_IDS="[]"
     if [ -d "$TOOLS_DIR" ]; then
         FOUND=$(find "$TOOLS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
-        if [ -n "$FOUND" ] && [ "$FOUND" != "null" ]; then TOOL_IDS="$FOUND"; fi
+        # Vérification si JSON valide et non vide
+        if echo "$FOUND" | jq empty >/dev/null 2>&1; then
+             TOOL_IDS="$FOUND"
+        fi
     fi
     
-    # Découverte Filters
     FILTER_IDS="[]"
     if [ -d "$FILTERS_DIR" ]; then
         FOUND=$(find "$FILTERS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
-        if [ -n "$FOUND" ] && [ "$FOUND" != "null" ]; then FILTER_IDS="$FOUND"; fi
+        if echo "$FOUND" | jq empty >/dev/null 2>&1; then
+             FILTER_IDS="$FOUND"
+        fi
     fi
     
-    # Découverte Actions
     ACTION_IDS="[]"
     if [ -d "$ACTIONS_DIR" ]; then
         FOUND=$(find "$ACTIONS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
-        if [ -n "$FOUND" ] && [ "$FOUND" != "null" ]; then ACTION_IDS="$FOUND"; fi
+        if echo "$FOUND" | jq empty >/dev/null 2>&1; then
+             ACTION_IDS="$FOUND"
+        fi
     fi
 
     echo "   🔗 Injection Dynamique :"
@@ -304,27 +270,39 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     echo "$FILTER_IDS" | jq -r '.[]' | while read id; do echo "      + Filter : $id"; done
     echo "$ACTION_IDS" | jq -r '.[]' | while read id; do echo "      + Action : $id"; done
 
-    # Construction du Payload Final (Merge)
-    # 1. Merge Remote + Local
-    # 2. Injection IDs
-    # 3. Nettoyage champs protégés (id, created, etc. ne doivent pas être écrasés par le local si null)
-    MERGED_PAYLOAD=$(jq -n \
-        --argjson remote "$REMOTE_MODEL" \
-        --argjson local "$LOCAL_PAYLOAD" \
-        --argjson tools "$TOOL_IDS" \
-        --argjson filters "$FILTER_IDS" \
-        --argjson actions "$ACTION_IDS" \
-        '$remote * $local | .meta.toolIds = $tools | .meta.filterIds = $filters | .meta.defaultFilterIds = $filters | .meta.actionIds = $actions')
+    # 3. Construction du Payload (Base Locale + Injections)
+    # On utilise des fichiers temporaires pour jq afin d'éviter les erreurs d'arguments shell
+    TMP_LOCAL="/tmp/owui_local_$$.json"
+    TMP_TOOLS="/tmp/owui_tools_$$.json"
+    TMP_FILTERS="/tmp/owui_filters_$$.json"
+    TMP_ACTIONS="/tmp/owui_actions_$$.json"
+    
+    echo "$LOCAL_PAYLOAD" > "$TMP_LOCAL"
+    echo "$TOOL_IDS" > "$TMP_TOOLS"
+    echo "$FILTER_IDS" > "$TMP_FILTERS"
+    echo "$ACTION_IDS" > "$TMP_ACTIONS"
+    
+    # Construction et Nettoyage
+    # On supprime les champs système qui pourraient gêner l'update (user_id, created...)
+    # On force is_active = true
+    FINAL_PAYLOAD=$(jq -n \
+        --argjson local "$(cat $TMP_LOCAL)" \
+        --argjson tools "$(cat $TMP_TOOLS)" \
+        --argjson filters "$(cat $TMP_FILTERS)" \
+        --argjson actions "$(cat $TMP_ACTIONS)" \
+        '$local | del(.user_id, .created, .updated_at, .created_at, .is_global) | .is_active = true | .meta.toolIds = $tools | .meta.filterIds = $filters | .meta.defaultFilterIds = $filters | .meta.actionIds = $actions')
 
-    if [ -z "$MERGED_PAYLOAD" ]; then
-        echo "❌ [FATAL] Erreur lors de la fusion JSON (jq). Vérifiez les logs ci-dessus."
+    rm -f "$TMP_LOCAL" "$TMP_TOOLS" "$TMP_FILTERS" "$TMP_ACTIONS"
+
+    if [ -z "$FINAL_PAYLOAD" ]; then
+        echo "❌ [FATAL] Erreur lors de la construction du payload JSON."
         exit 1
     fi
 
     # A. Injection System Prompt
     if [ -f "$SYSTEM_PROMPT_FILE" ]; then
        echo "   📄 Injection du System Prompt JSON..."
-       MERGED_PAYLOAD=$(echo "$MERGED_PAYLOAD" | jq --rawfile prompt "$SYSTEM_PROMPT_FILE" '.params.system = $prompt')
+       FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile prompt "$SYSTEM_PROMPT_FILE" '.params.system = $prompt')
     fi
     
     # B. Injection Image
@@ -339,49 +317,57 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
             B64_DATA=$(base64 -w 0 "$IMG_PATH")
             FULL_B64="data:$MIME;base64,$B64_DATA"
             
-            # Injection via fichier tmp pour éviter "Argument list too long"
             TMP_IMG="/tmp/owui_img_$$.txt"
             echo -n "$FULL_B64" > "$TMP_IMG"
-            MERGED_PAYLOAD=$(echo "$MERGED_PAYLOAD" | jq --rawfile img "$TMP_IMG" '.meta.profile_image_url = $img | del(.local_image_filename)')
+            FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile img "$TMP_IMG" '.meta.profile_image_url = $img | del(.local_image_filename)')
             rm -f "$TMP_IMG"
             echo "   ✅ Image injectée."
         fi
     fi
 
-    # 5. Envoi de la Mise à Jour
+    # 4. Envoi de la Mise à Jour
+    # On vérifie d'abord si le modèle existe pour choisir entre ADD et UPDATE
+    CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    
     PAYLOAD_FILE="/tmp/owui_payload_$$.json"
     RESP_FILE="/tmp/owui_resp_$$.json"
-    echo "$MERGED_PAYLOAD" > "$PAYLOAD_FILE"
+    echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
     
     if [ "$DEBUG_MODE" == "true" ]; then
-        echo "📤 DEBUG: Payload fusionné :"
+        echo "📤 DEBUG: Payload final :"
         cat "$PAYLOAD_FILE"
     fi
 
-    echo "   🚀 Envoi de la mise à jour (POST /update)..."
-    HTTP_CODE=$(curl -s -w "%{http_code}" -o "$RESP_FILE" -X POST "$OWUI_URL/api/v1/models/model/update" \
-        -H "Authorization: Bearer $TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "@$PAYLOAD_FILE")
+    if [ "$CHECK_CODE" -eq 200 ]; then
+        echo "   🚀 Mise à jour du modèle existant (POST /update)..."
+        HTTP_CODE=$(curl -s -w "%{http_code}" -o "$RESP_FILE" -X POST "$OWUI_URL/api/v1/models/model/update" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "@$PAYLOAD_FILE")
+    else
+        echo "   🚀 Création du nouveau modèle (POST /add)..."
+        HTTP_CODE=$(curl -s -w "%{http_code}" -o "$RESP_FILE" -X POST "$OWUI_URL/api/v1/models/add" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "@$PAYLOAD_FILE")
+    fi
     
     # Vérification d'erreur stricte
-    check_http_error "$HTTP_CODE" "$RESP_FILE" "Mise à jour du modèle"
+    check_http_error "$HTTP_CODE" "$RESP_FILE" "Déploiement du modèle"
     
-    echo "   ✅ Modèle mis à jour avec succès."
+    echo "   ✅ Modèle déployé avec succès."
     
     rm -f "$PAYLOAD_FILE" "$RESP_FILE"
     
-    # 6. Vérification Finale (Statistiques)
-    # On réutilise REMOTE_MODEL pour la comparaison ? Non, il faut re-fetcher le NOUVEAU
+    # 5. Vérification Finale
     NEW_REMOTE=$(curl -s -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
-    
     R_TOOLS=$(echo "$NEW_REMOTE" | jq '.info.meta.toolIds | length // .meta.toolIds | length // 0')
     L_TOOLS=$(echo "$TOOL_IDS" | jq length)
     
     if [ "$R_TOOLS" -ne "$L_TOOLS" ]; then
-         echo "   ⚠️  [WARNING] Tools attendus: $L_TOOLS, reçus: $R_TOOLS. La mise à jour a réussi mais les liens semblent incomplets."
+         echo "   ⚠️  [WARNING] Discrépance Tools (Reçu: $R_TOOLS / Attendu: $L_TOOLS)."
     else
-         echo "   ✨ Vérification Configuration : OK ($L_TOOLS outils synchronisés)"
+         echo "   ✨ Vérification : OK ($L_TOOLS outils synchronisés)"
     fi
 fi
 
