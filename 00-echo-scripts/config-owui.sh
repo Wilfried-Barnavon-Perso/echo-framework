@@ -5,7 +5,7 @@
 # ==============================================================================
 
 # --- CONFIGURATION ---
-DEBUG_MODE="false"  # Mettre à "true" pour afficher les payloads JSON
+DEBUG_MODE="true"  # Mettre à "true" pour afficher les payloads JSON
 OWUI_URL="http://localhost:3000"
 SECRET_FILE="/opt/.owui-setting-secret"
 ADMIN_SECRET_FILE="/opt/.owui-admin-secret"
@@ -350,13 +350,29 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     PAYLOAD_FILE="/tmp/owui_payload_$$.json"
     echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
 
-    CHECK=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    CHECK=$(curl -s -o /dev/null -w "%{{http_code}}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     
     # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
     if [ "$CHECK" -eq 200 ]; then
-        curl -s -X POST "$OWUI_URL/api/v1/models/model/update" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
-        echo "   ✅ Modèle mis à jour."
+        RESPONSE_MODEL_UPD=$(curl -s -w "\n%{http_code}" -X POST "$OWUI_URL/api/v1/models/model/update" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE")
+        
+        HTTP_CODE_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | tail -n1)
+        BODY_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | sed '$d')
+        
+        if [ "$HTTP_CODE_M_UPD" -eq 200 ] || [ "$HTTP_CODE_M_UPD" -eq 201 ]; then
+             echo "   ✅ Modèle mis à jour."
+             if [ "$DEBUG_MODE" == "true" ]; then
+                 echo "   📤 DEBUG: Réponse API Update Modèle :"
+                 echo "$BODY_M_UPD" | head -c 1000
+                 echo "..."
+             fi
+        else
+             echo "   ❌ [ERREUR] Update Modèle échoué (HTTP $HTTP_CODE_M_UPD)."
+             if [ "$DEBUG_MODE" == "true" ]; then
+                 echo "      Réponse : $BODY_M_UPD"
+             fi
+        fi
     else
         curl -s -X POST "$OWUI_URL/api/v1/models/add" \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
