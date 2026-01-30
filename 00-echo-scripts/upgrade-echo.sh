@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.0
+# VERSION : 6.3
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
@@ -14,20 +14,24 @@ export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
+clear
+
 if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
-    clear
     echo "⚠️  RECONSTRUCTION COMPLETE DE LA STACK ECHO"
     echo "    Cette opération va :"
     echo "    1. Arrêter tous les services de la stack"
     echo "    2. Supprimer TOUS LES VOLUMES des conteneurs"
     echo "    3. Supprimer toutes les images dockerfile"
+    echo "    4. Supprimer les fichiers secrets locaux (Reset Auth)"
     echo ""
     read -p "Tapez 'CONFIRMER' : " CONFIRM
     [ "$CONFIRM" != "CONFIRMER" ] && exit 1
     export CONFIRMED_YET="yes"
     docker stop $(docker ps -aq) > /dev/null 2>&1 && echo "Services arrêtés"
+    docker rm $(docker ps -aq) > /dev/null 2>&1 && echo "Conteneurs supprimés"
     docker volume rm $(docker volume ls -q) > /dev/null 2>&1 && echo "Volumes actifs supprimés"
     docker system prune -a --volumes -f > /dev/null 2>&1 && echo "Volumes orphelins et images supprimé"
+    rm -f /opt/config/.owui-setting-secret /opt/config/.owui-admin-secret && echo "Fichiers secrets supprimés"
 fi
 
 # --- SELF RUN (Protection) ---
@@ -43,7 +47,6 @@ BRANCH_FILE="/opt/ECHO_BRANCH"
 TARGET_BRANCH="main"
 if [ -f "$BRANCH_FILE" ]; then TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]'); fi
 
-clear
 echo "⚠️  UPGRADE MAJEUR via DOCKER-COMPOSE"
 echo "    Cette opération va :"
 echo "    1. Synchroniser le code et écraser les modifications locales"

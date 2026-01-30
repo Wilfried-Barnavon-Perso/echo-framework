@@ -1,283 +1,403 @@
 #!/bin/bash
 # ==============================================================================
-# CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE SECRET-BASED)
-# VERSION : 6.9
-# AUTEUR  : Wilfried BARNAVON
-# DATE    : 2026-01-26
+# CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
+# VERSION : 7.26
 # ==============================================================================
 
 # --- CONFIGURATION ---
-# Port modifié à 8080 pour correspondre à la stack v6 (Standalone)
-OWUI_URL="http://localhost:8080"
-SECRET_FILE="/opt/config/.owui-setting-secret"
+DEBUG_MODE="false"  # Mettre à "true" pour afficher les payloads JSON
+OWUI_URL="http://localhost:3000"
+SECRET_FILE="/opt/.owui-setting-secret"
+ADMIN_SECRET_FILE="/opt/.owui-admin-secret"
 
-# Compte de Service (Automate)
+# Fichiers de Configuration
+CONFIG_DIR="/opt/config"
+MODEL_CONFIG_FILE="$CONFIG_DIR/model-config.json"
+SYSTEM_PROMPT_FILE="$CONFIG_DIR/system-prompt.json"
+IMAGE_BASE_DIR="/opt/echo-images"
+
+# Comptes
 SERVICE_EMAIL="install-stack@echo.local"
 SERVICE_NAME="Install Stack Service"
-
-# Compte Admin Humain
 HUMAN_EMAIL="admin@echo.local"
 HUMAN_NAME="ECHO Architect"
-HUMAN_DEFAULT_PASSWORD="password"
 
 # Dossiers Ressources
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS_DIR="/opt/owui-tools"
 FILTERS_DIR="/opt/owui-filters"
 PIPES_DIR="/opt/owui-pipes"
 ACTIONS_DIR="/opt/owui-actions"
 
-echo "🔧 [Config] Démarrage de l'initialisation ECHO..."
+echo "🔧 [Config] Démarrage initialisation ECHO..."
 
-# --- 1. ATTENTE DISPONIBILITE API ---
-echo "⏳ [Config] Attente API (Max 10 min)..."
-MAX_RETRIES=300
+# --- 1. ATTENTE API ---
+# Timeout fixé 
+SLEEP_TIME=2
+WAIT_LIMIT=600
 COUNT=0
+echo -n "⏳ [Config] Attente API open-webui (Max $(($WAIT_LIMIT*$SLEEP_TIME/60)) min)."
+
 until curl -s -f "$OWUI_URL/health" > /dev/null; do
-    sleep 2
-    ((COUNT++))
-    if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
-        echo "❌ [FATAL] Timeout : L'API ne répond pas."
+    if [ "$COUNT" -ge "$WAIT_LIMIT" ]; then
+        echo "❌ [FATAL] Timeout : L'API n'est pas disponible après $(($WAIT_LIMIT*$SLEEP_TIME/60)) minutes."
         exit 1
     fi
     echo -n "."
+    sleep $SLEEP_TIME
+    ((COUNT++))
 done
-echo " OK."
+echo " OK après $(($COUNT*2)) secondes."
 
-# --- 2. GESTION AUTHENTIFICATION (STRATEGIE SECRET-BASED) ---
-
+# --- 2. AUTHENTIFICATION ---
 TOKEN=""
-SERVICE_PWD=""
 
-# Cas A : Le secret existe déjà
+# A. Authentification Service (Automate)
 if [ -f "$SECRET_FILE" ]; then
-    echo "🔑 [AUTH] Secret trouvé (Caché). Tentative de login..."
     SERVICE_PWD=$(cat "$SECRET_FILE" | tr -d '[:space:]')
-    
-    # Sign-in pour obtenir le JWT temporaire
     LOGIN_RESP=$(curl -s -X POST "$OWUI_URL/api/v1/auths/signin" \
         -H "Content-Type: application/json" \
         -d "{\"email\": \"$SERVICE_EMAIL\", \"password\": \"$SERVICE_PWD\"}")
-    
     TOKEN=$(echo "$LOGIN_RESP" | jq -r '.token // empty')
-    
-    if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-        echo "   ✅ Authentification réussie."
-    else
-        echo "   ⚠️  Echec login avec le secret stocké. Le secret ou la DB a changé."
-        TOKEN=""
-    fi
 fi
 
-# Cas B : Pas de secret ou login échoué (Premier lancement ou Reset)
-if [ -z "$TOKEN" ]; then
-    echo "🆕 [AUTH] Initialisation d'un nouveau Compte de Service..."
-    
-    # 1. Génération d'un mot de passe ultra-durci (64 chars, haute entropie)
+if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
+    echo "🆕 [AUTH] Création compte service..."
     SERVICE_PWD=$(LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 64)
-    
-    # 2. Création du compte Service (Devient Admin si c'est le 1er user)
-    echo "   Creating Service Account ($SERVICE_EMAIL)..."
     SIGNUP_RESP=$(curl -s -X POST "$OWUI_URL/api/v1/auths/signup" \
         -H "Content-Type: application/json" \
         -d "{\"name\": \"$SERVICE_NAME\", \"email\": \"$SERVICE_EMAIL\", \"password\": \"$SERVICE_PWD\"}")
-    
     TOKEN=$(echo "$SIGNUP_RESP" | jq -r '.token // empty')
     
     if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-        # 3. Sauvegarde immédiate du secret avec permissions restreintes
+        touch "$SECRET_FILE"
+        chmod 600 "$SECRET_FILE"
         echo "$SERVICE_PWD" > "$SECRET_FILE"
-        chown root:root "$SECRET_FILE"
         chmod 400 "$SECRET_FILE"
-        echo "   ✅ Secret sauvegardé et sécurisé dans $SECRET_FILE"
-        
-        # 4. Création de l'Admin Humain (via le compte service)
-        echo "   👤 Création de l'Admin Humain ($HUMAN_EMAIL)..."
-        curl -s -X POST "$OWUI_URL/api/v1/auths/add" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"name\": \"$HUMAN_NAME\", \"email\": \"$HUMAN_EMAIL\", \"password\": \"$HUMAN_DEFAULT_PASSWORD\", \"role\": \"admin\"}" > /dev/null
-        echo "   ✅ Admin Humain prêt."
+        echo "   ✅ Compte service créé et authentifié."
     else
-        echo "   ❌ [FATAL] Impossible de créer le compte service (Existe déjà ?)."
-        echo "   Si la base de données n'est pas vide, restaurez le secret dans $SECRET_FILE."
+        echo "❌ [FATAL] Echec création/authentification du compte service."
+        echo "   🔍 Debug Info:"
+        echo "   - URL: $OWUI_URL/api/v1/auths/signup"
+        echo "   - Réponse API: $SIGNUP_RESP"
         exit 1
     fi
 fi
 
-# --- FONCTIONS UTILITAIRES ---
-
-api_upsert() {
-    local endpoint_base="$1"
-    local id="$2"
-    local payload="$3"
-    local type_desc="$4"
-
-    RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint_base/create" \
+# B. Création Compte Admin Humain (si nécessaire)
+if [ ! -s "$ADMIN_SECRET_FILE" ]; then
+    echo "🆕 [AUTH] Le fichier secret admin est manquant ou vide. Création d'un nouveau compte admin..."
+    ADMIN_PWD=$(LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16)
+    
+    # Sauvegarde sécurisée AVANT création
+    touch "$ADMIN_SECRET_FILE"
+    chmod 600 "$ADMIN_SECRET_FILE"
+    echo "$ADMIN_PWD" > "$ADMIN_SECRET_FILE"
+    chmod 400 "$ADMIN_SECRET_FILE"
+    
+    curl -s -X POST "$OWUI_URL/api/v1/auths/add" \
         -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/json" \
-        -d "$payload")
-    
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1 | cut -d: -f2)
-    BODY=$(echo "$RESPONSE" | sed '$d')
-
-    if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
-        echo "   ✅ $type_desc créé."
-    elif echo "$BODY" | grep -q "already registered" || [ "$HTTP_CODE" -eq 409 ]; then
-        echo "   🔄 $type_desc existe déjà. Mise à jour..."
-        curl -s -X POST "$OWUI_URL/api/v1/$endpoint_base/id/$id/update" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$payload" > /dev/null
-        echo "   ✅ $type_desc mis à jour."
-    else
-        echo "   ❌ ERREUR ($HTTP_CODE): $BODY"
-    fi
-}
-
-ensure_active() {
-    local endpoint_base="$1"
-    local id="$2"
-    
-    STATE_RESP=$(curl -s -X GET "$OWUI_URL/api/v1/$endpoint_base/id/$id" -H "Authorization: Bearer $TOKEN")
-    IS_ACTIVE=$(echo "$STATE_RESP" | jq -r '.is_active')
-    
-    if [ "$IS_ACTIVE" == "true" ]; then
-        # Refresh Cache
-        curl -s -X POST "$OWUI_URL/api/v1/$endpoint_base/id/$id/toggle" -H "Authorization: Bearer $TOKEN" > /dev/null
-        sleep 0.5
-        curl -s -X POST "$OWUI_URL/api/v1/$endpoint_base/id/$id/toggle" -H "Authorization: Bearer $TOKEN" > /dev/null
-        echo "      🔄 $id : Cache rafraîchi."
-    else
-        # Force ON
-        curl -s -X POST "$OWUI_URL/api/v1/$endpoint_base/id/$id/toggle" -H "Authorization: Bearer $TOKEN" > /dev/null
-        echo "      🚀 $id : Activé."
-    fi
-}
-
-get_display_name() {
-    local file="$1"
-    local default_id="$2"
-    # Extrait la ligne '# ECHO CONFIG NAME : Mon Nom'
-    # Sécurité : Recherche limitée aux 10 premières lignes uniquement
-    local custom_name=$(head -n 10 "$file" | grep "^# ECHO CONFIG NAME :" | head -n 1 | sed 's/^# ECHO CONFIG NAME :[[:space:]]*//')
-    
-    if [ -n "$custom_name" ]; then
-        echo "$custom_name"
-    else
-        echo "$default_id"
-    fi
-}
-
-# --- 3. PARAMETRES GLOBAUX ---
-echo "⚙️ [SETTINGS] Configuration..."
-curl -s -X POST "$OWUI_URL/api/v1/admin/settings/update" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{
-    "ui": { 
-        "banner": "ECHO v5 Infrastructure", 
-        "title": "ECHO Framework", 
-        "show_admin_details": true,
-        "default_model_id": "pipe_engine"
-    },
-    "features": { 
-        "enable_artifacts": true, 
-        "enable_memory": true,
-        "enable_signup": false
-    }
-}' > /dev/null
-
-# --- 4. IMPORT OUTILS ---
-echo "🛠️ [TOOLS] Traitement des Outils..."
-if [ -d "$TOOLS_DIR" ]; then
-    for file in $TOOLS_DIR/*.py; do
-        [ -e "$file" ] || continue
-        FILENAME=$(basename "$file")
-        TOOL_ID="${FILENAME%.*}"
-        DISPLAY_NAME=$(get_display_name "$file" "$TOOL_ID")
+        -d "{\"name\": \"$HUMAN_NAME\", \"email\": \"$HUMAN_EMAIL\", \"password\": \"$ADMIN_PWD\", \"role\": \"admin\"}" > /dev/null
         
-        echo "   -> Traitement de $TOOL_ID (Nom: $DISPLAY_NAME)..."
-        CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
-        PAYLOAD=$(jq -n --arg id "$TOOL_ID" --arg name "$DISPLAY_NAME" --arg content "$CONTENT" \
-                  '{id: $id, name: $name, content: ($content | fromjson), meta: {description: "ECHO Tool", manifest: {}}}')
-        api_upsert "tools" "$TOOL_ID" "$PAYLOAD" "Outil"
-    done
+    echo "   ✅ Admin créé. Credentials stockés dans $ADMIN_SECRET_FILE"
+else
+    echo "👍 [AUTH] Le compte admin existe déjà, pas de création nécessaire."
 fi
 
-# --- 5. IMPORT FILTRES ---
-echo "🛡️ [FILTERS] Traitement des Filtres..."
-if [ -d "$FILTERS_DIR" ]; then
-    for file in $FILTERS_DIR/*.py; do
-        [ -e "$file" ] || continue
-        FILENAME=$(basename "$file")
-        FILTER_ID="${FILENAME%.*}"
-        DISPLAY_NAME=$(get_display_name "$file" "$FILTER_ID")
-
-        echo "   -> Traitement de $FILTER_ID (Nom: $DISPLAY_NAME)..."
-        CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
-        PAYLOAD=$(jq -n --arg id "$FILTER_ID" --arg name "$DISPLAY_NAME" --arg content "$CONTENT" \
-                  '{id: $id, name: $name, content: ($content | fromjson), type: "filter", meta: {description: "ECHO Filter", manifest: {}}, is_active: true, is_global: true}')
-        api_upsert "functions" "$FILTER_ID" "$PAYLOAD" "Filtre"
-        ensure_active "functions" "$FILTER_ID"
-    done
-fi
-
-# --- 6. IMPORT PIPES ---
-echo "🧩 [PIPES] Traitement des Pipes..."
-if [ -d "$PIPES_DIR" ]; then
-    for file in $PIPES_DIR/*.py; do
-        [ -e "$file" ] || continue
-        FILENAME=$(basename "$file")
-        FUNC_ID="${FILENAME%.*}"
-        DISPLAY_NAME=$(get_display_name "$file" "$FUNC_ID")
-
-        echo "   -> Traitement de $FUNC_ID (Nom: $DISPLAY_NAME)..."
-        CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
-        PAYLOAD=$(jq -n --arg id "$FUNC_ID" --arg name "$DISPLAY_NAME" --arg content "$CONTENT" \
-                  '{id: $id, name: $name, content: ($content | fromjson), type: "pipe", meta: {description: "ECHO Pipe", manifest: {}}, is_active: true}')
-        api_upsert "functions" "$FUNC_ID" "$PAYLOAD" "Fonction (Pipe)"
-        ensure_active "functions" "$FUNC_ID"
-    done
-fi
-
-# --- 7. IMPORT ACTIONS ---
-echo "🎬 [ACTIONS] Traitement des Actions..."
-if [ -d "$ACTIONS_DIR" ]; then
-    for file in $ACTIONS_DIR/*.py; do
-        [ -e "$file" ] || continue
-        FILENAME=$(basename "$file")
-        ACTION_ID="${FILENAME%.*}"
-        DISPLAY_NAME=$(get_display_name "$file" "$ACTION_ID")
-
-        echo "   -> Traitement de $ACTION_ID (Nom: $DISPLAY_NAME)..."
-        CONTENT=$(sed '1s/^\xEF\xBB\xBF//' "$file" | jq -sR .)
-        PAYLOAD=$(jq -n --arg id "$ACTION_ID" --arg name "$DISPLAY_NAME" --arg content "$CONTENT" \
-                  '{id: $id, name: $name, content: ($content | fromjson), type: "action", is_active: true, meta: {description: "ECHO Action", manifest: {}}}')
-        api_upsert "functions" "$ACTION_ID" "$PAYLOAD" "Action"
-        ensure_active "functions" "$ACTION_ID"
-    done
-fi
-
-# --- 8. CONFIGURATION MODELE ---
-echo "🧠 [MODEL] Configuration du Modèle..."
-MODEL_CONFIG_FILE="/opt/config/model-config.json"
-SYSTEM_PROMPT_FILE="/opt/config/system-prompt.json"
-MODEL_ID="pipe_engine"
-
-if [ -f "$MODEL_CONFIG_FILE" ] && [ -f "$SYSTEM_PROMPT_FILE" ]; then
-    EXTRACTED_PROMPT=$(jq -r '.content // .system_prompt // empty' "$SYSTEM_PROMPT_FILE" 2>/dev/null)
-    [ -z "$EXTRACTED_PROMPT" ] && SYSTEM_PROMPT=$(cat "$SYSTEM_PROMPT_FILE") || SYSTEM_PROMPT="$EXTRACTED_PROMPT"
-    MODEL_PAYLOAD=$(jq --arg system "$SYSTEM_PROMPT" '.[0] | del(.user_id, .created, .updated_at, .created_at, .access_control) | .params.system = $system | .is_active = true' "$MODEL_CONFIG_FILE")
-    CHECK_MODEL=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
-    if [ "$CHECK_MODEL" -eq 200 ]; then
-        echo "   🔄 Mise à jour modèle..."
-        curl -s -X POST "$OWUI_URL/api/v1/models/model/update" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$MODEL_PAYLOAD" > /dev/null
-    else
-        echo "   🆕 Création modèle..."
-        curl -s -X POST "$OWUI_URL/api/v1/models/add" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$MODEL_PAYLOAD" > /dev/null
+# --- 3. IMPORT RESSOURCES (Legacy) ---
+api_upsert() {
+    local endpoint="$1"
+    local id="$2"
+    local payload="$3"
+    local desc="$4"
+    RESPONSE=$(curl -s -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
+        -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
+    HTTP_CODE=${RESPONSE: -3}
+    if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+        echo "   ✅ $desc : $id créé."
+    elif [ "$HTTP_CODE" -eq 409 ]; then
+        curl -s -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload" > /dev/null
+        echo "   🔄 $desc : $id mis à jour."
     fi
-    echo "   ✅ Modèle configuré."
+}
+
+# Fonction pour vérifier et basculer l'état (Active/Global) si nécessaire
+toggle_state() {
+    local id="$1"
+    
+    # Récupération de l'état actuel
+    CURRENT_STATE=$(curl -s -X GET "$OWUI_URL/api/v1/functions/id/$id" \
+        -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json")
+    
+    IS_ACTIVE=$(echo "$CURRENT_STATE" | jq -r '.is_active')
+    IS_GLOBAL=$(echo "$CURRENT_STATE" | jq -r '.is_global')
+    
+    # Bascule Global si nécessaire (on veut Global = true)
+    if [ "$IS_GLOBAL" != "true" ]; then
+        curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle/global" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" > /dev/null
+        echo "      🌐 $id passé en Global."
+    fi
+    
+    # Bascule Active si nécessaire (on veut Active = true)
+    if [ "$IS_ACTIVE" != "true" ]; then
+        curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" > /dev/null
+        echo "      ⚡ $id activé."
+    fi
+}
+
+# Boucle générique de traitement des ressources
+# Format: "API_ENDPOINT:API_ENDPOINT:DESCRIPTION_HUMAINE"
+# $DESC est utilisé pour :
+#  1. Déterminer le dossier source via un case/esac
+#  2. Afficher des logs lisibles ("Traitement Outil...")
+#  3. Construire le champ 'type' du JSON pour les Pipes/Filtres/Actions
+for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:functions:Pipe" "functions:functions:Action"; do
+    IFS=":" read -r DIR_NAME API_ENDPOINT DESC <<< "$DIR_TYPE"
+    TARGET_DIR=""
+    case "$DESC" in
+        "Outil") TARGET_DIR="$TOOLS_DIR";;
+        "Filtre") TARGET_DIR="$FILTERS_DIR";;
+        "Pipe") TARGET_DIR="$PIPES_DIR";;
+        "Action") TARGET_DIR="$ACTIONS_DIR";;
+    esac
+
+    if [ -d "$TARGET_DIR" ]; then
+        echo "📂 Traitement $DESC..."
+        for file in "$TARGET_DIR"/*.py;
+ do
+            [ -e "$file" ] || continue
+            ID=$(basename "$file" | cut -d. -f1)
+            echo "   👉 Découverte : $ID"
+            
+            # Extraction du Nom (Title) pour affichage propre
+            # On récupère la première occurrence de "title:", on nettoie le préfixe et les espaces
+            TITLE_LINE=$(grep -m 1 "title:" "$file")
+            CLEAN_NAME=$(echo "$TITLE_LINE" | sed 's/.*title:[[:space:]]*//' | tr -d '\r')
+            
+            # Si pas de titre trouvé, on fallback sur l'ID
+            if [ -n "$CLEAN_NAME" ]; then
+                NAME="$CLEAN_NAME"
+            else
+                NAME="$ID"
+            fi
+
+            CONTENT=$(jq -sR . "$file")
+            
+            if [[ "$API_ENDPOINT" == "tools" ]]; then
+                # Tools: Payload strict sans is_active/is_global
+                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" \
+                    '{id: $id, name: $name, content: ($content|fromjson), meta: {}}')
+                api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
+                
+            else
+                # Functions: Payload strict, puis toggle
+                TYPE_VAL=$(echo "$DESC" | tr '[:upper:]' '[:lower:]')
+                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" --arg type "$TYPE_VAL" \
+                    '{id: $id, name: $name, content: ($content|fromjson), type: $type, meta: {}}')
+                
+                api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
+                
+                # Vérification et Forçage de l'état (Active + Global)
+                toggle_state "$ID"
+            fi
+        done
+    fi
+done
+
+# --- 4. CONFIGURATION MODELE (Assemblage) ---
+if [ -f "$MODEL_CONFIG_FILE" ]; then
+    echo "⏳ [MODEL] Attente de 2s pour stabilisation des index..."
+    sleep 2
+    
+    echo "🧠 [MODEL] Assemblage et déploiement du modèle..."
+    
+    # Lecture Config (Gère si c'est un tableau [] ou un objet {})
+    RAW_CONFIG=$(cat "$MODEL_CONFIG_FILE")
+    IS_ARRAY=$(echo "$RAW_CONFIG" | jq 'if type=="array" then "yes" else "no" end')
+    
+    if [[ $IS_ARRAY == '"yes"' ]]; then
+        FINAL_PAYLOAD=$(echo "$RAW_CONFIG" | jq '.[0]')
+    else
+        FINAL_PAYLOAD="$RAW_CONFIG"
+    fi
+
+    # Nettoyage des champs système auto-générés pour éviter les conflits
+    # is_global est supprimé car non supporté dans le payload modèle
+    # access_control est conservé pour permettre la gestion des permissions
+    # Params est conservé (vide ou peuplé)
+    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq 'del(.user_id, .created, .updated_at, .created_at, .is_active, .is_global) | .is_active = true')
+    
+    # ------------------------------------------------------------------
+    # DÉCOUVERTE DYNAMIQUE DES RESSOURCES (Tools, Filters, Actions)
+    # ------------------------------------------------------------------
+    # On scanne les dossiers pour construire les tableaux JSON d'IDs
+    
+    # Découverte Tools
+    TOOL_IDS="[]"
+    if [ -d "$TOOLS_DIR" ]; then
+        IDS=$(find "$TOOLS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        TOOL_IDS=$IDS
+    fi
+    
+    # Découverte Filters
+    FILTER_IDS="[]"
+    if [ -d "$FILTERS_DIR" ]; then
+        IDS=$(find "$FILTERS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        FILTER_IDS=$IDS
+    fi
+    
+    # Découverte Actions
+    ACTION_IDS="[]"
+    if [ -d "$ACTIONS_DIR" ]; then
+        IDS=$(find "$ACTIONS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        ACTION_IDS=$IDS
+    fi
+    
+    echo "   🔗 Injection Dynamique :"
+    echo "$TOOL_IDS" | jq -r '.[]' | while read id; do echo "      + Tool   : $id"; done
+    echo "$FILTER_IDS" | jq -r '.[]' | while read id; do echo "      + Filter : $id"; done
+    echo "$ACTION_IDS" | jq -r '.[]' | while read id; do echo "      + Action : $id"; done
+    
+    # Injection dans le Payload Final
+    # On injecte filterIds ET defaultFilterIds (pour les activer par défaut)
+    # STANDARDISATION : On utilise uniquement toolIds (CamelCase) pour s'aligner avec filterIds/actionIds
+    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq \
+        --argjson tools "$TOOL_IDS" \
+        --argjson filters "$FILTER_IDS" \
+        --argjson actions "$ACTION_IDS" \
+        '.meta.toolIds = $tools | .meta.filterIds = $filters | .meta.defaultFilterIds = $filters | .meta.actionIds = $actions')
+        
+    MODEL_ID=$(echo "$FINAL_PAYLOAD" | jq -r '.id')
+    
+    # A. Injection du System Prompt JSON
+    if [ -f "$SYSTEM_PROMPT_FILE" ]; then
+       echo "   📄 Injection du System Prompt JSON..."
+       FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile prompt "$SYSTEM_PROMPT_FILE" '.params.system = $prompt')
+    fi
+    
+    # B. Injection de l'Image Locale
+    IMG_NAME=$(echo "$FINAL_PAYLOAD" | jq -r '.local_image_filename // empty')
+    if [ -n "$IMG_NAME" ] && [ "$IMG_NAME" != "null" ]; then
+        IMG_PATH="$IMAGE_BASE_DIR/$IMG_NAME"
+        if [ -f "$IMG_PATH" ]; then
+            echo "   🖼️  Encodage de l'image : $IMG_NAME"
+            MIME="image/png"
+            [[ "$IMG_PATH" == *.jpg || "$IMG_PATH" == *.jpeg ]] && MIME="image/jpeg"
+            [[ "$IMG_PATH" == *.webp ]] && MIME="image/webp"
+            
+            # Encodage Base64 (-w 0 pour linux/busybox)
+            B64_DATA=$(base64 -w 0 "$IMG_PATH")
+            FULL_B64="data:$MIME;base64,$B64_DATA"
+            
+            # FIX: Passage par fichier temporaire (avec PID) pour éviter "Argument list too long"
+            TMP_IMG_FILE="/tmp/owui_image_b64_$$.txt"
+            echo -n "$FULL_B64" > "$TMP_IMG_FILE"
+            
+            if [ ! -s "$TMP_IMG_FILE" ]; then
+                 echo "   ⚠️  [WARNING] Le fichier temporaire image est vide !"
+            fi
+            
+            # Remplacement dans le Payload
+            FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile img "$TMP_IMG_FILE" '.meta.profile_image_url = $img | del(.local_image_filename)')
+            
+            # Vérification Injection Image
+            HAS_IMG=$(echo "$FINAL_PAYLOAD" | jq '.meta.profile_image_url != null')
+            if [ "$HAS_IMG" != "true" ]; then
+                echo "   ⚠️  [WARNING] Echec de l'injection de l'image dans le payload JSON."
+            else
+                echo "   ✅ Image injectée dans le payload."
+            fi
+            
+            rm -f "$TMP_IMG_FILE"
+        else
+            echo "   ⚠️ Image introuvable : $IMG_PATH"
+        fi
+    fi
+    
+    # C. Envoi API
+    # FIX: Utilisation d'un fichier temporaire pour éviter "Argument list too long" sur le payload final
+    if [ "$DEBUG_MODE" == "true" ]; then
+        echo "📤 DEBUG: Payload envoyé :"
+        echo "$FINAL_PAYLOAD"
+    fi
+    
+    PAYLOAD_FILE="/tmp/owui_payload_$$.json"
+    echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
+
+    CHECK=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    
+    # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
+    if [ "$CHECK" -eq 200 ]; then
+        curl -s -X POST "$OWUI_URL/api/v1/models/model/update" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
+        echo "   ✅ Modèle mis à jour."
+    else
+        curl -s -X POST "$OWUI_URL/api/v1/models/add" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
+        echo "   ✅ Modèle créé."
+    fi
+
+    rm -f "$PAYLOAD_FILE"
+    
+    # ------------------------------------------------------------------
+    # VÉRIFICATION POST-DÉPLOIEMENT
+    # ------------------------------------------------------------------
+    # On récupère la liste complète des modèles pour trouver le nôtre
+    
+    MODELS_LIST=$(curl -s -X GET "$OWUI_URL/api/v1/models" -H "Authorization: Bearer $TOKEN")
+    
+    # Extraction du modèle spécifique
+    # On cible .data[] car l'API retourne { "data": [ ... ] }
+    REMOTE_MODEL=$(echo "$MODELS_LIST" | jq -r --arg id "$MODEL_ID" '.data[] | select(.id == $id)')
+    
+    if [ "$DEBUG_MODE" == "true" ]; then
+        echo "🔍 DEBUG: Modèle extrait :"
+        echo "$REMOTE_MODEL"
+        echo "🔍 DEBUG: Clés disponibles :"
+        echo "$REMOTE_MODEL" | jq 'keys'
+    fi
+    
+    if [ -n "$REMOTE_MODEL" ] && [ "$REMOTE_MODEL" != "null" ]; then
+        # Extraction des compteurs (Robustesse Multi-Chemins)
+        
+        # Outils
+        R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.info.meta.toolIds | length // .meta.toolIds | length // .tools | length // 0')
+        
+        # Filtres
+        R_FILTERS=$(echo "$REMOTE_MODEL" | jq '.filters | length // .info.meta.filterIds | length // 0')
+        
+        # Actions
+        R_ACTIONS=$(echo "$REMOTE_MODEL" | jq '.actions | length // .info.meta.actionIds | length // 0')
+        
+        L_TOOLS=$(echo "$TOOL_IDS" | jq length)
+        L_FILTERS=$(echo "$FILTER_IDS" | jq length)
+        L_ACTIONS=$(echo "$ACTION_IDS" | jq length)
+        
+        # Comparaison
+        if [ "$R_TOOLS" -ne "$L_TOOLS" ] || [ "$R_FILTERS" -ne "$L_FILTERS" ] || [ "$R_ACTIONS" -ne "$L_ACTIONS" ]; then
+            echo "   ⚠️  [WARNING] Discrépance détectée dans la configuration du modèle !"
+            echo "       Attendu (Local) vs Reçu (API) :"
+            echo "       - Tools   : $L_TOOLS vs $R_TOOLS"
+            echo "       - Filters : $L_FILTERS vs $R_FILTERS"
+            echo "       - Actions : $L_ACTIONS vs $R_ACTIONS"
+            echo "       Cela peut indiquer que le modèle a été créé avant que les ressources ne soient prêtes."
+        else
+            echo "   ✨ Vérification Configuration : OK (Synchro Parfaite)"
+        fi
+    else
+        echo "   ⚠️  [WARNING] Impossible de vérifier le modèle : ID '$MODEL_ID' introuvable dans la liste API."
+        # Debug optionnel si échec total
+        # echo "DEBUG LIST: $MODELS_LIST" | head -c 200
+    fi
 fi
 
 echo "✅ [Config] Terminé avec succès."
+
+# --- 5. AFFICHAGE ADMIN ---
+# Lancement du script d'affichage sécurisé (si présent)
+if [ -f "/opt/echo-scripts/show-echo-admin.sh" ]; then
+    bash "/opt/echo-scripts/show-echo-admin.sh"
+fi

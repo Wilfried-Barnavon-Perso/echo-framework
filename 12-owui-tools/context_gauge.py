@@ -1,5 +1,5 @@
 """
-title: Context Gauge (Strict)
+title: ECHO Context Gauge
 author: Wilfried BARNAVON
 version: 1.3
 description: Outil d'introspection permettant au modèle de vérifier son niveau d'occupation de la fenêtre de contexte (Données réelles uniquement).

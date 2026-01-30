@@ -3,21 +3,33 @@
         "id": "pipe_engine",
         "name": "ECHO Engine",
         "object": "model",
-        "created": 1768579271,
         "owned_by": "openai",
         "pipe": {
             "type": "pipe"
         },
         "has_user_valves": true,
-        "user_id": "08e8e0f8-1cf1-4bc0-8eea-59dae66b10c7",
         "base_model_id": null,
+        
+        "_comment_image": "Defines the local image file in /opt/echo-images/ to be encoded/injected by the script.",
+        "local_image_filename": "logo-echo.png",
+        
+        "_comment_params": "Standard LLM parameters. 'system' is auto-injected from system-prompt.json.",
         "params": {
-            "function_calling": "native",
-            "system": "Tu t'appelles ECHO et tu agis en tant que spécialiste des sujets traités.\n"
+            "system": null,
+            "temperature": null,
+            "top_p": null,
+            "top_k": null,
+            "frequency_penalty": null,
+            "presence_penalty": null,
+            "repeat_penalty": null,
+            "max_tokens": null,
+            "seed": null,
+            "stop": null,
+            "function_calling": "native"
         },
+        
         "meta": {
-            "profile_image_url": "/static/favicon.png",
-            "description": null,
+            "description": "ECHO Engine - Orchestrateur Cognitif",
             "capabilities": {
                 "file_context": true,
                 "vision": true,
@@ -32,26 +44,15 @@
             },
             "suggestion_prompts": null,
             "tags": [],
-            "toolIds": [
-                "web_browser_advanced",
-                "api_client",
-                "context_gauge",
-                "gemini_internal_web_search",
-                "python_code_executor"
-            ],
-            "filterIds": [
-                "bypass_rag"
-            ],
-            "defaultFilterIds": [
-                "bypass_rag"
-            ],
-            "actionIds": [
-                "reset_auth_action"
-            ]
+            
+            "_comment_resources": "AUTO-MANAGED by config-owui.sh. Do not edit IDs manually.",
+            "toolIds": [],
+            "filterIds": [],
+            "defaultFilterIds": [],
+            "actionIds": []
         },
-        "access_control": {},
-        "is_active": true,
-        "updated_at": 1768579607,
-        "created_at": 1768579607
+        
+        "_comment_access": "Default (null) = Public Read / Owner Write. To restrict, use: {'read': {'group_ids': ['id']}, 'write': {'group_ids': ['id']}}",
+        "access_control": null
     }
 ]

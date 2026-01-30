@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.2
+# VERSION : 6.5
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -155,23 +155,6 @@ else
     exit 1
 fi
 
-# --- 4. POST-INSTALL (CONFIG) ---
-echo "⏳ Attente disponibilité Open WebUI (Healthcheck sur localhost:8080)..."
-# Note: Port modifié à 8080 (Mapping direct) au lieu de 3000
-MAX_RETRIES=300
-COUNT=0
-set +e
-until curl -s -f http://localhost:8080/health > /dev/null; do
-    sleep 2
-    ((COUNT++))
-    if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
-        echo "❌ Timeout attente Open WebUI."
-        break
-    fi
-    echo -n "."
-done
-set -e
-echo " UP."
 
 echo "🔧 Configuration Auto (API Host-Driven)..."
 if [ -f "/opt/echo-scripts/config-owui.sh" ]; then
@@ -184,7 +167,8 @@ fi
 docker image prune -f >/dev/null 2>&1
 echo "✅ DEPLOIEMENT TERMINÉ."
 echo "-----------------------------------------------------------"
-echo "🌐 APPLICATION ECHO : http://IP-LOCALE:8080"
-echo "🔧 CONSOLE ADMIN    : http://IP-LOCALE:3001"
-echo "⚠️  N'oubliez pas de configurer votre PROXY EXTERNE !"
+echo "🌐 APPLICATION ECHO : http://IP-LOCALE:3000"
+echo "🔑 Tapez show-echo-admin pour le mot de passe"
+echo "🔧 CONSOLE ADMIN    : http://IP-LOCALE:3001 (login ssh)"
+echo "⚠️  N'oubliez pas de configurer votre WAF si public !"
 echo "-----------------------------------------------------------"
