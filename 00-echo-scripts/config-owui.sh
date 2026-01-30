@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
-# VERSION : 7.35
+# VERSION : 7.36
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -275,11 +275,29 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     echo "   🔨 Fusion de la configuration locale sur la configuration distante..."
     
-    # Découverte Dynamique (inchangé)
-    TOOL_IDS="[]"; FILTER_IDS="[]"; ACTION_IDS="[]"
-    [ -d "$TOOLS_DIR" ] && TOOL_IDS=$(find "$TOOLS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
-    [ -d "$FILTERS_DIR" ] && FILTER_IDS=$(find "$FILTERS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
-    [ -d "$ACTIONS_DIR" ] && ACTION_IDS=$(find "$ACTIONS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+    # Découverte Dynamique (Robustesse améliorée)
+    # FIX: On garantit que les variables restent "[]" si find ne retourne rien ou échoue
+    
+    # Découverte Tools
+    TOOL_IDS="[]"
+    if [ -d "$TOOLS_DIR" ]; then
+        FOUND=$(find "$TOOLS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        if [ -n "$FOUND" ] && [ "$FOUND" != "null" ]; then TOOL_IDS="$FOUND"; fi
+    fi
+    
+    # Découverte Filters
+    FILTER_IDS="[]"
+    if [ -d "$FILTERS_DIR" ]; then
+        FOUND=$(find "$FILTERS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        if [ -n "$FOUND" ] && [ "$FOUND" != "null" ]; then FILTER_IDS="$FOUND"; fi
+    fi
+    
+    # Découverte Actions
+    ACTION_IDS="[]"
+    if [ -d "$ACTIONS_DIR" ]; then
+        FOUND=$(find "$ACTIONS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        if [ -n "$FOUND" ] && [ "$FOUND" != "null" ]; then ACTION_IDS="$FOUND"; fi
+    fi
 
     echo "   🔗 Injection Dynamique :"
     echo "$TOOL_IDS" | jq -r '.[]' | while read id; do echo "      + Tool   : $id"; done
@@ -297,6 +315,11 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
         --argjson filters "$FILTER_IDS" \
         --argjson actions "$ACTION_IDS" \
         '$remote * $local | .meta.toolIds = $tools | .meta.filterIds = $filters | .meta.defaultFilterIds = $filters | .meta.actionIds = $actions')
+
+    if [ -z "$MERGED_PAYLOAD" ]; then
+        echo "❌ [FATAL] Erreur lors de la fusion JSON (jq). Vérifiez les logs ci-dessus."
+        exit 1
+    fi
 
     # A. Injection System Prompt
     if [ -f "$SYSTEM_PROMPT_FILE" ]; then
