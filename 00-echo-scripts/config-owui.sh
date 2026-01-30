@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.27
+# VERSION : 7.28
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -112,8 +112,8 @@ api_upsert() {
     local desc="$4"
     
     # Capture complète (Body + Code HTTP à la fin)
-    # Fix: Utilisation d'un délimiteur clair au lieu de \n au début
-    RESPONSE=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
+    # Fix: Utilisation de simple quotes pour éviter l'interpolation du %
+    RESPONSE=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/$endpoint/create" \
         -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
     
     HTTP_CODE=$(echo "$RESPONSE" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
@@ -124,7 +124,7 @@ api_upsert() {
         echo "   ✅ $desc : $id créé."
     elif [ "$HTTP_CODE" -eq 409 ] || [ "$HTTP_CODE" -eq 400 ]; then
         # Tentative d'update
-        RESPONSE_UPD=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
+        RESPONSE_UPD=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
         
         HTTP_CODE_UPD=$(echo "$RESPONSE_UPD" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
@@ -351,11 +351,12 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     PAYLOAD_FILE="/tmp/owui_payload_$$.json"
     echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
 
-    CHECK=$(curl -s -o /dev/null -w "%{{http_code}}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    CHECK=$(curl -s -o /dev/null -w '%{http_code}' -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     
     # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
     if [ "$CHECK" -eq 200 ]; then
-        RESPONSE_MODEL_UPD=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST "$OWUI_URL/api/v1/models/model/update" \
+        # Fix: Utilisation de simple quotes et du format HTTPSTATUS
+        RESPONSE_MODEL_UPD=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/models/model/update" \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE")
         
         HTTP_CODE_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
