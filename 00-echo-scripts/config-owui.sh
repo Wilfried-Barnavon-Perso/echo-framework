@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
+# CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
 # VERSION : 7.34
 # ==============================================================================
 
@@ -110,39 +110,15 @@ api_upsert() {
     local id="$2"
     local payload="$3"
     local desc="$4"
-    
-    # Capture complète (Body + Code HTTP à la fin)
-    # Fix: Utilisation de simple quotes pour éviter l'interpolation du %
-    RESPONSE=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/$endpoint/create" \
+    RESPONSE=$(curl -s -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
         -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
-    
-    HTTP_CODE=$(echo "$RESPONSE" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
-    BODY=$(echo "$RESPONSE" | sed -e 's/HTTPSTATUS:.*//')
-
-    # Traitement 400 (Bad Request/Already Exists) comme un 409 (Conflict) pour tenter l'update
+    HTTP_CODE=${RESPONSE: -3}
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $desc : $id créé."
-    elif [ "$HTTP_CODE" -eq 409 ] || [ "$HTTP_CODE" -eq 400 ]; then
-        # Tentative d'update
-        RESPONSE_UPD=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
-        
-        HTTP_CODE_UPD=$(echo "$RESPONSE_UPD" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
-        BODY_UPD=$(echo "$RESPONSE_UPD" | sed -e 's/HTTPSTATUS:.*//')
-        
-        if [ "$HTTP_CODE_UPD" -eq 200 ] || [ "$HTTP_CODE_UPD" -eq 201 ]; then
-             echo "   🔄 $desc : $id mis à jour."
-        else
-             echo "   ❌ [ERREUR] Update $desc $id échoué (HTTP $HTTP_CODE_UPD)."
-             if [ "$DEBUG_MODE" == "true" ]; then
-                 echo "      Réponse : $BODY_UPD"
-             fi
-        fi
-    else
-        echo "   ❌ [ERREUR] Création $desc $id échouée (HTTP $HTTP_CODE)."
-        if [ "$DEBUG_MODE" == "true" ]; then
-            echo "      Réponse : $BODY"
-        fi
+    elif [ "$HTTP_CODE" -eq 409 ]; then
+        curl -s -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload" > /dev/null
+        echo "   🔄 $desc : $id mis à jour."
     fi
 }
 
@@ -190,8 +166,8 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
 
     if [ -d "$TARGET_DIR" ]; then
         echo "📂 Traitement $DESC..."
-        for file in "$TARGET_DIR"/*.py; 
-do
+        for file in "$TARGET_DIR"/*.py;
+ do
             [ -e "$file" ] || continue
             ID=$(basename "$file" | cut -d. -f1)
             echo "   👉 Découverte : $ID"
@@ -212,14 +188,14 @@ do
             
             if [[ "$API_ENDPOINT" == "tools" ]]; then
                 # Tools: Payload strict sans is_active/is_global
-                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" 
+                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" \
                     '{id: $id, name: $name, content: ($content|fromjson), meta: {}}')
                 api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
                 
             else
                 # Functions: Payload strict, puis toggle
                 TYPE_VAL=$(echo "$DESC" | tr '[:upper:]' '[:lower:]')
-                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" --arg type "$TYPE_VAL" 
+                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" --arg type "$TYPE_VAL" \
                     '{id: $id, name: $name, content: ($content|fromjson), type: $type, meta: {}}')
                 
                 api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
@@ -227,9 +203,6 @@ do
                 # Vérification et Forçage de l'état (Active + Global)
                 toggle_state "$ID"
             fi
-            
-            # Latence de sécurité entre chaque opération
-            sleep 2
         done
     fi
 done
@@ -346,33 +319,21 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     # C. Envoi API
     # FIX: Utilisation d'un fichier temporaire pour éviter "Argument list too long" sur le payload final
+    if [ "$DEBUG_MODE" == "true" ]; then
+        echo "📤 DEBUG: Payload envoyé :"
+        echo "$FINAL_PAYLOAD"
+    fi
+    
     PAYLOAD_FILE="/tmp/owui_payload_$$.json"
     echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
 
-    CHECK=$(curl -s -o /dev/null -w '%{http_code}' -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    CHECK=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     
     # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
     if [ "$CHECK" -eq 200 ]; then
-        # BACK TO BASICS: L'endpoint d'hier était /api/v1/models/model/update
-        RESPONSE_MODEL_UPD=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/models/model/update" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE")
-        
-        HTTP_CODE_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
-        BODY_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | sed -e 's/HTTPSTATUS:.*//')
-        
-        if [ "$HTTP_CODE_M_UPD" -eq 200 ] || [ "$HTTP_CODE_M_UPD" -eq 201 ]; then
-             echo "   ✅ Modèle mis à jour."
-             if [ "$DEBUG_MODE" == "true" ]; then
-                 echo "   📤 DEBUG: Réponse API Update Modèle :"
-                 echo "$BODY_M_UPD" | head -c 1000
-                 echo "..."
-             fi
-        else
-             echo "   ❌ [ERREUR] Update Modèle échoué (HTTP $HTTP_CODE_M_UPD)."
-             if [ "$DEBUG_MODE" == "true" ]; then
-                 echo "      Réponse : $BODY_M_UPD"
-             fi
-        fi
+        curl -s -X POST "$OWUI_URL/api/v1/models/model/update" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
+        echo "   ✅ Modèle mis à jour."
     else
         curl -s -X POST "$OWUI_URL/api/v1/models/add" \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
