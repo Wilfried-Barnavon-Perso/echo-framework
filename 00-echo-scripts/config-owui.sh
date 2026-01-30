@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.32
+# VERSION : 7.33
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -236,8 +236,8 @@ done
 
 # --- 4. CONFIGURATION MODELE (Assemblage) ---
 if [ -f "$MODEL_CONFIG_FILE" ]; then
-    echo "⏳ [MODEL] Attente de 5s pour stabilisation des index..."
-    sleep 5
+    echo "⏳ [MODEL] Attente de 2s pour stabilisation des index..."
+    sleep 2
     
     echo "🧠 [MODEL] Assemblage et déploiement du modèle..."
     
@@ -351,27 +351,32 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
 
     CHECK=$(curl -s -o /dev/null -w '%{http_code}' -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     
-    # STRATÉGIE "DELETE & RECREATE" (Plus robuste que l'update)
+    # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
     if [ "$CHECK" -eq 200 ]; then
-        echo "   🔄 Modèle existant détecté. Suppression avant recréation..."
-        curl -s -X DELETE "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN"
-        sleep 1
-    fi
-    
-    # Création
-    RESPONSE_CREATE=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/models/add" \
-        -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE")
-    
-    HTTP_CODE_C=$(echo "$RESPONSE_CREATE" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
-    BODY_C=$(echo "$RESPONSE_CREATE" | sed -e 's/HTTPSTATUS:.*//')
-    
-    if [ "$HTTP_CODE_C" -eq 200 ] || [ "$HTTP_CODE_C" -eq 201 ]; then
-        echo "   ✅ Modèle déployé avec succès."
-    else
-        echo "   ❌ [ERREUR] Déploiement Modèle échoué (HTTP $HTTP_CODE_C)."
-        if [ "$DEBUG_MODE" == "true" ]; then
-            echo "      Réponse : $BODY_C"
+        # BACK TO BASICS: L'endpoint d'hier était /api/v1/models/model/update
+        RESPONSE_MODEL_UPD=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/models/model/update" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE")
+        
+        HTTP_CODE_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+        BODY_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | sed -e 's/HTTPSTATUS:.*//')
+        
+        if [ "$HTTP_CODE_M_UPD" -eq 200 ] || [ "$HTTP_CODE_M_UPD" -eq 201 ]; then
+             echo "   ✅ Modèle mis à jour."
+             if [ "$DEBUG_MODE" == "true" ]; then
+                 echo "   📤 DEBUG: Réponse API Update Modèle :"
+                 echo "$BODY_M_UPD" | head -c 1000
+                 echo "..."
+             fi
+        else
+             echo "   ❌ [ERREUR] Update Modèle échoué (HTTP $HTTP_CODE_M_UPD)."
+             if [ "$DEBUG_MODE" == "true" ]; then
+                 echo "      Réponse : $BODY_M_UPD"
+             fi
         fi
+    else
+        curl -s -X POST "$OWUI_URL/api/v1/models/add" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
+        echo "   ✅ Modèle créé."
     fi
 
     rm -f "$PAYLOAD_FILE"
