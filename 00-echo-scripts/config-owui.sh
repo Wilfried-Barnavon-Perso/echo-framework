@@ -113,15 +113,33 @@ api_upsert() {
     local id="$2"
     local payload="$3"
     local desc="$4"
-    RESPONSE=$(curl -s -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
+    
+    # Capture complète (Body + Code HTTP à la fin)
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
         -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
-    HTTP_CODE=${RESPONSE: -3}
+    
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $desc : $id créé."
     elif [ "$HTTP_CODE" -eq 409 ]; then
-        curl -s -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload" > /dev/null
-        echo "   🔄 $desc : $id mis à jour."
+        # Tentative d'update
+        RESPONSE_UPD=$(curl -s -w "\n%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
+        
+        HTTP_CODE_UPD=$(echo "$RESPONSE_UPD" | tail -n1)
+        BODY_UPD=$(echo "$RESPONSE_UPD" | sed '$d')
+        
+        if [ "$HTTP_CODE_UPD" -eq 200 ] || [ "$HTTP_CODE_UPD" -eq 201 ]; then
+             echo "   🔄 $desc : $id mis à jour."
+        else
+             echo "   ❌ [ERREUR] Update $desc $id échoué (HTTP $HTTP_CODE_UPD)."
+             echo "      Réponse : $BODY_UPD"
+        fi
+    else
+        echo "   ❌ [ERREUR] Création $desc $id échouée (HTTP $HTTP_CODE)."
+        echo "      Réponse : $BODY"
     fi
 }
 
