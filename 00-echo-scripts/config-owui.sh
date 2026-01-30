@@ -1,11 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.28
+# VERSION : 7.29
 # ==============================================================================
 
 # --- CONFIGURATION ---
-DEBUG_MODE="true"  # Mettre à "true" pour afficher les payloads JSON
+DEBUG_MODE="false"  # Mettre à "true" pour afficher les payloads JSON
 OWUI_URL="http://localhost:3000"
 SECRET_FILE="/opt/.owui-setting-secret"
 ADMIN_SECRET_FILE="/opt/.owui-admin-secret"
@@ -112,7 +112,6 @@ api_upsert() {
     local desc="$4"
     
     # Capture complète (Body + Code HTTP à la fin)
-    # Fix: Utilisation de simple quotes pour éviter l'interpolation du %
     RESPONSE=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/$endpoint/create" \
         -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
     
@@ -227,14 +226,17 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
                 # Vérification et Forçage de l'état (Active + Global)
                 toggle_state "$ID"
             fi
+            
+            # Latence de sécurité entre chaque opération
+            sleep 2
         done
     fi
 done
 
 # --- 4. CONFIGURATION MODELE (Assemblage) ---
 if [ -f "$MODEL_CONFIG_FILE" ]; then
-    echo "⏳ [MODEL] Attente de 2s pour stabilisation des index..."
-    sleep 2
+    echo "⏳ [MODEL] Attente de 5s pour stabilisation des index..."
+    sleep 5
     
     echo "🧠 [MODEL] Assemblage et déploiement du modèle..."
     
