@@ -212,14 +212,14 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
             
             if [[ "$API_ENDPOINT" == "tools" ]]; then
                 # Tools: Payload strict sans is_active/is_global
-                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" \
+                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" 
                     '{id: $id, name: $name, content: ($content|fromjson), meta: {}}')
                 api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
                 
             else
                 # Functions: Payload strict, puis toggle
                 TYPE_VAL=$(echo "$DESC" | tr '[:upper:]' '[:lower:]')
-                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" --arg type "$TYPE_VAL" \
+                PAYLOAD=$(jq -n --arg id "$ID" --arg name "$NAME" --arg content "$CONTENT" --arg type "$TYPE_VAL" 
                     '{id: $id, name: $name, content: ($content|fromjson), type: $type, meta: {}}')
                 
                 api_upsert "$API_ENDPOINT" "$ID" "$PAYLOAD" "$DESC"
