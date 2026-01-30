@@ -5,7 +5,7 @@
 # ==============================================================================
 
 # --- CONFIGURATION ---
-DEBUG_MODE="true"  # Mettre à "true" pour afficher les payloads JSON
+DEBUG_MODE="false"  # Mettre à "true" pour afficher les payloads JSON
 OWUI_URL="http://localhost:3000"
 SECRET_FILE="/opt/.owui-setting-secret"
 ADMIN_SECRET_FILE="/opt/.owui-admin-secret"
@@ -47,9 +47,6 @@ until curl -s -f "$OWUI_URL/health" > /dev/null; do
     ((COUNT++))
 done
 echo " OK après $(($COUNT*2)) secondes."
-
-echo "⏳ [Config] Pause de sécurité (15s) pour stabilisation complète..."
-sleep 15
 
 # --- 2. AUTHENTIFICATION ---
 TOKEN=""
@@ -121,9 +118,10 @@ api_upsert() {
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
+    # Traitement 400 (Bad Request/Already Exists) comme un 409 (Conflict) pour tenter l'update
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $desc : $id créé."
-    elif [ "$HTTP_CODE" -eq 409 ]; then
+    elif [ "$HTTP_CODE" -eq 409 ] || [ "$HTTP_CODE" -eq 400 ]; then
         # Tentative d'update
         RESPONSE_UPD=$(curl -s -w "\n%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
@@ -135,11 +133,15 @@ api_upsert() {
              echo "   🔄 $desc : $id mis à jour."
         else
              echo "   ❌ [ERREUR] Update $desc $id échoué (HTTP $HTTP_CODE_UPD)."
-             echo "      Réponse : $BODY_UPD"
+             if [ "$DEBUG_MODE" == "true" ]; then
+                 echo "      Réponse : $BODY_UPD"
+             fi
         fi
     else
         echo "   ❌ [ERREUR] Création $desc $id échouée (HTTP $HTTP_CODE)."
-        echo "      Réponse : $BODY"
+        if [ "$DEBUG_MODE" == "true" ]; then
+            echo "      Réponse : $BODY"
+        fi
     fi
 }
 
