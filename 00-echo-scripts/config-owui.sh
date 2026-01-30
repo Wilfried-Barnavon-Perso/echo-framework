@@ -5,7 +5,7 @@
 # ==============================================================================
 
 # --- CONFIGURATION ---
-DEBUG_MODE="false"  # Mettre à "true" pour afficher les payloads JSON
+DEBUG_MODE="true"  # Mettre à "true" pour afficher les payloads JSON
 OWUI_URL="http://localhost:3000"
 SECRET_FILE="/opt/.owui-setting-secret"
 ADMIN_SECRET_FILE="/opt/.owui-admin-secret"
