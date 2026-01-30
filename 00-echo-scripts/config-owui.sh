@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.26
+# VERSION : 7.27
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -47,6 +47,9 @@ until curl -s -f "$OWUI_URL/health" > /dev/null; do
     ((COUNT++))
 done
 echo " OK après $(($COUNT*2)) secondes."
+
+echo "⏳ [Config] Pause de sécurité (15s) pour stabilisation complète..."
+sleep 15
 
 # --- 2. AUTHENTIFICATION ---
 TOKEN=""
