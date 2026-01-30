@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.30
+# VERSION : 7.31
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -190,7 +190,7 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
 
     if [ -d "$TARGET_DIR" ]; then
         echo "📂 Traitement $DESC..."
-        for file in "$TARGET_DIR"/*.py;
+        for file in "$TARGET_DIR"/*.py; 
  do
             [ -e "$file" ] || continue
             ID=$(basename "$file" | cut -d. -f1)
@@ -354,8 +354,8 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
     if [ "$CHECK" -eq 200 ]; then
         # Fix: Utilisation de simple quotes et du format HTTPSTATUS
-        # Update endpoint changed to /api/v1/models/{id}/update
-        RESPONSE_MODEL_UPD=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/models/$MODEL_ID/update" \
+        # Update endpoint changed to /api/v1/models/update (without ID in URL)
+        RESPONSE_MODEL_UPD=$(curl -s -w 'HTTPSTATUS:%{http_code}' -X POST "$OWUI_URL/api/v1/models/update" \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE")
         
         HTTP_CODE_M_UPD=$(echo "$RESPONSE_MODEL_UPD" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
