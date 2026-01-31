@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
-# VERSION : 7.41
+# VERSION : 7.42
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -113,12 +113,35 @@ api_upsert() {
     RESPONSE=$(curl -s -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
         -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
     HTTP_CODE=${RESPONSE: -3}
+    
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $desc : $id créé."
     elif [ "$HTTP_CODE" -eq 409 ]; then
-        curl -s -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload" > /dev/null
-        echo "   🔄 $desc : $id mis à jour."
+        # Tentative d'Update
+        UPDATE_RESP=$(curl -s -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
+        UPDATE_CODE=${UPDATE_RESP: -3}
+        
+        if [ "$UPDATE_CODE" -eq 200 ]; then
+            echo "   🔄 $desc : $id mis à jour."
+        else
+            echo "   ⚠️  Echec update $desc $id (HTTP $UPDATE_CODE). Tentative de Force-Recreate..."
+            # Force Recreate : Delete + Create
+            curl -s -X DELETE "$OWUI_URL/api/v1/$endpoint/id/$id/delete" \
+                -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" > /dev/null
+            
+            RETRY_RESP=$(curl -s -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
+                -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
+            RETRY_CODE=${RETRY_RESP: -3}
+            
+            if [ "$RETRY_CODE" -eq 200 ] || [ "$RETRY_CODE" -eq 201 ]; then
+                echo "   ✅ $desc : $id recréé avec succès."
+            else
+                echo "   ❌ Echec total pour $desc $id (HTTP $RETRY_CODE)."
+            fi
+        fi
+    else
+        echo "   ❌ Echec création $desc $id (HTTP $HTTP_CODE)."
     fi
 }
 
