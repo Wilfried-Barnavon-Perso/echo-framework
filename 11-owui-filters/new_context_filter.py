@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 1.15
-description: 1.15: Simplification injection Version (Texte d'abord) + Optimisation Cache (JSON ensuite).
+version: 1.16
+description: 1.16: Changement de placeholder (%%ECHO_VERSION%%) pour éviter les conflits avec le template engine OWUI.
 """
 
 
@@ -141,8 +141,8 @@ class Filter:
                 sys_content = messages[system_msg_idx].get("content", "")
                 
                 # A. Injection Version (Priorité Absolue - Manipulation Texte Simple)
-                if "{{ECHO_VERSION}}" in sys_content:
-                    sys_content = sys_content.replace("{{ECHO_VERSION}}", echo_version)
+                if "%%ECHO_VERSION%%" in sys_content:
+                    sys_content = sys_content.replace("%%ECHO_VERSION%%", echo_version)
                     # On met à jour immédiatement pour garantir que c'est fait
                     messages[system_msg_idx]["content"] = sys_content
                     if self.valves.debug_context:
