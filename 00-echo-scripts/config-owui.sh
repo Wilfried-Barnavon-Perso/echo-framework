@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
-# VERSION : 7.39
+# VERSION : 7.40
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -369,6 +369,8 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     if [ "$R_TOOLS" -ne "$L_TOOLS" ]; then
          echo "   ⚠️  [WARNING] Discrépance Tools (Reçu: $R_TOOLS / Attendu: $L_TOOLS)."
+         echo "   🔍 DEBUG STRUCTURE :"
+         echo "$NEW_REMOTE" | jq .
     else
          echo "   ✨ Vérification : OK ($L_TOOLS outils synchronisés)"
     fi
