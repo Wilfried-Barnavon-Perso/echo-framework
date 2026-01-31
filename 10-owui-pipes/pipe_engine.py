@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 138.11
-description: 138.11: Rétablissement de l'affichage systématique des métriques de tokens (Context Gauge) à chaque réponse si activé par l'utilisateur.
+version: 138.14
+description: 138.14: Nettoyage complet UserValves (Suppression SHOW_METRICS obsolète).
 """
 
 # ==============================================================================
@@ -727,11 +727,10 @@ class GeminiAdapter:
 # SECTION 7 : STREAM PROCESSOR
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, context_window: int, debug=False, chat_id=None, sig_manager=None, show_metrics=False, initial_label="Réponse", file_stats=None, logger=None):
+    def __init__(self, context_window: int, debug=False, chat_id=None, sig_manager=None, initial_label="Réponse", file_stats=None, logger=None):
         self.debug = debug
         self.chat_id = chat_id
         self.sig_manager = sig_manager
-        self.show_metrics = show_metrics
         self.context_window = context_window
         self.initial_label = initial_label
         self.usage_stats = None
@@ -742,6 +741,7 @@ class StreamProcessor:
         os.makedirs(self.stats_dir, exist_ok=True)
         # Capture buffer for tool calls
         self.pending_tool_calls = {} 
+        self.has_tool_call = False
         
         # Capture full response for debug log
         self.full_response_accumulator = []
@@ -809,6 +809,7 @@ class StreamProcessor:
                                     yield txt
                                 
                                 elif func_call:
+                                    self.has_tool_call = True
                                     step_label = f"Pré-{func_call.get('name', 'Action')}"
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     
@@ -863,39 +864,6 @@ class StreamProcessor:
         if self.logger:
             self.logger.log("api_response", self.full_response_accumulator, metadata={"response_id": self.response_id})
 
-        if self.show_metrics:
-            stats_content = "\n\n" 
-            has_content = False
-            if self.file_stats and self.debug:
-                stats_content += "**📁 Fichiers Traités**\n\n"
-                stats_content += "| Fichier | Type | Taille | Statut |\n| :--- | :--- | :--- | :--- |\n"
-                for f in self.file_stats:
-                    size_mb = f['size'] / (1024*1024)
-                    stats_content += f"| {f['name']} | {f['type']} | {size_mb:.2f} MB | {f['status']} |\n"
-                stats_content += "\n"
-                has_content = True
-            
-            if self.usage_stats:
-                # 138.11 : Affichage systématique si show_metrics est True
-                if True:
-                    p_tok = self.usage_stats.get("promptTokenCount", 0)
-                    c_tok = self.usage_stats.get("candidatesTokenCount", 0)
-                    t_tok = self.usage_stats.get("totalTokenCount", 0)
-                    pct = (t_tok / self.context_window) * 100
-                    bar = "█" * int(pct/10) + "░" * (10 - int(pct/10))
-                    stats_content += f"""<details>
-<summary>⚡ Contexte [{step_label}]: {pct:.1f}% {bar}</summary>
-
-| Métrique | Valeur |
-| :--- | :--- |
-| **Prompt** | {p_tok:,} |
-| **Réponse** | {c_tok:,} |
-| **Total** | {t_tok:,} / {self.context_window:,} |
-</details>\n"""
-                    has_content = True
-            
-            if has_content: yield stats_content
-
         if self.usage_stats:
             yield {
                 "usage": {
@@ -943,7 +911,6 @@ class Pipe:
         
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
-        SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -1044,7 +1011,6 @@ class Pipe:
             self.valves.DEBUG_MODE, 
             chat_id, 
             sig_manager=orch.sig_manager,
-            show_metrics=user_valves.SHOW_METRICS, 
             initial_label=initial_label,
             file_stats=orch.files_processed_info,
             logger=debug_logger
