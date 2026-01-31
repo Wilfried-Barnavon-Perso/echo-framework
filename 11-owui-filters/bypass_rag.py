@@ -1,8 +1,8 @@
 """
 title: ECHO RAG File Bypass
 author: Wilfried BARNAVON
-version: 1.11
-description: 1.11: Integration Context Optimizer (Injection Version Dynamique + Split Cache Statique/Dynamique).
+version: 1.12
+description: 1.12: Formatage Markdown du Contexte Dynamique (```json:context) pour meilleure interprétation LLM.
 """
 
 
@@ -61,7 +61,7 @@ class Filter:
             return body
 
         if self.valves.debug_context:
-            logger.info(f"🛡️ [Filter v1.11] Processing Request...")
+            logger.info(f"🛡️ [Filter v1.12] Processing Request...")
         
         # ----------------------------------------------------------------------
         # MODULE 1 : BYPASS RAG (Gestion des fichiers)
@@ -149,8 +149,8 @@ class Filter:
             if env_block and last_user_msg_idx != -1:
                 user_content = messages[last_user_msg_idx].get("content", "")
                 
-                # Formatage du bloc environnement en texte lisible ou JSON string
-                env_text = f"--- CONTEXTE DYNAMIQUE ---\n{json.dumps(env_block, ensure_ascii=False, indent=2)}\n--------------------------\n\n"
+                # Formatage Markdown JSON Context
+                env_text = f"```json:context\n{{\"environnement_utilisateur\": {json.dumps(env_block, ensure_ascii=False, indent=2)}}}\n```\n\n"
                 
                 if isinstance(user_content, str):
                     messages[last_user_msg_idx]["content"] = env_text + user_content
