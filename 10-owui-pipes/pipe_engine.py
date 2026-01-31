@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 138.15
-description: 138.15: Refactoring Orchestrator. Extraction de la logique de traitement des tours (User/Model/Tool) dans des méthodes dédiées (préparation pour le cache). Zéro changement fonctionnel.
+version: 138.16
+description: 138.16: Fix critique Orchestrator. Restauration de la méthode _process_files_for_message manquante.
 """
 
 # ==============================================================================
@@ -608,6 +608,28 @@ class Orchestrator:
                 part = {"text": f"[Error processing binary file {f_name}: {str(e)}]"}
 
         return part, info_entry
+
+    async def _process_files_for_message(self, files_raw: List[Dict]) -> List[Dict]:
+        parts = []
+        files_to_process = []
+        seen_ids = set()
+
+        txt_map, bin_map = self._parse_mime_valves()
+        for f in files_raw:
+            fid = f.get("id") or f.get("file", {}).get("id")
+            if fid and fid not in seen_ids:
+                files_to_process.append(f); seen_ids.add(fid)
+
+        tasks = []
+        for f_obj in files_to_process:
+            tasks.append(asyncio.to_thread(self._process_single_file_sync, f_obj, txt_map, bin_map))
+        
+        if tasks:
+            results = await asyncio.gather(*tasks)
+            for part, info in results:
+                if part: parts.append(part)
+                if info: self.files_processed_info.append(info)
+        return parts
 
     async def _process_tool_turn(self, messages: List[Dict], start_idx: int) -> Tuple[List[Dict], int]:
         """Traite une séquence de messages TOOL (Résultats)."""
