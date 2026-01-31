@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
-# VERSION : 7.37
+# VERSION : 7.39
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -327,7 +327,8 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
 
     # 4. Envoi de la Mise à Jour
     # On vérifie d'abord si le modèle existe pour choisir entre ADD et UPDATE
-    CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    # CORRECTIF: Utilisation du bon endpoint GET avec paramètre ?id=
+    CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     
     PAYLOAD_FILE="/tmp/owui_payload_$$.json"
     RESP_FILE="/tmp/owui_resp_$$.json"
@@ -340,13 +341,15 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
 
     if [ "$CHECK_CODE" -eq 200 ]; then
         echo "   🚀 Mise à jour du modèle existant (POST /update)..."
+        # Endpoint VALIDE : /api/v1/models/model/update
         HTTP_CODE=$(curl -s -w "%{http_code}" -o "$RESP_FILE" -X POST "$OWUI_URL/api/v1/models/model/update" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "@$PAYLOAD_FILE")
     else
-        echo "   🚀 Création du nouveau modèle (POST /add)..."
-        HTTP_CODE=$(curl -s -w "%{http_code}" -o "$RESP_FILE" -X POST "$OWUI_URL/api/v1/models/add" \
+        echo "   🚀 Création du nouveau modèle (POST /create)..."
+        # CORRECTIF: Utilisation de /create au lieu de /add
+        HTTP_CODE=$(curl -s -w "%{http_code}" -o "$RESP_FILE" -X POST "$OWUI_URL/api/v1/models/create" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "@$PAYLOAD_FILE")
@@ -360,7 +363,7 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     rm -f "$PAYLOAD_FILE" "$RESP_FILE"
     
     # 5. Vérification Finale
-    NEW_REMOTE=$(curl -s -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    NEW_REMOTE=$(curl -s -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     R_TOOLS=$(echo "$NEW_REMOTE" | jq '.info.meta.toolIds | length // .meta.toolIds | length // 0')
     L_TOOLS=$(echo "$TOOL_IDS" | jq length)
     
