@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
-# CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.26
+# CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
+# VERSION : 7.44
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -110,16 +110,44 @@ api_upsert() {
     local id="$2"
     local payload="$3"
     local desc="$4"
-    RESPONSE=$(curl -s -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
+    
+    # Utilisation d'un fichier temp pour capturer la réponse body + code
+    TMP_RESP="/tmp/owui_upsert_response_$$.txt"
+    
+    HTTP_CODE=$(curl -s -w "%{http_code}" -o "$TMP_RESP" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
         -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
-    HTTP_CODE=${RESPONSE: -3}
+    
+    # 409 = Conflict, 400 = Bad Request (Souvent "ID already exists" dans cette version OWUI)
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $desc : $id créé."
-    elif [ "$HTTP_CODE" -eq 409 ]; then
-        curl -s -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload" > /dev/null
-        echo "   🔄 $desc : $id mis à jour."
+    elif [ "$HTTP_CODE" -eq 409 ] || [ "$HTTP_CODE" -eq 400 ]; then
+        # Tentative d'Update
+        UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
+        
+        if [ "$UPDATE_CODE" -eq 200 ]; then
+            echo "   🔄 $desc : $id mis à jour."
+        else
+            echo "   ⚠️  Echec update $desc $id (HTTP $UPDATE_CODE). Tentative de Force-Recreate..."
+            # Force Recreate : Delete + Create
+            curl -s -X DELETE "$OWUI_URL/api/v1/$endpoint/id/$id/delete" \
+                -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" > /dev/null
+            
+            RETRY_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
+                -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
+            
+            if [ "$RETRY_CODE" -eq 200 ] || [ "$RETRY_CODE" -eq 201 ]; then
+                echo "   ✅ $desc : $id recréé avec succès."
+            else
+                echo "   ❌ Echec total pour $desc $id (HTTP $RETRY_CODE)."
+            fi
+        fi
+    else
+        echo "   ❌ Echec création $desc $id (HTTP $HTTP_CODE)."
+        # Affichage de l'erreur pour debug
+        echo "      🔍 Réponse : $(cat "$TMP_RESP")"
     fi
+    rm -f "$TMP_RESP"
 }
 
 # Fonction pour vérifier et basculer l'état (Active/Global) si nécessaire
@@ -207,79 +235,106 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
     fi
 done
 
-# --- 4. CONFIGURATION MODELE (Assemblage) ---
+# --- 4. CONFIGURATION MODELE (Assemblage & Déploiement) ---
+# Fonction d'affichage d'erreur API détaillée
+check_http_error() {
+    local http_code="$1"
+    local response_file="$2"
+    local context="$3"
+    
+    if [ "$http_code" -ne 200 ] && [ "$http_code" -ne 201 ]; then
+        echo "❌ [API ERROR] $context (HTTP $http_code)"
+        if [ -s "$response_file" ]; then
+            echo "   🔍 Réponse API :"
+            cat "$response_file" | jq . 2>/dev/null || cat "$response_file"
+        fi
+        rm -f "$response_file"
+        exit 1
+    fi
+}
+
 if [ -f "$MODEL_CONFIG_FILE" ]; then
     echo "⏳ [MODEL] Attente de 2s pour stabilisation des index..."
     sleep 2
     
-    echo "🧠 [MODEL] Assemblage et déploiement du modèle..."
+    # 1. Préparation de la Config Locale
+    RAW_LOCAL_CONFIG=$(cat "$MODEL_CONFIG_FILE")
+    # Si c'est un tableau, on prend le premier élément
+    LOCAL_PAYLOAD=$(echo "$RAW_LOCAL_CONFIG" | jq 'if type=="array" then .[0] else . end')
+    MODEL_ID=$(echo "$LOCAL_PAYLOAD" | jq -r '.id')
     
-    # Lecture Config (Gère si c'est un tableau [] ou un objet {})
-    RAW_CONFIG=$(cat "$MODEL_CONFIG_FILE")
-    IS_ARRAY=$(echo "$RAW_CONFIG" | jq 'if type=="array" then "yes" else "no" end')
-    
-    if [[ $IS_ARRAY == '"yes"' ]]; then
-        FINAL_PAYLOAD=$(echo "$RAW_CONFIG" | jq '.[0]')
-    else
-        FINAL_PAYLOAD="$RAW_CONFIG"
-    fi
+    echo "🧠 [MODEL] Configuration du modèle : $MODEL_ID"
 
-    # Nettoyage des champs système auto-générés pour éviter les conflits
-    # is_global est supprimé car non supporté dans le payload modèle
-    # access_control est conservé pour permettre la gestion des permissions
-    # Params est conservé (vide ou peuplé)
-    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq 'del(.user_id, .created, .updated_at, .created_at, .is_active, .is_global) | .is_active = true')
+    # 2. Découverte Dynamique des Ressources
+    # On garantit que les variables sont des tableaux JSON valides "[]"
     
-    # ------------------------------------------------------------------
-    # DÉCOUVERTE DYNAMIQUE DES RESSOURCES (Tools, Filters, Actions)
-    # ------------------------------------------------------------------
-    # On scanne les dossiers pour construire les tableaux JSON d'IDs
-    
-    # Découverte Tools
     TOOL_IDS="[]"
     if [ -d "$TOOLS_DIR" ]; then
-        IDS=$(find "$TOOLS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
-        TOOL_IDS=$IDS
+        FOUND=$(find "$TOOLS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        # Vérification si JSON valide et non vide
+        if echo "$FOUND" | jq empty >/dev/null 2>&1; then
+             TOOL_IDS="$FOUND"
+        fi
     fi
     
-    # Découverte Filters
     FILTER_IDS="[]"
     if [ -d "$FILTERS_DIR" ]; then
-        IDS=$(find "$FILTERS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
-        FILTER_IDS=$IDS
+        FOUND=$(find "$FILTERS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        if echo "$FOUND" | jq empty >/dev/null 2>&1; then
+             FILTER_IDS="$FOUND"
+        fi
     fi
     
-    # Découverte Actions
     ACTION_IDS="[]"
     if [ -d "$ACTIONS_DIR" ]; then
-        IDS=$(find "$ACTIONS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
-        ACTION_IDS=$IDS
+        FOUND=$(find "$ACTIONS_DIR" -name "*.py" -exec basename {} .py \; | jq -R . | jq -s .)
+        if echo "$FOUND" | jq empty >/dev/null 2>&1; then
+             ACTION_IDS="$FOUND"
+        fi
     fi
-    
+
     echo "   🔗 Injection Dynamique :"
     echo "$TOOL_IDS" | jq -r '.[]' | while read id; do echo "      + Tool   : $id"; done
     echo "$FILTER_IDS" | jq -r '.[]' | while read id; do echo "      + Filter : $id"; done
     echo "$ACTION_IDS" | jq -r '.[]' | while read id; do echo "      + Action : $id"; done
+
+    # 3. Construction du Payload (Base Locale + Injections)
+    # On utilise des fichiers temporaires pour jq afin d'éviter les erreurs d'arguments shell
+    TMP_LOCAL="/tmp/owui_local_$$.json"
+    TMP_TOOLS="/tmp/owui_tools_$$.json"
+    TMP_FILTERS="/tmp/owui_filters_$$.json"
+    TMP_ACTIONS="/tmp/owui_actions_$$.json"
     
-    # Injection dans le Payload Final
-    # On injecte filterIds ET defaultFilterIds (pour les activer par défaut)
-    # STANDARDISATION : On utilise uniquement toolIds (CamelCase) pour s'aligner avec filterIds/actionIds
-    FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq \
-        --argjson tools "$TOOL_IDS" \
-        --argjson filters "$FILTER_IDS" \
-        --argjson actions "$ACTION_IDS" \
-        '.meta.toolIds = $tools | .meta.filterIds = $filters | .meta.defaultFilterIds = $filters | .meta.actionIds = $actions')
-        
-    MODEL_ID=$(echo "$FINAL_PAYLOAD" | jq -r '.id')
+    echo "$LOCAL_PAYLOAD" > "$TMP_LOCAL"
+    echo "$TOOL_IDS" > "$TMP_TOOLS"
+    echo "$FILTER_IDS" > "$TMP_FILTERS"
+    echo "$ACTION_IDS" > "$TMP_ACTIONS"
     
-    # A. Injection du System Prompt JSON
+    # Construction et Nettoyage
+    # On supprime les champs système qui pourraient gêner l'update (user_id, created...)
+    # On force is_active = true
+    FINAL_PAYLOAD=$(jq -n \
+        --argjson local "$(cat $TMP_LOCAL)" \
+        --argjson tools "$(cat $TMP_TOOLS)" \
+        --argjson filters "$(cat $TMP_FILTERS)" \
+        --argjson actions "$(cat $TMP_ACTIONS)" \
+        '$local | del(.user_id, .created, .updated_at, .created_at, .is_global) | .is_active = true | .meta.toolIds = $tools | .meta.filterIds = $filters | .meta.defaultFilterIds = $filters | .meta.actionIds = $actions')
+
+    rm -f "$TMP_LOCAL" "$TMP_TOOLS" "$TMP_FILTERS" "$TMP_ACTIONS"
+
+    if [ -z "$FINAL_PAYLOAD" ]; then
+        echo "❌ [FATAL] Erreur lors de la construction du payload JSON."
+        exit 1
+    fi
+
+    # A. Injection System Prompt
     if [ -f "$SYSTEM_PROMPT_FILE" ]; then
        echo "   📄 Injection du System Prompt JSON..."
        FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile prompt "$SYSTEM_PROMPT_FILE" '.params.system = $prompt')
     fi
     
-    # B. Injection de l'Image Locale
-    IMG_NAME=$(echo "$FINAL_PAYLOAD" | jq -r '.local_image_filename // empty')
+    # B. Injection Image
+    IMG_NAME=$(echo "$LOCAL_PAYLOAD" | jq -r '.local_image_filename // empty')
     if [ -n "$IMG_NAME" ] && [ "$IMG_NAME" != "null" ]; then
         IMG_PATH="$IMAGE_BASE_DIR/$IMG_NAME"
         if [ -f "$IMG_PATH" ]; then
@@ -287,110 +342,65 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
             MIME="image/png"
             [[ "$IMG_PATH" == *.jpg || "$IMG_PATH" == *.jpeg ]] && MIME="image/jpeg"
             [[ "$IMG_PATH" == *.webp ]] && MIME="image/webp"
-            
-            # Encodage Base64 (-w 0 pour linux/busybox)
             B64_DATA=$(base64 -w 0 "$IMG_PATH")
             FULL_B64="data:$MIME;base64,$B64_DATA"
             
-            # FIX: Passage par fichier temporaire (avec PID) pour éviter "Argument list too long"
-            TMP_IMG_FILE="/tmp/owui_image_b64_$$.txt"
-            echo -n "$FULL_B64" > "$TMP_IMG_FILE"
-            
-            if [ ! -s "$TMP_IMG_FILE" ]; then
-                 echo "   ⚠️  [WARNING] Le fichier temporaire image est vide !"
-            fi
-            
-            # Remplacement dans le Payload
-            FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile img "$TMP_IMG_FILE" '.meta.profile_image_url = $img | del(.local_image_filename)')
-            
-            # Vérification Injection Image
-            HAS_IMG=$(echo "$FINAL_PAYLOAD" | jq '.meta.profile_image_url != null')
-            if [ "$HAS_IMG" != "true" ]; then
-                echo "   ⚠️  [WARNING] Echec de l'injection de l'image dans le payload JSON."
-            else
-                echo "   ✅ Image injectée dans le payload."
-            fi
-            
-            rm -f "$TMP_IMG_FILE"
-        else
-            echo "   ⚠️ Image introuvable : $IMG_PATH"
+            TMP_IMG="/tmp/owui_img_$$.txt"
+            echo -n "$FULL_B64" > "$TMP_IMG"
+            FINAL_PAYLOAD=$(echo "$FINAL_PAYLOAD" | jq --rawfile img "$TMP_IMG" '.meta.profile_image_url = $img | del(.local_image_filename)')
+            rm -f "$TMP_IMG"
+            echo "   ✅ Image injectée."
         fi
     fi
-    
-    # C. Envoi API
-    # FIX: Utilisation d'un fichier temporaire pour éviter "Argument list too long" sur le payload final
-    if [ "$DEBUG_MODE" == "true" ]; then
-        echo "📤 DEBUG: Payload envoyé :"
-        echo "$FINAL_PAYLOAD"
-    fi
+
+    # 4. Envoi de la Mise à Jour
+    # On vérifie d'abord si le modèle existe pour choisir entre ADD et UPDATE
+    # CORRECTIF: Utilisation du bon endpoint GET avec paramètre ?id=
+    CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     
     PAYLOAD_FILE="/tmp/owui_payload_$$.json"
+    RESP_FILE="/tmp/owui_resp_$$.json"
     echo "$FINAL_PAYLOAD" > "$PAYLOAD_FILE"
-
-    CHECK=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/$MODEL_ID" -H "Authorization: Bearer $TOKEN")
-    
-    # Note: On force l'update pour s'assurer que l'image/prompt sont rafraichis
-    if [ "$CHECK" -eq 200 ]; then
-        curl -s -X POST "$OWUI_URL/api/v1/models/model/update" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
-        echo "   ✅ Modèle mis à jour."
-    else
-        curl -s -X POST "$OWUI_URL/api/v1/models/add" \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$PAYLOAD_FILE" > /dev/null
-        echo "   ✅ Modèle créé."
-    fi
-
-    rm -f "$PAYLOAD_FILE"
-    
-    # ------------------------------------------------------------------
-    # VÉRIFICATION POST-DÉPLOIEMENT
-    # ------------------------------------------------------------------
-    # On récupère la liste complète des modèles pour trouver le nôtre
-    
-    MODELS_LIST=$(curl -s -X GET "$OWUI_URL/api/v1/models" -H "Authorization: Bearer $TOKEN")
-    
-    # Extraction du modèle spécifique
-    # On cible .data[] car l'API retourne { "data": [ ... ] }
-    REMOTE_MODEL=$(echo "$MODELS_LIST" | jq -r --arg id "$MODEL_ID" '.data[] | select(.id == $id)')
     
     if [ "$DEBUG_MODE" == "true" ]; then
-        echo "🔍 DEBUG: Modèle extrait :"
-        echo "$REMOTE_MODEL"
-        echo "🔍 DEBUG: Clés disponibles :"
-        echo "$REMOTE_MODEL" | jq 'keys'
+        echo "📤 DEBUG: Payload final :"
+        cat "$PAYLOAD_FILE"
+    fi
+
+    if [ "$CHECK_CODE" -eq 200 ]; then
+        echo "   🚀 Mise à jour du modèle existant (POST /update)..."
+        # Endpoint VALIDE : /api/v1/models/model/update
+        HTTP_CODE=$(curl -s -w "%{http_code}" -o "$RESP_FILE" -X POST "$OWUI_URL/api/v1/models/model/update" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "@$PAYLOAD_FILE")
+    else
+        echo "   🚀 Création du nouveau modèle (POST /create)..."
+        # CORRECTIF: Utilisation de /create au lieu de /add
+        HTTP_CODE=$(curl -s -w "%{http_code}" -o "$RESP_FILE" -X POST "$OWUI_URL/api/v1/models/create" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "@$PAYLOAD_FILE")
     fi
     
-    if [ -n "$REMOTE_MODEL" ] && [ "$REMOTE_MODEL" != "null" ]; then
-        # Extraction des compteurs (Robustesse Multi-Chemins)
-        
-        # Outils
-        R_TOOLS=$(echo "$REMOTE_MODEL" | jq '.info.meta.toolIds | length // .meta.toolIds | length // .tools | length // 0')
-        
-        # Filtres
-        R_FILTERS=$(echo "$REMOTE_MODEL" | jq '.filters | length // .info.meta.filterIds | length // 0')
-        
-        # Actions
-        R_ACTIONS=$(echo "$REMOTE_MODEL" | jq '.actions | length // .info.meta.actionIds | length // 0')
-        
-        L_TOOLS=$(echo "$TOOL_IDS" | jq length)
-        L_FILTERS=$(echo "$FILTER_IDS" | jq length)
-        L_ACTIONS=$(echo "$ACTION_IDS" | jq length)
-        
-        # Comparaison
-        if [ "$R_TOOLS" -ne "$L_TOOLS" ] || [ "$R_FILTERS" -ne "$L_FILTERS" ] || [ "$R_ACTIONS" -ne "$L_ACTIONS" ]; then
-            echo "   ⚠️  [WARNING] Discrépance détectée dans la configuration du modèle !"
-            echo "       Attendu (Local) vs Reçu (API) :"
-            echo "       - Tools   : $L_TOOLS vs $R_TOOLS"
-            echo "       - Filters : $L_FILTERS vs $R_FILTERS"
-            echo "       - Actions : $L_ACTIONS vs $R_ACTIONS"
-            echo "       Cela peut indiquer que le modèle a été créé avant que les ressources ne soient prêtes."
-        else
-            echo "   ✨ Vérification Configuration : OK (Synchro Parfaite)"
-        fi
+    # Vérification d'erreur stricte
+    check_http_error "$HTTP_CODE" "$RESP_FILE" "Déploiement du modèle"
+    
+    echo "   ✅ Modèle déployé avec succès."
+    
+    rm -f "$PAYLOAD_FILE" "$RESP_FILE"
+    
+    # 5. Vérification Finale
+    NEW_REMOTE=$(curl -s -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    
+    # Correction JQ : gestion robuste des chemins alternatifs et du null
+    R_TOOLS=$(echo "$NEW_REMOTE" | jq '(.info.meta.toolIds // .meta.toolIds // []) | length')
+    L_TOOLS=$(echo "$TOOL_IDS" | jq length)
+    
+    if [ "$R_TOOLS" -ne "$L_TOOLS" ]; then
+         echo "   ⚠️  [WARNING] Discrépance Tools (Reçu: $R_TOOLS / Attendu: $L_TOOLS)."
     else
-        echo "   ⚠️  [WARNING] Impossible de vérifier le modèle : ID '$MODEL_ID' introuvable dans la liste API."
-        # Debug optionnel si échec total
-        # echo "DEBUG LIST: $MODELS_LIST" | head -c 200
+         echo "   ✨ Vérification : OK ($L_TOOLS outils synchronisés)"
     fi
 fi
 

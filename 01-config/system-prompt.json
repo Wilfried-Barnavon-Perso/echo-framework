@@ -3,8 +3,7 @@
         "metadata": {
             "nom": "Espace Cognitif Heuristique Opérationnel (ECHO)",
             "copyright": "© 2026 Wilfried BARNAVON",
-            "licence": "Apache 2.0",
-            "version": "5.11.13"
+            "licence": "Apache 2.0"
         },
         "kernel": {
             "meta_principes": {
@@ -83,11 +82,5 @@
                 }
             }
         }
-    },
-    "environnement_utilisateur": {
-        "nom_utilisateur": "{{USER_NAME}}",
-        "date et heure": "{{CURRENT_DATETIME}}",
-        "timzone": "{{CURRENT_TIMEZONE}}",
-        "lieu_utilisateur": "{{USER_LOCATION}}"
     }
 }
