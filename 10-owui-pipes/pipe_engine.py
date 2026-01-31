@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 138.17
-description: 138.17: Activation du Smart Context Cache (SQLite/Zlib). Fix de l'écriture des stats pour Context Gauge.
+version: 138.18
+description: 138.18: Fix critique Context Gauge (écriture inconditionnelle des stats JSON). Ajout logs debug Cache (HIT/MISS).
 """
 
 # ==============================================================================
@@ -815,7 +815,7 @@ class Orchestrator:
             
             if cached_data:
                 # HIT !
-                # cached_data = {"parts": [...], "deferred_text": "..."}
+                if self.valves.DEBUG_MODE: self.debug_log.append(f"🟢 [CACHE HIT] {block_hash[:8]}...")
                 
                 parts = cached_data.get("parts", [])
                 new_deferred = cached_data.get("deferred_text", "")
@@ -843,6 +843,7 @@ class Orchestrator:
 
             else:
                 # MISS !
+                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔴 [CACHE MISS] {block_hash[:8] if block_hash else 'NoHash'}...")
                 cache_valid = False # On invalide la chaîne pour le futur
                 
                 # Traitement Live
@@ -962,7 +963,8 @@ class StreamProcessor:
             if "responseId" in data: self.response_id = data["responseId"]
             elif "response" in data and "id" in data["response"]: self.response_id = data["response"]["id"]
         
-        if self.usage_stats and self.chat_id and step_label == "Fenêtre de Contexte":
+        # 138.18: Écriture systématique pour Context Gauge (plus de condition de label)
+        if self.usage_stats and self.chat_id:
              try:
                 safe_id = "".join(x for x in str(self.chat_id) if x.isalnum() or x in "-_")
                 with open(f"{self.stats_dir}/{safe_id}.json", "w") as f:
