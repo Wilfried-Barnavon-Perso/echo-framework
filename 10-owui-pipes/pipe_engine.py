@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 138.16
-description: 138.16: Fix critique Orchestrator. Restauration de la méthode _process_files_for_message manquante.
+version: 138.17
+description: 138.17: Activation du Smart Context Cache (SQLite/Zlib). Fix de l'écriture des stats pour Context Gauge.
 """
 
 # ==============================================================================
@@ -748,8 +748,11 @@ class Orchestrator:
     async def prepare_context(self, body: Dict, chat_id: str, auth_token: str, extra_files: Any = None) -> List[Dict]:
         self.files_processed_info = []
         messages = body.get("messages", [])
-        contents = []
-
+        
+        # Init Cache
+        cache_mgr = None
+        if chat_id: cache_mgr = ContextCacheManager(self.data_dir, chat_id)
+        
         # Map tool IDs
         for m in messages:
             if m.get("tool_calls"):
@@ -761,76 +764,140 @@ class Orchestrator:
         for idx in range(len(messages) - 1, -1, -1):
             if messages[idx]["role"] == "user": last_user_idx = idx; break
 
+        final_contents = []
         deferred_text = ""
+        
+        # Cache State
+        cache_valid = True
+        
         i = 0
-        
         while i < len(messages):
-            m = messages[i]
-            role = m["role"]
-            
-            if role == "system": 
+            # Identification du Bloc (Lookahead)
+            # On détermine quels messages constituent une unité logique à traiter ensemble.
+            # Cas 1: System (Ignoré)
+            if messages[i]["role"] == "system": 
                 i+=1; continue
-
-            if role == "tool":
-                parts, new_i = await self._process_tool_turn(messages, i)
-                i = new_i
-                
-                # Fusion Resultat Outil dans le User précédent ou nouveau bloc
-                if contents and contents[-1]["role"] == "user":
-                    contents[-1]["parts"].extend(parts)
-                else:
-                    contents.append({"role": "user", "parts": parts})
-                continue
-
-            elif role in ["assistant", "model"]:
-                parts, new_deferred, new_i = await self._process_model_turn(messages, i, chat_id)
-                
-                # Gestion de la continuité du texte différé (cumul)
-                if deferred_text and new_deferred: deferred_text += "\n\n" + new_deferred
-                elif new_deferred: deferred_text = new_deferred
-                
-                # Note: Si _process_model_turn a consommé le texte (message pur), new_deferred est vide.
-                # Mais si deferred_text existait AVANT ce tour (ex: Model -> Model), il doit être passé ?
-                # Dans l'ancien code : "If no tool calls: ... consume deferred_text".
-                # _process_model_turn gère déjà la consommation interne du deferred_text SI on lui passait... 
-                # MAIS je ne lui ai pas passé deferred_text en argument !
-                
-                # CORRECTION LOGIQUE IMPORTANTE :
-                # La méthode _process_model_turn doit gérer son propre deferred text interne, 
-                # mais le deferred text GLOBAL (entre tours) doit être géré ici.
-                # Dans l'ancien code, deferred_text était une variable locale de la boucle.
-                # Ici aussi.
-                
-                # Si _process_model_turn renvoie du texte (parts), c'est qu'il a consommé son texte interne.
-                # Mais quid du texte venant du tour d'avant ?
-                
-                # Re-vérifions l'ancien code :
-                # "if deferred_text: if txt: txt = deferred_text..."
-                # Donc le texte différé est PRÉFIXÉ au texte courant.
-                
-                # Problème : Ma méthode _process_model_turn ne prend pas deferred_text en entrée.
-                # Je dois corriger ça.
-                
-                contents.append({"role": "model", "parts": parts})
-                i = new_i
-                continue
             
-            else: # USER
-                # Injection du texte différé (Thinking du modèle précédent)
-                if deferred_text:
-                    if contents:
-                        last_msg = contents[-1]
-                        if last_msg["role"] == "model":
-                            last_msg["parts"].append({"text": deferred_text})
-                        else:
-                            contents.append({"role": "model", "parts": [{"text": deferred_text}]})
-                    deferred_text = ""
+            block_msgs = []
+            block_type = messages[i]["role"]
+            start_i = i
+            
+            # Cas 2: Tool (Séquence de résultats)
+            if block_type == "tool":
+                while i < len(messages) and messages[i]["role"] == "tool":
+                    block_msgs.append(messages[i]); i += 1
+            
+            # Cas 3: Model (Séquence de réponses assistant)
+            elif block_type in ["assistant", "model"]:
+                while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
+                    block_msgs.append(messages[i]); i += 1
+            
+            # Cas 4: User (Un message unique)
+            else:
+                block_msgs.append(messages[i]); i += 1
+
+            # Calcul du Hash du Bloc (Incluant l'état deferred_text entrant pour User/Model)
+            # Pour Tool, pas de deferred text dependency directe sur le hash (c'est le Model suivant qui en dépend)
+            # Mais par sécurité, on hash tout le bloc.
+            # Pour lier User au Model précédent, on ajoute deferred_text au hash si User/Model
+            
+            current_hash_input = block_msgs
+            if deferred_text:
+                # On ajoute un pseudo-message pour influencer le hash sans polluer les données
+                current_hash_input = block_msgs + [{"role": "virtual_state", "content": deferred_text}]
+            
+            block_hash = cache_mgr.compute_hash(current_hash_input) if cache_mgr else None
+            
+            # Tentative Cache
+            cached_data = None
+            if cache_valid and block_hash:
+                cached_data = await cache_mgr.get_async(block_hash)
+            
+            if cached_data:
+                # HIT !
+                # cached_data = {"parts": [...], "deferred_text": "..."}
                 
-                parts = await self._process_user_turn(m, body, extra_files, (i == last_user_idx))
-                if parts: contents.append({"role": "user", "parts": parts})
-                i += 1
+                parts = cached_data.get("parts", [])
+                new_deferred = cached_data.get("deferred_text", "")
+                
+                # Application de la logique de fusion (identique au traitement live)
+                if block_type == "tool":
+                    if final_contents and final_contents[-1]["role"] == "user":
+                        final_contents[-1]["parts"].extend(parts)
+                    else:
+                        final_contents.append({"role": "user", "parts": parts})
+                
+                elif block_type in ["assistant", "model"]:
+                    if deferred_text and new_deferred: deferred_text += "\n\n" + new_deferred
+                    elif new_deferred: deferred_text = new_deferred
+                    final_contents.append({"role": "model", "parts": parts})
+                
+                else: # User
+                    if deferred_text:
+                        if final_contents:
+                            last_msg = final_contents[-1]
+                            if last_msg["role"] == "model": last_msg["parts"].append({"text": deferred_text})
+                            else: final_contents.append({"role": "model", "parts": [{"text": deferred_text}]})
+                        deferred_text = ""
+                    if parts: final_contents.append({"role": "user", "parts": parts})
+
+            else:
+                # MISS !
+                cache_valid = False # On invalide la chaîne pour le futur
+                
+                # Traitement Live
+                processed_parts = []
+                new_deferred = ""
+                
+                if block_type == "tool":
+                    # Note: _process_tool_turn attend messages complets + index, on adapte
+                    # On ne peut pas appeler _process_tool_turn tel quel car il itère.
+                    # On a déjà isolé le bloc. On réutilise la logique interne.
+                    for tm in block_msgs:
+                        tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
+                        try: val = std_json.loads(tm.get("content", "{}"))
+                        except: val = {"result": str(tm.get("content", ""))}
+                        processed_parts.append({"functionResponse": {"name": tool_name, "response": val}})
+                    
+                    if final_contents and final_contents[-1]["role"] == "user":
+                        final_contents[-1]["parts"].extend(processed_parts)
+                    else:
+                        final_contents.append({"role": "user", "parts": processed_parts})
+
+                elif block_type in ["assistant", "model"]:
+                    # On doit appeler _process_model_turn sur le bloc complet
+                    # Attention _process_model_turn attend (messages, start_idx).
+                    # On peut lui passer (block_msgs, 0).
+                    processed_parts, new_deferred, _ = await self._process_model_turn(block_msgs, 0, chat_id)
+                    
+                    if deferred_text and new_deferred: deferred_text += "\n\n" + new_deferred
+                    elif new_deferred: deferred_text = new_deferred
+                    
+                    final_contents.append({"role": "model", "parts": processed_parts})
+
+                else: # User
+                    if deferred_text:
+                        if final_contents:
+                            last_msg = final_contents[-1]
+                            if last_msg["role"] == "model": last_msg["parts"].append({"text": deferred_text})
+                            else: final_contents.append({"role": "model", "parts": [{"text": deferred_text}]})
+                        deferred_text = ""
+                    
+                    # User block est unique (taille 1)
+                    m = block_msgs[0]
+                    is_last = (start_i == last_user_idx) # Attention start_i est l'index global
+                    processed_parts = await self._process_user_turn(m, body, extra_files, is_last)
+                    if processed_parts: final_contents.append({"role": "user", "parts": processed_parts})
+
+                # Sauvegarde Cache (Nouveau bloc calculé)
+                if block_hash and cache_mgr:
+                    data_to_cache = {
+                        "parts": processed_parts,
+                        "deferred_text": new_deferred
+                    }
+                    await cache_mgr.set_async(block_hash, data_to_cache)
         
-        return contents
+        return final_contents
 
     def estimate_tokens(self, contents: List[Dict]) -> int:
         total = 0
