@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
-# VERSION : 7.40
+# VERSION : 7.41
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -364,13 +364,13 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     
     # 5. Vérification Finale
     NEW_REMOTE=$(curl -s -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN")
-    R_TOOLS=$(echo "$NEW_REMOTE" | jq '.info.meta.toolIds | length // .meta.toolIds | length // 0')
+    
+    # Correction JQ : gestion robuste des chemins alternatifs et du null
+    R_TOOLS=$(echo "$NEW_REMOTE" | jq '(.info.meta.toolIds // .meta.toolIds // []) | length')
     L_TOOLS=$(echo "$TOOL_IDS" | jq length)
     
     if [ "$R_TOOLS" -ne "$L_TOOLS" ]; then
          echo "   ⚠️  [WARNING] Discrépance Tools (Reçu: $R_TOOLS / Attendu: $L_TOOLS)."
-         echo "   🔍 DEBUG STRUCTURE :"
-         echo "$NEW_REMOTE" | jq .
     else
          echo "   ✨ Vérification : OK ($L_TOOLS outils synchronisés)"
     fi
