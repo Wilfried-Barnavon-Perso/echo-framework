@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
-# VERSION : 7.43
+# VERSION : 7.44
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -117,9 +117,10 @@ api_upsert() {
     HTTP_CODE=$(curl -s -w "%{http_code}" -o "$TMP_RESP" -X POST "$OWUI_URL/api/v1/$endpoint/create" \
         -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
     
+    # 409 = Conflict, 400 = Bad Request (Souvent "ID already exists" dans cette version OWUI)
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $desc : $id créé."
-    elif [ "$HTTP_CODE" -eq 409 ]; then
+    elif [ "$HTTP_CODE" -eq 409 ] || [ "$HTTP_CODE" -eq 400 ]; then
         # Tentative d'Update
         UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$payload")
