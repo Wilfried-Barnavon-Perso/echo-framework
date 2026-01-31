@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 138.10
-description: 138.10: Nettoyage code mort (get_system_instruction) suite à la délégation au filtre contextuel.
+version: 138.11
+description: 138.11: Rétablissement de l'affichage systématique des métriques de tokens (Context Gauge) à chaque réponse si activé par l'utilisateur.
 """
 
 # ==============================================================================
@@ -876,8 +876,8 @@ class StreamProcessor:
                 has_content = True
             
             if self.usage_stats:
-                # 137.3 : Affichage conditionnel (Uniquement en Fenêtre de Contexte)
-                if step_label == "Fenêtre de Contexte":
+                # 138.11 : Affichage systématique si show_metrics est True
+                if True:
                     p_tok = self.usage_stats.get("promptTokenCount", 0)
                     c_tok = self.usage_stats.get("candidatesTokenCount", 0)
                     t_tok = self.usage_stats.get("totalTokenCount", 0)
