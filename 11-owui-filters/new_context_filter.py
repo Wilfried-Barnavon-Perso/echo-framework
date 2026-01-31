@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 1.13
-description: 1.13: Optimisation contextuelle + Bypass RAG OWUI.
+version: 1.15
+description: 1.15: Simplification injection Version (Texte d'abord) + Optimisation Cache (JSON ensuite).
 """
 
 
@@ -135,53 +135,47 @@ class Filter:
                 elif role == "user":
                     last_user_msg_idx = i # On garde le dernier user
 
-            # 3. Traitement du System Prompt (si présent et format JSON)
+            # 3. Traitement du System Prompt (si présent)
             env_block = None
             if system_msg_idx != -1:
                 sys_content = messages[system_msg_idx].get("content", "")
                 
-                # On essaie de voir si c'est notre JSON ECHO
+                # A. Injection Version (Priorité Absolue - Manipulation Texte Simple)
+                if "{{ECHO_VERSION}}" in sys_content:
+                    sys_content = sys_content.replace("{{ECHO_VERSION}}", echo_version)
+                    # On met à jour immédiatement pour garantir que c'est fait
+                    messages[system_msg_idx]["content"] = sys_content
+                    if self.valves.debug_context:
+                        logger.info(f"🔄 [Context Optimizer] Version injectée (Raw Text): {echo_version}")
+
+                # B. Optimisation Cache (Extraction Environnement via JSON)
                 try:
-                    # Nettoyage basique si le prompt est entouré de balises ou texte
+                    # On tente de parser le contenu (potentiellement déjà modifié avec la version)
                     if isinstance(sys_content, str) and sys_content.strip().startswith("{"):
                         sys_json = json.loads(sys_content)
                         
-                        # A. Injection Version (framework_echo -> metadata -> version)
-                        if "framework_echo" in sys_json:
-                            meta = sys_json["framework_echo"].get("metadata", {})
-                            if meta.get("version") == "{{ECHO_VERSION}}":
-                                meta["version"] = echo_version
-                                if self.valves.debug_context:
-                                    logger.info(f"🔄 [Context Optimizer] Version injectée: {echo_version}")
-
-                        # B. Extraction Environnement (Split Cache)
+                        # Extraction Environnement (Split Cache)
                         if "environnement_utilisateur" in sys_json:
                             env_block = sys_json.pop("environnement_utilisateur")
                             
-                            # C. Application des UserValves sur l'environnement extrait
+                            # Application des UserValves sur l'environnement extrait
                             if env_block:
-                                # 1. Anonymisation
-                                if not enable_user_name:
-                                    if "nom_utilisateur" in env_block:
-                                        env_block["nom_utilisateur"] = "[Anonyme]"
-                                
-                                # 2. Override Location
-                                if override_location:
-                                    if "lieu_utilisateur" in env_block:
-                                        env_block["lieu_utilisateur"] = override_location
+                                if not enable_user_name and "nom_utilisateur" in env_block:
+                                    env_block["nom_utilisateur"] = "[Anonyme]"
+                                if override_location and "lieu_utilisateur" in env_block:
+                                    env_block["lieu_utilisateur"] = override_location
 
                             if self.valves.debug_context:
-                                logger.info(f"✂️ [Context Optimizer] Environnement extrait et traité (Cache Optimization).")
+                                logger.info(f"✂️ [Context Optimizer] Environnement extrait (JSON).")
                         
-                        # D. Mise à jour du System Message (Devenu Statique)
-                        messages[system_msg_idx]["content"] = json.dumps(sys_json, ensure_ascii=False)
+                            # Mise à jour du System Message (JSON nettoyé et re-sérialisé)
+                            messages[system_msg_idx]["content"] = json.dumps(sys_json, ensure_ascii=False)
                         
-                except json.JSONDecodeError:
-                    # Ce n'est pas du JSON, on ne touche pas (ou on fait juste le replace simple string)
-                    if "{{ECHO_VERSION}}" in sys_content:
-                        messages[system_msg_idx]["content"] = sys_content.replace("{{ECHO_VERSION}}", echo_version)
                 except Exception as e:
-                    logger.error(f"⚠️ [Context Optimizer] Erreur processing System Prompt: {e}")
+                    # Si le parsing échoue, ce n'est pas grave pour la version (déjà faite),
+                    # on perd juste l'optimisation du cache pour ce tour.
+                    if self.valves.debug_context:
+                        logger.warning(f"⚠️ [Context Optimizer] Skip optimisation cache (JSON error): {e}")
 
             # 4. Injection de l'Environnement dans le User Prompt
             if env_block and last_user_msg_idx != -1:
