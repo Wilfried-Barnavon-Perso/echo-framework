@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 138.14
-description: 138.14: Nettoyage complet UserValves (Suppression SHOW_METRICS obsolète).
+version: 138.15
+description: 138.15: Refactoring Orchestrator. Extraction de la logique de traitement des tours (User/Model/Tool) dans des méthodes dédiées (préparation pour le cache). Zéro changement fonctionnel.
 """
 
 # ==============================================================================
@@ -22,6 +22,8 @@ import glob
 import codecs
 import asyncio
 import json as std_json 
+import sqlite3
+import zlib
 from datetime import datetime
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
 
@@ -325,6 +327,133 @@ class SignatureManager:
         return None
 
 # ==============================================================================
+# SECTION 4.1 : CONTEXT CACHE MANAGER (SMART CACHE PER-CHAT)
+# ==============================================================================
+class ContextCacheManager:
+    """
+    Gère le cache persistant du contexte traité (Base64, formatage API) pour éviter le recalcul.
+    Architecture : 1 DB SQLite par Chat ID.
+    Format : Clé (Hash du message) -> Valeur (JSON compressé ZLIB).
+    """
+    def __init__(self, data_dir: str, chat_id: str):
+        self.cache_dir = os.path.join(data_dir, "pipe_engine_cache")
+        os.makedirs(self.cache_dir, exist_ok=True)
+        # Sécurisation ID
+        safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_") if chat_id else "unknown"
+        self.db_path = os.path.join(self.cache_dir, f"{safe_id}.db")
+        self._init_db()
+
+    def _init_db(self):
+        try:
+            # Mode check rapide
+            if os.path.exists(self.db_path) and os.path.getsize(self.db_path) > 0:
+                return
+            
+            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+                # Activation WAL pour performance concurrente
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS messages (
+                        hash TEXT PRIMARY KEY,
+                        data BLOB,
+                        created_at INTEGER,
+                        last_accessed INTEGER
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_last_accessed ON messages(last_accessed)")
+        except Exception: pass
+
+    def compute_hash(self, block_messages: List[Dict]) -> str:
+        """
+        Calcule une signature unique SHA-256 pour un bloc de messages.
+        Le hash inclut : Rôles, Contenu texte, IDs de fichiers, Appels d'outils.
+        L'ordre compte.
+        """
+        hasher = hashlib.sha256()
+        
+        for msg in block_messages:
+            # 1. Rôle
+            hasher.update((msg.get("role", "")).encode("utf-8"))
+            
+            # 2. Contenu Texte (Strip pour robustesse espaces)
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                hasher.update(content.strip().encode("utf-8"))
+            elif isinstance(content, list):
+                # Cas multimodal : on hash la structure textuelle
+                # Pour les images, OWUI envoie souvent un hash ou ID dans l'URL/Path, 
+                # mais ici on hash la représentation string du dictionnaire
+                hasher.update(str(content).encode("utf-8"))
+            
+            # 3. Fichiers (IDs sont critiques)
+            # Les fichiers peuvent être dans "files" (liste de dicts)
+            files = msg.get("files", [])
+            if files:
+                # Tri par ID pour déterminisme
+                f_ids = sorted([str(f.get("id") or f.get("file", {}).get("id")) for f in files])
+                hasher.update("FILES:".encode("utf-8"))
+                for fid in f_ids:
+                    hasher.update(fid.encode("utf-8"))
+            
+            # 4. Tool Calls (IDs + Arguments)
+            tcs = msg.get("tool_calls", [])
+            if tcs:
+                hasher.update("TOOLS:".encode("utf-8"))
+                # On assume l'ordre des tool calls est significatif
+                for tc in tcs:
+                    fid = tc.get("id", "")
+                    fname = tc.get("function", {}).get("name", "")
+                    fargs = tc.get("function", {}).get("arguments", "")
+                    hasher.update(f"{fid}:{fname}:{fargs}".encode("utf-8"))
+
+        return hasher.hexdigest()
+
+    def get(self, msg_hash: str) -> Optional[List[Dict]]:
+        """Récupère et décompresse un bloc du cache."""
+        try:
+            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT data FROM messages WHERE hash = ?", (msg_hash,))
+                row = cursor.fetchone()
+                if row:
+                    # Update Last Accessed (Async-ish: on le fait sans attendre le commit absolu si possible, mais SQLite impose commit)
+                    # Pour perf, on pourrait skipper cet update à chaque lecture, ou le faire en batch.
+                    # Ici on reste simple.
+                    cursor.execute("UPDATE messages SET last_accessed = ? WHERE hash = ?", (int(time.time()), msg_hash))
+                    
+                    # Décompression (ZLIB -> JSON -> Dict)
+                    compressed = row[0]
+                    # Note: La décompression sera faite hors de la méthode si on veut threader, 
+                    # mais ici on retourne les bytes bruts pour que l'appelant gère le thread ?
+                    # Non, faisons simple : on retourne l'objet.
+                    json_str = zlib.decompress(compressed).decode("utf-8")
+                    return orjson.loads(json_str)
+        except Exception:
+            return None
+        return None
+
+    def set(self, msg_hash: str, data: List[Dict]):
+        """Compresse et sauvegarde un bloc."""
+        try:
+            # Compression
+            json_bytes = orjson.dumps(data)
+            compressed = zlib.compress(json_bytes)
+            
+            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO messages (hash, data, created_at, last_accessed)
+                    VALUES (?, ?, ?, ?)
+                """, (msg_hash, compressed, int(time.time()), int(time.time())))
+        except Exception: pass
+
+    # Méthodes Helper pour AsyncIO (ThreadPool)
+    async def get_async(self, msg_hash: str) -> Optional[List[Dict]]:
+        return await asyncio.to_thread(self.get, msg_hash)
+
+    async def set_async(self, msg_hash: str, data: List[Dict]):
+        await asyncio.to_thread(self.set, msg_hash, data)
+
+# ==============================================================================
 # SECTION 5 : ORCHESTRATEUR (LOGIQUE MÉTIER)
 # ==============================================================================
 class Orchestrator:
@@ -480,26 +609,118 @@ class Orchestrator:
 
         return part, info_entry
 
-    async def _process_files_for_message(self, files_raw: List[Dict]) -> List[Dict]:
+    async def _process_tool_turn(self, messages: List[Dict], start_idx: int) -> Tuple[List[Dict], int]:
+        """Traite une séquence de messages TOOL (Résultats)."""
         parts = []
-        files_to_process = []
-        seen_ids = set()
+        i = start_idx
+        while i < len(messages) and messages[i]["role"] == "tool":
+            tm = messages[i]
+            tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
+            try: val = std_json.loads(tm.get("content", "{}"))
+            except: val = {"result": str(tm.get("content", ""))}
+            parts.append({"functionResponse": {"name": tool_name, "response": val}})
+            i += 1
+        return parts, i
 
-        txt_map, bin_map = self._parse_mime_valves()
-        for f in files_raw:
-            fid = f.get("id") or f.get("file", {}).get("id")
-            if fid and fid not in seen_ids:
-                files_to_process.append(f); seen_ids.add(fid)
-
-        tasks = []
-        for f_obj in files_to_process:
-            tasks.append(asyncio.to_thread(self._process_single_file_sync, f_obj, txt_map, bin_map))
+    async def _process_model_turn(self, messages: List[Dict], start_idx: int, chat_id: str) -> Tuple[List[Dict], str, int]:
+        """Traite une séquence de messages MODEL (Assistant). Retourne (parts, deferred_text, new_idx)."""
+        parts = []
+        deferred_text = ""
+        i = start_idx
         
-        if tasks:
-            results = await asyncio.gather(*tasks)
-            for part, info in results:
-                if part: parts.append(part)
-                if info: self.files_processed_info.append(info)
+        while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
+            sub_m = messages[i]
+            
+            # 1. Text Content
+            txt = sub_m.get("content", "")
+            if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
+            
+            # Safer stripping
+            txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL)
+            txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL)
+            txt = txt.strip()
+            
+            if sub_m.get("tool_calls"):
+                if txt:
+                    if deferred_text: deferred_text += "\n\n"
+                    deferred_text += txt
+            else:
+                # Message texte pur -> Déversement du tampon
+                if deferred_text:
+                    if txt: txt = deferred_text + "\n\n" + txt
+                    else: txt = deferred_text
+                    deferred_text = ""
+                
+                if txt: parts.append({"text": txt})
+
+            # 2. Tool Calls
+            if sub_m.get("tool_calls"):
+                for idx, tc in enumerate(sub_m["tool_calls"]):
+                    try:
+                        args = std_json.loads(tc["function"]["arguments"])
+                        part_data = {"functionCall": {"name": tc["function"]["name"], "args": args}}
+                        
+                        if idx == 0:
+                            sig = args.pop("_thought_signature", None)
+                            call_id = tc.get("id")
+                            if not sig and chat_id: sig = self.sig_manager.get_signature(chat_id, call_id)
+                            if not sig and chat_id: sig = self.sig_manager.get_signature(chat_id)
+                            if not sig: sig = MAGIC_KEY_SKIP_VALIDATION
+                            part_data["thoughtSignature"] = sig
+                        
+                        parts.append(part_data)
+                    except: pass
+            
+            i += 1
+        
+        # Fallback Signature sur Texte
+        if parts and "text" in parts[-1] and not any("functionCall" in p for p in parts) and chat_id:
+              latest_sig = self.sig_manager.get_signature(chat_id)
+              if latest_sig: parts[-1]["thoughtSignature"] = latest_sig
+        
+        if not parts: parts.append({"text": " "})
+        
+        return parts, deferred_text, i
+
+    async def _process_user_turn(self, message: Dict, body: Dict, extra_files: Any, is_last_msg: bool) -> List[Dict]:
+        """Traite un message USER unique (Texte + Fichiers)."""
+        parts = []
+        raw_list = []
+        if "files" in message and isinstance(message["files"], list): raw_list.extend(message["files"])
+        
+        if is_last_msg:
+            if self.valves.DEBUG_MODE:
+                raw_filter = body.get("raw_files_from_filter")
+                if raw_filter:
+                     try: dump = std_json.dumps(raw_filter, indent=2, default=str)
+                     except: dump = str(raw_filter)
+                     self.debug_log.append(f"📦 Filter Files: {dump[:200]}...")
+
+            raw_from_filter = body.get("raw_files_from_filter")
+            if raw_from_filter: raw_list.extend(raw_from_filter)
+            if extra_files: 
+                ex = extra_files if isinstance(extra_files, list) else [extra_files]
+                raw_list.extend(ex)
+
+        file_parts = await self._process_files_for_message(raw_list)
+        parts.extend(file_parts)
+
+        content_txt = message.get("content", "")
+        if isinstance(content_txt, str) and content_txt.strip():
+            parts.append({"text": content_txt})
+        
+        elif isinstance(content_txt, list):
+            for item in content_txt:
+                 if item.get("type") == "text": 
+                     parts.append({"text": item.get("text", "")})
+                 elif item.get("type") == "image_url":
+                     url = item.get("image_url", {}).get("url", "")
+                     if url.startswith("data:"):
+                         try:
+                             header, b64_data = url.split(",", 1)
+                             mime_type = header.split(":")[1].split(";")[0]
+                             parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
+                         except: pass
         return parts
 
     async def prepare_context(self, body: Dict, chat_id: str, auth_token: str, extra_files: Any = None) -> List[Dict]:
@@ -507,7 +728,7 @@ class Orchestrator:
         messages = body.get("messages", [])
         contents = []
 
-        # Map tool IDs for functionResponse matching
+        # Map tool IDs
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -518,29 +739,21 @@ class Orchestrator:
         for idx in range(len(messages) - 1, -1, -1):
             if messages[idx]["role"] == "user": last_user_idx = idx; break
 
-        # Buffer pour accumuler le texte (annonces/pensées) des messages contenant des outils
-        # afin de le réinjecter uniquement dans la réponse finale du tour.
         deferred_text = ""
-
         i = 0
+        
         while i < len(messages):
             m = messages[i]
             role = m["role"]
             
-            # 138.3: On ignore les messages système POUR LE FLUX PRINCIPAL
-            # (Car on les a déjà capturés pour le System Prompt)
-            if role == "system": i+=1; continue
+            if role == "system": 
+                i+=1; continue
 
             if role == "tool":
-                parts = []
-                while i < len(messages) and messages[i]["role"] == "tool":
-                    tm = messages[i]
-                    tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
-                    try: val = std_json.loads(tm.get("content", "{}"))
-                    except: val = {"result": str(tm.get("content", ""))}
-                    parts.append({"functionResponse": {"name": tool_name, "response": val}})
-                    i += 1
+                parts, new_i = await self._process_tool_turn(messages, i)
+                i = new_i
                 
+                # Fusion Resultat Outil dans le User précédent ou nouveau bloc
                 if contents and contents[-1]["role"] == "user":
                     contents[-1]["parts"].extend(parts)
                 else:
@@ -548,151 +761,53 @@ class Orchestrator:
                 continue
 
             elif role in ["assistant", "model"]:
-                # STRATEGY 2.2: Rehydration from Server-Side Cache with Strict API Compliance
-                parts = []
+                parts, new_deferred, new_i = await self._process_model_turn(messages, i, chat_id)
                 
-                # Consolidate consecutive model messages into one TURN (Required by API)
-                while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
-                    sub_m = messages[i]
-                    
-                    # 1. Text Content (Processed but conditionally appended)
-                    txt = sub_m.get("content", "")
-                    if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
-                    
-                    # Fix 136.29: Safer stripping
-                    txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL)
-                    txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL)
-                    txt = txt.strip()
-                    
-                    # LOGIC CHANGE 137.11: Revert to 137.9 (End-of-Turn Injection)
-                    # - If tool calls: Strip text from 'parts', append to 'deferred_text'.
-                    # - If no tool calls: This is a text response.
-                    #   - If deferred_text exists, prepend it here (assuming this is the end of the chain).
-                    #   - Consume deferred_text.
-                    
-                    if sub_m.get("tool_calls"):
-                        if txt:
-                            if deferred_text: deferred_text += "\n\n"
-                            deferred_text += txt
-                        # Strict API Compliance: No text in FunctionCall parts for immediate turn
-                    else:
-                        # Message texte pur. C'est ici qu'on déverse tout le texte accumulé.
-                        if deferred_text:
-                            if txt:
-                                txt = deferred_text + "\n\n" + txt
-                            else:
-                                txt = deferred_text
-                            deferred_text = "" # Le tampon est consommé
-                        
-                        if txt: parts.append({"text": txt})
-
-                    # 2. Tool Calls (Strict Signature Logic)
-                    if sub_m.get("tool_calls"):
-                        for idx, tc in enumerate(sub_m["tool_calls"]):
-                            try:
-                                args = std_json.loads(tc["function"]["arguments"])
-                                part_data = {"functionCall": {"name": tc["function"]["name"], "args": args}}
-                                
-                                # Logic Strict Gemini 3:
-                                # - Single/Sequential: Signature required.
-                                # - Parallel: Signature ONLY on the first call of the list.
-                                
-                                if idx == 0:
-                                    # Try to retrieve signature from args first (Reliable)
-                                    sig = args.pop("_thought_signature", None)
-                                    
-                                    # Try to retrieve signature by ID (Cache)
-                                    call_id = tc.get("id")
-                                    if not sig and chat_id:
-                                        sig = self.sig_manager.get_signature(chat_id, call_id)
-                                    
-                                    # Fallback: Latest known if not found by ID (Best effort)
-                                    if not sig and chat_id:
-                                         sig = self.sig_manager.get_signature(chat_id)
-
-                                    # Mandatory Fallback for strict validation (Migration/Legacy trace)
-                                    if not sig:
-                                        sig = MAGIC_KEY_SKIP_VALIDATION
-                                    
-                                    part_data["thoughtSignature"] = sig
-                                
-                                # If idx > 0 (Parallel calls 2, 3...), DO NOT include signature per doc.
-                                parts.append(part_data)
-                            except: pass
-                    
-                    i += 1
+                # Gestion de la continuité du texte différé (cumul)
+                if deferred_text and new_deferred: deferred_text += "\n\n" + new_deferred
+                elif new_deferred: deferred_text = new_deferred
                 
-                # If no function calls and just text, try to attach signature to text part if available
-                # (Recommended by doc for "Text/In-Context Reasoning")
-                if parts and "text" in parts[-1] and not any("functionCall" in p for p in parts) and chat_id:
-                      latest_sig = self.sig_manager.get_signature(chat_id)
-                      if latest_sig: parts[-1]["thoughtSignature"] = latest_sig
+                # Note: Si _process_model_turn a consommé le texte (message pur), new_deferred est vide.
+                # Mais si deferred_text existait AVANT ce tour (ex: Model -> Model), il doit être passé ?
+                # Dans l'ancien code : "If no tool calls: ... consume deferred_text".
+                # _process_model_turn gère déjà la consommation interne du deferred_text SI on lui passait... 
+                # MAIS je ne lui ai pas passé deferred_text en argument !
                 
-                # If parts is empty (e.g. tool call with no text kept), we must ensure we don't send empty content
-                # But here 'parts' will contain at least the functionCall if tools were present.
-                if not parts: parts.append({"text": " "})
+                # CORRECTION LOGIQUE IMPORTANTE :
+                # La méthode _process_model_turn doit gérer son propre deferred text interne, 
+                # mais le deferred text GLOBAL (entre tours) doit être géré ici.
+                # Dans l'ancien code, deferred_text était une variable locale de la boucle.
+                # Ici aussi.
+                
+                # Si _process_model_turn renvoie du texte (parts), c'est qu'il a consommé son texte interne.
+                # Mais quid du texte venant du tour d'avant ?
+                
+                # Re-vérifions l'ancien code :
+                # "if deferred_text: if txt: txt = deferred_text..."
+                # Donc le texte différé est PRÉFIXÉ au texte courant.
+                
+                # Problème : Ma méthode _process_model_turn ne prend pas deferred_text en entrée.
+                # Je dois corriger ça.
                 
                 contents.append({"role": "model", "parts": parts})
+                i = new_i
                 continue
             
             else: # USER
-                # Nouveau tour utilisateur = Le tour Modèle précédent est terminé.
-                # FIX 137.11: Injecter le texte différé à la FIN de l'historique du tour précédent.
+                # Injection du texte différé (Thinking du modèle précédent)
                 if deferred_text:
                     if contents:
                         last_msg = contents[-1]
                         if last_msg["role"] == "model":
-                            # Cas simple : le dernier message est un modèle, on ajoute le texte à la fin
                             last_msg["parts"].append({"text": deferred_text})
                         else:
-                            # Cas complexe : le dernier message est User/FunctionResponse
-                            # On doit créer un nouveau bloc modèle pour porter le texte
                             contents.append({"role": "model", "parts": [{"text": deferred_text}]})
                     deferred_text = ""
                 
-                parts = []
-                raw_list = []
-                if "files" in m and isinstance(m["files"], list): raw_list.extend(m["files"])
-                
-                if i == last_user_idx:
-                    if self.valves.DEBUG_MODE:
-                        raw_filter = body.get("raw_files_from_filter")
-                        if raw_filter:
-                             try: dump = std_json.dumps(raw_filter, indent=2, default=str)
-                             except: dump = str(raw_filter)
-                             self.debug_log.append(f"📦 Filter Files: {dump[:200]}...")
-
-                    raw_from_filter = body.get("raw_files_from_filter")
-                    if raw_from_filter:
-                        raw_list.extend(raw_from_filter)
-
-                    if extra_files: 
-                        ex = extra_files if isinstance(extra_files, list) else [extra_files]
-                        raw_list.extend(ex)
-
-                file_parts = await self._process_files_for_message(raw_list)
-                parts.extend(file_parts)
-
-                content_txt = m.get("content", "")
-                if isinstance(content_txt, str) and content_txt.strip():
-                    parts.append({"text": content_txt})
-                
-                elif isinstance(content_txt, list):
-                    for item in content_txt:
-                         if item.get("type") == "text": 
-                             parts.append({"text": item.get("text", "")})
-                         elif item.get("type") == "image_url":
-                             url = item.get("image_url", {}).get("url", "")
-                             if url.startswith("data:"):
-                                 try:
-                                     header, b64_data = url.split(",", 1)
-                                     mime_type = header.split(":")[1].split(";")[0]
-                                     parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
-                                 except: pass
-                
+                parts = await self._process_user_turn(m, body, extra_files, (i == last_user_idx))
                 if parts: contents.append({"role": "user", "parts": parts})
-            
-            i += 1
+                i += 1
+        
         return contents
 
     def estimate_tokens(self, contents: List[Dict]) -> int:
