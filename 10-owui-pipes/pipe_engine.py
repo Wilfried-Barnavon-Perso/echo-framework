@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 138.8
-description: 138.8: Architecture Multi-User Native. Full Client Context: Suppression totale du fallback "Contexte Serveur" (Date/Heure). Le contexte temporel et spatial repose désormais exclusivement sur les données injectées par Open WebUI. Nettoyage du code mort associé (_get_geo_info, ENABLE_DATE_TIME).
+version: 138.10
+description: 138.10: Nettoyage code mort (get_system_instruction) suite à la délégation au filtre contextuel.
 """
 
 # ==============================================================================
@@ -353,36 +353,6 @@ class Orchestrator:
                 f = t.get("function", {})
                 funcs.append({"name": f.get("name"), "description": f.get("description", ""), "parameters": f.get("parameters", {"type": "object", "properties": {}})})
         return [{"functionDeclarations": funcs}] if funcs else None
-
-    def get_system_instruction(self, client_context: Optional[str] = None) -> Dict:
-        """
-        Génère le prompt système final.
-        1. Utilise le contexte fourni par Open WebUI (client_context).
-        2. Applique la sanitization (Confidentialité) si nécessaire.
-        3. Applique l'Override Location si nécessaire (Remplacement strict).
-        """
-        sys_prompt_text = ""
-        
-        # 1. Utilisation du contexte Open WebUI (Template résolu)
-        if client_context:
-            sys_prompt_text = client_context
-        else:
-            # Fallback minimal
-            sys_prompt_text = "Tu es un assistant IA expert."
-
-        # 2. Privacy Logic (v138.5) - Targeted JSON key
-        # Si ENABLE_USER_NAME est OFF, on masque le nom dans le prompt système
-        if not getattr(self.user_valves, "ENABLE_USER_NAME", False):
-            # Regex stricte pour ne cibler que "nom_utilisateur": "..." (format JSON)
-            sys_prompt_text = re.sub(r'(?i)(\"nom_utilisateur\")\s*:\s*(\".*?\")', r'\1: "[Anonyme]"', sys_prompt_text)
-
-        # 3. Location Override (v138.6) - Remplacement Strict
-        override_loc = getattr(self.user_valves, "OVERRIDE_LOCATION", "")
-        if override_loc:
-             # On remplace directement la valeur du champ "lieu_utilisateur"
-             sys_prompt_text = re.sub(r'(?i)(\"lieu_utilisateur\")\s*:\s*(\".*?\")', f'\\1: "{override_loc}"', sys_prompt_text)
-            
-        return {"parts": [{"text": sys_prompt_text}]}
     
     def _probe_disk(self) -> str:
         try:
@@ -974,12 +944,6 @@ class Pipe:
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
         SHOW_METRICS: bool = Field(default=True, description="📊 Afficher Métriques")
-        
-        # 138.3: Nouvelle Valve de Confidentialité
-        ENABLE_USER_NAME: bool = Field(default=False, description="🔒 Partager nom d'utilisateur (Si OFF, le nom est masqué)")
-        
-        # 138.8: Suppression ENABLE_DATE_TIME (Full Client Context)
-        OVERRIDE_LOCATION: str = Field(default="", description="✏️ Forcer Lieu (Surcharge tout)")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -1034,8 +998,8 @@ class Pipe:
         # 138.2: On modifie l'appel pour passer le context client
         context = await orch.prepare_context(body, chat_id, creds.token, extra_files=files)
         
-        # 138.2: Pass client_context to instruction generation (Sanitization + Overrides applied inside)
-        system_instruction = orch.get_system_instruction(client_context)
+        # 138.9: System Prompt pur (logique d'override déplacée dans le filtre contextuel v1.13)
+        system_instruction = {"parts": [{"text": client_context or "Tu es un assistant IA expert."}]}
 
         if self.valves.DEBUG_MODE and orch.debug_log:
              for log in orch.debug_log: yield f"{log}\n"

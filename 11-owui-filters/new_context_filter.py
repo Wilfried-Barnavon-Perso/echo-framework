@@ -27,6 +27,14 @@ class Filter:
             default=False, description="Afficher les logs de transformation du contexte."
         )
 
+    class UserValves(BaseModel):
+        ENABLE_USER_NAME: bool = Field(
+            default=False, description="🔒 Partager nom d'utilisateur (Si OFF, le nom est masqué)"
+        )
+        OVERRIDE_LOCATION: str = Field(
+            default="", description="✏️ Forcer Lieu (Surcharge tout)"
+        )
+
     def __init__(self):
         # 1. Empêche OWUI de lancer le moteur RAG/Tika
         self.file_handler = True
@@ -60,8 +68,25 @@ class Filter:
         if not self.toggle:
             return body
 
+        # Récupération des UserValves
+        user_valves = __user__.get("valves") if __user__ else None
+        
+        # Valeurs par défaut si pas de valves injectées
+        enable_user_name = False
+        override_location = ""
+        
+        if user_valves:
+            # Gestion robuste selon si c'est un objet ou un dict (selon version OWUI)
+            try:
+                enable_user_name = user_valves.ENABLE_USER_NAME
+                override_location = user_valves.OVERRIDE_LOCATION
+            except AttributeError:
+                # Fallback si c'est un dict
+                enable_user_name = user_valves.get("ENABLE_USER_NAME", False)
+                override_location = user_valves.get("OVERRIDE_LOCATION", "")
+
         if self.valves.debug_context:
-            logger.info(f"🛡️ [Filter v1.12] Processing Request...")
+            logger.info(f"🛡️ [Filter v1.13] Processing Request... (User: {enable_user_name}, Loc: {override_location})")
         
         # ----------------------------------------------------------------------
         # MODULE 1 : BYPASS RAG (Gestion des fichiers)
@@ -132,10 +157,23 @@ class Filter:
                         # B. Extraction Environnement (Split Cache)
                         if "environnement_utilisateur" in sys_json:
                             env_block = sys_json.pop("environnement_utilisateur")
+                            
+                            # C. Application des UserValves sur l'environnement extrait
+                            if env_block:
+                                # 1. Anonymisation
+                                if not enable_user_name:
+                                    if "nom_utilisateur" in env_block:
+                                        env_block["nom_utilisateur"] = "[Anonyme]"
+                                
+                                # 2. Override Location
+                                if override_location:
+                                    if "lieu_utilisateur" in env_block:
+                                        env_block["lieu_utilisateur"] = override_location
+
                             if self.valves.debug_context:
-                                logger.info(f"✂️ [Context Optimizer] Environnement extrait du System Prompt (Cache Optimization).")
+                                logger.info(f"✂️ [Context Optimizer] Environnement extrait et traité (Cache Optimization).")
                         
-                        # C. Mise à jour du System Message (Devenu Statique)
+                        # D. Mise à jour du System Message (Devenu Statique)
                         messages[system_msg_idx]["content"] = json.dumps(sys_json, ensure_ascii=False)
                         
                 except json.JSONDecodeError:
