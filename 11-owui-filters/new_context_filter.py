@@ -1,8 +1,8 @@
 """
-title: ECHO RAG File Bypass
+title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 1.12
-description: 1.12: Formatage Markdown du Contexte Dynamique (```json:context) pour meilleure interprétation LLM.
+version: 1.13
+description: 1.13: Optimisation contextuelle + Bypass RAG OWUI.
 """
 
 
