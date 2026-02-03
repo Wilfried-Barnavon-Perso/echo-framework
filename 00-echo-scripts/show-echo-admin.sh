@@ -1,11 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # AFFICHAGE SECURISE DES IDENTIFIANTS ADMIN
-# Version : 1.3
+# Version : 1.4
 # Auteur : Wilfried BARNAVON
 # ==============================================================================
 
-ADMIN_SECRET_FILE="/opt/.owui-admin-secret"
+ADMIN_SECRET_FILE="/opt/.owui-secrets/.owui-admin-secret"
 HUMAN_EMAIL="admin@echo.local"
 
 if [ ! -f "$ADMIN_SECRET_FILE" ]; then

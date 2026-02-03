@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 138.18
-description: 138.18: Fix critique Context Gauge (écriture inconditionnelle des stats JSON). Ajout logs debug Cache (HIT/MISS).
+version: 140.0
+description: 140.0: Robustesse du flux d'authentification (PKCE idempotence & cleanup).
 """
 
 # ==============================================================================
@@ -80,7 +80,7 @@ class DebugLogger:
         except Exception:
             pass # Fail silently to avoid interrupting flow
 
-# --- GESTIONNAIRE DE CONNEXION PARTAGÉ ---
+# --- GESTIONNAIRE DECONNEXION PARTAGÉ ---
 _SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
 _LAST_CLIENT_ACCESS: float = 0.0
 
@@ -154,50 +154,190 @@ OFFICIAL_CLIENT_CONFIG = {
 }
 
 # ==============================================================================
-# SECTION 3 : SERVICE D'AUTHENTIFICATION (CONTEXTUALISÉ)
+# SECTION 4 : UNIFIED USER DATA MANAGER
+# ==============================================================================
+class UserDataManager:
+    def __init__(self, data_dir: str, user_id: str, debug_mode: bool = False):
+        self.db_dir = os.path.join(data_dir, "user_dbs")
+        self.debug_mode = debug_mode
+        os.makedirs(self.db_dir, exist_ok=True)
+        safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+        self.db_path = os.path.join(self.db_dir, f"user-{safe_uid}.db")
+        self._init_db()
+
+    def _get_connection(self):
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        return conn
+
+    def _init_db(self):
+        try:
+            with self._get_connection() as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS messages (hash TEXT PRIMARY KEY, data BLOB NOT NULL, created_at INTEGER NOT NULL)")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS signatures (
+                        chat_id TEXT NOT NULL,
+                        tool_call_id TEXT NOT NULL,
+                        signature TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY (chat_id, tool_call_id)
+                    )
+                """)
+                conn.execute("CREATE TABLE IF NOT EXISTS context_stats (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+                conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+        except Exception as e:
+            if self.debug_mode:
+                 print(f"DEBUG: Echec init DB pour {self.db_path}: {e}")
+            raise sqlite3.Error(f"Impossible d'initialiser la base de données utilisateur à {self.db_path}. Vérifiez les permissions.") from e
+
+    def compute_message_hash(self, block_messages: List[Dict], chat_id: Optional[str]) -> str:
+        hasher = hashlib.sha256()
+        if chat_id:
+            hasher.update(str(chat_id).encode("utf-8"))
+
+        for msg in block_messages:
+            hasher.update((msg.get("role", "")).encode("utf-8"))
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                hasher.update(content.strip().encode("utf-8"))
+            elif isinstance(content, list):
+                # Utiliser orjson pour une sérialisation canonique et rapide
+                hasher.update(orjson.dumps(content, option=orjson.OPT_SORT_KEYS))
+            
+            files = msg.get("files", [])
+            if files:
+                f_ids = sorted([str(f.get("id") or f.get("file", {}).get("id")) for f in files if f])
+                hasher.update("FILES:".encode("utf-8"))
+                for fid in f_ids: hasher.update(str(fid).encode("utf-8"))
+            
+            tcs = msg.get("tool_calls", [])
+            if tcs:
+                hasher.update("TOOLS:".encode("utf-8")),
+                for tc in tcs:
+                    hasher.update(f"{tc.get('id', '')}:{tc.get('function', {}).get('name', '')}:{tc.get('function', {}).get('arguments', '')}".encode("utf-8"))
+        return hasher.hexdigest()
+
+    # --- Auth Data Methods ---
+    def save_auth_data(self, key: str, value: str):
+        try:
+            with self._get_connection() as conn:
+                conn.execute("INSERT OR REPLACE INTO auth_data (key, value, updated_at) VALUES (?, ?, ?)",
+                             (key, value, int(time.time())))
+        except Exception: pass
+
+    def get_auth_data(self, key: str) -> Optional[Tuple[str, int]]:
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value, updated_at FROM auth_data WHERE key = ?", (key,))
+                row = cursor.fetchone()
+                return row if row else None
+        except Exception: pass
+        return None
+
+    def delete_auth_data(self, key: str):
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM auth_data WHERE key = ?", (key,))
+        except Exception: pass
+
+    # --- Message Cache Methods ---
+    def get_message_cache(self, msg_hash: str) -> Optional[List[Dict]]:
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT data FROM messages WHERE hash = ?", (msg_hash,))
+                row = cursor.fetchone()
+                if row:
+                    return orjson.loads(zlib.decompress(row[0]))
+        except Exception: pass
+        return None
+
+    def set_message_cache(self, msg_hash: str, data: List[Dict]):
+        try:
+            compressed = zlib.compress(orjson.dumps(data))
+            with self._get_connection() as conn:
+                conn.execute("INSERT OR REPLACE INTO messages (hash, data, created_at) VALUES (?, ?, ?)", 
+                             (msg_hash, compressed, int(time.time())))
+        except Exception: pass
+
+    # --- Signature Methods (Corrected Logic) ---
+    def save_signature(self, chat_id: str, signature: str, tool_call_id: Optional[str] = None):
+        if not chat_id or not signature: return
+        # Utiliser '__latest__' comme ID par défaut pour la signature la plus récente
+        effective_tool_call_id = tool_call_id or '__latest__'
+        try:
+            with self._get_connection() as conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO signatures (chat_id, tool_call_id, signature, updated_at)
+                    VALUES (?, ?, ?, ?)
+                """, (chat_id, effective_tool_call_id, signature, int(time.time())))
+        except Exception: pass
+
+    def get_signature(self, chat_id: str, tool_call_id: Optional[str] = None) -> Optional[str]:
+        if not chat_id: return None
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                # 1. Essayer de trouver la signature spécifique à l'ID de l'outil
+                if tool_call_id:
+                    cursor.execute("SELECT signature FROM signatures WHERE chat_id = ? AND tool_call_id = ?", (chat_id, tool_call_id))
+                    row = cursor.fetchone()
+                    if row: return row[0]
+                
+                # 2. Sinon, retourner la dernière signature connue pour ce chat
+                cursor.execute("SELECT signature FROM signatures WHERE chat_id = ? AND tool_call_id = '__latest__'", (chat_id,))
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except Exception: pass
+        return None
+
+    # --- Context Stats Methods ---
+    def save_context_stats(self, stats: Dict):
+        if not stats: return
+        try:
+            with self._get_connection() as conn:
+                conn.execute("INSERT OR REPLACE INTO context_stats (id, data, updated_at) VALUES (1, ?, ?)",
+                             (std_json.dumps(stats), int(time.time())))
+        except Exception: pass
+        
+    # --- Async Wrappers for ThreadPool Execution ---
+    async def get_message_cache_async(self, msg_hash: str) -> Optional[List[Dict]]:
+        return await asyncio.to_thread(self.get_message_cache, msg_hash)
+
+    async def set_message_cache_async(self, msg_hash: str, data: List[Dict]):
+        await asyncio.to_thread(self.set_message_cache, msg_hash, data)
+
+# ==============================================================================
+# SECTION 3 : SERVICE D'AUTHENTIFICATION (Refactored for DB Storage)
 # ==============================================================================
 class AuthService:
-    def __init__(self, data_dir: str, user_id: str):
-        # Création du sous-dossier tokens s'il n'existe pas
-        self.tokens_dir = os.path.join(data_dir, "tokens")
-        os.makedirs(self.tokens_dir, exist_ok=True)
-        
-        # Sécurisation de l'ID utilisateur pour le nom de fichier
-        safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
-        
-        # Chemins isolés par utilisateur
-        self.token_path = os.path.join(self.tokens_dir, f"gemini_official_token_{safe_uid}.json")
-        self.pkce_path = os.path.join(self.tokens_dir, f"gemini_pkce_{safe_uid}.txt")
-        self.internal_project_cache = os.path.join(self.tokens_dir, f"gemini_project_{safe_uid}.txt")
-        
+    def __init__(self, user_data_manager: UserDataManager):
+        self.user_data_manager = user_data_manager
         self.base_url = GOOGLE_API_BASE_URL
 
     def _generate_pkce(self):
         verifier = secrets.token_urlsafe(64)
         digest = hashlib.sha256(verifier.encode("utf-8")).digest()
-        import base64
         challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
         return verifier, challenge
 
     def get_auth_url(self) -> str:
         if not HAS_GOOGLE_LIBS: return "❌ **Erreur** : Librairies `google-auth` manquantes."
-        should_generate_new = True
-        if os.path.exists(self.pkce_path):
-            try:
-                if time.time() - os.path.getmtime(self.pkce_path) < 300:
-                    with open(self.pkce_path, "r") as f:
-                        if len(f.read().strip()) > 10: should_generate_new = False
-            except: pass
-
-        if should_generate_new:
-            verifier, challenge = self._generate_pkce()
-            try:
-                with open(self.pkce_path, "w") as f: f.write(verifier)
-            except Exception as e: return f"❌ Erreur IO: {str(e)}"
-        else:
-            with open(self.pkce_path, "r") as f: verifier = f.read().strip()
+        
+        # --- LOGIQUE D'IDEMPOTENCE POUR PKCE ---
+        # Gère les requêtes multiples systématiques d'OWUI en réutilisant le même challenge.
+        pkce_data = self.user_data_manager.get_auth_data('pkce_verifier')
+        
+        if pkce_data and time.time() - pkce_data[1] < 300: # Fenêtre d'idempotence de 5 minutes
+            # Un verifier récent existe, on le réutilise pour être idempotent.
+            verifier = pkce_data[0]
             digest = hashlib.sha256(verifier.encode("utf-8")).digest()
             challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+        else:
+            # Pas de verifier récent, on en crée un nouveau.
+            verifier, challenge = self._generate_pkce()
+            self.user_data_manager.save_auth_data('pkce_verifier', verifier)
 
         flow = Flow.from_client_config(OFFICIAL_CLIENT_CONFIG, scopes=GOOGLE_SCOPES, autogenerate_code_verifier=False)
         flow.redirect_uri = GOOGLE_REDIRECT_URI
@@ -206,44 +346,46 @@ class AuthService:
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
-        if not os.path.exists(self.pkce_path):
-             for _ in range(3):
-                if self.get_valid_credentials(): return True, "Succès (Récupéré via cache)."
-                time.sleep(0.5)
-             return False, "Session expirée (PKCE introuvable)."
+        
+        pkce_data = self.user_data_manager.get_auth_data('pkce_verifier')
+        if not pkce_data or time.time() - pkce_data[1] > 600: # 10 min expiry
+             return False, "Session d'authentification expirée (PKCE introuvable ou trop ancien)."
+
+        verifier = pkce_data[0]
         try:
-            with open(self.pkce_path, "r") as f: verifier = f.read().strip()
             flow = Flow.from_client_config(OFFICIAL_CLIENT_CONFIG, scopes=GOOGLE_SCOPES, autogenerate_code_verifier=False)
             flow.redirect_uri = GOOGLE_REDIRECT_URI
             flow.fetch_token(code=code.strip(), code_verifier=verifier)
-            with open(self.token_path, "w") as f: f.write(flow.credentials.to_json())
-            if os.path.exists(self.pkce_path): os.remove(self.pkce_path)
+            self.user_data_manager.save_auth_data('google_token', flow.credentials.to_json())
             return True, "Succès."
         except Exception as e: return False, str(e)
+        finally:
+            # Toujours supprimer le verifier après une tentative d'échange.
+            # Cela empêche la réutilisation des codes d'autorisation à usage unique
+            # et garantit un état propre pour une nouvelle tentative si nécessaire.
+            self.user_data_manager.delete_auth_data('pkce_verifier')
 
     def get_valid_credentials(self):
+        token_data = self.user_data_manager.get_auth_data('google_token')
+        if not token_data: return None
+
         creds = None
-        if os.path.exists(self.token_path):
-            try: creds = Credentials.from_authorized_user_file(self.token_path, GOOGLE_SCOPES)
-            except: pass
+        try: creds = Credentials.from_authorized_user_info(std_json.loads(token_data[0]), GOOGLE_SCOPES)
+        except: return None
+
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(GoogleAuthRequest())
-                with open(self.token_path, "w") as f: f.write(creds.to_json())
+                self.user_data_manager.save_auth_data('google_token', creds.to_json())
             except: return None
         return creds if (creds and creds.valid) else None
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
-        cached_pid = None
-        if os.path.exists(self.internal_project_cache):
-             with open(self.internal_project_cache, "r") as f: cached_pid = f.read().strip()
-        if cached_pid and not debug_mode:
-            return cached_pid, "Cache."
-        headers = {
-            "Authorization": f"Bearer {creds.token}", 
-            "Content-Type": "application/json",
-            "User-Agent": "GeminiCLI/0.24.0" 
-        }
+        cached_pid_data = self.user_data_manager.get_auth_data('google_project_id')
+        if cached_pid_data and not debug_mode:
+            return cached_pid_data[0], "Cache."
+
+        headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": "GeminiCLI/0.24.0"}
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
         try:
             resp = httpx.post(f"{self.base_url}:loadCodeAssist", headers=headers, json=payload, timeout=10)
@@ -253,217 +395,27 @@ class AuthService:
                 pid = raw.get("id") if isinstance(raw, dict) else raw
                 if pid:
                     pid = pid.replace("projects/", "")
-                    with open(self.internal_project_cache, "w") as f: f.write(pid)
+                    self.user_data_manager.save_auth_data('google_project_id', pid)
                     return pid, "API OK."
                 else:
-                    if cached_pid: return cached_pid, f"API Fail (Partial Response), Fallback to Cache. JSON: {str(data)[:50]}"
-                    try: error_dump = std_json.dumps(data, indent=2)
-                    except: error_dump = str(data)
-                    return None, f"**JSON inattendu** (Project ID introuvable) :\n```json\n{error_dump}\n```"
+                    if cached_pid_data: return cached_pid_data[0], f"API Fail, Fallback to Cache."
+                    return None, f"**JSON inattendu** (Project ID introuvable) : {str(data)[:200]}"
             else:
                 return None, f"HTTP {resp.status_code}: {resp.text}"
         except Exception as e: return None, str(e)
 
 # ==============================================================================
-# SECTION 4 : REGISTRE CAS & SIGNATURES (STATEFUL SESSION CACHE)
-# ==============================================================================
-class SignatureManager:
-    def __init__(self, data_dir: str):
-        self.sig_dir = os.path.join(data_dir, "signatures")
-        os.makedirs(self.sig_dir, exist_ok=True)
-
-    def _get_cache_path(self, chat_id: str) -> str:
-        safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
-        return os.path.join(self.sig_dir, f"{safe_id}.json")
-
-    def save_signature(self, chat_id: str, signature: str, tool_call_id: Optional[str] = None):
-        """
-        Stratégie 2.2: Persist thoughtSignature mapped to context.
-        """
-        if not chat_id or not signature: return
-        path = self._get_cache_path(chat_id)
-        
-        try:
-            cache = {}
-            if os.path.exists(path):
-                with open(path, "r") as f: cache = std_json.load(f)
-            
-            # Stockage "Global" (Fallback pour le texte)
-            cache["_latest"] = signature
-            
-            # Stockage "Spécifique" (Mappé au tool_call_id pour Agentic Workflow)
-            if tool_call_id:
-                cache[tool_call_id] = signature
-                
-            # Rotation simple (Keep last 50 entries to avoid bloat)
-            if len(cache) > 50:
-                # Keep latest and last 49
-                latest = cache.get("_latest")
-                keys = list(cache.keys())[-49:]
-                new_cache = {k: cache[k] for k in keys}
-                if latest: new_cache["_latest"] = latest
-                cache = new_cache
-
-            with open(path, "w") as f: std_json.dump(cache, f)
-        except Exception as e: pass
-
-    def get_signature(self, chat_id: str, tool_call_id: Optional[str] = None) -> Optional[str]:
-        """
-        Récupère la signature exacte pour un outil donné, ou la dernière connue.
-        """
-        if not chat_id: return None
-        path = self._get_cache_path(chat_id)
-        try:
-            if os.path.exists(path):
-                with open(path, "r") as f: cache = std_json.load(f)
-                
-                # 1. Priorité absolue : Signature liée à cet appel d'outil spécifique
-                if tool_call_id and tool_call_id in cache:
-                    return cache[tool_call_id]
-                
-                # 2. Fallback : Dernière signature connue (pour le texte ou si ID introuvable)
-                return cache.get("_latest")
-        except: pass
-        return None
-
-# ==============================================================================
-# SECTION 4.1 : CONTEXT CACHE MANAGER (SMART CACHE PER-CHAT)
-# ==============================================================================
-class ContextCacheManager:
-    """
-    Gère le cache persistant du contexte traité (Base64, formatage API) pour éviter le recalcul.
-    Architecture : 1 DB SQLite par Chat ID.
-    Format : Clé (Hash du message) -> Valeur (JSON compressé ZLIB).
-    """
-    def __init__(self, data_dir: str, chat_id: str):
-        self.cache_dir = os.path.join(data_dir, "pipe_engine_cache")
-        os.makedirs(self.cache_dir, exist_ok=True)
-        # Sécurisation ID
-        safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_") if chat_id else "unknown"
-        self.db_path = os.path.join(self.cache_dir, f"{safe_id}.db")
-        self._init_db()
-
-    def _init_db(self):
-        try:
-            # Mode check rapide
-            if os.path.exists(self.db_path) and os.path.getsize(self.db_path) > 0:
-                return
-            
-            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
-                # Activation WAL pour performance concurrente
-                conn.execute("PRAGMA journal_mode=WAL;")
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS messages (
-                        hash TEXT PRIMARY KEY,
-                        data BLOB,
-                        created_at INTEGER,
-                        last_accessed INTEGER
-                    )
-                """)
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_last_accessed ON messages(last_accessed)")
-        except Exception: pass
-
-    def compute_hash(self, block_messages: List[Dict]) -> str:
-        """
-        Calcule une signature unique SHA-256 pour un bloc de messages.
-        Le hash inclut : Rôles, Contenu texte, IDs de fichiers, Appels d'outils.
-        L'ordre compte.
-        """
-        hasher = hashlib.sha256()
-        
-        for msg in block_messages:
-            # 1. Rôle
-            hasher.update((msg.get("role", "")).encode("utf-8"))
-            
-            # 2. Contenu Texte (Strip pour robustesse espaces)
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                hasher.update(content.strip().encode("utf-8"))
-            elif isinstance(content, list):
-                # Cas multimodal : on hash la structure textuelle
-                # Pour les images, OWUI envoie souvent un hash ou ID dans l'URL/Path, 
-                # mais ici on hash la représentation string du dictionnaire
-                hasher.update(str(content).encode("utf-8"))
-            
-            # 3. Fichiers (IDs sont critiques)
-            # Les fichiers peuvent être dans "files" (liste de dicts)
-            files = msg.get("files", [])
-            if files:
-                # Tri par ID pour déterminisme
-                f_ids = sorted([str(f.get("id") or f.get("file", {}).get("id")) for f in files])
-                hasher.update("FILES:".encode("utf-8"))
-                for fid in f_ids:
-                    hasher.update(fid.encode("utf-8"))
-            
-            # 4. Tool Calls (IDs + Arguments)
-            tcs = msg.get("tool_calls", [])
-            if tcs:
-                hasher.update("TOOLS:".encode("utf-8"))
-                # On assume l'ordre des tool calls est significatif
-                for tc in tcs:
-                    fid = tc.get("id", "")
-                    fname = tc.get("function", {}).get("name", "")
-                    fargs = tc.get("function", {}).get("arguments", "")
-                    hasher.update(f"{fid}:{fname}:{fargs}".encode("utf-8"))
-
-        return hasher.hexdigest()
-
-    def get(self, msg_hash: str) -> Optional[List[Dict]]:
-        """Récupère et décompresse un bloc du cache."""
-        try:
-            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT data FROM messages WHERE hash = ?", (msg_hash,))
-                row = cursor.fetchone()
-                if row:
-                    # Update Last Accessed (Async-ish: on le fait sans attendre le commit absolu si possible, mais SQLite impose commit)
-                    # Pour perf, on pourrait skipper cet update à chaque lecture, ou le faire en batch.
-                    # Ici on reste simple.
-                    cursor.execute("UPDATE messages SET last_accessed = ? WHERE hash = ?", (int(time.time()), msg_hash))
-                    
-                    # Décompression (ZLIB -> JSON -> Dict)
-                    compressed = row[0]
-                    # Note: La décompression sera faite hors de la méthode si on veut threader, 
-                    # mais ici on retourne les bytes bruts pour que l'appelant gère le thread ?
-                    # Non, faisons simple : on retourne l'objet.
-                    json_str = zlib.decompress(compressed).decode("utf-8")
-                    return orjson.loads(json_str)
-        except Exception:
-            return None
-        return None
-
-    def set(self, msg_hash: str, data: List[Dict]):
-        """Compresse et sauvegarde un bloc."""
-        try:
-            # Compression
-            json_bytes = orjson.dumps(data)
-            compressed = zlib.compress(json_bytes)
-            
-            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
-                conn.execute("""
-                    INSERT OR REPLACE INTO messages (hash, data, created_at, last_accessed)
-                    VALUES (?, ?, ?, ?)
-                """, (msg_hash, compressed, int(time.time()), int(time.time())))
-        except Exception: pass
-
-    # Méthodes Helper pour AsyncIO (ThreadPool)
-    async def get_async(self, msg_hash: str) -> Optional[List[Dict]]:
-        return await asyncio.to_thread(self.get, msg_hash)
-
-    async def set_async(self, msg_hash: str, data: List[Dict]):
-        await asyncio.to_thread(self.set, msg_hash, data)
-
-# ==============================================================================
 # SECTION 5 : ORCHESTRATEUR (LOGIQUE MÉTIER)
 # ==============================================================================
 class Orchestrator:
-    def __init__(self, valves, user_valves, data_dir):
+    def __init__(self, valves, user_valves, data_dir: str, user_id: str):
         self.valves = valves
         self.user_valves = user_valves
         self.data_dir = data_dir
+        self.user_id = user_id
         self.uploads_dir = "/app/backend/data/uploads" 
         self.tool_map = {}
-        self.sig_manager = SignatureManager(data_dir)
+        self.user_data_manager = UserDataManager(data_dir, user_id, valves.DEBUG_MODE)
         self.debug_log = []
         self.files_processed_info = []
 
@@ -480,7 +432,7 @@ class Orchestrator:
         for t in tools:
             if t.get("type") == "function":
                 f = t.get("function", {})
-                funcs.append({"name": f.get("name"), "description": f.get("description", ""), "parameters": f.get("parameters", {"type": "object", "properties": {}})})
+                funcs.append({"name": f.get("name"), "description": f.get("description", ""), "parameters": f.get("parameters", {"type": "object", "properties": {}})}) # Closing parenthesis was missing
         return [{"functionDeclarations": funcs}] if funcs else None
     
     def _probe_disk(self) -> str:
@@ -638,7 +590,7 @@ class Orchestrator:
         while i < len(messages) and messages[i]["role"] == "tool":
             tm = messages[i]
             tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
-            try: val = std_json.loads(tm.get("content", "{}"))
+            try: val = orjson.loads(tm.get("content", "{{}}"))
             except: val = {"result": str(tm.get("content", ""))}
             parts.append({"functionResponse": {"name": tool_name, "response": val}})
             i += 1
@@ -677,16 +629,15 @@ class Orchestrator:
 
             # 2. Tool Calls
             if sub_m.get("tool_calls"):
-                for idx, tc in enumerate(sub_m["tool_calls"]):
+                for idx, tc in enumerate(sub_m["tool_calls"]) :
                     try:
-                        args = std_json.loads(tc["function"]["arguments"])
+                        args = orjson.loads(tc["function"]["arguments"])
                         part_data = {"functionCall": {"name": tc["function"]["name"], "args": args}}
                         
                         if idx == 0:
                             sig = args.pop("_thought_signature", None)
                             call_id = tc.get("id")
-                            if not sig and chat_id: sig = self.sig_manager.get_signature(chat_id, call_id)
-                            if not sig and chat_id: sig = self.sig_manager.get_signature(chat_id)
+                            if not sig and chat_id: sig = self.user_data_manager.get_signature(chat_id, call_id)
                             if not sig: sig = MAGIC_KEY_SKIP_VALIDATION
                             part_data["thoughtSignature"] = sig
                         
@@ -697,7 +648,7 @@ class Orchestrator:
         
         # Fallback Signature sur Texte
         if parts and "text" in parts[-1] and not any("functionCall" in p for p in parts) and chat_id:
-              latest_sig = self.sig_manager.get_signature(chat_id)
+              latest_sig = self.user_data_manager.get_signature(chat_id)
               if latest_sig: parts[-1]["thoughtSignature"] = latest_sig
         
         if not parts: parts.append({"text": " "})
@@ -714,13 +665,13 @@ class Orchestrator:
             if self.valves.DEBUG_MODE:
                 raw_filter = body.get("raw_files_from_filter")
                 if raw_filter:
-                     try: dump = std_json.dumps(raw_filter, indent=2, default=str)
-                     except: dump = str(raw_filter)
-                     self.debug_log.append(f"📦 Filter Files: {dump[:200]}...")
+                     try: dump = orjson.dumps(raw_filter, option=orjson.OPT_INDENT_2)
+                     except: dump = str(raw_filter).encode()
+                     self.debug_log.append(f"📦 Filter Files: {dump[:200].decode(errors='ignore')}...")
 
             raw_from_filter = body.get("raw_files_from_filter")
             if raw_from_filter: raw_list.extend(raw_from_filter)
-            if extra_files: 
+            if extra_files:
                 ex = extra_files if isinstance(extra_files, list) else [extra_files]
                 raw_list.extend(ex)
 
@@ -749,10 +700,6 @@ class Orchestrator:
         self.files_processed_info = []
         messages = body.get("messages", [])
         
-        # Init Cache
-        cache_mgr = None
-        if chat_id: cache_mgr = ContextCacheManager(self.data_dir, chat_id)
-        
         # Map tool IDs
         for m in messages:
             if m.get("tool_calls"):
@@ -767,14 +714,10 @@ class Orchestrator:
         final_contents = []
         deferred_text = ""
         
-        # Cache State
         cache_valid = True
         
         i = 0
         while i < len(messages):
-            # Identification du Bloc (Lookahead)
-            # On détermine quels messages constituent une unité logique à traiter ensemble.
-            # Cas 1: System (Ignoré)
             if messages[i]["role"] == "system": 
                 i+=1; continue
             
@@ -782,45 +725,31 @@ class Orchestrator:
             block_type = messages[i]["role"]
             start_i = i
             
-            # Cas 2: Tool (Séquence de résultats)
             if block_type == "tool":
                 while i < len(messages) and messages[i]["role"] == "tool":
                     block_msgs.append(messages[i]); i += 1
-            
-            # Cas 3: Model (Séquence de réponses assistant)
             elif block_type in ["assistant", "model"]:
                 while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
                     block_msgs.append(messages[i]); i += 1
-            
-            # Cas 4: User (Un message unique)
             else:
                 block_msgs.append(messages[i]); i += 1
 
-            # Calcul du Hash du Bloc (Incluant l'état deferred_text entrant pour User/Model)
-            # Pour Tool, pas de deferred text dependency directe sur le hash (c'est le Model suivant qui en dépend)
-            # Mais par sécurité, on hash tout le bloc.
-            # Pour lier User au Model précédent, on ajoute deferred_text au hash si User/Model
-            
             current_hash_input = block_msgs
             if deferred_text:
-                # On ajoute un pseudo-message pour influencer le hash sans polluer les données
                 current_hash_input = block_msgs + [{"role": "virtual_state", "content": deferred_text}]
             
-            block_hash = cache_mgr.compute_hash(current_hash_input) if cache_mgr else None
+            block_hash = self.user_data_manager.compute_message_hash(current_hash_input, chat_id)
             
-            # Tentative Cache
             cached_data = None
-            if cache_valid and block_hash:
-                cached_data = await cache_mgr.get_async(block_hash)
+            if cache_valid:
+                cached_data = await self.user_data_manager.get_message_cache_async(block_hash)
             
             if cached_data:
-                # HIT !
                 if self.valves.DEBUG_MODE: self.debug_log.append(f"🟢 [CACHE HIT] {block_hash[:8]}...")
                 
                 parts = cached_data.get("parts", [])
                 new_deferred = cached_data.get("deferred_text", "")
                 
-                # Application de la logique de fusion (identique au traitement live)
                 if block_type == "tool":
                     if final_contents and final_contents[-1]["role"] == "user":
                         final_contents[-1]["parts"].extend(parts)
@@ -842,21 +771,16 @@ class Orchestrator:
                     if parts: final_contents.append({"role": "user", "parts": parts})
 
             else:
-                # MISS !
                 if self.valves.DEBUG_MODE: self.debug_log.append(f"🔴 [CACHE MISS] {block_hash[:8] if block_hash else 'NoHash'}...")
-                cache_valid = False # On invalide la chaîne pour le futur
+                cache_valid = False
                 
-                # Traitement Live
                 processed_parts = []
                 new_deferred = ""
                 
                 if block_type == "tool":
-                    # Note: _process_tool_turn attend messages complets + index, on adapte
-                    # On ne peut pas appeler _process_tool_turn tel quel car il itère.
-                    # On a déjà isolé le bloc. On réutilise la logique interne.
                     for tm in block_msgs:
                         tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
-                        try: val = std_json.loads(tm.get("content", "{}"))
+                        try: val = orjson.loads(tm.get("content", "{{}}"))
                         except: val = {"result": str(tm.get("content", ""))}
                         processed_parts.append({"functionResponse": {"name": tool_name, "response": val}})
                     
@@ -866,14 +790,9 @@ class Orchestrator:
                         final_contents.append({"role": "user", "parts": processed_parts})
 
                 elif block_type in ["assistant", "model"]:
-                    # On doit appeler _process_model_turn sur le bloc complet
-                    # Attention _process_model_turn attend (messages, start_idx).
-                    # On peut lui passer (block_msgs, 0).
                     processed_parts, new_deferred, _ = await self._process_model_turn(block_msgs, 0, chat_id)
-                    
                     if deferred_text and new_deferred: deferred_text += "\n\n" + new_deferred
                     elif new_deferred: deferred_text = new_deferred
-                    
                     final_contents.append({"role": "model", "parts": processed_parts})
 
                 else: # User
@@ -884,19 +803,14 @@ class Orchestrator:
                             else: final_contents.append({"role": "model", "parts": [{"text": deferred_text}]})
                         deferred_text = ""
                     
-                    # User block est unique (taille 1)
                     m = block_msgs[0]
-                    is_last = (start_i == last_user_idx) # Attention start_i est l'index global
+                    is_last = (start_i == last_user_idx)
                     processed_parts = await self._process_user_turn(m, body, extra_files, is_last)
                     if processed_parts: final_contents.append({"role": "user", "parts": processed_parts})
 
-                # Sauvegarde Cache (Nouveau bloc calculé)
-                if block_hash and cache_mgr:
-                    data_to_cache = {
-                        "parts": processed_parts,
-                        "deferred_text": new_deferred
-                    }
-                    await cache_mgr.set_async(block_hash, data_to_cache)
+                if block_hash:
+                    data_to_cache = {"parts": processed_parts, "deferred_text": new_deferred}
+                    await self.user_data_manager.set_message_cache_async(block_hash, data_to_cache)
         
         return final_contents
 
@@ -918,7 +832,6 @@ class GeminiAdapter:
     def build(self, project_id, contents, system_instr, temp, max_tok, think_level, model_id, tools=None):
         gen_config = {"temperature": temp, "maxOutputTokens": max_tok}
         
-        # Gemini 3 Logic (Pro & Flash)
         gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": think_level.lower()}
         
         payload = {
@@ -932,44 +845,33 @@ class GeminiAdapter:
 # SECTION 7 : STREAM PROCESSOR
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, context_window: int, debug=False, chat_id=None, sig_manager=None, initial_label="Réponse", file_stats=None, logger=None):
+    def __init__(self, context_window: int, user_data_manager: UserDataManager, debug=False, chat_id=None, initial_label="Réponse", file_stats=None, logger=None):
         self.debug = debug
         self.chat_id = chat_id
-        self.sig_manager = sig_manager
+        self.user_data_manager = user_data_manager
         self.context_window = context_window
         self.initial_label = initial_label
         self.usage_stats = None
         self.file_stats = file_stats or []
         self.current_sig = None
-        self.stats_dir = "/app/backend/data/stats"
-        self.logger = logger # DebugLogger
-        os.makedirs(self.stats_dir, exist_ok=True)
-        # Capture buffer for tool calls
-        self.pending_tool_calls = {} 
+        self.logger = logger
+        self.pending_tool_calls = {}
         self.has_tool_call = False
-        
-        # Capture full response for debug log
         self.full_response_accumulator = []
         self.response_id = None
 
-    def _update_stats(self, data, step_label=None):
+    def _update_stats(self, data):
         if "response" in data and "usageMetadata" in data["response"]:
             self.usage_stats = data["response"]["usageMetadata"]
         elif "usageMetadata" in data:
             self.usage_stats = data["usageMetadata"]
         
-        # Capture Response ID
         if not self.response_id:
             if "responseId" in data: self.response_id = data["responseId"]
             elif "response" in data and "id" in data["response"]: self.response_id = data["response"]["id"]
         
-        # 138.18: Écriture systématique pour Context Gauge (plus de condition de label)
-        if self.usage_stats and self.chat_id:
-             try:
-                safe_id = "".join(x for x in str(self.chat_id) if x.isalnum() or x in "-_")
-                with open(f"{self.stats_dir}/{safe_id}.json", "w") as f:
-                    std_json.dump(self.usage_stats, f)
-             except: pass
+        if self.usage_stats:
+            self.user_data_manager.save_context_stats(self.usage_stats)
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
@@ -990,8 +892,8 @@ class StreamProcessor:
                     line = line.strip()
                     if not line: continue
                     if line.startswith("data:"):
-                        data = std_json.loads(line[6:])
-                        self._update_stats(data, step_label)
+                        data = orjson.loads(line[6:])
+                        self._update_stats(data)
                         self.full_response_accumulator.append(data)
 
                         cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
@@ -1000,15 +902,10 @@ class StreamProcessor:
                                 txt = part.get("text", "")
                                 func_call = part.get("functionCall")
 
-                                # CAPTURE STRATEGY: Grab signature whenever it appears
                                 if "thoughtSignature" in part:
                                     self.current_sig = part["thoughtSignature"]
-                                    if self.chat_id and self.sig_manager:
-                                        # Always save as latest fallback
-                                        self.sig_manager.save_signature(self.chat_id, self.current_sig)
-                                        # Map to pending calls if any
-                                        for tc_id in self.pending_tool_calls:
-                                            self.sig_manager.save_signature(self.chat_id, self.current_sig, tc_id)
+                                    if self.chat_id:
+                                        self.user_data_manager.save_signature(self.chat_id, self.current_sig)
 
                                 if part.get("thought"):
                                     if not in_think: yield "<think>\n"; in_think = True
@@ -1019,20 +916,13 @@ class StreamProcessor:
                                     step_label = f"Pré-{func_call.get('name', 'Action')}"
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     
-                                    # Create Open-WebUI tool ID
                                     tc_id = f"call_{secrets.token_hex(8)}"
-                                    
-                                    # Track this ID
                                     self.pending_tool_calls[tc_id] = True
                                     
-                                    # If it is the FIRST tool call (tool_index == 0), associate the current signature
-                                    # Subsequent parallel calls share the signature of the turn but don't need explicit mapping
-                                    # for the 'first only' rule, though mapping doesn't hurt as prepare_context filters by index.
-                                    if self.current_sig and self.chat_id and self.sig_manager:
-                                        self.sig_manager.save_signature(self.chat_id, self.current_sig, tc_id)
+                                    if self.current_sig and self.chat_id:
+                                        self.user_data_manager.save_signature(self.chat_id, self.current_sig, tc_id)
 
                                     args = func_call.get("args", {})
-                                    # Still tunnel via args as backup strategy 1
                                     if self.current_sig: args["_thought_signature"] = self.current_sig
                                     
                                     yield {
@@ -1042,7 +932,7 @@ class StreamProcessor:
                                                     "index": tool_index, 
                                                     "id": tc_id,
                                                     "type": "function", 
-                                                    "function": {"name": func_call["name"], "arguments": std_json.dumps(args)}
+                                                    "function": {"name": func_call["name"], "arguments": orjson.dumps(args).decode()}
                                                 }]
                                             }
                                         }]
@@ -1059,14 +949,13 @@ class StreamProcessor:
         if buffer and buffer.strip().startswith("data:"):
             try:
                 line = buffer.strip()
-                data = std_json.loads(line[6:])
-                self._update_stats(data, step_label) 
+                data = orjson.loads(line[6:])
+                self._update_stats(data) 
                 self.full_response_accumulator.append(data)
             except: pass
 
         if in_think: yield "\n</think>\n"
 
-        # Log full response at end
         if self.logger:
             self.logger.log("api_response", self.full_response_accumulator, metadata={"response_id": self.response_id})
 
@@ -1084,20 +973,14 @@ class StreamProcessor:
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
-        # --- CONFIGURATION ADMIN / SYSTEME (Globale) ---
-        # 138.3: SUPPRESSION DE LA VALVE SYSTEM_PROMPT.
-        # Le prompt est désormais piloté par Open WebUI via le contexte client.
-        
         GEMINI_MIME_MAPPING_TXT: str = Field(
             default='{"text/plain": [".bat",".c",".conf",".cpp",".cs",".css",".csv",".dockerfile",".editorconfig",".env",".gitignore",".go",".h",".hpp",".ini",".java",".js",".json",".kt",".lua",".md",".php",".pl",".ps1",".py",".r",".rb",".rs",".sh",".sql",".swift",".toml",".ts",".txt",".vb",".xml",".yaml",".yml","dockerfile"], "text/html": [".html", ".htm"]}',
             description="📄 Mapping Texte (JSON)"
         )
-        
         GEMINI_MIME_MAPPING_BIN: str = Field(
             default='{"video/x-flv": [".flv"], "video/quicktime": [".mov"], "video/mpeg": [".mpeg", ".mpg", ".mpe"], "video/mpegps": [".mpegps"], "video/mp4": [".mp4"], "video/webm": [".webm"], "video/wmv": [".wmv"], "video/3gpp": [".3gpp"], "audio/aac": [".aac"], "audio/flac": [".flac"], "audio/mp3": [".mp3"], "audio/m4a": [".m4a", ".mpa"], "audio/mpga": [".mpga"], "audio/opus": [".opus"], "audio/pcm": [".pcm"], "audio/wav": [".wav"], "image/png": [".png"], "image/jpeg": [".jpeg", ".jpg"], "image/webp": [".webp"], "image/heic": [".heic"], "image/heif": [".heif"], "application/pdf": [".pdf"]}',
             description="🖼️ Mapping Binaire (JSON)"
         )
-        
         API_RETRY_COUNT: int = Field(default=3, description="🔄 Nombre d'essais API")
         HTTP_CLIENT_TIMEOUT: int = Field(default=300, description="⏱️ Autokill Client HTTP (sec)")
         ENABLE_HTTP2: bool = Field(default=True, description="🚀 Activer HTTP/2")
@@ -1109,41 +992,32 @@ class Pipe:
         MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
 
     class UserValves(BaseModel):
-        # --- PREFERENCES UTILISATEUR (Individuelles) ---
         MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-3-flash-preview"] = Field(default="gemini-3-pro-preview", description="Modèle")
-        
         PRO_THINKING_LEVEL: Literal["LOW", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion (Pro)")
         FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion (Flash)")
-        
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
 
     def __init__(self):
         self.valves = self.Valves()
         self.data_dir = "/app/backend/data"
-        # AuthService n'est plus instancié ici
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
-        # --- VERIFICATION CRITIQUE UTILISATEUR ---
         if not __user__ or "id" not in __user__:
-             # Selon instructions : pas de fallback, on considère OWUI solide.
-             # Si cela arrive, c'est une erreur critique d'intégration.
              yield "❌ **Erreur Critique** : Impossible d'identifier l'utilisateur (Objet `__user__` manquant ou incomplet)."; return
 
         user_id = __user__["id"]
-        # Récupération sécurisée des UserValves injectées par OWUI
-        # Si OWUI n'injecte rien (premier lancement), on utilise les défauts
         user_valves = __user__.get("valves")
-        if not user_valves:
-            user_valves = self.UserValves()
+        if not user_valves: user_valves = self.UserValves()
 
-        # Instanciation dynamique des services par utilisateur
-        auth = AuthService(self.data_dir, user_id)
-        orch = Orchestrator(self.valves, user_valves, self.data_dir)
-        
+        try:
+            orch = Orchestrator(self.valves, user_valves, self.data_dir, user_id)
+            auth = AuthService(orch.user_data_manager)
+        except Exception as e:
+            yield f"❌ **Erreur Critique Initialisation** : {e}"; return
+
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         
-        # Init Debug Logger
         debug_logger = None
         if self.valves.DEBUG_MODE:
             debug_logger = DebugLogger(self.data_dir, chat_id)
@@ -1163,15 +1037,10 @@ class Pipe:
         tools = orch.convert_owui_tools(body.get("tools"))
         files = body.get("files") or kwargs.get("__files__")
         
-        # 138.3: Extraction du Contexte Client depuis les messages système
-        # Ce sont les messages avec le rôle "system" envoyés par Open WebUI au début de la conversation.
         system_messages = [m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]
         client_context = "\n".join(system_messages) if system_messages else None
         
-        # 138.2: On modifie l'appel pour passer le context client
         context = await orch.prepare_context(body, chat_id, creds.token, extra_files=files)
-        
-        # 138.9: System Prompt pur (logique d'override déplacée dans le filtre contextuel v1.13)
         system_instruction = {"parts": [{"text": client_context or "Tu es un assistant IA expert."}]}
 
         if self.valves.DEBUG_MODE and orch.debug_log:
@@ -1181,11 +1050,7 @@ class Pipe:
         if body.get("messages") and body.get("messages")[-1].get("role") == "tool":
             initial_label = "Fenêtre de Contexte"
 
-        # --- ADAPTER STANDARD ---
-        # Note: on utilise user_valves pour les params modèle
-        
-        # Sélection du Thinking Level approprié selon le modèle
-        selected_thinking_level = "high" # Valeur par défaut de sécurité
+        selected_thinking_level = "high"
         if user_valves.MODEL_SELECTION == "gemini-3-pro-preview":
             selected_thinking_level = user_valves.PRO_THINKING_LEVEL
         elif user_valves.MODEL_SELECTION == "gemini-3-flash-preview":
@@ -1193,49 +1058,33 @@ class Pipe:
 
         adapter = GeminiAdapter(auth.base_url)
         req = adapter.build(
-            pid, 
-            context, 
-            system_instruction, # 138.2
-            user_valves.TEMPERATURE, 
-            user_valves.MAX_TOKENS, 
-            selected_thinking_level,
-            user_valves.MODEL_SELECTION, 
-            tools
+            pid, context, system_instruction,
+            user_valves.TEMPERATURE, user_valves.MAX_TOKENS, 
+            selected_thinking_level, user_valves.MODEL_SELECTION, tools
         )
         req["headers"]["Authorization"] = f"Bearer {creds.token}"
 
-        if self.valves.DEBUG_MODE:
-             # Utilisation native orjson (Bytes)
-             log_req = orjson.loads(orjson.dumps(req['json']))
-             
-             # Log Request to file
-             if debug_logger:
-                 debug_logger.log("api_request", log_req)
+        if self.valves.DEBUG_MODE and debug_logger:
+            debug_logger.log("api_request", orjson.loads(orjson.dumps(req['json'])))
         
         proc = StreamProcessor(
             self.valves.MAX_CONTEXT_SIZE,
+            orch.user_data_manager,
             self.valves.DEBUG_MODE, 
-            chat_id, 
-            sig_manager=orch.sig_manager,
+            chat_id,
             initial_label=initial_label,
             file_stats=orch.files_processed_info,
             logger=debug_logger
         )
 
         try:
-            # --- CONNECTION POOLING OPTIMIZATION ---
             client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.ENABLE_HTTP2)
-            
-            # --- TURBO OPTIMIZATION (Strict orjson) ---
             req_content = orjson.dumps(req["json"])
             
-            # --- UPSTREAM GZIP COMPRESSION (SMART) ---
-            if self.valves.ENABLE_UPSTREAM_GZIP:
-                if len(req_content) < (self.valves.GZIP_THRESHOLD_KB * 1024):
-                    req_content = gzip.compress(req_content, compresslevel=self.valves.GZIP_LEVEL)
-                    req["headers"]["Content-Encoding"] = "gzip"
+            if self.valves.ENABLE_UPSTREAM_GZIP and len(req_content) < (self.valves.GZIP_THRESHOLD_KB * 1024):
+                req_content = gzip.compress(req_content, compresslevel=self.valves.GZIP_LEVEL)
+                req["headers"]["Content-Encoding"] = "gzip"
             
-            # RETRY LOOP (Native, v136.23)
             for attempt in range(self.valves.API_RETRY_COUNT):
                 try:
                     async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
@@ -1244,14 +1093,12 @@ class Pipe:
                             break
                         
                         if r.status_code in [429, 500, 502, 503, 504]:
-                             err = await r.aread()
-                             err_text = err.decode(errors='ignore')
+                             err_text = (await r.aread()).decode(errors='ignore')
                              yield f"⚠️ Erreur {r.status_code} ({err_text[:100]}...), tentative {attempt+1}/{self.valves.API_RETRY_COUNT}...\n"
                              await asyncio.sleep(1 * (attempt + 1))
                              continue
                         
-                        err = await r.aread()
-                        err_text = err.decode(errors='ignore')
+                        err_text = (await r.aread()).decode(errors='ignore')
                         if self.valves.DEBUG_MODE:
                             yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
                         else:
@@ -1262,7 +1109,5 @@ class Pipe:
                     if attempt < self.valves.API_RETRY_COUNT - 1:
                          yield f"⚠️ Erreur Réseau: {str(e)}, tentative {attempt+1}/{self.valves.API_RETRY_COUNT}...\n"
                          await asyncio.sleep(1)
-                    else:
-                         raise e 
-
+                    else: raise e 
         except Exception as e: yield f"🔥 **CRASH** : `{str(e)}`"

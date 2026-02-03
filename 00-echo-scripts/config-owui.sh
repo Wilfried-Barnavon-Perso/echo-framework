@@ -1,14 +1,14 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
-# VERSION : 7.44
+# VERSION : 7.45
 # ==============================================================================
 
 # --- CONFIGURATION ---
 DEBUG_MODE="false"  # Mettre à "true" pour afficher les payloads JSON
 OWUI_URL="http://localhost:3000"
-SECRET_FILE="/opt/.owui-setting-secret"
-ADMIN_SECRET_FILE="/opt/.owui-admin-secret"
+SECRET_FILE="/opt/.owui-secrets/.owui-setting-secret"
+ADMIN_SECRET_FILE="/opt/.owui-secrets/.owui-admin-secret"
 
 # Fichiers de Configuration
 CONFIG_DIR="/opt/config"

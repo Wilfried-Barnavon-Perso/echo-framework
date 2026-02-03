@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 3.6
+# VERSION : 3.7
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -79,6 +79,8 @@ fi
 
 # --- 2. DÉPLOIEMENT FICHIERS ---
 echo "📂 [SYNC] 2/2 Déploiement des fichiers..."
+
+mkdir -p /opt/.owui-secrets
 
 sync_resource() {
     local src="$1"; local dest="$2"

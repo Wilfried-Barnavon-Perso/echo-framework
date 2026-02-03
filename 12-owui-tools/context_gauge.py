@@ -1,13 +1,14 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 1.3
-description: Outil d'introspection permettant au modèle de vérifier son niveau d'occupation de la fenêtre de contexte (Données réelles uniquement).
+version: 2.0
+description: Outil d'introspection permettant de vérifier l'occupation de la fenêtre de contexte depuis la base de données utilisateur.
 """
 
 from pydantic import BaseModel, Field
 import os
 import json
+import sqlite3
 
 class Tools:
     class Valves(BaseModel):
@@ -18,33 +19,44 @@ class Tools:
 
     def __init__(self):
         self.valves = self.Valves()
+        # Le chemin racine des bases de données unifiées
+        self.db_root_dir = "/app/backend/data/user_dbs"
 
-    def get_context_load(self, __messages__: list, __metadata__: dict = None) -> str:
+    def get_context_load(self, __messages__: list, __user__: dict, __metadata__: dict = None) -> str:
         """
-        Lit l'historique de consommation de tokens directement depuis les fichiers système du serveur.
-        Ne fait AUCUNE estimation : si le fichier n'est pas trouvé, renvoie une erreur.
+        Lit l'historique de consommation de tokens directement depuis la base de données de l'utilisateur.
+        Ne fait AUCUNE estimation : si la base ou les données ne sont pas trouvées, renvoie une erreur.
         Utilisez cet outil lorsque vous devez vérifier si vous approchez de la limite de mémoire.
         """
         limit = self.valves.context_limit
         real_stats = None
         source = "MISSING_DATA"
-        chat_id = None
-        
-        if __metadata__:
-            chat_id = __metadata__.get("chat_id") or __metadata__.get("session_id")
-            if chat_id:
-                try:
-                    safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
-                    stats_path = f"/app/backend/data/stats/{safe_id}.json"
-                    if os.path.exists(stats_path):
-                        with open(stats_path, "r") as f:
-                            real_stats = json.load(f)
-                            source = "API_REAL"
-                except Exception as e:
-                    return f"Erreur de lecture système : {str(e)}"
+        user_id = __user__.get("id")
+
+        if not user_id:
+            return "Erreur critique : Impossible d'identifier l'utilisateur."
+
+        try:
+            safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+            db_path = os.path.join(self.db_root_dir, f"user-{safe_uid}.db")
+
+            if not os.path.exists(db_path):
+                return f"Métrique indisponible : Aucune base de données trouvée pour l'utilisateur ID `{user_id}`."
+
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT data FROM context_stats WHERE id = 1")
+                row = cursor.fetchone()
+                if row:
+                    real_stats = json.loads(row[0])
+                    source = "DB_REAL"
+        except sqlite3.OperationalError as e:
+            return f"Métrique indisponible : La table `context_stats` est probablement manquante dans la base de données. Erreur: {e}"
+        except Exception as e:
+            return f"Erreur de lecture système : {str(e)}"
 
         if not real_stats:
-             return f"Métrique indisponible : Aucune donnée de session trouvée pour l'ID `{chat_id}`."
+             return f"Métrique indisponible : Aucune donnée de session trouvée pour l'utilisateur ID `{user_id}`."
 
         # Usage des vraies stats
         est_tokens = real_stats.get("totalTokenCount", 0)

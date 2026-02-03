@@ -1,7 +1,8 @@
 version: '3.8'
 
 # ==============================================================================
-# ECHO FRAMEWORK v6.4 - STANDALONE APPLICATION SERVER
+# ECHO FRAMEWORK
+# Version : 7.1
 # ==============================================================================
 # ARCHITECTURE :
 # Ce fichier ne gère QUE la couche applicative "ECHO".
@@ -29,6 +30,8 @@ services:
     environment:
       # L'authentification interne reste active pour les utilisateurs de l'IA
       - WEBUI_AUTH=True
+      # Fuseau horaire pour la cohérence des logs
+      - TZ=Europe/Paris
       # URL publique gérée par le proxy externe
       # - WEBUI_URL=https://www.echo-ai.eu
       
@@ -42,6 +45,10 @@ services:
     restart: always
     networks:
       - echo-network
+    environment:
+      # Fuseau horaire pour l'affichage de l'heure. À adapter à votre localisation.
+      # Exemples: "America/New_York", "Europe/London", "Asia/Tokyo"
+      - TZ=Europe/Paris
     extra_hosts:
       - "host.docker.internal:host-gateway"
     
@@ -50,6 +57,8 @@ services:
       - /opt/docker-admin-manager/server.py:/app/server.py:ro
       - echo-backups:/backups
       - echo-webui-data:/app/backend/data
+      - /opt/.owui-secrets:/app/secrets:ro
+      - /opt/ECHO_VERSION:/app/ECHO_VERSION:ro
     
     # EXPOSITION : Port 3001 ouvert pour le Reverse Proxy distant
     # IMPORTANT : Ce service n'a PAS d'auth intégrée. Le Proxy DOIT le protéger.
@@ -57,7 +66,7 @@ services:
       - "3001:3001"
 
     command: >
-      /bin/bash -c "pip install --no-cache-dir flask flask-cors docker psutil paramiko APScheduler schedule && python /app/server.py"
+      /bin/bash -c "pip install --no-cache-dir flask flask-cors docker psutil paramiko APScheduler schedule httpx && python /app/server.py"
 
   # ============================================================================
   # SECTION 2 : WORKERS INTERNES (BACKEND)
@@ -69,6 +78,8 @@ services:
     restart: always
     networks:
       - echo-network
+    environment:
+      - TZ=Europe/Paris
     volumes:
       - /opt/docker-python-worker/worker_api.py:/app/app.py:ro
       - echo-worker-data:/app/data
@@ -84,6 +95,7 @@ services:
     ipc: host
     environment:
       - PIP_ROOT_USER_ACTION=ignore
+      - TZ=Europe/Paris
     volumes:
       - /opt/docker-browser-agent/browser_api.py:/app/app.py:ro
       - echo-browser-data:/app/data
@@ -98,6 +110,8 @@ services:
       - echo-network
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=Europe/Paris
     command: --interval 3600 --cleanup
 
 # ==============================================================================
