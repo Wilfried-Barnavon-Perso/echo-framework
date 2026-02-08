@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 3.7
+# VERSION : 3.9
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -117,16 +117,22 @@ sync_resource "$SRC_DIR/11-owui-filters"       "/opt/owui-filters"
 sync_resource "$SRC_DIR/_assets/images"        "/opt/echo-images"
 
 # Synchro Fichiers (Code Python Containers)
-sync_resource "$SRC_DIR/20-docker-admin-manager/server.py"    "/opt/docker-admin-manager"
+# Admin Manager : Dossier complet requis pour le Dockerfile
+sync_resource "$SRC_DIR/20-docker-admin-manager"    "/opt/docker-admin-manager"
 sync_resource "$SRC_DIR/21-docker-python-worker/worker_api.py" "/opt/docker-python-worker"
 sync_resource "$SRC_DIR/22-docker-browser-agent/browser_api.py" "/opt/docker-browser-agent"
 
-# Lien symboliques
+# Lien symboliques (Automatique pour tous les scripts .sh)
+echo "   🔗 Création des liens symboliques globaux..."
+for script_path in /opt/echo-scripts/*.sh; do
+    [ -e "$script_path" ] || continue
+    # Extraction du nom sans extension (ex: update-echo.sh -> update-echo)
+    script_name=$(basename "$script_path" .sh)
+    ln -sf "$script_path" "/usr/local/bin/$script_name"
+done
 
-ln -sf /opt/echo-scripts/update-echo.sh /usr/local/bin/update-echo 
-ln -sf /opt/echo-scripts/upgrade-echo.sh /usr/local/bin/upgrade-echo
+# Alias spécifique (Exception pour rebuild-echo qui n'est pas un fichier physique)
 ln -sf /opt/echo-scripts/upgrade-echo.sh /usr/local/bin/rebuild-echo
-ln -sf /opt/echo-scripts/show-echo-admin.sh /usr/local/bin/show-echo-admin
 
 # Versioning
 if [ -f "$SRC_DIR/VERSION" ]; then cp "$SRC_DIR/VERSION" "/opt/ECHO_VERSION"; chmod 644 "/opt/ECHO_VERSION"; fi

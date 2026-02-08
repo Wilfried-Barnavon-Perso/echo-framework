@@ -1,8 +1,8 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.12.00
-# DATE           : 2026-01-30
+# SCRIPT VERSION : 5.18.01
+# DATE           : 2026-02-07
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -24,6 +24,7 @@
 # 4. CLOUD-INIT : Génère un fichier 'user-data' qui : 
 #    - Injecte le ZIP.
 #    - Dézippe dans /opt/echo-framework-source.
+#    - Installe les outils (Docker, yq, jq).
 #    - Lance sync-echo.sh --local-only (évite le git clone).
 #    - Lance install-stack.sh.
 # 5. HYPER-V : Crée et lance la VM.
@@ -55,7 +56,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.11.13"
+$SCRIPT_VERSION = "5.18.01"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 
@@ -200,11 +201,26 @@ autoinstall:
       - path: /etc/chrony/conf.d/hyperv.conf
         content: |
           refclock PHC /dev/ptp0 poll 3 dpoll -2 offset 0
+      
+      # Configuration de la rotation des logs Docker (Sécurité Disque)
+      - path: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            }
+          }
 $WriteFilesBlock
     runcmd:
       - [chown, -R, "${AutoUser}:${AutoUser}", "/home/${AutoUser}"]
       - "systemctl restart chrony"
       
+      # --- INSTALLATION OUTILS SUPPLEMENTAIRES ---
+      # Installation de yq (Processeur YAML) pour l'introspection des scripts
+      - "wget https://github.com/mikefarah/yq/releases/download/v4.40.5/yq_linux_amd64 -O /usr/local/bin/yq && chmod +x /usr/local/bin/yq"
+
       # --- EXTRACTION ET DEPLOIEMENT ---
       # 1. Préparation du dossier source
       - "mkdir -p /opt/echo-framework-source"

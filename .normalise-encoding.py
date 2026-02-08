@@ -49,7 +49,7 @@ def normalize_file(filepath):
         print(f"❌ Error processing {filepath}: {e}")
 
 def main():
-    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    root_dir = os.path.dirname(os.path.abspath(__file__))
     print(f"🔍 Scanning directory: {root_dir}")
 
     for root, dirs, files in os.walk(root_dir):

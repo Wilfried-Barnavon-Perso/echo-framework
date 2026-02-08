@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.3
+# VERSION : 6.4
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
@@ -51,7 +51,8 @@ echo "⚠️  UPGRADE MAJEUR via DOCKER-COMPOSE"
 echo "    Cette opération va :"
 echo "    1. Synchroniser le code et écraser les modifications locales"
 echo "    2. Télécharger les dernières images Docker"
-echo "    3. Redémarrer toute la stack"
+echo "    3. Reconstruire les images Docker locales"
+echo "    4. Redémarrer toute la stack"
 echo "    Branche cible : $TARGET_BRANCH"
 echo ""
 [ -v CONFIRMED_YET ] || { 
@@ -72,10 +73,15 @@ if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then
     exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 
-# --- 2. DOCKER COMPOSE PULL ---
-echo "🐳 [UPGRADE] Téléchargement des images Docker..."
+# --- 2. DOCKER COMPOSE PULL & BUILD ---
+echo "🐳 [UPGRADE] Téléchargement et Construction des images..."
 if [ -f "$COMPOSE_FILE" ]; then
+    # Pull des images distantes (Open WebUI, BunkerWeb...)
     $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull
+    
+    # Build des images locales (Admin Manager)
+    # C'est indispensable pour appliquer les changements de Dockerfile ou de dépendances
+    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" build --quiet
 else
     echo "❌ Critique : stack-echo.yml introuvable."
     exit 1

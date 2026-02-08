@@ -1,0 +1,154 @@
+version: '3.8'
+
+# ==============================================================================
+# ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
+version: '3.8'
+
+# ==============================================================================
+# ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
+# VERSION : 1.17
+# ==============================================================================
+# Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
+# ==============================================================================
+
+# --- BLOC DE CONFIGURATION PARTAGÉ (YAML ANCHOR) ---
+x-bw-config: &bw-config
+  # Backend de base de données (MariaDB)
+  DATABASE_URI: "mysql://bunkerweb:changeme@bw-db:3306/db"
+  
+  # Whitelist API critique
+  API_WHITELIST_IP: "127.0.0.0/8 10.20.30.0/24 172.16.0.0/12 192.168.0.0/16"
+  
+  # Optimisations
+  GUNICORN_TIMEOUT: "60"
+  GUNICORN_WORKERS: "2"
+  USE_BUNKERNET: "no"
+  SEND_ANONYMOUS_REPORT: "no"
+
+services:
+  
+  # 1. BunkerWeb (Frontal HTTP/HTTPS)
+  bunkerweb:
+    image: bunkerity/bunkerweb:1.6.8
+    container_name: bunkerweb
+    restart: unless-stopped
+    ports:
+      - "80:8080"
+      - "443:8443"
+    environment:
+      <<: *bw-config
+      SERVER_NAME: ""
+      MULTISITE: "yes"
+      AUTO_LETS_ENCRYPT: "yes"
+      REDIRECT_HTTP_TO_HTTPS: "yes"
+      USE_GZIP: "yes"
+      USE_BROTLI: "yes"
+      USE_CLIENT_CACHE: "yes"
+      USE_CLAMAV: "no"
+      USE_ANTIBOT: "basic"
+      DISABLE_DEFAULT_SERVER: "yes"
+      USE_MODSECURITY: "yes"
+      MODSEC_CRS_PARANOIA_LEVEL: "1"
+    labels:
+      - "bunkerweb.INSTANCE=yes"
+    networks:
+      - bw-universe
+      - echo-network
+    volumes:
+      - bw-data:/data
+
+  # 2. Autoconf (Contrôleur Dynamique)
+  bw-autoconf:
+    image: bunkerity/bunkerweb-autoconf:1.6.8
+    container_name: bw-autoconf
+    restart: unless-stopped
+    depends_on:
+      - bunkerweb
+      - bw-docker
+      - bw-db
+    environment:
+      <<: *bw-config
+      DOCKER_HOST: "tcp://bw-docker:2375"
+    networks:
+      - bw-universe
+      - bw-docker
+    volumes:
+      - bw-data:/data
+
+  # 3. Scheduler (Tâches de fond)
+  bw-scheduler:
+    image: bunkerity/bunkerweb-scheduler:1.6.8
+    container_name: bw-scheduler
+    restart: unless-stopped
+    depends_on:
+      - bunkerweb
+      - bw-docker
+      - bw-db
+    environment:
+      <<: *bw-config
+      DOCKER_HOST: "tcp://bw-docker:2375"
+      # Indique explicitement l'instance à contacter (évite les erreurs sur 127.0.0.1)
+      BUNKERWEB_INSTANCES: "bunkerweb"
+    networks:
+      - bw-universe
+      - bw-docker
+    volumes:
+      - bw-data:/data
+
+  # 4. Socket Proxy (Sécurité Docker)
+  bw-docker:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: bw-docker
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      CONTAINERS: "1"
+      NETWORKS: "1"
+      SERVICES: "1"
+      INFO: "1"
+    networks:
+      - bw-docker
+
+  # 5. Base de Données (MariaDB)
+  bw-db:
+    image: mariadb:10.11
+    container_name: bw-db
+    restart: unless-stopped
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_DATABASE: "db"
+      MYSQL_USER: "bunkerweb"
+      MYSQL_PASSWORD: "changeme"
+    volumes:
+      - bw-db-data:/var/lib/mysql
+    networks:
+      - bw-universe
+
+# ==============================================================================
+# Réseaux
+# ==============================================================================
+networks:
+  bw-universe:
+    name: bw-universe
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.20.30.0/24
+  bw-docker:
+    name: bw-docker
+  echo-network:
+    name: echo-network
+    external: true
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  bw-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/bunkerweb
+  bw-db-data:

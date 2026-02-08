@@ -22,38 +22,66 @@ services:
     volumes:
       - echo-webui-data:/app/backend/data
       - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
-    # EXPOSITION : Port 3000 ouvert pour le Reverse Proxy distant
+    # EXPOSITION : Port 3000 pour accès direct, Labels pour accès BunkerWeb
     ports:
       - "3000:8080"
     networks:
       - echo-network
     environment:
-      # L'authentification interne reste active pour les utilisateurs de l'IA
       - WEBUI_AUTH=True
-      # Fuseau horaire pour la cohérence des logs
       - TZ=Europe/Paris
-      # URL publique gérée par le proxy externe
-      # - WEBUI_URL=https://www.echo-ai.eu
+    
+    # Intégration BunkerWeb (Activée si la stack BunkerWeb tourne)
+    labels:
+      - "bunkerweb.SERVER_NAME=ui.${ECHO_DOMAIN:-localhost} www.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-webui-core:8080"
+      
+      # Optimisations LLM (Streaming)
+      - "bunkerweb.USE_GZIP=no"
+      - "bunkerweb.REVERSE_PROXY_WS=yes"
+      - "bunkerweb.REVERSE_PROXY_BUFFERING=off"
+      - "bunkerweb.MAX_CLIENT_BODY_SIZE=50m"
+      - "bunkerweb.reverse_proxy_read_timeout=600"
+      - "bunkerweb.reverse_proxy_send_timeout=600"
+      - "bunkerweb.MODSEC_CRS_PARANOIA_LEVEL=1"
       
     command: >
       /bin/bash -c "pip install mgzip && ./start.sh"
 
   # 2. Admin Manager (Dashboard Système ECHO)
   admin-manager:
-    image: python:3.11
+    # Construction locale pour performance et stabilité (Plus de pip install au boot)
+    build:
+      context: /opt/docker-admin-manager
+      dockerfile: Dockerfile
+    image: echo-admin-manager:local
     container_name: echo-admin-manager
     restart: always
     networks:
       - echo-network
     environment:
-      # Fuseau horaire pour l'affichage de l'heure. À adapter à votre localisation.
-      # Exemples: "America/New_York", "Europe/London", "Asia/Tokyo"
       - TZ=Europe/Paris
     extra_hosts:
       - "host.docker.internal:host-gateway"
     
+    # Intégration BunkerWeb
+    labels:
+      - "bunkerweb.SERVER_NAME=am.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
+      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
+      - "bunkerweb.MODSEC_CRS_PARANOIA_LEVEL=2"
+      - "bunkerweb.HEADERS_RESPONSE_NAME_1=X-Robots-Tag"
+      - "bunkerweb.HEADERS_RESPONSE_VALUE_1=noindex, nofollow"
+    
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Montage du code en lecture seule pour mises à jour sans rebuild complet si besoin
       - /opt/docker-admin-manager/server.py:/app/server.py:ro
       - echo-backups:/backups
       - echo-webui-data:/app/backend/data
@@ -61,12 +89,8 @@ services:
       - /opt/ECHO_VERSION:/app/ECHO_VERSION:ro
     
     # EXPOSITION : Port 3001 ouvert pour le Reverse Proxy distant
-    # IMPORTANT : Ce service n'a PAS d'auth intégrée. Le Proxy DOIT le protéger.
     ports:
       - "3001:3001"
-
-    command: >
-      /bin/bash -c "pip install --no-cache-dir flask flask-cors docker psutil paramiko APScheduler schedule httpx && python /app/server.py"
 
   # ============================================================================
   # SECTION 2 : WORKERS INTERNES (BACKEND)

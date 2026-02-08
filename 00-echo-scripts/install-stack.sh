@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.5
+# VERSION : 6.14
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -14,6 +14,8 @@ REPO_ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"
 SOURCE_VERSION_FILE="$REPO_ROOT/VERSION"
 SYSTEM_VERSION_FILE="/opt/ECHO_VERSION"
 COMPOSE_FILE="/opt/config/stack-echo.yml"
+# Nouveau : Fichier Override pour l'intégration optionnelle BunkerWeb
+OVERRIDE_FILE="/opt/config/docker-compose.override.yml"
 
 export COMPOSE_PROJECT_NAME="echo"
 
@@ -145,8 +147,34 @@ done
 echo "🏗️ Go !"
 set -e
 
-# Démarrage final
-$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
+# --- DEMARRAGE UNIFIÉ (INTELLIGENT) ---
+# On détermine si on doit lancer la version sécurisée (BunkerWeb) ou standard
+BW_STACK_FILE="/opt/config/bunkerweb-stack.yml"
+# Le fichier .env est stocké dans les données persistantes pour survivre aux updates
+ENV_FILE="/opt/bunkerweb/.env"
+
+# Condition : Fichiers présents ET domaine configuré
+if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -q "^ECHO_DOMAIN=" "$ENV_FILE"; then
+    echo "🔒 Mode SECURE EDGE détecté. Lancement de l'infrastructure complète (ECHO + BunkerWeb)..."
+    
+    # Lancement unique de toute la stack pour éviter le crash "KeyError: ContainerConfig"
+    # du vieux docker-compose lors des recréations à chaud.
+    $DOCKER_COMPOSE_CMD \
+        --env-file "$ENV_FILE" \
+        -f "$BW_STACK_FILE" \
+        -f "$COMPOSE_FILE" \
+        up -d --remove-orphans
+
+else
+    echo "🔓 Mode STANDARD (Local) détecté."
+    # Démarrage standard
+    if [ -f "$OVERRIDE_FILE" ]; then
+        echo "✨ Intégration détectée (Override)."
+        $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" up -d --remove-orphans
+    else
+        $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
+    fi
+fi
 
 if [ $? -eq 0 ]; then
     echo "✅ Stack Docker Compose active."
@@ -165,10 +193,13 @@ fi
 
 # Nettoyage images orphelines
 docker image prune -f >/dev/null 2>&1
+
 echo "✅ DEPLOIEMENT TERMINÉ."
 echo "-----------------------------------------------------------"
-echo "🌐 APPLICATION ECHO : http://IP-LOCALE:3000"
-echo "🔑 Tapez show-echo-admin pour le mot de passe"
-echo "🔧 CONSOLE ADMIN    : http://IP-LOCALE:3001 (login ssh)"
-echo "⚠️  N'oubliez pas de configurer votre WAF si public !"
+echo "🌐 LOCAL UI    : http://IP-LOCALE:3000"
+echo "🔧 LOCAL ADMIN : http://IP-LOCALE:3001"
+echo "🔑 CREDENTIALS : Tapez 'show-echo-admin'"
+echo "-----------------------------------------------------------"
+echo "🛡️  POUR ACTIVER L'ACCÈS PUBLIC SÉCURISÉ (BunkerWeb) :"
+echo "   Lancez la commande : enable-bunkerweb"
 echo "-----------------------------------------------------------"
