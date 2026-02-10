@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : disable-bunkerweb.sh
-# VERSION : 1.0
+# VERSION : 1.2
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Désactivation de la couche de sécurité BunkerWeb (Secure Edge)
@@ -35,18 +35,22 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then echo "Annulé."; exit 0; f
 # 1. Arrêt complet de la stack unifiée
 echo "🛑 Arrêt de l'infrastructure sécurisée..."
 if [ -f "$ENV_FILE" ]; then
-    $DOCKER_COMPOSE_CMD 
-        --env-file "$ENV_FILE" 
-        -f "$BW_STACK_FILE" 
-        -f "$ECHO_STACK_FILE" 
-        down --remove-orphans
+    $DOCKER_COMPOSE_CMD \
+        --env-file "$ENV_FILE" \
+        -f "$BW_STACK_FILE" \
+        -f "$ECHO_STACK_FILE" \
+        down --remove-orphans || true
 else
     # Fallback si le .env a déjà disparu
-    $DOCKER_COMPOSE_CMD 
-        -f "$BW_STACK_FILE" 
-        -f "$ECHO_STACK_FILE" 
-        down --remove-orphans
+    $DOCKER_COMPOSE_CMD \
+        -f "$BW_STACK_FILE" \
+        -f "$ECHO_STACK_FILE" \
+        down --remove-orphans || true
 fi
+
+# Nettoyage agressif pour éviter le bug KeyError: 'ContainerConfig' de docker-compose 1.29
+echo "🧹 Nettoyage préventif des conteneurs..."
+docker rm -f echo-webui-core echo-admin-manager echo-python-worker echo-browser-agent echo-watchtower bunkerweb bw-autoconf bw-scheduler bw-docker bw-db 2>/dev/null || true
 
 # 2. Désactivation de la configuration (Renommage .env)
 if [ -f "$ENV_FILE" ]; then

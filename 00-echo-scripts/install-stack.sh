@@ -14,8 +14,6 @@ REPO_ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"
 SOURCE_VERSION_FILE="$REPO_ROOT/VERSION"
 SYSTEM_VERSION_FILE="/opt/ECHO_VERSION"
 COMPOSE_FILE="/opt/config/stack-echo.yml"
-# Nouveau : Fichier Override pour l'intégration optionnelle BunkerWeb
-OVERRIDE_FILE="/opt/config/docker-compose.override.yml"
 
 export COMPOSE_PROJECT_NAME="echo"
 
@@ -168,12 +166,7 @@ if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -q "^ECHO_DOMAIN=" "$EN
 else
     echo "🔓 Mode STANDARD (Local) détecté."
     # Démarrage standard
-    if [ -f "$OVERRIDE_FILE" ]; then
-        echo "✨ Intégration détectée (Override)."
-        $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" up -d --remove-orphans
-    else
-        $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
-    fi
+    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
 fi
 
 if [ $? -eq 0 ]; then

@@ -93,6 +93,7 @@ $DOCKER_COMPOSE_CMD -f "$BW_STACK_FILE" -f "$ECHO_STACK_FILE" down --remove-orph
 cd "$CONFIG_DIR" || exit 1
 
 $DOCKER_COMPOSE_CMD \
+    --env-file "$ENV_FILE" \
     -f "bunkerweb-stack.yml" \
     -f "stack-echo.yml" \
     up -d --build --quiet --remove-orphans

@@ -2,7 +2,7 @@
 
 | **Méta-donnée** | **Valeur** | 
 | :--- | :--- | 
-| **Version** | 5.18.01 | 
+| **Version** | 5.19.0 | 
 | **Architecte** | Wilfried BARNAVON | 
 | **Licence** | Apache 2.0 | 
 | **Philosophie** | Souveraineté, Heuristique & Efficience | 

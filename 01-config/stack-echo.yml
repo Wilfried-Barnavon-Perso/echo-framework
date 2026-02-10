@@ -29,6 +29,7 @@ services:
       - echo-network
     environment:
       - WEBUI_AUTH=True
+      - WEBUI_NAME="ECHO AI"
       - TZ=Europe/Paris
     
     # Intégration BunkerWeb (Activée si la stack BunkerWeb tourne)
@@ -47,6 +48,13 @@ services:
       - "bunkerweb.reverse_proxy_read_timeout=600"
       - "bunkerweb.reverse_proxy_send_timeout=600"
       - "bunkerweb.MODSEC_CRS_PARANOIA_LEVEL=1"
+      
+      # Assouplissement WAF pour SPA (Open WebUI charge bcp d'assets simultanés)
+      # On garde la protection mais on augmente les seuils pour tolérer le chargement initial
+      - "bunkerweb.USE_BAD_BEHAVIOR=yes"
+      - "bunkerweb.USE_LIMIT_REQ=yes"
+      - "bunkerweb.LIMIT_REQ_RATE=20r/s"
+      - "bunkerweb.LIMIT_REQ_BURST=100"
       
     command: >
       /bin/bash -c "pip install mgzip && ./start.sh"
@@ -76,6 +84,13 @@ services:
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
       - "bunkerweb.MODSEC_CRS_PARANOIA_LEVEL=2"
+      
+      # Assouplissement WAF pour l'Admin (Burst toléré)
+      - "bunkerweb.USE_BAD_BEHAVIOR=yes"
+      - "bunkerweb.USE_LIMIT_REQ=yes"
+      - "bunkerweb.LIMIT_REQ_RATE=20r/s"
+      - "bunkerweb.LIMIT_REQ_BURST=100"
+      
       - "bunkerweb.HEADERS_RESPONSE_NAME_1=X-Robots-Tag"
       - "bunkerweb.HEADERS_RESPONSE_VALUE_1=noindex, nofollow"
     

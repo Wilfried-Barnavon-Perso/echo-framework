@@ -2,10 +2,6 @@ version: '3.8'
 
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-version: '3.8'
-
-# ==============================================================================
-# ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
 # VERSION : 1.17
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
@@ -99,6 +95,7 @@ services:
   bw-docker:
     image: tecnativa/docker-socket-proxy:latest
     container_name: bw-docker
+    restart: unless-stopped
     user: root
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro

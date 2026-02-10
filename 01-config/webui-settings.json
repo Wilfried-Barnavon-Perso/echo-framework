@@ -1,0 +1,187 @@
+{
+  "version": 0,
+  "ui": {
+    "enable_signup": false,
+    "default_user_role": "pending",
+    "default_group_id": "",
+    "enable_community_sharing": false,
+    "enable_message_rating": false,
+    "enable_user_webhooks": true,
+    "pending_user_overlay_title": "",
+    "pending_user_overlay_content": "",
+    "watermark": "",
+    "prompt_suggestions": [],
+    "banners": []
+  },
+  "webhook_url": "",
+  "auth": {
+    "admin": {
+      "show": true,
+      "email": null
+    },
+    "enable_api_keys": false,
+    "api_key": {
+      "endpoint_restrictions": false,
+      "allowed_endpoints": ""
+    },
+    "jwt_expiry": "4w"
+  },
+  "webui": {
+    "url": ""
+  },
+  "folders": {
+    "enable": true,
+    "max_file_count": ""
+  },
+  "channels": {
+    "enable": false
+  },
+  "memories": {
+    "enable": true
+  },
+  "notes": {
+    "enable": true
+  },
+  "users": {
+    "enable_status": true
+  },
+  "ldap": {
+    "enable": false
+  },
+  "openai": {
+    "enable": false,
+    "api_base_urls": [
+      "https://api.openai.com/v1"
+    ],
+    "api_keys": [
+      ""
+    ],
+    "api_configs": {
+      "0": {}
+    }
+  },
+  "ollama": {
+    "enable": false,
+    "base_urls": [
+      "http://host.docker.internal:11434"
+    ],
+    "api_configs": {
+      "0": {}
+    }
+  },
+  "evaluation": {
+    "arena": {
+      "enable": false,
+      "models": []
+    }
+  },
+  "code_execution": {
+    "enable": false,
+    "engine": "pyodide",
+    "jupyter": {
+      "url": "",
+      "auth": "",
+      "auth_token": "",
+      "auth_password": "",
+      "timeout": 60
+    }
+  },
+  "code_interpreter": {
+    "enable": false,
+    "engine": "pyodide",
+    "prompt_template": "",
+    "jupyter": {
+      "url": "",
+      "auth": "",
+      "auth_token": "",
+      "auth_password": "",
+      "timeout": 60
+    }
+  },
+  "task": {
+    "model": {
+      "default": "",
+      "external": ""
+    },
+    "title": {
+      "enable": true,
+      "prompt_template": ""
+    },
+    "follow_up": {
+      "enable": false,
+      "prompt_template": ""
+    },
+    "image": {
+      "prompt_template": ""
+    },
+    "autocomplete": {
+      "enable": false,
+      "input_max_length": -1
+    },
+    "tags": {
+      "prompt_template": "",
+      "enable": false
+    },
+    "query": {
+      "search": {
+        "enable": false
+      },
+      "retrieval": {
+        "enable": false
+      },
+      "prompt_template": ""
+    },
+    "tools": {
+      "prompt_template": ""
+    },
+    "voice": {
+      "prompt_template": null
+    }
+  },
+  "audio": {
+    "tts": {
+      "openai": {
+        "api_base_url": "https://api.openai.com/v1",
+        "api_key": "",
+        "params": {}
+      },
+      "api_key": "",
+      "engine": "transformers",
+      "model": "",
+      "voice": "",
+      "split_on": "punctuation",
+      "azure": {
+        "speech_region": "",
+        "speech_base_url": "",
+        "speech_output_format": "audio-24khz-160kbitrate-mono-mp3"
+      }
+    },
+    "stt": {
+      "openai": {
+        "api_base_url": "https://api.openai.com/v1",
+        "api_key": ""
+      },
+      "engine": "",
+      "model": "",
+      "supported_content_types": [
+        ""
+      ],
+      "whisper_model": "base",
+      "deepgram": {
+        "api_key": ""
+      },
+      "azure": {
+        "api_key": "",
+        "region": "",
+        "locales": "",
+        "base_url": "",
+        "max_speakers": ""
+      },
+      "mistral": {
+        "api_key": "",
+        "api_base_url": "https://api.mistral.ai/v1",
+        "use_chat_completions": false
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ ADMIN_SECRET_FILE="/opt/.owui-secrets/.owui-admin-secret"
 CONFIG_DIR="/opt/config"
 MODEL_CONFIG_FILE="$CONFIG_DIR/model-config.json"
 SYSTEM_PROMPT_FILE="$CONFIG_DIR/system-prompt.json"
+SETTINGS_FILE="$CONFIG_DIR/webui-settings.json"
 IMAGE_BASE_DIR="/opt/echo-images"
 
 # Comptes
@@ -102,6 +103,35 @@ if [ ! -s "$ADMIN_SECRET_FILE" ]; then
     echo "   ✅ Admin créé. Credentials stockés dans $ADMIN_SECRET_FILE"
 else
     echo "👍 [AUTH] Le compte admin existe déjà, pas de création nécessaire."
+fi
+
+# --- 2-BIS. IMPORT CONFIGURATION GLOBALE (SETTINGS) ---
+if [ -f "$SETTINGS_FILE" ]; then
+    echo "⚙️ [Config] Import des paramètres globaux..."
+    
+    # 1. Encapsulation du JSON dans la structure attendue : { "config": { ... } }
+    # On utilise un fichier temporaire pour éviter les problèmes de ligne de commande
+    TMP_PAYLOAD="/tmp/owui_config_import_$$.json"
+    jq -n --slurpfile content "$SETTINGS_FILE" '{config: $content[0]}' > "$TMP_PAYLOAD"
+
+    # 2. Envoi vers l'endpoint d'import global (Documenté: POST /api/v1/configs/import)
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/import" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "@$TMP_PAYLOAD")
+        
+    rm -f "$TMP_PAYLOAD"
+
+    if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+        echo "   ✅ Configuration globale importée."
+        
+        # 3. Rechargement à chaud (Documenté: GET /api/v1/admin/config/reload)
+        echo "   🔄 Rechargement de la configuration en mémoire..."
+        curl -s -X GET "$OWUI_URL/api/v1/admin/config/reload" \
+            -H "Authorization: Bearer $TOKEN" > /dev/null
+    else
+        echo "   ⚠️  Echec import configuration (HTTP $HTTP_CODE)."
+    fi
 fi
 
 # --- 3. IMPORT RESSOURCES (Legacy) ---
