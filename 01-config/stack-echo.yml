@@ -2,7 +2,7 @@ version: '3.8'
 
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 7.1
+# Version : 7.2
 # ==============================================================================
 # ARCHITECTURE :
 # Ce fichier ne gère QUE la couche applicative "ECHO".
@@ -30,31 +30,65 @@ services:
     environment:
       - WEBUI_AUTH=True
       - WEBUI_NAME="ECHO AI"
+      # - CSRF_TRUSTED_ORIGINS=https://ui.${ECHO_DOMAIN:-localhost}
+      - FORWARDED_ALLOW_IPS=*
       - TZ=Europe/Paris
+      # Configuration Reverse Proxy (Doc Officielle)
+      - "WEBUI_URL=https://ui.${ECHO_DOMAIN:-localhost}"
+      # ATTENTION : Séparateur point-virgule (;) obligatoire pour Open WebUI
+      - "CORS_ALLOW_ORIGIN=https://ui.${ECHO_DOMAIN:-localhost};https://www.${ECHO_DOMAIN:-localhost};http://localhost:3000;http://127.0.0.1:3000;https://${ECHO_DOMAIN:-localhost};${ECHO_DETECTED_ORIGINS}"
+      
+      # Sécurité Cookies (Recommandé Doc Officielle)
+      - "WEBUI_SESSION_COOKIE_SECURE=true"
+      - "WEBUI_AUTH_COOKIE_SECURE=true"
+      - "WEBUI_SESSION_COOKIE_SAME_SITE=lax"
+      - "WEBUI_AUTH_COOKIE_SAME_SITE=lax"
     
-    # Intégration BunkerWeb (Activée si la stack BunkerWeb tourne)
+    # Intégration BunkerWeb
     labels:
-      - "bunkerweb.SERVER_NAME=ui.${ECHO_DOMAIN:-localhost} www.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.SERVER_NAME=ui.${ECHO_DOMAIN:-localhost}"
       - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-webui-core:8080"
       
-      # Optimisations LLM (Streaming)
-      - "bunkerweb.USE_GZIP=no"
-      - "bunkerweb.REVERSE_PROXY_WS=yes"
+      # 1. OPTIMISATIONS STREAMING & UPLOAD
       - "bunkerweb.REVERSE_PROXY_BUFFERING=off"
-      - "bunkerweb.MAX_CLIENT_BODY_SIZE=50m"
-      - "bunkerweb.reverse_proxy_read_timeout=600"
-      - "bunkerweb.reverse_proxy_send_timeout=600"
-      - "bunkerweb.MODSEC_CRS_PARANOIA_LEVEL=1"
+      - "bunkerweb.REVERSE_PROXY_REQUEST_BUFFERING=no"
+      - "bunkerweb.MAX_CLIENT_BODY_SIZE=200m"
+      - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600"
+      - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600"
       
-      # Assouplissement WAF pour SPA (Open WebUI charge bcp d'assets simultanés)
-      # On garde la protection mais on augmente les seuils pour tolérer le chargement initial
-      - "bunkerweb.USE_BAD_BEHAVIOR=yes"
+      # 2. WEBSOCKETS
+      - "bunkerweb.REVERSE_PROXY_WS=yes"
+      
+      # 3. RATE LIMITING (Stratégie SPA Robuste)
       - "bunkerweb.USE_LIMIT_REQ=yes"
+      
+      # Règle 1 : Assets Statiques & Websockets (ILLIMITÉ)
+      # Cible tous les dossiers statiques SvelteKit + WS
+      - "bunkerweb.LIMIT_REQ_URL_1=^/(_app|static|assets|favicon|ws|socket.io).*"
+      - "bunkerweb.LIMIT_REQ_RATE_1=1000r/s"
+      
+      # Règle 2 : API Générale (Standard)
+      - "bunkerweb.LIMIT_REQ_URL=/"
       - "bunkerweb.LIMIT_REQ_RATE=20r/s"
-      - "bunkerweb.LIMIT_REQ_BURST=100"
+      - "bunkerweb.LIMIT_REQ_BURST=50"
+
+      # 4. SECURITE & WAF (Anti-Ban & Faux Positifs)
+      - "bunkerweb.USE_MODSECURITY=yes"
+      - "bunkerweb.MODSEC_CRS_PARANOIA_LEVEL=1"
+      - "bunkerweb.USE_BAD_BEHAVIOR=yes"
+      # EXCLUSION CRITIQUE : Ne pas bannir sur 404 (Assets manquants) ni 429 (Rate Limit)
+      - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=400 401 403 405 444 500 502 503 504"
+      
+      # Tuning ModSecurity pour API (Prompts IA)
+      # Désactivation totale du moteur de règles pour /api/ afin d'éviter les faux positifs sur le contenu des chats (code, urls, etc.)
+      - 'bunkerweb.CUSTOM_CONF_MODSEC_openwebui_tuning=SecRule REQUEST_URI "@beginsWith /api/" "id:10002,phase:1,pass,nolog,ctl:ruleEngine=Off"'
+      
+      # 5. UX & PERFORMANCE
+      - "bunkerweb.USE_BROTLI=yes"
+      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
       
     command: >
       /bin/bash -c "pip install mgzip && ./start.sh"
@@ -98,6 +132,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Montage du code en lecture seule pour mises à jour sans rebuild complet si besoin
       - /opt/docker-admin-manager/server.py:/app/server.py:ro
+      - /opt/echo-images:/app/static:ro
       - echo-backups:/backups
       - echo-webui-data:/app/backend/data
       - /opt/.owui-secrets:/app/secrets:ro
@@ -152,6 +187,24 @@ services:
     environment:
       - TZ=Europe/Paris
     command: --interval 3600 --cleanup
+
+  # 3. Redirector (Redirection Root/WWW -> UI)
+  redirector:
+    image: alpine:latest
+    container_name: echo-redirector
+    restart: always
+    networks:
+      - echo-network
+    command: tail -f /dev/null
+    labels:
+      - "bunkerweb.SERVER_NAME=${ECHO_DOMAIN:-localhost} www.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
+      - "bunkerweb.USE_REVERSE_PROXY=no"
+      # Redirection 301 Permanente vers le sous-domaine UI (Plugin Natif)
+      - "bunkerweb.REDIRECT_TO=https://ui.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.REDIRECT_TO_REQUEST_URI=yes"
+      - "bunkerweb.REDIRECT_TO_STATUS_CODE=301"
+      - "bunkerweb.USE_BAD_BEHAVIOR=no"
 
 # ==============================================================================
 # NETWORKS & VOLUMES

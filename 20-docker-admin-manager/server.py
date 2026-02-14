@@ -2,9 +2,9 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.10 (No Auto-Clear)
+VERSION : 5.11 (Support PWA)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-02-03
+DATE MAJ : 2026-02-14
 
 --- DESCRIPTION ARCHITECTURALE ---
 Ce micro-service Flask agit comme le "Concierge" de l'infrastructure ECHO.
@@ -114,7 +114,7 @@ except ImportError:
 # ==============================================================================
 # SECTION 2 : CONFIGURATION FLASK
 # ==============================================================================
-app = Flask(__name__)
+app = Flask(__name__, static_folder='/app/static')
 app.secret_key = secrets.token_hex(32)
 app.config['JSON_AS_ASCII'] = False
 
@@ -123,6 +123,24 @@ def set_charset(response):
     if response.headers.get('Content-Type', '').startswith('text/html'):
         response.headers['Content-Type'] = 'text/html; charset=utf-8'
     return response
+
+@app.route('/manifest.json')
+def manifest():
+    return jsonify({
+        "name": "ECHO Admin",
+        "short_name": "ECHO Admin",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0d1117",
+        "theme_color": "#0d1117",
+        "icons": [
+            {
+                "src": "/static/logo-echo.png",
+                "sizes": "512x512",
+                "type": "image/png"
+            }
+        ]
+    })
 
 # ==============================================================================
 # SECTION 3 : CONSTANTES & CHEMINS
@@ -724,6 +742,10 @@ HTML_LOGIN = """
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Connexion ECHO Admin</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0d1117">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>body { display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #121212; } .card { width: 100%; max-width: 400px; border: 1px solid #333; }</style>
 </head>
@@ -752,6 +774,10 @@ HTML_DASHBOARD = """
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ECHO Admin Console</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0d1117">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
     <style>

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE) (retour à la 7.26)
-# VERSION : 7.45
+# VERSION : 7.46
 # ==============================================================================
 
 # --- CONFIGURATION ---
@@ -129,6 +129,9 @@ if [ -f "$SETTINGS_FILE" ]; then
         echo "   🔄 Rechargement de la configuration en mémoire..."
         curl -s -X GET "$OWUI_URL/api/v1/admin/config/reload" \
             -H "Authorization: Bearer $TOKEN" > /dev/null
+            
+        echo "   ⏳ Temporisation post-reload (5s)..."
+        sleep 5
     else
         echo "   ⚠️  Echec import configuration (HTTP $HTTP_CODE)."
     fi

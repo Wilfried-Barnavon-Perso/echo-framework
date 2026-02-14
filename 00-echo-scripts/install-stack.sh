@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.14
+# VERSION : 6.15
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -124,9 +124,43 @@ else
     done
 fi
 
+# --- 2.3 Détection Dynamique des Origines CORS (IPs Locales) ---
+echo "🌍 Calcul des origines CORS locales..."
+# Récupération du port hôte exposé par open-webui (ex: "3000:8080" -> "3000")
+# On utilise yq s'il est dispo, sinon grep (moins robuste mais fallback)
+if command -v yq >/dev/null 2>&1; then
+    OWUI_PORT=$(yq '.services.open-webui.ports[0]' "$COMPOSE_FILE" | cut -d: -f1)
+else
+    # Fallback grep simple (suppose format standard "3000:8080")
+    OWUI_PORT=$(grep -A 10 "open-webui:" "$COMPOSE_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
+fi
+
+# Nettoyage si vide (défaut 3000)
+if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi
+
+# Récupération des IPs locales (hostname -I renvoie toutes les IPs séparées par espace)
+HOST_IPS=$(hostname -I 2>/dev/null || ip addr show | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1)
+
+ECHO_DETECTED_ORIGINS=""
+for ip in $HOST_IPS; do
+    # On ajoute http://IP:PORT à la liste avec un séparateur ;
+    # Gestion du séparateur initial pour éviter ";http..."
+    if [ -z "$ECHO_DETECTED_ORIGINS" ]; then
+        ECHO_DETECTED_ORIGINS="http://$ip:$OWUI_PORT"
+    else
+        ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS;http://$ip:$OWUI_PORT"
+    fi
+done
+
+# Export pour docker-compose
+export ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS"
+echo "   ✅ Port détecté : $OWUI_PORT"
+echo "   ✅ Origines IP  : $ECHO_DETECTED_ORIGINS"
+
+
 # --- 3. LANCEMENT DOCKER COMPOSE ---
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."
-$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull --quiet
+# La commande 'pull' est maintenant implicite via l'option --build de la commande 'up'
 
 # --- SUPPRESSION PRÉVENTIVE (HARD CLEAN GLOBAL) ---
 # Nécessaire pour supprimer proprement les conteneurs BW obsolètes
@@ -161,12 +195,12 @@ if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -q "^ECHO_DOMAIN=" "$EN
         --env-file "$ENV_FILE" \
         -f "$BW_STACK_FILE" \
         -f "$COMPOSE_FILE" \
-        up -d --remove-orphans
+        up -d --build --remove-orphans
 
 else
     echo "🔓 Mode STANDARD (Local) détecté."
     # Démarrage standard
-    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
+    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --build --remove-orphans
 fi
 
 if [ $? -eq 0 ]; then

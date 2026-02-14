@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.4
+# VERSION : 6.5
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
@@ -31,7 +31,7 @@ if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
     docker rm $(docker ps -aq) > /dev/null 2>&1 && echo "Conteneurs supprimés"
     docker volume rm $(docker volume ls -q) > /dev/null 2>&1 && echo "Volumes actifs supprimés"
     docker system prune -a --volumes -f > /dev/null 2>&1 && echo "Volumes orphelins et images supprimé"
-    rm -f /opt/config/.owui-setting-secret /opt/config/.owui-admin-secret && echo "Fichiers secrets supprimés"
+    rm -rf /opt/.owui-secrets && echo "Fichiers secrets supprimés"
 fi
 
 # --- SELF RUN (Protection) ---
@@ -50,9 +50,7 @@ if [ -f "$BRANCH_FILE" ]; then TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:spa
 echo "⚠️  UPGRADE MAJEUR via DOCKER-COMPOSE"
 echo "    Cette opération va :"
 echo "    1. Synchroniser le code et écraser les modifications locales"
-echo "    2. Télécharger les dernières images Docker"
-echo "    3. Reconstruire les images Docker locales"
-echo "    4. Redémarrer toute la stack"
+echo "    2. Lancer le redéploiement complet de la stack (pull, build, up)"
 echo "    Branche cible : $TARGET_BRANCH"
 echo ""
 [ -v CONFIRMED_YET ] || { 
@@ -73,19 +71,9 @@ if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then
     exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 
-# --- 2. DOCKER COMPOSE PULL & BUILD ---
-echo "🐳 [UPGRADE] Téléchargement et Construction des images..."
-if [ -f "$COMPOSE_FILE" ]; then
-    # Pull des images distantes (Open WebUI, BunkerWeb...)
-    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" pull
-    
-    # Build des images locales (Admin Manager)
-    # C'est indispensable pour appliquer les changements de Dockerfile ou de dépendances
-    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" build --quiet
-else
-    echo "❌ Critique : stack-echo.yml introuvable."
-    exit 1
-fi
+# --- 2. DELEGATION AU LAUNCHER ---
+# Le téléchargement (pull) et la construction (build) des images sont
+# maintenant gérés par install-stack.sh via la commande 'up --build'.
 
 # --- 3. REBUILD / RELAUNCH ---
 echo "🚀 [UPGRADE] Relance de la stack (via install-stack.sh)..."

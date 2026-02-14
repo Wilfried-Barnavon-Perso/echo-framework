@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 3.9
+# VERSION : 3.10
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -148,4 +148,8 @@ if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then
     exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 
-echo "✅ [SYNC] Code source déployé avec succès."
+# Lecture Version Finale
+FINAL_VERSION="unknown"
+if [ -f "/opt/ECHO_VERSION" ]; then FINAL_VERSION=$(cat "/opt/ECHO_VERSION"); fi
+
+echo "✅ [SYNC] Code source déployé avec succès ($FINAL_VERSION)."
