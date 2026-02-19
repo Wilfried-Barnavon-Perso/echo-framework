@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 140.0
-description: 140.0: Robustesse du flux d'authentification (PKCE idempotence & cleanup).
+version: 142.0
+description: 142.0: Identity Awareness. Placeholder resolution (__PIPE_MODEL_ID__) in context.
 """
 
 # ==============================================================================
@@ -12,13 +12,9 @@ import os
 import sys
 import secrets
 import hashlib
-import random
 import re
 import time
-import uuid
 import base64
-import mimetypes
-import glob
 import codecs
 import asyncio
 import json as std_json 
@@ -38,7 +34,7 @@ except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(
         f"❌ Module critique manquant : '{missing_module}'. "
-        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v136.21+. "
+        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v142+. "
         f"Veuillez l'installer dans l'environnement Python."
     ) from e
 
@@ -57,12 +53,11 @@ GOOGLE_SCOPES = [
     "openid",
 ]
 
-# --- LOGGER DEBUG (NOUVEAU) ---
+# --- LOGGER DEBUG (DOCKER CONSOLE ONLY) ---
 class DebugLogger:
     def __init__(self, data_dir: str, chat_id: str):
         self.log_dir = os.path.join(data_dir, "debug_logs")
         os.makedirs(self.log_dir, exist_ok=True)
-        # Sanitize chat_id
         safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_") if chat_id else "unknown_chat"
         self.log_path = os.path.join(self.log_dir, f"debug_{safe_id}.json")
 
@@ -74,11 +69,12 @@ class DebugLogger:
             "data": payload
         }
         try:
-            # Use NDJSON (JSON Lines) for robustness
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(std_json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:
-            pass # Fail silently to avoid interrupting flow
+        except Exception: pass
+
+    def console(self, msg: str):
+        print(f"[PIPE DEBUG] {msg}", flush=True)
 
 # --- GESTIONNAIRE DECONNEXION PARTAGÉ ---
 _SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
@@ -117,9 +113,6 @@ async def _get_global_client(idle_timeout: int = 300, enable_http2: bool = True)
     _LAST_CLIENT_ACCESS = now
     return _SHARED_ASYNC_CLIENT
 
-def fast_b64encode(data: bytes) -> str:
-    return pybase64.b64encode(data).decode("utf-8")
-
 # Chaîne magique définie par Google pour le bypass de validation stricte
 MAGIC_KEY_SKIP_VALIDATION = "context_engineering_is_the_way_to_go"
 
@@ -133,12 +126,6 @@ try:
     HAS_GOOGLE_LIBS = True
 except ImportError:
     HAS_GOOGLE_LIBS = False
-
-try:
-    from zoneinfo import ZoneInfo
-    HAS_ZONEINFO = True
-except ImportError:
-    HAS_ZONEINFO = False
 
 # ==============================================================================
 # SECTION 2 : CLIENT CONFIG
@@ -154,7 +141,7 @@ OFFICIAL_CLIENT_CONFIG = {
 }
 
 # ==============================================================================
-# SECTION 4 : UNIFIED USER DATA MANAGER
+# SECTION 4 : UNIFIED USER DATA MANAGER (OPTIMIZED CACHE - NO ZLIB)
 # ==============================================================================
 class UserDataManager:
     def __init__(self, data_dir: str, user_id: str, debug_mode: bool = False):
@@ -186,9 +173,7 @@ class UserDataManager:
                 conn.execute("CREATE TABLE IF NOT EXISTS context_stats (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
         except Exception as e:
-            if self.debug_mode:
-                 print(f"DEBUG: Echec init DB pour {self.db_path}: {e}")
-            raise sqlite3.Error(f"Impossible d'initialiser la base de données utilisateur à {self.db_path}. Vérifiez les permissions.") from e
+            if self.debug_mode: print(f"[PIPE ERROR] DB Init {self.db_path}: {e}")
 
     def compute_message_hash(self, block_messages: List[Dict], chat_id: Optional[str]) -> str:
         hasher = hashlib.sha256()
@@ -201,14 +186,7 @@ class UserDataManager:
             if isinstance(content, str):
                 hasher.update(content.strip().encode("utf-8"))
             elif isinstance(content, list):
-                # Utiliser orjson pour une sérialisation canonique et rapide
                 hasher.update(orjson.dumps(content, option=orjson.OPT_SORT_KEYS))
-            
-            files = msg.get("files", [])
-            if files:
-                f_ids = sorted([str(f.get("id") or f.get("file", {}).get("id")) for f in files if f])
-                hasher.update("FILES:".encode("utf-8"))
-                for fid in f_ids: hasher.update(str(fid).encode("utf-8"))
             
             tcs = msg.get("tool_calls", [])
             if tcs:
@@ -241,7 +219,9 @@ class UserDataManager:
                 conn.execute("DELETE FROM auth_data WHERE key = ?", (key,))
         except Exception: pass
 
-    # --- Message Cache Methods ---
+    # --- Message Cache Methods (OPTIMIZED - NO ZLIB) ---
+    # Le cache stocke le résultat JSON prêt à l'emploi pour éviter le re-traitement.
+    # Format : Hash(Block) -> JSON(Parts List + Deferred Text)
     def get_message_cache(self, msg_hash: str) -> Optional[List[Dict]]:
         try:
             with self._get_connection() as conn:
@@ -249,22 +229,22 @@ class UserDataManager:
                 cursor.execute("SELECT data FROM messages WHERE hash = ?", (msg_hash,))
                 row = cursor.fetchone()
                 if row:
-                    return orjson.loads(zlib.decompress(row[0]))
+                    try: return orjson.loads(row[0])
+                    except: return None
         except Exception: pass
         return None
 
     def set_message_cache(self, msg_hash: str, data: List[Dict]):
         try:
-            compressed = zlib.compress(orjson.dumps(data))
+            raw_data = orjson.dumps(data)
             with self._get_connection() as conn:
                 conn.execute("INSERT OR REPLACE INTO messages (hash, data, created_at) VALUES (?, ?, ?)", 
-                             (msg_hash, compressed, int(time.time())))
+                             (msg_hash, raw_data, int(time.time())))
         except Exception: pass
 
-    # --- Signature Methods (Corrected Logic) ---
+    # --- Signature Methods ---
     def save_signature(self, chat_id: str, signature: str, tool_call_id: Optional[str] = None):
         if not chat_id or not signature: return
-        # Utiliser '__latest__' comme ID par défaut pour la signature la plus récente
         effective_tool_call_id = tool_call_id or '__latest__'
         try:
             with self._get_connection() as conn:
@@ -279,13 +259,11 @@ class UserDataManager:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                # 1. Essayer de trouver la signature spécifique à l'ID de l'outil
                 if tool_call_id:
                     cursor.execute("SELECT signature FROM signatures WHERE chat_id = ? AND tool_call_id = ?", (chat_id, tool_call_id))
                     row = cursor.fetchone()
                     if row: return row[0]
                 
-                # 2. Sinon, retourner la dernière signature connue pour ce chat
                 cursor.execute("SELECT signature FROM signatures WHERE chat_id = ? AND tool_call_id = '__latest__'", (chat_id,))
                 row = cursor.fetchone()
                 return row[0] if row else None
@@ -301,7 +279,7 @@ class UserDataManager:
                              (std_json.dumps(stats), int(time.time())))
         except Exception: pass
         
-    # --- Async Wrappers for ThreadPool Execution ---
+    # --- Async Wrappers ---
     async def get_message_cache_async(self, msg_hash: str) -> Optional[List[Dict]]:
         return await asyncio.to_thread(self.get_message_cache, msg_hash)
 
@@ -309,7 +287,7 @@ class UserDataManager:
         await asyncio.to_thread(self.set_message_cache, msg_hash, data)
 
 # ==============================================================================
-# SECTION 3 : SERVICE D'AUTHENTIFICATION (Refactored for DB Storage)
+# SECTION 3 : SERVICE D'AUTHENTIFICATION
 # ==============================================================================
 class AuthService:
     def __init__(self, user_data_manager: UserDataManager):
@@ -325,17 +303,12 @@ class AuthService:
     def get_auth_url(self) -> str:
         if not HAS_GOOGLE_LIBS: return "❌ **Erreur** : Librairies `google-auth` manquantes."
         
-        # --- LOGIQUE D'IDEMPOTENCE POUR PKCE ---
-        # Gère les requêtes multiples systématiques d'OWUI en réutilisant le même challenge.
         pkce_data = self.user_data_manager.get_auth_data('pkce_verifier')
-        
-        if pkce_data and time.time() - pkce_data[1] < 300: # Fenêtre d'idempotence de 5 minutes
-            # Un verifier récent existe, on le réutilise pour être idempotent.
+        if pkce_data and time.time() - pkce_data[1] < 300:
             verifier = pkce_data[0]
             digest = hashlib.sha256(verifier.encode("utf-8")).digest()
             challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
         else:
-            # Pas de verifier récent, on en crée un nouveau.
             verifier, challenge = self._generate_pkce()
             self.user_data_manager.save_auth_data('pkce_verifier', verifier)
 
@@ -346,10 +319,8 @@ class AuthService:
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
-        
         pkce_data = self.user_data_manager.get_auth_data('pkce_verifier')
-        if not pkce_data or time.time() - pkce_data[1] > 600: # 10 min expiry
-             return False, "Session d'authentification expirée (PKCE introuvable ou trop ancien)."
+        if not pkce_data or time.time() - pkce_data[1] > 600: return False, "Session expirée."
 
         verifier = pkce_data[0]
         try:
@@ -360,9 +331,6 @@ class AuthService:
             return True, "Succès."
         except Exception as e: return False, str(e)
         finally:
-            # Toujours supprimer le verifier après une tentative d'échange.
-            # Cela empêche la réutilisation des codes d'autorisation à usage unique
-            # et garantit un état propre pour une nouvelle tentative si nécessaire.
             self.user_data_manager.delete_auth_data('pkce_verifier')
 
     def get_valid_credentials(self):
@@ -382,8 +350,7 @@ class AuthService:
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
         cached_pid_data = self.user_data_manager.get_auth_data('google_project_id')
-        if cached_pid_data and not debug_mode:
-            return cached_pid_data[0], "Cache."
+        if cached_pid_data and not debug_mode: return cached_pid_data[0], "Cache."
 
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": "GeminiCLI/0.24.0"}
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
@@ -399,13 +366,12 @@ class AuthService:
                     return pid, "API OK."
                 else:
                     if cached_pid_data: return cached_pid_data[0], f"API Fail, Fallback to Cache."
-                    return None, f"**JSON inattendu** (Project ID introuvable) : {str(data)[:200]}"
-            else:
-                return None, f"HTTP {resp.status_code}: {resp.text}"
+                    return None, f"**JSON inattendu** : {str(data)[:200]}"
+            else: return None, f"HTTP {resp.status_code}: {resp.text}"
         except Exception as e: return None, str(e)
 
 # ==============================================================================
-# SECTION 5 : ORCHESTRATEUR (LOGIQUE MÉTIER)
+# SECTION 5 : ORCHESTRATEUR (LOGIQUE MÉTIER SIMPLIFIÉE)
 # ==============================================================================
 class Orchestrator:
     def __init__(self, valves, user_valves, data_dir: str, user_id: str):
@@ -413,11 +379,9 @@ class Orchestrator:
         self.user_valves = user_valves
         self.data_dir = data_dir
         self.user_id = user_id
-        self.uploads_dir = "/app/backend/data/uploads" 
         self.tool_map = {}
         self.user_data_manager = UserDataManager(data_dir, user_id, valves.DEBUG_MODE)
-        self.debug_log = []
-        self.files_processed_info = []
+        self.logger = DebugLogger(data_dir, "orchestrator") if valves.DEBUG_MODE else None
 
     def check_for_auth_code(self, messages: List[Dict]) -> Optional[str]:
         if not messages: return None
@@ -432,159 +396,10 @@ class Orchestrator:
         for t in tools:
             if t.get("type") == "function":
                 f = t.get("function", {})
-                funcs.append({"name": f.get("name"), "description": f.get("description", ""), "parameters": f.get("parameters", {"type": "object", "properties": {}})}) # Closing parenthesis was missing
+                funcs.append({"name": f.get("name"), "description": f.get("description", ""), "parameters": f.get("parameters", {"type": "object", "properties": {}})})
         return [{"functionDeclarations": funcs}] if funcs else None
-    
-    def _probe_disk(self) -> str:
-        try:
-            files = os.listdir(self.uploads_dir)
-            return f"✅ Dir exists. {len(files)} files."
-        except Exception as e: return f"❌ Error: {str(e)}"
-
-    def _resolve_local_path(self, provided_path: str, f_id: str, f_name: str) -> Optional[str]:
-        if provided_path and os.path.exists(provided_path):
-            self.debug_log.append(f"✅ Direct: {provided_path}")
-            return provided_path
-        
-        candidates = []
-        if f_name:
-            clean_name = f_name.replace("/", "_").replace("\\", "_")
-            candidates.append(os.path.join(self.uploads_dir, f"{f_id}_{clean_name}"))
-            candidates.append(os.path.join(self.uploads_dir, clean_name))
-            
-        matches = glob.glob(os.path.join(self.uploads_dir, f"{f_id}_*"))
-        candidates.extend(matches)
-
-        for cand in candidates:
-            if os.path.exists(cand):
-                return cand
-
-        try:
-            files_in_dir = os.listdir(self.uploads_dir)
-            self.debug_log.append(f"❌ File Not Found. Looking for ID: {f_id}, Name: {f_name}")
-            self.debug_log.append(f"📂 Content of {self.uploads_dir} ({len(files_in_dir)} files): {str(files_in_dir)[:300]}...")
-        except Exception as e:
-            self.debug_log.append(f"❌ Cannot list {self.uploads_dir}: {str(e)}")
-            
-        return None
-
-    def _parse_mime_valves(self) -> Tuple[Dict[str, str], Dict[str, str]]:
-        txt_map = {}
-        bin_map = {}
-        try:
-            raw_txt = std_json.loads(self.valves.GEMINI_MIME_MAPPING_TXT)
-            for mime, exts in raw_txt.items():
-                for ext in exts:
-                    txt_map[ext.lower().strip()] = mime
-        except Exception as e:
-            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Erreur JSON TXT: {e}")
-
-        try:
-            raw_bin = std_json.loads(self.valves.GEMINI_MIME_MAPPING_BIN)
-            for mime, exts in raw_bin.items():
-                for ext in exts:
-                    bin_map[ext.lower().strip()] = mime
-        except Exception as e:
-            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Erreur JSON BIN: {e}")
-            
-        return txt_map, bin_map
-
-    def _get_file_info(self, f_id: str, f_name: str, owui_path: str, txt_map: Dict, bin_map: Dict) -> Tuple[str, bool, str, Optional[str]]:
-        if not f_id: return "", False, "No ID", None
-        real_path = self._resolve_local_path(owui_path, f_id, f_name)
-        if not real_path: return "", False, f"Not Found: {f_id}", None
-
-        ext = os.path.splitext(real_path)[1].lower()
-        
-        if ext in txt_map:
-            return txt_map[ext], True, "", real_path
-            
-        if ext in bin_map:
-            return bin_map[ext], False, "", real_path
-
-        mime_type, _ = mimetypes.guess_type(real_path)
-        is_text = False
-        if mime_type:
-            if mime_type.startswith("text/") or mime_type in ["application/json", "application/javascript", "application/xml"]:
-                is_text = True
-        else:
-            mime_type = "application/octet-stream"
-
-        return mime_type, is_text, "", real_path
-
-    def _process_single_file_sync(self, f_obj: Dict, txt_map: Dict, bin_map: Dict) -> Tuple[Optional[Dict], Optional[Dict]]:
-        f_real = f_obj.get("file", f_obj)
-        f_id = f_real.get("id")
-        f_name = f_real.get("filename") or f_real.get("meta", {}).get("name")
-        f_path = f_real.get("path")
-
-        mime, is_text, err, real_path = self._get_file_info(f_id, f_name, f_path, txt_map, bin_map)
-
-        if err:
-            if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ {f_name}: {err}")
-            return None, None
-        
-        file_size = os.path.getsize(real_path)
-        info_entry = None
-        part = None
-
-        if is_text:
-            content_str = None
-            try:
-                with open(real_path, "r", encoding="utf-8") as f:
-                    content_str = f.read()
-            except UnicodeDecodeError:
-                try:
-                    with open(real_path, "r", encoding="latin-1") as f:
-                        content_str = f.read()
-                except: pass
-            except Exception: pass
-            
-            if content_str is not None:
-                part = {"text": f"--- FILE: {f_name} ---\n{content_str}\n--- END FILE ---\n"}
-                info_entry = {"name": f_name, "type": "Text (Inline)", "size": file_size, "status": "Embedded 📄"}
-        else:
-            try:
-                with open(real_path, "rb") as f:
-                    raw_data = f.read()
-                    b64_data = fast_b64encode(raw_data)
-                
-                part = {"inlineData": {"mimeType": mime, "data": b64_data}}
-                info_entry = {"name": f_name, "type": f"{mime} (Base64)", "size": file_size, "status": "Embedded 🖼️"}
-                
-                if file_size > (self.valves.MAX_INLINE_SIZE_KB * 1024):
-                    if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ File {f_name} large ({file_size/1024:.0f}KB) but sent as Base64 (No Upload Mode).")
-
-            except Exception as e:
-                if self.valves.DEBUG_MODE: self.debug_log.append(f"⚠️ Base64 Error {f_name}: {str(e)}")
-                part = {"text": f"[Error processing binary file {f_name}: {str(e)}]"}
-
-        return part, info_entry
-
-    async def _process_files_for_message(self, files_raw: List[Dict]) -> List[Dict]:
-        parts = []
-        files_to_process = []
-        seen_ids = set()
-
-        txt_map, bin_map = self._parse_mime_valves()
-        for f in files_raw:
-            fid = f.get("id") or f.get("file", {}).get("id")
-            if fid and fid not in seen_ids:
-                files_to_process.append(f); seen_ids.add(fid)
-
-        tasks = []
-        for f_obj in files_to_process:
-            tasks.append(asyncio.to_thread(self._process_single_file_sync, f_obj, txt_map, bin_map))
-        
-        if tasks:
-            results = await asyncio.gather(*tasks)
-            for part, info in results:
-                if part: parts.append(part)
-                if info: self.files_processed_info.append(info)
-        return parts
 
     async def _process_tool_turn(self, messages: List[Dict], start_idx: int) -> Tuple[List[Dict], int]:
-        """Traite une séquence de messages TOOL (Résultats)."""
         parts = []
         i = start_idx
         while i < len(messages) and messages[i]["role"] == "tool":
@@ -597,19 +412,15 @@ class Orchestrator:
         return parts, i
 
     async def _process_model_turn(self, messages: List[Dict], start_idx: int, chat_id: str) -> Tuple[List[Dict], str, int]:
-        """Traite une séquence de messages MODEL (Assistant). Retourne (parts, deferred_text, new_idx)."""
         parts = []
         deferred_text = ""
         i = start_idx
         
         while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
             sub_m = messages[i]
-            
-            # 1. Text Content
             txt = sub_m.get("content", "")
             if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
             
-            # Safer stripping
             txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL)
             txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL)
             txt = txt.strip()
@@ -619,71 +430,48 @@ class Orchestrator:
                     if deferred_text: deferred_text += "\n\n"
                     deferred_text += txt
             else:
-                # Message texte pur -> Déversement du tampon
                 if deferred_text:
                     if txt: txt = deferred_text + "\n\n" + txt
                     else: txt = deferred_text
                     deferred_text = ""
-                
                 if txt: parts.append({"text": txt})
 
-            # 2. Tool Calls
             if sub_m.get("tool_calls"):
                 for idx, tc in enumerate(sub_m["tool_calls"]) :
                     try:
                         args = orjson.loads(tc["function"]["arguments"])
                         part_data = {"functionCall": {"name": tc["function"]["name"], "args": args}}
-                        
                         if idx == 0:
                             sig = args.pop("_thought_signature", None)
                             call_id = tc.get("id")
                             if not sig and chat_id: sig = self.user_data_manager.get_signature(chat_id, call_id)
                             if not sig: sig = MAGIC_KEY_SKIP_VALIDATION
                             part_data["thoughtSignature"] = sig
-                        
                         parts.append(part_data)
                     except: pass
-            
             i += 1
         
-        # Fallback Signature sur Texte
         if parts and "text" in parts[-1] and not any("functionCall" in p for p in parts) and chat_id:
               latest_sig = self.user_data_manager.get_signature(chat_id)
               if latest_sig: parts[-1]["thoughtSignature"] = latest_sig
         
         if not parts: parts.append({"text": " "})
-        
         return parts, deferred_text, i
 
-    async def _process_user_turn(self, message: Dict, body: Dict, extra_files: Any, is_last_msg: bool) -> List[Dict]:
-        """Traite un message USER unique (Texte + Fichiers)."""
+    async def _process_user_turn(self, message: Dict) -> List[Dict]:
+        """
+        Traite un message USER.
+        N'utilise QUE le JSON déjà préparé par le Filtre (Texte + Inline Data).
+        Plus aucune lecture disque ici (délégué au Filtre v4.13+).
+        """
         parts = []
-        raw_list = []
-        if "files" in message and isinstance(message["files"], list): raw_list.extend(message["files"])
+        content = message.get("content", "")
+
+        if isinstance(content, str) and content.strip():
+            parts.append({"text": content})
         
-        if is_last_msg:
-            if self.valves.DEBUG_MODE:
-                raw_filter = body.get("raw_files_from_filter")
-                if raw_filter:
-                     try: dump = orjson.dumps(raw_filter, option=orjson.OPT_INDENT_2)
-                     except: dump = str(raw_filter).encode()
-                     self.debug_log.append(f"📦 Filter Files: {dump[:200].decode(errors='ignore')}...")
-
-            raw_from_filter = body.get("raw_files_from_filter")
-            if raw_from_filter: raw_list.extend(raw_from_filter)
-            if extra_files:
-                ex = extra_files if isinstance(extra_files, list) else [extra_files]
-                raw_list.extend(ex)
-
-        file_parts = await self._process_files_for_message(raw_list)
-        parts.extend(file_parts)
-
-        content_txt = message.get("content", "")
-        if isinstance(content_txt, str) and content_txt.strip():
-            parts.append({"text": content_txt})
-        
-        elif isinstance(content_txt, list):
-            for item in content_txt:
+        elif isinstance(content, list):
+            for item in content:
                  if item.get("type") == "text": 
                      parts.append({"text": item.get("text", "")})
                  elif item.get("type") == "image_url":
@@ -694,36 +482,50 @@ class Orchestrator:
                              mime_type = header.split(":")[1].split(";")[0]
                              parts.append({"inlineData": {"mimeType": mime_type, "data": b64_data}})
                          except: pass
+                 elif "inline_data" in item:
+                     parts.append({"inlineData": {"mimeType": item["inline_data"]["mime_type"], "data": item["inline_data"]["data"]}})
+
         return parts
 
-    async def prepare_context(self, body: Dict, chat_id: str, auth_token: str, extra_files: Any = None) -> List[Dict]:
-        self.files_processed_info = []
+    async def prepare_context(self, body: Dict, chat_id: str) -> List[Dict]:
         messages = body.get("messages", [])
         
-        # Map tool IDs
+        # --- RESOLUTION PLACEHOLDER IDENTITY AWARENESS ---
+        # Le Filtre v4.17 injecte "__PIPE_MODEL_ID__" dans le contexte.
+        # Le Pipe v142.0 le remplace par la vraie valeur active.
+        active_model = self.user_valves.MODEL_SELECTION
+        
+        for m in messages:
+            if m.get("role") == "user":
+                content = m.get("content", "")
+                if isinstance(content, str):
+                    if "__PIPE_MODEL_ID__" in content:
+                        m["content"] = content.replace("__PIPE_MODEL_ID__", active_model)
+                elif isinstance(content, list):
+                    for part in content:
+                        if part.get("type") == "text":
+                            txt = part.get("text", "")
+                            if "__PIPE_MODEL_ID__" in txt:
+                                part["text"] = txt.replace("__PIPE_MODEL_ID__", active_model)
+        # ------------------------------------------------
+        
         for m in messages:
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
                     if "id" in tc and "function" in tc:
                         self.tool_map[tc["id"]] = tc["function"].get("name")
 
-        last_user_idx = -1
-        for idx in range(len(messages) - 1, -1, -1):
-            if messages[idx]["role"] == "user": last_user_idx = idx; break
-
         final_contents = []
         deferred_text = ""
-        
         cache_valid = True
-        
         i = 0
+        
         while i < len(messages):
             if messages[i]["role"] == "system": 
                 i+=1; continue
             
             block_msgs = []
             block_type = messages[i]["role"]
-            start_i = i
             
             if block_type == "tool":
                 while i < len(messages) and messages[i]["role"] == "tool":
@@ -740,27 +542,24 @@ class Orchestrator:
             
             block_hash = self.user_data_manager.compute_message_hash(current_hash_input, chat_id)
             
+            if self.logger: self.logger.console(f"Hash Computation ({len(block_msgs)} msgs): {block_hash[:8]}...")
+
             cached_data = None
             if cache_valid:
                 cached_data = await self.user_data_manager.get_message_cache_async(block_hash)
             
             if cached_data:
-                if self.valves.DEBUG_MODE: self.debug_log.append(f"🟢 [CACHE HIT] {block_hash[:8]}...")
-                
+                if self.logger: self.logger.console(f"CACHE HIT: {block_hash[:8]}")
                 parts = cached_data.get("parts", [])
                 new_deferred = cached_data.get("deferred_text", "")
                 
                 if block_type == "tool":
-                    if final_contents and final_contents[-1]["role"] == "user":
-                        final_contents[-1]["parts"].extend(parts)
-                    else:
-                        final_contents.append({"role": "user", "parts": parts})
-                
+                    if final_contents and final_contents[-1]["role"] == "user": final_contents[-1]["parts"].extend(parts)
+                    else: final_contents.append({"role": "user", "parts": parts})
                 elif block_type in ["assistant", "model"]:
                     if deferred_text and new_deferred: deferred_text += "\n\n" + new_deferred
                     elif new_deferred: deferred_text = new_deferred
                     final_contents.append({"role": "model", "parts": parts})
-                
                 else: # User
                     if deferred_text:
                         if final_contents:
@@ -771,23 +570,15 @@ class Orchestrator:
                     if parts: final_contents.append({"role": "user", "parts": parts})
 
             else:
-                if self.valves.DEBUG_MODE: self.debug_log.append(f"🔴 [CACHE MISS] {block_hash[:8] if block_hash else 'NoHash'}...")
+                if self.logger: self.logger.console(f"CACHE MISS: {block_hash[:8]}")
                 cache_valid = False
-                
                 processed_parts = []
                 new_deferred = ""
                 
                 if block_type == "tool":
-                    for tm in block_msgs:
-                        tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
-                        try: val = orjson.loads(tm.get("content", "{{}}"))
-                        except: val = {"result": str(tm.get("content", ""))}
-                        processed_parts.append({"functionResponse": {"name": tool_name, "response": val}})
-                    
-                    if final_contents and final_contents[-1]["role"] == "user":
-                        final_contents[-1]["parts"].extend(processed_parts)
-                    else:
-                        final_contents.append({"role": "user", "parts": processed_parts})
+                    processed_parts, _ = await self._process_tool_turn(block_msgs, 0)
+                    if final_contents and final_contents[-1]["role"] == "user": final_contents[-1]["parts"].extend(processed_parts)
+                    else: final_contents.append({"role": "user", "parts": processed_parts})
 
                 elif block_type in ["assistant", "model"]:
                     processed_parts, new_deferred, _ = await self._process_model_turn(block_msgs, 0, chat_id)
@@ -804,8 +595,7 @@ class Orchestrator:
                         deferred_text = ""
                     
                     m = block_msgs[0]
-                    is_last = (start_i == last_user_idx)
-                    processed_parts = await self._process_user_turn(m, body, extra_files, is_last)
+                    processed_parts = await self._process_user_turn(m)
                     if processed_parts: final_contents.append({"role": "user", "parts": processed_parts})
 
                 if block_hash:
@@ -813,14 +603,6 @@ class Orchestrator:
                     await self.user_data_manager.set_message_cache_async(block_hash, data_to_cache)
         
         return final_contents
-
-    def estimate_tokens(self, contents: List[Dict]) -> int:
-        total = 0
-        for item in contents:
-            for part in item.get("parts", []):
-                if "text" in part: total += len(part["text"]) // 4
-                elif "inlineData" in part: total += 1120
-        return total
 
 # ==============================================================================
 # SECTION 6 : ADAPTER STANDARD
@@ -831,9 +613,7 @@ class GeminiAdapter:
 
     def build(self, project_id, contents, system_instr, temp, max_tok, think_level, model_id, tools=None):
         gen_config = {"temperature": temp, "maxOutputTokens": max_tok}
-        
         gen_config["thinkingConfig"] = {"includeThoughts": True, "thinkingLevel": think_level.lower()}
-        
         payload = {
             "model": model_id, "project": project_id,
             "request": {"systemInstruction": system_instr, "contents": contents, "generationConfig": gen_config}
@@ -845,18 +625,16 @@ class GeminiAdapter:
 # SECTION 7 : STREAM PROCESSOR
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, context_window: int, user_data_manager: UserDataManager, debug=False, chat_id=None, initial_label="Réponse", file_stats=None, logger=None):
+    def __init__(self, context_window: int, user_data_manager: UserDataManager, debug=False, chat_id=None, initial_label="Réponse", logger=None):
         self.debug = debug
         self.chat_id = chat_id
         self.user_data_manager = user_data_manager
         self.context_window = context_window
         self.initial_label = initial_label
         self.usage_stats = None
-        self.file_stats = file_stats or []
         self.current_sig = None
         self.logger = logger
         self.pending_tool_calls = {}
-        self.has_tool_call = False
         self.full_response_accumulator = []
         self.response_id = None
 
@@ -865,25 +643,21 @@ class StreamProcessor:
             self.usage_stats = data["response"]["usageMetadata"]
         elif "usageMetadata" in data:
             self.usage_stats = data["usageMetadata"]
-        
         if not self.response_id:
             if "responseId" in data: self.response_id = data["responseId"]
             elif "response" in data and "id" in data["response"]: self.response_id = data["response"]["id"]
-        
         if self.usage_stats:
             self.user_data_manager.save_context_stats(self.usage_stats)
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False
         tool_index = 0
-        step_label = self.initial_label
         ct = response.headers.get("content-type", "")
         if "application/json" in ct:
             yield f"⚠️ API Error: {await response.aread()}"
             return
 
         decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
-        
         async for chunk in response.aiter_bytes():
             try:
                 buffer = decoder.decode(chunk, final=False)
@@ -895,100 +669,52 @@ class StreamProcessor:
                         data = orjson.loads(line[6:])
                         self._update_stats(data)
                         self.full_response_accumulator.append(data)
-
                         cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
                         if cand and cand[0].get("content"):
                             for part in cand[0]["content"]["parts"]:
                                 txt = part.get("text", "")
                                 func_call = part.get("functionCall")
-
                                 if "thoughtSignature" in part:
                                     self.current_sig = part["thoughtSignature"]
-                                    if self.chat_id:
-                                        self.user_data_manager.save_signature(self.chat_id, self.current_sig)
-
+                                    if self.chat_id: self.user_data_manager.save_signature(self.chat_id, self.current_sig)
                                 if part.get("thought"):
                                     if not in_think: yield "<think>\n"; in_think = True
                                     yield txt
-                                
                                 elif func_call:
-                                    self.has_tool_call = True
-                                    step_label = f"Pré-{func_call.get('name', 'Action')}"
                                     if in_think: yield "\n</think>\n"; in_think = False
-                                    
                                     tc_id = f"call_{secrets.token_hex(8)}"
-                                    self.pending_tool_calls[tc_id] = True
-                                    
-                                    if self.current_sig and self.chat_id:
-                                        self.user_data_manager.save_signature(self.chat_id, self.current_sig, tc_id)
-
+                                    if self.current_sig and self.chat_id: self.user_data_manager.save_signature(self.chat_id, self.current_sig, tc_id)
                                     args = func_call.get("args", {})
                                     if self.current_sig: args["_thought_signature"] = self.current_sig
-                                    
-                                    yield {
-                                        "choices": [{
-                                            "index": 0, "delta": {
-                                                "tool_calls": [{
-                                                    "index": tool_index, 
-                                                    "id": tc_id,
-                                                    "type": "function", 
-                                                    "function": {"name": func_call["name"], "arguments": orjson.dumps(args).decode()}
-                                                }]
-                                            }
-                                        }]
-                                    }
+                                    yield {"choices": [{"index": 0, "delta": {"tool_calls": [{"index": tool_index, "id": tc_id, "type": "function", "function": {"name": func_call["name"], "arguments": orjson.dumps(args).decode()}}]}}]}
                                     tool_index += 1
-
                                 elif "text" in part:
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     yield txt
             except: pass
         
         remaining = decoder.decode(b"", final=True)
-        buffer += remaining
-        if buffer and buffer.strip().startswith("data:"):
-            try:
-                line = buffer.strip()
-                data = orjson.loads(line[6:])
-                self._update_stats(data) 
-                self.full_response_accumulator.append(data)
-            except: pass
+        if remaining.strip().startswith("data:"):
+             try: self._update_stats(orjson.loads(remaining.strip()[6:]))
+             except: pass
 
         if in_think: yield "\n</think>\n"
-
-        if self.logger:
-            self.logger.log("api_response", self.full_response_accumulator, metadata={"response_id": self.response_id})
-
+        if self.logger: self.logger.log("api_response", self.full_response_accumulator, metadata={"response_id": self.response_id})
         if self.usage_stats:
-            yield {
-                "usage": {
-                    "prompt_tokens": self.usage_stats.get("promptTokenCount", 0),
-                    "completion_tokens": self.usage_stats.get("candidatesTokenCount", 0),
-                    "total_tokens": self.usage_stats.get("totalTokenCount", 0)
-                }
-            }
+            yield {"usage": {"prompt_tokens": self.usage_stats.get("promptTokenCount", 0), "completion_tokens": self.usage_stats.get("candidatesTokenCount", 0), "total_tokens": self.usage_stats.get("totalTokenCount", 0)}}
 
 # ==============================================================================
-# SECTION 8 : LE PIPE (POINT D'ENTRÉE)
+# SECTION 8 : LE PIPE
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
-        GEMINI_MIME_MAPPING_TXT: str = Field(
-            default='{"text/plain": [".bat",".c",".conf",".cpp",".cs",".css",".csv",".dockerfile",".editorconfig",".env",".gitignore",".go",".h",".hpp",".ini",".java",".js",".json",".kt",".lua",".md",".php",".pl",".ps1",".py",".r",".rb",".rs",".sh",".sql",".swift",".toml",".ts",".txt",".vb",".xml",".yaml",".yml","dockerfile"], "text/html": [".html", ".htm"]}',
-            description="📄 Mapping Texte (JSON)"
-        )
-        GEMINI_MIME_MAPPING_BIN: str = Field(
-            default='{"video/x-flv": [".flv"], "video/quicktime": [".mov"], "video/mpeg": [".mpeg", ".mpg", ".mpe"], "video/mpegps": [".mpegps"], "video/mp4": [".mp4"], "video/webm": [".webm"], "video/wmv": [".wmv"], "video/3gpp": [".3gpp"], "audio/aac": [".aac"], "audio/flac": [".flac"], "audio/mp3": [".mp3"], "audio/m4a": [".m4a", ".mpa"], "audio/mpga": [".mpga"], "audio/opus": [".opus"], "audio/pcm": [".pcm"], "audio/wav": [".wav"], "image/png": [".png"], "image/jpeg": [".jpeg", ".jpg"], "image/webp": [".webp"], "image/heic": [".heic"], "image/heif": [".heif"], "application/pdf": [".pdf"]}',
-            description="🖼️ Mapping Binaire (JSON)"
-        )
         API_RETRY_COUNT: int = Field(default=3, description="🔄 Nombre d'essais API")
         HTTP_CLIENT_TIMEOUT: int = Field(default=300, description="⏱️ Autokill Client HTTP (sec)")
         ENABLE_HTTP2: bool = Field(default=True, description="🚀 Activer HTTP/2")
         ENABLE_UPSTREAM_GZIP: bool = Field(default=True, description="📦 Activer Compression GZIP")
         GZIP_LEVEL: int = Field(default=1, description="🎚️ Niveau GZIP (1-9)")
         GZIP_THRESHOLD_KB: int = Field(default=10240, description="🚫 Désactiver GZIP si > Ko")
-        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE")
-        MAX_INLINE_SIZE_KB: int = Field(default=10240, description="Seuil d'alerte taille (Ko)")
+        DEBUG_MODE: bool = Field(default=False, description="🐞 DEBUG MODE (Docker Logs Only)")
         MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
 
     class UserValves(BaseModel):
@@ -1004,24 +730,20 @@ class Pipe:
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         if not __user__ or "id" not in __user__:
-             yield "❌ **Erreur Critique** : Impossible d'identifier l'utilisateur (Objet `__user__` manquant ou incomplet)."; return
+             yield "❌ **Erreur Critique** : Impossible d'identifier l'utilisateur."; return
 
         user_id = __user__["id"]
-        user_valves = __user__.get("valves")
-        if not user_valves: user_valves = self.UserValves()
+        user_valves = __user__.get("valves") or self.UserValves()
 
         try:
             orch = Orchestrator(self.valves, user_valves, self.data_dir, user_id)
             auth = AuthService(orch.user_data_manager)
         except Exception as e:
+            print(f"[PIPE CRITICAL] Init Error: {e}", flush=True)
             yield f"❌ **Erreur Critique Initialisation** : {e}"; return
 
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         
-        debug_logger = None
-        if self.valves.DEBUG_MODE:
-            debug_logger = DebugLogger(self.data_dir, chat_id)
-
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = auth.exchange_code(ac)
@@ -1031,30 +753,17 @@ class Pipe:
         if not creds: yield auth.get_auth_url(); return
         pid, debug_log = auth.get_project_id(creds, self.valves.DEBUG_MODE)
         
-        if not pid: 
-             yield f"❌ **Erreur Projet**\n{debug_log}"; return
+        if not pid: yield f"❌ **Erreur Projet**\n{debug_log}"; return
 
         tools = orch.convert_owui_tools(body.get("tools"))
-        files = body.get("files") or kwargs.get("__files__")
         
         system_messages = [m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]
         client_context = "\n".join(system_messages) if system_messages else None
         
-        context = await orch.prepare_context(body, chat_id, creds.token, extra_files=files)
+        context = await orch.prepare_context(body, chat_id)
         system_instruction = {"parts": [{"text": client_context or "Tu es un assistant IA expert."}]}
 
-        if self.valves.DEBUG_MODE and orch.debug_log:
-             for log in orch.debug_log: yield f"{log}\n"
-        
-        initial_label = "Réponse"
-        if body.get("messages") and body.get("messages")[-1].get("role") == "tool":
-            initial_label = "Fenêtre de Contexte"
-
-        selected_thinking_level = "high"
-        if user_valves.MODEL_SELECTION == "gemini-3-pro-preview":
-            selected_thinking_level = user_valves.PRO_THINKING_LEVEL
-        elif user_valves.MODEL_SELECTION == "gemini-3-flash-preview":
-            selected_thinking_level = user_valves.FLASH_THINKING_LEVEL
+        selected_thinking_level = user_valves.PRO_THINKING_LEVEL if user_valves.MODEL_SELECTION == "gemini-3-pro-preview" else user_valves.FLASH_THINKING_LEVEL
 
         adapter = GeminiAdapter(auth.base_url)
         req = adapter.build(
@@ -1064,17 +773,12 @@ class Pipe:
         )
         req["headers"]["Authorization"] = f"Bearer {creds.token}"
 
-        if self.valves.DEBUG_MODE and debug_logger:
-            debug_logger.log("api_request", orjson.loads(orjson.dumps(req['json'])))
-        
         proc = StreamProcessor(
             self.valves.MAX_CONTEXT_SIZE,
             orch.user_data_manager,
             self.valves.DEBUG_MODE, 
             chat_id,
-            initial_label=initial_label,
-            file_stats=orch.files_processed_info,
-            logger=debug_logger
+            logger=orch.logger
         )
 
         try:
@@ -1091,23 +795,11 @@ class Pipe:
                         if r.status_code == 200:
                             async for token in proc.process(r): yield token
                             break
-                        
                         if r.status_code in [429, 500, 502, 503, 504]:
-                             err_text = (await r.aread()).decode(errors='ignore')
-                             yield f"⚠️ Erreur {r.status_code} ({err_text[:100]}...), tentative {attempt+1}/{self.valves.API_RETRY_COUNT}...\n"
-                             await asyncio.sleep(1 * (attempt + 1))
-                             continue
-                        
+                             await asyncio.sleep(1 * (attempt + 1)); continue
                         err_text = (await r.aread()).decode(errors='ignore')
-                        if self.valves.DEBUG_MODE:
-                            yield f"🔥 **API CRASH {r.status_code}**\nURL: `{req['url']}`\nResponse:\n```json\n{err_text}\n```"
-                        else:
-                            yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"
-                        return
-
+                        yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"; return
                 except Exception as e:
-                    if attempt < self.valves.API_RETRY_COUNT - 1:
-                         yield f"⚠️ Erreur Réseau: {str(e)}, tentative {attempt+1}/{self.valves.API_RETRY_COUNT}...\n"
-                         await asyncio.sleep(1)
-                    else: raise e 
+                    if attempt == self.valves.API_RETRY_COUNT - 1: raise e 
+                    await asyncio.sleep(1)
         except Exception as e: yield f"🔥 **CRASH** : `{str(e)}`"

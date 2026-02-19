@@ -114,6 +114,7 @@ sync_resource "$SRC_DIR/12-owui-tools"         "/opt/owui-tools"
 sync_resource "$SRC_DIR/10-owui-pipes"         "/opt/owui-pipes"
 sync_resource "$SRC_DIR/13-owui-actions"       "/opt/owui-actions"
 sync_resource "$SRC_DIR/11-owui-filters"       "/opt/owui-filters"
+sync_resource "$SRC_DIR/14-owui-libs"          "/opt/owui-libs"
 sync_resource "$SRC_DIR/_assets/images"        "/opt/echo-images"
 
 # Synchro Fichiers (Code Python Containers)

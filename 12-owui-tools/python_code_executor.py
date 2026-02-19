@@ -1,8 +1,8 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 5.0
-description: 5.0: Exécution de code Python via micro-service worker.
+version: 5.1
+description: 5.1: Exécution de code Python via micro-service worker. Sandbox Clarification.
 """
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
@@ -21,14 +21,15 @@ class Tools:
 
     def python_code_executor(self, code: str, __user__: dict = {}) -> str:
         """
-        Exécute du code Python arbitraire dans un conteneur sécurisé (Worker).
+        Exécute du code Python arbitraire dans un environnement isolé (Sandbox éphémère).
+        N'a pas d'accès persistant aux fichiers de l'utilisateur.
         L'identité de l'utilisateur est transmise au worker pour audit/isolation.
         """
         # Récupération de l'ID utilisateur (défaut 'anonymous' si appel système)
         user_id = __user__.get("id", "anonymous")
         
         if self.valves.debug_mode:
-            print(f"[PY-EXEC v137.0] User={user_id} CodeLen={len(code)}")
+            print(f"[PY-EXEC v5.1] User={user_id} CodeLen={len(code)}")
 
         try:
             payload = {"code": code, "timeout": self.valves.execution_timeout}

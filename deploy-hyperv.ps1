@@ -1,8 +1,8 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# SCRIPT VERSION : 5.21.0
-# DATE           : 2026-02-14
+# SCRIPT VERSION : 5.23.9
+# DATE           : 2026-02-18
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -56,7 +56,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.21.0"
+$SCRIPT_VERSION = "5.23.9"
 $ScriptDir = $PSScriptRoot
 $VersionFile = "$ScriptDir\VERSION"
 

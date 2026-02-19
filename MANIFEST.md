@@ -2,11 +2,11 @@
 
 | **Méta-donnée** | **Valeur** | 
 | :--- | :--- | 
-| **Version** | 5.19.0 | 
+| **Version** | 5.23.9 | 
 | **Architecte** | Wilfried BARNAVON | 
 | **Licence** | Apache 2.0 | 
 | **Philosophie** | Souveraineté, Heuristique & Efficience | 
-| **Dernière MàJ** | 2026-02-08 | 
+| **Dernière MàJ** | 2026-02-18 | 
 
 ## 1. Genèse & Intention
 
@@ -97,3 +97,6 @@ En concevant ECHO v5, je m'engage sur trois principes :
 
 *Distribué sous licence Apache 2.0.*
 *Pour l'implémentation technique, se référer au `README.md`.*
+
+---
+*Version actuelle : v5.23.9 (Stable)*

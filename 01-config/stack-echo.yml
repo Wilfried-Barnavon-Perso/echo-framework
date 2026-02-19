@@ -2,7 +2,7 @@ version: '3.8'
 
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 7.2
+# Version : 7.3
 # ==============================================================================
 # ARCHITECTURE :
 # Ce fichier ne gère QUE la couche applicative "ECHO".
@@ -22,6 +22,7 @@ services:
     volumes:
       - echo-webui-data:/app/backend/data
       - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
+      - /opt/owui-libs:/app/backend/echo_libs:ro
     # EXPOSITION : Port 3000 pour accès direct, Labels pour accès BunkerWeb
     ports:
       - "3000:8080"
@@ -34,7 +35,9 @@ services:
       - FORWARDED_ALLOW_IPS=*
       - TZ=Europe/Paris
       # Configuration Reverse Proxy (Doc Officielle)
-      - "WEBUI_URL=https://ui.${ECHO_DOMAIN:-localhost}"
+      # - "WEBUI_URL=https://ui.${ECHO_DOMAIN:-localhost}"
+      # Configuration vide car multi accès possible (privée, public www/ui ...). Sécurité par CORS_ALLOW_ORIGIN
+      - "WEBUI_URL="
       # ATTENTION : Séparateur point-virgule (;) obligatoire pour Open WebUI
       - "CORS_ALLOW_ORIGIN=https://ui.${ECHO_DOMAIN:-localhost};https://www.${ECHO_DOMAIN:-localhost};http://localhost:3000;http://127.0.0.1:3000;https://${ECHO_DOMAIN:-localhost};${ECHO_DETECTED_ORIGINS}"
       
@@ -70,10 +73,15 @@ services:
       - "bunkerweb.LIMIT_REQ_URL_1=^/(_app|static|assets|favicon|ws|socket.io).*"
       - "bunkerweb.LIMIT_REQ_RATE_1=1000r/s"
       
-      # Règle 2 : API Générale (Standard)
+      # Règle 2 : API Backend (Strict)
+      - "bunkerweb.LIMIT_REQ_URL_2=^/(api|auth|ollama|openai).*"
+      - "bunkerweb.LIMIT_REQ_RATE_2=20r/s"
+      - "bunkerweb.LIMIT_REQ_BURST_2=50"
+      
+      # Règle 3 : Navigation Frontend (Souple)
       - "bunkerweb.LIMIT_REQ_URL=/"
-      - "bunkerweb.LIMIT_REQ_RATE=20r/s"
-      - "bunkerweb.LIMIT_REQ_BURST=50"
+      - "bunkerweb.LIMIT_REQ_RATE=50r/s"
+      - "bunkerweb.LIMIT_REQ_BURST=100"
 
       # 4. SECURITE & WAF (Anti-Ban & Faux Positifs)
       - "bunkerweb.USE_MODSECURITY=yes"
@@ -89,7 +97,8 @@ services:
       # 5. UX & PERFORMANCE
       - "bunkerweb.USE_BROTLI=yes"
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
-      
+      # Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
+      - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
     command: >
       /bin/bash -c "pip install mgzip && ./start.sh"
 
@@ -188,6 +197,49 @@ services:
       - TZ=Europe/Paris
     command: --interval 3600 --cleanup
 
+  # ============================================================================
+  # SECTION 3 : INFRASTRUCTURE RAG & AUTOMATISATION
+  # ============================================================================
+
+  # 4. Qdrant (Base Vectorielle)
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    container_name: echo-qdrant
+    restart: always
+    networks:
+      - echo-network
+    ports:
+      - "6333:6333"
+    volumes:
+      - echo-qdrant-data:/qdrant/storage
+    environment:
+      - TZ=Europe/Paris
+
+  # 5. n8n (Orchestrateur Low-Code)
+  n8n:
+    image: n8nio/n8n:1.77.1
+    container_name: echo-n8n
+    restart: always
+    networks:
+      - echo-network
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=${ECHO_DOMAIN:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://n8n.${ECHO_DOMAIN:-localhost}/
+      - GENERIC_TIMEZONE=Europe/Paris
+      - TZ=Europe/Paris
+    volumes:
+      - echo-n8n-data:/home/node/.n8n
+    labels:
+      - "bunkerweb.SERVER_NAME=n8n.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-n8n:5678"
+      - "bunkerweb.USE_WEBSOCKETS=yes"
+
   # 3. Redirector (Redirection Root/WWW -> UI)
   redirector:
     image: alpine:latest
@@ -223,4 +275,8 @@ volumes:
   echo-browser-data:
     external: true
   echo-backups:
+    external: true
+  echo-qdrant-data:
+    external: true
+  echo-n8n-data:
     external: true
