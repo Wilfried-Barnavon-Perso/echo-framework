@@ -1,14 +1,14 @@
 """
 title: ECHO Universal API Client
 author: Wilfried BARNAVON
-version: 1.0
-description: Permet d'effectuer des appels API REST (GET, POST, etc.) vers des services externes.
+version: 1.1
+description: 1.1: Standardized signature with __event_emitter__ and __event_call__.
 """
 
 import requests
 import json
 from pydantic import BaseModel, Field
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 class Tools:
     class Valves(BaseModel):
@@ -17,7 +17,15 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
-    def call_api(self, url: str, method: str = "GET", headers: Optional[Dict] = None, body: Optional[Dict] = None) -> str:
+    def call_api(
+        self, 
+        url: str, 
+        method: str = "GET", 
+        headers: Optional[Dict] = None, 
+        body: Optional[Dict] = None,
+        __event_emitter__: Any = None,
+        __event_call__: Any = None
+    ) -> str:
         """
         Effectue un appel API HTTP.
         :param url: L'URL cible.

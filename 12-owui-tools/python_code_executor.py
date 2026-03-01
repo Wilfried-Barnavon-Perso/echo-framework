@@ -1,14 +1,23 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 5.1
-description: 5.1: Exécution de code Python via micro-service worker. Sandbox Clarification.
+version: 5.2
+description: 5.2: Standardized signature with __event_emitter__ and __event_call__.
 """
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
 
-import requests, json
+import requests, json, sys
 from pydantic import BaseModel, Field
+from typing import Any
+
+sys.path.append("/app/backend/echo_libs")
+try:
+    from echo_utils import EchoEvents
+except ImportError:
+    class EchoEvents:
+        def __init__(self, e=None, c=None): pass
+        async def status(self, d, done=False): pass
 
 class Tools:
     class Valves(BaseModel):
@@ -19,17 +28,23 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
-    def python_code_executor(self, code: str, __user__: dict = {}) -> str:
+    async def python_code_executor(
+        self, 
+        code: str, 
+        __user__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None
+    ) -> str:
         """
         Exécute du code Python arbitraire dans un environnement isolé (Sandbox éphémère).
         N'a pas d'accès persistant aux fichiers de l'utilisateur.
         L'identité de l'utilisateur est transmise au worker pour audit/isolation.
         """
+        events = EchoEvents(__event_emitter__, __event_call__)
         # Récupération de l'ID utilisateur (défaut 'anonymous' si appel système)
         user_id = __user__.get("id", "anonymous")
         
-        if self.valves.debug_mode:
-            print(f"[PY-EXEC v5.1] User={user_id} CodeLen={len(code)}")
+        await events.status(f"⚡ ECHO Sandbox : Exécution...")
 
         try:
             payload = {"code": code, "timeout": self.valves.execution_timeout}
@@ -50,6 +65,7 @@ class Tools:
             
             if response.status_code == 200:
                 data = response.json()
+                await events.status(f"⚡ Exécution terminée.", done=True)
                 if data.get("status") == "success": 
                     return json.dumps({"status": "success", "output": data.get("output", "Aucune sortie.")}, ensure_ascii=False)
                 else: 

@@ -1,309 +1,356 @@
-from flask import Flask, request, jsonify # pyright: ignore[reportMissingImports]
-from DrissionPage import WebPage, ChromiumOptions # pyright: ignore[reportMissingImports]
-try:
-    from DrissionPage.common import Keys # Mapping des touches spéciales
-except ImportError:
-    # Fallback pour compatibilité versions
-    class Keys:
-        ENTER = '\n'
-        TAB = '\t'
-        ESCAPE = '\uE00C'
-        BACKSPACE = '\b'
-        DELETE = '\uE017'
-        UP = '\uE013'
-        DOWN = '\uE015'
-        LEFT = '\uE012'
-        RIGHT = '\uE014'
-        SPACE = ' '
-
-import threading
-import time
-import uuid
+import asyncio
+import base64
 import os
+import secrets
 import shutil
+import time
+import random
+import uuid
 import logging
-import traceback
-import html2text # Hard requirement (Docker rebuild needed)
+import json
+import html2text
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from playwright.async_api import async_playwright
 
 """
 ================================================================================
-MODULE : ECHO BROWSER AGENT API
-VERSION : 3.3 (Debug Fixes)
+MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
+VERSION : 8.2 (IDENTITY UNIFICATION & DNS SUTURE)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-01-20
+DATE MAJ : 2026-02-25
 
-CHANGELOG 3.3 :
-- FIX: Action 'key' (press_key) fonctionnelle (Mapping Keys + action.type).
-- PERF: Optimisation du script 'highlight' (Évite querySelectorAll('*')).
-- Vision Augmentée v2.1.
+CHANGELOG 8.2 :
+- FEAT: Unified Session Identity - Strictly uses provided session_id (chat_id).
+- FEAT: DNS Suture - Added --disable-async-dns to Chromium for stable resolution.
+- FEAT: Immediate Heartbeat - session.last_activity updated at request start.
+- FIX: Corrected tablet viewport default size.
 ================================================================================
 """
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-app = Flask(__name__)
 
-IDLE_TIMEOUT = 900 # 15 min
-MAX_SESSIONS = 10
+# --- ETAT GLOBAL ---
+IDLE_TIMEOUT_DEFAULT = 3600 # 1 heure de survie par defaut
+MAX_SESSIONS = 20
+SESSIONS = {}
+SESSIONS_LOCK = asyncio.Lock()
 
-# Mapping des touches supportées par l'outil
-KEY_MAP = {
-    "ENTER": Keys.ENTER,
-    "TAB": Keys.TAB,
-    "ESCAPE": Keys.ESCAPE,
-    "BACKSPACE": Keys.BACKSPACE,
-    "DELETE": Keys.DELETE,
-    "UP": Keys.UP,
-    "DOWN": Keys.DOWN,
-    "LEFT": Keys.LEFT,
-    "RIGHT": Keys.RIGHT,
-    "SPACE": Keys.SPACE
-}
+class GlobalState:
+    playwright = None
+    browser = None
 
-# --- JS VISION AUGMENTÉE V2.1 (Optimisé) ---
-# Correction : Ne scanne plus '*' pour éviter le freeze sur les grosses pages (Wikipedia)
+state = GlobalState()
+
 HIGHLIGHT_JS = """
 (function() {
-    document.querySelectorAll('.echo-marker').forEach(e => e.remove());
-    
-    // 1. Éléments interactifs standards (Rapide)
-    const stdSelectors = 'a, button, input, textarea, select, [role="button"], [onclick]';
-    let items = Array.from(document.querySelectorAll(stdSelectors));
-    
-    // 2. Éléments structurels potentiellement cliquables (Optimisé)
-    // On cible uniquement les conteneurs courants au lieu de tout le DOM
-    const structSelectors = 'div, span, li, tr, td, i, svg, img, h1, h2, h3, h4, h5, h6, p';
-    let structural = Array.from(document.querySelectorAll(structSelectors));
-    
-    // Filtre strict sur le curseur pointer
-    structural.forEach(el => {
-        if (!items.includes(el)) {
-            const style = window.getComputedStyle(el);
-            if (style.cursor === 'pointer') {
+    try {
+        document.querySelectorAll('.echo-marker').forEach(e => e.remove());
+        const selectors = 'a, button, input, textarea, select, [role="button"], [role="link"], [onclick]';
+        let items = Array.from(document.querySelectorAll(selectors));
+        document.querySelectorAll('div, span, li, i, svg, img').forEach(el => {
+            if (!items.includes(el) && window.getComputedStyle(el).cursor === 'pointer') {
                 items.push(el);
             }
-        }
-    });
-    
-    let count = 0;
-    
-    items.forEach(el => {
-        let rect = el.getBoundingClientRect();
-        // Filtre de visibilité et taille
-        if (rect.width > 5 && rect.height > 5 && window.getComputedStyle(el).visibility !== 'hidden' && window.getComputedStyle(el).display !== 'none') {
-            
-            let marker = document.createElement('div');
-            marker.className = 'echo-marker';
-            marker.innerText = count;
-            
-            // Style High Contrast
-            marker.style.position = 'absolute';
-            marker.style.left = (rect.left + window.scrollX) + 'px';
-            marker.style.top = (rect.top + window.scrollY) + 'px';
-            marker.style.zIndex = '2147483647';
-            marker.style.backgroundColor = '#ff0000';
-            marker.style.color = '#ffffff';
-            marker.style.fontWeight = 'bold';
-            marker.style.fontSize = '12px';
-            marker.style.padding = '1px 4px';
-            marker.style.borderRadius = '2px';
-            marker.style.pointerEvents = 'none';
-            marker.style.boxShadow = '0 2px 4px rgba(0,0,0,0.5)';
-            
-            document.body.appendChild(marker);
-            
-            el.setAttribute('data-echo-index', count);
-            count++;
-        }
-    });
-    return count;
+        });
+        let elements = [];
+        let count = 0;
+        items.forEach(el => {
+            let rect = el.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                let text = (el.innerText || el.ariaLabel || el.placeholder || "").trim().substring(0, 50);
+                elements.push({
+                    id: count, tag: el.tagName.toLowerCase(), text: text,
+                    x: Math.round(rect.left), y: Math.round(rect.top)
+                });
+                let marker = document.createElement('div');
+                marker.className = 'echo-marker';
+                marker.innerText = count;
+                marker.style.cssText = `
+                    position: absolute; left: ${rect.left + window.scrollX}px; top: ${rect.top + window.scrollY}px;
+                    z-index: 2147483647; background-color: #ff0000; color: #ffffff; font-weight: bold;
+                    font-size: 10px; padding: 1px 2px; border: 1px solid white; border-radius: 2px;
+                    pointer-events: none;
+                `;
+                document.body.appendChild(marker);
+                el.setAttribute('data-echo-index', count);
+                count++;
+            }
+        });
+        return { "count": count, "elements": elements }; 
+    } catch (e) { return { "count": 0, "elements": [], "error": e.toString() }; }
 })();
 """
 
-# Config HTML2Text pour une lecture propre
 h2t = html2text.HTML2Text()
 h2t.ignore_links = False
 h2t.ignore_images = True
-h2t.body_width = 0 # No wrap
-
-SESSIONS = {}
-SESSIONS_LOCK = threading.Lock()
+h2t.body_width = 0 
 
 class BrowserSession:
-    def __init__(self, user_id):
-        self.session_id = str(uuid.uuid4())
+    def __init__(self, sid, user_id, context, idle_timeout):
+        self.sid = sid
         self.user_id = user_id
-        self.page = None
-        self.lock = threading.Lock()
+        self.context = context
+        self.idle_timeout = idle_timeout
+        self.pages = [] # Liste des onglets ouverts
+        self.active_page_index = 0
         self.last_activity = time.time()
-        self.profile_dir = f"/app/data/profiles/{self.session_id}"
+
+    async def get_active_page(self):
+        # Refresh activity on every access
+        self.last_activity = time.time()
+        if not self.pages:
+            p = await self.context.new_page()
+            # Default Tablet Viewport
+            await p.set_viewport_size({"width": 820, "height": 1180}) 
+            self.pages.append(p)
         
-        self.co = ChromiumOptions()
-        self.co.headless(True)
-        self.co.set_argument('--no-sandbox')
-        self.co.set_argument('--disable-gpu')
-        self.co.set_argument('--window-size=1920,1080') 
-        self.co.set_argument('--disable-dev-shm-usage')
-        self.co.set_paths(browser_path='/usr/bin/chromium')
-        self.co.set_user_data_path(self.profile_dir)
-
-    def get_page(self, mode='s'):
-        with self.lock:
-            self.last_activity = time.time()
-            if self.page is None:
-                logger.info(f"[{self.session_id}] 🌱 Init Page (Mode {mode})")
-                self.page = WebPage(mode=mode, chromium_options=self.co)
+        if self.active_page_index >= len(self.pages):
+            self.active_page_index = len(self.pages) - 1
             
-            if mode == 'd' and self.page.mode == 's':
-                logger.info(f"[{self.session_id}] 🔥 Upgrade to Driver")
-                self.page.change_mode('d')
-            return self.page
+        target = self.pages[self.active_page_index]
+        if target.is_closed():
+            self.pages.pop(self.active_page_index)
+            return await self.get_active_page()
+            
+        return target
 
-    def close(self):
-        with self.lock:
-            if self.page:
-                try: self.page.quit()
-                except: pass
-            if os.path.exists(self.profile_dir):
-                try: shutil.rmtree(self.profile_dir)
-                except: pass
+    async def mouse_shake(self, page):
+        """Macro de presence."""
+        try:
+            for _ in range(3):
+                x, y = random.randint(100, 700), random.randint(100, 1000)
+                await page.mouse.move(x, y, steps=5)
+                await asyncio.sleep(0.05)
+        except: pass
 
-def cleanup_loop():
+    async def close(self):
+        try:
+            await self.context.close()
+            logger.info(f"[{self.sid}] 🗑️ BrowserContext closed.")
+        except Exception as e:
+            logger.error(f"[{self.sid}] ⚠️ Error closing context: {e}")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("🚀 Initializing Global Playwright Async Instance (v6 ENGINE)...")
+    state.playwright = await async_playwright().start()
+    state.browser = await state.playwright.chromium.launch(
+        headless=True,
+        args=[
+            "--no-sandbox", 
+            "--disable-gpu", 
+            "--disable-dev-shm-usage",
+            "--disable-async-dns" # Souverainete DNS: utilise le resolver systeme
+        ]
+    )
+    cleanup_task = asyncio.create_task(session_cleanup_loop())
+    yield
+    cleanup_task.cancel()
+    await state.browser.close()
+    await state.playwright.stop()
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+async def session_cleanup_loop():
     while True:
-        time.sleep(60)
+        await asyncio.sleep(60)
         now = time.time()
-        with SESSIONS_LOCK:
-            to_remove = [sid for sid, s in SESSIONS.items() if (now - s.last_activity) > IDLE_TIMEOUT]
+        async with SESSIONS_LOCK:
+            to_remove = [sid for sid, s in SESSIONS.items() if now - s.last_activity > s.idle_timeout]
             for sid in to_remove:
-                logger.info(f"⏰ Timeout Session {sid}")
-                stop_session_internal(sid)
+                logger.info(f"[{sid}] ⏰ Cleaning idle session")
+                session = SESSIONS.pop(sid)
+                await session.close()
 
-def stop_session_internal(session_id):
-    if session_id in SESSIONS:
-        SESSIONS.pop(session_id).close()
-        return True
-    return False
-
-threading.Thread(target=cleanup_loop, daemon=True).start()
-
-@app.route('/start_session', methods=['POST'])
-def start_session():
+@app.post("/start_session")
+async def start_session(request: Request):
+    data = await request.json()
     user_id = request.headers.get('X-OpenWebUI-User-Id', 'anonymous')
-    with SESSIONS_LOCK:
-        if len(SESSIONS) >= MAX_SESSIONS: return jsonify({"error": "Busy (Max sessions)"}), 503
-        session = BrowserSession(user_id)
-        SESSIONS[session.session_id] = session
-    return jsonify({"session_id": session.session_id})
+    sid = data.get("session_id") # C'est le chat_id permanent
+    idle_timeout = data.get("idle_timeout", IDLE_TIMEOUT_DEFAULT)
+    mode = data.get("mode", "mobile")
 
-@app.route('/stop_session', methods=['POST'])
-def stop_session():
-    return jsonify({"status": "closed"}) if stop_session_internal(request.json.get("session_id")) else ("", 404)
+    if not sid:
+        return {"status": "error", "message": "ERREUR_TECHNIQUE : Identifiant de chat manquant."}
 
-@app.route('/action', methods=['POST'])
-def browser_action():
-    data = request.json
-    sid = data.get("session_id")
-    action = data.get("action")
-    params = data.get("params", {})
-    user_id = request.headers.get('X-OpenWebUI-User-Id', 'anonymous')
+    async with SESSIONS_LOCK:
+        if sid in SESSIONS:
+            SESSIONS[sid].last_activity = time.time()
+            return {"session_id": sid, "status": "success", "message": "Session deja active."}
+        
+        if len(SESSIONS) >= MAX_SESSIONS:
+            return {"status": "error", "message": "ERREUR_CAPACITE : Le worker est sature."}
+        
+        # Configuration Contextuelle (Tablette / Desktop)
+        if mode == "mobile":
+            ctx_args = {
+                "user_agent": "Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+                "viewport": {"width": 820, "height": 1180},
+                "device_scale_factor": 2,
+                "is_mobile": True,
+                "has_touch": True
+            }
+        else:
+            ctx_args = {
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "viewport": {"width": 1280, "height": 800},
+                "device_scale_factor": 1
+            }
+
+        context = await state.browser.new_context(**ctx_args)
+        session = BrowserSession(sid, user_id, context, idle_timeout)
+        SESSIONS[sid] = session
+        logger.info(f"[{sid}] 🆕 v6 Session created (Mode: {mode} | Tablet Profile Active)")
+        return {"session_id": sid, "status": "success"}
+
+@app.post("/action")
+async def browser_action(request: Request):
+    data = await request.json()
+    sid, action, params = data.get("session_id"), data.get("action"), data.get("params", {})
     
     session = SESSIONS.get(sid)
-    if not session: return jsonify({"error": "Session invalid"}), 404
+    if not session:
+        return {"status": "error", "error_type": "SESSION_NOT_FOUND", "message": "RESTART_REQUIRED"}
     
-    # SÉCURITÉ : Vérification du propriétaire
-    if session.user_id != 'anonymous' and user_id != 'anonymous' and session.user_id != user_id:
-        logger.warning(f"⛔ Access Denied: {user_id} tried to use session of {session.user_id}")
-        return jsonify({"error": "Access Denied"}), 403
-    
+    # Heartbeat immediat
+    session.last_activity = time.time()
+
     try:
-        needs_driver = action in ['click', 'type', 'screenshot', 'highlight', 'key', 'scroll', 'evaluate']
-        page = session.get_page(mode='d' if needs_driver else 's')
-        
+        page = await session.get_active_page()
         result = {"status": "success"}
 
         if action == "goto":
-            page.get(params.get("url"))
-            result["title"] = page.title
-            
+            url = params.get("url")
+            if not url: return {"status": "error", "message": "ERREUR_PARAMETRE : URL manquante."}
+            logger.info(f"[{sid}] 🌐 Goto: {url}")
+            await page.goto(url, wait_until="networkidle", timeout=60000)
+            result["title"], result["url"] = await page.title(), page.url
+
         elif action == "click":
             selector = params.get("selector")
-            ele = None
+            if not selector: return {"status": "error", "message": "ERREUR_PARAMETRE : Cible manquante."}
             
-            # Stratégie 1: Index Vision
-            if selector.replace("#", "").isdigit():
-                try: ele = page.ele(f'@data-echo-index={selector.replace("#", "")}')
-                except: pass
+            logger.info(f"[{sid}] 🖱️ Click: {selector}")
+            is_index = selector.replace("#", "").isdigit()
+            real_selector = f'[data-echo-index="{selector.replace("#", "")}"]' if is_index else selector
             
-            # Stratégie 2: Sélecteur CSS/XPath Direct
-            if not ele:
-                try: ele = page.ele(selector)
-                except: pass
-            
-            # Stratégie 3: Texte approximatif
-            if not ele:
-                try: ele = page.ele(f'text:{selector}')
-                except: pass
-                
-            if ele:
-                try: ele.scroll.to_see(center=True)
-                except: pass
-                time.sleep(0.2)
-                ele.click()
-                result["message"] = "Clic effectué"
-            else:
-                return jsonify({"error": f"Element '{selector}' introuvable"}), 404
-
-        elif action == "type":
-            ele = page.ele(params.get("selector"))
-            if ele:
-                ele.scroll.to_see()
-                ele.input(params.get("text"))
-            else:
-                page.actions.type(params.get("text"))
-        
-        elif action == "key":
-            # FIX: Mapping et utilisation correcte de .type() au lieu de .key()
-            key_str = params.get("key", "ENTER").upper()
-            key = KEY_MAP.get(key_str, key_str)
             try:
-                # Utilisation de actions.type qui gère les codes touches
-                page.actions.type(key)
-                result["message"] = f"Touche {key_str} pressée"
-            except Exception as e:
-                logger.error(f"Key Error: {e}")
-                return jsonify({"error": f"Erreur touche: {e}"}), 500
-
-        elif action == "read":
-            html = page.html
-            try:
-                content = h2t.handle(html)
+                await session.mouse_shake(page)
+                if is_index:
+                    await page.locator(real_selector).first.dispatch_event("click")
+                else:
+                    await page.click(real_selector, timeout=15000)
             except:
-                content = page.ele('body').text
-                
-            result["content"] = content[:20000] 
+                await page.locator(real_selector).first.dispatch_event("click")
+            
+            await page.wait_for_load_state("networkidle", timeout=15000)
             result["url"] = page.url
 
+        elif action == "type":
+            selector, text = params.get("selector"), params.get("text")
+            if not selector or text is None: return {"status": "error", "message": "ERREUR_PARAMETRE : Cible ou texte manquant."}
+            
+            logger.info(f"[{sid}] ⌨️ Type: {text}")
+            await page.fill(selector, text, timeout=30000)
+            result["url"] = page.url
+
+        elif action == "press":
+            key = params.get("key", "Enter")
+            logger.info(f"[{sid}] ⌨️ Press: {key}")
+            await page.keyboard.press(key)
+            await page.wait_for_load_state("networkidle", timeout=30000)
+            result["url"] = page.url
+
+        elif action == "hover":
+            selector = params.get("selector")
+            if not selector: return {"status": "error", "message": "ERREUR_PARAMETRE : Cible manquante."}
+            
+            logger.info(f"[{sid}] 🖱️ Hover: {selector}")
+            real_selector = f'[data-echo-index="{selector.replace("#", "")}"]' if selector.replace("#", "").isdigit() else selector
+            await page.hover(real_selector, timeout=10000)
+            result["url"] = page.url
+
+        elif action == "scroll":
+            direction = params.get("direction", "down")
+            logger.info(f"[{sid}] 📜 Scroll: {direction}")
+            if direction == "down": await page.evaluate("window.scrollBy(0, window.innerHeight * 0.8)")
+            elif direction == "up": await page.evaluate("window.scrollBy(0, -window.innerHeight * 0.8)")
+            elif direction == "top": await page.evaluate("window.scrollTo(0, 0)")
+            elif direction == "bottom": await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(0.5)
+            result["url"] = page.url
+
+        elif action == "read":
+            logger.info(f"[{sid}] 📖 Read Markdown")
+            content = await page.content()
+            result["content"] = h2t.handle(content)[:30000]
+            result["url"] = page.url
+
+        elif action == "read_html":
+            logger.info(f"[{sid}] 📖 Read HTML Source")
+            result["content"] = await page.content()
+            result["url"] = page.url
+
+        elif action == "tab_new":
+            url = params.get("url", "about:blank")
+            logger.info(f"[{sid}] 📑 New Tab: {url}")
+            new_p = await session.context.new_page()
+            await new_p.goto(url, wait_until="networkidle")
+            session.pages.append(new_p)
+            session.active_page_index = len(session.pages) - 1
+            result["message"] = f"Nouvel onglet ouvert (Index: {session.active_page_index})"
+
+        elif action == "tab_switch":
+            idx = int(params.get("index", 0))
+            if 0 <= idx < len(session.pages):
+                session.active_page_index = idx
+                result["message"] = f"Basculé sur l'onglet {idx}"
+            else:
+                return {"status": "error", "message": f"Index d'onglet invalide : {idx}"}
+
+        elif action == "tab_close":
+            if len(session.pages) > 1:
+                p = session.pages.pop(session.active_page_index)
+                await p.close()
+                session.active_page_index = max(0, session.active_page_index - 1)
+                result["message"] = "Onglet fermé."
+            else:
+                return {"status": "error", "message": "Impossible de fermer le dernier onglet restant."}
+
         elif action == "highlight":
-            count = page.run_js(HIGHLIGHT_JS)
-            result["count"] = count
-
-        elif action == "screenshot":
-            path = f"/app/data/screenshot_{sid}.png"
-            page.get_screenshot(path=path, full_page=True)
-            result["path"] = path
-
-        elif action == "evaluate":
-            res = page.run_js(params.get("script"))
-            result["result"] = res
+            logger.info(f"[{sid}] 📸 Visual Highlight Flow (Tab {session.active_page_index})")
+            await page.bring_to_front()
+            await session.mouse_shake(page)
+            vision_data = await page.evaluate(HIGHLIGHT_JS)
+            result.update({"metadata": vision_data.get("elements", []), "count": vision_data.get("count", 0), "url": page.url, "tab_index": session.active_page_index, "tab_count": len(session.pages)})
+            
+            # Stabilisation Paint
+            await asyncio.sleep(0.5)
+            capture_id = secrets.token_hex(4)
+            temp_path = f"/app/data/cap_{sid}_{capture_id}.png"
+            
+            await page.screenshot(path=temp_path)
+            if os.path.exists(temp_path):
+                with open(temp_path, "rb") as f:
+                    result["screenshot_b64"] = base64.b64encode(f.read()).decode()
+                try: os.remove(temp_path)
+                except: pass
+            else: result["screenshot_b64"] = ""
 
         else:
-            return jsonify({"error": "Action inconnue"}), 400
+            return {"status": "error", "message": f"Action '{action}' non supportée."}
+
+        return result
 
     except Exception as e:
-        logger.error(f"Error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-    return jsonify(result)
+        logger.error(f"[{sid}] 💥 Action Error: {str(e)}")
+        return {"status": "error", "message": f"ERREUR_CRITIQUE : {str(e)}"}
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5002, threaded=True)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=5002)

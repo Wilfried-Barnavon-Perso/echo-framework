@@ -1,20 +1,23 @@
 """
 title: ECHO Memory Search
 author: ECHO Framework
-version: 1.2
-description: Recherche RAG Qdrant via librairie partagée.
+version: 1.4
+description: 1.4: Using restored get_google_token for RAG embedding.
 """
 
 import sys
 import requests
-from typing import Optional
+from typing import Optional, Any
 
 sys.path.append("/app/backend/echo_libs")
 try:
-    from echo_utils import EchoAuth
+    from echo_utils import EchoAuth, EchoEvents
 except ImportError:
     class EchoAuth:
         def get_google_token(self, uid): return None
+    class EchoEvents:
+        def __init__(self, e=None, c=None): pass
+        async def status(self, d, done=False): pass
 
 QDRANT_URL = "http://echo-qdrant:6333"
 COLLECTION = "echo_knowledge"
@@ -23,8 +26,17 @@ class Tools:
     def __init__(self):
         self.auth = EchoAuth()
 
-    async def search_knowledge_base(self, query: str, __user__: dict = {}) -> str:
+    async def search_knowledge_base(
+        self, 
+        query: str, 
+        __user__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None
+    ) -> str:
+        events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__: return "❌ Erreur User."
+
+        await events.status(f"📚 ECHO Memory : {query}...")
         token = self.auth.get_google_token(__user__["id"])
         if not token: return "❌ Erreur Auth."
 

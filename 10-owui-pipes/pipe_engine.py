@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 142.0
-description: 142.0: Identity Awareness. Placeholder resolution (__PIPE_MODEL_ID__) in context.
+version: 148.4
+description: 148.4: Strict Architecture (No defensive code).
 """
 
 # ==============================================================================
@@ -14,14 +14,21 @@ import secrets
 import hashlib
 import re
 import time
+import random
 import base64
 import codecs
 import asyncio
 import json as std_json 
 import sqlite3
 import zlib
+import gzip
 from datetime import datetime
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
+
+# Importations ECHO Strictes (Volume Docker)
+sys.path.append("/app/backend/echo_libs")
+from echo_utils import EchoEvents
+from echo_constants import *
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
 try:
@@ -32,26 +39,11 @@ try:
     from pydantic import BaseModel, Field
 except ImportError as e:
     missing_module = e.name or "inconnu"
-    raise ImportError(
-        f"❌ Module critique manquant : '{missing_module}'. "
-        f"Ce module est requis pour le fonctionnement du script Gemini Pro Unified v142+. "
-        f"Veuillez l'installer dans l'environnement Python."
-    ) from e
+    raise ImportError(f"❌ Module critique manquant : '{missing_module}'.") from e
 
-# --- CONSTANTES DE CONFIGURATION GOOGLE ---
-GOOGLE_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "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"
-GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
-GOOGLE_REDIRECT_URI = "https://codeassist.google.com/authcode"
-GOOGLE_API_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal"
-
-GOOGLE_SCOPES = [
-    "https://www.googleapis.com/auth/cloud-platform",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "openid",
-]
+# ==============================================================================
+# SECTION 1 : DÉPENDANCES OPTIONNELLES
+# ==============================================================================
 
 # --- LOGGER DEBUG (DOCKER CONSOLE ONLY) ---
 class DebugLogger:
@@ -144,8 +136,8 @@ OFFICIAL_CLIENT_CONFIG = {
 # SECTION 4 : UNIFIED USER DATA MANAGER (OPTIMIZED CACHE - NO ZLIB)
 # ==============================================================================
 class UserDataManager:
-    def __init__(self, data_dir: str, user_id: str, debug_mode: bool = False):
-        self.db_dir = os.path.join(data_dir, "user_dbs")
+    def __init__(self, data_dir: str = ECHO_BASE_DATA_DIR, user_id: str = "system", debug_mode: bool = False):
+        self.db_dir = ECHO_USER_DBS_DIR
         self.debug_mode = debug_mode
         os.makedirs(self.db_dir, exist_ok=True)
         safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
@@ -315,7 +307,17 @@ class AuthService:
         flow = Flow.from_client_config(OFFICIAL_CLIENT_CONFIG, scopes=GOOGLE_SCOPES, autogenerate_code_verifier=False)
         flow.redirect_uri = GOOGLE_REDIRECT_URI
         url, _ = flow.authorization_url(prompt="consent", access_type="offline", code_challenge=challenge, code_challenge_method="S256")
-        return f"### 🔐 Authentification Requise\n\n1. **[Cliquez ici]({url})**\n2. Connectez-vous.\n3. Copiez le code `4/...`.\n4. **Collez-le ici**."
+        
+        return (
+            "## 🔐 ECHO Secure Gateway\n\n"
+            "L'accès au moteur **Gemini** nécessite une synchronisation avec votre environnement Google Cloud.\n\n"
+            "> 1. 🔗 **[Cliquez ici pour générer votre jeton d'accès](" + url + ")**\n"
+            "> 2. 📋 Copiez le code fourni (format `4/...`)\n"
+            "> 3. ⌨️ Collez-le simplement dans ce chat.\n\n"
+            "---\n"
+            "*Sécurité : Votre jeton est traité en mémoire vive et n'est jamais stocké dans l'historique de discussion.*\n"
+            "[ECHO_SESSION_AUTH_PENDING]"
+        )
 
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         if not HAS_GOOGLE_LIBS: return False, "Libs manquantes."
@@ -352,10 +354,10 @@ class AuthService:
         cached_pid_data = self.user_data_manager.get_auth_data('google_project_id')
         if cached_pid_data and not debug_mode: return cached_pid_data[0], "Cache."
 
-        headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": "GeminiCLI/0.24.0"}
+        headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
         try:
-            resp = httpx.post(f"{self.base_url}:loadCodeAssist", headers=headers, json=payload, timeout=10)
+            resp = httpx.post(f"{GOOGLE_API_BASE_URL}:loadCodeAssist", headers=headers, json=payload, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
                 raw = data.get("cloudaicompanionProject")
@@ -405,9 +407,18 @@ class Orchestrator:
         while i < len(messages) and messages[i]["role"] == "tool":
             tm = messages[i]
             tool_name = self.tool_map.get(tm.get("tool_call_id"), "unknown_tool")
-            try: val = orjson.loads(tm.get("content", "{{}}"))
-            except: val = {"result": str(tm.get("content", ""))}
+            content_raw = tm.get("content", "{}")
+            
+            # --- TRANSMISSION PURE JSON ---
+            # Le Pipe transmet désormais la donnée brute (JSON ou Texte)
+            # sans tenter d'extraire des commentaires HTML (v147.3+)
+            try: 
+                val = orjson.loads(content_raw)
+            except: 
+                val = {"result": str(content_raw)}
             parts.append({"functionResponse": {"name": tool_name, "response": val}})
+            # ------------------------------
+            
             i += 1
         return parts, i
 
@@ -491,8 +502,6 @@ class Orchestrator:
         messages = body.get("messages", [])
         
         # --- RESOLUTION PLACEHOLDER IDENTITY AWARENESS ---
-        # Le Filtre v4.17 injecte "__PIPE_MODEL_ID__" dans le contexte.
-        # Le Pipe v142.0 le remplace par la vraie valeur active.
         active_model = self.user_valves.MODEL_SELECTION
         
         for m in messages:
@@ -507,7 +516,17 @@ class Orchestrator:
                             txt = part.get("text", "")
                             if "__PIPE_MODEL_ID__" in txt:
                                 part["text"] = txt.replace("__PIPE_MODEL_ID__", active_model)
-        # ------------------------------------------------
+        
+        # --- PURGE DE LA MÉMOIRE MULTIMODALE BINAIRE (ECHO STABILIZATION) ---
+        # On ne garde pas les inlineData binaires des messages passés pour éviter l'ivresse des tokens.
+        # Seul le tour actuel recevra l'image fraîche via l'intercepteur de tool.
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, list):
+                # On ne garde que les parties texte ou image utilisateur réelles, 
+                # on vire les images binaires injectées par les outils passés.
+                m["content"] = [p for p in content if p.get("type") != "inline_data" or p.get("role") == "user"]
+        # --------------------------------------------------------------------
         
         for m in messages:
             if m.get("tool_calls"):
@@ -523,6 +542,12 @@ class Orchestrator:
         while i < len(messages):
             if messages[i]["role"] == "system": 
                 i+=1; continue
+            
+            # --- AMNÉSIE CONTEXTUELLE : On ignore les messages techniques ---
+            content_str = str(messages[i].get("content", ""))
+            if "ECHO_SESSION_AUTH_PENDING" in content_str or "Authentification ECHO réussie" in content_str or "Authentification ECHO en cours" in content_str or content_str.startswith("4/"):
+                i += 1; continue
+            # ----------------------------------------------------------------
             
             block_msgs = []
             block_type = messages[i]["role"]
@@ -625,7 +650,7 @@ class GeminiAdapter:
 # SECTION 7 : STREAM PROCESSOR
 # ==============================================================================
 class StreamProcessor:
-    def __init__(self, context_window: int, user_data_manager: UserDataManager, debug=False, chat_id=None, initial_label="Réponse", logger=None):
+    def __init__(self, context_window: int, user_data_manager: UserDataManager, debug=False, chat_id=None, initial_label="Réponse", logger=None, events: EchoEvents = None):
         self.debug = debug
         self.chat_id = chat_id
         self.user_data_manager = user_data_manager
@@ -634,6 +659,7 @@ class StreamProcessor:
         self.usage_stats = None
         self.current_sig = None
         self.logger = logger
+        self.events = events or EchoEvents()
         self.pending_tool_calls = {}
         self.full_response_accumulator = []
         self.response_id = None
@@ -654,7 +680,8 @@ class StreamProcessor:
         tool_index = 0
         ct = response.headers.get("content-type", "")
         if "application/json" in ct:
-            yield f"⚠️ API Error: {await response.aread()}"
+            err_msg = (await response.aread()).decode(errors='ignore')
+            await self.events.toast(f"ECHO Engine : Erreur Stream - {err_msg}", "error")
             return
 
         decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
@@ -685,7 +712,6 @@ class StreamProcessor:
                                     tc_id = f"call_{secrets.token_hex(8)}"
                                     if self.current_sig and self.chat_id: self.user_data_manager.save_signature(self.chat_id, self.current_sig, tc_id)
                                     args = func_call.get("args", {})
-                                    if self.current_sig: args["_thought_signature"] = self.current_sig
                                     yield {"choices": [{"index": 0, "delta": {"tool_calls": [{"index": tool_index, "id": tc_id, "type": "function", "function": {"name": func_call["name"], "arguments": orjson.dumps(args).decode()}}]}}]}
                                     tool_index += 1
                                 elif "text" in part:
@@ -709,6 +735,7 @@ class StreamProcessor:
 class Pipe:
     class Valves(BaseModel):
         API_RETRY_COUNT: int = Field(default=3, description="🔄 Nombre d'essais API")
+        RETRY_BASE_DELAY: int = Field(default=2, description="⏱️ Délai de base relance exponentielle (sec)")
         HTTP_CLIENT_TIMEOUT: int = Field(default=300, description="⏱️ Autokill Client HTTP (sec)")
         ENABLE_HTTP2: bool = Field(default=True, description="🚀 Activer HTTP/2")
         ENABLE_UPSTREAM_GZIP: bool = Field(default=True, description="📦 Activer Compression GZIP")
@@ -718,8 +745,8 @@ class Pipe:
         MAX_CONTEXT_SIZE: int = Field(default=1048576, description="📚 Taille Contexte Max")
 
     class UserValves(BaseModel):
-        MODEL_SELECTION: Literal["gemini-3-pro-preview", "gemini-3-flash-preview"] = Field(default="gemini-3-pro-preview", description="Modèle")
-        PRO_THINKING_LEVEL: Literal["LOW", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion (Pro)")
+        MODEL_SELECTION: Literal["gemini-3.1-pro-preview", "gemini-3-flash-preview"] = Field(default="gemini-3.1-pro-preview", description="Modèle")
+        PRO_THINKING_LEVEL: Literal["LOW", "MEDIUM", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion (Pro)")
         FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion (Flash)")
         TEMPERATURE: float = Field(default=1.0, description="Température")
         MAX_TOKENS: int = Field(default=65536, description="Max Tokens")
@@ -728,7 +755,8 @@ class Pipe:
         self.valves = self.Valves()
         self.data_dir = "/app/backend/data"
 
-    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
+    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __request__: Optional[any] = None, __event_emitter__: Optional[any] = None, __event_call__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]: # ECHO REFRESH
+        events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or "id" not in __user__:
              yield "❌ **Erreur Critique** : Impossible d'identifier l'utilisateur."; return
 
@@ -743,32 +771,43 @@ class Pipe:
             yield f"❌ **Erreur Critique Initialisation** : {e}"; return
 
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
-        
+
+        # --- TRAITEMENT DU TOKEN VIA VARIABLE DE TRANSPORT (FILTRE INLET) ---
+        hidden_token = body.get("_auth_token")
+        if hidden_token:
+            success, msg = auth.exchange_code(hidden_token)
+            if success:
+                yield "✅ **Authentification ECHO réussie.**\n\nVotre identité Google a été vérifiée. Comment puis-je vous aider ?"
+            else:
+                yield f"❌ **Échec de l'authentification** : `{msg}`\n\nVeuillez réessayer."
+            return
+        # --------------------------------------------------------------------
+
         ac = orch.check_for_auth_code(body.get("messages", []))
         if ac:
             success, msg = auth.exchange_code(ac)
             yield f"✅ **{msg}**" if success else f"❌ **Échec** : `{msg}`"; return
-        
+
         creds = auth.get_valid_credentials()
         if not creds: yield auth.get_auth_url(); return
         pid, debug_log = auth.get_project_id(creds, self.valves.DEBUG_MODE)
-        
+
         if not pid: yield f"❌ **Erreur Projet**\n{debug_log}"; return
 
         tools = orch.convert_owui_tools(body.get("tools"))
-        
+
         system_messages = [m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]
         client_context = "\n".join(system_messages) if system_messages else None
-        
+
         context = await orch.prepare_context(body, chat_id)
         system_instruction = {"parts": [{"text": client_context or "Tu es un assistant IA expert."}]}
 
-        selected_thinking_level = user_valves.PRO_THINKING_LEVEL if user_valves.MODEL_SELECTION == "gemini-3-pro-preview" else user_valves.FLASH_THINKING_LEVEL
+        selected_thinking_level = user_valves.PRO_THINKING_LEVEL if user_valves.MODEL_SELECTION == "gemini-3.1-pro-preview" else user_valves.FLASH_THINKING_LEVEL
 
         adapter = GeminiAdapter(auth.base_url)
         req = adapter.build(
             pid, context, system_instruction,
-            user_valves.TEMPERATURE, user_valves.MAX_TOKENS, 
+            user_valves.TEMPERATURE, user_valves.MAX_TOKENS,
             selected_thinking_level, user_valves.MODEL_SELECTION, tools
         )
         req["headers"]["Authorization"] = f"Bearer {creds.token}"
@@ -778,28 +817,60 @@ class Pipe:
             orch.user_data_manager,
             self.valves.DEBUG_MODE, 
             chat_id,
-            logger=orch.logger
+            logger=orch.logger,
+            events=events
         )
 
         try:
             client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.ENABLE_HTTP2)
             req_content = orjson.dumps(req["json"])
-            
+
             if self.valves.ENABLE_UPSTREAM_GZIP and len(req_content) < (self.valves.GZIP_THRESHOLD_KB * 1024):
                 req_content = gzip.compress(req_content, compresslevel=self.valves.GZIP_LEVEL)
                 req["headers"]["Content-Encoding"] = "gzip"
-            
+
+            # --- BOUCLE DE REQUÊTE AVEC BACKOFF EXPONENTIEL ---
             for attempt in range(self.valves.API_RETRY_COUNT):
                 try:
-                    async with client.stream("POST", req["url"], content=req_content, headers=req["headers"]) as r:
+                    # Utilisation de l'URL SSE centralisée et du User-Agent
+                    headers = req["headers"]
+                    headers["User-Agent"] = ECHO_USER_AGENT
+                    
+                    async with client.stream("POST", GOOGLE_SSE_URL, content=req_content, headers=headers) as r:
                         if r.status_code == 200:
                             async for token in proc.process(r): yield token
-                            break
+                            return # Succès
+
+                        # Lecture de l'erreur
+                        err_data = await r.aread()
+                        try:
+                            err_json = std_json.loads(err_data)
+                            err_msg = err_json.get("error", {}).get("message", err_data.decode(errors='ignore'))
+                        except:
+                            err_msg = err_data.decode(errors='ignore')
+
+                        # 1. Erreurs d'Authentification (401, 403) -> Yield pour affichage Chat
+                        if r.status_code in [401, 403]:
+                            yield f"🔐 **Authentification requise ({r.status_code})**\n`{err_msg}`"
+                            return
+
+                        # 2. Erreurs temporaires (Retry possible)
                         if r.status_code in [429, 500, 502, 503, 504]:
-                             await asyncio.sleep(1 * (attempt + 1)); continue
-                        err_text = (await r.aread()).decode(errors='ignore')
-                        yield f"⚠️ **API ERROR {r.status_code}**\n`{err_text}`"; return
+                            if attempt < self.valves.API_RETRY_COUNT - 1:
+                                wait_time = self.valves.RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                                await asyncio.sleep(wait_time)
+                                continue
+
+                        # 3. Erreurs finales (Notification Toast)
+                        await events.toast(f"ECHO Engine : Erreur API {r.status_code} - {err_msg}", "error")
+                        return
+
                 except Exception as e:
-                    if attempt == self.valves.API_RETRY_COUNT - 1: raise e 
-                    await asyncio.sleep(1)
-        except Exception as e: yield f"🔥 **CRASH** : `{str(e)}`"
+                    if attempt == self.valves.API_RETRY_COUNT - 1:
+                        await events.toast(f"ECHO Engine : Erreur Critique - {str(e)}", "error")
+                        return
+                    wait_time = self.valves.RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                    await asyncio.sleep(wait_time)
+
+        except Exception as e: 
+            await events.toast(f"ECHO Engine : Crash - {str(e)}", "error")

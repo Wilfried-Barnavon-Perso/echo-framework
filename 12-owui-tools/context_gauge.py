@@ -1,14 +1,15 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 2.0
-description: Outil d'introspection permettant de vérifier l'occupation de la fenêtre de contexte depuis la base de données utilisateur.
+version: 2.1
+description: 2.1: Standardized signature with __event_emitter__ and __event_call__.
 """
 
 from pydantic import BaseModel, Field
 import os
 import json
 import sqlite3
+from typing import Any
 
 class Tools:
     class Valves(BaseModel):
@@ -22,7 +23,14 @@ class Tools:
         # Le chemin racine des bases de données unifiées
         self.db_root_dir = "/app/backend/data/user_dbs"
 
-    def get_context_load(self, __messages__: list, __user__: dict, __metadata__: dict = None) -> str:
+    def get_context_load(
+        self, 
+        __messages__: list, 
+        __user__: dict, 
+        __metadata__: dict = None,
+        __event_emitter__: Any = None,
+        __event_call__: Any = None
+    ) -> str:
         """
         Lit l'historique de consommation de tokens directement depuis la base de données de l'utilisateur.
         Ne fait AUCUNE estimation : si la base ou les données ne sont pas trouvées, renvoie une erreur.
