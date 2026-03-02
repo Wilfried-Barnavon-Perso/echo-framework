@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 148.4
-description: 148.4: Strict Architecture (No defensive code).
+version: 149.0
+description: 149.0: Implemented Cognitive Suture (Block Hashing for Persistent Thought Signatures).
 """
 
 # ==============================================================================
@@ -423,15 +423,23 @@ class Orchestrator:
         return parts, i
 
     async def _process_model_turn(self, messages: List[Dict], start_idx: int, chat_id: str) -> Tuple[List[Dict], str, int]:
+        """
+        Reconstructs a model turn from the history.
+        Implements 'Cognitive Suture': every historical assistant block is hashed 
+        to retrieve its original thought signature from the SQLite database.
+        """
         parts = []
         deferred_text = ""
         i = start_idx
+        block_messages = []
         
         while i < len(messages) and messages[i]["role"] in ["assistant", "model"]:
             sub_m = messages[i]
+            block_messages.append(sub_m)
             txt = sub_m.get("content", "")
             if isinstance(txt, list): txt = "".join([x.get("text","") for x in txt if "text" in x])
             
+            # Standard cleanup: do not feed internal thoughts back to the model as text parts
             txt = re.sub(r'<think>.*?</think>', '', str(txt), flags=re.DOTALL)
             txt = re.sub(r'<details>.*?</details>', '', txt, flags=re.DOTALL)
             txt = txt.strip()
@@ -452,6 +460,7 @@ class Orchestrator:
                     try:
                         args = orjson.loads(tc["function"]["arguments"])
                         part_data = {"functionCall": {"name": tc["function"]["name"], "args": args}}
+                        # Tool signatures are attached to the first part of the block
                         if idx == 0:
                             sig = args.pop("_thought_signature", None)
                             call_id = tc.get("id")
@@ -462,9 +471,26 @@ class Orchestrator:
                     except: pass
             i += 1
         
-        if parts and "text" in parts[-1] and not any("functionCall" in p for p in parts) and chat_id:
-              latest_sig = self.user_data_manager.get_signature(chat_id)
-              if latest_sig: parts[-1]["thoughtSignature"] = latest_sig
+        # --- COGNITIVE SUTURE : TEXT BLOCK PERSISTENCE ---
+        # If the block is pure text or has a trailing text part, we fetch its specific signature by content hash.
+        # This prevents Gemini 3.1 from losing its CoT (Chain of Thought) chain across turns.
+        if parts and chat_id:
+            # Compute hash of the current assistant block (same logic as used during storage)
+            block_hash = self.user_data_manager.compute_message_hash(block_messages, chat_id)
+            sig = self.user_data_manager.get_signature(chat_id, block_hash)
+            
+            if sig:
+                # Inject signature into the first tool call if exists, otherwise into the last text part
+                injected = False
+                for p in parts:
+                    if "functionCall" in p:
+                        p["thoughtSignature"] = sig
+                        injected = True; break
+                if not injected:
+                    for p in reversed(parts):
+                        if "text" in p:
+                            p["thoughtSignature"] = sig
+                            injected = True; break
         
         if not parts: parts.append({"text": " "})
         return parts, deferred_text, i
@@ -657,10 +683,13 @@ class StreamProcessor:
         self.context_window = context_window
         self.initial_label = initial_label
         self.usage_stats = None
-        self.current_sig = None
         self.logger = logger
         self.events = events or EchoEvents()
-        self.pending_tool_calls = {}
+        
+        # --- COGNITIVE SUTURE STATE ---
+        self.captured_sig = None
+        self.accumulated_text = ""
+        self.accumulated_tool_calls = []
         self.full_response_accumulator = []
         self.response_id = None
 
@@ -701,21 +730,33 @@ class StreamProcessor:
                             for part in cand[0]["content"]["parts"]:
                                 txt = part.get("text", "")
                                 func_call = part.get("functionCall")
+                                
+                                # Capture signature but do NOT save yet (need full hash)
                                 if "thoughtSignature" in part:
-                                    self.current_sig = part["thoughtSignature"]
-                                    if self.chat_id: self.user_data_manager.save_signature(self.chat_id, self.current_sig)
+                                    self.captured_sig = part["thoughtSignature"]
+                                
                                 if part.get("thought"):
                                     if not in_think: yield "<think>\n"; in_think = True
                                     yield txt
                                 elif func_call:
                                     if in_think: yield "\n</think>\n"; in_think = False
                                     tc_id = f"call_{secrets.token_hex(8)}"
-                                    if self.current_sig and self.chat_id: self.user_data_manager.save_signature(self.chat_id, self.current_sig, tc_id)
                                     args = func_call.get("args", {})
-                                    yield {"choices": [{"index": 0, "delta": {"tool_calls": [{"index": tool_index, "id": tc_id, "type": "function", "function": {"name": func_call["name"], "arguments": orjson.dumps(args).decode()}}]}}]}
+                                    
+                                    # Track tool call for late hashing and continuity
+                                    tc_data = {
+                                        "index": tool_index, 
+                                        "id": tc_id, 
+                                        "type": "function", 
+                                        "function": {"name": func_call["name"], "arguments": orjson.dumps(args).decode()}
+                                    }
+                                    self.accumulated_tool_calls.append(tc_data)
+                                    
+                                    yield {"choices": [{"index": 0, "delta": {"tool_calls": [tc_data]}}]}
                                     tool_index += 1
                                 elif "text" in part:
                                     if in_think: yield "\n</think>\n"; in_think = False
+                                    self.accumulated_text += txt
                                     yield txt
             except: pass
         
@@ -839,6 +880,25 @@ class Pipe:
                     async with client.stream("POST", GOOGLE_SSE_URL, content=req_content, headers=headers) as r:
                         if r.status_code == 200:
                             async for token in proc.process(r): yield token
+                            
+                            # --- COGNITIVE SUTURE : FINAL PERSISTENCE ---
+                            # Once the stream is finished, we compute the hash of the full response 
+                            # and store the signature with it. This ensures every historical turn 
+                            # can retrieve its signature.
+                            if proc.captured_sig and chat_id:
+                                # Create a virtual block message representing the response
+                                virtual_msg = {"role": "assistant", "content": proc.accumulated_text}
+                                if proc.accumulated_tool_calls:
+                                    virtual_msg["tool_calls"] = proc.accumulated_tool_calls
+                                
+                                # Compute final hash for the block
+                                final_hash = orch.user_data_manager.compute_message_hash([virtual_msg], chat_id)
+                                orch.user_data_manager.save_signature(chat_id, proc.captured_sig, final_hash)
+                                
+                                # If tool calls were made, also persist under the first call_id for redundancy
+                                if proc.accumulated_tool_calls:
+                                    orch.user_data_manager.save_signature(chat_id, proc.captured_sig, proc.accumulated_tool_calls[0]["id"])
+                            
                             return # Succès
 
                         # Lecture de l'erreur
