@@ -1,3 +1,13 @@
+### 🌐 Rendu Web Desktop (v5.42.4)
+*   **v5.42.4** : Correctif du Browser Agent. Suppression de l'écrasement du viewport en mode tablette lors de la création de page. Le mode Desktop respecte désormais nativement la résolution PC (1280x800).
+
+### 🛡️ Robustesse Authentification Google (v5.42.3)
+*   **v5.42.3** : Détection automatique des challenges Google (403 VALIDATION_REQUIRED). Extraction du lien de validation pour permettre à l'utilisateur de débloquer son compte directement depuis le chat.
+*   **v5.42.2** : Support du diagnostic profond des erreurs 403. Logging exhaustif du JSON d'erreur Google pour identifier les liens de validation (ToS, âge).
+
+### 🛠️ Onboarding Dynamique Google One AI Pro (v5.42.0)
+*   **v5.42.0** : Support de l'onboarding automatique pour les comptes **Google One AI Pro**. Implémentation du handshake `:onboardUser` (sans `cloudaicompanionProject` pour le `free-tier`) suite à l'audit du client officiel `gemini-cli`. Résolution de l'erreur "JSON inattendu" lors de la ré-authentification de nouveaux comptes.
+
 ### ⚠️ Mise à jour de Vision Heuristique (v5.41.1)
 *   **v5.41.1** : Raffinement de l'IA pour la lecture de fichiers. Mise à jour de la Docstring de l'outil `read_raw_file_content` pour clarifier ses cas d'usage (bas niveau, code, chunks) et ses contre-indications (analyse sémantique), orientant ainsi l'IA vers `semantic_probe` pour les besoins conceptuels.
 *   **v5.41.0** : Architecture "Persistent Session Registry". Évolution de la base SQLite pour stocker les noms de fichiers originaux.

@@ -17,15 +17,13 @@ from playwright.async_api import async_playwright
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 8.2 (IDENTITY UNIFICATION & DNS SUTURE)
+VERSION : 8.3 (DESKTOP VIEWPORT FIX)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-02-25
+DATE MAJ : 2026-03-02
 
-CHANGELOG 8.2 :
-- FEAT: Unified Session Identity - Strictly uses provided session_id (chat_id).
-- FEAT: DNS Suture - Added --disable-async-dns to Chromium for stable resolution.
-- FEAT: Immediate Heartbeat - session.last_activity updated at request start.
-- FIX: Corrected tablet viewport default size.
+CHANGELOG 8.3 :
+- FIX: Removed hardcoded tablet viewport override in get_active_page.
+- FEAT: Pages now correctly inherit viewport from session context (Desktop support).
 ================================================================================
 """
 
@@ -104,8 +102,7 @@ class BrowserSession:
         self.last_activity = time.time()
         if not self.pages:
             p = await self.context.new_page()
-            # Default Tablet Viewport
-            await p.set_viewport_size({"width": 820, "height": 1180}) 
+            # Inherit viewport from context (Fix v8.3)
             self.pages.append(p)
         
         if self.active_page_index >= len(self.pages):

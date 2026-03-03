@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 149.0
-description: 149.0: Implemented Cognitive Suture (Block Hashing for Persistent Thought Signatures).
+version: 150.3
+description: 150.3: Automatic Google Challenge detection and validation URL extraction.
 """
 
 # ==============================================================================
@@ -357,17 +357,53 @@ class AuthService:
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
         payload = {"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}
         try:
-            resp = httpx.post(f"{GOOGLE_API_BASE_URL}:loadCodeAssist", headers=headers, json=payload, timeout=10)
+            resp = httpx.post(f"{GOOGLE_API_BASE_URL}:loadCodeAssist", headers=headers, json=payload, timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
-                raw = data.get("cloudaicompanionProject")
-                pid = raw.get("id") if isinstance(raw, dict) else raw
+                
+                # --- LOGIQUE D'EXTRACTION DU PROJET ---
+                raw_project = data.get("cloudaicompanionProject")
+                pid = raw_project.get("id") if isinstance(raw_project, dict) else raw_project
+                
+                if not pid:
+                    # Audit Gemini-CLI : Recherche de tier éligible pour Onboarding (Google One AI Pro / Free Tier)
+                    allowed_tiers = data.get("allowedTiers", [])
+                    target_tier = next((t for t in allowed_tiers if t.get("id") == "free-tier"), None)
+                    if not target_tier and allowed_tiers:
+                        target_tier = next((t for t in allowed_tiers if t.get("isDefault")), allowed_tiers[0])
+                    
+                    if target_tier:
+                        tier_id = target_tier.get("id")
+                        # Appel Onboarding (SANS cloudaicompanionProject pour le free-tier selon audit gemini-cli)
+                        onboard_payload = {
+                            "tierId": tier_id,
+                            "metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}
+                        }
+                        
+                        onboard_resp = httpx.post(f"{GOOGLE_API_BASE_URL}:onboardUser", headers=headers, json=onboard_payload, timeout=20)
+                        if onboard_resp.status_code == 200:
+                            onboard_data = onboard_resp.json()
+                            # L'ID peut être directement dans la réponse ou via une LRO
+                            res_proj = onboard_data.get("response", {}).get("cloudaicompanionProject", {})
+                            pid = res_proj.get("id")
+                            
+                            # Fallback : si c'est une opération asynchrone, on rafraîchit loadCodeAssist
+                            if not pid and onboard_data.get("name"):
+                                time.sleep(2) # Attente provisionnement Google
+                                retry_resp = httpx.post(f"{GOOGLE_API_BASE_URL}:loadCodeAssist", headers=headers, json=payload, timeout=10)
+                                if retry_resp.status_code == 200:
+                                    retry_data = retry_resp.json()
+                                    raw_retry = retry_data.get("cloudaicompanionProject")
+                                    pid = raw_retry.get("id") if isinstance(raw_retry, dict) else raw_retry
+                
                 if pid:
                     pid = pid.replace("projects/", "")
                     self.user_data_manager.save_auth_data('google_project_id', pid)
-                    return pid, "API OK."
+                    return pid, "API OK (Handshake)."
                 else:
                     if cached_pid_data: return cached_pid_data[0], f"API Fail, Fallback to Cache."
+                    # Logging complet en console pour audit
+                    print(f"[ECHO ENGINE] loadCodeAssist RAW: {std_json.dumps(data)}", flush=True)
                     return None, f"**JSON inattendu** : {str(data)[:200]}"
             else: return None, f"HTTP {resp.status_code}: {resp.text}"
         except Exception as e: return None, str(e)
@@ -911,7 +947,34 @@ class Pipe:
 
                         # 1. Erreurs d'Authentification (401, 403) -> Yield pour affichage Chat
                         if r.status_code in [401, 403]:
-                            yield f"🔐 **Authentification requise ({r.status_code})**\n`{err_msg}`"
+                            raw_err = err_data.decode(errors='ignore')
+                            print(f"[ECHO ENGINE] AUTH ERROR {r.status_code} RAW: {raw_err}", flush=True)
+                            
+                            # Détection Challenge Google (v150.3)
+                            validation_url = None
+                            try:
+                                e_json = std_json.loads(raw_err)
+                                details = e_json.get("error", {}).get("details", [])
+                                for d in details:
+                                    # Format ErrorInfo
+                                    if d.get("reason") == "VALIDATION_REQUIRED":
+                                        validation_url = d.get("metadata", {}).get("validation_url")
+                                        if validation_url: break
+                                    # Format Help Links
+                                    if "links" in d:
+                                        validation_url = d["links"][0].get("url")
+                                        if validation_url: break
+                            except: pass
+
+                            if validation_url:
+                                yield (
+                                    f"## 🔐 Action requise sur votre compte Google\n\n"
+                                    f"Une validation supplémentaire est nécessaire pour débloquer l'accès à Gemini.\n\n"
+                                    f"> 🔗 **[Cliquez ici pour vérifier votre compte]({validation_url})**\n\n"
+                                    f"Une fois la validation terminée sur le site de Google, renvoyez simplement votre message."
+                                )
+                            else:
+                                yield f"🔐 **Authentification requise ({r.status_code})**\n`{err_msg}`"
                             return
 
                         # 2. Erreurs temporaires (Retry possible)
