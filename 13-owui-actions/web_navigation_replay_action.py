@@ -1,8 +1,9 @@
 """
 title: Show Web Replay
 author: Wilfried BARNAVON
-version: 1.7
-description: 1.7: Standardized event handling via EchoEvents.
+version: 1.9
+description: 1.9: Enhanced Ergonomics (Grouped Motor, Symmetrical Spacing & Reversed Play Icon).
+icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTE3IDN2MTgiLz48cGF0aCBkPSJNMyA3aDQiLz48cGF0aCBkPSJNMyAxMmg0Ii8+PHBhdGggZD0iTTMgMTdoNCIvPjxwYXRoIGQ9Ik0xNyA3aDQiLz48cGF0aCBkPSJNMTcgMTJoNCIvPjxwYXRoIGQ9Ik0xNyAxN2g0Ii8+PC9zdmc+
 """
 
 import os
@@ -66,11 +67,19 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                     <div style="width:100%; background:rgba(0,0,0,0.5); border-top:1px solid #333; padding:20px; display:flex; flex-direction:column; align-items:center; gap:15px; backdrop-filter:blur(10px);">
                         <div id="${{REPLAY_ID}}-meta" style="font-size:11px; color:#4ade80; font-family:monospace; letter-spacing:1px; background:rgba(0,0,0,0.3); padding:4px 12px; border-radius:10px;">INITIALISATION...</div>
                         
-                        <div style="display:flex; gap:25px; align-items:center;">
+                        <div style="display:flex; gap:15px; align-items:center;">
+                            <!-- Bloc Manuel Gauche -->
                             <button id="${{REPLAY_ID}}-first" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">|◀</button>
-                            <button id="${{REPLAY_ID}}-prev" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">◀</button>
-                            <button id="${{REPLAY_ID}}-play" style="background:#4ade80; border:none; color:black; padding:10px 30px; border-radius:20px; font-weight:bold; cursor:pointer; min-width:120px;">▶ PLAY</button>
-                            <button id="${{REPLAY_ID}}-next" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">▶</button>
+                            <button id="${{REPLAY_ID}}-prev" style="background:none; border:none; color:white; cursor:pointer; font-size:18px; margin-right:40px;">◀</button>
+                            
+                            <!-- Bloc Moteur Central Groupé -->
+                            <div style="display:flex; gap:10px; align-items:center;">
+                                <button id="${{REPLAY_ID}}-play-rev" style="background:#f97316; border:none; color:white; padding:10px 25px; border-radius:20px 5px 5px 20px; font-weight:bold; cursor:pointer; min-width:110px;">◀ PLAY</button>
+                                <button id="${{REPLAY_ID}}-play" style="background:#4ade80; border:none; color:black; padding:10px 25px; border-radius:5px 20px 20px 5px; font-weight:bold; cursor:pointer; min-width:110px;">PLAY ▶</button>
+                            </div>
+
+                            <!-- Bloc Manuel Droite -->
+                            <button id="${{REPLAY_ID}}-next" style="background:none; border:none; color:white; cursor:pointer; font-size:18px; margin-left:40px;">▶</button>
                             <button id="${{REPLAY_ID}}-last" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">▶|</button>
                         </div>
 
@@ -85,11 +94,27 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                 // --- Atomic State ---
                 let currentIndex = 0;
                 let isPlaying = false;
+                let isPlayingRev = false;
                 let playInterval = null;
                 const timestamps = data.timestamps;
 
+                const stopPlayback = () => {{
+                    if (playInterval) clearInterval(playInterval);
+                    isPlaying = false;
+                    isPlayingRev = false;
+                    const btnPlay = document.getElementById(`${{REPLAY_ID}}-play`);
+                    const btnRev = document.getElementById(`${{REPLAY_ID}}-play-rev`);
+                    btnPlay.innerText = "PLAY ▶";
+                    btnPlay.style.background = "#4ade80";
+                    btnRev.innerText = "◀ PLAY";
+                    btnRev.style.background = "#f97316";
+                }};
+
                 const requestFrame = (idx) => {{
-                    if (idx < 0 || idx >= timestamps.length) return;
+                    if (idx < 0 || idx >= timestamps.length) {{
+                        stopPlayback();
+                        return;
+                    }}
                     currentIndex = idx;
                     document.getElementById(`${{REPLAY_ID}}-meta`).innerText = `REQUÊTE FLUX... (${{idx + 1}}/${{timestamps.length}})`;
                     if(window.echoReplayResolve) {{
@@ -126,38 +151,59 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                 canvas.onmouseleave = () => {{ loupe.style.display = 'none'; }};
 
                 // --- Handlers ---
-                document.getElementById(`${{REPLAY_ID}}-first`).onclick = () => requestFrame(0);
-                document.getElementById(`${{REPLAY_ID}}-last`).onclick = () => requestFrame(timestamps.length - 1);
-                document.getElementById(`${{REPLAY_ID}}-prev`).onclick = () => requestFrame(Math.max(0, currentIndex - 1));
-                document.getElementById(`${{REPLAY_ID}}-next`).onclick = () => requestFrame(Math.min(timestamps.length - 1, currentIndex + 1));
+                document.getElementById(`${{REPLAY_ID}}-first`).onclick = () => {{ stopPlayback(); requestFrame(0); }};
+                document.getElementById(`${{REPLAY_ID}}-last`).onclick = () => {{ stopPlayback(); requestFrame(timestamps.length - 1); }};
+                document.getElementById(`${{REPLAY_ID}}-prev`).onclick = () => {{ stopPlayback(); requestFrame(Math.max(0, currentIndex - 1)); }};
+                document.getElementById(`${{REPLAY_ID}}-next`).onclick = () => {{ stopPlayback(); requestFrame(Math.min(timestamps.length - 1, currentIndex + 1)); }};
                 
                 document.getElementById(`${{REPLAY_ID}}-play`).onclick = () => {{
-                    isPlaying = !isPlaying;
-                    const btn = document.getElementById(`${{REPLAY_ID}}-play`);
-                    btn.innerText = isPlaying ? "⏸ PAUSE" : "▶ PLAY";
-                    btn.style.background = isPlaying ? "#ff4444" : "#4ade80";
                     if (isPlaying) {{
+                        stopPlayback();
+                    }} else {{
+                        stopPlayback();
+                        isPlaying = true;
+                        const btn = document.getElementById(`${{REPLAY_ID}}-play`);
+                        btn.innerText = "⏸ STOP";
+                        btn.style.background = "#ff4444";
                         playInterval = setInterval(() => {{
-                            let next = currentIndex + 1;
-                            if (next >= timestamps.length) next = 0;
-                            requestFrame(next);
+                            requestFrame(currentIndex + 1);
                         }}, document.getElementById(`${{REPLAY_ID}}-speed`).value * 1000);
-                    }} else {{ clearInterval(playInterval); }}
+                    }}
+                }};
+
+                document.getElementById(`${{REPLAY_ID}}-play-rev`).onclick = () => {{
+                    if (isPlayingRev) {{
+                        stopPlayback();
+                    }} else {{
+                        stopPlayback();
+                        isPlayingRev = true;
+                        const btn = document.getElementById(`${{REPLAY_ID}}-play-rev`);
+                        btn.innerText = "⏸ STOP";
+                        btn.style.background = "#ff4444";
+                        playInterval = setInterval(() => {{
+                            requestFrame(currentIndex - 1);
+                        }}, document.getElementById(`${{REPLAY_ID}}-speed`).value * 1000);
+                    }}
+                }};
+
+                document.getElementById(`${{REPLAY_ID}}-speed`).oninput = (e) => {{
+                    document.getElementById(`${{REPLAY_ID}}-speed-val`).innerText = e.target.value + "s";
                 }};
 
                 document.getElementById(`${{REPLAY_ID}}-close`).onclick = () => {{
-                    if(playInterval) clearInterval(playInterval);
+                    stopPlayback();
                     replay.remove();
                     if(window.echoReplayResolve) window.echoReplayResolve({{ action: "close" }});
                 }};
             }}
-            return true; // Accuse réception de l'installation
+            return true;
         }} catch (e) {{ return e.toString(); }}
     }})();
     """
 
 class Action:
     class Valves(BaseModel):
+        priority: int = Field(default=2, description="Priorité d'affichage (2 = Deuxième).")
         UPLOADS_DIR: str = Field(default="/app/backend/data/uploads", description="Dossier des captures ECHO")
 
     def __init__(self):
@@ -174,7 +220,8 @@ class Action:
         prefix = f"U_{uid}_C_{cid}_T_"
         files = []
         try:
-            all_files = sorted(os.listdir(self.valves.UPLOADS_DIR), reverse=True)
+            # Tri CHRONOLOGIQUE (du plus ancien au plus récent)
+            all_files = sorted(os.listdir(self.valves.UPLOADS_DIR), reverse=False)
             for f_name in all_files:
                 if f_name.startswith(prefix) and f_name.endswith(".png"):
                     ts_str = f_name.replace(prefix, "").replace(".png", "")

@@ -1,8 +1,8 @@
 """
 title: ECHO Cognitive Core
 author: ECHO Framework
-version: 2.9
-description: 2.9: Restored full docstrings and instructions (Strict Architecture).
+version: 3.1
+description: 3.1: Robust Payload Protocol (STRING payloads for creative freedom).
 """
 
 import sys
@@ -37,7 +37,7 @@ async def _execute_intel_request(valves, auth, query: str, context: str, persona
                 "responseMimeType": "application/json",
                 "responseSchema": schema,
                 "thinkingConfig": {
-                    "includeThoughts": True,
+                    "includeThoughts": False, 
                     "thinkingLevel": thinking
                 }
             }
@@ -88,6 +88,7 @@ class Tools:
         query: str, 
         context: str, 
         expert_persona: str, 
+        include_reasoning: bool = False,
         __user__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
@@ -95,36 +96,54 @@ class Tools:
         """
         Invoque un Expert de Niveau 1 (Raisonnement Profond). Réponse EXCLUSIVEMENT en JSON.
         À utiliser pour : Analyses complexes, stratégie, programmation avancée, audit.
+        
+        VOTRE MISSION (Modèle Mandant) :
+        1. Délégation pure par défaut (Silencieux). 
+        2. Activer 'include_reasoning' pour le raisonnement du sous-agent (consommation de tokens augmentée) sinon désactivé.
+        3. Le champ 'expert_payload' est une chaîne de caractères (STRING) pouvant contenir du Markdown riche.
 
-        :param query: Requête d'analyse riche. Spécifiez le format attendu dans 'expert_payload'.
+        :param query: Requête d'analyse riche. Le résultat sera placé dans 'expert_payload'.
         :param context: Contexte complet et structuré.
         :param expert_persona: Rôle précis de l'expert.
+        :param include_reasoning: Activer pour le raisonnement du sous-agent (consommation de tokens augmentée) sinon désactivé.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
+        
+        # Métadonnées Sanctuarisées
+        properties = {
+            "expert_metadata": {
+                "type": "OBJECT",
+                "properties": {
+                    "persona_active": {"type": "STRING"},
+                    "confidence_score": {"type": "NUMBER"},
+                    "uncertainty_factors": {"type": "ARRAY", "items": {"type": "STRING"}}
+                },
+                "required": ["persona_active", "confidence_score", "uncertainty_factors"]
+            }
+        }
+        required = ["expert_metadata", "expert_payload"]
+        
+        # Schéma Elastique pour le Raisonnement
+        if include_reasoning:
+            properties["expert_logic"] = {
+                "type": "OBJECT",
+                "properties": {
+                    "thought_process_summary": {"type": "STRING"},
+                    "key_assumptions": {"type": "ARRAY", "items": {"type": "STRING"}}
+                },
+                "required": ["thought_process_summary", "key_assumptions"]
+            }
+            required.append("expert_logic")
+            
+        # Option A : Payload en STRING pour une robustesse maximale
+        properties["expert_payload"] = {"type": "STRING"}
+        
         schema = {
             "type": "OBJECT",
-            "properties": {
-                "expert_metadata": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "persona_active": {"type": "STRING"},
-                        "confidence_score": {"type": "NUMBER"},
-                        "uncertainty_factors": {"type": "ARRAY", "items": {"type": "STRING"}}
-                    },
-                    "required": ["persona_active", "confidence_score", "uncertainty_factors"]
-                },
-                "expert_logic": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "thought_process_summary": {"type": "STRING"},
-                        "key_assumptions": {"type": "ARRAY", "items": {"type": "STRING"}}
-                    },
-                    "required": ["thought_process_summary", "key_assumptions"]
-                },
-                "expert_payload": {"type": "OBJECT"}
-            },
-            "required": ["expert_metadata", "expert_logic", "expert_payload"]
+            "properties": properties,
+            "required": required
         }
+        
         return await _execute_intel_request(self.valves, self.auth, query, context, expert_persona, self.valves.EXPERT_MODEL, self.valves.EXPERT_THINKING, schema, __user__, events)
 
     async def fast_check(
@@ -132,6 +151,7 @@ class Tools:
         query: str, 
         context: str, 
         assistant_persona: str = "Assistant Rapide", 
+        include_reasoning: bool = True,
         __user__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
@@ -140,31 +160,49 @@ class Tools:
         Invoque un Assistant Rapide (Niveau Réflexe). Réponse EXCLUSIVEMENT en JSON.
         À utiliser pour : Vérifications simples, calculs, dates, extractions, reformulations.
 
-        :param query: Requête de vérification simple. Spécifiez le format attendu dans 'fast_payload'.
+        VOTRE MISSION (Modèle Mandant) :
+        1. Transparence par défaut pour validation immédiate.
+        2. Désactiver 'include_reasoning' pour une réponse chirurgicale ultra-rapide.
+        3. Le champ 'fast_payload' est une chaîne de caractères (STRING).
+
+        :param query: Requête de vérification simple. Le résultat sera placé dans 'fast_payload'.
         :param context: Contexte ou extrait minimal.
         :param assistant_persona: Rôle de l'assistant.
+        :param include_reasoning: Activer pour le raisonnement du sous-agent (consommation de tokens augmentée) sinon désactivé.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
+        
+        # Métadonnées Sanctuarisées
+        properties = {
+            "fast_metadata": {
+                "type": "OBJECT",
+                "properties": {
+                    "status": {"type": "STRING"},
+                    "persona_active": {"type": "STRING"}
+                },
+                "required": ["status", "persona_active"]
+            }
+        }
+        required = ["fast_metadata", "fast_payload"]
+        
+        # Schéma Elastique pour le Raisonnement
+        if include_reasoning:
+            properties["fast_logic"] = {
+                "type": "OBJECT",
+                "properties": {
+                    "brief_explanation": {"type": "STRING"}
+                },
+                "required": ["brief_explanation"]
+            }
+            required.append("fast_logic")
+            
+        # Option A : Payload en STRING pour une robustesse maximale
+        properties["fast_payload"] = {"type": "STRING"}
+        
         schema = {
             "type": "OBJECT",
-            "properties": {
-                "fast_metadata": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "status": {"type": "STRING"},
-                        "persona_active": {"type": "STRING"}
-                    },
-                    "required": ["status", "persona_active"]
-                },
-                "fast_logic": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "brief_explanation": {"type": "STRING"}
-                    },
-                    "required": ["brief_explanation"]
-                },
-                "fast_payload": {"type": "OBJECT"}
-            },
-            "required": ["fast_metadata", "fast_logic", "fast_payload"]
+            "properties": properties,
+            "required": required
         }
+        
         return await _execute_intel_request(self.valves, self.auth, query, context, assistant_persona, self.valves.FAST_MODEL, self.valves.FAST_THINKING, schema, __user__, events)

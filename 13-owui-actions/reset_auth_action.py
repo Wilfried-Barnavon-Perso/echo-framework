@@ -1,8 +1,9 @@
 """
 title: ECHO Auth Manager
 author: Wilfried BARNAVON
-version: 3.4
-description: 3.4: Restored detailed UX messages (Strict Architecture).
+version: 3.5
+description: 3.5: Added priority valve and lock icon.
+icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgeD0iMyIgeT0iMTEiIHJ4PSIyIiByeT0iMiIvPjxwYXRoIGQ9Ik03IDExVjdhNSA1IDAgMCAxIDEwIDB2NCIvPjwvc3ZnPg==
 """
 
 import os
@@ -18,7 +19,7 @@ from echo_constants import ECHO_USER_DBS_DIR
 
 class Action:
     class Valves(BaseModel):
-        pass
+        priority: int = Field(default=1, description="Priorité d'affichage (1 = Premier).")
 
     def __init__(self):
         self.valves = self.Valves()

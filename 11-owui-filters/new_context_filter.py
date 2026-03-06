@@ -1,228 +1,194 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 4.32.0
-description: 4.32.0: Persistent Technical Registry (Strict Architecture).
+version: 6.11
+description: 6.11: Standardized 'version_echo' key & Dynamic Template.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Literal
-import os
+from typing import Optional, List, Union, Dict, Any
 import json
-import logging
-import requests
-import base64
+import os
 import sys
-import uuid
-import random
-import glob
-import time
 import re
 import asyncio
+import logging
+import time
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 
-# ==============================================================================
-# SECTION 0 : IMPORTATIONS ECHO STRICTES
-# ==============================================================================
+# Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, EchoStateManager, EchoEvents, resolve_upload_file_path
-from echo_constants import get_gemini_mime, ECHO_UPLOADS_DIR, ECHO_VERSION_FILE
+from echo_utils import EchoAuth, EchoStateManager, resolve_upload_file_path
+from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL
 
-# TENTATIVE D'ACCES DIRECT AU BACKEND OWUI
-try:
-    from open_webui.models.files import Files
-    HAS_DIRECT_DB_ACCESS = True
-except ImportError:
-    HAS_DIRECT_DB_ACCESS = False
-
+# Configuration du Logger
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ECHO-FILTER")
 
 class Filter:
     class Valves(BaseModel):
-        priority: int = Field(default=0, description="Priorité.")
-        debug_context: bool = Field(default=False, description="Debug.")
-        ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Activer Smart Context")
-        SMART_CONTEXT_THRESHOLD_KB: int = Field(default=2048, description="Seuil (Ko)")
-        GEMINI_FLASH_MODEL: str = Field(default="gemini-3-flash-preview", description="Modèle Analyse")
-
-    class UserValves(BaseModel):
-        ENABLE_USER_NAME: bool = Field(default=False)
-        OVERRIDE_LOCATION: str = Field(default="")
-        SMART_CONTEXT_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH", description="Niveau")
+        ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Active le résumé intelligent des fichiers volumineux via Gemini Flash.")
+        MAX_DIRECT_TEXT_SIZE: int = Field(default=262144, description="Taille max (octets) pour l'injection directe sans résumé.")
+        DEBUG_MODE: bool = Field(default=False)
 
     def __init__(self):
-        self.file_handler = True
-        self.toggle = True
         self.valves = self.Valves()
         self.auth = EchoAuth()
-        self.version_path = ECHO_VERSION_FILE
-        self.uploads_dir = ECHO_UPLOADS_DIR
 
-    def _get_echo_version(self) -> str:
-        try:
-            if os.path.exists(self.version_path):
-                with open(self.version_path, 'r', encoding='utf-8') as f: return f.read().strip()
-        except: pass
-        return "Unknown"
+    def _process_file_task(self, file_obj: dict, token: str, project_id: str, thinking_level: str, chat_id: str, state_manager: EchoStateManager, events: Any) -> dict:
+        """Tâche isolée de traitement de fichier (Smart Context, Binaire ou Index)."""
+        file_id = file_obj.get("id") or file_obj.get("file", {}).get("id")
+        filename = file_obj.get("name") or file_obj.get("file", {}).get("meta", {}).get("name", "inconnu")
+        mime = file_obj.get("mime_type") or file_obj.get("file", {}).get("meta", {}).get("content_type", "application/octet-stream")
+        
+        path = resolve_upload_file_path(file_id)
+        if not path or not os.path.exists(path):
+            return {"status": "error", "fid": file_id, "error": "Fichier introuvable sur le disque."}
 
-    def _call_flash(self, token: str, project_id: str, prompt: str, system: str, fpath: str, mime: str, thinking_level: str) -> Optional[str]:
-        if not project_id: return None
-        url = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "GeminiCLI/0.24.0", "x-goog-api-client": "gl-python/3.10"}
-        try:
-            with open(fpath, 'rb') as f: b64 = base64.b64encode(f.read()).decode('utf-8')
-            payload = {"model": self.valves.GEMINI_FLASH_MODEL, "project": project_id, "user_prompt_id": hex(random.getrandbits(64))[2:], "request": {"contents": [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": b64}}]}], "session_id": str(uuid.uuid4()), "generationConfig": {"temperature": 0.2, "maxOutputTokens": 64000, "thinkingConfig": {"thinkingLevel": thinking_level.upper()}, "responseMimeType": "text/plain"}}}
-            resp = requests.post(url, headers=headers, json=payload, stream=True, timeout=120)
-            if resp.status_code != 200: return None
-            full_text = ""
-            for line in resp.iter_lines():
-                if line:
-                    decoded = line.decode("utf-8")
-                    if decoded.startswith("data:"):
-                        try:
-                            data = json.loads(decoded[5:].strip())
-                            cand = data.get("response", {}).get("candidates", [])[0]
-                            if "content" in cand:
-                                parts = cand["content"].get("parts", [])
-                                if parts and "text" in parts[0]: full_text += parts[0]["text"]
-                        except: pass
-            return full_text
-        except: return None
+        size = os.path.getsize(path)
+        
+        # --- CAS 1 : IMAGE / AUDIO / VIDEO / PDF (Injection Binaire) ---
+        if any(x in mime for x in ["image/", "audio/", "video/", "pdf"]):
+            try:
+                import base64
+                with open(path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+                state_manager.mark_processed(chat_id, file_id, filename, mime, "transmitted")
+                return {
+                    "status": "success", "type": "Transmitted", "fid": file_id, "sub_type": "binary",
+                    "content": {"anchor": f"📎 **Fichier joint : {filename}** ({mime})", "mime": mime, "data": b64}
+                }
+            except Exception as e:
+                return {"status": "error", "fid": file_id, "error": f"Erreur binaire : {str(e)}"}
 
-    def _process_file_task(self, f_obj, token, project_id, thinking_level, chat_id, state_manager):
-        try:
-            target = f_obj.get("file", f_obj)
-            fid = f_obj.get("id") or target.get("id")
-            fname = target.get("filename") or target.get("name") or "unknown"
-            
-            real_path = resolve_upload_file_path(fid, self.uploads_dir)
-            if not real_path: return {"status": "error", "reason": "not_found", "fname": fname}
-            
-            fsize = os.path.getsize(real_path)
-            mime, supported = get_gemini_mime(real_path)
-            if not supported: return {"status": "error", "reason": f"unsupported_type ({mime})", "fname": fname}
-            if mime.startswith("image/"): return {"status": "skip", "reason": "image_native", "fname": fname}
-            
-            if (token and project_id and fsize > (self.valves.SMART_CONTEXT_THRESHOLD_KB * 1024)):
-                prompt = "Analyse INTÉGRALE de ce document. Génère une 'Fiche de Lecture Exhaustive' structurée en Markdown."
-                res_text = self._call_flash(token, project_id, prompt, "Analyste Senior.", real_path, mime, thinking_level)
-                if res_text:
-                    if state_manager: state_manager.mark_processed(chat_id, fid, fname, "smart_context")
-                    md_block = (
-                        f"<details>\n"
-                        f"  <summary>📄 Smart Context : {fname}</summary>\n"
-                        f"  - **FILE_ID (Technical Reference)**: {fid}\n"
-                        f"  - **Note**: Utilisez cet ID précis (UUID) pour tout appel d'outil se référant à ce fichier.\n\n"
-                        f"{res_text}\n"
-                        f"</details>"
-                    )
-                    return {"status": "success", "type": "smart", "content": md_block, "fname": fname}
-            
-            with open(real_path, "rb") as f: b64_data = base64.b64encode(f.read()).decode("utf-8")
-            if state_manager: state_manager.mark_processed(chat_id, fid, fname, "raw_inline")
-            ux_block = (
-                f"<details>\n"
-                f"  <summary>📎 Fichier (Raw) : {fname}</summary>\n"
-                f"  - **FILE_ID (Technical Reference)**: {fid}\n"
-                f"  - **Note**: Utilisez cet ID précis (UUID) pour toute lecture profonde.\n"
-                f"  (Taille: {int(fsize/1024)} Ko)\n"
-                f"</details>\n"
-            )
-            return {"status": "success", "type": "raw", "content": {"inline_data": {"mime_type": mime, "data": b64_data}, "ux_block": ux_block}, "fname": fname}
-        except Exception as e: return {"status": "error", "reason": str(e), "fname": "unknown"}
+        # --- CAS 2 : TEXTE PETIT (Injection Directe) ---
+        if size < self.valves.MAX_DIRECT_TEXT_SIZE and "text/" in mime:
+            try:
+                with open(path, "r", encoding="utf-8", errors="ignore") as f: content = f.read()
+                state_manager.mark_processed(chat_id, file_id, filename, mime, "transmitted")
+                return {
+                    "status": "success", "type": "Transmitted", "fid": file_id, "sub_type": "text",
+                    "content": f"📄 **Fichier : {filename}**\n```\n{content}\n```"
+                }
+            except Exception as e:
+                return {"status": "error", "fid": file_id, "error": f"Erreur lecture : {str(e)}"}
 
-    async def inlet(self, body: dict, __event_emitter__: Any = None, __event_call__: Any = None, __user__: Optional[dict] = None) -> dict:
+        # --- CAS 3 : TEXTE LARGE (Smart Context via Gemini Flash) ---
+        if self.valves.ENABLE_SMART_CONTEXT and "text/" in mime:
+            if token and project_id:
+                try:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as f: raw_text = f.read()
+                    import httpx
+                    payload = {
+                        "model": "gemini-3-flash-preview", "project": project_id,
+                        "request": {
+                            "systemInstruction": {"parts": [{"text": "Tu es l'unité de prétraitement contextuel d'ECHO. Ta mission est de produire un résumé technique exhaustif et structuré du fichier fourni."}]},
+                            "contents": [{"role": "user", "parts": [{"text": f"Analyse et résume ce fichier technique nommé '{filename}' :\n\n{raw_text}"}]}],
+                            "generationConfig": {"temperature": 0.1, "thinkingConfig": {"includeThoughts": False}}
+                        }
+                    }
+                    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
+                    resp = httpx.post(f"{GOOGLE_API_BASE_URL}:generateContent", headers=headers, json=payload, timeout=60)
+                    if resp.status_code == 200:
+                        summary = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                        state_manager.mark_processed(chat_id, file_id, filename, mime, "summarized")
+                        return {"status": "success", "type": "Summarized", "fid": file_id, "content": f"🧠 **Smart Context : {filename}**\n\n{summary}"}
+                except: pass
+
+        # --- CAS 4 : FALLBACK BINAIRE (Indexation) ---
+        state_manager.mark_processed(chat_id, file_id, filename, "application/octet-stream", "indexed")
+        return {"status": "success", "type": "Indexed", "fid": file_id}
+
+    async def inlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
         try:
-            events = EchoEvents(__event_emitter__, __event_call__)
-            if not self.toggle: return body
+            from echo_utils import EchoEvents
+            events = EchoEvents(__event_emitter__)
+            body.setdefault("metadata", {})
             msgs = body.get("messages", [])
+            chat_id = (__metadata__ or {}).get("chat_id") or body.get("chat_id")
             all_files = body.get("files", [])
-            chat_id = body.get("chat_id") or body.get("metadata", {}).get("chat_id")
-            user_id = __user__.get("id", "anonymous") if __user__ else "anonymous"
-            state_manager = EchoStateManager(user_id=user_id) if chat_id else None
+            state_manager = EchoStateManager(user_id=__user__.get("id", "system")) if __user__ else None
 
-            # --- DÉTECTION ET EXTRACTION DU TOKEN OAUTH (STEALTH V2) ---
+            if not msgs: return body
+
+            # --- 0. INVARIANT HASH ---
+            if state_manager:
+                idx = -1
+                for i in range(len(msgs)-1, -1, -1):
+                    if msgs[i].get("role") == "user": idx = i; break
+                if idx != -1:
+                    m = msgs[idx]
+                    inv_hash = state_manager.calculate_invariant_hash(m["role"], m["content"], all_files)
+                    body["metadata"]["_echo_invariant_hash"] = inv_hash
+
+            # --- AUTH OAUTH ---
             if msgs and len(msgs) >= 2:
                 prev_msg = msgs[-2]
-                prev_content = str(prev_msg.get("content", ""))
-                if "ECHO_SESSION_AUTH_PENDING" in prev_content:
-                    current_user_msg = msgs[-1]
-                    raw_content = current_user_msg.get("content", "")
-                    text_to_search = raw_content if isinstance(raw_content, str) else "".join([x.get("text", "") for x in raw_content if isinstance(x, dict) and x.get("type") == "text"])
-                    match = re.search(r"(4/[a-zA-Z0-9._-]+)", text_to_search.strip())
+                if "ECHO_SESSION_AUTH_PENDING" in str(prev_msg.get("content", "")):
+                    match = re.search(r'(4/[\w-]+)', msgs[-1].get("content", ""))
                     if match:
                         body["_auth_token"] = match.group(1)
-                        current_user_msg["content"] = "🔐 *Authentification ECHO en cours...*"
+                        msgs[-1]["content"] = "🔐 *Authentification ECHO en cours...*"
                         return body
 
-            user_valves = __user__.get("valves") if __user__ else None
-            enable_user_name, override_location, thinking_level = False, "", "HIGH"
-            if user_valves:
-                enable_user_name = getattr(user_valves, "ENABLE_USER_NAME", False)
-                override_location = getattr(user_valves, "OVERRIDE_LOCATION", "")
-                thinking_level = getattr(user_valves, "SMART_CONTEXT_THINKING_LEVEL", "HIGH")
-
-            meta_vars = body.get("metadata", {}).get("variables", {})
-            env_block = {"environnement_utilisateur": {"version_framework": self._get_echo_version(), "nom_utilisateur": __user__.get("name", "Anonyme") if enable_user_name else "[Masqué]", "modele_actif": "__PIPE_MODEL_ID__", "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"), "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC"), "lieu_utilisateur": override_location or meta_vars.get("{{USER_LOCATION}}", "Inconnu")}}
-            
-            # --- RÉCUPÉRATION DU REGISTRE DE SESSION (PERSISTANT) ---
-            registry = state_manager.get_session_registry(chat_id) if state_manager else {}
-            
+            # --- 1. SYNC & AIGUILLAGE ---
             files_to_process = []
-            if all_files and state_manager:
-                known_files = state_manager.sync_state(chat_id, [f.get("id") or f.get("file", {}).get("id") for f in all_files if f.get("id") or f.get("file", {}).get("id")])
+            if state_manager and chat_id:
+                ids_in_body = [f.get("id") or f.get("file", {}).get("id") for f in all_files if f.get("id") or f.get("file", {}).get("id")]
+                known_files = state_manager.sync_state(chat_id, ids_in_body)
                 for f in all_files:
-                    if (fid := (f.get("id") or f.get("file", {}).get("id"))) and fid not in known_files: files_to_process.append(f)
-            elif all_files: files_to_process = all_files
+                    fid = f.get("id") or f.get("file", {}).get("id")
+                    if fid and fid not in known_files: files_to_process.append(f)
 
             token, project_id = None, None
             if self.valves.ENABLE_SMART_CONTEXT and __user__ and "id" in __user__ and files_to_process:
                 token, project_id = self.auth.get_credentials(__user__["id"])
 
-            injections_smart, injections_raw = [], []
-            if files_to_process:
-                await events.status(f"Traitement de {len(files_to_process)} fichiers...", False)
+            results = []
+            if files_to_process and chat_id:
+                await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
                 loop = asyncio.get_running_loop()
                 with ThreadPoolExecutor(max_workers=3) as executor:
-                    tasks = [loop.run_in_executor(executor, self._process_file_task, f, token, project_id, thinking_level, chat_id, state_manager) for f in files_to_process]
-                    for res in await asyncio.gather(*tasks):
-                        if res["status"] == "success":
-                            if res["type"] == "smart": injections_smart.append(res["content"])
-                            else: injections_raw.append(res["content"])
-                await events.status("Fichiers traités.", False)
-                # Rafraîchir le registre après traitement
-                registry = state_manager.get_session_registry(chat_id) if state_manager else {}
+                    tasks = [loop.run_in_executor(executor, self._process_file_task, f, token, project_id, "HIGH", chat_id, state_manager, events) for f in files_to_process]
+                    results = await asyncio.gather(*tasks)
+                await events.status("Aiguillage ECHO terminé.", True)
 
-            if msgs:
-                idx = next((i for i in range(len(msgs)-1, -1, -1) if msgs[i]["role"] == "user"), -1)
-                if idx != -1:
-                    # Bloc 1 : Environnement
-                    new_content = [{"type": "text", "text": f"```json:context\n{json.dumps(env_block, ensure_ascii=False)}\n```\n\n"}]
-                    # Bloc 2 : Registre Technique (Persistant)
-                    if registry:
-                        file_block = {"registre_technique": registry}
-                        new_content.append({"type": "text", "text": f"```json:fichiers\n{json.dumps(file_block, ensure_ascii=False)}\n```\n\n"})
-                    # Bloc 3 : Smart Context (Événementiel)
-                    if injections_smart: new_content.append({"type": "text", "text": "\n".join(injections_smart) + "\n\n"})
-                    if injections_raw:
-                        for item in injections_raw:
-                            new_content.append({"type": "inline_data", "inline_data": item["inline_data"]})
-                            new_content.append({"type": "text", "text": item["ux_block"]})
-                    orig = msgs[idx].get("content", "")
-                    if isinstance(orig, str): new_content.append({"type": "text", "text": orig})
-                    else: new_content.extend(orig)
-                    msgs[idx]["content"] = new_content
+            # --- 2. RECONSTRUCTION META-TRANSPORT ---
+            if idx != -1:
+                registry = state_manager.get_session_registry(chat_id) if (state_manager and chat_id) else {}
+                meta_vars = body["metadata"].get("variables", {})
+                etat_echo = {
+                    "version_echo": "##ECHO_VERSION##",
+                    "moteur_ia": "##GEMINI_ENGINE##",
+                    "nom_utilisateur": __user__.get("name", "Anonyme") if __user__ else "Anonyme",
+                    "contexte_temporel": {
+                        "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
+                        "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
+                    },
+                    "registre_technique": registry
+                }
+                rich_parts = [{"text": f"```json:etat_echo\n{json.dumps(etat_echo, ensure_ascii=False)}\n```\n\n"}]
+                for res in results:
+                    if res.get("status") == "success":
+                        if res["type"] == "Summarized": rich_parts.append({"text": res["content"]})
+                        elif res["type"] == "Transmitted":
+                            if res["sub_type"] == "text": rich_parts.append({"text": res["content"]})
+                            else:
+                                rich_parts.append({"text": res["content"]["anchor"]})
+                                rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
+                body["metadata"]["_echo_rich_parts"] = rich_parts
+
+            if all_files:
+                body["metadata"]["_echo_files"] = all_files; body["files"] = []
+
             return body
         except Exception as e:
-            logger.error(f"FILTER ERROR: {e}")
-            return body
+            logger.error(f"FILTER ERROR: {e}"); return body
 
     async def outlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
         msgs = body.get("messages", [])
         for m in msgs:
             content = str(m.get("content", ""))
-            if content.startswith("4/") or "Authentification ECHO en cours" in content:
-                m["content"] = "****************"
+            if content.startswith("4/") or "Authentification ECHO en cours" in content: m["content"] = "****************"
         return body

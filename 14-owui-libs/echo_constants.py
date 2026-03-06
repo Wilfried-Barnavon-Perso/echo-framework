@@ -1,8 +1,8 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 1.2
-description: Master Source of Truth for ECHO Infrastructure. No fallbacks.
+version: 1.4
+description: Master Source of Truth for ECHO Infrastructure. Corrected version path.
 """
 
 import os
@@ -20,8 +20,11 @@ ECHO_UPLOADS_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 ECHO_USER_DBS_DIR = f"{ECHO_BASE_DATA_DIR}/user_dbs"
 ECHO_VERSION_FILE = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
+# Source de vérité de la version (Lien Docker)
+ECHO_VERSION_PATH = "/app/backend/data/ECHO_VERSION"
+
 # Identité Réseau
-ECHO_USER_AGENT = "GeminiCLI/0.24.0"
+ECHO_USER_AGENT = "GeminiCLI/0.32.1"
 
 # ==============================================================================
 # 1. PROTOCOLE GOOGLE CLOUD
@@ -50,10 +53,10 @@ GOOGLE_SCOPES = [
 
 MIME_MAPPING_TXT = {
     "text/plain": [
-        ".bat", ".c", ".conf", ".cpp", ".cs", ".css", ".csv", ".dockerfile", 
-        ".editorconfig", ".env", ".gitignore", ".go", ".h", ".hpp", ".ini", 
-        ".java", ".js", ".json", ".kt", ".log", ".lua", ".md", ".php", ".pl", 
-        ".ps1", ".py", ".r", ".rb", ".rs", ".sh", ".sql", ".swift", ".toml", 
+        ".bat", ".c", ".conf", ".cpp", ".cs", ".css", ".csv", ".dockerfile",
+        ".editorconfig", ".env", ".gitignore", ".go", ".h", ".hpp", ".ini",
+        ".java", ".js", ".json", ".kt", ".log", ".lua", ".md", ".php", ".pl",
+        ".ps1", ".py", ".r", ".rb", ".rs", ".sh", ".sql", ".swift", ".toml",
         ".ts", ".txt", ".vb", ".xml", ".yaml", ".yml", "dockerfile", "makefile"
     ],
     "text/html": [".html", ".htm"]
