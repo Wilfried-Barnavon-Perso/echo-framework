@@ -1,15 +1,20 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 2.1
-description: 2.1: Standardized signature with __event_emitter__ and __event_call__.
+version: 2.3
+description: 2.3: Deterministic JSON output to prevent model completion derailment.
 """
 
 from pydantic import BaseModel, Field
 import os
 import json
 import sqlite3
+import sys
 from typing import Any
+
+# Importation ECHO Standard
+sys.path.append("/app/backend/echo_libs")
+from echo_utils import wrap_tool_output
 
 class Tools:
     class Valves(BaseModel):
@@ -30,7 +35,7 @@ class Tools:
         __metadata__: dict = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> str:
+    ) -> dict:
         """
         Lit l'historique de consommation de tokens directement depuis la base de données de l'utilisateur.
         Ne fait AUCUNE estimation : si la base ou les données ne sont pas trouvées, renvoie une erreur.
@@ -42,14 +47,14 @@ class Tools:
         user_id = __user__.get("id")
 
         if not user_id:
-            return "Erreur critique : Impossible d'identifier l'utilisateur."
+            return wrap_tool_output(text="❌ Erreur : Impossible d'identifier l'utilisateur.", status={"status": "error"})
 
         try:
             safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
             db_path = os.path.join(self.db_root_dir, f"user-{safe_uid}.db")
 
             if not os.path.exists(db_path):
-                return f"Métrique indisponible : Aucune base de données trouvée pour l'utilisateur ID `{user_id}`."
+                return wrap_tool_output(text=f"⚠️ Métrique indisponible : Pas de DB pour `{user_id}`.", status={"status": "missing_db"})
 
             with sqlite3.connect(db_path, timeout=5.0) as conn:
                 cursor = conn.cursor()
@@ -58,28 +63,32 @@ class Tools:
                 if row:
                     real_stats = json.loads(row[0])
                     source = "DB_REAL"
-        except sqlite3.OperationalError as e:
-            return f"Métrique indisponible : La table `context_stats` est probablement manquante dans la base de données. Erreur: {e}"
         except Exception as e:
-            return f"Erreur de lecture système : {str(e)}"
+            return wrap_tool_output(text=f"❌ Erreur DB : {str(e)}", status={"status": "error", "error": str(e)})
 
         if not real_stats:
-             return f"Métrique indisponible : Aucune donnée de session trouvée pour l'utilisateur ID `{user_id}`."
+             return wrap_tool_output(text=f"⚠️ Aucune donnée de session pour `{user_id}`.", status={"status": "no_data"})
 
-        # Usage des vraies stats
         est_tokens = real_stats.get("totalTokenCount", 0)
         p_tok = real_stats.get("promptTokenCount", 0)
         c_tok = real_stats.get("candidatesTokenCount", 0)
 
         percent = round((est_tokens / limit) * 100, 2)
         
-        status = "SAFE"
-        if percent > 80: status = "WARNING"
-        if percent > 95: status = "CRITICAL"
+        status_load = "SAFE"
+        if percent > 80: status_load = "WARNING"
+        if percent > 95: status_load = "CRITICAL"
 
-        msg = (
-            f"Context Load: {percent}% ({est_tokens}/{limit} tokens) - Status: {status} [{source}]\n"
-            f"Details: Prompt={p_tok}, Candidates={c_tok}"
-        )
+        payload = {
+            "context_load_percent": percent,
+            "used_tokens": est_tokens,
+            "total_limit": limit,
+            "status": status_load,
+            "data_source": source,
+            "details": {
+                "prompt": p_tok,
+                "candidates": c_tok
+            }
+        }
             
-        return msg
+        return wrap_tool_output(text=json.dumps(payload, indent=2), status={"status": "success", "load_percent": percent, "tokens": est_tokens})

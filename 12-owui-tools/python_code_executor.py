@@ -1,79 +1,74 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 5.2
-description: 5.2: Standardized signature with __event_emitter__ and __event_call__.
+version: 5.4
+description: 5.4: Strict Multi-Parts standard enforcement (IA/UI isolation).
 """
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
 
-import requests, json, sys
+import requests
+import json
+import sys
 from pydantic import BaseModel, Field
-from typing import Any
+from typing import Optional, Any
 
+# Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-try:
-    from echo_utils import EchoEvents
-except ImportError:
-    class EchoEvents:
-        def __init__(self, e=None, c=None): pass
-        async def status(self, d, done=False): pass
+from echo_utils import wrap_tool_output, EchoEvents
 
 class Tools:
     class Valves(BaseModel):
-        execution_timeout: int = Field(default=30, description="Temps maximum (s).")
-        worker_url: str = Field(default="http://python-worker:5000/execute", description="URL interne.")
-        debug_mode: bool = Field(default=False, description="Activer les logs debug.")
+        PYTHON_WORKER_URL: str = Field(default="http://python-worker:5000/execute", description="URL du microservice d'exécution Python.")
+        TIMEOUT: int = Field(default=30, description="Délai d'attente maximum pour l'exécution (secondes).")
 
     def __init__(self):
         self.valves = self.Valves()
 
-    async def python_code_executor(
+    async def execute_python_code(
         self, 
         code: str, 
-        __user__: dict = {},
+        __user__: dict = {}, 
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> str:
+    ) -> dict:
         """
-        Exécute du code Python arbitraire dans un environnement isolé (Sandbox éphémère).
-        N'a pas d'accès persistant aux fichiers de l'utilisateur.
-        L'identité de l'utilisateur est transmise au worker pour audit/isolation.
+        Exécute du code Python dans un environnement sandbox sécurisé.
+        Idéal pour : calculs complexes, analyse de données, manipulation de structures JSON.
+        
+        :param code: Le code Python à exécuter.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        # Récupération de l'ID utilisateur (défaut 'anonymous' si appel système)
-        user_id = __user__.get("id", "anonymous")
-        
-        await events.status(f"⚡ ECHO Sandbox : Exécution...")
+        await events.status("🐍 Exécution Python en cours...")
 
         try:
-            payload = {"code": code, "timeout": self.valves.execution_timeout}
-            
-            # Propagation de l'identité vers le worker via Headers HTTP
-            headers = {
-                "X-OpenWebUI-User-Id": str(user_id)
-            }
-            
-            http_timeout = self.valves.execution_timeout + 2
-            
             response = requests.post(
-                self.valves.worker_url, 
-                json=payload, 
-                headers=headers, 
-                timeout=http_timeout
+                self.valves.PYTHON_WORKER_URL,
+                json={"code": code},
+                timeout=self.valves.TIMEOUT
             )
             
             if response.status_code == 200:
-                data = response.json()
-                await events.status(f"⚡ Exécution terminée.", done=True)
-                if data.get("status") == "success": 
-                    return json.dumps({"status": "success", "output": data.get("output", "Aucune sortie.")}, ensure_ascii=False)
-                else: 
-                    return json.dumps({"status": "error", "error": data.get("error", "Erreur inconnue")}, ensure_ascii=False)
-            else: 
-                return json.dumps({"status": "error", "error": f"Erreur HTTP Worker: {response.status_code}"}, ensure_ascii=False)
+                worker_res = response.json()
+                text_out = worker_res.get("output", "")
+                if worker_res.get("error"):
+                    text_out += f"\n\n⚠️ Erreur d'exécution :\n{worker_res['error']}"
                 
-        except requests.exceptions.ConnectionError: 
-            return json.dumps({"status": "critical_error", "error": "Impossible de contacter le conteneur 'python-worker'. Vérifiez qu'il est démarré."}, ensure_ascii=False)
+                # PURGE & REDIRECTION: Extraire les graphiques éventuels pour l'IA
+                multiparts = []
+                plots = worker_res.pop("plots", [])
+                if isinstance(plots, list):
+                    for plot_b64 in plots:
+                        multiparts.append({"type": "media", "mime_type": "image/png", "data": plot_b64})
+                
+                await events.status("Exécution terminée.", done=True)
+                return wrap_tool_output(text=text_out, status=worker_res, echo_tool_multiparts=multiparts)
+            else:
+                err_msg = f"Erreur Worker (HTTP {response.status_code})"
+                await events.status(f"❌ {err_msg}", done=True)
+                return wrap_tool_output(text=f"❌ {err_msg}", status={"status": "critical_error", "code": response.status_code})
+
+        except requests.exceptions.ConnectionError:
+            return wrap_tool_output(text="❌ Service Python Worker injoignable.", status={"status": "error"})
         except Exception as e: 
-            return json.dumps({"status": "critical_error", "error": f"Erreur Client: {str(e)}"}, ensure_ascii=False)
+            return wrap_tool_output(text=f"❌ Erreur Client: {str(e)}", status={"status": "error", "error": str(e)})

@@ -1,139 +1,79 @@
 """
 title: ECHO Gemini Web Search
 author: Wilfried BARNAVON
-version: 12.5
-description: 12.5: Restored full docstrings and mission instructions (Strict Architecture).
+version: 12.7
+description: 12.7: Mutualized thought splitting using echo_utils (Standard <think>).
 """
 
 import json
 import os
 import httpx
 import uuid
-import random
-import asyncio
-from typing import Optional, Literal, Any
+import sys
+import re
+from typing import Optional, Any, Tuple
 from pydantic import BaseModel, Field
 
-# Importations ECHO Strictes (Volume Docker)
-import sys
+# Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, EchoEvents
-from echo_constants import ECHO_USER_AGENT, GOOGLE_SSE_URL
+from echo_utils import EchoAuth, EchoEvents, wrap_tool_output, split_thought_process
+from echo_constants import ECHO_USER_AGENT
 
 class Tools:
     class Valves(BaseModel):
-        SEARCH_MODEL: str = Field(default="gemini-3-flash-preview", description="Modèle utilisé pour la recherche et la synthèse.")
-        MAX_TOKENS: int = Field(default=65536, description="Nombre maximum de tokens en sortie.")
-        DEFAULT_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH", description="Niveau de réflexion par défaut.")
-        HTTP_TIMEOUT: int = Field(default=180, description="Timeout pour la recherche (secondes).")
+        GEMINI_FLASH_MODEL: str = Field(default="gemini-3-flash-preview")
 
     def __init__(self):
         self.valves = self.Valves()
         self.auth = EchoAuth()
 
-    async def gemini_internal_web_search(
+    async def search_web(
         self, 
         query: str, 
-        location: str, 
-        current_date: str, 
-        current_time: str, 
-        thinking_level: Optional[Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"]] = None,
         __user__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> str:
+    ) -> dict:
         """
-        [SEARCH ENGINE] Effectue une recherche Google en temps réel pour obtenir des informations fraîches (news, météo, faits).
-        Réponse EXCLUSIVEMENT en JSON structuré.
-
-        VOTRE MISSION (Modèle Mandant) :
-        1. Utilisez cet outil pour vérifier des faits ou obtenir des actualités récentes.
-        2. Choisissez le 'thinking_level' : 'MINIMAL' pour une réponse rapide, 'HIGH' pour une analyse croisée de sources.
-        3. Les résultats sont ancrés (Grounding) dans la recherche Google.
-
-        :param query: La recherche à effectuer.
-        :param location: Lieu de l'utilisateur (pour la pertinence locale).
-        :param current_date: Date actuelle.
-        :param current_time: Heure actuelle.
-        :param thinking_level: (Optionnel) Niveau de réflexion souhaité pour cette recherche.
+        Recherche en temps réel sur le web via Gemini Search.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        if not __user__ or "id" not in __user__: return json.dumps({"error": "User ID missing"})
-        
-        token, project_id = self.auth.get_credentials(__user__["id"])
-        if not token or not project_id: return json.dumps({"error": "Google Auth failed"})
+        await events.status(f"🌐 Recherche Web : {query}...")
 
-        await events.status(f"🌐 ECHO Search : {query}...")
-        active_thinking = thinking_level or self.valves.DEFAULT_THINKING_LEVEL
-        
-        headers = {
-            "Authorization": f"Bearer {token}", 
-            "Content-Type": "application/json", 
-            "User-Agent": ECHO_USER_AGENT,
-            "x-goog-api-client": "gl-python/3.10"
-        }
-        
-        search_schema = {
-            "type": "OBJECT",
-            "properties": {
-                "search_metadata": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "location_used": {"type": "STRING"},
-                        "sources_found": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"title": {"type": "STRING"}, "url": {"type": "STRING"}}}}
-                    },
-                    "required": ["location_used", "sources_found"]
-                },
-                "search_logic": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "search_strategy": {"type": "STRING"},
-                        "grounding_confidence": {"type": "NUMBER"}
-                    },
-                    "required": ["search_strategy", "grounding_confidence"]
-                },
-                "search_payload": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "summary_fr": {"type": "STRING"},
-                        "key_facts": {"type": "ARRAY", "items": {"type": "STRING"}}
-                    },
-                    "required": ["summary_fr", "key_facts"]
-                }
-            },
-            "required": ["search_metadata", "search_logic", "search_payload"]
-        }
+        token, project_id = self.auth.get_credentials(__user__.get("id"))
+        if not token: return wrap_tool_output(text="❌ Erreur Auth.", status={"status": "error"})
 
-        context_prompt = f"Contexte: {location}, le {current_date} à {current_time}.\nRequête: {query}\nSynthétise en français."
+        url = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
+        
         payload = {
-            "model": self.valves.SEARCH_MODEL,
+            "model": self.valves.GEMINI_FLASH_MODEL,
             "project": project_id,
             "request": {
-                "contents": [{"role": "user", "parts": [{"text": context_prompt}]}],
-                "tools": [{"google_search": {}}, {"urlContext": {}}],
-                "generationConfig": {
-                    "responseMimeType": "application/json",
-                    "responseSchema": search_schema,
-                    "maxOutputTokens": self.valves.MAX_TOKENS,
-                    "thinkingConfig": {"includeThoughts": True, "thinkingLevel": active_thinking}
-                }
+                "contents": [{"role": "user", "parts": [{"text": query}]}],
+                "tools": [{"googleSearch": {}}],
+                "generationConfig": {"thinkingConfig": {"includeThoughts": True}}
             }
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.valves.HTTP_TIMEOUT) as client:
-                full_text = ""
-                async with client.stream("POST", GOOGLE_SSE_URL, headers=headers, json=payload) as resp:
-                    if resp.status_code != 200: return json.dumps({"error": f"API Error {resp.status_code}"})
+            full_text = ""
+            async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream("POST", url, headers=headers, json=payload) as resp:
                     async for line in resp.aiter_lines():
                         if line.startswith("data:"):
                             try:
-                                data = json.loads(line[5:].strip())
-                                cand = data.get("response", {}).get("candidates", [])[0]
+                                chunk = json.loads(line[5:].strip())
+                                cand = chunk.get("response", {}).get("candidates", [])[0]
                                 if "content" in cand:
-                                    parts = cand["content"].get("parts", [])
-                                    if parts and "text" in parts[0]: full_text += parts[0]["text"]
+                                    for p in cand["content"].get("parts", []):
+                                        if "text" in p: full_text += p["text"]
                             except: pass
-                await events.status(f"🌐 Recherche terminée.", done=True)
-                return full_text
-        except Exception as e: return json.dumps({"error": "Search Exception", "details": str(e)})
+
+            clean_text, thoughts = split_thought_process(full_text)
+            await events.status("Recherche terminée.", done=True)
+            multiparts = [{"type": "thought", "content": thoughts}] if thoughts else []
+            return wrap_tool_output(text=clean_text, status={"status": "success"}, echo_tool_multiparts=multiparts)
+
+        except Exception as e:
+            return wrap_tool_output(text=f"❌ Erreur Search: {str(e)}", status={"status": "error"})

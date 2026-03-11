@@ -1,8 +1,8 @@
 """
 title: ECHO File Content Explorer
 author: ECHO Framework
-version: 1.12
-description: 1.12: Universal Probe Protocol (Support for application/octet-stream).
+version: 1.15
+description: 1.15: Mutualized thought splitting using echo_utils (Standard <think>).
 """
 
 import os
@@ -14,12 +14,15 @@ import random
 import uuid
 import asyncio
 import httpx
-from typing import Optional, List, Dict, Any, Union
+import hashlib
+import zlib
+import re
+from typing import Optional, List, Dict, Any, Union, Tuple
 from pydantic import BaseModel, Field
 
-# Importations ECHO Strictes
+# Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, EchoEvents, resolve_upload_file_path
+from echo_utils import EchoAuth, EchoEvents, resolve_upload_file_path, wrap_tool_output, split_thought_process
 from echo_constants import ECHO_USER_AGENT, ECHO_UPLOADS_DIR, get_gemini_mime
 
 class Tools:
@@ -40,21 +43,11 @@ class Tools:
         __user__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> str:
-        """
-        Sonde universelle du stockage physique. À utiliser impérativement pour lire le contenu brut de tout fichier 
-        dont le type MIME est 'application/octet-stream' ou si l'IA nécessite une vérification factuelle 
-        approfondie non couverte par le résumé initial (Smart Context).
-        
-        Cet outil est votre accès direct aux données brutes du système de fichiers ECHO.
-
-        :param file_id: L'UUID du fichier (provenant du Registre Technique).
-        :param start_line: Ligne de début (index 1).
-        :param end_line: Ligne de fin.
-        """
+    ) -> dict:
+        """Sonde universelle du stockage physique."""
         events = EchoEvents(__event_emitter__, __event_call__)
         fpath = resolve_upload_file_path(file_id, self.uploads_dir)
-        if not fpath: return f"❌ Fichier {file_id} introuvable."
+        if not fpath: return wrap_tool_output(text=f"❌ Fichier {file_id} introuvable.", status={"status": "error"})
 
         try:
             await events.status(f"📖 Lecture brute : {os.path.basename(fpath)}...")
@@ -64,10 +57,11 @@ class Tools:
                 subset = lines[start_line-1:end_line]
                 content = "".join(subset)
             
-            await events.status(f"Lecture terminée ({len(subset)} lignes).", done=True)
-            return f"--- CONTENU BRUT (Lignes {start_line}-{min(end_line, total)} sur {total}) ---\n\n{content}\n\n--- FIN DU BLOC ---"
+            res_text = f"--- CONTENU BRUT (Lignes {start_line}-{min(end_line, total)} sur {total}) ---\n\n{content}\n\n--- FIN DU BLOC ---"
+            await events.status(f"Lecture terminée.", done=True)
+            return wrap_tool_output(text=res_text, status={"status": "success", "file": os.path.basename(fpath)})
         except Exception as e:
-            return f"❌ Erreur de lecture : {str(e)}"
+            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
 
     async def semantic_probe(
         self, 
@@ -77,24 +71,17 @@ class Tools:
         __user__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> str:
-        """
-        Sonde sémantiquement un fichier volumineux (image, PDF, long texte) via Gemini Flash.
-        Idéal pour : 'Trouve le passage qui parle de X' ou 'Décris ce schéma'.
-        
-        :param file_id: L'UUID du fichier.
-        :param query: Votre question précise sur le contenu.
-        :param thinking_level: Niveau d'intensité de la réflexion (MINIMAL, LOW, MEDIUM, HIGH).
-        """
+    ) -> dict:
+        """Sonde sémantiquement un fichier volumineux via Gemini Flash."""
         events = EchoEvents(__event_emitter__, __event_call__)
         fpath = resolve_upload_file_path(file_id, self.uploads_dir)
-        if not fpath: return f"❌ Fichier {file_id} introuvable."
+        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
 
         token, project_id = self.auth.get_credentials(__user__.get("id"))
-        if not token or not project_id: return "❌ Erreur Auth."
+        if not token or not project_id: return wrap_tool_output(text="❌ Erreur Auth.", status={"status": "error"})
 
         mime, supported = get_gemini_mime(fpath)
-        if not supported: return f"❌ Type {mime} non supporté pour le sondage."
+        if not supported: return wrap_tool_output(text=f"❌ Type {mime} non supporté.", status={"status": "error"})
 
         await events.status(f"🤖 Sondage Sémantique ({thinking_level})...")
 
@@ -109,7 +96,7 @@ class Tools:
                 "request": {
                     "contents": [{"role": "user", "parts": [{"text": query}, {"inline_data": {"mime_type": mime, "data": b64}}]}],
                     "generationConfig": {
-                        "thinkingConfig": {"thinkingLevel": thinking_level.upper()},
+                        "thinkingConfig": {"includeThoughts": True, "thinkingLevel": thinking_level.upper()},
                         "responseMimeType": "text/plain"
                     }
                 }
@@ -125,9 +112,49 @@ class Tools:
                                 cand = data.get("response", {}).get("candidates", [])[0]
                                 if "content" in cand:
                                     parts = cand["content"].get("parts", [])
-                                    if parts and "text" in parts[0]: full_text += parts[0]["text"]
+                                    for p in parts:
+                                        if "text" in p: full_text += p["text"]
                             except: pass
 
+            clean_text, thoughts = split_thought_process(full_text)
             await events.status(f"🤖 Analyse terminée.", done=True)
-            return f"🤖 **Sondage Sémantique ({thinking_level}) :**\n\n{full_text}"
-        except Exception as e: return f"❌ Exception: {str(e)}"
+            multiparts = [{"type": "thought", "content": thoughts}] if thoughts else []
+            return wrap_tool_output(text=clean_text, status={"status": "success"}, echo_tool_multiparts=multiparts)
+        except Exception as e: return wrap_tool_output(text=f"❌ Exception: {str(e)}", status={"status": "error"})
+
+    async def calculate_file_hashes(
+        self, 
+        file_id: str, 
+        algorithms: List[str] = ["sha256"],
+        __user__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None
+    ) -> dict:
+        """Calcule les empreintes numériques (Hash) d'un fichier."""
+        events = EchoEvents(__event_emitter__, __event_call__)
+        fpath = resolve_upload_file_path(file_id, self.uploads_dir)
+        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
+
+        supported = {"md5": hashlib.md5, "sha1": hashlib.sha1, "sha256": hashlib.sha256, "sha512": hashlib.sha512, "sha3_256": hashlib.sha3_256, "sha3_512": hashlib.sha3_512}
+        results = {}; active_hashes = {}; do_crc32 = False; crc32_val = 0
+
+        for algo in algorithms:
+            a_lower = algo.lower()
+            if a_lower in supported: active_hashes[a_lower] = supported[a_lower]()
+            elif a_lower == "crc32": do_crc32 = True
+            else: results[algo] = "Unsupported"
+
+        try:
+            filename = os.path.basename(fpath)
+            await events.status(f"🧮 Calcul des hashs pour {filename}...")
+            with open(fpath, "rb") as f:
+                while chunk := f.read(65536):
+                    for h_obj in active_hashes.values(): h_obj.update(chunk)
+                    if do_crc32: crc32_val = zlib.crc32(chunk, crc32_val)
+            
+            for name, h_obj in active_hashes.items(): results[name] = h_obj.hexdigest()
+            if do_crc32: results["crc32"] = format(crc32_val & 0xFFFFFFFF, '08x')
+
+            await events.status(f"Calculs terminés.", done=True)
+            return wrap_tool_output(text=json.dumps(results, indent=2), status={"status": "success", "filename": filename})
+        except Exception as e: return wrap_tool_output(text=f"❌ Erreur: {str(e)}", status={"status": "error"})

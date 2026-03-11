@@ -17,13 +17,16 @@ from playwright.async_api import async_playwright
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 8.3 (DESKTOP VIEWPORT FIX)
+VERSION : 8.5 (PERFORMANCE & RESET)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-03-02
+DATE MAJ : 2026-03-09
 
-CHANGELOG 8.3 :
-- FIX: Removed hardcoded tablet viewport override in get_active_page.
-- FEAT: Pages now correctly inherit viewport from session context (Desktop support).
+CHANGELOG 8.5 :
+- FEAT: Added 'reset' action to fully purge and restart a browser session.
+- PERF: Memory-based screenshots (no disk I/O) for faster HUD updates.
+CHANGELOG 8.4 :
+- FEAT: Added native support for 'index' parameter in click/type/hover.
+- FIX: Improved target selection logic (Index priority over Selector).
 ================================================================================
 """
 
@@ -229,31 +232,29 @@ async def browser_action(request: Request):
             result["title"], result["url"] = await page.title(), page.url
 
         elif action == "click":
-            selector = params.get("selector")
-            if not selector: return {"status": "error", "message": "ERREUR_PARAMETRE : Cible manquante."}
+            idx, sel = params.get("index"), params.get("selector")
+            if idx is None and not sel: return {"status": "error", "message": "ERREUR_PARAMETRE : Cible manquante (index ou selector requis)."}
             
-            logger.info(f"[{sid}] 🖱️ Click: {selector}")
-            is_index = selector.replace("#", "").isdigit()
-            real_selector = f'[data-echo-index="{selector.replace("#", "")}"]' if is_index else selector
+            real_selector = f'[data-echo-index="{idx}"]' if idx is not None else sel
+            logger.info(f"[{sid}] 🖱️ Click Target: {real_selector}")
             
             try:
                 await session.mouse_shake(page)
-                if is_index:
-                    await page.locator(real_selector).first.dispatch_event("click")
-                else:
-                    await page.click(real_selector, timeout=15000)
-            except:
                 await page.locator(real_selector).first.dispatch_event("click")
+            except:
+                await page.click(real_selector, timeout=10000)
             
             await page.wait_for_load_state("networkidle", timeout=15000)
             result["url"] = page.url
 
         elif action == "type":
-            selector, text = params.get("selector"), params.get("text")
-            if not selector or text is None: return {"status": "error", "message": "ERREUR_PARAMETRE : Cible ou texte manquant."}
+            idx, sel, text = params.get("index"), params.get("selector"), params.get("text")
+            if (idx is None and not sel) or text is None: 
+                return {"status": "error", "message": "ERREUR_PARAMETRE : Cible ou texte manquant."}
             
-            logger.info(f"[{sid}] ⌨️ Type: {text}")
-            await page.fill(selector, text, timeout=30000)
+            real_selector = f'[data-echo-index="{idx}"]' if idx is not None else sel
+            logger.info(f"[{sid}] ⌨️ Type Target: {real_selector} | Content: {text}")
+            await page.fill(real_selector, text, timeout=30000)
             result["url"] = page.url
 
         elif action == "press":
@@ -264,11 +265,11 @@ async def browser_action(request: Request):
             result["url"] = page.url
 
         elif action == "hover":
-            selector = params.get("selector")
-            if not selector: return {"status": "error", "message": "ERREUR_PARAMETRE : Cible manquante."}
+            idx, sel = params.get("index"), params.get("selector")
+            if idx is None and not sel: return {"status": "error", "message": "ERREUR_PARAMETRE : Cible manquante."}
             
-            logger.info(f"[{sid}] 🖱️ Hover: {selector}")
-            real_selector = f'[data-echo-index="{selector.replace("#", "")}"]' if selector.replace("#", "").isdigit() else selector
+            real_selector = f'[data-echo-index="{idx}"]' if idx is not None else sel
+            logger.info(f"[{sid}] 🖱️ Hover Target: {real_selector}")
             await page.hover(real_selector, timeout=10000)
             result["url"] = page.url
 
@@ -319,6 +320,14 @@ async def browser_action(request: Request):
             else:
                 return {"status": "error", "message": "Impossible de fermer le dernier onglet restant."}
 
+        elif action == "reset":
+            logger.info(f"[{sid}] 🔄 Hard Resetting Session")
+            async with SESSIONS_LOCK:
+                if sid in SESSIONS:
+                    session = SESSIONS.pop(sid)
+                    await session.close()
+            result["message"] = "Session réinitialisée. Nouveau navigateur au prochain appel."
+
         elif action == "highlight":
             logger.info(f"[{sid}] 📸 Visual Highlight Flow (Tab {session.active_page_index})")
             await page.bring_to_front()
@@ -328,16 +337,10 @@ async def browser_action(request: Request):
             
             # Stabilisation Paint
             await asyncio.sleep(0.5)
-            capture_id = secrets.token_hex(4)
-            temp_path = f"/app/data/cap_{sid}_{capture_id}.png"
             
-            await page.screenshot(path=temp_path)
-            if os.path.exists(temp_path):
-                with open(temp_path, "rb") as f:
-                    result["screenshot_b64"] = base64.b64encode(f.read()).decode()
-                try: os.remove(temp_path)
-                except: pass
-            else: result["screenshot_b64"] = ""
+            # Optimisation v8.5 : Screenshot direct en memoire
+            img_bytes = await page.screenshot(type="png")
+            result["screenshot_b64"] = base64.b64encode(img_bytes).decode()
 
         else:
             return {"status": "error", "message": f"Action '{action}' non supportée."}

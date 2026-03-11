@@ -1,8 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.52
+# VERSION : 7.53
 # ==============================================================================
+# CHANGELOG :
+# 7.53: Fix double encoding issues (mojibake).
 
 # --- CONFIGURATION ---
 DEBUG_MODE="false"
@@ -161,7 +163,7 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     sleep 2
     # Extraction de l'ID via fichier pour eviter ARG_MAX
     MODEL_ID=$(jq -r 'if type=="array" then .[0].id else .id end' "$MODEL_CONFIG_FILE")
-    if [ -z "$MODEL_ID" ] || [ "$MODEL_ID" == "null" ]; then echo "❌ [FATAL] Impossible de dÃ©terminer MODEL_ID."; exit 1; fi
+    if [ -z "$MODEL_ID" ] || [ "$MODEL_ID" == "null" ]; then echo "❌ [FATAL] Impossible de déterminer MODEL_ID."; exit 1; fi
     
     echo "🧠 [MODEL] Configuration : $MODEL_ID"
     
@@ -196,7 +198,7 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
         rm -f "$TMP_B64"
     fi
 
-    # 5. DÃ©ploiement (ENDPOINTS STABLES v5.29.0)
+    # 5. Déploiement (ENDPOINTS STABLES v5.29.0)
     CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN")
     [ "$CHECK_CODE" -eq 401 ] && refresh_token && CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN")
 

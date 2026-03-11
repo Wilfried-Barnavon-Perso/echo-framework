@@ -9,10 +9,8 @@
         },
         "has_user_valves": true,
         "base_model_id": null,
-        
         "_comment_image": "Defines the local image file in /opt/echo-images/ to be encoded/injected by the script.",
         "local_image_filename": "logo-echo.png",
-        
         "_comment_params": "Standard LLM parameters. 'system' is auto-injected from system-prompt.json.",
         "params": {
             "system": null,
@@ -27,11 +25,10 @@
             "stop": null,
             "function_calling": "native"
         },
-        
         "meta": {
             "description": "ECHO Engine - Orchestrateur Cognitif",
             "capabilities": {
-                "file_context": true,
+                "file_context": false,
                 "vision": true,
                 "file_upload": true,
                 "web_search": false,
@@ -44,14 +41,12 @@
             },
             "suggestion_prompts": null,
             "tags": [],
-            
             "_comment_resources": "AUTO-MANAGED by config-owui.sh. Do not edit IDs manually.",
             "toolIds": [],
             "filterIds": [],
             "defaultFilterIds": [],
             "actionIds": []
         },
-        
         "_comment_access": "Default (null) = Public Read / Owner Write. To restrict, use: {'read': {'group_ids': ['id']}, 'write': {'group_ids': ['id']}}",
         "access_control": null
     }

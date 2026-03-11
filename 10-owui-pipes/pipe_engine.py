@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 166.3
-description: 166.3: Discretized signature fallback (Docker Logs only).
+version: 167.8
+description: 167.8: Fix double encoding issues (mojibake). Stops pipe execution immediately after successful auth to prevent sending auth codes to the model.
 """
 
 # ==============================================================================
@@ -27,7 +27,7 @@ from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Un
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, EchoStateManager, get_echo_version
+from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process
 from echo_constants import *
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
@@ -151,9 +151,53 @@ class AuthService:
         self.user_data_manager = user_data_manager
         self.base_url = GOOGLE_API_BASE_URL
 
+    def _generate_pkce(self):
+        """Génération PKCE robuste conforme v150.3."""
+        verifier = secrets.token_urlsafe(64)
+        digest = hashlib.sha256(verifier.encode("utf-8")).digest()
+        challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+        return verifier, challenge
+
+    def get_auth_url(self) -> str:
+        """Génère l'URL d'authentification avec challenge PKCE (S256) via httpx.QueryParams. Réutilise le verifier s'il est actif."""
+        existing_data = self.user_data_manager.get_auth_data('pkce_verifier')
+        if existing_data and (int(time.time()) - existing_data[1] < 290):
+            verifier = existing_data[0]
+            digest = hashlib.sha256(verifier.encode("utf-8")).digest()
+            challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+        else:
+            verifier, challenge = self._generate_pkce()
+            self.user_data_manager.save_auth_data('pkce_verifier', verifier)
+        
+        params = httpx.QueryParams({
+            "client_id": GOOGLE_CLIENT_ID,
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "response_type": "code",
+            "scope": " ".join(GOOGLE_SCOPES),
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "access_type": "offline",
+            "prompt": "consent"
+        })
+        url = f"{GOOGLE_AUTH_URI}?{params}"
+        return (
+            f"🔐 **Authentification ECHO Requise**\n\n"
+            f"Votre session Google Cloud a expiré ou a été réinitialisée.\n\n"
+            f"1. [Cliquez ici pour autoriser ECHO]({url})\n"
+            f"2. Copiez le code affiché (ex: `4/0Af...`)\n"
+            f"3. Collez-le simplement dans ce chat.\n\n"
+            f"*(ECHO_SESSION_AUTH_PENDING)*"
+        )
+
     def exchange_code(self, code: str) -> Tuple[bool, str]:
         pkce_data = self.user_data_manager.get_auth_data('pkce_verifier')
         if not pkce_data: return False, "Session expirée."
+        
+        # Contrôle strict de 300 secondes (5 minutes)
+        if int(time.time()) - pkce_data[1] > 300:
+            self.user_data_manager.delete_auth_data('pkce_verifier')
+            return False, "Le délai de 5 minutes est dépassé. Veuillez générer un nouveau lien."
+
         try:
             from google_auth_oauthlib.flow import Flow
             OFFICIAL_CLIENT_CONFIG = {"installed": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "auth_uri": GOOGLE_AUTH_URI, "token_uri": GOOGLE_TOKEN_URI, "redirect_uris": [GOOGLE_REDIRECT_URI]}}
@@ -161,9 +205,11 @@ class AuthService:
             flow.redirect_uri = GOOGLE_REDIRECT_URI
             flow.fetch_token(code=code.strip(), code_verifier=pkce_data[0])
             self.user_data_manager.save_auth_data('google_token', flow.credentials.to_json())
+            
+            # Suppression uniquement en cas de succès
+            self.user_data_manager.delete_auth_data('pkce_verifier')
             return True, "Succès."
         except Exception as e: return False, str(e)
-        finally: self.user_data_manager.delete_auth_data('pkce_verifier')
 
     def get_valid_credentials(self):
         token_data = self.user_data_manager.get_auth_data('google_token')
@@ -204,13 +250,14 @@ class Orchestrator:
     def _resolve_placeholders(self, text: str, model_id: str) -> str:
         """Résolution dynamique des balises techniques."""
         if not isinstance(text, str): return text
-        version = get_echo_version()
+        version = get_echo_version() or "##VERSION_ERR##"
         resolved = text.replace("##ECHO_VERSION##", version)
         resolved = resolved.replace("##GEMINI_ENGINE##", model_id)
+        resolved = resolved.replace("##MODEL_ID##", model_id)
         return resolved
 
     def _ensure_gemini_parts(self, content: Any, model_id: str = "unknown") -> List[Dict]:
-        """Nettoyage NON-DESTRUCTIF avec résolution de placeholders."""
+        """Nettoyage NON-DESTRUCTIF avec résolution de placeholders et conversion multimodale."""
         parts = []
         if isinstance(content, str):
             if content.strip(): parts.append({"text": self._resolve_placeholders(content, model_id)})
@@ -218,22 +265,72 @@ class Orchestrator:
             for p in content:
                 if not isinstance(p, dict): continue
                 new_part = {}
-                if "text" in p: new_part["text"] = self._resolve_placeholders(p["text"], model_id)
-                elif "inlineData" in p: new_part["inlineData"] = p["inlineData"]
-                elif "inline_data" in p: new_part["inlineData"] = {"mimeType": p["inline_data"]["mime_type"], "data": p["inline_data"]["data"]}
-                elif "functionCall" in p: new_part["functionCall"] = p["functionCall"]
-                elif "functionResponse" in p: new_part["functionResponse"] = p["functionResponse"]
-                if "thoughtSignature" in p and new_part: new_part["thoughtSignature"] = p["thoughtSignature"]
-                if new_part: parts.append(new_part)
+                if "text" in p: 
+                    new_part["text"] = self._resolve_placeholders(p["text"], model_id)
+                elif p.get("type") == "image_url" and "image_url" in p:
+                    # Conversion format OpenAI (OWUI) -> Gemini inlineData
+                    url = p["image_url"].get("url", "")
+                    if url.startswith("data:"):
+                        try:
+                            mime, b64 = url.split(";", 1)[0].replace("data:", ""), url.split(",", 1)[1]
+                            new_part["inlineData"] = {"mimeType": mime, "data": b64}
+                        except: pass
+                elif "inlineData" in p: 
+                    new_part["inlineData"] = p["inlineData"]
+                elif "inline_data" in p: 
+                    new_part["inlineData"] = {"mimeType": p["inline_data"]["mime_type"], "data": p["inline_data"]["data"]}
+                elif "functionCall" in p: 
+                    new_part["functionCall"] = p["functionCall"]
+                elif "functionResponse" in p: 
+                    new_part["functionResponse"] = p["functionResponse"]
+                
+                if "thoughtSignature" in p and new_part: 
+                    new_part["thoughtSignature"] = p["thoughtSignature"]
+                
+                if new_part: 
+                    parts.append(new_part)
         return parts
 
-    def _normalize_tool_response(self, content: Any) -> Dict:
-        """Factorisation Entrée : Transforme tout retour d'outil en dictionnaire Gemini."""
-        if isinstance(content, (dict, list)): return content
+    def _unbox_tool_output(self, name: str, content: Any, model_id: str) -> List[Dict]:
+        """Déballeur Strict ECHO Multi-Parts conforme à la doc Gemini officielle."""
         if isinstance(content, str):
-            try: return orjson.loads(content)
-            except: return {"result": content}
-        return {"result": str(content)}
+            try: content = orjson.loads(content)
+            except: content = {"text": str(content), "status": {"status": "legacy_fallback"}}
+        if not isinstance(content, dict): content = {"text": str(content), "status": {"status": "error_format"}}
+        
+        text_body = content.get("text", "")
+        status_meta = content.get("status", {"status": "success"})
+        rich_multiparts = content.get("echo_tool_multiparts", [])
+
+        # Le texte métier DOIT être dans le dictionnaire `response` pour que le modèle le lise comme résultat de l'outil
+        response_dict = status_meta.copy()
+        if text_body:
+            response_dict["result"] = self._resolve_placeholders(text_body, model_id)
+
+        # Construction du functionResponse
+        func_resp = {
+            "name": name,
+            "response": response_dict
+        }
+
+        # S'il y a des parts multimodales, elles s'imbriquent DANS le functionResponse
+        func_parts = []
+        for mp in rich_multiparts:
+            m_type = mp.get("type")
+            if m_type == "thought" and mp.get("content"): 
+                response_dict["tool_thought"] = mp["content"]
+            elif m_type == "media" and mp.get("data"): 
+                func_parts.append({
+                    "inlineData": {
+                        "mimeType": mp.get("mime_type", "image/png"), 
+                        "data": mp["data"]
+                    }
+                })
+        
+        if func_parts:
+            func_resp["parts"] = func_parts
+
+        return [{"functionResponse": func_resp}]
 
     def convert_owui_tools(self, tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
         if not tools: return None
@@ -245,7 +342,7 @@ class Orchestrator:
         return [{"functionDeclarations": funcs}] if funcs else None
 
     async def prepare_context(self, body: Dict, chat_id: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
-        """RESTAURATION Bit-Perfect avec Agrégation de Réponses Outils (v166.3)."""
+        """RESTAURATION Bit-Perfect avec Standard ECHO Multi-Parts."""
         messages = body.get("messages", []); meta = __metadata__ or body.get("metadata", {})
         all_files = meta.get("_echo_files", [])
         model_id = self.user_valves.MODEL_SELECTION
@@ -257,7 +354,6 @@ class Orchestrator:
             if role == "system" or any(x in str(content) for x in ["ECHO_SESSION_AUTH_PENDING", "Authentification ECHO"]) or str(content).startswith("4/"): 
                 i += 1; continue
 
-            # --- CAS SPÉCIFIQUE : AGRÉGATION DES RÉPONSES OUTILS ---
             if role == "tool":
                 aggregated_tool_parts = []
                 while i < len(messages) and messages[i].get("role") == "tool":
@@ -266,13 +362,19 @@ class Orchestrator:
                     current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
                     call_id = m_tool.get("tool_call_id"); bridge = self.user_data_manager.get_call_bridge(call_id)
                     func_name = bridge["name"] if bridge else "unknown"
-                    aggregated_tool_parts.append({"functionResponse": {"name": func_name, "response": self._normalize_tool_response(content_tool)}})
+                    rich_tool_parts = self._unbox_tool_output(func_name, content_tool, model_id)
+                    aggregated_tool_parts.extend(rich_tool_parts)
                     self.user_data_manager.index_suture(current_cumul, chat_id, inv_hash, last_cumul)
                     last_cumul = current_cumul; i += 1
                 final_contents.append({"role": "user", "parts": aggregated_tool_parts})
                 continue
 
             # --- CAS GÉNÉRAUX : USER / ASSISTANT ---
+            if role in ["assistant", "model"]:
+                # PURGE DES PENSÉES (Doctrine v5.48.8) : Ne jamais renvoyer les pensées au modèle.
+                # Permet de maintenir l'invariance du hash pour la Suture.
+                content, _ = split_thought_process(content if isinstance(content, str) else str(content))
+
             inv_hash = meta.get("_echo_invariant_hash") if (role == "user" and i == len(messages)-1) else self.user_data_manager.calculate_invariant(role, content, m.get("files", []) if i < len(messages)-1 else all_files)
             current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
             restored_parts = None
@@ -299,14 +401,13 @@ class Orchestrator:
                     bridge = self.user_data_manager.get_call_bridge(tool_calls[0].get("id"))
                     if bridge: sig = bridge["signature"]
                 if not sig: sig = self.user_data_manager.get_signature(current_cumul)
-                
                 restored_parts = self._ensure_gemini_parts(content, model_id)
                 if not tool_calls:
                     tool_io = self.user_data_manager.state_manager.get_tool_io(current_cumul)
                     if tool_io: restored_parts = [{"functionCall": {"name": tc["name"], "args": tc["args"]}} for tc in tool_io.get("calls", [])] + restored_parts
                 else:
                     restored_parts = [{"functionCall": {"name": tc["function"]["name"], "args": orjson.loads(tc["function"]["arguments"])}} for tc in tool_calls] + restored_parts
-
+                
                 if sig and restored_parts:
                     injected = False
                     for p in restored_parts:
@@ -315,15 +416,13 @@ class Orchestrator:
                         for p in reversed(restored_parts):
                             if "text" in p: p["thoughtSignature"] = sig; break
                 elif tool_calls:
+                    # Le parachute MAGIC_KEY est validé par la doc Google pour les historiques manuels
                     for p in restored_parts:
-                        if "functionCall" in p: 
-                            p["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION
-                            print(f"!!! [ECHO] SUTURE : Signature manquante pour l'appel {tool_calls[0].get('id')}. Utilisation du parachute MAGIC_KEY.", flush=True)
-                            break
+                        if "functionCall" in p: p["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION; break
+                    print(f"!!! [ECHO INFO] SUTURE : Signature manquante pour {tool_calls[0].get('id')}. Utilisation de la clé de secours officielle (Doc Google).", flush=True)
 
             if restored_parts: final_contents.append({"role": "model" if role in ["assistant", "model"] else "user", "parts": restored_parts})
             else: final_contents.append({"role": "model" if role in ["assistant", "model"] else "user", "parts": self._ensure_gemini_parts(content, model_id)})
-            
             self.user_data_manager.index_suture(current_cumul, chat_id, inv_hash, last_cumul)
             last_cumul = current_cumul; i += 1
 
@@ -342,7 +441,6 @@ class StreamProcessor:
         self.accumulated_calls = []; self.full_raw_accumulator = []
 
     def _create_tool_call_part(self, func_call: dict, tool_index: int) -> dict:
-        """Génération d'appel d'outil avec indexation OpenAI stricte."""
         tc_id = f"echo-{secrets.token_hex(8)}"
         self.accumulated_calls.append({"id": tc_id, "name": func_call["name"], "args": func_call.get("args", {})})
         return {"index": tool_index, "id": tc_id, "type": "function", "function": {"name": func_call["name"], "arguments": std_json.dumps(func_call.get("args", {}))}}
@@ -358,7 +456,6 @@ class StreamProcessor:
                     data = orjson.loads(line[6:]); self.full_raw_accumulator.append(data)
                     target = data.get("response", {}) if "response" in data else data
                     if "usageMetadata" in target: self.usage_stats = target["usageMetadata"]; self.user_data_manager.save_context_stats(self.usage_stats)
-                    
                     cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
                     if cand and cand[0].get("content"):
                         for part in cand[0]["content"]["parts"]:
@@ -372,7 +469,12 @@ class StreamProcessor:
                                 yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
                             elif "text" in part:
                                 if in_think: yield "\n</think>\n"; in_think = False
-                                self.accumulated_text += part["text"]; yield part["text"]
+                                raw_t = part["text"]
+                                # INTERCEPTION DES MESSAGES ÉPHÉMÈRES (Garde-fous Google)
+                                if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t:
+                                    print(f"!!! [ECHO INTERCEPT] Garde-fou Google détecté et masqué : {raw_t}", flush=True)
+                                    continue
+                                self.accumulated_text += raw_t; yield raw_t
                 except: pass
         if in_think: yield "\n</think>\n"
         if self.logger: self.logger.log("api_response", self.full_raw_accumulator)
@@ -401,22 +503,28 @@ class Pipe:
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
         auth = AuthService(orch.user_data_manager)
-
+        
+        # --- NOUVEAU : Interception du code d'autorisation transmis par le filtre ---
+        auth_token = body.get("_auth_token")
+        if auth_token:
+            success, msg = auth.exchange_code(auth_token)
+            if not success:
+                yield f"❌ **Échec de l'authentification :** {msg}\n\n" + auth.get_auth_url()
+                return
+            yield "✅ **Authentification réussie !** Vous pouvez maintenant poser votre question.\n"
+            return
+        
         creds = auth.get_valid_credentials()
         if not creds: yield auth.get_auth_url(); return
         pid, _ = auth.get_project_id(creds, self.valves.DEBUG_MODE)
         if not pid: yield "❌ Erreur Projet."; return
-
         context = await orch.prepare_context(body, chat_id, __metadata__, events)
         sys_instr = {"parts": [{"text": "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."}]}
         think = user_valves.PRO_THINKING_LEVEL if user_valves.MODEL_SELECTION == "gemini-3.1-pro-preview" else user_valves.FLASH_THINKING_LEVEL
-        
         payload = {"model": user_valves.MODEL_SELECTION, "project": pid, "request": {"systemInstruction": sys_instr, "contents": context, "generationConfig": {"temperature": user_valves.TEMPERATURE, "maxOutputTokens": user_valves.MAX_TOKENS, "thinkingConfig": {"includeThoughts": True, "thinkingLevel": think.lower()}}}}
         tools = orch.convert_owui_tools(body.get("tools"))
         if tools: payload["request"]["tools"] = tools; payload["request"]["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
-        
         if orch.logger: orch.logger.log("google_request", payload)
-
         proc = StreamProcessor(orch.user_data_manager, chat_id, events, logger=orch.logger)
         client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.ENABLE_HTTP2)
         try:
@@ -428,9 +536,35 @@ class Pipe:
                         inv = orch.user_data_manager.calculate_invariant("assistant", proc.accumulated_text, tool_io=tool_io)
                         new_cumul = orch.user_data_manager.calculate_cumulative(inv, body.get("_echo_last_cumul"))
                         orch.user_data_manager.save_cognitive(new_cumul, proc.captured_sig, None, tool_io)
-                        for c in proc.accumulated_calls:
-                            orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig, c["name"], c["args"])
+                        for c in proc.accumulated_calls: orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig, c["name"], c["args"])
                         orch.user_data_manager.index_suture(new_cumul, chat_id, inv, body.get("_echo_last_cumul"))
+                elif r.status_code in [401, 403]:
+                    err_data = await r.aread()
+                    raw_err = err_data.decode(errors='ignore')
+                    print(f"[ECHO ENGINE] AUTH ERROR {r.status_code} RAW: {raw_err}", flush=True)
+                    validation_url = None
+                    try:
+                        e_json = std_json.loads(raw_err)
+                        details = e_json.get("error", {}).get("details", [])
+                        for d in details:
+                            if d.get("reason") == "VALIDATION_REQUIRED":
+                                validation_url = d.get("metadata", {}).get("validation_url")
+                                if validation_url: break
+                            if "links" in d:
+                                validation_url = d["links"][0].get("url")
+                                if validation_url: break
+                    except: pass
+                    if validation_url:
+                        yield (
+                            f"## 🔐 Action requise sur votre compte Google\n\n"
+                            f"Une validation supplémentaire est nécessaire pour débloquer l'accès à Gemini.\n\n"
+                            f"> 🔗 **[Cliquez ici pour vérifier votre compte]({validation_url})**\n\n"
+                            f"Une fois la validation terminée sur le site de Google, renvoyez simplement votre message."
+                        )
+                    else:
+                        try: err_msg = std_json.loads(raw_err).get("error", {}).get("message", raw_err)
+                        except: err_msg = raw_err
+                        yield f"🔐 **Authentification requise ({r.status_code})**\n`{err_msg}`"
                 else: 
                     err_text = await r.aread(); yield f"❌ Erreur API {r.status_code}. {err_text.decode('utf-8', errors='ignore')}"
         except httpx.ProtocolError as e:

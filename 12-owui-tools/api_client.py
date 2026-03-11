@@ -1,14 +1,19 @@
 """
 title: ECHO Universal API Client
 author: Wilfried BARNAVON
-version: 1.1
-description: 1.1: Standardized signature with __event_emitter__ and __event_call__.
+version: 1.2
+description: 1.2: Standardized output with wrap_tool_output.
 """
 
 import requests
 import json
+import sys
 from pydantic import BaseModel, Field
 from typing import Dict, Optional, Any
+
+# Importation ECHO Standard
+sys.path.append("/app/backend/echo_libs")
+from echo_utils import wrap_tool_output
 
 class Tools:
     class Valves(BaseModel):
@@ -25,7 +30,7 @@ class Tools:
         body: Optional[Dict] = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> str:
+    ) -> dict:
         """
         Effectue un appel API HTTP.
         :param url: L'URL cible.
@@ -34,7 +39,7 @@ class Tools:
         :param body: Dictionnaire du corps de la requête (JSON).
         """
         if self.valves.allowed_domains != "*" and url.split('/')[2] not in self.valves.allowed_domains.split(','):
-             return json.dumps({"error": "Domaine non autorisé par la configuration de sécurité."})
+             return wrap_tool_output(text="❌ Domaine non autorisé.", status={"status": "error", "domain": url})
 
         try:
             response = requests.request(
@@ -45,15 +50,18 @@ class Tools:
                 timeout=15
             )
             
+            status_meta = {"status": response.status_code, "url": url, "method": method}
+            
             try:
-                return json.dumps({
-                    "status": response.status_code,
-                    "data": response.json()
-                }, indent=2)
+                res_json = response.json()
+                text_out = json.dumps(res_json, indent=2, ensure_ascii=False)
             except:
-                return json.dumps({
-                    "status": response.status_code,
-                    "text": response.text[:2000]
-                })
+                text_out = response.text[:5000]
+
+            if response.status_code >= 400:
+                text_out = f"❌ Erreur API {response.status_code}\n\n{text_out}"
+            
+            return wrap_tool_output(text=text_out, status=status_meta)
+
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return wrap_tool_output(text=f"❌ Exception API : {str(e)}", status={"status": "error", "error": str(e)})

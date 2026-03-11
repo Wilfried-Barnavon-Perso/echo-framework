@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils
 author: ECHO Framework
-version: 2.12
-description: v2.12 : Centralized get_echo_version helper.
+version: 2.15
+description: v2.15 : Added Google OAuth token refresh logic for Filter and Pipe.
 """
 
 import os
@@ -13,7 +13,9 @@ import time
 import asyncio
 import glob
 import hashlib
-from typing import Optional, Tuple, List, Set, Any
+import re
+import httpx
+from typing import Optional, Tuple, List, Set, Any, Union, Dict
 
 # Alias pour json standard si besoin
 import json as std_json
@@ -21,8 +23,55 @@ import json as std_json
 # Importation directe (Strict)
 from echo_constants import (
     ECHO_UPLOADS_DIR, ECHO_USER_DBS_DIR, ECHO_VERSION_PATH,
-    GOOGLE_TOKEN_URI, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    GOOGLE_TOKEN_URI, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+    ECHO_USER_AGENT
 )
+
+# ==============================================================================
+# SECTION 1 : STANDARDS DE COMMUNICATION (MULTI-PARTS)
+# ==============================================================================
+
+def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
+    """
+    Extrait le contenu entre balises <think> ou <thought> et retourne (texte_propre, pensées).
+    Standard ECHO pour le traitement des modèles de raisonnement.
+    """
+    if not isinstance(text, str): return text, None
+    
+    # Support <think> (Gemini Pro/Flash Official) et <thought> (Legacy/Internal)
+    for tag in ["think", "thought"]:
+        pattern = rf"<{tag}>(.*?)</{tag}>"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            thoughts = match.group(1).strip()
+            clean_text = re.sub(pattern, "", text, flags=re.DOTALL).strip()
+            return clean_text, thoughts
+            
+    return text, None
+
+def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[dict] = None) -> dict:
+    """
+    ============================================================================
+    STRICT ECHO TOOL OUTPUT STANDARD (v5.48.5)
+    ============================================================================
+    Structure de retour unique pour le Pipe. L'outil est le seul responsable de ce 
+    qu'il envoie à l'IA.
+
+    - 'text' (str) : Obligatoire. Contenu métier principal que le modèle doit lire.
+    - 'status' (dict) : Optionnel. État technique (ex: {"status": "success"}).
+    - 'echo_tool_multiparts' (list) : Optionnel. Uniquement pour l'IA (pensées internes, 
+      ou médias EXPLICITEMENT destinés à être analysés par le modèle).
+    ============================================================================
+    """
+    return {
+        "text": text,
+        "status": status or {"status": "success"},
+        "echo_tool_multiparts": echo_tool_multiparts or []
+    }
+
+# ==============================================================================
+# SECTION 2 : RÉSOLUTION DE FICHIERS & VERSIONS
+# ==============================================================================
 
 def resolve_upload_file_path(file_id: str, uploads_dir: str = ECHO_UPLOADS_DIR) -> Optional[str]:
     """Résout le chemin physique d'un fichier uploadé via son UUID (Globbing)."""
@@ -38,6 +87,10 @@ def get_echo_version() -> str:
             with open(ECHO_VERSION_PATH, "r") as f: return f.read().strip()
     except: pass
     return ""
+
+# ==============================================================================
+# SECTION 3 : GESTION DES ÉVÉNEMENTS (OWUI COMPAT)
+# ==============================================================================
 
 class EchoEvents:
     """Gestionnaire centralisé pour les événements Open WebUI."""
@@ -69,13 +122,9 @@ class EchoEvents:
         res = await self.call("confirmation", {"title": title, "message": message})
         return bool(res)
 
-def wrap_multimodal_response(logic_data: dict, b64_image: str = None, html_ui: str = None, context_policy: str = "strip") -> dict:
-    response = {"logic_response": logic_data, "context_policy": context_policy}
-    if b64_image: response["__echo_multimodal__"] = {"mime_type": "image/png", "base64_data": b64_image}
-    if html_ui:
-        policy_meta = f'<meta name="echo-context-policy" content="{context_policy}">'
-        response["html_ui"] = html_ui.replace("<head>", f"<head>{policy_meta}") if "<head>" in html_ui else f"{policy_meta}{html_ui}"
-    return response
+# ==============================================================================
+# SECTION 4 : SERVICE D'AUTHENTIFICATION (DAL)
+# ==============================================================================
 
 class EchoAuth:
     def __init__(self, db_dir: str = ECHO_USER_DBS_DIR):
@@ -108,6 +157,51 @@ class EchoAuth:
             print(f"[EchoAuth] Error: {str(e)}")
             return None, None
 
+    async def refresh_google_token(self, user_id: str) -> Optional[str]:
+        """Rafraîchit le token Google OAuth et met à jour la BDD."""
+        db_path = self._get_db_path(user_id)
+        if not os.path.exists(db_path): return None
+        
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM auth_data WHERE key = 'google_token'")
+            row = cursor.fetchone()
+            if not row: conn.close(); return None
+            
+            token_data = json.loads(row[0])
+            refresh_token = token_data.get("refresh_token")
+            if not refresh_token: conn.close(); return None
+
+            payload = {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token"
+            }
+            
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(GOOGLE_TOKEN_URI, data=payload, headers={"User-Agent": ECHO_USER_AGENT})
+                if resp.status_code == 200:
+                    new_data = resp.json()
+                    token_data.update(new_data)
+                    cursor.execute("UPDATE auth_data SET value = ?, updated_at = ? WHERE key = 'google_token'",
+                                 (json.dumps(token_data), int(time.time())))
+                    conn.commit()
+                    conn.close()
+                    print(f"[EchoAuth] Token rafraîchi pour {user_id}.", flush=True)
+                    return token_data.get("access_token") or token_data.get("token")
+                else:
+                    print(f"[EchoAuth] Erreur refresh ({resp.status_code}): {resp.text}", flush=True)
+            conn.close()
+        except Exception as e:
+            print(f"[EchoAuth] Exception refresh: {e}", flush=True)
+        return None
+
+# ==============================================================================
+# SECTION 5 : GESTIONNAIRE D'ÉTAT (SQLite)
+# ==============================================================================
+
 class EchoStateManager:
     def __init__(self, db_dir: str = ECHO_USER_DBS_DIR, user_id: str = "system"):
         self.db_dir = db_dir
@@ -122,7 +216,7 @@ class EchoStateManager:
         return conn
 
     def _init_db(self):
-        """Initialise le schéma ECHO (v2.12)."""
+        """Initialise le schéma ECHO (v2.13)."""
         try:
             with self._get_connection() as conn:
                 # 1. TABLE: SUTURE_INDEX
@@ -187,7 +281,7 @@ class EchoStateManager:
                     )
                 """)
                 
-                # 7. TABLE: CALL_BRIDGE (Nouveauté v2.11 : Lien immédiat ID <-> Signature)
+                # 7. TABLE: CALL_BRIDGE
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS call_bridge (
                         call_id TEXT PRIMARY KEY,
@@ -266,7 +360,7 @@ class EchoStateManager:
         except: pass
         return known_files
 
-    # --- CALL BRIDGE (v2.11) ---
+    # --- CALL BRIDGE ---
 
     def save_call_bridge(self, call_id: str, signature: str, function_name: str, args: dict = None):
         try:
