@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.18
-description: 6.18: Restored OAuth PKCE interception and code extraction.
+version: 6.21
+description: 6.21: Fixed missing content injection caused by case sensitivity issue on status string comparisons.
 """
 
 from pydantic import BaseModel, Field
@@ -70,12 +70,12 @@ class Filter:
                     b64 = base64.b64encode(f.read()).decode("utf-8")
                 state_manager.mark_processed(chat_id, file_id, filename, mime, "transmitted")
                 return {
-                    "status": "success", "type": "Transmitted", "fid": file_id, "sub_type": "binary",
+                    "status": "success", "type": "transmitted", "fid": file_id, "name": filename, "mime": mime, "sub_type": "binary",
                     "content": {"anchor": f"📎 **Fichier joint : {filename}** ({mime})", "mime": mime, "data": b64}
                 }
             except Exception as e:
                 print(f"[ECHO-FILTER] !! Erreur binaire: {e}", flush=True)
-                return {"status": "error", "fid": file_id, "error": f"Erreur binaire : {str(e)}"}
+                return {"status": "error", "fid": file_id, "name": filename, "mime": mime, "error": f"Erreur binaire : {str(e)}"}
 
         # --- CAS 2 : TEXTE PETIT (Injection Directe) ---
         if is_supported and size < self.valves.MAX_DIRECT_TEXT_SIZE and "text/" in mime:
@@ -84,12 +84,12 @@ class Filter:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f: content = f.read()
                 state_manager.mark_processed(chat_id, file_id, filename, mime, "transmitted")
                 return {
-                    "status": "success", "type": "Transmitted", "fid": file_id, "sub_type": "text",
+                    "status": "success", "type": "transmitted", "fid": file_id, "name": filename, "mime": mime, "sub_type": "text",
                     "content": f"📄 **Fichier : {filename}**\n```\n{content}\n```"
                 }
             except Exception as e:
                 print(f"[ECHO-FILTER] !! Erreur lecture: {e}", flush=True)
-                return {"status": "error", "fid": file_id, "error": f"Erreur lecture : {str(e)}"}
+                return {"status": "error", "fid": file_id, "name": filename, "mime": mime, "error": f"Erreur lecture : {str(e)}"}
 
         # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (Smart Context via Gemini Flash) ---
         if self.valves.ENABLE_SMART_CONTEXT and is_supported:
@@ -131,7 +131,7 @@ class Filter:
                             summary = candidates[0]["content"]["parts"][0].get("text", "")
                             state_manager.mark_processed(chat_id, file_id, filename, mime, "summarized")
                             print(f"[ECHO-FILTER] ✅ Résumé Flash généré pour {filename}.", flush=True)
-                            return {"status": "success", "type": "Summarized", "fid": file_id, "content": f"🧠 **Smart Context : {filename}**\n\n{summary}"}
+                            return {"status": "success", "type": "summarized", "fid": file_id, "name": filename, "mime": mime, "content": f"🧠 **Smart Context : {filename}**\n\n{summary}"}
                         else:
                             print(f"[ECHO-FILTER] !! Format inattendu ou blocage Google pour {filename}: {data}", flush=True)
                     else:
@@ -142,7 +142,7 @@ class Filter:
         # --- CAS 4 : FALLBACK BINAIRE (Indexation) ---
         print(f"[ECHO-FILTER] --> Mode: INDEXATION (Fallback)", flush=True)
         state_manager.mark_processed(chat_id, file_id, filename, mime, "indexed")
-        return {"status": "success", "type": "Indexed", "fid": file_id}
+        return {"status": "success", "type": "indexed", "fid": file_id, "name": filename, "mime": mime}
 
     async def inlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
         try:
@@ -182,11 +182,6 @@ class Filter:
                                 if isinstance(p, dict) and (p.get("type") == "image_url" or "inline_data" in p or "inlineData" in p):
                                     native_parts.append(p)
                         break
-                
-                if idx != -1:
-                    m = msgs[idx]
-                    inv_hash = state_manager.calculate_invariant_hash(m["role"], m["content"], all_files)
-                    body["metadata"]["_echo_invariant_hash"] = inv_hash
 
             # --- AUTH OAUTH & REFRESH ---
             token, project_id = None, None
@@ -208,7 +203,10 @@ class Filter:
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
                 tasks = [self._process_file_task(f, token, project_id, "HIGH", chat_id, state_manager, events) for f in files_to_process]
-                results = await asyncio.gather(*tasks)
+                results = []
+                for task in tasks:
+                    results.append(await task)
+                    await asyncio.sleep(1.5)
                 await events.status("Aiguillage ECHO terminé.", True)
 
             # --- 2. RECONSTRUCTION META-TRANSPORT ---
@@ -232,7 +230,15 @@ class Filter:
                         "localisation": final_loc,
                         "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                     },
-                    "registre_technique": registry
+                    "registre_fichiers": registry,
+                    "nouveaux_fichiers": [
+                        {
+                            "nom": r.get("name"),
+                            "id": r.get("fid"),
+                            "mime": r.get("mime"),
+                            "statut": r.get("type")
+                        } for r in results if r.get("status") == "success"
+                    ]
                 }
                 
                 # Fusion : Parts natives (Images OWUI) + Etat ECHO
@@ -243,14 +249,19 @@ class Filter:
                 
                 for res in results:
                     if res.get("status") == "success":
-                        if res["type"] == "Summarized": rich_parts.append({"text": res["content"]})
-                        elif res["type"] == "Transmitted":
+                        if res["type"] == "summarized": rich_parts.append({"text": res["content"]})
+                        elif res["type"] == "transmitted":
                             if res["sub_type"] == "text": rich_parts.append({"text": res["content"]})
                             else:
                                 rich_parts.append({"text": res["content"]["anchor"]})
                                 rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
                 
                 body["metadata"]["_echo_rich_parts"] = rich_parts
+
+                m = msgs[idx]
+                inv_hash = state_manager.calculate_invariant_hash(m["role"], rich_parts + [{"text": m["content"]}] if isinstance(m["content"], str) else rich_parts + m["content"])
+                state_manager.save_rich_payload(inv_hash, rich_parts)
+                body["metadata"]["_echo_invariant_hash"] = inv_hash
 
             if all_files:
                 body["metadata"]["_echo_files"] = all_files; body["files"] = []

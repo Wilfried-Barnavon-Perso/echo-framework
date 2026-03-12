@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 167.8
-description: 167.8: Fix double encoding issues (mojibake). Stops pipe execution immediately after successful auth to prevent sending auth codes to the model.
+version: 167.9
+description: 167.9: Updated calculate_invariant to ignore OWUI files list for reliable Suture.
 """
 
 # ==============================================================================
@@ -104,8 +104,8 @@ class UserDataManager:
         self.state_manager = EchoStateManager(ECHO_USER_DBS_DIR, user_id)
         self.debug_mode = debug_mode
 
-    def calculate_invariant(self, role: str, content: Any, files: List[dict] = None, tool_io: dict = None) -> str:
-        return self.state_manager.calculate_invariant_hash(role, content, files, tool_io)
+    def calculate_invariant(self, role: str, content: Any, tool_io: dict = None) -> str:
+        return self.state_manager.calculate_invariant_hash(role, content, tool_io)
 
     def calculate_cumulative(self, invariant: str, parent: str = None) -> str:
         return self.state_manager.calculate_cumulative_hash(invariant, parent)
@@ -375,7 +375,7 @@ class Orchestrator:
                 # Permet de maintenir l'invariance du hash pour la Suture.
                 content, _ = split_thought_process(content if isinstance(content, str) else str(content))
 
-            inv_hash = meta.get("_echo_invariant_hash") if (role == "user" and i == len(messages)-1) else self.user_data_manager.calculate_invariant(role, content, m.get("files", []) if i < len(messages)-1 else all_files)
+            inv_hash = meta.get("_echo_invariant_hash") if (role == "user" and i == len(messages)-1) else self.user_data_manager.calculate_invariant(role, content)
             current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
             restored_parts = None
             

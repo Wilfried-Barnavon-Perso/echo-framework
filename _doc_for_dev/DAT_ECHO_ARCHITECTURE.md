@@ -1,7 +1,7 @@
 # Dossier d'Architecture Technique (DAT) : ECHO Framework v5.70.0
 
 ## 1. Introduction et Vision
-Le Framework ECHO (Espace Cognitif Heuristique Opérationnel) est un orchestrateur cognitif conçu pour augmenter les capacités des modèles Gemini (v1.5, v2.0, v3.1) au sein d'une infrastructure Open WebUI. Il repose sur une architecture de "Pipe" et de "Filtre" permettant une manipulation granulaire du contexte, du raisonnement (pensées) et des interactions multi-modales.
+Le Framework ECHO (Espace Cognitif Heuristique Opérationnel) est un orchestrateur cognitif conçu pour augmenter les capacités des modèles Gemini (v3.0+) au sein d'une infrastructure Open WebUI. Il repose sur une architecture de "Pipe" et de "Filtre" permettant une manipulation granulaire du contexte, du raisonnement (pensées) et des interactions multi-modales.
 
 ---
 

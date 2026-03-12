@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils
 author: ECHO Framework
-version: 2.15
-description: v2.15 : Added Google OAuth token refresh logic for Filter and Pipe.
+version: 2.16
+description: v2.16 : Removed files from invariant_hash calculation. Added nouveaux_fichiers to wrap_tool_output.
 """
 
 import os
@@ -49,7 +49,7 @@ def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
             
     return text, None
 
-def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[dict] = None) -> dict:
+def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[dict] = None, nouveaux_fichiers: List[dict] = None) -> dict:
     """
     ============================================================================
     STRICT ECHO TOOL OUTPUT STANDARD (v5.48.5)
@@ -61,8 +61,13 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
     - 'status' (dict) : Optionnel. État technique (ex: {"status": "success"}).
     - 'echo_tool_multiparts' (list) : Optionnel. Uniquement pour l'IA (pensées internes, 
       ou médias EXPLICITEMENT destinés à être analysés par le modèle).
+    - 'nouveaux_fichiers' (list) : Optionnel. Fichiers créés par l'outil pendant l'exécution.
     ============================================================================
     """
+    if nouveaux_fichiers:
+        json_str = std_json.dumps(nouveaux_fichiers, ensure_ascii=False, indent=2)
+        text += f"\n\n```json:nouveaux_artefacts\n{json_str}\n```"
+
     return {
         "text": text,
         "status": status or {"status": "success"},
@@ -300,18 +305,13 @@ class EchoStateManager:
 
     # --- HASHAGE ---
 
-    def calculate_invariant_hash(self, role: str, content: Any, files: List[dict] = None, tool_io: dict = None) -> str:
+    def calculate_invariant_hash(self, role: str, content: Any, tool_io: dict = None) -> str:
         norm_content = ""
         if isinstance(content, str): norm_content = content.strip()
         elif isinstance(content, list): norm_content = std_json.dumps(content, sort_keys=True)
 
-        file_ids = ""
-        if files:
-            ids = sorted([f.get("id") or f.get("file", {}).get("id") for f in files if f])
-            file_ids = "|".join([str(i) for i in ids if i])
-
         norm_tool = std_json.dumps(tool_io, sort_keys=True) if tool_io else ""
-        data = f"{role.lower()}|{norm_content}|{file_ids}|{norm_tool}"
+        data = f"{role.lower()}|{norm_content}|{norm_tool}"
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
     def calculate_cumulative_hash(self, invariant_hash: str, parent_hash: str = None) -> str:

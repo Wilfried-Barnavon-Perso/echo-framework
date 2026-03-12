@@ -10,11 +10,14 @@ from typing import Optional, Literal, Dict, Any, List
 
 """
 ================================================================================
-TOOL : ECHO NAVIGATION ENGINE (v6.60 - PERFORMANCE & RESET)
-VERSION : 6.60
+TOOL : ECHO NAVIGATION ENGINE (v6.61 - RESTORED VALVES)
+VERSION : 6.61
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-03-09
 
+CHANGELOG 6.61 :
+- FIX: Restored UserValves visibility in Open WebUI interface.
+- FIX: Aligned class structure for proper valve detection.
 CHANGELOG 6.60 :
 - FEAT: Added 'web_browse_reset' tool to hard restart browser engine.
 - PERF: Full in-memory image pipeline (no disk overhead).
@@ -29,6 +32,41 @@ CHANGELOG 6.54 :
 - FIX: Radical fix for slowness (Interval leak) via strict single-engine persistent architecture.
 - FIX: Corrected Timer display and filename export (parentheses and concatenation).
 - FIX: Optimized rendering loop (only data update after first injection).
+CHANGELOG 6.50 :
+- PERF: Hardware Accelerated Rendering (GPU) via translate3d for HUD, Lens, and Crop.
+- PERF: Optimized Data Flow (Single-Injection Architecture) - parse logic once, update data only.
+- FIX: Corrected export filenames and copy fallback logic.
+CHANGELOG 6.40 :
+- FIX: Crop handles now white with black border.
+- FIX: Default crop selection is now the full image.
+- FIX: Added fallback for Copy tool in non-secure (HTTP) contexts.
+CHANGELOG 6.39 :
+- FEAT: Bidirectional crop adjustment (added Top, Bottom, Left, Right handles).
+CHANGELOG 6.38 :
+- FEAT: Added Advanced Media Toolset: Select/Crop (⛶), Copy (❐), and Download (📥).
+- FEAT: Intelligent export (exports selection if active, otherwise full image).
+CHANGELOG 6.37 :
+- FEAT: Loupe (magnifier) can now overlap HUD borders (unclipped) for better edge visibility.
+CHANGELOG 6.36 :
+- PERF: Fixed drag/resize lag by disabling transitions during manual interactions.
+- PERF: Added hardware acceleration (will-change).
+CHANGELOG 6.35 :
+- FIX: Improved positioning stability by using async saveState (350ms delay) after transitions.
+- FIX: Refined_clampHud margins using distinct horizontal/vertical logic.
+CHANGELOG 6.34 :
+- FIX: Loupe (magnifier) fix by unifying state on the HUD element.
+CHANGELOG 6.33 :
+- FEAT: Fully compliant HUD functional specifications (25% start surface, 97% screen limit, persistence).
+- FIX: Improved transitions and state restoration (minimized, fullscreen Option A).
+CHANGELOG 6.32 :
+- FIX: Robust HUD state persistence using chat-specific keys and immediate restoration.
+- FIX: Forced 'right: auto' and immediate minimized state application.
+CHANGELOG 6.31 :
+- FIX: Improved HUD state persistence (size, position, minimized, full-screen) across frames.
+CHANGELOG 6.30 :
+- FEAT: Implemented 'get_browser_frames_history' (Visual Memory).
+- FEAT: Systematic indexing of frames in real-time.
+- REM: Removed legacy 'get_visual_snapshot'.
 ================================================================================
 """
 
@@ -281,8 +319,9 @@ def _generate_monitor_js(b64: str, sid: str, chat_id: str, timeout: int) -> str:
                     }};
                     document.getElementById(HUD_ID + "-btn-min").onclick = (e) => {{
                         e.stopPropagation(); this.applyTransition(true);
-                        area.style.display = area.style.display === 'none' ? 'flex' : 'none';
-                        this.hud.style.height = area.style.display === 'none' ? 'auto' : (this.hud.offsetWidth * this.ratio) + 'px';
+                        const a = document.getElementById(HUD_ID + "-area");
+                        a.style.display = a.style.display === 'none' ? 'flex' : 'none';
+                        this.hud.style.height = a.style.display === 'none' ? 'auto' : (this.hud.offsetWidth * this.ratio) + 'px';
                         this.saveState(false);
                     }};
                     document.getElementById(HUD_ID + "-btn-def").onclick = (e) => {{
@@ -407,29 +446,6 @@ def _generate_monitor_js(b64: str, sid: str, chat_id: str, timeout: int) -> str:
         window.echoHudEngine.update(payload);
     }})();
     """
-
-async def _deploy_navigation_monitor(valves: Any, res_view: dict, chat_id: str, user_id: str, u_valves: Any, __event_call__) -> str:
-    if not res_view.get("screenshot_b64"): return ""
-    ts = int(time.time())
-    file_id = f"U_{user_id}_C_{chat_id}_T_{ts}"
-    filename = f"{file_id}_frame.png"
-    filepath = os.path.join(valves.UPLOADS_DIR, filename)
-    try:
-        img_data = base64.b64decode(res_view["screenshot_b64"])
-        with open(filepath, "wb") as f: f.write(img_data)
-        
-        # INDEXATION BDD (v5.50.0)
-        state_manager = EchoStateManager(user_id=user_id)
-        state_manager.mark_processed(chat_id, file_id, filename, "image/png", "indexed")
-        print(f"[ECHO-NAV] 🗄️ Frame indexée : {file_id}", flush=True)
-    except Exception as e:
-        print(f"[ECHO-NAV] !! Erreur indexation frame: {e}", flush=True)
-        
-    if __event_call__ and u_valves.SHOW_BROWSER_HUD:
-        code = _generate_monitor_js(res_view["screenshot_b64"], chat_id[:8], chat_id, u_valves.HUD_VISIBLE_SEC)
-        try: await asyncio.wait_for(__event_call__({"type": "execute", "data": {"code": code}}), timeout=5.0)
-        except: pass
-    return filename
 
 # --- INTERFACE TOOLS ECHO ---
 
@@ -588,3 +604,26 @@ class Tools:
             return wrap_tool_output(text=json.dumps(history, indent=2), status={"status": "success", "count": len(history)})
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur lecture historique: {str(e)}", status={"status": "error"})
+
+async def _deploy_navigation_monitor(valves: Any, res_view: dict, chat_id: str, user_id: str, u_valves: Any, __event_call__) -> str:
+    if not res_view.get("screenshot_b64"): return ""
+    ts = int(time.time())
+    file_id = f"U_{user_id}_C_{chat_id}_T_{ts}"
+    filename = f"{file_id}_frame.png"
+    filepath = os.path.join(valves.UPLOADS_DIR, filename)
+    try:
+        img_data = base64.b64decode(res_view["screenshot_b64"])
+        with open(filepath, "wb") as f: f.write(img_data)
+        
+        # INDEXATION BDD (v5.50.0)
+        state_manager = EchoStateManager(user_id=user_id)
+        state_manager.mark_processed(chat_id, file_id, filename, "image/png", "indexed")
+        print(f"[ECHO-NAV] 🗄️ Frame indexée : {file_id}", flush=True)
+    except Exception as e:
+        print(f"[ECHO-NAV] !! Erreur indexation frame: {e}", flush=True)
+        
+    if __event_call__ and u_valves.SHOW_BROWSER_HUD:
+        code = _generate_monitor_js(res_view["screenshot_b64"], chat_id[:8], chat_id, u_valves.HUD_VISIBLE_SEC)
+        try: await asyncio.wait_for(__event_call__({"type": "execute", "data": {"code": code}}), timeout=5.0)
+        except: pass
+    return filename
