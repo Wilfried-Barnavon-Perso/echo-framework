@@ -10,11 +10,17 @@ from typing import Optional, Literal, Dict, Any, List
 
 """
 ================================================================================
-TOOL : ECHO NAVIGATION ENGINE (v6.61 - RESTORED VALVES)
-VERSION : 6.61
+TOOL : ECHO NAVIGATION ENGINE (v6.64 - MIME COMPATIBILITY)
+VERSION : 6.64
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-03-09
+DATE MAJ : 2026-03-12
 
+CHANGELOG 6.64 :
+- FIX: Switched MIME type to 'text/plain' for Base64 HTML to satisfy Gemini API constraints.
+CHANGELOG 6.63 :
+- FEAT: Support for Base64 encapsulated HTML via echo_tool_multiparts.
+CHANGELOG 6.62 :
+- FEAT: Added 'nouveaux_fichiers' support in get_browser_frames_history for Suture persistence.
 CHANGELOG 6.61 :
 - FIX: Restored UserValves visibility in Open WebUI interface.
 - FIX: Aligned class structure for proper valve detection.
@@ -536,9 +542,16 @@ class Tools:
             res_action.pop("screenshot_b64", None)
             return wrap_tool_output(text=f"❌ Échec action {action}: {res_action.get('message')}", status=res_action)
             
-        if action in ["read", "read_html"]: 
+        if action == "read": 
             res_action.pop("screenshot_b64", None)
             return wrap_tool_output(text=res_action.get("content", ""), status=res_action)
+
+        if action == "read_html":
+            res_action.pop("screenshot_b64", None)
+            b64_html = res_action.pop("content", "")
+            multiparts = [{"type": "media", "mime_type": "text/plain", "data": b64_html}]
+            text_out = "### Source HTML\nContenu récupéré et encapsulé (MIME: text/plain) pour analyse sécurisée."
+            return wrap_tool_output(text=text_out, status=res_action, echo_tool_multiparts=multiparts)
             
         # Pour click/type/scroll : Retour minimaliste (factuel)
         res_action.pop("screenshot_b64", None)
@@ -579,8 +592,8 @@ class Tools:
         try:
             conn = state_manager._get_connection()
             cursor = conn.cursor()
-            # On cherche les fichiers PNG indexés pour ce chat
-            query = "SELECT file_id, timestamp FROM processed_files WHERE chat_id = ? AND file_id LIKE 'U_%_C_%_T_%' ORDER BY timestamp DESC"
+            # On cherche les fichiers PNG indexés pour ce chat (v6.62 : Ajout filename et mime pour Suture)
+            query = "SELECT file_id, filename, mime, timestamp FROM processed_files WHERE chat_id = ? AND file_id LIKE 'U_%_C_%_T_%' ORDER BY timestamp DESC"
             params = [chat_id]
             if depth:
                 query += " LIMIT ?"
@@ -591,17 +604,33 @@ class Tools:
             conn.close()
             
             history = []
+            nouveaux_fichiers = []
             for row in rows:
                 fid = row[0]
-                ts = row[1]
+                fname = row[1]
+                fmime = row[2] or "image/png"
+                ts = row[3]
                 dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+                
                 history.append({
                     "file_id": fid,
                     "date": dt,
                     "usage": f"Use semantic_probe(file_id='{fid}') to analyze or read_raw_file_content(file_id='{fid}') to view."
                 })
+                
+                # Format Suture (v6.62)
+                nouveaux_fichiers.append({
+                    "nom": fname,
+                    "id": fid,
+                    "mime": fmime,
+                    "statut": "indexed"
+                })
             
-            return wrap_tool_output(text=json.dumps(history, indent=2), status={"status": "success", "count": len(history)})
+            return wrap_tool_output(
+                text=json.dumps(history, indent=2), 
+                status={"status": "success", "count": len(history)},
+                nouveaux_fichiers=nouveaux_fichiers
+            )
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur lecture historique: {str(e)}", status={"status": "error"})
 

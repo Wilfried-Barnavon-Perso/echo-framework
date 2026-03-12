@@ -17,10 +17,12 @@ from playwright.async_api import async_playwright
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 8.5 (PERFORMANCE & RESET)
+VERSION : 8.6 (SECURE HTML ENCAPSULATION)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-03-09
+DATE MAJ : 2026-03-12
 
+CHANGELOG 8.6 :
+- FEAT: Base64 encoding for 'read_html' action to prevent JSON corruption.
 CHANGELOG 8.5 :
 - FEAT: Added 'reset' action to fully purge and restart a browser session.
 - PERF: Memory-based screenshots (no disk I/O) for faster HUD updates.
@@ -291,7 +293,9 @@ async def browser_action(request: Request):
 
         elif action == "read_html":
             logger.info(f"[{sid}] 📖 Read HTML Source")
-            result["content"] = await page.content()
+            # Encapsulation Base64 pour protection du JSON (v8.6)
+            html_content = await page.content()
+            result["content"] = base64.b64encode(html_content.encode('utf-8')).decode('utf-8')
             result["url"] = page.url
 
         elif action == "tab_new":
