@@ -1,8 +1,8 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 5.4
-description: 5.4: Strict Multi-Parts standard enforcement (IA/UI isolation).
+version: 5.6
+description: 5.6: Enriched docstrings with parameters.
 """
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
@@ -26,19 +26,20 @@ class Tools:
         self.valves = self.Valves()
 
     async def execute_python_code(
-        self, 
-        code: str, 
-        __user__: dict = {}, 
+        self,
+        code: str,
+        __user__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> dict:
+    ) -> str:
         """
-        Exécute du code Python dans un environnement sandbox sécurisé.
-        Idéal pour : calculs complexes, analyse de données, manipulation de structures JSON.
-        
-        :param code: Le code Python à exécuter.
+        Exécute du code Python dans un environnement sandbox sécurisé et isolé.
+        Idéal pour les calculs complexes, l'analyse de données (pandas, numpy), la génération de graphiques (matplotlib) ou la manipulation de structures JSON.
+        Le code a accès à Internet mais ne partage pas ses fichiers avec les autres outils ECHO.
+        :param code: Le code Python complet à exécuter (ex: import pandas as pd; ...).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
+
         await events.status("🐍 Exécution Python en cours...")
 
         try:
@@ -66,7 +67,7 @@ class Tools:
             else:
                 err_msg = f"Erreur Worker (HTTP {response.status_code})"
                 await events.status(f"❌ {err_msg}", done=True)
-                return wrap_tool_output(text=f"❌ {err_msg}", status={"status": "critical_error", "code": response.status_code})
+                return wrap_tool_output(text=text_out, status={"status": "critical_error", "code": response.status_code})
 
         except requests.exceptions.ConnectionError:
             return wrap_tool_output(text="❌ Service Python Worker injoignable.", status={"status": "error"})

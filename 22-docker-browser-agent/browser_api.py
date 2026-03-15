@@ -1,3 +1,23 @@
+"""
+================================================================================
+MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
+VERSION : 8.7 (SECURE HTML ENCAPSULATION)
+AUTEUR : Wilfried BARNAVON & ECHO Team
+DATE MAJ : 2026-03-12
+
+CHANGELOG 8.7 :
+- FEAT: Added 'get_attribute' action to safely retrieve absolute URLs (src, href) from DOM elements.
+CHANGELOG 8.6 :
+- FEAT: Base64 encoding for 'read_html' action to prevent JSON corruption.
+CHANGELOG 8.5 :
+- FEAT: Added 'reset' action to fully purge and restart a browser session.
+- PERF: Memory-based screenshots (no disk I/O) for faster HUD updates.
+CHANGELOG 8.4 :
+- FEAT: Added native support for 'index' parameter in click/type/hover.
+- FIX: Improved target selection logic (Index priority over Selector).
+================================================================================
+"""
+
 import asyncio
 import base64
 import os
@@ -13,24 +33,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
-
-"""
-================================================================================
-MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 8.6 (SECURE HTML ENCAPSULATION)
-AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-03-12
-
-CHANGELOG 8.6 :
-- FEAT: Base64 encoding for 'read_html' action to prevent JSON corruption.
-CHANGELOG 8.5 :
-- FEAT: Added 'reset' action to fully purge and restart a browser session.
-- PERF: Memory-based screenshots (no disk I/O) for faster HUD updates.
-CHANGELOG 8.4 :
-- FEAT: Added native support for 'index' parameter in click/type/hover.
-- FIX: Improved target selection logic (Index priority over Selector).
-================================================================================
-"""
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -296,6 +298,16 @@ async def browser_action(request: Request):
             # Encapsulation Base64 pour protection du JSON (v8.6)
             html_content = await page.content()
             result["content"] = base64.b64encode(html_content.encode('utf-8')).decode('utf-8')
+            result["url"] = page.url
+
+        elif action == "get_attribute":
+            idx, attr = params.get("index"), params.get("attribute")
+            if idx is None or not attr:
+                return {"status": "error", "message": "ERREUR_PARAMETRE : Index ou attribut manquant."}
+            real_selector = f'[data-echo-index="{idx}"]'
+            logger.info(f"[{sid}] 🔍 Get Attribute '{attr}' for Target: {real_selector}")
+            val = await page.evaluate(f"(sel) => {{ const el = document.querySelector(sel); return el ? (el.{attr} || el.getAttribute('{attr}')) : null; }}", real_selector)
+            result["value"] = val
             result["url"] = page.url
 
         elif action == "tab_new":

@@ -10,11 +10,18 @@ from typing import Optional, Literal, Dict, Any, List
 
 """
 ================================================================================
-TOOL : ECHO NAVIGATION ENGINE (v6.64 - MIME COMPATIBILITY)
-VERSION : 6.64
+TOOL : ECHO NAVIGATION ENGINE (v6.67 - ENRICHED DOCSTRINGS)
+VERSION : 6.67
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-03-12
 
+CHANGELOG 6.67 :
+- FEAT: Enriched docstrings with parameters for better model understanding.
+CHANGELOG 6.66 :
+- FIX: Corrected magnifier (lens) alignment issue caused by object-fit: contain rendering.
+CHANGELOG 6.65 :
+- FEAT: Added 'get_web_object_url' tool to extract absolute URLs from DOM elements.
+- REFACTOR: Using 'generate_echo_file_id' for standardized IDs.
 CHANGELOG 6.64 :
 - FIX: Switched MIME type to 'text/plain' for Base64 HTML to satisfy Gemini API constraints.
 CHANGELOG 6.63 :
@@ -78,7 +85,7 @@ CHANGELOG 6.30 :
 
 # Import Lib Partagée (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager
+from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id
 from echo_constants import ECHO_UPLOADS_DIR
 
 # --- FONCTIONS UTILITAIRES PRIVÉES ---
@@ -201,6 +208,7 @@ def _generate_monitor_js(b64: str, sid: str, chat_id: str, timeout: int) -> str:
                     if (!this.hud) return;
                     const area = document.getElementById(HUD_ID + "-area");
                     const lens = document.getElementById(HUD_ID + "-lens");
+                    const img = document.getElementById(HUD_ID + "-img");
                     
                     this.hud.ondblclick = (e) => {{
                         if (e.target.tagName === 'BUTTON') return;
@@ -251,9 +259,28 @@ def _generate_monitor_js(b64: str, sid: str, chat_id: str, timeout: int) -> str:
                         const aRect = area.getBoundingClientRect(), hRect = this.hud.getBoundingClientRect();
                         const lx = e.clientX - hRect.left - 75, ly = e.clientY - hRect.top - 75;
                         lens.style.transform = "translate3d(" + lx + "px, " + ly + "px, 0px)";
-                        const px = ((e.clientX - aRect.left) / aRect.width) * 100, py = ((e.clientY - aRect.top) / aRect.height) * 100;
-                        lens.style.backgroundPosition = px + "% " + py + "%";
-                        lens.style.backgroundSize = (aRect.width * 2.5) + "px " + (aRect.height * 2.5) + "px";
+                        
+                        const natW = img.naturalWidth, natH = img.naturalHeight;
+                        if (!natW || !natH) return;
+                        
+                        let renderW = aRect.width, renderH = renderW * (natH / natW);
+                        if (renderH > aRect.height) {{
+                            renderH = aRect.height;
+                            renderW = renderH * (natW / natH);
+                        }}
+                        
+                        const offsetX = (aRect.width - renderW) / 2;
+                        const offsetY = (aRect.height - renderH) / 2;
+                        
+                        const mouseX_on_image = e.clientX - aRect.left - offsetX;
+                        const mouseY_on_image = e.clientY - aRect.top - offsetY;
+                        
+                        const zoomFactor = 2.5;
+                        lens.style.backgroundSize = (renderW * zoomFactor) + "px " + (renderH * zoomFactor) + "px";
+                        
+                        const bgPosX = 75 - (mouseX_on_image * zoomFactor);
+                        const bgPosY = 75 - (mouseY_on_image * zoomFactor);
+                        lens.style.backgroundPosition = bgPosX + "px " + bgPosY + "px";
                     }};
                     area.onmouseenter = () => {{ if(this.zoomActive) lens.style.display = 'block'; }};
                     area.onmouseleave = () => {{ lens.style.display = 'none'; }};
@@ -420,14 +447,14 @@ def _generate_monitor_js(b64: str, sid: str, chat_id: str, timeout: int) -> str:
                         if (saved && saved.w) {{
                             if (saved.f) {{
                                 const size = this.getBestSize(this.ratio, 0.97);
-                                this.hud.style.width = size.w + 'px'; this.hud.style.height = size.h + 'px';
+                                this.hud.style.width = size.w + "px"; this.hud.style.height = size.h + "px";
                                 this.posX = (window.innerWidth - size.w) / 2; this.posY = (window.innerHeight - size.h) / 2;
                             }} else if (area && area.style.display !== 'none') {{
                                 this.hud.style.height = (this.hud.offsetWidth * this.ratio) + 'px';
                             }}
                         }} else {{
                             const size = this.getBestSize(this.ratio, 0.25);
-                            this.hud.style.width = size.w + 'px'; this.hud.style.height = size.h + 'px';
+                            this.hud.style.width = size.w + "px"; this.hud.style.height = size.h + "px";
                             this.posX = (window.innerWidth - size.w) / 2; this.posY = (window.innerHeight - size.h) / 2;
                         }}
                         this.clampHud();
@@ -472,8 +499,9 @@ class Tools:
 
     async def web_browse_navigate(self, url: str, __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None) -> dict:
         """
-        Accède à une URL et retourne la structure complète du DOM (la carte).
-        C'est l'outil à utiliser pour découvrir les éléments interactifs d'une page.
+        Accède à une URL et retourne la structure complète du DOM (la carte interactive).
+        C'est l'outil à utiliser pour découvrir les éléments d'une page, naviguer sur Internet et extraire des données.
+        :param url: L'URL complète de la page web à charger (incluant http/https).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = __metadata__.get("chat_id", "default_session")
@@ -504,12 +532,11 @@ class Tools:
         __event_emitter__=None
     ) -> dict:
         """
-        Exécute une action spécifique sur la page actuelle.
-        
-        :param action: L'action à effectuer. Utilisez 'refresh_map' pour mettre à jour votre vision du DOM.
-        :param selector: Sélecteur CSS (alternative à l'index).
-        :param index: ID numérique de l'élément (issu de la carte précédente). C'est la méthode de ciblage RECOMMANDÉE pour click/type.
-        :param text: Contenu textuel à SAISIR. Utilisé UNIQUEMENT avec l'action 'type'. Ne jamais utiliser pour désigner un bouton.
+        Exécute une action interactive spécifique sur la page web actuelle.
+        :param action: L'action à effectuer. Utilisez 'refresh_map' pour mettre à jour votre vision du DOM ou 'read_html' pour extraire le code source.
+        :param selector: Sélecteur CSS de l'élément cible (alternative à l'index).
+        :param index: ID numérique de l'élément cible (issu de la carte précédente). C'est la méthode de ciblage RECOMMANDÉE.
+        :param text: Contenu textuel à SAISIR. Utilisé UNIQUEMENT avec l'action 'type'.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = __metadata__.get("chat_id", "default_session")
@@ -557,10 +584,41 @@ class Tools:
         res_action.pop("screenshot_b64", None)
         return wrap_tool_output(text=f"Action {action} terminée avec succès.", status=res_action)
 
+    async def get_web_object_url(
+        self, 
+        index: int, 
+        attribute: Literal["src", "href"] = "src", 
+        __user__: dict = {}, 
+        __metadata__: dict = {},
+        __event_call__=None,
+        __event_emitter__=None
+    ) -> dict:
+        """
+        Récupère l'URL absolue d'une image (src) ou d'un lien (href) à partir de son ID (index) identifié dans la liste des éléments interactifs de la page en cours.
+        :param index: ID numérique de l'élément identifié dans la liste des éléments interactifs.
+        :param attribute: L'attribut à récupérer ('src' pour les images/objets, 'href' pour les liens). Par défaut 'src'.
+        """
+        chat_id = __metadata__.get("chat_id", "default_session")
+        uid = __user__.get("id", "anonymous")
+        u_valves = __user__.get("valves", self.UserValves())
+        events = EchoEvents(__event_emitter__, __event_call__)
+
+        if not await _verify_engine_status(self.valves, chat_id, uid, u_valves, events):
+            return wrap_tool_output(text="❌ Session perdue.", status={"status": "error"})
+
+        res = await _req(self.valves, "/action", {"session_id": chat_id, "action": "get_attribute", "params": {"index": index, "attribute": attribute}}, uid)
+        
+        if res.get("status") == "success" and res.get("value"):
+            return wrap_tool_output(text=f"✅ L'URL absolue est : {res['value']}", status=res)
+        elif res.get("status") == "success":
+            return wrap_tool_output(text=f"❌ L'attribut '{attribute}' n'a pas été trouvé pour l'élément à l'index {index}.", status={"status": "error"})
+        else:
+            return wrap_tool_output(text=f"❌ Erreur lors de la récupération de l'attribut : {res.get('message')}", status=res)
+
     async def web_browse_reset(self, __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None) -> dict:
         """
-        Réinitialise complètement l'instance du navigateur pour cette session.
-        À utiliser en cas d'erreur persistante, de détection de bot ou pour repartir à zéro.
+        Réinitialise complètement l'instance du navigateur pour cette session utilisateur.
+        À utiliser en cas d'erreur persistante, de détection de bot ou pour repartir d'une page vierge.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = __metadata__.get("chat_id", "default_session")
@@ -579,10 +637,9 @@ class Tools:
 
     async def get_browser_frames_history(self, depth: Optional[int] = None, __user__: dict = {}, __metadata__: dict = {}) -> dict:
         """
-        Consultez cet outil pour obtenir les IDs des captures d'écran passées. 
-        Permet de remonter le temps visuellement et d'analyser des étapes précédentes.
-        
-        :param depth: Nombre optionnel de frames récentes à retourner. Si omis, retourne tout l'historique de la session.
+        Retourne la liste des IDs des captures d'écran passées de la session.
+        Permet d'analyser visuellement les étapes précédentes via semantic_probe ou read_raw_file_content.
+        :param depth: Nombre optionnel de frames récentes à retourner (ex: 5 pour les 5 dernières). Si omis, retourne tout l'historique.
         """
         chat_id = __metadata__.get("chat_id", "default_session")
         uid = __user__.get("id", "anonymous")
@@ -636,8 +693,7 @@ class Tools:
 
 async def _deploy_navigation_monitor(valves: Any, res_view: dict, chat_id: str, user_id: str, u_valves: Any, __event_call__) -> str:
     if not res_view.get("screenshot_b64"): return ""
-    ts = int(time.time())
-    file_id = f"U_{user_id}_C_{chat_id}_T_{ts}"
+    file_id = generate_echo_file_id(user_id, chat_id)
     filename = f"{file_id}_frame.png"
     filepath = os.path.join(valves.UPLOADS_DIR, filename)
     try:

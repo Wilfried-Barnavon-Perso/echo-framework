@@ -1,8 +1,8 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 2.3
-description: 2.3: Deterministic JSON output to prevent model completion derailment.
+version: 2.4
+description: 2.4: Enriched docstrings.
 """
 
 from pydantic import BaseModel, Field
@@ -37,9 +37,9 @@ class Tools:
         __event_call__: Any = None
     ) -> dict:
         """
-        Lit l'historique de consommation de tokens directement depuis la base de données de l'utilisateur.
-        Ne fait AUCUNE estimation : si la base ou les données ne sont pas trouvées, renvoie une erreur.
-        Utilisez cet outil lorsque vous devez vérifier si vous approchez de la limite de mémoire.
+        Renvoie l'utilisation exacte du contexte (en nombre de tokens et pourcentage) pour la session actuelle.
+        Lit l'historique de consommation de tokens directement depuis la base de données persistante de l'utilisateur.
+        Utilisez cet outil lorsque vous devez vérifier si vous approchez de la limite de mémoire de travail (Context Window).
         """
         limit = self.valves.context_limit
         real_stats = None

@@ -1,8 +1,11 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 167.9
-description: 167.9: Updated calculate_invariant to ignore OWUI files list for reliable Suture.
+version: 167.14
+description: 167.14: Merged API_RETRY_COUNT into MAX_RETRIES (Clean-up). Fixed usage_stats tracking to merge usageMetadata and preserve cachedContentTokenCount from initial stream chunks. Added color emojis to HUD Title (context Count).
+167.12: Moved context metrics HUD to the navbar, redesign to be thinner, flex-adaptive, and mobile-friendly.
+167.11: Added context metrics HUD display via Javascript execute event (SHOW_CONTEXT_METRICS valve).
+167.10: Added geometric retry (x3) for API errors (429, 500, 503) with precise status codes and JSON debug output.
 """
 
 # ==============================================================================
@@ -455,7 +458,11 @@ class StreamProcessor:
                 try:
                     data = orjson.loads(line[6:]); self.full_raw_accumulator.append(data)
                     target = data.get("response", {}) if "response" in data else data
-                    if "usageMetadata" in target: self.usage_stats = target["usageMetadata"]; self.user_data_manager.save_context_stats(self.usage_stats)
+                    if "usageMetadata" in target:
+                        if self.usage_stats is None:
+                            self.usage_stats = {}
+                        self.usage_stats.update(target["usageMetadata"])
+                        self.user_data_manager.save_context_stats(self.usage_stats)
                     cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
                     if cand and cand[0].get("content"):
                         for part in cand[0]["content"]["parts"]:
@@ -486,9 +493,12 @@ class StreamProcessor:
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
-        API_RETRY_COUNT: int = Field(default=3); HTTP_CLIENT_TIMEOUT: int = Field(default=300); ENABLE_HTTP2: bool = Field(default=True)
+        HTTP_CLIENT_TIMEOUT: int = Field(default=300); ENABLE_HTTP2: bool = Field(default=True)
         DEBUG_MODE: bool = Field(default=False); MAX_CONTEXT_SIZE: int = Field(default=1048576)
+        RETRY_TIMEBASE: int = Field(default=2, description="Délai initial (sec) avant relance sur erreur serveur (429/50x).")
+        MAX_RETRIES: int = Field(default=3, description="Nombre max d'essais supplémentaires sur erreur serveur.")
     class UserValves(BaseModel):
+        SHOW_CONTEXT_METRICS: bool = Field(default=True, description="Affiche une barre HUD des tokens et du cache utilisés à la fin du message.")
         MODEL_SELECTION: Literal["gemini-3.1-pro-preview", "gemini-3-flash-preview"] = Field(default="gemini-3.1-pro-preview")
         PRO_THINKING_LEVEL: Literal["LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
@@ -527,47 +537,156 @@ class Pipe:
         if orch.logger: orch.logger.log("google_request", payload)
         proc = StreamProcessor(orch.user_data_manager, chat_id, events, logger=orch.logger)
         client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.ENABLE_HTTP2)
-        try:
-            async with client.stream("POST", f"{GOOGLE_API_BASE_URL}:streamGenerateContent?alt=sse", content=orjson.dumps(payload), headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}) as r:
-                if r.status_code == 200:
-                    async for token in proc.process(r): yield token
-                    if chat_id and proc.usage_stats:
-                        tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
-                        inv = orch.user_data_manager.calculate_invariant("assistant", proc.accumulated_text, tool_io=tool_io)
-                        new_cumul = orch.user_data_manager.calculate_cumulative(inv, body.get("_echo_last_cumul"))
-                        orch.user_data_manager.save_cognitive(new_cumul, proc.captured_sig, None, tool_io)
-                        for c in proc.accumulated_calls: orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig, c["name"], c["args"])
-                        orch.user_data_manager.index_suture(new_cumul, chat_id, inv, body.get("_echo_last_cumul"))
-                elif r.status_code in [401, 403]:
-                    err_data = await r.aread()
-                    raw_err = err_data.decode(errors='ignore')
-                    print(f"[ECHO ENGINE] AUTH ERROR {r.status_code} RAW: {raw_err}", flush=True)
-                    validation_url = None
-                    try:
-                        e_json = std_json.loads(raw_err)
-                        details = e_json.get("error", {}).get("details", [])
-                        for d in details:
-                            if d.get("reason") == "VALIDATION_REQUIRED":
-                                validation_url = d.get("metadata", {}).get("validation_url")
-                                if validation_url: break
-                            if "links" in d:
-                                validation_url = d["links"][0].get("url")
-                                if validation_url: break
-                    except: pass
-                    if validation_url:
-                        yield (
-                            f"## 🔐 Action requise sur votre compte Google\n\n"
-                            f"Une validation supplémentaire est nécessaire pour débloquer l'accès à Gemini.\n\n"
-                            f"> 🔗 **[Cliquez ici pour vérifier votre compte]({validation_url})**\n\n"
-                            f"Une fois la validation terminée sur le site de Google, renvoyez simplement votre message."
-                        )
-                    else:
-                        try: err_msg = std_json.loads(raw_err).get("error", {}).get("message", raw_err)
-                        except: err_msg = raw_err
-                        yield f"🔐 **Authentification requise ({r.status_code})**\n`{err_msg}`"
-                else: 
-                    err_text = await r.aread(); yield f"❌ Erreur API {r.status_code}. {err_text.decode('utf-8', errors='ignore')}"
-        except httpx.ProtocolError as e:
-            await events.emit("error", {"detail": f"PROTOCOLE : Erreur réseau ({str(e)})."})
-            yield f"❌ Erreur réseau. Veuillez réessayer."
-        except Exception as e: yield f"❌ Erreur : {str(e)}"
+        
+        current_delay = self.valves.RETRY_TIMEBASE
+        
+        for attempt in range(self.valves.MAX_RETRIES + 1):
+            try:
+                async with client.stream("POST", f"{GOOGLE_API_BASE_URL}:streamGenerateContent?alt=sse", content=orjson.dumps(payload), headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}) as r:
+                    if r.status_code in [429, 500, 503]:
+                        error_payload = await r.aread()
+                        code = r.status_code
+                        if attempt < self.valves.MAX_RETRIES:
+                            await events.status(f"⚠️ Erreur API {code} : Nouvelle tentative dans {current_delay}s...", done=False)
+                            await asyncio.sleep(current_delay)
+                            current_delay *= 3
+                            continue
+                        else:
+                            await events.status(f"❌ Échec API {code} : Veuillez essayer avec un autre modèle.", done=True)
+                            yield f"❌ Échec définitif (Erreur {code}) après {self.valves.MAX_RETRIES} relances.\n\n```json\n{error_payload.decode('utf-8', errors='ignore')}\n```"
+                            return
+                    elif r.status_code == 200:
+                        async for token in proc.process(r): yield token
+                        if chat_id and proc.usage_stats:
+                            tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
+                            inv = orch.user_data_manager.calculate_invariant("assistant", proc.accumulated_text, tool_io=tool_io)
+                            new_cumul = orch.user_data_manager.calculate_cumulative(inv, body.get("_echo_last_cumul"))
+                            orch.user_data_manager.save_cognitive(new_cumul, proc.captured_sig, None, tool_io)
+                            for c in proc.accumulated_calls: orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig, c["name"], c["args"])
+                            orch.user_data_manager.index_suture(new_cumul, chat_id, inv, body.get("_echo_last_cumul"))
+                        
+                        if user_valves.SHOW_CONTEXT_METRICS and proc.usage_stats:
+                            max_t = self.valves.MAX_CONTEXT_SIZE
+                            p_t = proc.usage_stats.get("promptTokenCount", 0)
+                            c_t = proc.usage_stats.get("cachedContentTokenCount", 0)
+                            g_t = proc.usage_stats.get("candidatesTokenCount", 0)
+                            active_p_t = max(0, p_t - c_t)
+                            
+                            cache_pct = min(100, (c_t / max_t) * 100)
+                            prompt_pct = min(100, (active_p_t / max_t) * 100)
+                            gen_pct = min(100, (g_t / max_t) * 100)
+                            
+                            js_code = f"""
+                            (function() {{
+                                var navContainer = document.querySelector('nav div.flex.items-center.w-full.max-w-full');
+                                if (!navContainer) return;
+                                
+                                var rightControls = navContainer.querySelector('div.self-start.flex.flex-none.items-center');
+                                
+                                var oldHud = document.getElementById('echo-nav-context-hud');
+                                if (oldHud) oldHud.remove();
+                                
+                                var hud = document.createElement('div');
+                                hud.id = 'echo-nav-context-hud';
+                                hud.style.display = 'flex';
+                                hud.style.alignItems = 'center';
+                                hud.style.margin = '0 12px';
+                                hud.style.flex = '1';
+                                hud.style.width = '50%';
+                                hud.style.minWidth = '200px';
+                                hud.style.opacity = '0.85';
+                                hud.style.transition = 'opacity 0.2s';
+                                hud.onmouseover = function() {{ this.style.opacity = '1'; }};
+                                hud.onmouseout = function() {{ this.style.opacity = '0.85'; }};
+                                
+                                hud.title = '🟪 Cache: {c_t} | 🟩 User/Prompt: {active_p_t} | 🟧 Generated: {g_t} | ⬜ Max: {max_t}';
+                                
+                                var label = document.createElement('span');
+                                label.innerText = 'CTX';
+                                label.style.fontSize = '10px';
+                                label.style.fontWeight = 'bold';
+                                label.style.color = 'var(--color-gray-500, #6b7280)';
+                                label.style.marginRight = '6px';
+                                label.style.whiteSpace = 'nowrap';
+                                if (window.innerWidth < 640) label.style.display = 'none';
+                                hud.appendChild(label);
+                                
+                                var barContainer = document.createElement('div');
+                                barContainer.style.display = 'flex';
+                                barContainer.style.width = '100%';
+                                barContainer.style.height = '8px';
+                                barContainer.style.backgroundColor = 'rgba(128, 128, 128, 0.2)';
+                                barContainer.style.borderRadius = '4px';
+                                barContainer.style.overflow = 'hidden';
+                                
+                                var cacheBar = document.createElement('div');
+                                cacheBar.style.width = '{cache_pct:.2f}%';
+                                cacheBar.style.backgroundColor = '#8b5cf6';
+                                barContainer.appendChild(cacheBar);
+                                
+                                var promptBar = document.createElement('div');
+                                promptBar.style.width = '{prompt_pct:.2f}%';
+                                promptBar.style.backgroundColor = '#10b981';
+                                barContainer.appendChild(promptBar);
+                                
+                                var genBar = document.createElement('div');
+                                genBar.style.width = '{gen_pct:.2f}%';
+                                genBar.style.backgroundColor = '#f59e0b';
+                                barContainer.appendChild(genBar);
+                                
+                                hud.appendChild(barContainer);
+                                
+                                if (rightControls) {{
+                                    navContainer.insertBefore(hud, rightControls);
+                                }} else {{
+                                    navContainer.appendChild(hud);
+                                }}
+                            }})();
+                            """
+                            await events.emit("execute", {"code": js_code})
+
+                        break # Succès, on sort de la boucle de retry
+                    elif r.status_code in [401, 403]:
+                        err_data = await r.aread()
+                        raw_err = err_data.decode(errors='ignore')
+                        print(f"[ECHO ENGINE] AUTH ERROR {r.status_code} RAW: {raw_err}", flush=True)
+                        validation_url = None
+                        try:
+                            e_json = std_json.loads(raw_err)
+                            details = e_json.get("error", {}).get("details", [])
+                            for d in details:
+                                if d.get("reason") == "VALIDATION_REQUIRED":
+                                    validation_url = d.get("metadata", {}).get("validation_url")
+                                    if validation_url: break
+                                if "links" in d:
+                                    validation_url = d["links"][0].get("url")
+                                    if validation_url: break
+                        except: pass
+                        if validation_url:
+                            yield (
+                                f"## 🔐 Action requise sur votre compte Google\n\n"
+                                f"Une validation supplémentaire est nécessaire pour débloquer l'accès à Gemini.\n\n"
+                                f"> 🔗 **[Cliquez ici pour vérifier votre compte]({validation_url})**\n\n"
+                                f"Une fois la validation terminée sur le site de Google, renvoyez simplement votre message."
+                            )
+                        else:
+                            try: err_msg = std_json.loads(raw_err).get("error", {}).get("message", raw_err)
+                            except: err_msg = raw_err
+                            yield f"🔐 **Authentification requise ({r.status_code})**\n`{err_msg}`"
+                        break # Pas de retry sur les erreurs d'auth
+                    else: 
+                        err_text = await r.aread(); yield f"❌ Erreur API {r.status_code}. {err_text.decode('utf-8', errors='ignore')}"
+                        break # Pas de retry sur les autres erreurs inattendues
+            except (httpx.ReadTimeout, httpx.ProtocolError) as e:
+                if attempt < self.valves.MAX_RETRIES:
+                    await events.status(f"⚠️ Micro-coupure réseau. Reconnexion dans {current_delay}s...", done=False)
+                    await asyncio.sleep(current_delay)
+                    current_delay *= 3
+                    continue
+                else:
+                    await events.status("❌ Erreur réseau persistante.", done=True)
+                    yield f"❌ Erreur réseau persistante : {str(e)}"
+                    return
+            except Exception as e: 
+                yield f"❌ Erreur système : {str(e)}"
+                return

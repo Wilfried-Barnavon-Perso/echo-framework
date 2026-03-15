@@ -1,12 +1,13 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 1.4
-description: Master Source of Truth for ECHO Infrastructure. Corrected version path.
+version: 1.6
+description: 1.6: New User Agent.
 """
 
 import os
 import mimetypes
+import filetype
 
 # ==============================================================================
 # 0. TOPOLOGIE SYSTÈME (ENVIRONNEMENT DOCKER)
@@ -24,7 +25,7 @@ ECHO_VERSION_FILE = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 ECHO_VERSION_PATH = "/app/backend/data/ECHO_VERSION"
 
 # Identité Réseau
-ECHO_USER_AGENT = "GeminiCLI/0.32.1"
+ECHO_USER_AGENT = "GeminiCLI/0.33.1"
 
 # ==============================================================================
 # 1. PROTOCOLE GOOGLE CLOUD
@@ -74,22 +75,56 @@ MIME_MAPPING_BIN = {
 # ==============================================================================
 
 def get_gemini_mime(file_path: str) -> tuple[str, bool]:
+    """
+    Analyse universelle et robuste du type MIME d'un fichier.
+    Retourne un tuple (mime_type, est_supporte_par_gemini).
+    Intègre une détection par extension, par signature binaire (Magic Numbers),
+    et par épreuve textuelle (Null-Byte Sniffing), avec un fallback sécurisé.
+    """
+    if not os.path.exists(file_path):
+        return "application/octet-stream", False
+
     ext = os.path.splitext(file_path)[1].lower().strip()
     filename = os.path.basename(file_path).lower()
+    raw_mime = None
 
+    # 1. Vérification rapide par mappings pré-définis (Priorité absolue ECHO)
     for mime, extensions in MIME_MAPPING_TXT.items():
         if ext in extensions or filename in extensions: return mime, True
 
     for mime, extensions in MIME_MAPPING_BIN.items():
         if ext in extensions: return mime, True
 
-    standard_mime, _ = mimetypes.guess_type(file_path)
-    if standard_mime:
-        if standard_mime.startswith("text/") or \
-           standard_mime.startswith("image/") or \
-           standard_mime.startswith("audio/") or \
-           standard_mime.startswith("video/") or \
-           standard_mime == "application/json":
-            return standard_mime, True
+    # 2. Vérification par bibliothèque standard (basée sur l'extension)
+    raw_mime, _ = mimetypes.guess_type(file_path)
 
-    return None, False
+    # 3. Le Crible Binaire (Fichier sans extension ou type inconnu)
+    if not raw_mime:
+        kind = filetype.guess(file_path)
+        if kind:
+            raw_mime = kind.mime
+            
+    if not raw_mime:
+        raw_mime = "unknown/unknown"
+
+    # 4. Liste Blanche Native Gemini (Médias complexes & JSON)
+    if raw_mime.startswith("image/") or \
+       raw_mime.startswith("video/") or \
+       raw_mime.startswith("audio/") or \
+       raw_mime.startswith("text/") or \
+       raw_mime in ["application/pdf", "application/json"]:
+        return raw_mime, True
+
+    # 5. L'Épreuve Textuelle (Text-Sniffing) pour le code source et configs obscurs
+    # Si on arrive ici, c'est un format inconnu ou un "application/quelquechose" non supporté (ex: zip, dll, py)
+    try:
+        with open(file_path, 'rb') as f:
+            chunk = f.read(1024)
+        if not chunk or b'\x00' not in chunk:
+            # Aucun caractère nul = C'est du texte pur ou du code source lisible
+            return "text/plain", True
+    except:
+        pass
+
+    # 6. Le Rejet et Fallback Sécuritaire (Binaires purs)
+    return "application/octet-stream", False

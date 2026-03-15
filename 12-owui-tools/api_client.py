@@ -1,8 +1,8 @@
 """
 title: ECHO Universal API Client
 author: Wilfried BARNAVON
-version: 1.2
-description: 1.2: Standardized output with wrap_tool_output.
+version: 1.3
+description: 1.3: Enriched docstrings with parameters.
 """
 
 import requests
@@ -23,20 +23,18 @@ class Tools:
         self.valves = self.Valves()
 
     def call_api(
-        self, 
-        url: str, 
-        method: str = "GET", 
-        headers: Optional[Dict] = None, 
+        self,
+        url: str,
+        method: str = "GET",
+        headers: Optional[Dict] = None,
         body: Optional[Dict] = None,
-        __event_emitter__: Any = None,
-        __event_call__: Any = None
-    ) -> dict:
+    ) -> str:
         """
-        Effectue un appel API HTTP.
-        :param url: L'URL cible.
-        :param method: La méthode HTTP (GET, POST, PUT, DELETE).
-        :param headers: Dictionnaire des headers.
-        :param body: Dictionnaire du corps de la requête (JSON).
+        Effectue un appel API HTTP universel.
+        :param url: L'URL cible de la requête.
+        :param method: La méthode HTTP à utiliser (GET, POST, PUT, DELETE). Par défaut 'GET'.
+        :param headers: Dictionnaire optionnel des headers HTTP (ex: {'Authorization': 'Bearer ...'}). ECHO ajoutera un User-Agent si absent.
+        :param body: Dictionnaire optionnel du corps de la requête. Sera automatiquement converti en JSON.
         """
         if self.valves.allowed_domains != "*" and url.split('/')[2] not in self.valves.allowed_domains.split(','):
              return wrap_tool_output(text="❌ Domaine non autorisé.", status={"status": "error", "domain": url})

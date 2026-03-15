@@ -1,8 +1,8 @@
 """
 title: ECHO Gemini Web Search
 author: Wilfried BARNAVON
-version: 12.7
-description: 12.7: Mutualized thought splitting using echo_utils (Standard <think>).
+version: 12.10
+description: 12.10: Enriched docstrings with parameters.
 """
 
 import json
@@ -11,7 +11,7 @@ import httpx
 import uuid
 import sys
 import re
-from typing import Optional, Any, Tuple
+from typing import Optional, Any, Tuple, Literal
 from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
@@ -28,31 +28,40 @@ class Tools:
         self.auth = EchoAuth()
 
     async def search_web(
-        self, 
-        query: str, 
+        self,
+        query: str,
+        thinking_level: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = "MEDIUM",
         __user__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> dict:
+    ) -> str:
         """
-        Recherche en temps réel sur le web via Gemini Search.
+        Recherche en temps réel sur le web via le moteur natif Google Search de Gemini.
+        Fournit des informations actualisées, des actualités, des prix ou des données factuelles récentes.
+        :param query: La requête de recherche précise (mots-clés ou question).
+        :param thinking_level: Niveau de réflexion du modèle pour analyser les résultats (MINIMAL, LOW, MEDIUM, HIGH). Par défaut MEDIUM.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        await events.status(f"🌐 Recherche Web : {query}...")
+        await events.status(f"🌐 Recherche Web ({thinking_level}) : {query}...")
 
         token, project_id = self.auth.get_credentials(__user__.get("id"))
         if not token: return wrap_tool_output(text="❌ Erreur Auth.", status={"status": "error"})
 
         url = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
-        
+
         payload = {
             "model": self.valves.GEMINI_FLASH_MODEL,
             "project": project_id,
             "request": {
                 "contents": [{"role": "user", "parts": [{"text": query}]}],
                 "tools": [{"googleSearch": {}}],
-                "generationConfig": {"thinkingConfig": {"includeThoughts": True}}
+                "generationConfig": {
+                    "thinkingConfig": {
+                        "includeThoughts": True,
+                        "thinkingLevel": thinking_level.upper()
+                    }
+                }
             }
         }
 

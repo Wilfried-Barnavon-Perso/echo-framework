@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils
 author: ECHO Framework
-version: 2.16
-description: v2.16 : Removed files from invariant_hash calculation. Added nouveaux_fichiers to wrap_tool_output.
+version: 2.17
+description: 2.17 : Added generate_echo_file_id utility for standardizing cross-tool file identifiers.
 """
 
 import os
@@ -77,6 +77,11 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
 # ==============================================================================
 # SECTION 2 : RÉSOLUTION DE FICHIERS & VERSIONS
 # ==============================================================================
+
+def generate_echo_file_id(user_id: str, chat_id: str) -> str:
+    """Génère un identifiant unique standardisé pour les fichiers dans ECHO."""
+    ts = int(time.time() * 1000)
+    return f"U_{user_id}_C_{chat_id}_T_{ts}"
 
 def resolve_upload_file_path(file_id: str, uploads_dir: str = ECHO_UPLOADS_DIR) -> Optional[str]:
     """Résout le chemin physique d'un fichier uploadé via son UUID (Globbing)."""
