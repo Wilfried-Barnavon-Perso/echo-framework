@@ -1,8 +1,8 @@
 """
 title: ECHO Cognitive Core
 author: ECHO Framework
-version: 3.7
-description: 3.7: Enriched docstrings with parameters.
+version: 3.8
+description: 3.8: Added missing Pydantic imports.
 """
 
 import sys
@@ -10,6 +10,7 @@ import json
 import httpx
 import asyncio
 import re
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
 # Importation ECHO Standard

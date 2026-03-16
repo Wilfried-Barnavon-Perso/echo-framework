@@ -1,11 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 167.14
-description: 167.14: Merged API_RETRY_COUNT into MAX_RETRIES (Clean-up). Fixed usage_stats tracking to merge usageMetadata and preserve cachedContentTokenCount from initial stream chunks. Added color emojis to HUD Title (context Count).
-167.12: Moved context metrics HUD to the navbar, redesign to be thinner, flex-adaptive, and mobile-friendly.
-167.11: Added context metrics HUD display via Javascript execute event (SHOW_CONTEXT_METRICS valve).
-167.10: Added geometric retry (x3) for API errors (429, 500, 503) with precise status codes and JSON debug output.
+version: 167.20
+description: 167.20: No plans Limit given ... to be continued.
 """
 
 # ==============================================================================
@@ -75,7 +72,13 @@ class DebugLogger:
 _SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
 _LAST_CLIENT_ACCESS: float = 0.0
 
-async def _get_global_client(idle_timeout: int = 300, enable_http2: bool = True) -> httpx.AsyncClient:
+async def _get_global_client(
+    timeout: int = 600, 
+    enable_http2: bool = True,
+    max_connections: int = 100,
+    max_keepalive: int = 20,
+    keepalive_expiry: int = 300
+) -> httpx.AsyncClient:
     global _SHARED_ASYNC_CLIENT, _LAST_CLIENT_ACCESS
     now = time.time()
     try:
@@ -86,13 +89,17 @@ async def _get_global_client(idle_timeout: int = 300, enable_http2: bool = True)
                      await _SHARED_ASYNC_CLIENT.aclose(); _SHARED_ASYNC_CLIENT = None
     except: _SHARED_ASYNC_CLIENT = None
 
-    if _SHARED_ASYNC_CLIENT and (now - _LAST_CLIENT_ACCESS > idle_timeout):
+    if _SHARED_ASYNC_CLIENT and (now - _LAST_CLIENT_ACCESS > timeout):
         old_client = _SHARED_ASYNC_CLIENT; _SHARED_ASYNC_CLIENT = None 
         try: await old_client.aclose()
         except: pass
 
     if _SHARED_ASYNC_CLIENT is None or _SHARED_ASYNC_CLIENT.is_closed:
-        limits = httpx.Limits(max_keepalive_connections=20, max_connections=100, keepalive_expiry=300)
+        limits = httpx.Limits(
+            max_keepalive_connections=max_keepalive, 
+            max_connections=max_connections, 
+            keepalive_expiry=keepalive_expiry
+        )
         use_h2 = enable_http2 and HAS_HTTP2
         _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=use_h2)
     
@@ -228,18 +235,67 @@ class AuthService:
 
     def get_project_id(self, creds, debug_mode: bool = False) -> Tuple[Optional[str], str]:
         cached = self.user_data_manager.get_auth_data('google_project_id')
-        if cached and not debug_mode: return cached[0], "Cache."
+        plan_cached = self.user_data_manager.get_auth_data('google_plan_name')
+        if cached and plan_cached and not debug_mode: return cached[0], "Cache."
         headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
         try:
             resp = httpx.post(f"{GOOGLE_API_BASE_URL}:loadCodeAssist", headers=headers, json={"metadata": {"ideType": "IDE_UNSPECIFIED", "pluginType": "GEMINI"}}, timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
+                
+                # --- [Nouveau] Récupération du Plan et des Crédits ---
+                paid_tier = data.get("paidTier") or data.get("currentTier") or {}
+                plan_name = paid_tier.get("name", paid_tier.get("id", "Plan Inconnu"))
+                self.user_data_manager.save_auth_data('google_plan_name', plan_name)
+                
+                available_credits = paid_tier.get("availableCredits", [])
+                for credit in available_credits:
+                    if credit.get("creditType") == "GOOGLE_ONE_AI":
+                        self.user_data_manager.save_auth_data('google_credits', str(credit.get("creditAmount", "0")))
+                        break
+                # -----------------------------------------------------
+
                 pid = data.get("cloudaicompanionProject", {}).get("id") if isinstance(data.get("cloudaicompanionProject"), dict) else data.get("cloudaicompanionProject")
                 if pid:
                     pid = pid.replace("projects/", ""); self.user_data_manager.save_auth_data('google_project_id', pid)
                     return pid, "API OK."
             return None, "Handshake Fail."
         except Exception as e: return None, str(e)
+
+    async def fetch_user_quota_async(self, creds, pid: str, model_id: str):
+        """Récupère le quota principal (Pooled) de manière asynchrone."""
+        if not creds or not pid: return
+        headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
+        payload = {"project": pid, "userAgent": ECHO_USER_AGENT}
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(f"{GOOGLE_API_BASE_URL}:retrieveUserQuota", headers=headers, json=payload, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    buckets = data.get("buckets", [])
+                    
+                    total_rem = 0
+                    total_lim = 0
+                    furthest_reset = ""
+                    
+                    for b in buckets:
+                        rem_str = b.get("remainingAmount")
+                        frac = b.get("remainingFraction")
+                        r_time = b.get("resetTime", "")
+                        
+                        if rem_str and frac is not None and float(frac) > 0:
+                            rem = int(rem_str)
+                            lim = round(rem / float(frac))
+                            total_rem += rem
+                            total_lim += lim
+                            if r_time > furthest_reset: furthest_reset = r_time
+                    
+                    if total_lim > 0:
+                        self.user_data_manager.save_auth_data("google_quota_remaining", str(total_rem))
+                        self.user_data_manager.save_auth_data("google_quota_limit", str(total_lim))
+                        self.user_data_manager.save_auth_data("google_quota_reset_time", furthest_reset)
+                        self.user_data_manager.save_auth_data("google_quota_last_sync", str(int(time.time())))
+        except Exception: pass
 
 # ==============================================================================
 # SECTION 5 : ORCHESTRATEUR (SUTURE & PROTOCOLE)
@@ -462,6 +518,18 @@ class StreamProcessor:
                         if self.usage_stats is None:
                             self.usage_stats = {}
                         self.usage_stats.update(target["usageMetadata"])
+                    
+                    # --- [Nouveau] Récupération des Crédits au fil de l'eau ---
+                    if "remainingCredits" in target:
+                        if self.usage_stats is None: self.usage_stats = {}
+                        for credit in target["remainingCredits"]:
+                            if credit.get("creditType") == "GOOGLE_ONE_AI":
+                                self.usage_stats["google_credits"] = str(credit.get("creditAmount", "0"))
+                                self.user_data_manager.save_auth_data('google_credits', self.usage_stats["google_credits"])
+                                break
+                    # ----------------------------------------------------------
+                    
+                    if "usageMetadata" in target or "remainingCredits" in target:
                         self.user_data_manager.save_context_stats(self.usage_stats)
                     cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
                     if cand and cand[0].get("content"):
@@ -493,10 +561,12 @@ class StreamProcessor:
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
-        HTTP_CLIENT_TIMEOUT: int = Field(default=300); ENABLE_HTTP2: bool = Field(default=True)
+        HTTP_CLIENT_TIMEOUT: int = Field(default=600); ENABLE_HTTP2: bool = Field(default=True)
+        HTTP_MAX_CONNECTIONS: int = Field(default=100); HTTP_MAX_KEEPALIVE: int = Field(default=20)
+        HTTP_KEEPALIVE_EXPIRY: int = Field(default=300)
         DEBUG_MODE: bool = Field(default=False); MAX_CONTEXT_SIZE: int = Field(default=1048576)
         RETRY_TIMEBASE: int = Field(default=2, description="Délai initial (sec) avant relance sur erreur serveur (429/50x).")
-        MAX_RETRIES: int = Field(default=3, description="Nombre max d'essais supplémentaires sur erreur serveur.")
+        MAX_RETRIES: int = Field(default=5, description="Nombre max d'essais supplémentaires sur erreur serveur.")
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True, description="Affiche une barre HUD des tokens et du cache utilisés à la fin du message.")
         MODEL_SELECTION: Literal["gemini-3.1-pro-preview", "gemini-3-flash-preview"] = Field(default="gemini-3.1-pro-preview")
@@ -528,6 +598,13 @@ class Pipe:
         if not creds: yield auth.get_auth_url(); return
         pid, _ = auth.get_project_id(creds, self.valves.DEBUG_MODE)
         if not pid: yield "❌ Erreur Projet."; return
+        
+        # --- [Nouveau] Récupération du Quota en arrière-plan pour les nouvelles sessions ---
+        messages = body.get("messages", [])
+        if len(messages) <= 2:
+            await auth.fetch_user_quota_async(creds, pid, user_valves.MODEL_SELECTION)
+        # -----------------------------------------------------------------------------------
+        
         context = await orch.prepare_context(body, chat_id, __metadata__, events)
         sys_instr = {"parts": [{"text": "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."}]}
         think = user_valves.PRO_THINKING_LEVEL if user_valves.MODEL_SELECTION == "gemini-3.1-pro-preview" else user_valves.FLASH_THINKING_LEVEL
@@ -536,7 +613,13 @@ class Pipe:
         if tools: payload["request"]["tools"] = tools; payload["request"]["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
         if orch.logger: orch.logger.log("google_request", payload)
         proc = StreamProcessor(orch.user_data_manager, chat_id, events, logger=orch.logger)
-        client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.ENABLE_HTTP2)
+        client = await _get_global_client(
+            self.valves.HTTP_CLIENT_TIMEOUT, 
+            self.valves.ENABLE_HTTP2,
+            self.valves.HTTP_MAX_CONNECTIONS,
+            self.valves.HTTP_MAX_KEEPALIVE,
+            self.valves.HTTP_KEEPALIVE_EXPIRY
+        )
         
         current_delay = self.valves.RETRY_TIMEBASE
         
@@ -546,14 +629,26 @@ class Pipe:
                     if r.status_code in [429, 500, 503]:
                         error_payload = await r.aread()
                         code = r.status_code
+                        
+                        # --- [Nouveau] Synchronisation forcée du Quota sur erreur 429 ---
+                        if code == 429:
+                            await auth.fetch_user_quota_async(creds, pid, user_valves.MODEL_SELECTION)
+                        # ----------------------------------------------------------------
+                        
                         if attempt < self.valves.MAX_RETRIES:
-                            await events.status(f"⚠️ Erreur API {code} : Nouvelle tentative dans {current_delay}s...", done=False)
+                            await events.status(f"⚠️ Erreur API {code} (Essai {attempt+1}/{self.valves.MAX_RETRIES}). Pause de {current_delay}s...", done=False)
                             await asyncio.sleep(current_delay)
                             current_delay *= 3
                             continue
                         else:
+                            # --- [Nouveau] Affichage de l'heure de réinitialisation ---
+                            reset_msg = ""
+                            if code == 429:
+                                r_time = auth.user_data_manager.get_auth_data("google_quota_reset_time")
+                                if r_time and r_time[0]: reset_msg = f" (Réinitialisation prévue à : {r_time[0]})"
+                            # ----------------------------------------------------------
                             await events.status(f"❌ Échec API {code} : Veuillez essayer avec un autre modèle.", done=True)
-                            yield f"❌ Échec définitif (Erreur {code}) après {self.valves.MAX_RETRIES} relances.\n\n```json\n{error_payload.decode('utf-8', errors='ignore')}\n```"
+                            yield f"❌ Échec définitif (Erreur {code}) après {self.valves.MAX_RETRIES} relances.{reset_msg}\n\n```json\n{error_payload.decode('utf-8', errors='ignore')}\n```"
                             return
                     elif r.status_code == 200:
                         async for token in proc.process(r): yield token
@@ -568,6 +663,22 @@ class Pipe:
                         if user_valves.SHOW_CONTEXT_METRICS and proc.usage_stats:
                             max_t = self.valves.MAX_CONTEXT_SIZE
                             p_t = proc.usage_stats.get("promptTokenCount", 0)
+                            
+                            # --- [Nouveau] Variables HUD ---
+                            plan_data = auth.user_data_manager.get_auth_data('google_plan_name')
+                            plan_name = plan_data[0] if plan_data else ""
+                            
+                            credits_val = proc.usage_stats.get("google_credits", "")
+                            if not credits_val:
+                                c_data = auth.user_data_manager.get_auth_data('google_credits')
+                                credits_val = c_data[0] if c_data else ""
+                                
+                            q_rem = auth.user_data_manager.get_auth_data('google_quota_remaining')
+                            q_lim = auth.user_data_manager.get_auth_data('google_quota_limit')
+                            q_rem_str = q_rem[0] if q_rem else "?"
+                            q_lim_str = q_lim[0] if q_lim else "?"
+                            quota_str = f"🎯 {q_rem_str}/{q_lim_str} req. | " if (q_rem_str != "?" and q_lim_str != "?") else ""
+                            # -------------------------------
                             c_t = proc.usage_stats.get("cachedContentTokenCount", 0)
                             g_t = proc.usage_stats.get("candidatesTokenCount", 0)
                             active_p_t = max(0, p_t - c_t)
@@ -591,15 +702,22 @@ class Pipe:
                                 hud.style.display = 'flex';
                                 hud.style.alignItems = 'center';
                                 hud.style.margin = '0 12px';
-                                hud.style.flex = '1';
-                                hud.style.width = '50%';
-                                hud.style.minWidth = '200px';
-                                hud.style.opacity = '0.85';
+                                hud.style.flexGrow = '8';
+                                hud.style.width = '66%';
+                                hud.style.minWidth = '350px';
+                                hud.style.opacity = '0.9';
                                 hud.style.transition = 'opacity 0.2s';
                                 hud.onmouseover = function() {{ this.style.opacity = '1'; }};
-                                hud.onmouseout = function() {{ this.style.opacity = '0.85'; }};
+                                hud.onmouseout = function() {{ this.style.opacity = '0.9'; }};
                                 
-                                hud.title = '🟪 Cache: {c_t} | 🟩 User/Prompt: {active_p_t} | 🟧 Generated: {g_t} | ⬜ Max: {max_t}';
+                                var planName = "{plan_name}";
+                                var credits = "{credits_val}";
+                                var quotaInfo = "{quota_str}";
+                                var billingInfo = "";
+                                if (planName) billingInfo += `💳 ${{planName}} | ` + quotaInfo;
+                                if (credits && credits !== "0") billingInfo += `🔋 ${{credits}} crédits IA | `;
+                                
+                                hud.title = billingInfo + `🟪 Cache: {c_t} | 🟩 User/Prompt: {active_p_t} | 🟧 Generated: {g_t} | ⬜ Max: {max_t}`;
                                 
                                 var label = document.createElement('span');
                                 label.innerText = 'CTX';

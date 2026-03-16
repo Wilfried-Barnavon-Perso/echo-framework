@@ -1,8 +1,8 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 2.4
-description: 2.4: Enriched docstrings.
+version: 2.7
+description: 2.7: Added user billing information (plan, AI overage credits, and base quota) to the tool's JSON payload.
 """
 
 from pydantic import BaseModel, Field
@@ -79,7 +79,45 @@ class Tools:
         if percent > 80: status_load = "WARNING"
         if percent > 95: status_load = "CRITICAL"
 
+        # --- [Nouveau] Ajout des informations de facturation ---
+        plan_name = "Inconnu"
+        credits = "0"
+        q_rem = None
+        q_lim = None
+        q_reset = None
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM auth_data WHERE key = 'google_plan_name'")
+                p_row = cursor.fetchone()
+                if p_row: plan_name = p_row[0]
+                
+                cursor.execute("SELECT value FROM auth_data WHERE key = 'google_credits'")
+                c_row = cursor.fetchone()
+                if c_row: credits = c_row[0]
+                
+                cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_remaining'")
+                r_row = cursor.fetchone()
+                if r_row: q_rem = r_row[0]
+                
+                cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_limit'")
+                l_row = cursor.fetchone()
+                if l_row: q_lim = l_row[0]
+                
+                cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_reset_time'")
+                rt_row = cursor.fetchone()
+                if rt_row: q_reset = rt_row[0]
+        except: pass
+        
+        try: credits_int = int(credits)
+        except: credits_int = 0
+        # -------------------------------------------------------
+
         payload = {
+            "billing": {
+                "plan_name": plan_name,
+                "ai_overage_credits": credits_int
+            },
             "context_load_percent": percent,
             "used_tokens": est_tokens,
             "total_limit": limit,
@@ -90,5 +128,12 @@ class Tools:
                 "candidates": c_tok
             }
         }
+        
+        if q_rem and q_lim:
+            payload["billing"]["base_quota"] = {
+                "remaining": int(q_rem) if q_rem.isdigit() else q_rem,
+                "limit": int(q_lim) if q_lim.isdigit() else q_lim,
+                "reset_time": q_reset
+            }
             
         return wrap_tool_output(text=json.dumps(payload, indent=2), status={"status": "success", "load_percent": percent, "tokens": est_tokens})
