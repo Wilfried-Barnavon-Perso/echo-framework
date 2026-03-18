@@ -1,8 +1,8 @@
 """
 title: ECHO File Content Explorer
 author: ECHO Framework
-version: 1.20
-description: 1.20: Enhanced read_raw_file_content with multi-format output (UTF8, Base64, Hex) and enriched docstrings.
+version: 1.22
+description: 1.22: New Doctrings changes.
 """
 
 import os
@@ -381,7 +381,7 @@ def _generate_image_viewer_js(b64: str, mime: str, file_id: str) -> str:
 class Tools:
     class Valves(BaseModel):
         GEMINI_FLASH_MODEL: str = Field(default="gemini-3-flash-preview", description="Modèle pour les sondages sémantiques.")
-        MAX_READ_SIZE_KB: int = Field(default=512, description="Taille max par lecture brute.")
+        MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW). Brider à 16 pour conformité API.")
         MAX_DOWNLOAD_SIZE_MB: int = Field(default=20, description="Taille max autorisée pour un téléchargement distant (en Mo).")
 
     def __init__(self):
@@ -401,6 +401,7 @@ class Tools:
     ) -> str:
         """
         Sonde universelle du stockage physique. Permet d'extraire le contenu brut d'un fichier.
+        Note : La sortie est strictement limitée à un 'chunk' de 16 Ko (16384 caractères) pour garantir la conformité avec l'API Gemini.
         :param file_id: L'identifiant unique du fichier cible.
         :param output_mode: Format de sortie souhaité ('utf8' pour du texte, 'base64' pour des données binaires, 'hex' pour une vue hexadécimale). Par défaut 'utf8'.
         :param start_line: Ligne de début pour l'extraction (utile uniquement en mode utf8). Par défaut 1.
@@ -409,6 +410,9 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         fpath = resolve_upload_file_path(file_id, self.uploads_dir)
         if not fpath: return wrap_tool_output(text=f"❌ Fichier {file_id} introuvable.", status={"status": "error"})
+
+        # --- Limites Strictes 16Ko (16384 caractères) ---
+        MAX_CHARS = 16384
 
         try:
             await events.status(f"📖 Lecture ({output_mode}) : {os.path.basename(fpath)}...")
@@ -419,20 +423,32 @@ class Tools:
                     total = len(lines)
                     subset = lines[start_line-1:end_line]
                     content = "".join(subset)
+                    # Tronquage strict à 16Ko de texte
+                    if len(content) > MAX_CHARS:
+                        content = content[:MAX_CHARS] + "\n[... SORTIE TRONQUÉE À 16Ko POUR CONFORMITÉ API ...]"
                 res_text = f"--- CONTENU UTF-8 (Lignes {start_line}-{min(end_line, total)} sur {total}) ---\n\n{content}\n\n--- FIN DU BLOC ---"
             
             elif output_mode == "base64":
+                # Pour Base64, 3 octets source -> 4 caractères. Limite = 12288 octets.
+                max_bytes = 12288
                 with open(fpath, 'rb') as f:
-                    # On limite la lecture base64 pour ne pas saturer le contexte (approximation KB)
-                    raw_data = f.read(self.valves.MAX_READ_SIZE_KB * 1024)
+                    raw_data = f.read(max_bytes)
                     content = base64.b64encode(raw_data).decode('utf-8')
-                res_text = f"--- CONTENU BASE64 (Premiers {len(raw_data)} octets) ---\n\n{content}\n\n--- FIN DU BLOC ---"
+                
+                size = os.path.getsize(fpath)
+                suffix = " (TRONQUÉ À 12Ko SOURCE)" if size > max_bytes else ""
+                res_text = f"--- CONTENU BASE64{suffix} ({len(raw_data)} octets lus) ---\n\n{content}\n\n--- FIN DU BLOC ---"
                 
             elif output_mode == "hex":
+                # Pour Hex, 1 octet source -> 2 caractères. Limite = 8192 octets.
+                max_bytes = 8192
                 with open(fpath, 'rb') as f:
-                    raw_data = f.read(self.valves.MAX_READ_SIZE_KB * 1024 // 2) # Hex double la taille
+                    raw_data = f.read(max_bytes)
                     content = raw_data.hex()
-                res_text = f"--- CONTENU HEXADECIMAL (Premiers {len(raw_data)} octets) ---\n\n{content}\n\n--- FIN DU BLOC ---"
+                
+                size = os.path.getsize(fpath)
+                suffix = " (TRONQUÉ À 8Ko SOURCE)" if size > max_bytes else ""
+                res_text = f"--- CONTENU HEXADECIMAL{suffix} ({len(raw_data)} octets lus) ---\n\n{content}\n\n--- FIN DU BLOC ---"
 
             await events.status(f"Lecture terminée.", done=True)
             return wrap_tool_output(text=res_text, status={"status": "success", "file": os.path.basename(fpath), "mode": output_mode})
@@ -554,8 +570,7 @@ class Tools:
     ) -> str:
         """
         Affiche une image dans l'interface utilisateur à partir de son ID de fichier.
-        Cette fonction génère un HUD persistant permettant de visualiser, zoomer et recadrer l'image.
-        :param file_id: L'identifiant du fichier (ex: provenant d'un upload).
+        :param file_id: L'identifiant du fichier provenant d'un upload, ou du navigateur).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         fpath = resolve_upload_file_path(file_id, self.uploads_dir)
@@ -588,7 +603,7 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Télécharge un fichier distant depuis une URL et l'intègre au contexte ECHO (Suture).
+        Télécharge un fichier distant depuis une URL et l'intègre au contexte ECHO du prochain tour.
         Accepte les images, documents, PDFs, etc. Supporte les Data URIs (Base64).
         :param url: L'URL directe du fichier à télécharger ou un Data URI.
         """

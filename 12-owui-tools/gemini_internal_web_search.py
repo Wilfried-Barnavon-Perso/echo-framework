@@ -36,8 +36,8 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Recherche en temps réel sur le web via le moteur natif Google Search de Gemini.
-        Fournit des informations actualisées, des actualités, des prix ou des données factuelles récentes.
+        Recherche textuelle sur le web via le moteur natif Google Search de Gemini.
+        Fournit des informations actualisées, des actualités ou des données factuelles disponibles à la date et l'heure founies .
         :param query: La requête de recherche précise (mots-clés ou question).
         :param thinking_level: Niveau de réflexion du modèle pour analyser les résultats (MINIMAL, LOW, MEDIUM, HIGH). Par défaut MEDIUM.
         """

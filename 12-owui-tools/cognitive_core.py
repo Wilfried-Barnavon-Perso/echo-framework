@@ -80,7 +80,7 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Unité de raisonnement profond pour problèmes complexes, architecture, debug ou planification.
+        Unité de raisonnement profond pour problèmes textuelles complexes, architecture, debug ou planification.
         Utilise le modèle Gemini Pro avec un niveau de réflexion élevé.
         :param question: La question complexe ou la tâche nécessitant une réflexion approfondie.
         """
@@ -115,7 +115,7 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Unité d'analyse rapide pour requêtes simples, résumés, ou vérifications de faits.
+        Unité d'analyse rapide pour requêtes textuelles simples, résumés, ou vérifications de faits.
         Utilise le modèle Gemini Flash pour une réponse quasi-instantanée.
         :param question: La question simple ou la micro-tâche à traiter rapidement.
         """

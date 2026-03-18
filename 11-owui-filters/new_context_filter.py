@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.21
-description: 6.21: Fixed missing content injection caused by case sensitivity issue on status string comparisons.
+version: 6.22
+description: 6.22: Fixed Model IA.
 """
 
 from pydantic import BaseModel, Field
@@ -223,7 +223,7 @@ class Filter:
 
                 etat_echo = {
                     "version_echo": "##ECHO_VERSION##",
-                    "moteur_ia": "##GEMINI_ENGINE##",
+                    "modèle_ia": "##GEMINI_ENGINE##",
                     "nom_utilisateur": display_name,
                     "contexte_temporel": {
                         "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
