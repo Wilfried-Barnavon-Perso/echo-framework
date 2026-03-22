@@ -111,8 +111,8 @@ async def _get_global_client(
 # SECTION 4 : USER DATA MANAGER (PROXY)
 # ==============================================================================
 class UserDataManager:
-    def __init__(self, user_id: str = "system", debug_mode: bool = False):
-        self.state_manager = EchoStateManager(ECHO_USER_DBS_DIR, user_id)
+    def __init__(self, user_id: str = "system", chat_id: Optional[str] = None, debug_mode: bool = False):
+        self.state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
         self.debug_mode = debug_mode
 
     def calculate_invariant(self, role: str, content: Any, tool_io: dict = None) -> str:

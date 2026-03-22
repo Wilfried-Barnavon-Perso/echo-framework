@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.22
-description: 6.22: Fixed Model IA.
+version: 6.23
+description: 6.23: Fixed file resolution by passing mandatory user_id.
 """
 
 from pydantic import BaseModel, Field
@@ -15,6 +15,7 @@ import asyncio
 import logging
 import time
 import hashlib
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 
 # Importations ECHO Strictes (Volume Docker)
@@ -37,19 +38,27 @@ class Filter:
         OVERRIDE_LOCATION: str = Field(default="", description="📍 Surcharger ma position géographique (Ex: Paris, France).")
 
     def __init__(self):
+        # ==============================================================================
+        # INFRASTRUCTURE ECHO : CONTRÔLE DU RAG NATIF
+        # ==============================================================================
+        # file_handler = True informe Open WebUI que ce filtre gère les fichiers
+        # de manière exclusive. Cela désactive le Retrieval (RAG) natif d'OWUI.
+        self.file_handler = True
+        # ==============================================================================
+
         self.valves = self.Valves()
         self.user_valves = self.UserValves()
         self.auth = EchoAuth()
         self.toggle = True
         self.icon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIzIi8+PHBhdGggZD0iTTEyIDdWNW0wIDE0di0yTTcgMTJINW0xNCAwaC0ybTEuNS01LjVsLTEuNSAxLjVNOCAxNmwtMS41IDEuNU0xNy41IDE3LjVsLTEuNS0xLjVNOCA4TDYuNSA2LjUiLz48cGF0aCBkPSJNMiAxMmg0bTExIDBoNW0tMyAwbDMtM20tMyAzbDMgMyIvPjwvc3ZnPg=="
 
-    async def _process_file_task(self, file_obj: dict, token: str, project_id: str, thinking_level: str, chat_id: str, state_manager: EchoStateManager, events: Any) -> dict:
+    async def _process_file_task(self, user_id: str, file_obj: dict, token: str, project_id: str, thinking_level: str, chat_id: str, state_manager: EchoStateManager, events: Any) -> dict:
         """Tâche de traitement de fichier (Smart Context, Binaire ou Index)."""
         file_id = file_obj.get("id") or file_obj.get("file", {}).get("id")
         filename = file_obj.get("name") or file_obj.get("file", {}).get("meta", {}).get("name", "inconnu")
         mime = file_obj.get("mime_type") or file_obj.get("file", {}).get("meta", {}).get("content_type", "application/octet-stream")
         
-        path = resolve_upload_file_path(file_id)
+        path = resolve_upload_file_path(user_id, file_id)
         if not path or not os.path.exists(path):
             print(f"[ECHO-FILTER] ❌ Fichier {filename} introuvable sur le disque.", flush=True)
             return {"status": "error", "fid": file_id, "error": "Fichier introuvable sur le disque."}
@@ -152,7 +161,21 @@ class Filter:
             msgs = body.get("messages", [])
             chat_id = (__metadata__ or {}).get("chat_id") or body.get("chat_id")
             all_files = body.get("files", [])
-            state_manager = EchoStateManager(user_id=__user__.get("id", "system")) if __user__ else None
+            user_id = __user__.get("id", "system") if __user__ else "system"
+            
+            # 1. Initialisation avec chat_id (v5.76.0)
+            state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
+
+            # 2. Rangement physique des fichiers
+            if all_files and state_manager:
+                for f in all_files:
+                    fid = f.get("id") or f.get("file", {}).get("id")
+                    old_path = resolve_upload_file_path(user_id, fid) # Recherche transit
+                    if old_path and os.path.exists(old_path):
+                        new_path = os.path.join(state_manager.user_dir, "files", os.path.basename(old_path))
+                        if not os.path.exists(new_path):
+                            shutil.move(old_path, new_path)
+                            print(f"[ECHO-FILTER] 📦 Fichier {fid} rangé dans le coffre.", flush=True)
 
             if not msgs: return body
 
@@ -202,7 +225,7 @@ class Filter:
             results = []
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
-                tasks = [self._process_file_task(f, token, project_id, "HIGH", chat_id, state_manager, events) for f in files_to_process]
+                tasks = [self._process_file_task(user_id, f, token, project_id, "HIGH", chat_id, state_manager, events) for f in files_to_process]
                 results = []
                 for task in tasks:
                     results.append(await task)
@@ -265,6 +288,7 @@ class Filter:
 
             if all_files:
                 body["metadata"]["_echo_files"] = all_files; body["files"] = []
+                body["citations"] = False
 
             return body
         except Exception as e:

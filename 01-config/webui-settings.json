@@ -253,8 +253,8 @@
         "domain": {
           "filter_list": []
         },
-        "bypass_embedding_and_retrieval": false,
-        "bypass_web_loader": false,
+        "bypass_embedding_and_retrieval": true,
+        "bypass_web_loader": true,
         "ollama_cloud_api_key": "",
         "searxng_query_url": "",
         "searxng_language": "all",

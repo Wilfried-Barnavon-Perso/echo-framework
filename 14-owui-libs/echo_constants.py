@@ -16,13 +16,16 @@ import filetype
 # Racine unique de l'infrastructure de données
 ECHO_BASE_DATA_DIR = "/app/backend/data"
 
-# Imbrication stricte des chemins physiques
-ECHO_UPLOADS_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
-ECHO_USER_DBS_DIR = f"{ECHO_BASE_DATA_DIR}/user_dbs"
-ECHO_VERSION_FILE = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
+# NOUVELLE HIÉRARCHIE ECHO (v5.76.0)
+ECHO_USERS_ROOT = f"{ECHO_BASE_DATA_DIR}/users"
+ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
-# Source de vérité de la version (Lien Docker)
-ECHO_VERSION_PATH = "/app/backend/data/ECHO_VERSION"
+# ALIAS DE COMPATIBILITÉ CRITIQUE (ANTI-RÉGRESSION)
+ECHO_UPLOADS_DIR = ECHO_UPLOADS_TRANSIT_DIR
+ECHO_OLD_USER_DBS_DIR = f"{ECHO_BASE_DATA_DIR}/user_dbs"
+ECHO_USER_DBS_DIR = ECHO_OLD_USER_DBS_DIR
+
+ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
 # Identité Réseau
 ECHO_USER_AGENT = "GeminiCLI/0.33.1"

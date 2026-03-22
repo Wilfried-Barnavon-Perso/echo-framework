@@ -1,8 +1,8 @@
 """
 title: ECHO File Content Explorer
 author: ECHO Framework
-version: 1.22
-description: 1.22: New Doctrings changes.
+version: 1.23
+description: 1.23: Forced user_id in resolve_upload_file_path.
 """
 
 import os
@@ -408,7 +408,8 @@ class Tools:
         :param end_line: Ligne de fin pour l'extraction (utile uniquement en mode utf8). Par défaut 500.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        fpath = resolve_upload_file_path(file_id, self.uploads_dir)
+        uid = __user__.get("id", "anonymous")
+        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
         if not fpath: return wrap_tool_output(text=f"❌ Fichier {file_id} introuvable.", status={"status": "error"})
 
         # --- Limites Strictes 16Ko (16384 caractères) ---
@@ -472,7 +473,8 @@ class Tools:
         :param thinking_level: Niveau de réflexion du modèle (MINIMAL, LOW, MEDIUM, HIGH). Par défaut MEDIUM.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        fpath = resolve_upload_file_path(file_id, self.uploads_dir)
+        uid = __user__.get("id", "anonymous")
+        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
 
         token, project_id = self.auth.get_credentials(__user__.get("id"))
@@ -534,7 +536,8 @@ class Tools:
         :param algorithms: Liste des algorithmes souhaités (md5, sha1, sha256, sha512, crc32). Par défaut ['sha256'].
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        fpath = resolve_upload_file_path(file_id, self.uploads_dir)
+        uid = __user__.get("id", "anonymous")
+        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
 
         supported = {"md5": hashlib.md5, "sha1": hashlib.sha1, "sha256": hashlib.sha256, "sha512": hashlib.sha512, "sha3_256": hashlib.sha3_256, "sha3_512": hashlib.sha3_512}
@@ -573,7 +576,8 @@ class Tools:
         :param file_id: L'identifiant du fichier provenant d'un upload, ou du navigateur).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        fpath = resolve_upload_file_path(file_id, self.uploads_dir)
+        uid = __user__.get("id", "anonymous")
+        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
         if not fpath: return wrap_tool_output(text=f"❌ Fichier {file_id} introuvable.", status={"status": "error"})
 
         mime, supported = get_gemini_mime(fpath)

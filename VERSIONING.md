@@ -50,6 +50,20 @@ Chaque composant possède son propre cycle de vie et sa propre numérotation, do
 
 Pour garantir la cohérence, chaque Release de la Stack (`5.Y.Z`) est définie par un snapshot précis des versions de composants.
 
+**Exemple pour la 5.75.0 (Smart Memory & Organic RAG Update) :**
+
+{
+  "stack_version": "5.75.0",
+  "release_date": "2026-03-20",
+  "description": "Smart Memory & Organic RAG Update (Gemini Flash Distillation + Qdrant Integration)",
+  "components": {
+    "pipe_engine": "136.0",
+    "conversation_memory_filter": "1.1",
+    "memory_organic_tool": "1.0",
+    "open_webui": "main"
+  }
+}
+
 **Exemple pour la 5.6.0 (Turbo Performance Update) :**
 
 { "stack_version": "5.6.0", "release_date": "2026-01-15", "description": "Turbo Performance Update (orjson injection + Streaming infra)", "components": { "pipe_engine": "136.0", "admin_manager": "2.6", "python_worker": "1.0", "browser_agent": "1.0", "open_webui": "main" } }
