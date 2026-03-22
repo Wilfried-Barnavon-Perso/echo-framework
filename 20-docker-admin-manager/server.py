@@ -2,52 +2,24 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.11 (Support PWA)
+VERSION : 5.12 (Support Recursive Vault Maintenance)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-02-14
+DATE MAJ : 2026-03-22
 
 --- DESCRIPTION ARCHITECTURALE ---
 Ce micro-service Flask agit comme le "Concierge" de l'infrastructure ECHO.
 Il s'exécute dans un conteneur Docker dédié (echo-admin-manager) sur le port 3001.
 
+--- CHANGELOG 5.12 ---
+- Introduction de la maintenance récursive pour le Vault ECHO (users/{id}/files).
+- Mise à jour des statistiques utilisateurs pour inclure les dossiers de chats ECHO.
+- Optimisation du nettoyage des fichiers par parcours d'arborescence profond.
+
+--- CHANGELOG 5.11 ---
+- Support PWA et icônes.
+
 --- CHANGELOG 5.10 ---
 - Suppression de l'auto-nettoyage du presse-papier (Copie simple uniquement).
-
---- CHANGELOG 5.9 ---
-- Correction du chemin de lecture de la version ECHO (/app/ECHO_VERSION).
-
---- CHANGELOG 5.8 ---
-- Simplification du nettoyage clipboard (écrasement par vide).
-- Affichage de la version ECHO (lue depuis /app/backend/data/ECHO_VERSION).
-
---- CHANGELOG 5.7 ---
-- Amélioration de la fiabilité du nettoyage presse-papier (Positionnement hors-écran vs Opacité).
-
---- CHANGELOG 5.6 ---
-- Amélioration de la fonction d auto-nettoyage du presse-papier (Support Fallback).
-
---- CHANGELOG 5.5 ---
-- Ajout d une barre de progression visuelle pour le délai de nettoyage du presse-papier (30s).
-
---- CHANGELOG 5.4 ---
-- Remplacement du modal "Mot de passe" par une copie silencieuse avec auto-nettoyage du presse-papier (30s).
-
---- CHANGELOG 5.3 ---
-- Correction du bouton de copie du mot de passe (Support HTTPS/HTTP + Feedback visuel).
-
---- CHANGELOG 5.2 ---
-- Ajout de la visualisation sécurisée du mot de passe Admin OWUI (avec timer).
-
---- CHANGELOG 5.1 ---
-- Correction erreur de syntaxe (Docstring).
-
---- CHANGELOG 5.0 ---
-- Horloge dynamique basée sur l heure serveur (avec support TZ via Docker).
-- Statistiques système (CPU/RAM/Disque) détaillées avec valeurs chiffrées.
-- Ajout d un panneau "Statistiques Utilisateurs" (nb de conversations).
-- Réorganisation de la mise en page et correction des bugs de l interface.
-- Fiabilisation des actions de maintenance (purge de tokens, changement de mot de passe).
-- Renommage de "Auto-Pilot" en "Auto-Backup".
 
 --- RESPONSABILITÉS ---
 1. MONITORING : Exposition des métriques (CPU/RAM/Disque).
@@ -151,15 +123,17 @@ HOST_GATEWAY = "host.docker.internal"
 SETTINGS_FILE = os.path.join(BACKUP_DIR, "settings.json")
 OWUI_DATA_ROOT = "/app/backend/data"
 USER_DBS_DIR = os.path.join(OWUI_DATA_ROOT, "user_dbs")
+ECHO_USERS_ROOT = os.path.join(OWUI_DATA_ROOT, "users") # Nouvelle racine ECHO
 WEBUI_DB_PATH = os.path.join(OWUI_DATA_ROOT, "webui.db")
 OWUI_SECRETS_PATH = "/app/secrets/.owui-setting-secret"
 OWUI_ADMIN_SECRET_PATH = "/app/secrets/.owui-admin-secret"
 
-# Les répertoires de fichiers restants à nettoyer par date
+# Les répertoires de fichiers restants à nettoyer par date (MAJ v5.12 : Récursif)
 DIRS = {
     "user_dbs": USER_DBS_DIR,
     "uploads": os.path.join(OWUI_DATA_ROOT, "uploads"),
-    "debug_logs": os.path.join(OWUI_DATA_ROOT, "debug_logs")
+    "debug_logs": os.path.join(OWUI_DATA_ROOT, "debug_logs"),
+    "echo_vault": ECHO_USERS_ROOT
 }
 
 MAINT_CONFIG_FILE = os.path.join(OWUI_DATA_ROOT, "maintenance_config.json")
@@ -236,18 +210,25 @@ def save_maint_config(config):
     except Exception as e: print(f"Erreur sauvegarde config maintenance: {e}")
 
 def get_dir_stats(path, filter_ext=None):
+    """Calcule les statistiques de stockage de manière récursive (v5.12)."""
     if not os.path.exists(path): return {"count": 0, "size": 0, "size_fmt": "0 B"}
     try:
-        all_files = [os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
-        # Filtrage optionnel (ex: seulement les .db pour le comptage logique)
-        target_files = [f for f in all_files if f.endswith(filter_ext)] if filter_ext else all_files
-        
-        # La taille prend TOUT le dossier (fichiers liés inclus), le count prend le filtre
-        total_size = sum(os.path.getsize(f) for f in all_files)
-        return {"count": len(target_files), "size": total_size, "size_fmt": human_size(total_size)}
+        total_size = 0
+        match_count = 0
+        for root, _, files in os.walk(path):
+            for f in files:
+                if filter_ext and not f.endswith(filter_ext):
+                    continue
+                fpath = os.path.join(root, f)
+                try:
+                    total_size += os.path.getsize(fpath)
+                    match_count += 1
+                except: pass
+        return {"count": match_count, "size": total_size, "size_fmt": human_size(total_size)}
     except: return {"count": 0, "size": 0, "size_fmt": "Err"}
 
 def cleanup_directory(dir_key, retention_days):
+    """Supprime récursivement les fichiers périmés (v5.12)."""
     if retention_days == -1: return 0, 0
     path = DIRS.get(dir_key)
     if not path or not os.path.exists(path) or dir_key == 'user_dbs': return 0, 0
@@ -258,15 +239,16 @@ def cleanup_directory(dir_key, retention_days):
     skipped = 0
     
     try:
-        files = [os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
-        for fpath in files:
-            try:
-                if os.path.getmtime(fpath) < cutoff:
-                    os.remove(fpath)
-                    deleted += 1
-                else:
-                    skipped += 1
-            except: pass
+        for root, _, files in os.walk(path):
+            for f in files:
+                fpath = os.path.join(root, f)
+                try:
+                    if os.path.getmtime(fpath) < cutoff:
+                        os.remove(fpath)
+                        deleted += 1
+                    else:
+                        skipped += 1
+                except: pass
     except Exception as e:
         print(f"Error cleaning {dir_key}: {e}")
     
@@ -303,18 +285,15 @@ def cleanup_orphan_user_dbs(owui_base_url: str, owui_auth_token: str):
     deleted_count = 0
     vacuumed_count = 0
     
-    # 1. Suppression des orphelines
+    # 1. Suppression des orphelines (Legacy user_dbs/)
     try:
-        # On ne traite que les fichiers .db
         db_files = [f for f in os.listdir(USER_DBS_DIR) if f.startswith('user-') and f.endswith('.db')]
         for f in db_files:
-            # Format attendu: user-{uuid}.db. Extraction UUID: f[5:-3]
             file_user_id = f[5:-3]
             if file_user_id not in valid_user_ids:
                 try:
                     full_path = os.path.join(USER_DBS_DIR, f)
                     os.remove(full_path)
-                    # Tentative de suppression des fichiers wal/shm associés
                     for ext in ['-wal', '-shm']:
                         try:
                             aux_path = full_path + ext
@@ -324,7 +303,7 @@ def cleanup_orphan_user_dbs(owui_base_url: str, owui_auth_token: str):
                 except Exception as ex:
                     print(f"⚠️ [DB Cleanup] Échec suppression {f}: {ex}")
     except Exception as e:
-        print(f"❌ [DB Cleanup] Erreur globale liste fichiers: {e}")
+        print(f"❌ [DB Cleanup] Erreur globale liste fichiers user_dbs: {e}")
 
     # 2. Maintenance des restantes (Vacuum)
     try:
@@ -336,6 +315,19 @@ def cleanup_orphan_user_dbs(owui_base_url: str, owui_auth_token: str):
             except Exception as e: print(f"⚠️ [DB Cleanup] Erreur VACUUM sur {db_file}: {e}")
     except: pass
     
+    # 3. Compactage des bases de sessions ECHO (users/{id}/chats/*.db)
+    if os.path.exists(ECHO_USERS_ROOT):
+        try:
+            for uid in os.listdir(ECHO_USERS_ROOT):
+                chats_path = os.path.join(ECHO_USERS_ROOT, uid, "chats")
+                if os.path.exists(chats_path):
+                    for db_chat in os.listdir(chats_path):
+                        if db_chat.endswith('.db'):
+                            try:
+                                with sqlite3.connect(os.path.join(chats_path, db_chat), timeout=15.0) as conn: conn.execute("VACUUM;")
+                            except: pass
+        except: pass
+
     print(f"✅ [DB Cleanup] Terminé. {deleted_count} BDD orphelines supprimées, {vacuumed_count} compactées.")
     return deleted_count, vacuumed_count
 
@@ -344,11 +336,12 @@ def run_global_maintenance():
     report = []
     config = load_maint_config()
     
-    # Nettoyage fichiers
+    # Nettoyage fichiers (Récursif désormais)
     del_uploads, keep_uploads = cleanup_directory("uploads", config["retention"]["uploads_days"])
     del_logs, keep_logs = cleanup_directory("debug_logs", config["retention"]["debug_days"])
+    del_vault, keep_vault = cleanup_directory("echo_vault", config["retention"]["uploads_days"])
     
-    report.append(f"Uploads: {del_uploads} suppr. ({keep_uploads} conservés)")
+    report.append(f"Fichiers: {del_uploads + del_vault} suppr. ({keep_uploads + keep_vault} conservés)")
     report.append(f"Logs: {del_logs} suppr. ({keep_logs} conservés)")
     
     # Nettoyage BDD
@@ -416,6 +409,7 @@ def perform_backup_task():
     try:
         container = client.containers.get(TARGET_CONTAINER)
         container.stop()
+        # tar inclut récursivement DATA_DIR_FOR_BACKUP (/app/backend/data)
         subprocess.run(['tar', '-czf', filepath, '-C', DATA_DIR_FOR_BACKUP, '.'], check=True)
         container.start()
         settings = load_settings()
@@ -488,7 +482,6 @@ def change_system_password(username, current_pwd, new_pwd):
 @app.route('/')
 def index():
     if not session.get('logged_in'): return render_template_string(HTML_LOGIN)
-    # Les stats initiales sont calculées ici (rapide)
     storage_stats = {}
     for key, path in DIRS.items():
         filter_ext = '.db' if key == 'user_dbs' else None
@@ -526,16 +519,12 @@ def logout():
 @app.route('/api/storage/analysis')
 def storage_analysis():
     if not session.get('logged_in'): return jsonify({"error": "Unauthorized"}), 401
-    
-    # 1. Calcul des stats basiques (comme index)
     analysis = {}
     for key, path in DIRS.items():
         filter_ext = '.db' if key == 'user_dbs' else None
         analysis[key] = get_dir_stats(path, filter_ext)
     
-    # 2. Analyse approfondie des orphelins (nécessite appel API)
-    orphans_count = -1 # -1 = non déterminé
-    
+    orphans_count = -1
     owui_base_url = os.environ.get("OWUI_BASE_URL", "http://echo-webui-core:8080")
     if HAS_HTTPX and os.path.exists(USER_DBS_DIR):
         auth_token = _get_owui_auth_token(owui_base_url)
@@ -575,22 +564,34 @@ def stats():
 
 @app.route('/api/user_stats')
 def user_stats():
+    """Récupère les stats utilisateurs incluant le Vault ECHO (v5.12)."""
     if not session.get('logged_in'): return jsonify([])
     if not os.path.exists(WEBUI_DB_PATH):
         return jsonify([{"error": f"Database not found: {WEBUI_DB_PATH}"}]), 500
     
     users_data = []
     try:
+        # Utilisation de mode=ro pour sécurité
         con = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
         cur = con.cursor()
         users = cur.execute("SELECT id, name, email, role FROM user ORDER BY name COLLATE NOCASE ASC").fetchall()
         
         for user in users:
-            user_dict = dict(user)
-            chat_count = cur.execute("SELECT COUNT(id) FROM chat WHERE user_id = ?", (user['id'],)).fetchone()[0]
-            user_dict['chat_count'] = chat_count
-            users_data.append(user_dict)
+            uid = user['id']
+            # 1. Calcul des conversations (Legacy OWUI + New ECHO Vault)
+            legacy_count = cur.execute("SELECT COUNT(id) FROM chat WHERE user_id = ?", (uid,)).fetchone()[0]
+            
+            # 2. Scan physique du Vault ECHO pour les bases de session
+            vault_chats_dir = os.path.join(ECHO_USERS_ROOT, str(uid), "chats")
+            echo_chat_count = 0
+            if os.path.exists(vault_chats_dir):
+                echo_chat_count = len([f for f in os.listdir(vault_chats_dir) if f.endswith('.db')])
+            
+            users_data.append({
+                "id": uid, "name": user['name'], "email": user['email'],
+                "role": user['role'], "chat_count": legacy_count + echo_chat_count
+            })
         con.close()
         return jsonify(users_data)
     except Exception as e:
@@ -637,7 +638,11 @@ def force_maintenance():
 def global_auth_reset():
     if not session.get('logged_in'): return redirect(url_for('index'))
     purged_count, error_count = 0, 0
-    for db_path in glob.glob(os.path.join(USER_DBS_DIR, 'user-*.db')):
+    # On purge les tokens dans user_dbs (Legacy) et dans users/*/identity.db (New)
+    db_paths = glob.glob(os.path.join(USER_DBS_DIR, 'user-*.db'))
+    db_paths += glob.glob(os.path.join(ECHO_USERS_ROOT, '*', 'identity.db'))
+    
+    for db_path in db_paths:
         try:
             with sqlite3.connect(db_path, timeout=10.0) as conn:
                 cursor = conn.cursor()
@@ -645,9 +650,9 @@ def global_auth_reset():
                 if cursor.rowcount > 0:
                     purged_count += 1
         except Exception as e:
-            print(f"⚠️ Erreur purge {os.path.basename(db_path)}: {e}")
+            print(f"⚠️ Erreur purge {db_path}: {e}")
             error_count += 1
-    if purged_count > 0: flash(f'✅ Tokens Google purgés pour {purged_count} utilisateur(s).', 'success')
+    if purged_count > 0: flash(f'✅ Tokens Google purgés pour {purged_count} base(s).', 'success')
     else: flash('ℹ️ Aucun token Google à purger trouvé.', 'info')
     if error_count > 0: flash(f'❌ {error_count} erreurs rencontrées.', 'danger')
     return redirect(url_for('index'))
@@ -882,6 +887,11 @@ HTML_DASHBOARD = """
                                 <td class="text-end" id="st-log-count">{{ storage_stats.debug_logs.count }}</td>
                                 <td class="text-end" id="st-log-size">{{ storage_stats.debug_logs.size_fmt }}</td>
                             </tr>
+                            <tr>
+                                <td>ECHO Vault <span class="badge bg-secondary ms-1">Total</span></td>
+                                <td class="text-end" id="st-vault-count">{{ storage_stats.echo_vault.count }}</td>
+                                <td class="text-end" id="st-vault-size">{{ storage_stats.echo_vault.size_fmt }}</td>
+                            </tr>
                         </tbody></table></div>
                         <button class="btn btn-sm btn-outline-secondary w-100 mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#maintConfig">⚙️ Configurer Rétention</button>
                         <div class="collapse" id="maintConfig"><div class="card card-body bg-dark p-2 mb-2"><form action="/settings/maintenance" method="post"><div class="row g-2 mb-2"><div class="col-6"><label class="form-label small">Uploads (j)</label><input type="number" name="ret_uploads" class="form-control form-control-sm" value="{{ maint_config.retention.uploads_days }}"></div><div class="col-6"><label class="form-label small">Logs (j)</label><input type="number" name="ret_debug" class="form-control form-control-sm" value="{{ maint_config.retention.debug_days }}"></div></div><div class="mb-2"><label class="form-label small">Heure Nettoyage</label><input type="time" name="cleanup_hour" class="form-control form-control-sm" value="{{ maint_config.cleanup_hour }}"></div><button type="submit" class="btn btn-sm btn-success w-100">Enregistrer</button></form></div></div>
@@ -1006,6 +1016,8 @@ HTML_DASHBOARD = """
                      document.getElementById('st-up-size').textContent = data.uploads.size_fmt;
                      document.getElementById('st-log-count').textContent = data.debug_logs.count;
                      document.getElementById('st-log-size').textContent = data.debug_logs.size_fmt;
+                     document.getElementById('st-vault-count').textContent = data.echo_vault.count;
+                     document.getElementById('st-vault-size').textContent = data.echo_vault.size_fmt;
                      
                  } catch(e) {
                      console.error("Storage Error:", e);
