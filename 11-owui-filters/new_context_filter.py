@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.23
-description: 6.23: Fixed file resolution by passing mandatory user_id.
+version: 6.32
+description: 6.32: Unified Registry mode (Full Metadata). Removed nouveaux_fichiers redundancy.
 """
 
 from pydantic import BaseModel, Field
@@ -69,7 +69,6 @@ class Filter:
         print(f"[ECHO-FILTER] 📄 Analyse de {filename} ({mime}) - Taille: {size} octets", flush=True)
 
         # --- CAS 1 : IMAGE / AUDIO / VIDEO / PDF (Injection Binaire Directe si petit) ---
-        # Note: On injecte directement si c'est une image ou si c'est très petit.
         if is_supported and any(x in mime for x in ["image/", "audio/", "video/", "pdf"]) and size < self.valves.MAX_DIRECT_TEXT_SIZE:
             try:
                 import base64
@@ -77,7 +76,6 @@ class Filter:
                 await events.status(f"Encapsulation de {filename}...", False)
                 with open(path, "rb") as f:
                     b64 = base64.b64encode(f.read()).decode("utf-8")
-                state_manager.mark_processed(chat_id, file_id, filename, mime, "transmitted")
                 return {
                     "status": "success", "type": "transmitted", "fid": file_id, "name": filename, "mime": mime, "sub_type": "binary",
                     "content": {"anchor": f"📎 **Fichier joint : {filename}** ({mime})", "mime": mime, "data": b64}
@@ -91,7 +89,6 @@ class Filter:
             try:
                 print(f"[ECHO-FILTER] --> Mode: INJECTION_DIRECTE (Texte)", flush=True)
                 with open(path, "r", encoding="utf-8", errors="ignore") as f: content = f.read()
-                state_manager.mark_processed(chat_id, file_id, filename, mime, "transmitted")
                 return {
                     "status": "success", "type": "transmitted", "fid": file_id, "name": filename, "mime": mime, "sub_type": "text",
                     "content": f"📄 **Fichier : {filename}**\n```\n{content}\n```"
@@ -132,13 +129,11 @@ class Filter:
                     
                     if resp.status_code == 200:
                         data = resp.json()
-                        # Détection de l'enveloppe 'response' (Standard Cloud Code)
                         target = data.get("response", {}) if "response" in data else data
                         candidates = target.get("candidates", [])
                         
                         if candidates and candidates[0].get("content"):
                             summary = candidates[0]["content"]["parts"][0].get("text", "")
-                            state_manager.mark_processed(chat_id, file_id, filename, mime, "summarized")
                             print(f"[ECHO-FILTER] ✅ Résumé Flash généré pour {filename}.", flush=True)
                             return {"status": "success", "type": "summarized", "fid": file_id, "name": filename, "mime": mime, "content": f"🧠 **Smart Context : {filename}**\n\n{summary}"}
                         else:
@@ -150,10 +145,9 @@ class Filter:
 
         # --- CAS 4 : FALLBACK BINAIRE (Indexation) ---
         print(f"[ECHO-FILTER] --> Mode: INDEXATION (Fallback)", flush=True)
-        state_manager.mark_processed(chat_id, file_id, filename, mime, "indexed")
         return {"status": "success", "type": "indexed", "fid": file_id, "name": filename, "mime": mime}
 
-    async def inlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
+    async def inlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[Dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
         try:
             from echo_utils import EchoEvents
             events = EchoEvents(__event_emitter__)
@@ -163,14 +157,14 @@ class Filter:
             all_files = body.get("files", [])
             user_id = __user__.get("id", "system") if __user__ else "system"
             
-            # 1. Initialisation avec chat_id (v5.76.0)
+            # 1. Initialisation avec chat_id
             state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
 
             # 2. Rangement physique des fichiers
             if all_files and state_manager:
                 for f in all_files:
                     fid = f.get("id") or f.get("file", {}).get("id")
-                    old_path = resolve_upload_file_path(user_id, fid) # Recherche transit
+                    old_path = resolve_upload_file_path(user_id, fid)
                     if old_path and os.path.exists(old_path):
                         new_path = os.path.join(state_manager.user_dir, "files", os.path.basename(old_path))
                         if not os.path.exists(new_path):
@@ -179,7 +173,7 @@ class Filter:
 
             if not msgs: return body
 
-            # --- AUTH OAUTH INTERCEPTION (v6.18) ---
+            # --- AUTH OAUTH INTERCEPTION ---
             if len(msgs) >= 2:
                 prev_content = str(msgs[-2].get("content", ""))
                 if "(ECHO_SESSION_AUTH_PENDING)" in prev_content:
@@ -188,35 +182,17 @@ class Filter:
                     if match:
                         body["_auth_token"] = match.group(1)
                         msgs[-1]["content"] = "🔐 *Authentification ECHO en cours...*"
-                        print(f"[ECHO-FILTER] 🔐 Code OAuth intercepté et transmis.", flush=True)
                         return body
 
-            # --- 0. INVARIANT HASH & NATIVE PART PRESERVATION ---
-            idx = -1
-            native_parts = []
-            if state_manager:
-                for i in range(len(msgs)-1, -1, -1):
-                    if msgs[i].get("role") == "user": 
-                        idx = i
-                        # SAUVEGARDE MULTIMODALE : Conserver les images Base64 d'OWUI
-                        orig_content = msgs[i].get("content")
-                        if isinstance(orig_content, list):
-                            for p in orig_content:
-                                if isinstance(p, dict) and (p.get("type") == "image_url" or "inline_data" in p or "inlineData" in p):
-                                    native_parts.append(p)
-                        break
-
-            # --- AUTH OAUTH & REFRESH ---
+            # --- 3. TRAITEMENT DES FICHIERS (DRAFT) ---
             token, project_id = None, None
             if __user__ and "id" in __user__:
-                # Rafraîchissement proactif pour le Filtre
                 token = await self.auth.refresh_google_token(__user__["id"])
                 _, project_id = self.auth.get_credentials(__user__["id"])
 
-            # --- 1. SYNC & AIGUILLAGE ---
             files_to_process = []
             if state_manager and chat_id:
-                ids_in_body = [f.get("id") or f.get("file", {}).get("id") for f in all_files if f.get("id") or f.get("file", {}).get("id")]
+                ids_in_body = [f.get("id") or f.get("file", {}).get("id") for f in all_files if (f.get("id") or f.get("file", {}).get("id"))]
                 known_files = state_manager.sync_state(chat_id, ids_in_body)
                 for f in all_files:
                     fid = f.get("id") or f.get("file", {}).get("id")
@@ -226,17 +202,37 @@ class Filter:
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
                 tasks = [self._process_file_task(user_id, f, token, project_id, "HIGH", chat_id, state_manager, events) for f in files_to_process]
-                results = []
                 for task in tasks:
                     results.append(await task)
-                    await asyncio.sleep(1.5)
-                await events.status("Aiguillage ECHO terminé.", True)
+                    await asyncio.sleep(0.5)
 
-            # --- 2. RECONSTRUCTION META-TRANSPORT ---
+            # --- 4. ARCHITECTURE DU DRAFT (Bit-Perfect Ready) ---
+            idx = -1
+            native_parts = []
+            for i in range(len(msgs)-1, -1, -1):
+                if msgs[i].get("role") == "user": 
+                    idx = i
+                    orig_content = msgs[i].get("content")
+                    if isinstance(orig_content, list):
+                        for p in orig_content:
+                            if isinstance(p, dict) and (p.get("type") == "image_url" or "inline_data" in p or "inlineData" in p):
+                                native_parts.append(p)
+                    break
+
             if idx != -1:
+                # Récupération du registre enrichi (Passé)
                 registry = state_manager.get_session_registry(chat_id) if (state_manager and chat_id) else {}
-                meta_vars = body["metadata"].get("variables", {})
                 
+                # Fusion immédiate des nouveaux fichiers (Présent) dans le registre
+                for r in results:
+                    if r.get("status") == "success":
+                        registry[r.get("name")] = {
+                            "id": r.get("fid"),
+                            "mime": r.get("mime"),
+                            "statut": r.get("type")
+                        }
+
+                meta_vars = body["metadata"].get("variables", {})
                 u_v = __user__.get("valves") if __user__ else self.user_valves
                 display_name = __user__.get("name", "Anonyme") if getattr(u_v, "ENABLE_USER_NAME", False) else "Anonyme"
                 
@@ -245,29 +241,19 @@ class Filter:
                 final_loc = u_loc if u_loc else sys_loc
 
                 etat_echo = {
-                    "version_echo": "##ECHO_VERSION##",
-                    "modèle_ia": "##GEMINI_ENGINE##",
+                    "version_framework_echo": "##ECHO_VERSION##",
+                    "moteur_technique_ia": "##GEMINI_ENGINE##",
                     "nom_utilisateur": display_name,
                     "contexte_temporel": {
                         "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
                         "localisation": final_loc,
                         "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                     },
-                    "registre_fichiers": registry,
-                    "nouveaux_fichiers": [
-                        {
-                            "nom": r.get("name"),
-                            "id": r.get("fid"),
-                            "mime": r.get("mime"),
-                            "statut": r.get("type")
-                        } for r in results if r.get("status") == "success"
-                    ]
+                    "registre_fichiers": registry
                 }
                 
-                # Fusion : Parts natives (Images OWUI) + Etat ECHO
                 rich_parts = []
                 if native_parts: rich_parts.extend(native_parts)
-                
                 rich_parts.append({"text": f"```json:etat_echo\n{json.dumps(etat_echo, ensure_ascii=False)}\n```\n\n"})
                 
                 for res in results:
@@ -279,21 +265,21 @@ class Filter:
                                 rich_parts.append({"text": res["content"]["anchor"]})
                                 rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
                 
-                body["metadata"]["_echo_rich_parts"] = rich_parts
-
-                m = msgs[idx]
-                inv_hash = state_manager.calculate_invariant_hash(m["role"], rich_parts + [{"text": m["content"]}] if isinstance(m["content"], str) else rich_parts + m["content"])
-                state_manager.save_rich_payload(inv_hash, rich_parts)
-                body["metadata"]["_echo_invariant_hash"] = inv_hash
+                # INJECTION DU DRAFT (Délégué au Pipe)
+                body["metadata"]["_echo_user_parts_draft"] = rich_parts
+                body["metadata"]["_echo_user_msg_id"] = msgs[idx].get("id")
+                body["metadata"]["_echo_user_msg_updated_at"] = msgs[idx].get("updated_at")
+                body["metadata"]["_echo_files_to_seal"] = results
 
             if all_files:
-                body["metadata"]["_echo_files"] = all_files; body["files"] = []
+                body["metadata"]["_echo_files"] = all_files
+                body["files"] = []
                 body["citations"] = False
 
             return body
         except Exception as e:
             print(f"[ECHO-FILTER] ❌ CRITICAL ERROR: {e}", flush=True)
-            logger.error(f"FILTER ERROR: {e}"); return body
+            return body
 
     async def outlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
         msgs = body.get("messages", [])

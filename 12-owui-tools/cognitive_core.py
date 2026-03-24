@@ -1,8 +1,8 @@
 """
 title: ECHO Cognitive Core
 author: ECHO Framework
-version: 3.8
-description: 3.8: Added missing Pydantic imports.
+version: 3.9
+description: 3.9: Fixed authentication by using AuthService and dynamic user context. Preserved thought cleaning.
 """
 
 import sys
@@ -15,14 +15,16 @@ from typing import Optional, List, Dict, Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoAuth, EchoEvents
+from echo_utils import wrap_tool_output, EchoStateManager, EchoEvents, split_thought_process
 from echo_constants import GOOGLE_API_BASE_URL, ECHO_USER_AGENT
+from echo_auth import AuthService
 
-async def _call_gemini_direct(auth: EchoAuth, model: str, prompt: str, thinking_level: str = "MEDIUM", events: Optional[EchoEvents] = None) -> str:
+async def _call_gemini_direct(auth: AuthService, model: str, prompt: str, thinking_level: str = "MEDIUM", events: Optional[EchoEvents] = None) -> str:
     creds = auth.get_valid_credentials()
     if not creds: return "❌ Erreur: Non authentifié. L'utilisateur doit s'authentifier via le Pipe ECHO d'abord."
     
-    cached_pid = auth.get_project_id_from_cache()
+    # Récupération sécurisée du PID (synchronisation si cache vide)
+    cached_pid, _ = auth.get_project_id(creds)
     if not cached_pid: return "❌ Erreur: Project ID manquant. Utilisez le Pipe ECHO pour initialiser la session."
 
     url = f"{GOOGLE_API_BASE_URL}:streamGenerateContent?alt=sse"
@@ -40,7 +42,6 @@ async def _call_gemini_direct(auth: EchoAuth, model: str, prompt: str, thinking_
     }
 
     full_text = ""
-    thoughts = ""
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as response:
@@ -52,12 +53,14 @@ async def _call_gemini_direct(auth: EchoAuth, model: str, prompt: str, thinking_
                     if line.startswith("data: "):
                         try:
                             data = json.loads(line[6:])
-                            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                            for p in parts:
-                                if "thought" in p and p["thought"]:
-                                    thoughts += p["text"]
-                                    if events: await events.status(f"🧠 Réflexion en cours... ({len(thoughts)} car.)")
-                                if "text" in p: full_text += p["text"]
+                            target = data.get("response", {}) if "response" in data else data
+                            candidates = target.get("candidates", [])
+                            
+                            if candidates and candidates[0].get("content"):
+                                parts = candidates[0]["content"].get("parts", [])
+                                for p in parts:
+                                    # On accumule tout le texte (y compris les pensées balisées)
+                                    if "text" in p: full_text += p["text"]
                         except: pass
     except Exception as e: return f"❌ Erreur API : {str(e)}"
     return full_text
@@ -71,73 +74,72 @@ class Tools:
 
     def __init__(self):
         self.valves = self.Valves()
-        self.auth = EchoAuth()
 
     async def deep_reasoning(
         self,
         question: str,
+        __user__: Optional[dict] = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
         """
-        Unité de raisonnement profond pour problèmes textuelles complexes, architecture, debug ou planification.
+        Unité de raisonnement profond pour problèmes textuels complexes, architecture, debug ou planification.
         Utilise le modèle Gemini Pro avec un niveau de réflexion élevé.
         :param question: La question complexe ou la tâche nécessitant une réflexion approfondie.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        await events.status("Lancement du raisonnement profond (Gemini Pro)...")
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        
+        await events.status(f"Lancement du raisonnement profond (Gemini Pro) pour {user_id}...")
+        
+        # Contexte d'auth dynamique
+        state_manager = EchoStateManager(user_id=user_id)
+        auth_service = AuthService(user_data_manager=state_manager)
         
         res = await _call_gemini_direct(
-            self.auth, 
+            auth_service, 
             self.valves.PRO_MODEL, 
             question, 
             self.valves.PRO_THINKING,
             events
         )
         
-        # Extraction des pensées si présentes
-        thoughts = ""
-        clean_text = res
-        if "<think>" in res:
-            match = re.search(r"<think>(.*?)</think>", res, re.DOTALL)
-            if match:
-                thoughts = match.group(1).strip()
-                clean_text = res.replace(match.group(0), "").strip()
+        # NETTOYAGE DES PENSÉES (Sanctuarisé)
+        clean_text, thoughts = split_thought_process(res)
+        return clean_text
 
-        await events.status("Analyse terminée.", done=True)
-        multiparts = [{"type": "thought", "content": thoughts}] if thoughts else []
-        return wrap_tool_output(text=clean_text, status={"status": "success"}, echo_tool_multiparts=multiparts)
-
-    async def quick_intel(
+    async def deep_analysis(
         self,
-        question: str,
+        text_to_analyze: str,
+        instruction: Optional[str] = "Analyse ce contenu de manière critique.",
+        __user__: Optional[dict] = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
         """
-        Unité d'analyse rapide pour requêtes textuelles simples, résumés, ou vérifications de faits.
-        Utilise le modèle Gemini Flash pour une réponse quasi-instantanée.
-        :param question: La question simple ou la micro-tâche à traiter rapidement.
+        Analyse rapide et intelligente d'un texte ou d'un snippet de code via Gemini Flash.
+        :param text_to_analyze: Le contenu brut à analyser.
+        :param instruction: Instruction spécifique pour l'analyse.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        await events.status("Analyse flash en cours (Gemini Flash)...")
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        
+        await events.status("Analyse Flash en cours...")
+        
+        # Contexte d'auth dynamique
+        state_manager = EchoStateManager(user_id=user_id)
+        auth_service = AuthService(user_data_manager=state_manager)
+        
+        prompt = f"{instruction}\n\nCONTENU :\n{text_to_analyze}"
         
         res = await _call_gemini_direct(
-            self.auth, 
+            auth_service, 
             self.valves.FAST_MODEL, 
-            question, 
+            prompt, 
             self.valves.FAST_THINKING,
             events
         )
-
-        thoughts = ""
-        clean_text = res
-        if "<think>" in res:
-            match = re.search(r"<think>(.*?)</think>", res, re.DOTALL)
-            if match:
-                thoughts = match.group(1).strip()
-                clean_text = res.replace(match.group(0), "").strip()
-
-        await events.status("Analyse terminée.", done=True)
-        multiparts = [{"type": "thought", "content": thoughts}] if thoughts else []
-        return wrap_tool_output(text=clean_text, status={"status": "success"}, echo_tool_multiparts=multiparts)
+        
+        # NETTOYAGE DES PENSÉES (Sanctuarisé)
+        clean_text, thoughts = split_thought_process(res)
+        return clean_text

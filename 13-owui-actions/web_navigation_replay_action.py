@@ -1,9 +1,9 @@
 """
 title: Show Web Replay
 author: Wilfried BARNAVON
-version: 2.9
-description: 2.9: Fixed crop layering (absolute positioning), immobile loupe, and filename export. GPU accelerated.
-icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTE3IDN2MTgiLz48cGF0aCBkPSJNMyA3aDQiLz48cGF0aCBkPSJNMyAxMmg0Ii8+PHBhdGggZD0iTTMgMTdoNCIvPjxwYXRoIGQ9Ik0xNyA3aDQiLz48cGF0aCBkPSJNMTcgMTJoNCIvPjxwYXRoIGQ9Ik0xNyAxN2g0Ii8+PC9zdmc+
+version: 3.0
+description: 3.0: Vault Redirection support. Scans user vault for screenshots instead of global upload dir.
+icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTEyIDN2MTgiLz48cGF0aCBkPSJNMTcgM3YxOCIvPjxwYXRoIGQ9Ik0zIDdoMTgiLz48cGF0aCBkPSJNMyAxMmgyMSIvPjxwYXRoIGQ9Ik0zIDE3aDE4Ii8+PC9zdmc+
 """
 
 import os
@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 # Import Lib Partagée (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
+from echo_constants import ECHO_USERS_ROOT
 try:
     from echo_utils import EchoEvents
 except ImportError:
@@ -168,7 +169,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                         const rect = cropBox.getBoundingClientRect();
                         const cRect = document.getElementById(`${{REPLAY_ID}}-canvas`).getBoundingClientRect();
                         const scaleX = natW / cRect.width, scaleY = natH / cRect.height;
-                        const sx = (rect.left - cRect.left) * scaleX, sy = (rect.top - cRect.top) * scaleY;
+                        const sx = (rect.left - cRect.left) * scaleX, sy = (rect.top - aRect.top) * scaleY;
                         const sw = rect.width * scaleX, sh = rect.height * scaleY;
                         canvas.width = sw; canvas.height = sh;
                         ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, sw, sh);
@@ -317,7 +318,6 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
 class Action:
     class Valves(BaseModel):
         priority: int = Field(default=2, description="Priorité d'affichage (2 = Deuxième).")
-        UPLOADS_DIR: str = Field(default="/app/backend/data/uploads", description="Dossier des captures ECHO")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -330,28 +330,35 @@ class Action:
         cid = body.get("chat_id") or __metadata__.get("chat_id")
         if not cid: return None
 
+        # Redirection vers le Vault (v3.0)
+        safe_uid = "".join(x for x in str(uid) if x.isalnum() or x in "-_")
+        vault_path = os.path.join(ECHO_USERS_ROOT, safe_uid, "files")
+        
         prefix = f"U_{uid}_C_{cid}_T_"
         files = []
         try:
-            # Récupération et parsing universel des archives visuelles
-            all_entries = os.listdir(self.valves.UPLOADS_DIR)
+            if not os.path.exists(vault_path):
+                await events.status("📭 Aucun Vault détecté pour cet utilisateur.", done=True)
+                return None
+
+            # Récupération et parsing universel depuis le Vault
+            all_entries = os.listdir(vault_path)
             for f_name in all_entries:
                 if f_name.startswith(prefix) and f_name.endswith(".png"):
-                    # Tactique "Double Split" : Isoler le timestamp avant _frame ou .png
                     try:
                         ts_str = f_name.split("_T_")[-1].split("_")[0].split(".")[0]
                         files.append({"ts": int(ts_str), "name": f_name})
                     except: continue
             
-            # Tri CHRONOLOGIQUE STRICT sur l'entier ts
+            # Tri CHRONOLOGIQUE STRICT
             files.sort(key=lambda x: x["ts"])
             
         except Exception as e:
-            await events.toast(f"Erreur scan : {e}", "error")
+            await events.toast(f"Erreur scan Vault : {e}", "error")
             return None
 
         if not files:
-            await events.status("📭 Aucune archive visuelle.", done=True)
+            await events.status("📭 Aucune archive visuelle dans le Vault.", done=True)
             return None
 
         # 1. Installation de la Console
@@ -363,7 +370,7 @@ class Action:
         while True:
             # a. PUSH: Envoi de la frame actuelle (Atomic Update)
             f_name = files[current_idx]["name"]
-            path = os.path.join(self.valves.UPLOADS_DIR, f_name)
+            path = os.path.join(vault_path, f_name)
             try:
                 with open(path, "rb") as f:
                     b64 = base64.b64encode(f.read()).decode()

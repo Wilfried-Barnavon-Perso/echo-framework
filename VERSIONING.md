@@ -50,6 +50,19 @@ Chaque composant possède son propre cycle de vie et sa propre numérotation, do
 
 Pour garantir la cohérence, chaque Release de la Stack (`5.Y.Z`) est définie par un snapshot précis des versions de composants.
 
+**Exemple pour la 5.78.0 (Bit-Perfect Suture Update) :**
+
+{
+  "stack_version": "5.78.0",
+  "release_date": "2026-03-23",
+  "description": "Bit-Perfect Suture Update (ID-Anchored Shadowing + Strict Gemini Signatures)",
+  "components": {
+    "pipe_engine": "168.0",
+    "new_context_filter": "6.30",
+    "echo_utils": "2.20"
+  }
+}
+
 **Exemple pour la 5.75.0 (Smart Memory & Organic RAG Update) :**
 
 {

@@ -1,8 +1,8 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 2.7
-description: 2.7: Added user billing information (plan, AI overage credits, and base quota) to the tool's JSON payload.
+version: 2.8
+description: 2.8: Aligned with v5.76.0 tiered database hierarchy (identity.db + chat_id.db).
 """
 
 from pydantic import BaseModel, Field
@@ -15,6 +15,7 @@ from typing import Any
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output
+from echo_constants import ECHO_USERS_ROOT
 
 class Tools:
     class Valves(BaseModel):
@@ -25,8 +26,8 @@ class Tools:
 
     def __init__(self):
         self.valves = self.Valves()
-        # Le chemin racine des bases de données unifiées
-        self.db_root_dir = "/app/backend/data/user_dbs"
+        # Le chemin racine des bases de données unifiées (v5.76.0+)
+        self.db_root_dir = ECHO_USERS_ROOT
 
     def get_context_load(
         self, 
@@ -51,18 +52,29 @@ class Tools:
 
         try:
             safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
-            db_path = os.path.join(self.db_root_dir, f"user-{safe_uid}.db")
+            chat_id = (__metadata__ or {}).get("chat_id")
+            
+            # 1. Chemin vers l'identité (Facturation)
+            identity_db = os.path.join(self.db_root_dir, safe_uid, "identity.db")
+            
+            # 2. Chemin vers la session (Tokens)
+            if chat_id:
+                safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
+                session_db = os.path.join(self.db_root_dir, safe_uid, "chats", f"{safe_cid}.db")
+            else:
+                session_db = identity_db # Fallback sur identity si pas de chat_id
 
-            if not os.path.exists(db_path):
-                return wrap_tool_output(text=f"⚠️ Métrique indisponible : Pas de DB pour `{user_id}`.", status={"status": "missing_db"})
+            if not os.path.exists(session_db):
+                return wrap_tool_output(text=f"⚠️ Métrique indisponible : Pas de session active pour `{user_id}`.", status={"status": "missing_db"})
 
-            with sqlite3.connect(db_path, timeout=5.0) as conn:
+            # Lecture des stats de tokens (depuis session_db ou identity_db fallback)
+            with sqlite3.connect(f"file://{session_db}?mode=ro", uri=True, timeout=5.0) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT data FROM context_stats WHERE id = 1")
                 row = cursor.fetchone()
                 if row:
                     real_stats = json.loads(row[0])
-                    source = "DB_REAL"
+                    source = "DB_SESSION" if chat_id else "DB_IDENTITY_FALLBACK"
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur DB : {str(e)}", status={"status": "error", "error": str(e)})
 
@@ -79,35 +91,37 @@ class Tools:
         if percent > 80: status_load = "WARNING"
         if percent > 95: status_load = "CRITICAL"
 
-        # --- [Nouveau] Ajout des informations de facturation ---
+        # --- [Nouveau] Ajout des informations de facturation (Toujours depuis identity.db) ---
         plan_name = "Inconnu"
         credits = "0"
         q_rem = None
         q_lim = None
         q_reset = None
-        try:
-            with sqlite3.connect(db_path, timeout=5.0) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT value FROM auth_data WHERE key = 'google_plan_name'")
-                p_row = cursor.fetchone()
-                if p_row: plan_name = p_row[0]
-                
-                cursor.execute("SELECT value FROM auth_data WHERE key = 'google_credits'")
-                c_row = cursor.fetchone()
-                if c_row: credits = c_row[0]
-                
-                cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_remaining'")
-                r_row = cursor.fetchone()
-                if r_row: q_rem = r_row[0]
-                
-                cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_limit'")
-                l_row = cursor.fetchone()
-                if l_row: q_lim = l_row[0]
-                
-                cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_reset_time'")
-                rt_row = cursor.fetchone()
-                if rt_row: q_reset = rt_row[0]
-        except: pass
+        
+        if os.path.exists(identity_db):
+            try:
+                with sqlite3.connect(f"file://{identity_db}?mode=ro", uri=True, timeout=5.0) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT value FROM auth_data WHERE key = 'google_plan_name'")
+                    p_row = cursor.fetchone()
+                    if p_row: plan_name = p_row[0]
+                    
+                    cursor.execute("SELECT value FROM auth_data WHERE key = 'google_credits'")
+                    c_row = cursor.fetchone()
+                    if c_row: credits = c_row[0]
+                    
+                    cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_remaining'")
+                    r_row = cursor.fetchone()
+                    if r_row: q_rem = r_row[0]
+                    
+                    cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_limit'")
+                    l_row = cursor.fetchone()
+                    if l_row: q_lim = l_row[0]
+                    
+                    cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_reset_time'")
+                    rt_row = cursor.fetchone()
+                    if rt_row: q_reset = rt_row[0]
+            except: pass
         
         try: credits_int = int(credits)
         except: credits_int = 0

@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils
 author: ECHO Framework
-version: 2.19
-description: 2.19: Forced user_id in resolve_upload_file_path for Vault consistency.
+version: 2.22
+description: 2.22: Added temporal validation (updated_at) to message shadows.
 """
 
 import os
@@ -195,10 +195,27 @@ class EchoStateManager:
     def _init_db(self):
         try:
             with self._get_connection() as conn:
+                # Tables existantes (Suture & Payloads)
                 conn.execute("CREATE TABLE IF NOT EXISTS suture_index (cumulative_hash TEXT PRIMARY KEY, chat_id TEXT NOT NULL, invariant_hash TEXT NOT NULL, parent_hash TEXT, timestamp INTEGER)")
+                conn.execute("CREATE TABLE IF NOT EXISTS rich_payloads (invariant_hash TEXT PRIMARY KEY, rich_parts_json TEXT NOT NULL, created_at INTEGER)")
+                
+                # --- NOUVELLE TABLE DES OMBRES (Suture par ID) ---
+                conn.execute("CREATE TABLE IF NOT EXISTS message_shadows (message_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, role TEXT NOT NULL, full_parts_json TEXT NOT NULL, updated_at INTEGER)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_chat_id ON message_shadows (chat_id)")
+
+                # Migration du schéma (Ajout de message_id aux anciennes tables)
+                try: conn.execute("ALTER TABLE suture_index ADD COLUMN message_id TEXT")
+                except: pass
+                try: conn.execute("ALTER TABLE rich_payloads ADD COLUMN message_id TEXT")
+                except: pass
+                try: conn.execute("ALTER TABLE cognitive_signatures ADD COLUMN message_id TEXT")
+                except: pass
+                try: conn.execute("ALTER TABLE tool_journal ADD COLUMN message_id TEXT")
+                except: pass
+
+                # Autres tables de l'infrastructure
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_id ON suture_index (chat_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_inv_hash ON suture_index (invariant_hash)")
-                conn.execute("CREATE TABLE IF NOT EXISTS rich_payloads (invariant_hash TEXT PRIMARY KEY, rich_parts_json TEXT NOT NULL, created_at INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS cognitive_signatures (cumulative_hash TEXT PRIMARY KEY, thought_signature TEXT NOT NULL, updated_at INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS tool_journal (cumulative_hash TEXT PRIMARY KEY, io_json TEXT NOT NULL, updated_at INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS thought_archive (cumulative_hash TEXT PRIMARY KEY, raw_thought TEXT NOT NULL, updated_at INTEGER)")
@@ -207,7 +224,50 @@ class EchoStateManager:
                 conn.execute("CREATE TABLE IF NOT EXISTS context_stats (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.commit()
+        except Exception as e:
+            print(f"[EchoStateManager] Init DB Error: {e}")
+
+    # --- MÉTHODES DE SHADOWING (SUTURE PAR ID) ---
+    
+    def save_message_shadow(self, message_id: str, chat_id: str, role: str, parts: List[dict]):
+        """Scelle l'état complet (parts) d'un message pour une restauration Bit-Perfect."""
+        if not message_id: return
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (message_id, chat_id, role, std_json.dumps(parts), int(time.time()))
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"[EchoStateManager] Save Shadow Error: {e}")
+
+    def get_message_shadow(self, message_id: str, updated_at: int) -> Optional[List[dict]]:
+        """Récupère le moulage original d'un message SEULEMENT s'il correspond au timestamp physique."""
+        if not message_id: return None
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute(
+                    "SELECT full_parts_json FROM message_shadows WHERE message_id = ? AND updated_at = ?", 
+                    (message_id, int(updated_at))
+                ).fetchone()
+                if row: return std_json.loads(row[0])
         except: pass
+        return None
+
+    def get_last_assistant_shadow(self, chat_id: str) -> Optional[List[dict]]:
+        """Récupère la dernière ombre de l'assistant pour le chaînage CoT."""
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute(
+                    "SELECT full_parts_json FROM message_shadows WHERE chat_id = ? AND role IN ('assistant', 'model') ORDER BY updated_at DESC LIMIT 1",
+                    (chat_id,)
+                ).fetchone()
+                if row: return std_json.loads(row[0])
+        except: pass
+        return None
+
+    # --- MÉTHODES DE HACHAGE (LEGACY & SUTURE) ---
 
     def calculate_invariant_hash(self, role: str, content: Any, tool_io: dict = None) -> str:
         norm_c = content.strip() if isinstance(content, str) else std_json.dumps(content, sort_keys=True)
@@ -221,8 +281,12 @@ class EchoStateManager:
         reg = {}
         try:
             with self._get_connection() as conn:
-                for row in conn.execute("SELECT filename, file_id, mime FROM processed_files WHERE chat_id = ?", (chat_id,)).fetchall():
-                    reg[row[0]] = {"id": row[1], "mime": row[2] or "application/octet-stream"}
+                for row in conn.execute("SELECT filename, file_id, mime, mode FROM processed_files WHERE chat_id = ?", (chat_id,)).fetchall():
+                    reg[row[0]] = {
+                        "id": row[1], 
+                        "mime": row[2] or "application/octet-stream",
+                        "statut": row[3] or "unknown"
+                    }
         except: pass
         return reg
 
@@ -265,24 +329,30 @@ class EchoStateManager:
         except: pass
         return None
 
-    def save_rich_payload(self, inv: str, rich: List[dict]):
+    def save_rich_payload(self, inv: str, rich: List[dict], message_id: str = None):
         try:
             with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO rich_payloads (invariant_hash, rich_parts_json, created_at) VALUES (?, ?, ?)", (inv, std_json.dumps(rich), int(time.time())))
+                conn.execute(
+                    "INSERT OR REPLACE INTO rich_payloads (invariant_hash, rich_parts_json, message_id, created_at) VALUES (?, ?, ?, ?)",
+                    (inv, std_json.dumps(rich), message_id, int(time.time()))
+                )
                 conn.commit()
         except: pass
 
-    def index_suture(self, cumul: str, chat_id: str, inv: str, parent: str = None):
+    def index_suture(self, cumul: str, chat_id: str, inv: str, parent: str = None, message_id: str = None):
         try:
             with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO suture_index (cumulative_hash, chat_id, invariant_hash, parent_hash, timestamp) VALUES (?, ?, ?, ?, ?)", (cumul, chat_id, inv, parent, int(time.time())))
+                conn.execute(
+                    "INSERT OR REPLACE INTO suture_index (cumulative_hash, chat_id, invariant_hash, parent_hash, message_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                    (cumul, chat_id, inv, parent, message_id, int(time.time()))
+                )
                 conn.commit()
         except: pass
 
-    def save_cognitive_data(self, cumul: str, sig: str = None, thought: str = None, tool_io: dict = None):
+    def save_cognitive_data(self, cumul: str, sig: str = None, thought: str = None, tool_io: dict = None, message_id: str = None):
         try:
             with self._get_connection() as conn:
-                if sig: conn.execute("INSERT OR REPLACE INTO cognitive_signatures (cumulative_hash, thought_signature, updated_at) VALUES (?, ?, ?)", (cumul, sig, int(time.time())))
+                if sig: conn.execute("INSERT OR REPLACE INTO cognitive_signatures (cumulative_hash, thought_signature, message_id, updated_at) VALUES (?, ?, ?, ?)", (cumul, sig, message_id, int(time.time())))
                 if thought: conn.execute("INSERT OR REPLACE INTO thought_archive (cumulative_hash, raw_thought, updated_at) VALUES (?, ?, ?)", (cumul, thought, int(time.time())))
                 if tool_io: conn.execute("INSERT OR REPLACE INTO tool_journal (cumulative_hash, io_json, updated_at) VALUES (?, ?, ?)", (cumul, std_json.dumps(tool_io), int(time.time())))
                 conn.commit()

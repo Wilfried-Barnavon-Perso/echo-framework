@@ -10,11 +10,13 @@ from typing import Optional, Literal, Dict, Any, List
 
 """
 ================================================================================
-TOOL : ECHO NAVIGATION ENGINE (v6.67 - ENRICHED DOCSTRINGS)
-VERSION : 6.67
+TOOL : ECHO NAVIGATION ENGINE (v6.68 - VAULT REDIRECTION)
+VERSION : 6.68
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-03-12
+DATE MAJ : 2026-03-23
 
+CHANGELOG 6.68 :
+- FEAT: Direct Vault storage for screenshots (security and isolation). Removed UPLOADS_DIR dependency for frames.
 CHANGELOG 6.67 :
 - FEAT: Enriched docstrings with parameters for better model understanding.
 CHANGELOG 6.66 :
@@ -695,17 +697,21 @@ async def _deploy_navigation_monitor(valves: Any, res_view: dict, chat_id: str, 
     if not res_view.get("screenshot_b64"): return ""
     file_id = generate_echo_file_id(user_id, chat_id)
     filename = f"{file_id}_frame.png"
-    filepath = os.path.join(valves.UPLOADS_DIR, filename)
+    
+    # Redirection directe vers le Vault utilisateur (v6.68)
+    state_manager = EchoStateManager(user_id=user_id)
+    vault_path = os.path.join(state_manager.user_dir, "files")
+    filepath = os.path.join(vault_path, filename)
+    
     try:
         img_data = base64.b64decode(res_view["screenshot_b64"])
         with open(filepath, "wb") as f: f.write(img_data)
         
-        # INDEXATION BDD (v5.50.0)
-        state_manager = EchoStateManager(user_id=user_id)
+        # INDEXATION BDD
         state_manager.mark_processed(chat_id, file_id, filename, "image/png", "indexed")
-        print(f"[ECHO-NAV] 🗄️ Frame indexée : {file_id}", flush=True)
+        print(f"[ECHO-NAV] 🗄️ Frame scellée directement dans le Vault : {file_id}", flush=True)
     except Exception as e:
-        print(f"[ECHO-NAV] !! Erreur indexation frame: {e}", flush=True)
+        print(f"[ECHO-NAV] !! Erreur scellement frame: {e}", flush=True)
         
     if __event_call__ and u_valves.SHOW_BROWSER_HUD:
         code = _generate_monitor_js(res_view["screenshot_b64"], chat_id[:8], chat_id, u_valves.HUD_VISIBLE_SEC)

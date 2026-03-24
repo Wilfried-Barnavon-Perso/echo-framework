@@ -2,18 +2,19 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.15 (Stable Recovery / ECHO-Native)
+VERSION : 5.23 (Semantic Truth Alignment)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-03-22
 
 --- DESCRIPTION ARCHITECTURALE ---
-Ce micro-service Flask assure la maintenance, les backups et le monitoring
-exclusif du framework ECHO. Architecture ECHO-Native sans legacy.
+Ce micro-service assure la régulation et le monitoring du framework ECHO.
+Architecture ECHO-Native avec distinction entre stockage et sessions.
 
---- CHANGELOG 5.15 ---
-- Correction NameError (HAS_SCHEDULER) : Rétablissement des flags de dépendances.
-- Rétablissement complet des planificateurs de tâches (Backups & Maintenance).
-- Stabilisation du point d'entrée pour éviter les boucles de redémarrage.
+--- CHANGELOG 5.23 ---
+- Vérité Sémantique : Le compteur "Sessions Actives" ne cible plus que les .db de chats.
+- Correction du décalage : Exclusion de identity.db et des fichiers docs du compteur de sessions.
+- Maintien du Volume Global : Le volume Vault reste inclusif (docs + bases).
+- Parité UX intégrale maintenue (Horloge, Tooltips, Monitoring).
 ================================================================================
 """
 
@@ -32,7 +33,7 @@ import sqlite3
 from werkzeug.utils import secure_filename # pyright: ignore[reportMissingImports]
 
 # ==============================================================================
-# SECTION 1 : GESTION DES DÉPENDANCES (FLAGS DE CONTRÔLE)
+# SECTION 1 : GESTION DES DÉPENDANCES
 # ==============================================================================
 try:
     import docker
@@ -72,6 +73,12 @@ app = Flask(__name__, static_folder='/app/static')
 app.secret_key = secrets.token_hex(32)
 app.config['JSON_AS_ASCII'] = False
 
+@app.after_request
+def set_charset(response):
+    if response.headers.get('Content-Type', '').startswith('text/html'):
+        response.headers['Content-Type'] = 'text/html; charset=utf-8'
+    return response
+
 TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'echo-webui-core')
 BACKUP_DIR = "/backups"
 HOST_GATEWAY = "host.docker.internal"
@@ -82,6 +89,12 @@ ECHO_USERS_ROOT = os.path.join(OWUI_DATA_ROOT, "users")
 UPLOADS_DIR = os.path.join(OWUI_DATA_ROOT, "uploads")
 WEBUI_DB_PATH = os.path.join(OWUI_DATA_ROOT, "webui.db")
 OWUI_ADMIN_SECRET_PATH = "/app/secrets/.owui-admin-secret"
+
+DIRS = {
+    "uploads": UPLOADS_DIR,
+    "echo_vault": ECHO_USERS_ROOT,
+    "debug_logs": os.path.join(OWUI_DATA_ROOT, "debug_logs")
+}
 
 DEFAULT_BACKUP_CONFIG = {
     "auto_backup": True, "auto_cleanup": True, "cleanup_mode": "count",
@@ -94,7 +107,7 @@ DEFAULT_MAINT_CONFIG = {
 }
 
 # ==============================================================================
-# SECTION 3 : LOGIQUE MÉTIER - MAINTENANCE & STOCKAGE
+# SECTION 3 : HELPERS & LOGIQUE RÉCURSIVE
 # ==============================================================================
 
 def human_size(size):
@@ -103,34 +116,68 @@ def human_size(size):
         size /= 1024
     return f"{size:.1f} PB"
 
-def get_recursive_stats(path: str, extension: str = None):
+def get_cpu_model_name():
+    try:
+        with open('/proc/cpuinfo') as f:
+            for line in f:
+                if "model name" in line: return line.split(':')[1].strip()
+    except: return "N/A"
+
+def get_dir_stats(path, filter_ext=None):
     if not os.path.exists(path): return {"count": 0, "size": 0, "size_fmt": "0 B"}
     t_size, t_count = 0, 0
     for root, _, files in os.walk(path):
         for f in files:
-            if extension and not f.endswith(extension): continue
+            if filter_ext and not f.endswith(filter_ext): continue
             try:
                 t_size += os.path.getsize(os.path.join(root, f))
                 t_count += 1
             except: pass
     return {"count": t_count, "size": t_size, "size_fmt": human_size(t_size)}
 
+def prune_recursive(path: str, days: int, sanctuary_files: List[str] = ["identity.db"]):
+    if not os.path.exists(path): return 0
+    cutoff = time.time() - (days * 86400)
+    removed = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            if f in sanctuary_files: continue
+            fpath = os.path.join(root, f)
+            try:
+                if os.path.getmtime(fpath) < cutoff:
+                    os.remove(fpath); removed += 1
+            except: pass
+    return removed
+
+def get_echo_version():
+    try:
+        if os.path.exists('/app/ECHO_VERSION'):
+            with open('/app/ECHO_VERSION', 'r', encoding='utf-8') as f: return f.read().strip()
+    except: pass
+    return "v?.?"
+
+# ==============================================================================
+# SECTION 4 : ÉLAGAGE SÉMANTIQUE & SÉCURITÉ
+# ==============================================================================
+
 def load_maint_config():
     c = DEFAULT_MAINT_CONFIG.copy()
-    if os.path.exists(MAINT_CONFIG_FILE := os.path.join(OWUI_DATA_ROOT, "maintenance_config.json")):
+    m_file = os.path.join(OWUI_DATA_ROOT, "maintenance_config.json")
+    if os.path.exists(m_file):
         try:
-            with open(MAINT_CONFIG_FILE, 'r') as f: loaded = json.load(f); c.update(loaded)
+            with open(m_file, 'r') as f: c.update(json.load(f))
         except: pass
     return c
 
 def save_maint_config(c):
     try:
-        with open(os.path.join(OWUI_DATA_ROOT, "maintenance_config.json"), 'w') as f: json.dump(c, f, indent=4)
+        with open(os.path.join(OWUI_DATA_ROOT, "maintenance_config.json"), 'w') as f:
+            json.dump(c, f, indent=4)
     except: pass
 
-def run_deep_maintenance():
-    """Maintenance ECHO Native (v5.15)."""
-    print(f"🔧 [ECHO-MAINT] Démarrage...")
+def run_semantic_pruning():
+    """Élagage organique (v5.23)."""
+    print(f"🧬 [ECHO-LIFECYCLE] Démarrage...")
     report = []
     config = load_maint_config()
     
@@ -147,17 +194,10 @@ def run_deep_maintenance():
         except: pass
     report.append(f"Orphelins: {orphans}")
 
-    # 2. Nettoyage Fichiers
-    cutoff_v = time.time() - (config["retention"].get("vault_days", 1095) * 86400)
-    removed = 0
-    for root, _, files in os.walk(ECHO_USERS_ROOT):
-        if "files" in root:
-            for f in files:
-                fp = os.path.join(root, f)
-                try:
-                    if os.path.getmtime(fp) < cutoff_v: os.remove(fp); removed += 1
-                except: pass
-    report.append(f"Nettoyage: {removed}")
+    # 2. Atrophie
+    rem_u = prune_recursive(UPLOADS_DIR, config["retention"]["uploads_days"])
+    rem_v = prune_recursive(ECHO_USERS_ROOT, config["retention"]["vault_days"])
+    report.append(f"Élagage: {rem_u + rem_v}")
 
     # 3. Vacuum
     vax = 0
@@ -165,7 +205,8 @@ def run_deep_maintenance():
         for f in files:
             if f.endswith('.db'):
                 try:
-                    with sqlite3.connect(os.path.join(root, f), timeout=10.0) as conn: conn.execute("VACUUM;"); vax += 1
+                    with sqlite3.connect(os.path.join(root, f), timeout=10.0) as db:
+                        db.execute("VACUUM;"); vax += 1
                 except: pass
     report.append(f"Optimisés: {vax}")
 
@@ -173,8 +214,31 @@ def run_deep_maintenance():
     save_maint_config(config)
     return " | ".join(report)
 
+def setup_lifecycle_scheduler():
+    if not HAS_MAINT_SCHEDULER: return
+    try:
+        config = load_maint_config()
+        schedule.clear()
+        schedule.every().day.at(config.get("cleanup_hour", "03:00")).do(run_semantic_pruning)
+    except: pass
+
+def change_system_password(username, current_pwd, new_pwd):
+    if not DOCKER_AVAILABLE: return False, "Module SSH absent"
+    try:
+        ssh = paramiko.SSHClient(); ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(HOST_GATEWAY, username=username, password=current_pwd, timeout=10)
+        chan = ssh.invoke_shell(); time.sleep(1)
+        chan.send('passwd\n'); time.sleep(1)
+        chan.send(f'{current_pwd}\n'); time.sleep(0.5)
+        chan.send(f'{new_pwd}\n'); time.sleep(0.5)
+        chan.send(f'{new_pwd}\n'); time.sleep(1)
+        out = chan.recv(4096).decode('utf-8', errors='ignore'); ssh.close()
+        if "updated successfully" in out or "mis à jour avec succès" in out: return True, "Succès"
+        return False, "Refus système"
+    except Exception as e: return False, str(e)
+
 # ==============================================================================
-# SECTION 4 : BACKUPS & SCHEDULERS
+# SECTION 5 : SAUVEGARDES
 # ==============================================================================
 
 def load_settings():
@@ -185,22 +249,28 @@ def load_settings():
         except: pass
     return c
 
+def save_settings(new_s):
+    c = load_settings(); c.update(new_s)
+    with open(SETTINGS_FILE, 'w') as f: json.dump(c, f, indent=4)
+    update_backup_schedule()
+
 def perform_backup_task():
     if not DOCKER_AVAILABLE: return
-    fname = f"echo_native_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.tar.gz"
-    fpath = os.path.join(BACKUP_DIR, fname)
+    fpath = os.path.join(BACKUP_DIR, f"echo_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.tar.gz")
     try:
-        c_docker = docker.from_env()
-        target = c_docker.containers.get(TARGET_CONTAINER)
+        client = docker.from_env(); target = client.containers.get(TARGET_CONTAINER)
         target.stop()
         subprocess.run(['tar', '-czf', fpath, '-C', OWUI_DATA_ROOT, '.'], check=True)
         target.start()
-        # Cleanup vieux backups
         sets = load_settings()
         if sets.get("auto_cleanup"):
-            list_b = sorted(glob.glob(os.path.join(BACKUP_DIR, '*.tar.gz')), key=os.path.getmtime, reverse=True)
-            if len(list_b) > int(sets.get("cleanup_value", 5)):
-                for b in list_b[int(sets.get("cleanup_value", 5)):]: os.remove(b)
+            files = sorted(glob.glob(os.path.join(BACKUP_DIR, '*.tar.gz')), key=os.path.getmtime, reverse=True)
+            mode, val = sets.get("cleanup_mode", "count"), int(sets.get("cleanup_value", 5))
+            if mode == 'count' and len(files) > val:
+                for f in files[val:]: os.remove(f)
+            elif mode == 'days':
+                for f in files:
+                    if os.path.getmtime(f) < (time.time() - (val * 86400)): os.remove(f)
     except:
         try: docker.from_env().containers.get(TARGET_CONTAINER).start()
         except: pass
@@ -218,30 +288,39 @@ def update_backup_schedule():
             backup_scheduler.add_job(perform_backup_task, 'interval', days=int(sets.get("interval_days", 1)), start_date=start)
     except: pass
 
-def setup_maint_scheduler():
-    if not HAS_MAINT_SCHEDULER: return
-    config = load_maint_config()
-    schedule.clear()
-    schedule.every().day.at(config.get("cleanup_hour", "03:00")).do(run_deep_maintenance)
+def get_backup_list():
+    files = sorted(glob.glob(os.path.join(BACKUP_DIR, '*.tar.gz')), key=os.path.getmtime, reverse=True)
+    return [{'name': os.path.basename(f), 'size': human_size(os.path.getsize(f)), 'date': datetime.datetime.fromtimestamp(os.path.getmtime(f)).strftime('%d/%m/%Y %H:%M')} for f in files]
 
 # ==============================================================================
-# SECTION 5 : ROUTES API
+# SECTION 6 : ROUTES FLASK
 # ==============================================================================
 
 @app.route('/')
 def index():
     if not session.get('logged_in'): return render_template_string(HTML_LOGIN)
-    v_stats = get_recursive_stats(ECHO_USERS_ROOT)
-    u_stats = get_recursive_stats(UPLOADS_DIR)
-    ver = "v?.?"
-    if os.path.exists('/app/ECHO_VERSION'):
-        with open('/app/ECHO_VERSION', 'r') as f: ver = f.read().strip()
     
-    return render_template_string(HTML_DASHBOARD, 
-                                vault=v_stats, uploads=u_stats,
-                                version=ver, user=session.get('username'),
-                                maint=load_maint_config(),
-                                backups=sorted([{'name': os.path.basename(f), 'size': human_size(os.path.getsize(f)), 'date': datetime.datetime.fromtimestamp(os.path.getmtime(f)).strftime('%d/%m/%Y %H:%M')} for f in glob.glob(os.path.join(BACKUP_DIR, '*.tar.gz'))], key=lambda x: x['date'], reverse=True))
+    # Volume Total (Docs + Bases)
+    vault_storage = get_dir_stats(ECHO_USERS_ROOT)
+    
+    # Compteur de Sessions Réelles (Uniquement .db dans /chats/)
+    real_session_count = 0
+    if os.path.exists(ECHO_USERS_ROOT):
+        for root, _, files in os.walk(ECHO_USERS_ROOT):
+            if "chats" in root:
+                for f in files:
+                    if f.endswith('.db'): real_session_count += 1
+
+    stats = {
+        "uploads": get_dir_stats(UPLOADS_DIR),
+        "vault": vault_storage,
+        "logs": get_dir_stats(os.path.join(OWUI_DATA_ROOT, "debug_logs")),
+        "real_sessions": real_session_count
+    }
+    return render_template_string(HTML_DASHBOARD, settings=load_settings(), 
+                                storage_stats=stats, maint=load_maint_config(),
+                                version=get_echo_version(), user=session.get('username'),
+                                backups=get_backup_list(), server_time_iso=datetime.datetime.now().isoformat())
 
 @app.route('/', methods=['POST'])
 def login():
@@ -249,7 +328,7 @@ def login():
         ssh = paramiko.SSHClient(); ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(HOST_GATEWAY, username=request.form.get('username'), password=request.form.get('password'), timeout=5)
         ssh.close(); session['logged_in'] = True; session['username'] = request.form.get('username')
-    except: flash('Accès refusé.', 'danger')
+    except: flash('Authentification échouée.', 'danger')
     return redirect(url_for('index'))
 
 @app.route('/logout')
@@ -258,124 +337,193 @@ def logout(): session.clear(); return redirect(url_for('index'))
 @app.route('/api/user_stats')
 def user_stats():
     if not session.get('logged_in'): return jsonify([])
-    users_data = []
+    data = []
     try:
         conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        users = conn.execute("SELECT id, name, email, role FROM user ORDER BY name COLLATE NOCASE ASC").fetchall()
+        users = conn.execute("SELECT id, name, email, role FROM user ORDER BY name ASC").fetchall()
         for u in users:
-            vault_chats_dir = os.path.join(ECHO_USERS_ROOT, str(u['id']), "chats")
-            echo_count = len([f for f in os.listdir(vault_chats_dir) if f.endswith('.db')]) if os.path.exists(vault_chats_dir) else 0
-            users_data.append({"name": u['name'], "email": u['email'], "role": u['role'], "echo_chats": echo_count})
+            v_dir = os.path.join(ECHO_USERS_ROOT, str(u[0]), "chats")
+            count = len([f for f in os.listdir(v_dir) if f.endswith('.db')]) if os.path.exists(v_dir) else 0
+            data.append({"name": u[1], "email": u[2], "role": u[3], "chat_count": count})
         conn.close()
     except: pass
-    return jsonify(users_data)
+    return jsonify(data)
+
+@app.route('/api/admin/password')
+def admin_password():
+    if not session.get('logged_in'): return jsonify({}), 403
+    try:
+        with open(os.path.join("/app/secrets", ".owui-admin-secret"), 'r') as f: return jsonify({"password": f.read().strip()})
+    except: return jsonify({"password": "N/A"})
 
 @app.route('/api/stats')
 def sys_stats():
     if not HAS_PSUTIL: return jsonify({})
     mem = psutil.virtual_memory(); disk = psutil.disk_usage(BACKUP_DIR)
-    return jsonify({"cpu": psutil.cpu_percent(), "ram": mem.percent, "disk": disk.percent})
+    return jsonify({
+        "cpu_percent": psutil.cpu_percent(), "cpu_count": os.cpu_count(),
+        "cpu_model": get_cpu_model_name(), "cpu_load": [round(l, 2) for l in os.getloadavg()],
+        "ram_percent": mem.percent, "ram_used": human_size(mem.used), "ram_total": human_size(mem.total),
+        "disk_percent": disk.percent, "disk_used": human_size(disk.used), "disk_total": human_size(disk.total)
+    })
 
-@app.route('/action/<act>', methods=['POST'])
-def run_action(act):
+@app.route('/api/containers')
+def containers():
+    if not DOCKER_AVAILABLE: return jsonify([])
+    try:
+        return jsonify([{"id": c.short_id, "name": c.name, "status": c.status.capitalize()} for c in docker.from_env().containers.list(all=True)])
+    except: return jsonify([])
+
+@app.route('/action/<action>', methods=['POST'])
+def handle_action(action):
     if not session.get('logged_in'): return redirect(url_for('index'))
-    if act == 'maint': threading.Thread(target=run_deep_maintenance).start(); flash('Maintenance lancée.', 'info')
-    elif act == 'backup': threading.Thread(target=perform_backup_task).start(); flash('Sauvegarde lancée.', 'info')
-    elif act == 'delete_backup':
+    if action == 'backup': threading.Thread(target=perform_backup_task).start(); flash('Sauvegarde complète lancée.', 'info')
+    elif action == 'pruning': threading.Thread(target=run_semantic_pruning).start(); flash('Élagage sémantique lancé.', 'info')
+    elif action == 'restart':
+        cid = request.form.get('container')
+        if cid and DOCKER_AVAILABLE:
+            try: docker.from_env().containers.get(cid).restart(); flash('Redémarré.', 'success')
+            except: pass
+    elif action == 'delete_backup':
         f = request.form.get('filename')
-        if f and os.path.exists(p := os.path.join(BACKUP_DIR, secure_filename(f))): os.remove(p); flash('Backup supprimé.', 'warning')
+        if f and os.path.exists(p := os.path.join(BACKUP_DIR, secure_filename(f))): os.remove(p); flash('Supprimé.', 'warning')
+    elif action == 'restore':
+        f = request.form.get('filename')
+        if f and DOCKER_AVAILABLE:
+            try:
+                p = os.path.join(BACKUP_DIR, secure_filename(f))
+                client = docker.from_env(); target = client.containers.get(TARGET_CONTAINER)
+                target.stop(); subprocess.run(f"rm -rf {OWUI_DATA_ROOT}/*", shell=True)
+                subprocess.run(['tar', '-xzf', p, '-C', OWUI_DATA_ROOT], check=True); target.start()
+                flash('Restauration terminée.', 'success')
+            except Exception as e: flash(f'Erreur: {e}', 'danger')
+    elif action == 'auth_reset':
+        db_paths = glob.glob(os.path.join(ECHO_USERS_ROOT, '*', 'identity.db'))
+        for p in db_paths:
+            try:
+                with sqlite3.connect(p, timeout=5.0) as conn: conn.execute("DELETE FROM auth_data WHERE key LIKE 'google_%'")
+            except: pass
+        flash('Tokens Google purgés du Vault.', 'success')
     return redirect(url_for('index'))
 
-@app.route('/api/admin/password')
-def get_admin_pwd():
-    if not session.get('logged_in'): return jsonify({}), 403
-    if os.path.exists(OWUI_ADMIN_SECRET_PATH):
-        with open(OWUI_ADMIN_SECRET_PATH, 'r') as f: return jsonify({"password": f.read().strip()})
-    return jsonify({"password": "N/A"})
+@app.route('/settings', methods=['POST'])
+def save_settings_route():
+    save_settings({
+        "auto_backup": 'auto_backup' in request.form,
+        "auto_cleanup": 'auto_cleanup' in request.form,
+        "interval_days": int(request.form.get('interval_days', 1)),
+        "backup_time": request.form.get('backup_time', "03:00"),
+        "cleanup_mode": request.form.get('cleanup_mode', "count"),
+        "cleanup_value": int(request.form.get('cleanup_value', 5))
+    })
+    flash('Paramètres sauvegardes mis à jour.', 'success')
+    return redirect(url_for('index'))
+
+@app.route('/settings/maintenance', methods=['POST'])
+def update_maint():
+    c = load_maint_config()
+    c["cleanup_hour"] = request.form.get("cleanup_hour", "03:00")
+    c["retention"]["uploads_days"] = int(request.form.get("ret_uploads", 1095))
+    c["retention"]["vault_days"] = int(request.form.get("ret_vault", 1095))
+    save_maint_config(c); setup_lifecycle_scheduler(); flash('Cycle de vie mis à jour.', 'success')
+    return redirect(url_for('index'))
+
+@app.route('/action/security/passwd', methods=['POST'])
+def passwd_change():
+    u = session.get('username')
+    new_p, conf_p = request.form.get('new_password'), request.form.get('confirm_password')
+    if new_p != conf_p: flash('Mots de passe différents.', 'danger')
+    else:
+        ok, msg = change_system_password(u, request.form.get('current_password'), new_p)
+        flash(f'✅ {msg}' if ok else f'❌ {msg}', 'success' if ok else 'danger')
+    return redirect(url_for('index'))
 
 # ==============================================================================
-# SECTION 6 : TEMPLATES
+# SECTION 7 : TEMPLATES (UX VÉRITÉ SÉMANTIQUE)
 # ==============================================================================
 
 HTML_LOGIN = """
-<!doctype html>
-<html lang="fr" data-bs-theme="dark">
-<head><meta charset="utf-8"><title>ECHO Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-<body class="bg-black d-flex align-items-center justify-content-center vh-100">
-    <div class="card p-4 border-secondary shadow" style="width:350px;">
-        <h2 class="text-center text-primary mb-4">ECHO Admin</h2>
-        <form method="POST">
-            <input type="text" name="username" class="form-control mb-3" placeholder="Utilisateur" required>
-            <input type="password" name="password" class="form-control mb-3" placeholder="Mot de passe" required>
-            <button class="btn btn-primary w-100">Connexion</button>
-        </form>
-    </div>
-</body></html>"""
+<!doctype html><html lang="fr" data-bs-theme="dark"><head><meta charset="utf-8"><title>Login - ECHO Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+<body class="bg-black d-flex align-items-center justify-content-center vh-100"><div class="card p-5 border-secondary shadow-lg" style="width:400px;"><h2 class="text-center text-primary mb-4">ECHO Admin</h2><form method="POST"><input type="text" name="username" class="form-control mb-3" placeholder="Admin" required autofocus><input type="password" name="password" class="form-control mb-4" placeholder="Password" required><button class="btn btn-primary w-100">Entrer</button></form></div></body></html>"""
 
 HTML_DASHBOARD = """
-<!doctype html>
-<html lang="fr" data-bs-theme="dark">
-<head><meta charset="utf-8"><title>ECHO Console</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css"></head>
+<!doctype html><html lang="fr" data-bs-theme="dark"><head><meta charset="utf-8"><title>Console - ECHO Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css"><style>.card{background-color:#161b22;border-color:#30363d}.navbar{background-color:#161b22;border-bottom:1px solid #30363d}.table{--bs-table-bg:transparent;--bs-table-border-color:#30363d;color:#c9d1d9}.x-small{font-size:0.7rem;color:#888}</style></head>
 <body style="background-color:#0d1117;">
-    <nav class="navbar border-bottom border-secondary px-4 py-3 mb-4"><span class="navbar-brand text-primary fw-bold">ECHO CONSOLE {{ version }}</span><div class="d-flex align-items-center gap-3"><span class="text-muted small">{{ user }}</span><a href="/logout" class="btn btn-sm btn-outline-danger">Quitter</a></div></nav>
+    <div id="loader" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;display:none;flex-direction:column;justify-content:center;align-items:center;"><div class="spinner-border text-primary mb-3"></div><h4 id="loader-msg">Action en cours...</h4></div>
+    <nav class="navbar px-4 py-2 mb-4"><span class="navbar-brand text-primary fw-bold" data-bs-toggle="tooltip" title="ECHO Infrastructure Manager"><i class="bi bi-tree-fill"></i> ECHO CONSOLE {{ version }}</span><div class="d-flex align-items-center gap-3"><span class="badge bg-dark border border-secondary" id="clock">--:--:--</span><span class="text-muted small">{{ user }}</span><a href="/logout" class="btn btn-sm btn-outline-danger">Quitter</a></div></nav>
     <div class="container">
-        {% with messages = get_flashed_messages() %}{% for m in messages %}<div class="alert alert-info border-0 shadow">{{ m }}</div>{% endfor %}{% endwith %}
+        {% with msgs = get_flashed_messages(with_categories=true) %}{% for c,m in msgs %}<div class="alert alert-{{c}} alert-dismissible fade show border-0 mb-4">{{m}}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>{% endfor %}{% endwith %}
+        <div class="row g-4 mb-4">
+            <div class="col-md-3"><div class="card h-100 p-3" data-bs-toggle="tooltip" title="Charge CPU du serveur hôte">CPU: <span id="cpu">--</span>%<br><small class="x-small" id="cpu-details">...</small><div class="progress mt-2" style="height:4px;"><div id="cpu-bar" class="progress-bar bg-primary"></div></div></div></div>
+            <div class="col-md-3"><div class="card h-100 p-3" data-bs-toggle="tooltip" title="Utilisation de la mémoire vive">RAM: <span id="ram">--</span>%<br><small class="x-small" id="ram-text">--/--</small><div class="progress mt-2" style="height:4px;"><div id="ram-bar" class="progress-bar bg-info"></div></div></div></div>
+            <div class="col-md-3"><div class="card h-100 p-3 text-center" data-bs-toggle="tooltip" title="Sessions de chat ECHO réelles (fichiers .db dans /chats/)">Sessions Actives<br><b class="text-primary fs-4">{{ storage_stats.real_sessions }}</b></div></div>
+            <div class="col-md-3"><div class="card h-100 p-3 text-center" data-bs-toggle="tooltip" title="Volume total occupé par le Vault (Docs + Bases + Identités)">Volume Vault<br><b class="text-success fs-4">{{ storage_stats.vault.size_fmt }}</b></div></div>
+        </div>
         <div class="row g-4">
-            <div class="col-md-3"><div class="card p-3 border-secondary">CPU: <span id="cpu">--</span>%<div class="progress mt-2" style="height:4px;"><div id="cpu-bar" class="progress-bar bg-primary"></div></div></div></div>
-            <div class="col-md-3"><div class="card p-3 border-secondary">RAM: <span id="ram">--</span>%<div class="progress mt-2" style="height:4px;"><div id="ram-bar" class="progress-bar bg-info"></div></div></div></div>
-            <div class="col-md-3"><div class="card p-3 border-secondary text-center">Sessions ECHO<br><b class="text-primary fs-4">{{ vault.count }}</b></div></div>
-            <div class="col-md-3"><div class="card p-3 border-secondary text-center">Stockage Vault<br><b class="text-success fs-4">{{ vault.size_fmt }}</b></div></div>
-            <div class="col-lg-8">
-                <div class="card border-secondary">
-                    <div class="card-header border-secondary d-flex justify-content-between"><span><i class="bi bi-people"></i> État des Sessions ECHO</span><button class="btn btn-sm btn-link text-secondary p-0" onclick="updateUsers()"><i class="bi bi-arrow-repeat"></i></button></div>
-                    <div class="card-body p-0"><table class="table table-hover mb-0"><thead><tr><th class="ps-3">Nom</th><th>Email</th><th class="text-center">Sessions ECHO</th></tr></thead><tbody id="user-rows"></tbody></table></div>
-                </div>
+            <div class="col-lg-7">
+                <div class="card mb-4"><div class="card-header d-flex justify-content-between align-items-center"><span><i class="bi bi-people"></i> Sessions par Utilisateur</span><button class="btn btn-sm btn-outline-secondary" onclick="refreshUsers()"><i class="bi bi-arrow-repeat"></i></button></div><div class="p-0"><table class="table table-hover mb-0"><thead><tr><th class="ps-3">Nom</th><th>Email</th><th class="text-center">Sessions</th></tr></thead><tbody id="user-list"></tbody></table></div></div>
+                <div class="card"><div class="card-header d-flex justify-content-between align-items-center"><span><i class="bi bi-hdd-network"></i> Sauvegardes</span><div class="btn-group"><button class="btn btn-sm btn-outline-secondary" onclick="refreshBackups()"><i class="bi bi-arrow-repeat"></i></button><form action="/action/backup" method="post" onsubmit="showLoader()"><button class="btn btn-sm btn-success">+</button></form></div></div><div class="p-0"><table class="table table-sm mb-0"><thead><tr><th class="ps-3">Fichier</th><th>Date</th><th>Taille</th><th class="text-end pe-3">Action</th></tr></thead><tbody id="backup-rows"></tbody></table></div></div>
             </div>
-            <div class="col-lg-4">
-                <div class="card border-info mb-4">
-                    <div class="card-header bg-info text-dark fw-bold">Maintenance ECHO Native</div>
-                    <div class="card-body small">
-                        <p>Transit (Uploads) : <b>{{ uploads.size_fmt }}</b></p>
-                        <p class="text-muted">Dernière exécution : {{ maint.last_run }}</p>
-                        <form action="/action/maint" method="post"><button class="btn btn-info btn-sm w-100 mb-2">Lancer Maintenance Profonde</button></form>
-                    </div>
-                </div>
-                <div class="card border-warning mb-4"><div class="card-header text-warning">Secrets</div><div class="card-body"><button class="btn btn-sm btn-outline-warning w-100" onclick="copyPwd()">Copier Pass Admin OWUI</button></div></div>
-                <div class="card border-secondary"><div class="card-header d-flex justify-content-between"><span>Sauvegardes</span><form action="/action/backup" method="post"><button class="btn btn-sm btn-success p-0 px-2">+</button></form></div><div class="card-body p-0 small"><ul class="list-group list-group-flush">{% for b in backups %}<li class="list-group-item bg-transparent d-flex justify-content-between"><span>{{ b.name }}</span><form action="/action/delete_backup" method="post" class="d-inline"><input type="hidden" name="filename" value="{{ b.name }}"><button class="btn btn-sm text-danger p-0">×</button></form></li>{% endfor %}</ul></div></div>
+            <div class="col-lg-5">
+                <div class="card mb-4 border-info"><div class="card-header text-info"><i class="bi bi-scissors"></i> Élagage & Cycle de Vie</div><div class="card-body small">
+                    <form action="/settings/maintenance" method="post" class="mb-3">
+                        <div class="row g-2 mb-2"><div class="col-6"><label class="x-small">Uploads (j)</label><input type="number" name="ret_uploads" class="form-control form-control-sm" value="{{maint.retention.uploads_days}}"></div><div class="col-6"><label class="x-small">Vault (j)</label><input type="number" name="ret_vault" class="form-control form-control-sm" value="{{maint.retention.vault_days}}"></div></div>
+                        <label class="x-small">Heure d'élagage automatique</label><input type="time" name="cleanup_hour" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}">
+                        <button class="btn btn-sm btn-info w-100">Programmer le Cycle</button>
+                    </form>
+                    <hr><p>Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p>
+                    <form action="/action/pruning" method="post" onsubmit="showLoader('Élagage profond...')"><button class="btn btn-outline-info btn-sm w-100">Lancer l'Élagage Immédiat</button></form>
+                </div></div>
+                <div class="card mb-4 border-warning"><div class="card-header text-warning"><i class="bi bi-shield-lock"></i> Sécurité & Backups Auto</div><div class="card-body small">
+                    <form action="/settings" method="post" class="mb-3">
+                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="auto_backup" {% if settings.auto_backup %}checked{% endif %}> Backup Auto</div>
+                        <div class="row g-2 mt-1"><div class="col-6"><label class="x-small">Intervalle (j)</label><input type="number" name="interval_days" class="form-control form-control-sm" value="{{settings.interval_days}}"></div><div class="col-6"><label class="x-small">Heure</label><input type="time" name="backup_time" class="form-control form-control-sm" value="{{settings.backup_time}}"></div></div>
+                        <div class="input-group mt-2"><select name="cleanup_mode" class="form-select form-select-sm"><option value="count" {% if settings.cleanup_mode == 'count' %}selected{% endif %}>Garder X</option><option value="days" {% if settings.cleanup_mode == 'days' %}selected{% endif %}>Max X jours</option></select><input type="number" name="cleanup_value" class="form-control form-control-sm" value="{{settings.cleanup_value}}"></div>
+                        <button class="btn btn-sm btn-primary w-100 mt-2">Sauver Paramètres Backup</button>
+                    </form>
+                    <button class="btn btn-sm btn-outline-warning w-100 mb-2" onclick="copyPwd()">Copier Pass Admin OWUI</button>
+                    <button class="btn btn-sm btn-outline-secondary w-100 mb-2" data-bs-toggle="collapse" data-bs-target="#ssh">Changer Pass Système</button>
+                    <div class="collapse mt-2" id="ssh"><form action="/action/security/passwd" method="post" class="bg-dark p-2 rounded"><input type="password" name="current_password" class="form-control form-control-sm mb-1" placeholder="Actuel"><input type="password" name="new_password" class="form-control form-control-sm mb-1" placeholder="Nouveau"><button class="btn btn-sm btn-warning w-100">Valider</button></form></div>
+                    <form action="/action/auth_reset" method="post" onsubmit="return confirm('Purger Google ?')"><button class="btn btn-sm btn-link text-danger w-100">Réinitialiser Tokens Google</button></form>
+                </div></div>
+                <div class="card border-secondary"><div class="card-header d-flex justify-content-between align-items-center"><span>Containers</span><button class="btn btn-sm btn-link text-secondary p-0" onclick="refreshContainers()"><i class="bi bi-arrow-repeat"></i></button></div><ul class="list-group list-group-flush" id="container-list"></ul></div>
             </div>
         </div>
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        async function updateUsers() {
-            const res = await fetch('/api/user_stats'); const data = await res.json();
-            document.getElementById('user-rows').innerHTML = data.map(u => `<tr><td class="ps-3">${u.name}</td><td>${u.email}</td><td class="text-center"><span class="badge ${u.echo_chats > 0 ? 'bg-primary':'bg-secondary'}">${u.echo_chats}</span></td></tr>`).join('');
+        const initialTime = new Date('{{ server_time_iso }}');
+        function initClock() {
+            let now = initialTime;
+            setInterval(() => {
+                now.setSeconds(now.getSeconds() + 1);
+                document.getElementById('clock').innerText = now.toLocaleTimeString();
+            }, 1000);
         }
-        async function copyPwd() { const res = await fetch('/api/admin/password'); const data = await res.json(); navigator.clipboard.writeText(data.password); alert('Mot de passe copié !'); }
-        setInterval(async () => {
-            const res = await fetch('/api/stats'); const d = await res.json();
-            document.getElementById('cpu').innerText = d.cpu; document.getElementById('cpu-bar').style.width = d.cpu+'%';
-            document.getElementById('ram').innerText = d.ram; document.getElementById('ram-bar').style.width = d.ram+'%';
-        }, 3000);
-        updateUsers();
+        function showLoader(m='Action en cours...'){document.getElementById('loader-msg').innerText=m;document.getElementById('loader').style.display='flex'}
+        async function refreshUsers(){const r=await fetch('/api/user_stats');const d=await r.json();document.getElementById('user-list').innerHTML=d.map(u=>`<tr><td class="ps-3">${u.name}</td><td>${u.email}</td><td class="text-center"><span class="badge bg-primary">${u.chat_count}</span></td></tr>`).join('')}
+        async function refreshBackups(){const r=await fetch('/api/backups');const d=await r.json();document.getElementById('backup-rows').innerHTML=d.map(b=>`<tr><td class="ps-3 text-truncate" style="max-width:200px;">${b.name}</td><td>${b.date}</td><td><span class="badge bg-secondary">${b.size}</span></td><td class="text-end pe-3"><div class="btn-group"><a href="/download/${b.name}" class="btn btn-sm text-primary"><i class="bi bi-download"></i></a><form action="/action/restore" method="post" onsubmit="return confirm('RESTAURER ?')" class="d-inline"><input type="hidden" name="filename" value="${b.name}"><button class="btn btn-sm text-warning">↺</button></form><form action="/action/delete_backup" method="post" class="d-inline"><input type="hidden" name="filename" value="${b.name}"><button class="btn btn-sm text-danger">×</button></form></div></td></tr>`).join('')}
+        async function refreshContainers(){const r=await fetch('/api/containers');const d=await r.json();document.getElementById('container-list').innerHTML=d.map(c=>`<li class="list-group-item bg-transparent small d-flex justify-content-between align-items-center"><span>${c.name}</span><div class="d-flex align-items-center gap-2"><span class="badge ${c.status.startsWith('Up')?'bg-success':'bg-danger'}">${c.status}</span><form action="/action/restart" method="post"><input type="hidden" name="container" value="${c.id}"><button class="btn btn-sm btn-link text-secondary p-0"><i class="bi bi-power"></i></button></form></div></li>`).join('')}
+        async function copyPwd(){const r=await fetch('/api/admin/password');const d=await r.json();navigator.clipboard.writeText(d.password);alert('Copié !')}
+        setInterval(async()=>{const r=await fetch('/api/stats');const d=await r.json();document.getElementById('cpu').innerText=d.cpu_percent;document.getElementById('cpu-bar').style.width=d.cpu_percent+'%';document.getElementById('cpu-details').innerText=`${d.cpu_count} cœurs | Load: ${d.cpu_load.join(', ')}`;document.getElementById('ram').innerText=d.ram_percent;document.getElementById('ram-bar').style.width=d.ram_percent+'%';document.getElementById('ram-text').innerText=d.ram_used+' / '+d.ram_total},3000);
+        initClock();refreshUsers();refreshContainers();refreshBackups();
+        var tList=[].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]')).map(function(el){return new bootstrap.Tooltip(el)})
     </script>
 </body></html>"""
 
 # ==============================================================================
-# SECTION 7 : POINT D'ENTRÉE (FIXED)
+# SECTION 8 : POINT D'ENTRÉE
 # ==============================================================================
 if __name__ == '__main__':
+    if HAS_PSUTIL: psutil.cpu_percent(interval=None)
     if HAS_SCHEDULER:
-        backup_scheduler = BackgroundScheduler()
-        backup_scheduler.start()
-        update_backup_schedule()
-    
+        backup_scheduler = BackgroundScheduler(); backup_scheduler.start(); update_backup_schedule()
     if HAS_MAINT_SCHEDULER:
-        setup_maint_scheduler()
-        def schedule_loop():
+        setup_lifecycle_scheduler()
+        def maint_loop():
             while True:
-                schedule.run_pending()
+                try: schedule.run_pending()
+                except: pass
                 time.sleep(60)
-        threading.Thread(target=schedule_loop, daemon=True).start()
-
+        threading.Thread(target=maint_loop, daemon=True).start()
     app.run(host='0.0.0.0', port=3001, debug=False, threaded=True)

@@ -1,12 +1,12 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 167.23
-description: 167.23: Restored Context HUD and Suture indexing logic.
+version: 168.3
+description: 168.3: Strict temporal validation for Bit-Perfect Suture. Anti-Ghosting on message edit.
 """
 
 # ==============================================================================
-# SECTION 0 : IMPORTATIONS & CONSTANTES GLOBALES
+# SECTION 0 : IMPORTS & CONFIGURATION
 # ==============================================================================
 import os
 import sys
@@ -113,6 +113,7 @@ async def _get_global_client(
 class UserDataManager:
     def __init__(self, user_id: str = "system", chat_id: Optional[str] = None, debug_mode: bool = False):
         self.state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        self.identity_manager = EchoStateManager(user_id=user_id, chat_id=None)
         self.debug_mode = debug_mode
 
     def calculate_invariant(self, role: str, content: Any, tool_io: dict = None) -> str:
@@ -121,14 +122,32 @@ class UserDataManager:
     def calculate_cumulative(self, invariant: str, parent: str = None) -> str:
         return self.state_manager.calculate_cumulative_hash(invariant, parent)
 
+    def get_shadow(self, message_id: str, updated_at: int) -> Optional[List[dict]]:
+        """Restoration Bit-Perfect par ID physique et Timestamp (Verrou de Version)."""
+        return self.state_manager.get_message_shadow(message_id, updated_at)
+
+    def save_shadow(self, message_id: str, updated_at: int, parts: List[dict], chat_id: str, role: str):
+        """Scellement définitif de l'ombre d'un message."""
+        self.state_manager.save_message_shadow(message_id, chat_id, role, parts)
+
+    def mark_processed(self, chat_id: str, fid: str, name: str, mime: str, status: str):
+        """Scellement du registre des fichiers."""
+        self.state_manager.mark_processed(chat_id, fid, name, mime, status)
+
     def get_rich_payload(self, invariant: str) -> Optional[List[dict]]:
         return self.state_manager.get_rich_payload(invariant)
 
-    def save_rich_payload(self, invariant_hash: str, parts: List[dict]):
-        self.state_manager.save_rich_payload(invariant_hash, parts)
+    def save_rich_payload(self, invariant_hash: str, parts: List[dict], message_id: str = None):
+        self.state_manager.save_rich_payload(invariant_hash, parts, message_id)
 
-    def index_suture(self, cumul: str, chat_id: str, inv: str, parent: str = None):
-        self.state_manager.index_suture(cumul, chat_id, inv, parent)
+    def index_suture(self, cumul: str, chat_id: str, inv: str, parent: str = None, message_id: str = None):
+        self.state_manager.index_suture(cumul, chat_id, inv, parent, message_id)
+
+    def get_signature_by_id(self, message_id: str) -> Optional[str]:
+        return self.state_manager.get_signature_by_id(message_id)
+
+    def save_signature_by_id(self, message_id: str, signature: str):
+        self.state_manager.save_signature_by_id(message_id, signature)
 
     def get_signature(self, cumul: str) -> Optional[str]:
         return self.state_manager.get_thought_signature(cumul)
@@ -136,20 +155,20 @@ class UserDataManager:
     def get_call_bridge(self, call_id: str) -> Optional[dict]:
         return self.state_manager.get_call_bridge(call_id)
 
-    def save_cognitive(self, cumul: str, sig: str = None, thought: str = None, tool_io: dict = None):
-        self.state_manager.save_cognitive_data(cumul, sig, thought, tool_io)
+    def save_cognitive(self, cumul: str, sig: str = None, thought: str = None, tool_io: dict = None, message_id: str = None):
+        self.state_manager.save_cognitive_data(cumul, sig, thought, tool_io, message_id)
 
     def save_call_bridge(self, call_id: str, sig: str, func_name: str, args: dict = None):
         self.state_manager.save_call_bridge(call_id, sig, func_name, args)
 
     def save_auth_data(self, key: str, value: str):
-        self.state_manager.save_auth_data(key, value)
+        self.identity_manager.save_auth_data(key, value)
 
     def get_auth_data(self, key: str) -> Optional[Tuple[str, int]]:
-        return self.state_manager.get_auth_data(key)
+        return self.identity_manager.get_auth_data(key)
 
     def delete_auth_data(self, key: str):
-        self.state_manager.delete_auth_data(key)
+        self.identity_manager.delete_auth_data(key)
 
     def save_context_stats(self, stats: dict):
         self.state_manager.save_context_stats(stats)
@@ -160,11 +179,10 @@ class UserDataManager:
 class Orchestrator:
     def __init__(self, valves, user_valves, data_dir: str, user_id: str, chat_id: str = None):
         self.valves = valves; self.user_valves = user_valves
-        self.user_data_manager = UserDataManager(user_id, valves.DEBUG_MODE)
+        self.user_data_manager = UserDataManager(user_id, chat_id, valves.DEBUG_MODE)
         self.tool_map = {}; self.logger = DebugLogger(data_dir, chat_id) if valves.DEBUG_MODE else None
 
     def _resolve_placeholders(self, text: str, model_id: str) -> str:
-        """Résolution dynamique des balises techniques."""
         if not isinstance(text, str): return text
         version = get_echo_version() or "##VERSION_ERR##"
         resolved = text.replace("##ECHO_VERSION##", version)
@@ -173,7 +191,6 @@ class Orchestrator:
         return resolved
 
     def _ensure_gemini_parts(self, content: Any, model_id: str = "unknown") -> List[Dict]:
-        """Nettoyage NON-DESTRUCTIF avec résolution de placeholders et conversion multimodale."""
         parts = []
         if isinstance(content, str):
             if content.strip(): parts.append({"text": self._resolve_placeholders(content, model_id)})
@@ -184,7 +201,6 @@ class Orchestrator:
                 if "text" in p: 
                     new_part["text"] = self._resolve_placeholders(p["text"], model_id)
                 elif p.get("type") == "image_url" and "image_url" in p:
-                    # Conversion format OpenAI (OWUI) -> Gemini inlineData
                     url = p["image_url"].get("url", "")
                     if url.startswith("data:"):
                         try:
@@ -208,7 +224,6 @@ class Orchestrator:
         return parts
 
     def _unbox_tool_output(self, name: str, content: Any, model_id: str) -> List[Dict]:
-        """Déballeur Strict ECHO Multi-Parts conforme à la doc Gemini officielle."""
         if isinstance(content, str):
             try: content = orjson.loads(content)
             except: content = {"text": str(content), "status": {"status": "legacy_fallback"}}
@@ -218,12 +233,10 @@ class Orchestrator:
         status_meta = content.get("status", {"status": "success"})
         rich_multiparts = content.get("echo_tool_multiparts", [])
 
-        # Le texte métier DOIT être dans le dictionnaire `response` pour que le modèle le lise comme résultat de l'outil
         response_dict = status_meta.copy()
         if text_body:
             response_dict["result"] = self._resolve_placeholders(text_body, model_id)
 
-        # Construction du functionResponse (Premier Part)
         func_resp_part = {
             "functionResponse": {
                 "name": name,
@@ -231,23 +244,18 @@ class Orchestrator:
             }
         }
 
-        # Construction de la liste finale des parts (Standard Gemini : parts au même niveau)
         final_parts = [func_resp_part]
-        
         for mp in rich_multiparts:
             m_type = mp.get("type")
             if m_type == "thought" and mp.get("content"): 
-                # Injection de la pensée dans la réponse JSON de l'outil si présente
                 response_dict["tool_thought"] = mp["content"]
             elif m_type == "media" and mp.get("data"): 
-                # Ajout d'un part inlineData au même niveau que functionResponse
                 final_parts.append({
                     "inlineData": {
                         "mimeType": mp.get("mime_type", "image/png"), 
                         "data": mp["data"]
                     }
                 })
-        
         return final_parts
 
     def convert_owui_tools(self, tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
@@ -260,89 +268,99 @@ class Orchestrator:
         return [{"functionDeclarations": funcs}] if funcs else None
 
     async def prepare_context(self, body: Dict, chat_id: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
-        """RESTAURATION Bit-Perfect avec Standard ECHO Multi-Parts."""
+        """RESTAURATION Bit-Perfect avec Contrôle Temporel Strict (Anti-Ghosting)."""
         messages = body.get("messages", []); meta = __metadata__ or body.get("metadata", {})
-        all_files = meta.get("_echo_files", [])
         model_id = self.user_valves.MODEL_SELECTION
-        
         final_contents = []; last_cumul = None
         i = 0
         while i < len(messages):
             m = messages[i]; role = m.get("role"); content = m.get("content", "")
+            msg_id = m.get("id"); updated_at = m.get("updated_at")
+            
             if role == "system" or any(x in str(content) for x in ["ECHO_SESSION_AUTH_PENDING", "Authentification ECHO"]) or str(content).startswith("4/"): 
                 i += 1; continue
 
+            # --- PRIORITÉ 1 : SHADOW BIT-PERFECT (ID + TIMESTAMP) ---
+            if msg_id and updated_at:
+                shadow_parts = self.user_data_manager.get_shadow(msg_id, updated_at)
+                if shadow_parts:
+                    role_gemini = "model" if role in ["assistant", "model"] else "user"
+                    final_contents.append({"role": role_gemini, "parts": shadow_parts})
+                    inv_hash = self.user_data_manager.calculate_invariant(role, shadow_parts)
+                    last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
+                    i += 1; continue
+
+            # --- PRIORITÉ 2 : RECONSTRUCTION NORMALE (Fallback ou Cache Miss Temporel) ---
+            restored_parts = []
             if role == "tool":
                 aggregated_tool_parts = []
                 while i < len(messages) and messages[i].get("role") == "tool":
                     m_tool = messages[i]; content_tool = m_tool.get("content", "")
-                    inv_hash = self.user_data_manager.calculate_invariant("tool", content_tool)
-                    current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
                     call_id = m_tool.get("tool_call_id"); bridge = self.user_data_manager.get_call_bridge(call_id)
                     func_name = bridge["name"] if bridge else "unknown"
                     rich_tool_parts = self._unbox_tool_output(func_name, content_tool, model_id)
                     aggregated_tool_parts.extend(rich_tool_parts)
-                    self.user_data_manager.index_suture(current_cumul, chat_id, inv_hash, last_cumul)
-                    last_cumul = current_cumul; i += 1
-                final_contents.append({"role": "user", "parts": aggregated_tool_parts})
-                continue
-
-            # --- CAS GÉNÉRAUX : USER / ASSISTANT ---
-            if role in ["assistant", "model"]:
-                # PURGE DES PENSÉES (Doctrine v5.48.8) : Ne jamais renvoyer les pensées au modèle.
-                # Permet de maintenir l'invariance du hash pour la Suture.
-                content, _ = split_thought_process(content if isinstance(content, str) else str(content))
-
-            inv_hash = meta.get("_echo_invariant_hash") if (role == "user" and i == len(messages)-1) else self.user_data_manager.calculate_invariant(role, content)
-            current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
-            restored_parts = None
+                    inv_hash = self.user_data_manager.calculate_invariant("tool", content_tool)
+                    last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
+                    i += 1
+                restored_parts = aggregated_tool_parts
+                final_contents.append({"role": "user", "parts": restored_parts})
             
-            if role == "user":
-                if i == len(messages) - 1:
-                    rich = meta.get("_echo_rich_parts"); restored_parts = []
-                    if rich: restored_parts.extend(self._ensure_gemini_parts(rich, model_id))
-                    user_prompt = content if isinstance(content, str) else ""
-                    if not user_prompt and isinstance(content, list):
-                        for p in reversed(content):
-                            if isinstance(p, dict) and p.get("type") == "text": user_prompt = p.get("text", ""); break
-                            elif isinstance(p, str): user_prompt = p; break
-                    if user_prompt.strip(): restored_parts.append({"text": self._resolve_placeholders(user_prompt, model_id)})
-                    restored_parts = self._ensure_gemini_parts(restored_parts, model_id)
-                    self.user_data_manager.save_rich_payload(inv_hash, restored_parts)
-                else:
-                    payload = self.user_data_manager.get_rich_payload(inv_hash)
-                    if payload: restored_parts = self._ensure_gemini_parts(payload, model_id)
+            else:
+                # USER / ASSISTANT
+                if role in ["assistant", "model"]:
+                    content, _ = split_thought_process(content if isinstance(content, str) else str(content))
 
-            elif role in ["assistant", "model"]:
-                sig = None; tool_calls = m.get("tool_calls", [])
-                if tool_calls:
-                    bridge = self.user_data_manager.get_call_bridge(tool_calls[0].get("id"))
-                    if bridge: sig = bridge["signature"]
-                if not sig: sig = self.user_data_manager.get_signature(current_cumul)
-                restored_parts = self._ensure_gemini_parts(content, model_id)
-                if not tool_calls:
-                    tool_io = self.user_data_manager.state_manager.get_tool_io(current_cumul)
-                    if tool_io: restored_parts = [{"functionCall": {"name": tc["name"], "args": tc["args"]}} for tc in tool_io.get("calls", [])] + restored_parts
-                else:
-                    restored_parts = [{"functionCall": {"name": tc["function"]["name"], "args": orjson.loads(tc["function"]["arguments"])}} for tc in tool_calls] + restored_parts
+                draft_parts = meta.get("_echo_user_parts_draft") if (role == "user" and i == len(messages)-1) else None
                 
-                if sig and restored_parts:
-                    injected = False
-                    for p in restored_parts:
-                        if "functionCall" in p: p["thoughtSignature"] = sig; injected = True; break
-                    if not injected:
-                        for p in reversed(restored_parts):
-                            if "text" in p: p["thoughtSignature"] = sig; break
-                elif tool_calls:
-                    # Le parachute MAGIC_KEY est validé par la doc Google pour les historiques manuels
-                    for p in restored_parts:
-                        if "functionCall" in p: p["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION; break
-                    print(f"!!! [ECHO INFO] SUTURE : Signature manquante pour {tool_calls[0].get('id')}. Utilisation de la clé de secours officielle (Doc Google).", flush=True)
+                if role == "user":
+                    if draft_parts:
+                        restored_parts = []
+                        restored_parts.extend(self._ensure_gemini_parts(draft_parts, model_id))
+                        user_text = content if isinstance(content, str) else ""
+                        if user_text.strip(): restored_parts.append({"text": self._resolve_placeholders(user_text, model_id)})
+                    else:
+                        inv_hash = self.user_data_manager.calculate_invariant(role, content)
+                        restored_parts = self.user_data_manager.get_rich_payload(inv_hash) or self._ensure_gemini_parts(content, model_id)
+                else:
+                    # Assistant
+                    sig = self.user_data_manager.get_signature_by_id(msg_id) if msg_id else None
+                    if not sig:
+                        inv_hash = self.user_data_manager.calculate_invariant(role, content)
+                        current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
+                        sig = self.user_data_manager.get_signature(current_cumul)
+                    
+                    restored_parts = self._ensure_gemini_parts(content, model_id)
+                    tool_calls = m.get("tool_calls", [])
+                    if tool_calls:
+                        restored_parts = [{"functionCall": {"name": tc["function"]["name"], "args": orjson.loads(tc["function"]["arguments"])}} for tc in tool_calls] + restored_parts
+                    else:
+                        inv_hash = self.user_data_manager.calculate_invariant(role, content)
+                        current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
+                        tool_io = self.user_data_manager.state_manager.get_tool_io(current_cumul)
+                        if tool_io: restored_parts = [{"functionCall": {"name": tc["name"], "args": tc["args"]}} for tc in tool_io.get("calls", [])] + restored_parts
 
-            if restored_parts: final_contents.append({"role": "model" if role in ["assistant", "model"] else "user", "parts": restored_parts})
-            else: final_contents.append({"role": "model" if role in ["assistant", "model"] else "user", "parts": self._ensure_gemini_parts(content, model_id)})
-            self.user_data_manager.index_suture(current_cumul, chat_id, inv_hash, last_cumul)
-            last_cumul = current_cumul; i += 1
+                    if sig and restored_parts:
+                        for p in restored_parts:
+                            if "functionCall" in p: p["thoughtSignature"] = sig; break
+                        else:
+                            for p in restored_parts:
+                                if "text" in p: p["thoughtSignature"] = sig; break
+                    elif tool_calls:
+                        for p in restored_parts:
+                            if "functionCall" in p: p["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION; break
+
+                restored_parts = self._ensure_gemini_parts(restored_parts, model_id)
+                role_gemini = "model" if role in ["assistant", "model"] else "user"
+                final_contents.append({"role": role_gemini, "parts": restored_parts})
+                i += 1
+
+            # --- RÉPARATION DE LA SUTURE (Scellement immédiat pour le tour suivant) ---
+            if msg_id and updated_at and restored_parts:
+                self.user_data_manager.save_shadow(msg_id, updated_at, restored_parts, chat_id, role)
+
+            inv_hash = self.user_data_manager.calculate_invariant(role, restored_parts)
+            last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
 
         body["_echo_last_cumul"] = last_cumul
         if self.logger: self.logger.log("context_reconstructed", final_contents)
@@ -374,11 +392,9 @@ class StreamProcessor:
                     data = orjson.loads(line[6:]); self.full_raw_accumulator.append(data)
                     target = data.get("response", {}) if "response" in data else data
                     if "usageMetadata" in target:
-                        if self.usage_stats is None:
-                            self.usage_stats = {}
+                        if self.usage_stats is None: self.usage_stats = {}
                         self.usage_stats.update(target["usageMetadata"])
                     
-                    # --- [Nouveau] Récupération des Crédits au fil de l'eau ---
                     if "remainingCredits" in target:
                         if self.usage_stats is None: self.usage_stats = {}
                         for credit in target["remainingCredits"]:
@@ -386,10 +402,10 @@ class StreamProcessor:
                                 self.usage_stats["google_credits"] = str(credit.get("creditAmount", "0"))
                                 self.user_data_manager.save_auth_data('google_credits', self.usage_stats["google_credits"])
                                 break
-                    # ----------------------------------------------------------
                     
                     if "usageMetadata" in target or "remainingCredits" in target:
                         self.user_data_manager.save_context_stats(self.usage_stats)
+                    
                     cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
                     if cand and cand[0].get("content"):
                         for part in cand[0]["content"]["parts"]:
@@ -404,10 +420,7 @@ class StreamProcessor:
                             elif "text" in part:
                                 if in_think: yield "\n</think>\n"; in_think = False
                                 raw_t = part["text"]
-                                # INTERCEPTION DES MESSAGES ÉPHÉMÈRES (Garde-fous Google)
-                                if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t:
-                                    print(f"!!! [ECHO INTERCEPT] Garde-fou Google détecté et masqué : {raw_t}", flush=True)
-                                    continue
+                                if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t: continue
                                 self.accumulated_text += raw_t; yield raw_t
                 except: pass
         if in_think: yield "\n</think>\n"
@@ -424,10 +437,9 @@ class Pipe:
         HTTP_MAX_CONNECTIONS: int = Field(default=100); HTTP_MAX_KEEPALIVE: int = Field(default=20)
         HTTP_KEEPALIVE_EXPIRY: int = Field(default=300)
         DEBUG_MODE: bool = Field(default=False); MAX_CONTEXT_SIZE: int = Field(default=1048576)
-        RETRY_TIMEBASE: int = Field(default=2, description="Délai initial (sec) avant relance sur erreur serveur (429/50x).")
-        MAX_RETRIES: int = Field(default=5, description="Nombre max d'essais supplémentaires sur erreur serveur.")
+        RETRY_TIMEBASE: int = Field(default=2); MAX_RETRIES: int = Field(default=5)
     class UserValves(BaseModel):
-        SHOW_CONTEXT_METRICS: bool = Field(default=True, description="Affiche une barre HUD des tokens et du cache utilisés à la fin du message.")
+        SHOW_CONTEXT_METRICS: bool = Field(default=True)
         MODEL_SELECTION: Literal["gemini-3.1-pro-preview", "gemini-3-flash-preview"] = Field(default="gemini-3.1-pro-preview")
         PRO_THINKING_LEVEL: Literal["LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
@@ -443,203 +455,132 @@ class Pipe:
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
         auth = AuthService(orch.user_data_manager)
         
-        # --- NOUVEAU : Interception du code d'autorisation transmis par le filtre ---
+        # Interception OAuth
         auth_token = body.get("_auth_token")
         if auth_token:
             success, msg = auth.exchange_code(auth_token)
-            if not success:
-                yield f"❌ **Échec de l'authentification :** {msg}\n\n" + auth.get_auth_url()
-                return
-            yield "✅ **Authentification réussie !** Vous pouvez maintenant poser votre question.\n"
-            return
+            if not success: yield f"❌ Échec auth: {msg}\n" + auth.get_auth_url(); return
+            yield "✅ Authentification ECHO réussie !\n"; return
         
         creds = auth.get_valid_credentials()
         if not creds: yield auth.get_auth_url(); return
         pid, _ = auth.get_project_id(creds, self.valves.DEBUG_MODE)
         if not pid: yield "❌ Erreur Projet."; return
         
-        # --- [Nouveau] Récupération du Quota en arrière-plan pour les nouvelles sessions ---
-        messages = body.get("messages", [])
-        if len(messages) <= 2:
+        # Récupération Quota
+        if len(body.get("messages", [])) <= 2:
             await auth.fetch_user_quota_async(creds, pid, user_valves.MODEL_SELECTION)
-        # -----------------------------------------------------------------------------------
         
+        # Reconstruction contexte
         context = await orch.prepare_context(body, chat_id, __metadata__, events)
         sys_instr = {"parts": [{"text": "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."}]}
         think = user_valves.PRO_THINKING_LEVEL if user_valves.MODEL_SELECTION == "gemini-3.1-pro-preview" else user_valves.FLASH_THINKING_LEVEL
+        
         payload = {"model": user_valves.MODEL_SELECTION, "project": pid, "request": {"systemInstruction": sys_instr, "contents": context, "generationConfig": {"temperature": user_valves.TEMPERATURE, "maxOutputTokens": user_valves.MAX_TOKENS, "thinkingConfig": {"includeThoughts": True, "thinkingLevel": think.lower()}}}}
         tools = orch.convert_owui_tools(body.get("tools"))
         if tools: payload["request"]["tools"] = tools; payload["request"]["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
+        
         if orch.logger: orch.logger.log("google_request", payload)
         proc = StreamProcessor(orch.user_data_manager, chat_id, events, logger=orch.logger)
-        client = await _get_global_client(
-            self.valves.HTTP_CLIENT_TIMEOUT, 
-            self.valves.ENABLE_HTTP2,
-            self.valves.HTTP_MAX_CONNECTIONS,
-            self.valves.HTTP_MAX_KEEPALIVE,
-            self.valves.HTTP_KEEPALIVE_EXPIRY
-        )
+        client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.ENABLE_HTTP2, self.valves.HTTP_MAX_CONNECTIONS, self.valves.HTTP_MAX_KEEPALIVE, self.valves.HTTP_KEEPALIVE_EXPIRY)
         
         current_delay = self.valves.RETRY_TIMEBASE
-        
         for attempt in range(self.valves.MAX_RETRIES + 1):
             try:
                 async with client.stream("POST", f"{GOOGLE_API_BASE_URL}:streamGenerateContent?alt=sse", content=orjson.dumps(payload), headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}) as r:
                     if r.status_code in [429, 500, 503]:
-                        error_payload = await r.aread()
-                        code = r.status_code
-                        
-                        # --- [Nouveau] Synchronisation forcée du Quota sur erreur 429 ---
-                        if code == 429:
-                            await auth.fetch_user_quota_async(creds, pid, user_valves.MODEL_SELECTION)
-                        # ----------------------------------------------------------------
-                        
+                        if r.status_code == 429: await auth.fetch_user_quota_async(creds, pid, user_valves.MODEL_SELECTION)
                         if attempt < self.valves.MAX_RETRIES:
-                            await events.status(f"⚠️ Erreur API {code} (Essai {attempt+1}/{self.valves.MAX_RETRIES}). Pause de {current_delay}s...", done=False)
-                            await asyncio.sleep(current_delay)
-                            current_delay *= 3
-                            continue
-                        else:
-                            await events.status(f"❌ Erreur API persistante ({code}). Abandon.", done=True)
-                            yield f"❌ Erreur API Google ({code}). Veuillez réessayer plus tard."
-                            return
-                    
+                            await asyncio.sleep(current_delay); current_delay *= 3; continue
+                        else: yield f"❌ Erreur API Google ({r.status_code})."; return
                     r.raise_for_status()
-                    async for chunk in proc.process(r):
-                        yield chunk
-                    
-                    # --- [Restauration v167.23] Indexation Suture & HUD Metrics ---
-                    if chat_id and proc.usage_stats:
-                        tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
-                        inv = orch.user_data_manager.calculate_invariant("assistant", proc.accumulated_text, tool_io=tool_io)
-                        new_cumul = orch.user_data_manager.calculate_cumulative(inv, body.get("_echo_last_cumul"))
-                        orch.user_data_manager.save_cognitive(new_cumul, proc.captured_sig, None, tool_io)
-                        for c in proc.accumulated_calls: orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig, c["name"], c["args"])
-                        orch.user_data_manager.index_suture(new_cumul, chat_id, inv, body.get("_echo_last_cumul"))
-
-                    if user_valves.SHOW_CONTEXT_METRICS and proc.usage_stats:
-                        max_t = self.valves.MAX_CONTEXT_SIZE
-                        p_t = proc.usage_stats.get("promptTokenCount", 0)
-
-                        # --- Variables HUD ---
-                        plan_data = auth.user_data_manager.get_auth_data('google_plan_name')
-                        plan_name = plan_data[0] if plan_data else ""
-
-                        credits_val = proc.usage_stats.get("google_credits", "")
-                        if not credits_val:
-                            c_data = auth.user_data_manager.get_auth_data('google_credits')
-                            credits_val = c_data[0] if c_data else ""
-
-                        q_rem = auth.user_data_manager.get_auth_data('google_quota_remaining')
-                        q_lim = auth.user_data_manager.get_auth_data('google_quota_limit')
-                        q_rem_str = q_rem[0] if q_rem else "?"
-                        q_lim_str = q_lim[0] if q_lim else "?"
-                        quota_str = f"🎯 {q_rem_str}/{q_lim_str} req. | " if (q_rem_str != "?" and q_lim_str != "?") else ""
-                        
-                        c_t = proc.usage_stats.get("cachedContentTokenCount", 0)
-                        g_t = proc.usage_stats.get("candidatesTokenCount", 0)
-                        active_p_t = max(0, p_t - c_t)
-
-                        cache_pct = min(100, (c_t / max_t) * 100)
-                        prompt_pct = min(100, (active_p_t / max_t) * 100)
-                        gen_pct = min(100, (g_t / max_t) * 100)
-
-                        js_code = f"""
-                        (function() {{
-                            var navContainer = document.querySelector('nav div.flex.items-center.w-full.max-w-full');
-                            if (!navContainer) return;
-
-                            var rightControls = navContainer.querySelector('div.self-start.flex.flex-none.items-center');
-
-                            var oldHud = document.getElementById('echo-nav-context-hud');
-                            if (oldHud) oldHud.remove();
-
-                            var hud = document.createElement('div');
-                            hud.id = 'echo-nav-context-hud';
-                            hud.style.display = 'flex';
-                            hud.style.alignItems = 'center';
-                            hud.style.margin = '0 12px';
-                            hud.style.flexGrow = '8';
-                            hud.style.width = '66%';
-                            hud.style.minWidth = '350px';
-                            hud.style.opacity = '0.9';
-                            hud.style.transition = 'opacity 0.2s';
-                            hud.onmouseover = function() {{ this.style.opacity = '1'; }};
-                            hud.onmouseout = function() {{ this.style.opacity = '0.9'; }};
-
-                            var planName = "{plan_name}";
-                            var credits = "{credits_val}";
-                            var quotaInfo = "{quota_str}";
-                            var billingInfo = "";
-                            if (planName) billingInfo += `💳 ${{planName}} | ` + quotaInfo;
-                            if (credits && credits !== "0") billingInfo += `🔋 ${{credits}} crédits IA | `;
-
-                            hud.title = billingInfo + `🟪 Cache: {c_t} | 🟩 User/Prompt: {active_p_t} | 🟧 Generated: {g_t} | ⬜ Max: {max_t}`;  
-
-                            var label = document.createElement('span');
-                            label.innerText = 'CTX';
-                            label.style.fontSize = '10px';
-                            label.style.fontWeight = 'bold';
-                            label.style.color = 'var(--color-gray-500, #6b7280)';
-                            label.style.marginRight = '6px';
-                            label.style.whiteSpace = 'nowrap';
-                            if (window.innerWidth < 640) label.style.display = 'none';
-                            hud.appendChild(label);
-
-                            var barContainer = document.createElement('div');
-                            barContainer.style.display = 'flex';
-                            barContainer.style.width = '100%';
-                            barContainer.style.height = '8px';
-                            barContainer.style.backgroundColor = 'rgba(128, 128, 128, 0.2)';
-                            barContainer.style.borderRadius = '4px';
-                            barContainer.style.overflow = 'hidden';
-
-                            var cacheBar = document.createElement('div');
-                            cacheBar.style.width = '{cache_pct:.2f}%';
-                            cacheBar.style.backgroundColor = '#8b5cf6';
-                            barContainer.appendChild(cacheBar);
-
-                            var promptBar = document.createElement('div');
-                            promptBar.style.width = '{prompt_pct:.2f}%';
-                            promptBar.style.backgroundColor = '#10b981';
-                            barContainer.appendChild(promptBar);
-
-                            var genBar = document.createElement('div');
-                            genBar.style.width = '{gen_pct:.2f}%';
-                            genBar.style.backgroundColor = '#f59e0b';
-                            barContainer.appendChild(genBar);
-
-                            hud.appendChild(barContainer);
-
-                            if (rightControls) {{
-                                navContainer.insertBefore(hud, rightControls);
-                            }} else {{
-                                navContainer.appendChild(hud);
-                            }}
-                        }})();
-                        """
-                        await events.emit("execute", {"code": js_code})
-                    # --- [Fin Restauration] ---
-
+                    async for chunk in proc.process(r): yield chunk
                 break
-            except httpx.ReadTimeout:
+            except Exception as e:
                 if attempt < self.valves.MAX_RETRIES:
-                    await events.status(f"⚠️ Timeout de lecture (Essai {attempt+1}/{self.valves.MAX_RETRIES})...", done=False)
-                    await asyncio.sleep(current_delay); current_delay *= 2
-                    continue
-                else:
-                    await events.status("❌ Timeout persistant.", done=True)
-                    yield "❌ Erreur : Le serveur Google a mis trop de temps à répondre."
-                    return
-            except httpx.NetworkError as e:
-                if attempt < self.valves.MAX_RETRIES:
-                    await events.status(f"⚠️ Erreur réseau (Essai {attempt+1}/{self.valves.MAX_RETRIES})...", done=False)
-                    await asyncio.sleep(current_delay); current_delay *= 2
-                    continue
-                else:
-                    await events.status("❌ Erreur réseau persistante.", done=True)
-                    yield f"❌ Erreur réseau persistante : {str(e)}"
-                    return
-            except Exception as e: 
-                yield f"❌ Erreur système : {str(e)}"
-                return
+                    await asyncio.sleep(current_delay); current_delay *= 2; continue
+                else: yield f"❌ Erreur système : {str(e)}"; return
+
+        # --- SCELLEMENT FINAL (SUTURE DÉFINITIVE) ---
+        if chat_id and proc.usage_stats:
+            meta = __metadata__ or body.get("metadata", {})
+            
+            # 1. Scellement message Utilisateur (Le Draft complet)
+            user_msg_id = meta.get("_echo_user_msg_id")
+            user_updated_at = meta.get("_echo_user_msg_updated_at")
+            user_draft = meta.get("_echo_user_parts_draft")
+            if user_msg_id and user_draft:
+                user_text = body['messages'][-1].get('content', "")
+                full_user_parts = orch._ensure_gemini_parts(user_draft, user_valves.MODEL_SELECTION)
+                if user_text: full_user_parts.append({"text": orch._resolve_placeholders(user_text, user_valves.MODEL_SELECTION)})
+                orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
+
+            # 2. Scellement du Registre des Fichiers
+            files_to_seal = meta.get("_echo_files_to_seal", [])
+            for f in files_to_seal:
+                if f.get("status") == "success":
+                    orch.user_data_manager.mark_processed(chat_id, f['fid'], f['name'], f['mime'], f['type'])
+
+            # 3. Scellement Cognitif Assistant (Legacy Bridge & Tool Mapping)
+            tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
+            inv = orch.user_data_manager.calculate_invariant("assistant", proc.accumulated_text, tool_io=tool_io)
+            new_cumul = orch.user_data_manager.calculate_cumulative(inv, body.get("_echo_last_cumul"))
+            orch.user_data_manager.save_cognitive(new_cumul, proc.captured_sig, None, tool_io)
+            for c in proc.accumulated_calls: orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig, c["name"], c["args"])
+            orch.user_data_manager.index_suture(new_cumul, chat_id, inv, body.get("_echo_last_cumul"))
+
+        # --- HUD METRICS ---
+        if user_valves.SHOW_CONTEXT_METRICS and proc.usage_stats:
+            p_t = proc.usage_stats.get("promptTokenCount", 0)
+            c_t = proc.usage_stats.get("cachedContentTokenCount", 0)
+            g_t = proc.usage_stats.get("candidatesTokenCount", 0)
+            max_t = self.valves.MAX_CONTEXT_SIZE
+            
+            plan_data = orch.user_data_manager.get_auth_data('google_plan_name')
+            plan_name = plan_data[0] if plan_data else ""
+            credits_data = orch.user_data_manager.get_auth_data('google_credits')
+            credits_val = credits_data[0] if credits_data else "0"
+            q_rem = orch.user_data_manager.get_auth_data('google_quota_remaining')
+            q_lim = orch.user_data_manager.get_auth_data('google_quota_limit')
+            q_rem_str = q_rem[0] if q_rem else "?"
+            q_lim_str = q_lim[0] if q_lim else "?"
+            quota_str = f"🎯 {q_rem_str}/{q_lim_str} req. | " if (q_rem_str != "?" and q_lim_str != "?") else ""
+            
+            active_p_t = max(0, p_t - c_t)
+            cache_pct = min(100, (c_t / max_t) * 100)
+            prompt_pct = min(100, (active_p_t / max_t) * 100)
+            gen_pct = min(100, (g_t / max_t) * 100)
+
+            js_code = f"""
+            (function() {{
+                var navContainer = document.querySelector('nav div.flex.items-center.w-full.max-w-full');
+                if (!navContainer) return;
+                var rightControls = navContainer.querySelector('div.self-start.flex.flex-none.items-center');
+                var oldHud = document.getElementById('echo-nav-context-hud');
+                if (oldHud) oldHud.remove();
+                var hud = document.createElement('div');
+                hud.id = 'echo-nav-context-hud';
+                hud.style.cssText = 'display:flex;align-items:center;margin:0 12px;flex-grow:8;width:66%;min-width:350px;opacity:0.9;transition:opacity 0.2s;';
+                hud.onmouseover = function() {{ this.style.opacity = '1'; }};
+                hud.onmouseout = function() {{ this.style.opacity = '0.9'; }};
+                var billingInfo = "";
+                if ("{plan_name}") billingInfo += `💳 {plan_name} | {quota_str}`;
+                if ("{credits_val}" !== "0") billingInfo += `🔋 {credits_val} crédits IA | `;
+                hud.title = billingInfo + `🟪 Cache: {c_t} | 🟩 User/Prompt: {active_p_t} | 🟧 Generated: {g_t} | ⬜ Max: {max_t}`;
+                var label = document.createElement('span');
+                label.innerText = 'CTX'; label.style.cssText = 'font-size:10px;font-weight:bold;color:var(--color-gray-500, #6b7280);margin-right:6px;white-space:nowrap;';
+                if (window.innerWidth < 640) label.style.display = 'none';
+                hud.appendChild(label);
+                var barContainer = document.createElement('div');
+                barContainer.style.cssText = 'display:flex;width:100%;height:8px;background-color:rgba(128,128,128,0.2);border-radius:4px;overflow:hidden;';
+                var bars = [['#8b5cf6', {cache_pct}], ['#10b981', {prompt_pct}], ['#f59e0b', {gen_pct}]];
+                bars.forEach(b => {{
+                    var div = document.createElement('div');
+                    div.style.width = b[1] + '%'; div.style.backgroundColor = b[0];
+                    barContainer.appendChild(div);
+                }});
+                hud.appendChild(barContainer);
+                if (rightControls) navContainer.insertBefore(hud, rightControls); else navContainer.appendChild(hud);
+            }})();
+            """
+            await events.emit("execute", {"code": js_code})
