@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.32
-description: 6.32: Unified Registry mode (Full Metadata). Removed nouveaux_fichiers redundancy.
+version: 6.37
+description: 6.37: Filter session registry strictly by active message_ids for perfect Branching.
 """
 
 from pydantic import BaseModel, Field
@@ -20,8 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, EchoStateManager, resolve_upload_file_path
-from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime
+from echo_utils import EchoAuth, resolve_upload_file_path, EchoStateManager
+from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, ECHO_USERS_ROOT
 
 # Configuration du Logger
 logging.basicConfig(level=logging.INFO)
@@ -52,7 +52,7 @@ class Filter:
         self.toggle = True
         self.icon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIzIi8+PHBhdGggZD0iTTEyIDdWNW0wIDE0di0yTTcgMTJINW0xNCAwaC0ybTEuNS01LjVsLTEuNSAxLjVNOCAxNmwtMS41IDEuNU0xNy41IDE3LjVsLTEuNS0xLjVNOCA4TDYuNSA2LjUiLz48cGF0aCBkPSJNMiAxMmg0bTExIDBoNW0tMyAwbDMtM20tMyAzbDMgMyIvPjwvc3ZnPg=="
 
-    async def _process_file_task(self, user_id: str, file_obj: dict, token: str, project_id: str, thinking_level: str, chat_id: str, state_manager: EchoStateManager, events: Any) -> dict:
+    async def _process_file_task(self, user_id: str, file_obj: dict, token: str, project_id: str, thinking_level: str, chat_id: str, events: Any) -> dict:
         """Tâche de traitement de fichier (Smart Context, Binaire ou Index)."""
         file_id = file_obj.get("id") or file_obj.get("file", {}).get("id")
         filename = file_obj.get("name") or file_obj.get("file", {}).get("meta", {}).get("name", "inconnu")
@@ -157,20 +157,6 @@ class Filter:
             all_files = body.get("files", [])
             user_id = __user__.get("id", "system") if __user__ else "system"
             
-            # 1. Initialisation avec chat_id
-            state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
-
-            # 2. Rangement physique des fichiers
-            if all_files and state_manager:
-                for f in all_files:
-                    fid = f.get("id") or f.get("file", {}).get("id")
-                    old_path = resolve_upload_file_path(user_id, fid)
-                    if old_path and os.path.exists(old_path):
-                        new_path = os.path.join(state_manager.user_dir, "files", os.path.basename(old_path))
-                        if not os.path.exists(new_path):
-                            shutil.move(old_path, new_path)
-                            print(f"[ECHO-FILTER] 📦 Fichier {fid} rangé dans le coffre.", flush=True)
-
             if not msgs: return body
 
             # --- AUTH OAUTH INTERCEPTION ---
@@ -191,17 +177,22 @@ class Filter:
                 _, project_id = self.auth.get_credentials(__user__["id"])
 
             files_to_process = []
-            if state_manager and chat_id:
-                ids_in_body = [f.get("id") or f.get("file", {}).get("id") for f in all_files if (f.get("id") or f.get("file", {}).get("id"))]
-                known_files = state_manager.sync_state(chat_id, ids_in_body)
+            if chat_id:
+                safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+                vault_dir = os.path.normpath(os.path.join(ECHO_USERS_ROOT, safe_uid, "files"))
                 for f in all_files:
                     fid = f.get("id") or f.get("file", {}).get("id")
-                    if fid and fid not in known_files: files_to_process.append(f)
+                    if fid:
+                        path = resolve_upload_file_path(user_id, fid)
+                        if path and not os.path.normpath(path).startswith(vault_dir):
+                            files_to_process.append(f)
+                
+            print(f"[ECHO-FILTER DEBUG] Fichiers totaux: {len(all_files)} | À traiter: {len(files_to_process)}", flush=True)
 
             results = []
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
-                tasks = [self._process_file_task(user_id, f, token, project_id, "HIGH", chat_id, state_manager, events) for f in files_to_process]
+                tasks = [self._process_file_task(user_id, f, token, project_id, "HIGH", chat_id, events) for f in files_to_process]
                 for task in tasks:
                     results.append(await task)
                     await asyncio.sleep(0.5)
@@ -220,13 +211,17 @@ class Filter:
                     break
 
             if idx != -1:
-                # Récupération du registre enrichi (Passé)
-                registry = state_manager.get_session_registry(chat_id) if (state_manager and chat_id) else {}
+                # 1. Extraction des IDs de la branche historique active
+                active_msg_ids = [m.get("id") for m in msgs if m.get("id")]
                 
-                # Fusion immédiate des nouveaux fichiers (Présent) dans le registre
+                # 2. Récupération du registre depuis la BDD (Filtré par messages actifs)
+                state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
+                active_registry = state_manager.get_session_registry(chat_id, active_msg_ids) if chat_id else {}
+                
+                # 3. Ajout des nouveaux fichiers du tour courant
                 for r in results:
                     if r.get("status") == "success":
-                        registry[r.get("name")] = {
+                        active_registry[r.get("name")] = {
                             "id": r.get("fid"),
                             "mime": r.get("mime"),
                             "statut": r.get("type")
@@ -239,7 +234,8 @@ class Filter:
                 sys_loc = meta_vars.get("{{USER_LOCATION}}", "Inconnu")
                 u_loc = getattr(u_v, "OVERRIDE_LOCATION", "")
                 final_loc = u_loc if u_loc else sys_loc
-
+                
+                # 5. Génération du bloc JSON etat_echo complet
                 etat_echo = {
                     "version_framework_echo": "##ECHO_VERSION##",
                     "moteur_technique_ia": "##GEMINI_ENGINE##",
@@ -249,12 +245,21 @@ class Filter:
                         "localisation": final_loc,
                         "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                     },
-                    "registre_fichiers": registry
+                    "registre_fichiers": active_registry
+                }
+
+                body["metadata"]["_echo_env_info"] = {
+                    "nom_utilisateur": display_name,
+                    "localisation": final_loc,
+                    "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
+                    "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                 }
                 
                 rich_parts = []
-                if native_parts: rich_parts.extend(native_parts)
+                # 6. Injection de l'état en premier
                 rich_parts.append({"text": f"```json:etat_echo\n{json.dumps(etat_echo, ensure_ascii=False)}\n```\n\n"})
+                
+                if native_parts: rich_parts.extend(native_parts)
                 
                 for res in results:
                     if res.get("status") == "success":

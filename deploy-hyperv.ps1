@@ -45,7 +45,7 @@ $DNS_SERVERS = "[86.54.11.100, 1.1.1.1, 8.8.8.8]"
 $SWITCH_NAME = "Bridge LAN"
 
 # --- CONFIGURATION BRANCHE ---
-# $BRANCHE = "dev"
+#$BRANCHE = "dev"
 $BRANCHE = "main"
 
 function Pause-OnError {

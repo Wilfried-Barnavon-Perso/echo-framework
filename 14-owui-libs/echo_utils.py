@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils
 author: ECHO Framework
-version: 2.22
-description: 2.22: Added temporal validation (updated_at) to message shadows.
+version: 2.26
+description: 2.26: Added message_id to processed_files for branch-aware registry filtering.
 """
 
 import os
@@ -212,6 +212,10 @@ class EchoStateManager:
                 except: pass
                 try: conn.execute("ALTER TABLE tool_journal ADD COLUMN message_id TEXT")
                 except: pass
+                try: conn.execute("ALTER TABLE processed_files ADD COLUMN file_content TEXT")
+                except: pass
+                try: conn.execute("ALTER TABLE processed_files ADD COLUMN message_id TEXT")
+                except: pass
 
                 # Autres tables de l'infrastructure
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_id ON suture_index (chat_id)")
@@ -219,7 +223,7 @@ class EchoStateManager:
                 conn.execute("CREATE TABLE IF NOT EXISTS cognitive_signatures (cumulative_hash TEXT PRIMARY KEY, thought_signature TEXT NOT NULL, updated_at INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS tool_journal (cumulative_hash TEXT PRIMARY KEY, io_json TEXT NOT NULL, updated_at INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS thought_archive (cumulative_hash TEXT PRIMARY KEY, raw_thought TEXT NOT NULL, updated_at INTEGER)")
-                conn.execute("CREATE TABLE IF NOT EXISTS processed_files (chat_id TEXT, file_id TEXT, filename TEXT, mime TEXT, mode TEXT, timestamp INTEGER, PRIMARY KEY (chat_id, file_id))")
+                conn.execute("CREATE TABLE IF NOT EXISTS processed_files (chat_id TEXT, file_id TEXT, filename TEXT, mime TEXT, mode TEXT, timestamp INTEGER, file_content TEXT, PRIMARY KEY (chat_id, file_id))")
                 conn.execute("CREATE TABLE IF NOT EXISTS call_bridge (call_id TEXT PRIMARY KEY, signature TEXT NOT NULL, function_name TEXT NOT NULL, args_json TEXT, timestamp INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS context_stats (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
@@ -277,34 +281,37 @@ class EchoStateManager:
     def calculate_cumulative_hash(self, inv: str, parent: str = None) -> str:
         return hashlib.sha256(f"{inv}|{parent or ''}".encode("utf-8")).hexdigest()
 
-    def get_session_registry(self, chat_id: str) -> dict:
+    def get_session_registry(self, chat_id: str, active_message_ids: Optional[List[str]] = None) -> dict:
         reg = {}
         try:
             with self._get_connection() as conn:
-                for row in conn.execute("SELECT filename, file_id, mime, mode FROM processed_files WHERE chat_id = ?", (chat_id,)).fetchall():
+                if active_message_ids:
+                    placeholders = ','.join('?' for _ in active_message_ids)
+                    query = f"SELECT filename, file_id, mime, mode FROM processed_files WHERE chat_id = ? AND message_id IN ({placeholders})"
+                    params = [chat_id] + active_message_ids
+                    rows = conn.execute(query, params).fetchall()
+                else:
+                    rows = conn.execute("SELECT filename, file_id, mime, mode FROM processed_files WHERE chat_id = ?", (chat_id,)).fetchall()
+                
+                for row in rows:
                     reg[row[0]] = {
-                        "id": row[1], 
+                        "id": row[1],
                         "mime": row[2] or "application/octet-stream",
                         "statut": row[3] or "unknown"
                     }
         except: pass
         return reg
-
-    def mark_processed(self, chat_id: str, file_id: str, filename: str, mime: str, mode: str):
+    def mark_processed(self, chat_id: str, file_id: str, filename: str, mime: str, mode: str, content: Optional[str] = None, message_id: Optional[str] = None):
         try:
             with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO processed_files (chat_id, file_id, filename, mime, mode, timestamp) VALUES (?, ?, ?, ?, ?, ?)", (chat_id, file_id, filename, mime, mode, int(time.time())))
+                conn.execute("INSERT OR REPLACE INTO processed_files (chat_id, file_id, filename, mime, mode, timestamp, file_content, message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (chat_id, file_id, filename, mime, mode, int(time.time()), content, message_id))
                 conn.commit()
-        except: pass
-
-    def sync_state(self, chat_id: str, current_file_ids: List[str]) -> Set[str]:
-        try:
-            with self._get_connection() as conn:
-                db_files = {row[0] for row in conn.execute("SELECT file_id FROM processed_files WHERE chat_id = ?", (chat_id,)).fetchall()}
-                cur_set = set(current_file_ids); to_delete = list(db_files - cur_set)
-                if to_delete: conn.executemany("DELETE FROM processed_files WHERE chat_id = ? AND file_id = ?", [(chat_id, fid) for fid in to_delete])
-                conn.commit(); return db_files.intersection(cur_set)
-        except: return set()
+        except:
+            try:
+                with self._get_connection() as conn:
+                    conn.execute("INSERT OR REPLACE INTO processed_files (chat_id, file_id, filename, mime, mode, timestamp) VALUES (?, ?, ?, ?, ?, ?)", (chat_id, file_id, filename, mime, mode, int(time.time())))
+                    conn.commit()
+            except: pass
 
     def save_call_bridge(self, call_id: str, signature: str, function_name: str, args: dict = None):
         try:

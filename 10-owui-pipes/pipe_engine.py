@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 168.3
-description: 168.3: Strict temporal validation for Bit-Perfect Suture. Anti-Ghosting on message edit.
+version: 168.7
+description: 168.7: Inject message_id into mark_processed for strict branch-aware registry.
 """
 
 # ==============================================================================
@@ -130,9 +130,9 @@ class UserDataManager:
         """Scellement définitif de l'ombre d'un message."""
         self.state_manager.save_message_shadow(message_id, chat_id, role, parts)
 
-    def mark_processed(self, chat_id: str, fid: str, name: str, mime: str, status: str):
+    def mark_processed(self, chat_id: str, fid: str, name: str, mime: str, status: str, content: Optional[str] = None, message_id: Optional[str] = None):
         """Scellement du registre des fichiers."""
-        self.state_manager.mark_processed(chat_id, fid, name, mime, status)
+        self.state_manager.mark_processed(chat_id, fid, name, mime, status, content, message_id)
 
     def get_rich_payload(self, invariant: str) -> Optional[List[dict]]:
         return self.state_manager.get_rich_payload(invariant)
@@ -314,7 +314,7 @@ class Orchestrator:
                 draft_parts = meta.get("_echo_user_parts_draft") if (role == "user" and i == len(messages)-1) else None
                 
                 if role == "user":
-                    if draft_parts:
+                    if draft_parts is not None:
                         restored_parts = []
                         restored_parts.extend(self._ensure_gemini_parts(draft_parts, model_id))
                         user_text = content if isinstance(content, str) else ""
@@ -515,11 +515,15 @@ class Pipe:
                 if user_text: full_user_parts.append({"text": orch._resolve_placeholders(user_text, user_valves.MODEL_SELECTION)})
                 orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
 
-            # 2. Scellement du Registre des Fichiers
+            # 2. Scellement du Registre des Fichiers et Rangement
             files_to_seal = meta.get("_echo_files_to_seal", [])
             for f in files_to_seal:
                 if f.get("status") == "success":
-                    orch.user_data_manager.mark_processed(chat_id, f['fid'], f['name'], f['mime'], f['type'])
+                    content_to_save = None
+                    if f.get("type") == "summarized": content_to_save = f.get("content")
+                    elif f.get("type") == "transmitted" and f.get("sub_type") == "text": content_to_save = f.get("content")
+                    orch.user_data_manager.state_manager.mark_processed(chat_id, f['fid'], f['name'], f['mime'], f['type'], content_to_save, user_msg_id)
+                    orch.user_data_manager.state_manager.move_to_vault(f['fid'], f['name'])
 
             # 3. Scellement Cognitif Assistant (Legacy Bridge & Tool Mapping)
             tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
