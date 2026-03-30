@@ -1,13 +1,14 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.37
-description: 6.37: Filter session registry strictly by active message_ids for perfect Branching.
+version: 6.42
+description: 6.42: Updated model timeout.
 """
 
 from pydantic import BaseModel, Field
 from typing import Optional, List, Union, Dict, Any
-import json
+import orjson as json
+import pybase64 as base64
 import os
 import sys
 import re
@@ -21,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoAuth, resolve_upload_file_path, EchoStateManager
-from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, ECHO_USERS_ROOT
+from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, ECHO_USERS_ROOT, GOOGLE_API_KEY_REGEX
 
 # Configuration du Logger
 logging.basicConfig(level=logging.INFO)
@@ -71,7 +72,6 @@ class Filter:
         # --- CAS 1 : IMAGE / AUDIO / VIDEO / PDF (Injection Binaire Directe si petit) ---
         if is_supported and any(x in mime for x in ["image/", "audio/", "video/", "pdf"]) and size < self.valves.MAX_DIRECT_TEXT_SIZE:
             try:
-                import base64
                 print(f"[ECHO-FILTER] --> Mode: BINAIRE (Base64)", flush=True)
                 await events.status(f"Encapsulation de {filename}...", False)
                 with open(path, "rb") as f:
@@ -99,7 +99,7 @@ class Filter:
 
         # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (Smart Context via Gemini Flash) ---
         if self.valves.ENABLE_SMART_CONTEXT and is_supported:
-            if token and project_id:
+            if token:
                 try:
                     print(f"[ECHO-FILTER] --> Mode: SMART_CONTEXT (Gemini Flash)", flush=True)
                     await events.status(f"Analyse intelligente de {filename}...", False)
@@ -116,16 +116,13 @@ class Filter:
                         content_part = {"inline_data": {"mime_type": mime, "data": b64_data}}
 
                     payload = {
-                        "model": "gemini-3-flash-preview", "project": project_id,
-                        "request": {
-                            "systemInstruction": {"parts": [{"text": "Tu es l'unité de prétraitement contextuel d'ECHO. Ta mission est de produire un résumé technique exhaustif et structuré du fichier fourni. Identifie les points clés, la structure et le but du document."}]},
-                            "contents": [{"role": "user", "parts": [content_part]}],
-                            "generationConfig": {"temperature": 0.1, "thinkingConfig": {"includeThoughts": False}}
-                        }
+                        "contents": [{"role": "user", "parts": [content_part]}],
+                        "systemInstruction": {"parts": [{"text": "Tu es l'unité de prétraitement contextuel d'ECHO. Ta mission est de produire un résumé technique exhaustif et structuré du fichier fourni. Identifie les points clés, la structure et le but du document."}]},
+                        "generationConfig": {"temperature": 0.1}
                     }
-                    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
+                    headers = {"x-goog-api-key": token, "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
                     async with httpx.AsyncClient() as client:
-                        resp = await client.post(f"{GOOGLE_API_BASE_URL}:generateContent", headers=headers, json=payload, timeout=90)
+                        resp = await client.post(f"{GOOGLE_API_BASE_URL}/models/gemini-3-flash-preview:generateContent?key={token}", headers=headers, json=payload, timeout=120)
                     
                     if resp.status_code == 200:
                         data = resp.json()
@@ -159,22 +156,22 @@ class Filter:
             
             if not msgs: return body
 
-            # --- AUTH OAUTH INTERCEPTION ---
+            # --- AUTH API KEY INTERCEPTION ---
             if len(msgs) >= 2:
                 prev_content = str(msgs[-2].get("content", ""))
                 if "(ECHO_SESSION_AUTH_PENDING)" in prev_content:
-                    last_content = str(msgs[-1].get("content", ""))
-                    match = re.search(r"(4/[\w-]+)", last_content)
-                    if match:
-                        body["_auth_token"] = match.group(1)
-                        msgs[-1]["content"] = "🔐 *Authentification ECHO en cours...*"
+                    last_content = str(msgs[-1].get("content", "")).strip()
+                    if re.match(GOOGLE_API_KEY_REGEX, last_content):
+                        # Le filtre intercepte et passe la clé au Pipe via le body
+                        # et masque le contenu du message dans l'interface utilisateur.
+                        body["_api_key"] = last_content
+                        msgs[-1]["content"] = "🔐 *Vérification de la clé API Google en cours...*"
                         return body
 
             # --- 3. TRAITEMENT DES FICHIERS (DRAFT) ---
-            token, project_id = None, None
+            token = None
             if __user__ and "id" in __user__:
-                token = await self.auth.refresh_google_token(__user__["id"])
-                _, project_id = self.auth.get_credentials(__user__["id"])
+                token = self.auth.get_api_key(__user__["id"])
 
             files_to_process = []
             if chat_id:
@@ -192,7 +189,7 @@ class Filter:
             results = []
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
-                tasks = [self._process_file_task(user_id, f, token, project_id, "HIGH", chat_id, events) for f in files_to_process]
+                tasks = [self._process_file_task(user_id, f, token, None, "HIGH", chat_id, events) for f in files_to_process]
                 for task in tasks:
                     results.append(await task)
                     await asyncio.sleep(0.5)
@@ -238,13 +235,11 @@ class Filter:
                 # 5. Génération du bloc JSON etat_echo complet
                 etat_echo = {
                     "version_framework_echo": "##ECHO_VERSION##",
-                    "moteur_technique_ia": "##GEMINI_ENGINE##",
+                    "version_gemini": "##GEMINI_ENGINE##",
                     "nom_utilisateur": display_name,
-                    "contexte_temporel": {
-                        "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
-                        "localisation": final_loc,
-                        "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
-                    },
+                    "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
+                    "localisation": final_loc,
+                    "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC"),
                     "registre_fichiers": active_registry
                 }
 
@@ -257,7 +252,7 @@ class Filter:
                 
                 rich_parts = []
                 # 6. Injection de l'état en premier
-                rich_parts.append({"text": f"```json:etat_echo\n{json.dumps(etat_echo, ensure_ascii=False)}\n```\n\n"})
+                rich_parts.append({"text": f"```json:etat_echo\n{json.dumps(etat_echo).decode('utf-8')}\n```\n\n"})
                 
                 if native_parts: rich_parts.extend(native_parts)
                 
@@ -290,5 +285,7 @@ class Filter:
         msgs = body.get("messages", [])
         for m in msgs:
             content = str(m.get("content", ""))
-            if content.startswith("4/") or "Authentification ECHO en cours" in content: m["content"] = "****************"
+            # Masquage définitif de la clé API pour l'affichage UI
+            if re.search(GOOGLE_API_KEY_REGEX, content) or "Vérification de la clé API" in content or "Authentification ECHO en cours" in content:
+                m["content"] = "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]"
         return body

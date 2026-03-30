@@ -1,14 +1,14 @@
 """
 title: Show Web Replay
 author: Wilfried BARNAVON
-version: 3.0
-description: 3.0: Vault Redirection support. Scans user vault for screenshots instead of global upload dir.
+version: 3.2
+description: 3.2: Fixed JavaScript syntax error in replay shell.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTEyIDN2MTgiLz48cGF0aCBkPSJNMTcgM3YxOCIvPjxwYXRoIGQ9Ik0zIDdoMTgiLz48cGF0aCBkPSJNMyAxMmgyMSIvPjxwYXRoIGQ9Ik0zIDE3aDE4Ii8+PC9zdmc+
 """
 
 import os
-import json
-import base64
+import orjson as json
+import pybase64 as base64
 import time
 import logging
 import sys
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
     """Génère le script JS Cockpit (Interface et Listeners)."""
-    ts_json = json.dumps(timestamps)
+    ts_json = json.dumps(timestamps).decode('utf-8')
     return f"""
     (function() {{
         try {{

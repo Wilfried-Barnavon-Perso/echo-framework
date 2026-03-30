@@ -1,12 +1,12 @@
 """
 title: ECHO Organic Memory Retrieval
 author: Wilfried BARNAVON
-version: 1.0
-description: Outil de rappel sémantique (RAG) pour la mémoire organique ECHO.
+version: 1.2
+description: 1.2: Migrated to Google AI Studio API Key authentication and standard Gemini Embedding.
 """
 
 from typing import Optional, List, Any, Dict
-import json
+import orjson as json
 import os
 import sys
 import httpx
@@ -54,24 +54,23 @@ class Tools:
         try:
             await events.status(f"🧠 Recherche dans la mémoire organique : '{query}'...")
             
-            # 1. Récupération du token
-            token = await self.auth.refresh_google_token(user_id)
-            if not token:
-                return wrap_tool_output(text="❌ Erreur d'authentification Google.")
+            # 1. Récupération de la clé API (v5.90+)
+            api_key = self.auth.get_api_key(user_id)
+            if not api_key:
+                return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune clé API Google AI Studio trouvée.")
 
-            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
-
-            # 2. Vectorisation de la requête (Embedding)
-            embed_url = f"{GOOGLE_API_BASE_URL}:embedContent?model=models/gemini-embedding-2-preview"
+            # 2. Vectorisation de la requête (Embedding AI Studio)
+            embed_url = f"{GOOGLE_API_BASE_URL}/models/text-embedding-004:embedContent?key={api_key}"
             payload_embed = {
+                "model": "models/text-embedding-004",
                 "content": {"parts": [{"text": query}]}
             }
             
             async with httpx.AsyncClient() as client:
-                resp_embed = await client.post(embed_url, headers=headers, json=payload_embed, timeout=30)
+                resp_embed = await client.post(embed_url, headers={"User-Agent": ECHO_USER_AGENT}, json=payload_embed, timeout=30)
                 if resp_embed.status_code != 200:
                     logger.error(f"[ECHO-MEMORY-TOOL] Erreur Embedding: {resp_embed.text}")
-                    return wrap_tool_output(text="❌ Impossible de vectoriser la recherche.")
+                    return wrap_tool_output(text="❌ Impossible de vectoriser la recherche (AI Studio).")
                 
                 query_vector = resp_embed.json()["embedding"]["values"]
 

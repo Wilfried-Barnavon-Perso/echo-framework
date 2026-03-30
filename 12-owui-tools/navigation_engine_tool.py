@@ -1,7 +1,7 @@
 import httpx
-import json
+import orjson as json
 import asyncio
-import base64
+import pybase64 as base64
 import os
 import time
 import sys
@@ -10,11 +10,14 @@ from typing import Optional, Literal, Dict, Any, List
 
 """
 ================================================================================
-TOOL : ECHO NAVIGATION ENGINE (v6.68 - VAULT REDIRECTION)
-VERSION : 6.68
+TOOL : ECHO NAVIGATION ENGINE (v6.69 - ORJSON & PYBASE64)
+VERSION : 6.69
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-03-23
+DATE MAJ : 2026-03-26
 
+CHANGELOG 6.69 :
+- PERF: Migration to orjson and pybase64 for high-performance processing.
+- FIX: Explicit decoding for JSON strings injected into JavaScript Cockpit.
 CHANGELOG 6.68 :
 - FEAT: Direct Vault storage for screenshots (security and isolation). Removed UPLOADS_DIR dependency for frames.
 CHANGELOG 6.67 :
@@ -686,7 +689,7 @@ class Tools:
                 })
             
             return wrap_tool_output(
-                text=json.dumps(history, indent=2), 
+                text=json.dumps(history, option=json.OPT_INDENT_2).decode('utf-8'), 
                 status={"status": "success", "count": len(history)},
                 nouveaux_fichiers=nouveaux_fichiers
             )

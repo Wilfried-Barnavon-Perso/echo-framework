@@ -1,13 +1,14 @@
 """
 title: ECHO Smart Memory Filter
 author: Wilfried BARNAVON
-version: 1.1
-description: 1.1: Added Priority management and refined Multi-User isolation.
+version: 1.2
+description: 1.2: Migration to orjson for high-performance distillation.
 """
 
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Dict
-import json
+import orjson as json
+
 import os
 import sys
 import asyncio
@@ -16,6 +17,7 @@ import time
 import httpx
 import random
 import hashlib
+
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")

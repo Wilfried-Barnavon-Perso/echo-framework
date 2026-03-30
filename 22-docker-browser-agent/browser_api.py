@@ -1,10 +1,14 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 8.7 (SECURE HTML ENCAPSULATION)
+VERSION : 8.9 (ORJSON & PYBASE64)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-03-12
+DATE MAJ : 2026-03-26
 
+CHANGELOG 8.9 :
+- PERF: Migration to orjson and pybase64 with explicit decoding.
+CHANGELOG 8.8 :
+- PERF: Migration to orjson and pybase64 for high-performance processing.
 CHANGELOG 8.7 :
 - FEAT: Added 'get_attribute' action to safely retrieve absolute URLs (src, href) from DOM elements.
 CHANGELOG 8.6 :
@@ -19,7 +23,7 @@ CHANGELOG 8.4 :
 """
 
 import asyncio
-import base64
+import pybase64 as base64
 import os
 import secrets
 import shutil
@@ -27,7 +31,7 @@ import time
 import random
 import uuid
 import logging
-import json
+import orjson as json
 import html2text
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException

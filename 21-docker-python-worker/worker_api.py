@@ -1,14 +1,18 @@
 from flask import Flask, request, jsonify # pyright: ignore[reportMissingImports]
 import sys, io, contextlib, traceback, multiprocessing, tempfile, os
 import logging
+import orjson as json
+import pybase64 as base64
 
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : 1.2 (User Awareness & Logging)
+VERSION : 1.3 (ORJSON & PYBASE64 Migration)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-01-20
+DATE MAJ : 2026-03-27
 
+CHANGELOG 1.3 :
+- Migrated to orjson and pybase64 for consistency across the framework.
 CHANGELOG 1.2 :
 - Ajout du logging de l'ID utilisateur (X-OpenWebUI-User-Id).
 - Maintien du mode 'threaded' pour le parallélisme.

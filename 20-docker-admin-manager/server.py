@@ -2,14 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.23 (Semantic Truth Alignment)
+VERSION : 5.24 (Syntax Fix)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-03-22
+DATE MAJ : 2026-03-29
 
 --- DESCRIPTION ARCHITECTURALE ---
 Ce micro-service assure la régulation et le monitoring du framework ECHO.
 Architecture ECHO-Native avec distinction entre stockage et sessions.
 
+--- CHANGELOG 5.24 ---
+- Correction : Résolution d'une erreur de syntaxe fatale en fin de fichier.
 --- CHANGELOG 5.23 ---
 - Vérité Sémantique : Le compteur "Sessions Actives" ne cible plus que les .db de chats.
 - Correction du décalage : Exclusion de identity.db et des fichiers docs du compteur de sessions.
@@ -25,7 +27,7 @@ import subprocess
 import datetime
 import glob
 import secrets
-import json
+import orjson as json
 import time
 import threading
 import shutil
@@ -245,13 +247,13 @@ def load_settings():
     c = DEFAULT_BACKUP_CONFIG.copy()
     if os.path.exists(SETTINGS_FILE):
         try:
-            with open(SETTINGS_FILE, 'r') as f: c.update(json.load(f))
+            with open(SETTINGS_FILE, 'r') as f: c.update(json.loads(f.read()))
         except: pass
     return c
 
 def save_settings(new_s):
     c = load_settings(); c.update(new_s)
-    with open(SETTINGS_FILE, 'w') as f: json.dump(c, f, indent=4)
+    with open(SETTINGS_FILE, 'w') as f: f.write(json.dumps(c, option=json.OPT_INDENT_2).decode('utf-8'))
     update_backup_schedule()
 
 def perform_backup_task():

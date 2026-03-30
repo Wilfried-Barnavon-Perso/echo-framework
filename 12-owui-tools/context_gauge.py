@@ -7,7 +7,7 @@ description: 2.8: Aligned with v5.76.0 tiered database hierarchy (identity.db + 
 
 from pydantic import BaseModel, Field
 import os
-import json
+import orjson as json
 import sqlite3
 import sys
 from typing import Any
@@ -150,4 +150,4 @@ class Tools:
                 "reset_time": q_reset
             }
             
-        return wrap_tool_output(text=json.dumps(payload, indent=2), status={"status": "success", "load_percent": percent, "tokens": est_tokens})
+        return wrap_tool_output(text=json.dumps(payload, option=json.OPT_INDENT_2).decode('utf-8'), status={"status": "success", "load_percent": percent, "tokens": est_tokens})

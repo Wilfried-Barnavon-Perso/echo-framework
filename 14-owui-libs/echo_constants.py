@@ -1,8 +1,8 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 1.6
-description: 1.6: New User Agent.
+version: 1.8
+description: 1.8: Fixed API Key Regex to properly accept dashes.
 """
 
 import os
@@ -31,25 +31,15 @@ ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 ECHO_USER_AGENT = "GeminiCLI/0.33.1"
 
 # ==============================================================================
-# 1. PROTOCOLE GOOGLE CLOUD
+# 1. PROTOCOLE GOOGLE AI STUDIO (GEMINI API)
 # ==============================================================================
 
-GOOGLE_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "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"
+GOOGLE_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+GOOGLE_AI_STUDIO_URL = GOOGLE_API_BASE_URL
 
-GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
-GOOGLE_REDIRECT_URI = "https://codeassist.google.com/authcode"
-
-GOOGLE_API_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal"
-GOOGLE_SSE_URL = f"{GOOGLE_API_BASE_URL}:streamGenerateContent?alt=sse"
-
-GOOGLE_SCOPES = [
-    "https://www.googleapis.com/auth/cloud-platform",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "openid",
-]
+# Regex de validation de clé API Google (AIza...)
+# Le tiret doit être à la fin de la classe de caractères pour éviter les erreurs de plage
+GOOGLE_API_KEY_REGEX = r"^AIza[0-9A-Za-z_-]{35}$"
 
 # ==============================================================================
 # 2. MAPPING MIME TYPES

@@ -1,13 +1,14 @@
 """
 title: ECHO Shared Utils
 author: ECHO Framework
-version: 2.26
-description: 2.26: Added message_id to processed_files for branch-aware registry filtering.
+version: 2.30
+description: 2.30: Migrated to Google AI Studio API Key authentication.
 """
 
 import os
 import sqlite3
-import json
+import orjson as json
+import pybase64 as base64
 import requests
 import time
 import asyncio
@@ -19,13 +20,12 @@ import shutil
 from typing import Optional, Tuple, List, Set, Any, Union, Dict
 
 # Alias pour json standard si besoin
-import json as std_json
+import orjson as std_json
 
 # Importation directe (Strict)
 from echo_constants import (
     ECHO_UPLOADS_DIR, ECHO_USER_DBS_DIR, ECHO_VERSION_PATH,
-    GOOGLE_TOKEN_URI, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
-    ECHO_USER_AGENT, ECHO_USERS_ROOT
+    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_USERS_ROOT
 )
 
 # ==============================================================================
@@ -45,7 +45,7 @@ def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
 
 def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[dict] = None, nouveaux_fichiers: List[dict] = None) -> dict:
     if nouveaux_fichiers:
-        json_str = std_json.dumps(nouveaux_fichiers, ensure_ascii=False, indent=2)
+        json_str = json.dumps(nouveaux_fichiers, option=json.OPT_INDENT_2).decode('utf-8')
         text += f"\n\n```json:nouveaux_artefacts\n{json_str}\n```"
     return {"text": text, "status": status or {"status": "success"}, "echo_tool_multiparts": echo_tool_multiparts or []}
 
@@ -125,47 +125,28 @@ class EchoAuth:
         return path
 
     def get_credentials(self, user_id: str = None) -> Tuple[Optional[str], Optional[str]]:
+        """Récupère la clé API Google (v5.90+). Le project_id n'est plus requis."""
         db_path = self._get_db_path(user_id)
         if not os.path.exists(db_path): return None, None
         try:
             conn = sqlite3.connect(f"file://{db_path}?mode=ro", uri=True, timeout=5.0)
             cursor = conn.cursor()
-            cursor.execute("SELECT value FROM auth_data WHERE key = 'google_token'")
-            row_token = cursor.fetchone()
-            cursor.execute("SELECT value FROM auth_data WHERE key = 'google_project_id'")
-            row_pid = cursor.fetchone()
+            cursor.execute("SELECT value FROM auth_data WHERE key = 'google_api_key'")
+            row = cursor.fetchone()
             conn.close()
-            if not row_token: return None, None
-            token_data = json.loads(row_token[0])
-            access_token = token_data.get("token") or token_data.get("access_token")
-            project_id = row_pid[0] if row_pid else None
-            if project_id: project_id = project_id.replace("projects/", "")
-            return access_token, project_id
+            return (row[0], None) if row else (None, None)
         except: return None, None
 
-    def get_project_id_from_cache(self) -> Optional[str]:
-        _, pid = self.get_credentials(); return pid
+    def get_api_key(self, user_id: str = None) -> Optional[str]:
+        api_key, _ = self.get_credentials(user_id); return api_key
+
+    def get_google_token(self, user_id: str = None) -> Optional[str]:
+        """Alias pour la compatibilité avec les outils historiques."""
+        return self.get_api_key(user_id)
 
     async def refresh_google_token(self, user_id: str = None) -> Optional[str]:
-        db_path = self._get_db_path(user_id)
-        if not os.path.exists(db_path): return None
-        try:
-            conn = sqlite3.connect(db_path, timeout=5.0)
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM auth_data WHERE key = 'google_token'")
-            row = cursor.fetchone()
-            if not row: conn.close(); return None
-            token_data = json.loads(row[0]); refresh_token = token_data.get("refresh_token")
-            if not refresh_token: conn.close(); return None
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(GOOGLE_TOKEN_URI, data={"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "refresh_token": refresh_token, "grant_type": "refresh_token"})
-                if resp.status_code == 200:
-                    token_data.update(resp.json())
-                    cursor.execute("UPDATE auth_data SET value = ?, updated_at = ? WHERE key = 'google_token'", (json.dumps(token_data), int(time.time())))
-                    conn.commit(); conn.close(); return token_data.get("access_token") or token_data.get("token")
-            conn.close()
-        except: pass
-        return None
+        """Legacy : Les API Keys ne se rafraîchissent pas automatiquement."""
+        return self.get_api_key(user_id)
 
 # ==============================================================================
 # SECTION 5 : GESTIONNAIRE D'ÉTAT (SQLite)
@@ -238,9 +219,8 @@ class EchoStateManager:
         if not message_id: return
         try:
             with self._get_connection() as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at) VALUES (?, ?, ?, ?, ?)",
-                    (message_id, chat_id, role, std_json.dumps(parts), int(time.time()))
+                conn.execute("INSERT OR REPLACE INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (message_id, chat_id, role, std_json.dumps(parts).decode('utf-8'), int(time.time()))
                 )
                 conn.commit()
         except Exception as e:
@@ -274,8 +254,8 @@ class EchoStateManager:
     # --- MÉTHODES DE HACHAGE (LEGACY & SUTURE) ---
 
     def calculate_invariant_hash(self, role: str, content: Any, tool_io: dict = None) -> str:
-        norm_c = content.strip() if isinstance(content, str) else std_json.dumps(content, sort_keys=True)
-        norm_t = std_json.dumps(tool_io, sort_keys=True) if tool_io else ""
+        norm_c = content.strip() if isinstance(content, str) else json.dumps(content, option=json.OPT_SORT_KEYS).decode('utf-8')
+        norm_t = json.dumps(tool_io, option=json.OPT_SORT_KEYS).decode('utf-8') if tool_io else ""
         return hashlib.sha256(f"{role.lower()}|{norm_c}|{norm_t}".encode("utf-8")).hexdigest()
 
     def calculate_cumulative_hash(self, inv: str, parent: str = None) -> str:
@@ -316,7 +296,7 @@ class EchoStateManager:
     def save_call_bridge(self, call_id: str, signature: str, function_name: str, args: dict = None):
         try:
             with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO call_bridge (call_id, signature, function_name, args_json, timestamp) VALUES (?, ?, ?, ?, ?)", (call_id, signature, function_name, std_json.dumps(args), int(time.time())))
+                conn.execute("INSERT OR REPLACE INTO call_bridge (call_id, signature, function_name, args_json, timestamp) VALUES (?, ?, ?, ?, ?)", (call_id, signature, function_name, json.dumps(args).decode('utf-8'), int(time.time())))
                 conn.commit()
         except: pass
 
@@ -341,7 +321,7 @@ class EchoStateManager:
             with self._get_connection() as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO rich_payloads (invariant_hash, rich_parts_json, message_id, created_at) VALUES (?, ?, ?, ?)",
-                    (inv, std_json.dumps(rich), message_id, int(time.time()))
+                    (inv, json.dumps(rich).decode('utf-8'), message_id, int(time.time()))
                 )
                 conn.commit()
         except: pass
@@ -361,7 +341,7 @@ class EchoStateManager:
             with self._get_connection() as conn:
                 if sig: conn.execute("INSERT OR REPLACE INTO cognitive_signatures (cumulative_hash, thought_signature, message_id, updated_at) VALUES (?, ?, ?, ?)", (cumul, sig, message_id, int(time.time())))
                 if thought: conn.execute("INSERT OR REPLACE INTO thought_archive (cumulative_hash, raw_thought, updated_at) VALUES (?, ?, ?)", (cumul, thought, int(time.time())))
-                if tool_io: conn.execute("INSERT OR REPLACE INTO tool_journal (cumulative_hash, io_json, updated_at) VALUES (?, ?, ?)", (cumul, std_json.dumps(tool_io), int(time.time())))
+                if tool_io: conn.execute("INSERT OR REPLACE INTO tool_journal (cumulative_hash, io_json, updated_at) VALUES (?, ?, ?)", (cumul, json.dumps(tool_io).decode('utf-8'), int(time.time())))
                 conn.commit()
         except: pass
 
@@ -404,7 +384,7 @@ class EchoStateManager:
     def save_context_stats(self, stats: dict):
         try:
             with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO context_stats (id, data, updated_at) VALUES (1, ?, ?)", (std_json.dumps(stats), int(time.time())))
+                conn.execute("INSERT OR REPLACE INTO context_stats (id, data, updated_at) VALUES (1, ?, ?)", (std_json.dumps(stats).decode('utf-8'), int(time.time())))
                 conn.commit()
         except: pass
 

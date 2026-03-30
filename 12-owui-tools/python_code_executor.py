@@ -1,17 +1,18 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 5.6
-description: 5.6: Enriched docstrings with parameters.
+version: 5.7
+description: 5.7: Migration to orjson for consistency.
 """
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
 
 import requests
-import json
+import orjson as json
 import sys
 from pydantic import BaseModel, Field
 from typing import Optional, Any
+
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")

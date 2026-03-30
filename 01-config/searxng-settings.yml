@@ -1,0 +1,41 @@
+# Configuration SearxNG pour ECHO Framework (Souveraineté)
+use_default_settings: true
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "echo_secret_key_change_me" # À changer en prod
+  base_url: false
+  image_proxy: true
+
+search:
+  safe_search: 1
+  autocomplete: duckduckgo
+  formats:
+    - html
+    - json # INDISPENSABLE pour l'outil ECHO
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+  - name: bing
+    engine: bing
+    shortcut: b
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: w
+
+ui:
+  static_path: ""
+  templates_path: ""
+  default_locale: "fr"
+  center_alignment: true
+
+enabled_plugins:
+  - 'Hash plugin'
+  - 'Self Information'
+  - 'Tracker avoidance'

@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 168.7
-description: 168.7: Inject message_id into mark_processed for strict branch-aware registry.
+version: 168.12
+description: 168.12: Model default change.
 """
 
 # ==============================================================================
@@ -15,13 +15,13 @@ import hashlib
 import re
 import time
 import random
-import base64
+import pybase64 as base64
 import codecs
 import asyncio
-import json as std_json 
+import orjson as std_json 
 import sqlite3
 import zlib
-import gzip
+import mgzip as gzip
 from datetime import datetime
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
 
@@ -36,19 +36,12 @@ try:
     import httpx
     import orjson
     import pybase64
-    import mgzip as gzip
     from pydantic import BaseModel, Field
+    # Protocole HTTP/2 obligatoire (h2)
+    import h2
 except ImportError as e:
     missing_module = e.name or "inconnu"
-    raise ImportError(f"❌ Module critique manquant : '{missing_module}'.") from e
-
-# Vérification HTTP/2
-HAS_HTTP2 = False
-try:
-    import h2
-    HAS_HTTP2 = True
-except ImportError:
-    HAS_HTTP2 = False
+    raise ImportError(f"❌ Module critique manquant : '{missing_module}'. ECHO exige httpx, orjson, pybase64 et h2 (HTTP/2).") from e
 
 MAGIC_KEY_SKIP_VALIDATION = "context_engineering_is_the_way_to_go"
 
@@ -67,7 +60,7 @@ class DebugLogger:
         entry = {"timestamp": datetime.now().isoformat(), "type": event_type, "metadata": metadata or {}, "data": payload}
         try:
             with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(std_json.dumps(entry, ensure_ascii=False) + "\n")
+                f.write(std_json.dumps(entry).decode('utf-8') + "\n")
         except Exception: pass
 
 _SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
@@ -75,21 +68,14 @@ _LAST_CLIENT_ACCESS: float = 0.0
 
 async def _get_global_client(
     timeout: int = 600, 
-    enable_http2: bool = True,
     max_connections: int = 100,
     max_keepalive: int = 20,
     keepalive_expiry: int = 300
 ) -> httpx.AsyncClient:
+    """Gestionnaire de client HTTP/2 STRICT."""
     global _SHARED_ASYNC_CLIENT, _LAST_CLIENT_ACCESS
     now = time.time()
-    try:
-        if _SHARED_ASYNC_CLIENT and not _SHARED_ASYNC_CLIENT.is_closed:
-            if hasattr(_SHARED_ASYNC_CLIENT, "_transport") and hasattr(_SHARED_ASYNC_CLIENT._transport, "_pool"):
-                 client_loop = getattr(_SHARED_ASYNC_CLIENT._transport._pool, "_loop", None)
-                 if client_loop and client_loop != asyncio.get_running_loop():
-                     await _SHARED_ASYNC_CLIENT.aclose(); _SHARED_ASYNC_CLIENT = None
-    except: _SHARED_ASYNC_CLIENT = None
-
+    
     if _SHARED_ASYNC_CLIENT and (now - _LAST_CLIENT_ACCESS > timeout):
         old_client = _SHARED_ASYNC_CLIENT; _SHARED_ASYNC_CLIENT = None 
         try: await old_client.aclose()
@@ -101,8 +87,8 @@ async def _get_global_client(
             max_connections=max_connections, 
             keepalive_expiry=keepalive_expiry
         )
-        use_h2 = enable_http2 and HAS_HTTP2
-        _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=use_h2)
+        # HTTP/2 STRICT : Pas de fallback possible si h2 est installé
+        _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=True)
     
     _LAST_CLIENT_ACCESS = now
     return _SHARED_ASYNC_CLIENT
@@ -379,7 +365,7 @@ class StreamProcessor:
     def _create_tool_call_part(self, func_call: dict, tool_index: int) -> dict:
         tc_id = f"echo-{secrets.token_hex(8)}"
         self.accumulated_calls.append({"id": tc_id, "name": func_call["name"], "args": func_call.get("args", {})})
-        return {"index": tool_index, "id": tc_id, "type": "function", "function": {"name": func_call["name"], "arguments": std_json.dumps(func_call.get("args", {}))}}
+        return {"index": tool_index, "id": tc_id, "type": "function", "function": {"name": func_call["name"], "arguments": std_json.dumps(func_call.get("args", {})).decode('utf-8')}}
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False; buffer = ""; decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
@@ -433,16 +419,17 @@ class StreamProcessor:
 # ==============================================================================
 class Pipe:
     class Valves(BaseModel):
-        HTTP_CLIENT_TIMEOUT: int = Field(default=600); ENABLE_HTTP2: bool = Field(default=True)
+        HTTP_CLIENT_TIMEOUT: int = Field(default=600)
         HTTP_MAX_CONNECTIONS: int = Field(default=100); HTTP_MAX_KEEPALIVE: int = Field(default=20)
         HTTP_KEEPALIVE_EXPIRY: int = Field(default=300)
         DEBUG_MODE: bool = Field(default=False); MAX_CONTEXT_SIZE: int = Field(default=1048576)
         RETRY_TIMEBASE: int = Field(default=2); MAX_RETRIES: int = Field(default=5)
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
-        MODEL_SELECTION: Literal["gemini-3.1-pro-preview", "gemini-3-flash-preview"] = Field(default="gemini-3.1-pro-preview")
+        MODEL_SELECTION: Literal["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"] = Field(default="gemini-3.1-flash-lite-preview")
         PRO_THINKING_LEVEL: Literal["LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
+        LITE_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         TEMPERATURE: float = Field(default=1.0); MAX_TOKENS: int = Field(default=65536)
 
     def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
@@ -455,50 +442,97 @@ class Pipe:
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
         auth = AuthService(orch.user_data_manager)
         
-        # Interception OAuth
-        auth_token = body.get("_auth_token")
-        if auth_token:
-            success, msg = auth.exchange_code(auth_token)
-            if not success: yield f"❌ Échec auth: {msg}\n" + auth.get_auth_url(); return
-            yield "✅ Authentification ECHO réussie !\n"; return
+        # --- [NOUVEAU] DETECTION ET INTERCEPTION DE CLÉ API ---
+        api_key_from_filter = body.get("_api_key")
         
-        creds = auth.get_valid_credentials()
-        if not creds: yield auth.get_auth_url(); return
-        pid, _ = auth.get_project_id(creds, self.valves.DEBUG_MODE)
-        if not pid: yield "❌ Erreur Projet."; return
+        if api_key_from_filter:
+            await events.status("🔐 Validation de la clé API Google AI Studio...")
+            success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
+            if success:
+                yield "✅ **Configuration ECHO Réussie**\n\nVotre clé API Google AI Studio a été validée et enregistrée de manière sécurisée dans votre coffre-fort ECHO.\n\nVous pouvez maintenant poser votre question."
+                return
+            else:
+                yield f"❌ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
+                return
+
+        # --- [NOUVEAU] VÉRIFICATION DE PRÉSENCE ---
+        api_key_data = auth.get_valid_credentials()
+        if not api_key_data:
+            yield auth.get_auth_prompt()
+            return
         
-        # Récupération Quota
-        if len(body.get("messages", [])) <= 2:
-            await auth.fetch_user_quota_async(creds, pid, user_valves.MODEL_SELECTION)
+        api_key = api_key_data[0]
         
         # Reconstruction contexte
         context = await orch.prepare_context(body, chat_id, __metadata__, events)
         sys_instr = {"parts": [{"text": "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."}]}
-        think = user_valves.PRO_THINKING_LEVEL if user_valves.MODEL_SELECTION == "gemini-3.1-pro-preview" else user_valves.FLASH_THINKING_LEVEL
         
-        payload = {"model": user_valves.MODEL_SELECTION, "project": pid, "request": {"systemInstruction": sys_instr, "contents": context, "generationConfig": {"temperature": user_valves.TEMPERATURE, "maxOutputTokens": user_valves.MAX_TOKENS, "thinkingConfig": {"includeThoughts": True, "thinkingLevel": think.lower()}}}}
+        # Sélection du niveau de réflexion selon le modèle
+        if user_valves.MODEL_SELECTION == "gemini-3.1-pro-preview":
+            think = user_valves.PRO_THINKING_LEVEL
+        elif user_valves.MODEL_SELECTION == "gemini-3.1-flash-lite-preview":
+            think = user_valves.LITE_THINKING_LEVEL
+        else:
+            think = user_valves.FLASH_THINKING_LEVEL
+        
+        # URL et Payload adaptés pour AI Studio (Le modèle est dans l'URL)
+        api_url = f"{GOOGLE_API_BASE_URL}/models/{user_valves.MODEL_SELECTION}:streamGenerateContent?key={api_key}&alt=sse"
+        payload = {
+            "contents": context,
+            "systemInstruction": sys_instr,
+            "generationConfig": {
+                "temperature": user_valves.TEMPERATURE,
+                "maxOutputTokens": user_valves.MAX_TOKENS,
+                "thinkingConfig": {
+                    "includeThoughts": True,
+                    "thinkingLevel": think.lower()
+                }
+            }
+        }
+        
         tools = orch.convert_owui_tools(body.get("tools"))
-        if tools: payload["request"]["tools"] = tools; payload["request"]["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
+        if tools:
+            payload["tools"] = tools
+            payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
         
         if orch.logger: orch.logger.log("google_request", payload)
         proc = StreamProcessor(orch.user_data_manager, chat_id, events, logger=orch.logger)
-        client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.ENABLE_HTTP2, self.valves.HTTP_MAX_CONNECTIONS, self.valves.HTTP_MAX_KEEPALIVE, self.valves.HTTP_KEEPALIVE_EXPIRY)
+        client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.HTTP_MAX_CONNECTIONS, self.valves.HTTP_MAX_KEEPALIVE, self.valves.HTTP_KEEPALIVE_EXPIRY)
         
         current_delay = self.valves.RETRY_TIMEBASE
+        headers = {
+            "x-goog-api-key": api_key, 
+            "Content-Type": "application/json", 
+            "User-Agent": ECHO_USER_AGENT
+        }
+
         for attempt in range(self.valves.MAX_RETRIES + 1):
             try:
-                async with client.stream("POST", f"{GOOGLE_API_BASE_URL}:streamGenerateContent?alt=sse", content=orjson.dumps(payload), headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}) as r:
+                async with client.stream("POST", api_url, content=orjson.dumps(payload), headers=headers) as r:
                     if r.status_code in [429, 500, 503]:
-                        if r.status_code == 429: await auth.fetch_user_quota_async(creds, pid, user_valves.MODEL_SELECTION)
                         if attempt < self.valves.MAX_RETRIES:
-                            await asyncio.sleep(current_delay); current_delay *= 3; continue
+                            # Retry Jitter : +/- 30% de variation aléatoire
+                            wait_time = current_delay * random.uniform(0.7, 1.3)
+                            await events.status(f"⚠️ Surcharge API Google ({r.status_code}). Essai {attempt + 1}/{self.valves.MAX_RETRIES} dans {wait_time:.1f}s...")
+                            await asyncio.sleep(wait_time)
+                            current_delay *= 3
+                            continue
                         else: yield f"❌ Erreur API Google ({r.status_code})."; return
                     r.raise_for_status()
+                    
+                    # Vérification HTTP/2
+                    if r.http_version != "HTTP/2":
+                        yield "❌ Erreur de protocole : HTTP/2 obligatoire pour Gemini AI Studio."; return
+                        
                     async for chunk in proc.process(r): yield chunk
                 break
             except Exception as e:
                 if attempt < self.valves.MAX_RETRIES:
-                    await asyncio.sleep(current_delay); current_delay *= 2; continue
+                    wait_time = current_delay * random.uniform(0.7, 1.3)
+                    await events.status(f"⚠️ Instabilité réseau. Essai {attempt + 1}/{self.valves.MAX_RETRIES} dans {wait_time:.1f}s...")
+                    await asyncio.sleep(wait_time)
+                    current_delay *= 2
+                    continue
                 else: yield f"❌ Erreur système : {str(e)}"; return
 
         # --- SCELLEMENT FINAL (SUTURE DÉFINITIVE) ---
