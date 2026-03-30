@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 168.12
-description: 168.12: Model default change.
+version: 169.0
+description: 169.0: Dynamic Model Routing via User Valves and Gemma 3 Judge.
 """
 
 # ==============================================================================
@@ -159,6 +159,9 @@ class UserDataManager:
     def save_context_stats(self, stats: dict):
         self.state_manager.save_context_stats(stats)
 
+    def get_last_context_stats(self) -> dict:
+        return self.state_manager.get_last_context_stats()
+
 # ==============================================================================
 # SECTION 5 : ORCHESTRATEUR (SUTURE & PROTOCOLE)
 # ==============================================================================
@@ -253,10 +256,10 @@ class Orchestrator:
                 funcs.append({"name": f.get("name"), "description": f.get("description", ""), "parameters": f.get("parameters", {"type": "object", "properties": {}})})
         return [{"functionDeclarations": funcs}] if funcs else None
 
-    async def prepare_context(self, body: Dict, chat_id: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
+    async def prepare_context(self, body: Dict, chat_id: str, target_model: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
         """RESTAURATION Bit-Perfect avec Contrôle Temporel Strict (Anti-Ghosting)."""
         messages = body.get("messages", []); meta = __metadata__ or body.get("metadata", {})
-        model_id = self.user_valves.MODEL_SELECTION
+        model_id = target_model
         final_contents = []; last_cumul = None
         i = 0
         while i < len(messages):
@@ -426,13 +429,76 @@ class Pipe:
         RETRY_TIMEBASE: int = Field(default=2); MAX_RETRIES: int = Field(default=5)
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
-        MODEL_SELECTION: Literal["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"] = Field(default="gemini-3.1-flash-lite-preview")
+        MODEL_SELECTION: Literal["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview", "echo-auto", "echo-auto-pro"] = Field(default="echo-auto")
         PRO_THINKING_LEVEL: Literal["LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         LITE_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         TEMPERATURE: float = Field(default=1.0); MAX_TOKENS: int = Field(default=65536)
 
     def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
+
+    def _evaluate_complexity_heuristics(self, prompt: str, estimated_prompt_tokens: int, history_tokens: int) -> int:
+        score = 0
+        if not prompt: return 0
+        # 1. Marqueurs de Code (+4)
+        if re.search(r"(\[|{)\s*\"|def\s+\w+\(|function\s*\(|class\s+\w+|```", prompt, re.IGNORECASE):
+            score += 4
+        # 2. Intention Cognitive (+3)
+        if re.search(ECHO_COGNITIVE_TERMS, prompt, re.IGNORECASE):
+            score += 3
+        # 3. Taille du Prompt (+2)
+        if estimated_prompt_tokens > 1000:
+            score += 2
+        # 4. Charge Contextuelle (+3)
+        if (history_tokens + estimated_prompt_tokens) > 8000:
+            score += 3
+        return min(score, 10)
+
+    async def _call_router_model(self, prompt: str, api_key: str) -> int:
+        url = f"{GOOGLE_API_BASE_URL}/models/{MODEL_ROUTER}:generateContent?key={api_key}"
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "systemInstruction": {"parts": [{"text": "Évalue la complexité de cette question de 1 à 10. Ne réponds que par un chiffre."}]},
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 3}
+        }
+        try:
+            async with httpx.AsyncClient(http2=True) as client:
+                resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=3.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    text_response = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                    match = re.search(r"\d+", text_response)
+                    if match: return min(max(int(match.group()), 1), 10)
+        except: pass
+        return 5 # Fallback sécurisé dans la zone grise
+
+    async def _determine_best_model(self, messages: list, router_type: str, api_key: str, user_data_manager: UserDataManager) -> Tuple[str, int]:
+        last_prompt = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                last_prompt = m.get("content", "")
+                if isinstance(last_prompt, list):
+                    last_prompt = " ".join([p.get("text", "") for p in last_prompt if isinstance(p, dict) and "text" in p])
+                break
+                
+        estimated_prompt_tokens = len(str(last_prompt)) // 4
+        stats = user_data_manager.get_last_context_stats()
+        history_tokens = stats.get("totalTokenCount", 0)
+        
+        score = self._evaluate_complexity_heuristics(str(last_prompt), estimated_prompt_tokens, history_tokens)
+        
+        if 3 <= score <= 5 and len(str(last_prompt)) > 150:
+            llm_score = await self._call_router_model(str(last_prompt), api_key)
+            score = (score + llm_score) // 2
+            
+        target_model = MODEL_LITE
+        if router_type == "echo-auto-pro":
+            if score >= 7: target_model = MODEL_PRO
+            elif score >= 4: target_model = MODEL_FLASH
+        elif router_type == "echo-auto":
+            if score >= 4: target_model = MODEL_FLASH
+            
+        return target_model, score
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         events = EchoEvents(__event_emitter__)
@@ -463,20 +529,29 @@ class Pipe:
         
         api_key = api_key_data[0]
         
+        # --- [NOUVEAU] ROUTAGE DYNAMIQUE ---
+        target_model = user_valves.MODEL_SELECTION
+        if target_model in ["echo-auto", "echo-auto-pro"]:
+            await events.status(f"🧠 Évaluation de la complexité en cours...")
+            target_model, score = await self._determine_best_model(body.get("messages", []), target_model, api_key, orch.user_data_manager)
+            await events.status(f"Model Auto ({score}/10) : {target_model}")
+        else:
+            await events.status(f"Model Fixé : {target_model}")
+        
         # Reconstruction contexte
-        context = await orch.prepare_context(body, chat_id, __metadata__, events)
+        context = await orch.prepare_context(body, chat_id, target_model, __metadata__, events)
         sys_instr = {"parts": [{"text": "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."}]}
         
         # Sélection du niveau de réflexion selon le modèle
-        if user_valves.MODEL_SELECTION == "gemini-3.1-pro-preview":
+        if target_model == MODEL_PRO:
             think = user_valves.PRO_THINKING_LEVEL
-        elif user_valves.MODEL_SELECTION == "gemini-3.1-flash-lite-preview":
+        elif target_model == MODEL_LITE:
             think = user_valves.LITE_THINKING_LEVEL
         else:
             think = user_valves.FLASH_THINKING_LEVEL
         
         # URL et Payload adaptés pour AI Studio (Le modèle est dans l'URL)
-        api_url = f"{GOOGLE_API_BASE_URL}/models/{user_valves.MODEL_SELECTION}:streamGenerateContent?key={api_key}&alt=sse"
+        api_url = f"{GOOGLE_API_BASE_URL}/models/{target_model}:streamGenerateContent?key={api_key}&alt=sse"
         payload = {
             "contents": context,
             "systemInstruction": sys_instr,
@@ -545,8 +620,8 @@ class Pipe:
             user_draft = meta.get("_echo_user_parts_draft")
             if user_msg_id and user_draft:
                 user_text = body['messages'][-1].get('content', "")
-                full_user_parts = orch._ensure_gemini_parts(user_draft, user_valves.MODEL_SELECTION)
-                if user_text: full_user_parts.append({"text": orch._resolve_placeholders(user_text, user_valves.MODEL_SELECTION)})
+                full_user_parts = orch._ensure_gemini_parts(user_draft, target_model)
+                if user_text: full_user_parts.append({"text": orch._resolve_placeholders(user_text, target_model)})
                 orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
 
             # 2. Scellement du Registre des Fichiers et Rangement

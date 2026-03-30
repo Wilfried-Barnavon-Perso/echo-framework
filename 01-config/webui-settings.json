@@ -104,7 +104,7 @@
       "external": ""
     },
     "title": {
-      "enable": true,
+      "enable": false,
       "prompt_template": ""
     },
     "follow_up": {

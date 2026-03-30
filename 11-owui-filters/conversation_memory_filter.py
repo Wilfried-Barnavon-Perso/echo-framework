@@ -1,8 +1,8 @@
 """
 title: ECHO Smart Memory Filter
 author: Wilfried BARNAVON
-version: 1.2
-description: 1.2: Migration to orjson for high-performance distillation.
+version: 1.3
+description: 1.3: Fixed API Key authentication and syntax errors.
 """
 
 from pydantic import BaseModel, Field
@@ -22,7 +22,7 @@ import hashlib
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoAuth
-from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL
+from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, MODEL_LITE
 
 # Configuration du Logger
 logging.basicConfig(level=logging.INFO)
@@ -51,32 +51,27 @@ class Filter:
         if self.collection_verified:
             return
         
-        async with httpx.AsyncClient() as client:
-            try:
-                # Vérifier si la collection existe
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(f"{self.valves.QDRANT_URL}/collections/{self.valves.COLLECTION_NAME}")
-                if resp.status_code != 200:
-                    logger.info(f"[ECHO-MEMORY] 🏗️ Création de la collection '{self.valves.COLLECTION_NAME}'...")
-                    create_payload = {
-                        "vectors": {
-                            "size": 3072, # Dimension pour gemini-embedding-2-preview
-                            "distance": "Cosine"
-                        }
-                    }
-                    await client.put(f"{self.valves.QDRANT_URL}/collections/{self.valves.COLLECTION_NAME}", json=create_payload)
-                    
-                    # Création d'un index sur user_id pour le filtrage sémantique strict
-                    index_payload = {
-                        "field_name": "user_id",
-                        "field_schema": "keyword"
-                    }
-                    await client.post(f"{self.valves.QDRANT_URL}/collections/{self.valves.COLLECTION_NAME}/index", json=index_payload)
+                if resp.status_code == 200:
+                    self.collection_verified = True
+                    return
                 
+                # Création de la collection
+                logger.info(f"[ECHO-MEMORY] Création de la collection {self.valves.COLLECTION_NAME}...")
+                create_payload = {
+                    "vectors": {
+                        "size": 3072, # Dimension pour gemini-embedding-2-preview
+                        "distance": "Cosine"
+                    }
+                }
+                await client.put(f"{self.valves.QDRANT_URL}/collections/{self.valves.COLLECTION_NAME}", json=create_payload)
                 self.collection_verified = True
-            except Exception as e:
-                logger.error(f"[ECHO-MEMORY] ❌ Erreur Qdrant Initialisation: {e}")
+        except Exception as e:
+            logger.error(f"[ECHO-MEMORY] ❌ Erreur Qdrant Initialisation: {e}")
 
-    async def _distill_and_store(self, chat_id: str, user_id: str, messages: List[Dict], token: str):
+    async def _distill_and_store(self, chat_id: str, user_id: str, messages: List[Dict], api_key: str):
         """Tâche de fond : Distillation, Vectorisation et Stockage."""
         try:
             await self._ensure_collection()
@@ -102,7 +97,11 @@ class Filter:
                 f"HISTORIQUE :\n{history_text}"
             )
 
-            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
+            headers = {
+                "x-goog-api-key": api_key,
+                "Content-Type": "application/json",
+                "User-Agent": ECHO_USER_AGENT
+            }
             
             payload_flash = {
                 "contents": [{"role": "user", "parts": [{"text": distill_prompt}]}],
@@ -113,9 +112,9 @@ class Filter:
             }
             
             # Endpoint standardisé via Google API Base URL
-            flash_url = f"{GOOGLE_API_BASE_URL}:generateContent?model=gemini-3.1-flash-lite-preview"
-            
-            async with httpx.AsyncClient() as client:
+            flash_url = f"{GOOGLE_API_BASE_URL}/models/{MODEL_LITE}:generateContent?key={api_key}"
+
+            async with httpx.AsyncClient(http2=True) as client:
                 resp_flash = await client.post(flash_url, headers=headers, json=payload_flash, timeout=60)
                 if resp_flash.status_code != 200:
                     logger.error(f"[ECHO-MEMORY] Erreur Distillation Flash: {resp_flash.text}")
@@ -130,7 +129,7 @@ class Filter:
                     return
 
                 # 2. Vectorisation via Gemini Embedding-2
-                embed_url = f"{GOOGLE_API_BASE_URL}:embedContent?model=models/gemini-embedding-2-preview"
+                embed_url = f"{GOOGLE_API_BASE_URL}/models/gemini-embedding-2-preview:embedContent?key={api_key}"
                 payload_embed = {
                     "content": {"parts": [{"text": summary}]}
                 }
@@ -185,12 +184,11 @@ class Filter:
 
         # 3. Lancement asynchrone
         user_id = __user__.get("id")
-        # On rafraîchit le token avant de lancer la tâche de fond
-        token = await self.auth.refresh_google_token(user_id)
+        api_key = self.auth.get_api_key(user_id)
         
-        if token:
+        if api_key:
             if self.valves.DEBUG_MODE:
                 logger.info(f"[ECHO-MEMORY] 🧠 Analyse de mémorisation lancée pour {chat_id}")
-            asyncio.create_task(self._distill_and_store(chat_id, user_id, messages, token))
+            asyncio.create_task(self._distill_and_store(chat_id, user_id, messages, api_key))
 
         return body

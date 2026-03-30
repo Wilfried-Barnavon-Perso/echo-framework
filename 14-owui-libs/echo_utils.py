@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils
 author: ECHO Framework
-version: 2.30
-description: 2.30: Migrated to Google AI Studio API Key authentication.
+version: 2.31
+description: 2.31: Added get_last_context_stats for dynamic model routing.
 """
 
 import os
@@ -387,6 +387,14 @@ class EchoStateManager:
                 conn.execute("INSERT OR REPLACE INTO context_stats (id, data, updated_at) VALUES (1, ?, ?)", (std_json.dumps(stats).decode('utf-8'), int(time.time())))
                 conn.commit()
         except: pass
+
+    def get_last_context_stats(self) -> dict:
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute("SELECT data FROM context_stats WHERE id = 1").fetchone()
+                if row: return std_json.loads(row[0])
+        except: pass
+        return {}
 
     def move_to_vault(self, file_id: str, filename: str) -> bool:
         old_path = resolve_upload_file_path(self.user_id, file_id)

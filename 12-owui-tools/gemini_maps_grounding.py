@@ -15,11 +15,11 @@ from pydantic import BaseModel, Field
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoAuth, EchoEvents, wrap_tool_output
-from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL
+from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, MODEL_LITE
 
 class Tools:
     class Valves(BaseModel):
-        GEMINI_FLASH_MODEL: str = Field(default="gemini-3.1-flash-lite-preview")
+        GEMINI_FLASH_MODEL: str = Field(default=MODEL_LITE)
 
     def __init__(self):
         self.valves = self.Valves()

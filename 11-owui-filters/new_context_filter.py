@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.42
-description: 6.42: Updated model timeout.
+version: 6.43
+description: 6.43: Integrated constant-based model routing and HTTP/2 support.
 """
 
 from pydantic import BaseModel, Field
@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoAuth, resolve_upload_file_path, EchoStateManager
-from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, ECHO_USERS_ROOT, GOOGLE_API_KEY_REGEX
+from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, ECHO_USERS_ROOT, GOOGLE_API_KEY_REGEX, MODEL_FLASH
 
 # Configuration du Logger
 logging.basicConfig(level=logging.INFO)
@@ -121,8 +121,8 @@ class Filter:
                         "generationConfig": {"temperature": 0.1}
                     }
                     headers = {"x-goog-api-key": token, "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
-                    async with httpx.AsyncClient() as client:
-                        resp = await client.post(f"{GOOGLE_API_BASE_URL}/models/gemini-3-flash-preview:generateContent?key={token}", headers=headers, json=payload, timeout=120)
+                    async with httpx.AsyncClient(http2=True) as client:
+                        resp = await client.post(f"{GOOGLE_API_BASE_URL}/models/{MODEL_FLASH}:generateContent?key={token}", headers=headers, json=payload, timeout=120)
                     
                     if resp.status_code == 200:
                         data = resp.json()

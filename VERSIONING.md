@@ -50,6 +50,19 @@ Chaque composant possède son propre cycle de vie et sa propre numérotation, do
 
 Pour garantir la cohérence, chaque Release de la Stack (`5.Y.Z`) est définie par un snapshot précis des versions de composants.
 
+**Exemple pour la 5.93.0 (Dynamic Model Routing) :**
+
+{
+  "stack_version": "5.93.0",
+  "release_date": "2026-03-30",
+  "description": "Dynamic Model Routing (Juge IA Gemma 3 & Heuristiques Cognitives)",
+  "components": {
+    "pipe_engine": "169.0",
+    "echo_utils": "2.31",
+    "echo_constants": "1.9"
+  }
+}
+
 **Exemple pour la 5.78.0 (Bit-Perfect Suture Update) :**
 
 {

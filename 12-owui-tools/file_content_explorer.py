@@ -20,11 +20,11 @@ from echo_utils import (
     EchoAuth, EchoEvents, wrap_tool_output, 
     resolve_upload_file_path, get_echo_version, split_thought_process
 )
-from echo_constants import ECHO_UPLOADS_DIR, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime
+from echo_constants import ECHO_UPLOADS_DIR, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, MODEL_FLASH
 
 class Tools:
     class Valves(BaseModel):
-        GEMINI_FLASH_MODEL: str = Field(default="gemini-3-flash-preview")
+        GEMINI_FLASH_MODEL: str = Field(default=MODEL_FLASH)
         UPLOADS_DIR: str = Field(default=ECHO_UPLOADS_DIR)
 
     def __init__(self):
