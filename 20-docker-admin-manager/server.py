@@ -2,17 +2,17 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.24 (Syntax Fix)
+VERSION : 5.25 (Syntax Fix)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-03-29
+DATE MAJ : 2026-04-02
 
 --- DESCRIPTION ARCHITECTURALE ---
 Ce micro-service assure la régulation et le monitoring du framework ECHO.
 Architecture ECHO-Native avec distinction entre stockage et sessions.
 
+--- CHANGELOG 5.25 ---
+- Correction : Suppression définitive du décorateur @app.after_request orphelin (ligne 78).
 --- CHANGELOG 5.24 ---
-- Correction : Résolution d'une erreur de syntaxe fatale en fin de fichier.
---- CHANGELOG 5.23 ---
 - Vérité Sémantique : Le compteur "Sessions Actives" ne cible plus que les .db de chats.
 - Correction du décalage : Exclusion de identity.db et des fichiers docs du compteur de sessions.
 - Maintien du Volume Global : Le volume Vault reste inclusif (docs + bases).
@@ -74,8 +74,6 @@ except ImportError:
 app = Flask(__name__, static_folder='/app/static')
 app.secret_key = secrets.token_hex(32)
 app.config['JSON_AS_ASCII'] = False
-
-@app.after_request
 
 TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'echo-webui-core')
 BACKUP_DIR = "/backups"
