@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.43
-description: 6.43: Integrated constant-based model routing and HTTP/2 support.
+version: 6.60
+description: 6.60: Implémentation de la structure d'identité duale (actuel/origine) dans le bloc etat_echo.
 """
 
 from pydantic import BaseModel, Field
@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, resolve_upload_file_path, EchoStateManager
+from echo_utils import EchoAuth, resolve_upload_file_path, EchoStateManager, EchoGeminiClient, EchoEvents
 from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, ECHO_USERS_ROOT, GOOGLE_API_KEY_REGEX, MODEL_FLASH
 
 # Configuration du Logger
@@ -32,6 +32,9 @@ class Filter:
     class Valves(BaseModel):
         ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Active le résumé intelligent des fichiers volumineux via Gemini Flash.")
         MAX_DIRECT_TEXT_SIZE: int = Field(default=262144, description="Taille max (octets) pour l'injection directe sans résumé.")
+        KEY_SWITCH_THRESHOLD: int = Field(default=2, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        MAX_RETRIES: int = Field(default=3, description="Nombre de tentatives maximum pour le Smart Context.")
+        SMART_CONTEXT_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour l'analyse Flash.")
         DEBUG_MODE: bool = Field(default=False)
 
     class UserValves(BaseModel):
@@ -53,7 +56,7 @@ class Filter:
         self.toggle = True
         self.icon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIzIi8+PHBhdGggZD0iTTEyIDdWNW0wIDE0di0yTTcgMTJINW0xNCAwaC0ybTEuNS01LjVsLTEuNSAxLjVNOCAxNmwtMS41IDEuNU0xNy41IDE3LjVsLTEuNS0xLjVNOCA4TDYuNSA2LjUiLz48cGF0aCBkPSJNMiAxMmg0bTExIDBoNW0tMyAwbDMtM20tMyAzbDMgMyIvPjwvc3ZnPg=="
 
-    async def _process_file_task(self, user_id: str, file_obj: dict, token: str, project_id: str, thinking_level: str, chat_id: str, events: Any) -> dict:
+    async def _process_file_task(self, user_id: str, file_obj: dict, tokens: List[str], project_id: str, thinking_level: str, chat_id: str, events: Any) -> dict:
         """Tâche de traitement de fichier (Smart Context, Binaire ou Index)."""
         file_id = file_obj.get("id") or file_obj.get("file", {}).get("id")
         filename = file_obj.get("name") or file_obj.get("file", {}).get("meta", {}).get("name", "inconnu")
@@ -99,19 +102,17 @@ class Filter:
 
         # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (Smart Context via Gemini Flash) ---
         if self.valves.ENABLE_SMART_CONTEXT and is_supported:
-            if token:
+            if tokens:
                 try:
                     print(f"[ECHO-FILTER] --> Mode: SMART_CONTEXT (Gemini Flash)", flush=True)
                     await events.status(f"Analyse intelligente de {filename}...", False)
                     
-                    import httpx
                     # On prépare le payload multimodal si besoin
                     content_part = {}
                     if "text/" in mime or "application/json" in mime:
                         with open(path, "r", encoding="utf-8", errors="ignore") as f: raw_text = f.read()
                         content_part = {"text": f"Analyse et résume ce fichier technique nommé '{filename}' :\n\n{raw_text}"}
                     else:
-                        import base64
                         with open(path, "rb") as f: b64_data = base64.b64encode(f.read()).decode("utf-8")
                         content_part = {"inline_data": {"mime_type": mime, "data": b64_data}}
 
@@ -120,23 +121,27 @@ class Filter:
                         "systemInstruction": {"parts": [{"text": "Tu es l'unité de prétraitement contextuel d'ECHO. Ta mission est de produire un résumé technique exhaustif et structuré du fichier fourni. Identifie les points clés, la structure et le but du document."}]},
                         "generationConfig": {"temperature": 0.1}
                     }
-                    headers = {"x-goog-api-key": token, "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
-                    async with httpx.AsyncClient(http2=True) as client:
-                        resp = await client.post(f"{GOOGLE_API_BASE_URL}/models/{MODEL_FLASH}:generateContent?key={token}", headers=headers, json=payload, timeout=120)
+
+                    data = await EchoGeminiClient.call(
+                        keys=tokens,
+                        target_model=MODEL_FLASH,
+                        payload=payload,
+                        threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                        max_retries=self.valves.MAX_RETRIES,
+                        events=events,
+                        timeout=self.valves.SMART_CONTEXT_TIMEOUT
+                    )
                     
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        target = data.get("response", {}) if "response" in data else data
-                        candidates = target.get("candidates", [])
-                        
-                        if candidates and candidates[0].get("content"):
-                            summary = candidates[0]["content"]["parts"][0].get("text", "")
-                            print(f"[ECHO-FILTER] ✅ Résumé Flash généré pour {filename}.", flush=True)
-                            return {"status": "success", "type": "summarized", "fid": file_id, "name": filename, "mime": mime, "content": f"🧠 **Smart Context : {filename}**\n\n{summary}"}
-                        else:
-                            print(f"[ECHO-FILTER] !! Format inattendu ou blocage Google pour {filename}: {data}", flush=True)
+                    target = data.get("response", {}) if "response" in data else data
+                    candidates = target.get("candidates", [])
+                    
+                    if candidates and candidates[0].get("content"):
+                        summary = candidates[0]["content"]["parts"][0].get("text", "")
+                        print(f"[ECHO-FILTER] ✅ Résumé Flash généré pour {filename}.", flush=True)
+                        return {"status": "success", "type": "summarized", "fid": file_id, "name": filename, "mime": mime, "content": f"🧠 **Smart Context : {filename}**\n\n{summary}"}
                     else:
-                        print(f"[ECHO-FILTER] !! Erreur API Flash ({resp.status_code}): {resp.text}", flush=True)
+                        print(f"[ECHO-FILTER] !! Format inattendu ou blocage Google pour {filename}: {data}", flush=True)
+
                 except Exception as e:
                     print(f"[ECHO-FILTER] !! Exception Smart Context pour {filename}: {e}", flush=True)
 
@@ -161,17 +166,19 @@ class Filter:
                 prev_content = str(msgs[-2].get("content", ""))
                 if "(ECHO_SESSION_AUTH_PENDING)" in prev_content:
                     last_content = str(msgs[-1].get("content", "")).strip()
-                    if re.match(GOOGLE_API_KEY_REGEX, last_content):
-                        # Le filtre intercepte et passe la clé au Pipe via le body
+                    # Capture de toutes les clés valides (separateurs: espace, tab, \n)
+                    keys = re.findall(GOOGLE_API_KEY_REGEX, last_content)
+                    if keys:
+                        # Le filtre intercepte et passe les clés au Pipe via le body
                         # et masque le contenu du message dans l'interface utilisateur.
-                        body["_api_key"] = last_content
-                        msgs[-1]["content"] = "🔐 *Vérification de la clé API Google en cours...*"
+                        body["_api_key"] = last_content # Le Pipe repassera par validate_and_save_api_key qui sait spliter
+                        msgs[-1]["content"] = "🔐 *Vérification des clés API Google en cours...*"
                         return body
 
             # --- 3. TRAITEMENT DES FICHIERS (DRAFT) ---
-            token = None
+            tokens = []
             if __user__ and "id" in __user__:
-                token = self.auth.get_api_key(__user__["id"])
+                tokens = self.auth.get_api_keys(__user__["id"])
 
             files_to_process = []
             if chat_id:
@@ -189,7 +196,7 @@ class Filter:
             results = []
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
-                tasks = [self._process_file_task(user_id, f, token, None, "HIGH", chat_id, events) for f in files_to_process]
+                tasks = [self._process_file_task(user_id, f, tokens, None, "HIGH", chat_id, events) for f in files_to_process]
                 for task in tasks:
                     results.append(await task)
                     await asyncio.sleep(0.5)
@@ -235,7 +242,8 @@ class Filter:
                 # 5. Génération du bloc JSON etat_echo complet
                 etat_echo = {
                     "version_framework_echo": "##ECHO_VERSION##",
-                    "version_gemini": "##GEMINI_ENGINE##",
+                    "modèle_actuel": "##MODEL_ID##",
+                    "modèle_origine": "##MODEL_ORIGIN##",
                     "nom_utilisateur": display_name,
                     "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
                     "localisation": final_loc,
@@ -285,7 +293,7 @@ class Filter:
         msgs = body.get("messages", [])
         for m in msgs:
             content = str(m.get("content", ""))
-            # Masquage définitif de la clé API pour l'affichage UI
-            if re.search(GOOGLE_API_KEY_REGEX, content) or "Vérification de la clé API" in content or "Authentification ECHO en cours" in content:
-                m["content"] = "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]"
+            # Masquage chirurgical des clés API sans détruire le reste du message
+            if re.search(GOOGLE_API_KEY_REGEX, content):
+                m["content"] = re.sub(GOOGLE_API_KEY_REGEX, "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]", content)
         return body

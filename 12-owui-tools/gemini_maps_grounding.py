@@ -1,12 +1,11 @@
 """
 title: ECHO Google Maps Grounding
 author: Wilfried BARNAVON
-version: 12.30
-description: 12.30: Specialized tool for native Google Maps grounding (places, reviews, transit). Removed general web search to favor sovereign alternatives.
+version: 12.31
+description: 12.31: Integrated Centralized EchoGeminiClient for multi-key resilience.
 """
 
 import orjson as json
-import httpx
 import sys
 import os
 from typing import Optional, Any
@@ -14,30 +13,18 @@ from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, EchoEvents, wrap_tool_output
+from echo_utils import EchoAuth, EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, MODEL_LITE
 
 class Tools:
     class Valves(BaseModel):
         GEMINI_FLASH_MODEL: str = Field(default=MODEL_LITE)
+        KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        MAPS_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour la recherche Maps.")
 
     def __init__(self):
         self.valves = self.Valves()
         self.auth = EchoAuth()
-
-    async def _call_gemini_api(self, payload: dict, api_key: str, url_suffix: str = "generateContent") -> dict:
-        """Appel générique à l'API Gemini (Non-Streaming) pour le grounding natif."""
-        url = f"{GOOGLE_API_BASE_URL}/models/{self.valves.GEMINI_FLASH_MODEL}:{url_suffix}?key={api_key}"
-        headers = {
-            "x-goog-api-key": api_key, 
-            "Content-Type": "application/json", 
-            "User-Agent": ECHO_USER_AGENT
-        }
-        async with httpx.AsyncClient(timeout=120, http2=True) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            if resp.status_code != 200:
-                raise Exception(f"API Maps Error {resp.status_code}: {resp.text}")
-            return resp.json()
 
     async def search_maps(
         self,
@@ -59,8 +46,8 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"🗺️ Recherche Google Maps : {query}...")
 
-        api_key = self.auth.get_api_key(__user__.get("id"))
-        if not api_key: 
+        api_keys = self.auth.get_api_keys(__user__.get("id"))
+        if not api_keys: 
             return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune clé API Google AI Studio trouvée.", status={"status": "error"})
 
         payload = {
@@ -77,7 +64,16 @@ class Tools:
             }
 
         try:
-            data = await self._call_gemini_api(payload, api_key)
+            data = await EchoGeminiClient.call(
+                keys=api_keys,
+                target_model=self.valves.GEMINI_FLASH_MODEL,
+                payload=payload,
+                threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                max_retries=3,
+                events=events,
+                timeout=self.valves.MAPS_TIMEOUT
+            )
+            
             cand = data.get("candidates", [])[0]
             full_text = ""
             if "content" in cand:

@@ -1,8 +1,8 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 2.8
-description: 2.8: Aligned with v5.76.0 tiered database hierarchy (identity.db + chat_id.db).
+version: 3.1
+description: 3.1: Purge des métriques de facturation obsolètes (Focus exclusif sur la charge cognitive).
 """
 
 from pydantic import BaseModel, Field
@@ -88,50 +88,10 @@ class Tools:
         percent = round((est_tokens / limit) * 100, 2)
         
         status_load = "SAFE"
-        if percent > 80: status_load = "WARNING"
-        if percent > 95: status_load = "CRITICAL"
-
-        # --- [Nouveau] Ajout des informations de facturation (Toujours depuis identity.db) ---
-        plan_name = "Inconnu"
-        credits = "0"
-        q_rem = None
-        q_lim = None
-        q_reset = None
-        
-        if os.path.exists(identity_db):
-            try:
-                with sqlite3.connect(f"file://{identity_db}?mode=ro", uri=True, timeout=5.0) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT value FROM auth_data WHERE key = 'google_plan_name'")
-                    p_row = cursor.fetchone()
-                    if p_row: plan_name = p_row[0]
-                    
-                    cursor.execute("SELECT value FROM auth_data WHERE key = 'google_credits'")
-                    c_row = cursor.fetchone()
-                    if c_row: credits = c_row[0]
-                    
-                    cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_remaining'")
-                    r_row = cursor.fetchone()
-                    if r_row: q_rem = r_row[0]
-                    
-                    cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_limit'")
-                    l_row = cursor.fetchone()
-                    if l_row: q_lim = l_row[0]
-                    
-                    cursor.execute("SELECT value FROM auth_data WHERE key = 'google_quota_reset_time'")
-                    rt_row = cursor.fetchone()
-                    if rt_row: q_reset = rt_row[0]
-            except: pass
-        
-        try: credits_int = int(credits)
-        except: credits_int = 0
-        # -------------------------------------------------------
+        if percent > 25: status_load = "WARNING"
+        if percent > 50: status_load = "CRITICAL"
 
         payload = {
-            "billing": {
-                "plan_name": plan_name,
-                "ai_overage_credits": credits_int
-            },
             "context_load_percent": percent,
             "used_tokens": est_tokens,
             "total_limit": limit,
@@ -142,12 +102,5 @@ class Tools:
                 "candidates": c_tok
             }
         }
-        
-        if q_rem and q_lim:
-            payload["billing"]["base_quota"] = {
-                "remaining": int(q_rem) if q_rem.isdigit() else q_rem,
-                "limit": int(q_lim) if q_lim.isdigit() else q_lim,
-                "reset_time": q_reset
-            }
             
         return wrap_tool_output(text=json.dumps(payload, option=json.OPT_INDENT_2).decode('utf-8'), status={"status": "success", "load_percent": percent, "tokens": est_tokens})

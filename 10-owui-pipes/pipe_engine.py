@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 169.0
-description: 169.0: Dynamic Model Routing via User Valves and Gemma 3 Judge.
+version: 179.0
+description: 179.0: Nettoyage final des vestiges de la v5 (Placeholders et Constantes obsolètes).
 """
 
 # ==============================================================================
@@ -27,7 +27,7 @@ from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Un
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process
+from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient, _get_global_client, EchoUI
 from echo_constants import *
 from echo_auth import AuthService
 
@@ -62,36 +62,6 @@ class DebugLogger:
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(std_json.dumps(entry).decode('utf-8') + "\n")
         except Exception: pass
-
-_SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
-_LAST_CLIENT_ACCESS: float = 0.0
-
-async def _get_global_client(
-    timeout: int = 600, 
-    max_connections: int = 100,
-    max_keepalive: int = 20,
-    keepalive_expiry: int = 300
-) -> httpx.AsyncClient:
-    """Gestionnaire de client HTTP/2 STRICT."""
-    global _SHARED_ASYNC_CLIENT, _LAST_CLIENT_ACCESS
-    now = time.time()
-    
-    if _SHARED_ASYNC_CLIENT and (now - _LAST_CLIENT_ACCESS > timeout):
-        old_client = _SHARED_ASYNC_CLIENT; _SHARED_ASYNC_CLIENT = None 
-        try: await old_client.aclose()
-        except: pass
-
-    if _SHARED_ASYNC_CLIENT is None or _SHARED_ASYNC_CLIENT.is_closed:
-        limits = httpx.Limits(
-            max_keepalive_connections=max_keepalive, 
-            max_connections=max_connections, 
-            keepalive_expiry=keepalive_expiry
-        )
-        # HTTP/2 STRICT : Pas de fallback possible si h2 est installé
-        _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=True)
-    
-    _LAST_CLIENT_ACCESS = now
-    return _SHARED_ASYNC_CLIENT
 
 # ==============================================================================
 # SECTION 4 : USER DATA MANAGER (PROXY)
@@ -141,20 +111,17 @@ class UserDataManager:
     def get_call_bridge(self, call_id: str) -> Optional[dict]:
         return self.state_manager.get_call_bridge(call_id)
 
-    def save_cognitive(self, cumul: str, sig: str = None, thought: str = None, tool_io: dict = None, message_id: str = None):
-        self.state_manager.save_cognitive_data(cumul, sig, thought, tool_io, message_id)
+    def save_cognitive(self, cumul: str, sig: str = None, thought: str = None, tool_io: dict = None, message_id: str = None, model_id: str = None):
+        self.state_manager.save_cognitive_data(cumul, sig, thought, tool_io, message_id, model_id)
+
+    def get_last_active_model(self) -> Optional[str]:
+        return self.state_manager.get_last_active_model()
 
     def save_call_bridge(self, call_id: str, sig: str, func_name: str, args: dict = None):
         self.state_manager.save_call_bridge(call_id, sig, func_name, args)
 
     def save_auth_data(self, key: str, value: str):
-        self.identity_manager.save_auth_data(key, value)
-
-    def get_auth_data(self, key: str) -> Optional[Tuple[str, int]]:
-        return self.identity_manager.get_auth_data(key)
-
-    def delete_auth_data(self, key: str):
-        self.identity_manager.delete_auth_data(key)
+        self.state_manager.save_auth_data(key, value)
 
     def save_context_stats(self, stats: dict):
         self.state_manager.save_context_stats(stats)
@@ -166,17 +133,24 @@ class UserDataManager:
 # SECTION 5 : ORCHESTRATEUR (SUTURE & PROTOCOLE)
 # ==============================================================================
 class Orchestrator:
-    def __init__(self, valves, user_valves, data_dir: str, user_id: str, chat_id: str = None):
+    def __init__(self, valves, user_valves, data_dir: str, user_id: str, chat_id: str = None, model_origin: str = "unknown"):
         self.valves = valves; self.user_valves = user_valves
         self.user_data_manager = UserDataManager(user_id, chat_id, valves.DEBUG_MODE)
         self.tool_map = {}; self.logger = DebugLogger(data_dir, chat_id) if valves.DEBUG_MODE else None
+        self.model_origin = model_origin
+
+    def _build_identity(self, m_id: str) -> str:
+        if m_id == "aucun": return "aucun"
+        categories = { MODEL_LITE: "LITE", MODEL_FLASH: "FLASH", MODEL_PRO: "PRO" }
+        cat = categories.get(m_id, "UNKNOWN")
+        return f"{cat} ({m_id})"
 
     def _resolve_placeholders(self, text: str, model_id: str) -> str:
         if not isinstance(text, str): return text
         version = get_echo_version() or "##VERSION_ERR##"
         resolved = text.replace("##ECHO_VERSION##", version)
-        resolved = resolved.replace("##GEMINI_ENGINE##", model_id)
-        resolved = resolved.replace("##MODEL_ID##", model_id)
+        resolved = resolved.replace("##MODEL_ID##", self._build_identity(model_id))
+        resolved = resolved.replace("##MODEL_ORIGIN##", self._build_identity(self.model_origin))
         return resolved
 
     def _ensure_gemini_parts(self, content: Any, model_id: str = "unknown") -> List[Dict]:
@@ -364,11 +338,17 @@ class StreamProcessor:
         self.events = events or EchoEvents(); self.logger = logger
         self.usage_stats = None; self.captured_sig = None; self.accumulated_text = ""
         self.accumulated_calls = []; self.full_raw_accumulator = []
+        self.escalation_requested = None
 
-    def _create_tool_call_part(self, func_call: dict, tool_index: int) -> dict:
+    def _create_tool_call_part(self, func_call: dict, tool_index: int) -> Optional[dict]:
+        name = func_call["name"]
+        args = func_call.get("args", {})
+        if name == "changement_niveau_cognitif":
+            self.escalation_requested = args
+            return None
         tc_id = f"echo-{secrets.token_hex(8)}"
-        self.accumulated_calls.append({"id": tc_id, "name": func_call["name"], "args": func_call.get("args", {})})
-        return {"index": tool_index, "id": tc_id, "type": "function", "function": {"name": func_call["name"], "arguments": std_json.dumps(func_call.get("args", {})).decode('utf-8')}}
+        self.accumulated_calls.append({"id": tc_id, "name": name, "args": args})
+        return {"index": tool_index, "id": tc_id, "type": "function", "function": {"name": name, "arguments": std_json.dumps(args).decode('utf-8')}}
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False; buffer = ""; decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
@@ -383,16 +363,6 @@ class StreamProcessor:
                     if "usageMetadata" in target:
                         if self.usage_stats is None: self.usage_stats = {}
                         self.usage_stats.update(target["usageMetadata"])
-                    
-                    if "remainingCredits" in target:
-                        if self.usage_stats is None: self.usage_stats = {}
-                        for credit in target["remainingCredits"]:
-                            if credit.get("creditType") == "GOOGLE_ONE_AI":
-                                self.usage_stats["google_credits"] = str(credit.get("creditAmount", "0"))
-                                self.user_data_manager.save_auth_data('google_credits', self.usage_stats["google_credits"])
-                                break
-                    
-                    if "usageMetadata" in target or "remainingCredits" in target:
                         self.user_data_manager.save_context_stats(self.usage_stats)
                     
                     cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
@@ -405,7 +375,10 @@ class StreamProcessor:
                             elif part.get("functionCall"):
                                 if in_think: yield "\n</think>\n"; in_think = False
                                 tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
-                                yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
+                                if tool_call:
+                                    yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
+                                else:
+                                    return # Escalade
                             elif "text" in part:
                                 if in_think: yield "\n</think>\n"; in_think = False
                                 raw_t = part["text"]
@@ -427,6 +400,7 @@ class Pipe:
         HTTP_KEEPALIVE_EXPIRY: int = Field(default=300)
         DEBUG_MODE: bool = Field(default=False); MAX_CONTEXT_SIZE: int = Field(default=1048576)
         RETRY_TIMEBASE: int = Field(default=2); MAX_RETRIES: int = Field(default=5)
+        KEY_SWITCH_THRESHOLD: int = Field(default=2, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
         MODEL_SELECTION: Literal["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview", "echo-auto", "echo-auto-pro"] = Field(default="echo-auto")
@@ -434,71 +408,9 @@ class Pipe:
         FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         LITE_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         TEMPERATURE: float = Field(default=1.0); MAX_TOKENS: int = Field(default=65536)
+        MAX_CASCADE_ATTEMPTS: int = Field(default=5, ge=3, le=10, description="Nombre max de transferts de modèles autorisés par tour.")
 
     def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
-
-    def _evaluate_complexity_heuristics(self, prompt: str, estimated_prompt_tokens: int, history_tokens: int) -> int:
-        score = 0
-        if not prompt: return 0
-        # 1. Marqueurs de Code (+4)
-        if re.search(r"(\[|{)\s*\"|def\s+\w+\(|function\s*\(|class\s+\w+|```", prompt, re.IGNORECASE):
-            score += 4
-        # 2. Intention Cognitive (+3)
-        if re.search(ECHO_COGNITIVE_TERMS, prompt, re.IGNORECASE):
-            score += 3
-        # 3. Taille du Prompt (+2)
-        if estimated_prompt_tokens > 1000:
-            score += 2
-        # 4. Charge Contextuelle (+3)
-        if (history_tokens + estimated_prompt_tokens) > 8000:
-            score += 3
-        return min(score, 10)
-
-    async def _call_router_model(self, prompt: str, api_key: str) -> int:
-        url = f"{GOOGLE_API_BASE_URL}/models/{MODEL_ROUTER}:generateContent?key={api_key}"
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "systemInstruction": {"parts": [{"text": "Évalue la complexité de cette question de 1 à 10. Ne réponds que par un chiffre."}]},
-            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 3}
-        }
-        try:
-            async with httpx.AsyncClient(http2=True) as client:
-                resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=3.0)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    text_response = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-                    match = re.search(r"\d+", text_response)
-                    if match: return min(max(int(match.group()), 1), 10)
-        except: pass
-        return 5 # Fallback sécurisé dans la zone grise
-
-    async def _determine_best_model(self, messages: list, router_type: str, api_key: str, user_data_manager: UserDataManager) -> Tuple[str, int]:
-        last_prompt = ""
-        for m in reversed(messages):
-            if m.get("role") == "user":
-                last_prompt = m.get("content", "")
-                if isinstance(last_prompt, list):
-                    last_prompt = " ".join([p.get("text", "") for p in last_prompt if isinstance(p, dict) and "text" in p])
-                break
-                
-        estimated_prompt_tokens = len(str(last_prompt)) // 4
-        stats = user_data_manager.get_last_context_stats()
-        history_tokens = stats.get("totalTokenCount", 0)
-        
-        score = self._evaluate_complexity_heuristics(str(last_prompt), estimated_prompt_tokens, history_tokens)
-        
-        if 3 <= score <= 5 and len(str(last_prompt)) > 150:
-            llm_score = await self._call_router_model(str(last_prompt), api_key)
-            score = (score + llm_score) // 2
-            
-        target_model = MODEL_LITE
-        if router_type == "echo-auto-pro":
-            if score >= 7: target_model = MODEL_PRO
-            elif score >= 4: target_model = MODEL_FLASH
-        elif router_type == "echo-auto":
-            if score >= 4: target_model = MODEL_FLASH
-            
-        return target_model, score
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         events = EchoEvents(__event_emitter__)
@@ -506,11 +418,13 @@ class Pipe:
         user_valves = __user__.get("valves") or self.UserValves()
         chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
-        auth = AuthService(orch.user_data_manager)
-        
+        auth = AuthService(user_id=__user__["id"])
+        from echo_utils import EchoAuth
+        echo_auth = EchoAuth(user_id=__user__["id"])
+
         # --- [NOUVEAU] DETECTION ET INTERCEPTION DE CLÉ API ---
         api_key_from_filter = body.get("_api_key")
-        
+
         if api_key_from_filter:
             await events.status("🔐 Validation de la clé API Google AI Studio...")
             success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
@@ -522,95 +436,241 @@ class Pipe:
                 return
 
         # --- [NOUVEAU] VÉRIFICATION DE PRÉSENCE ---
-        api_key_data = auth.get_valid_credentials()
-        if not api_key_data:
+        api_keys = echo_auth.get_api_keys()
+        if not api_keys:
             yield auth.get_auth_prompt()
             return
+        # On prend la première clé pour le routage dynamique initial
+        api_key = api_keys[0]
+
+        # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
+        model_selection = user_valves.MODEL_SELECTION
+        last_model = orch.user_data_manager.get_last_active_model()
         
-        api_key = api_key_data[0]
-        
-        # --- [NOUVEAU] ROUTAGE DYNAMIQUE ---
-        target_model = user_valves.MODEL_SELECTION
-        if target_model in ["echo-auto", "echo-auto-pro"]:
-            await events.status(f"🧠 Évaluation de la complexité en cours...")
-            target_model, score = await self._determine_best_model(body.get("messages", []), target_model, api_key, orch.user_data_manager)
-            await events.status(f"Model Auto ({score}/10) : {target_model}")
+        if model_selection in ["echo-auto", "echo-auto-pro"]:
+            if last_model and last_model in [MODEL_LITE, MODEL_FLASH, MODEL_PRO]:
+                target_model = last_model
+                origine_model = last_model
+                await events.status(f"🧠 Reprise du contexte ({target_model})...")
+            else:
+                target_model = MODEL_LITE
+                origine_model = "aucun"
+                await events.status(f"🧠 Initialisation de session (LITE)...")
         else:
+            target_model = model_selection
+            origine_model = last_model if last_model else "aucun"
             await events.status(f"Model Fixé : {target_model}")
+
+        # L'origine est passée à l'Orchestrateur pour la résolution des placeholders
+        orch.model_origin = origine_model
         
-        # Reconstruction contexte
+        # Reconstruction contexte (Bit-Perfect)
         context = await orch.prepare_context(body, chat_id, target_model, __metadata__, events)
-        sys_instr = {"parts": [{"text": "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."}]}
+
+        # --- [NOUVEAU] CONFIGURATION CASCADE ---
+        is_auto = user_valves.MODEL_SELECTION in ["echo-auto", "echo-auto-pro"]
+        # Détermination des niveaux autorisés pour le schéma de l'outil (Approach: Clean Prompt)
+        niveaux_autorises = ["FLASH"]
+        if user_valves.MODEL_SELECTION == "echo-auto-pro": niveaux_autorises.append("PRO")
         
-        # Sélection du niveau de réflexion selon le modèle
-        if target_model == MODEL_PRO:
-            think = user_valves.PRO_THINKING_LEVEL
-        elif target_model == MODEL_LITE:
-            think = user_valves.LITE_THINKING_LEVEL
-        else:
-            think = user_valves.FLASH_THINKING_LEVEL
+        max_cascade_attempts = user_valves.MAX_CASCADE_ATTEMPTS
+        cascade_attempt = 0
         
-        # URL et Payload adaptés pour AI Studio (Le modèle est dans l'URL)
-        api_url = f"{GOOGLE_API_BASE_URL}/models/{target_model}:streamGenerateContent?key={api_key}&alt=sse"
-        payload = {
-            "contents": context,
-            "systemInstruction": sys_instr,
-            "generationConfig": {
-                "temperature": user_valves.TEMPERATURE,
-                "maxOutputTokens": user_valves.MAX_TOKENS,
-                "thinkingConfig": {
-                    "includeThoughts": True,
-                    "thinkingLevel": think.lower()
+        while cascade_attempt < max_cascade_attempts:
+            cascade_attempt += 1
+            
+            # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
+            sys_instr_raw = "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."
+            resolved_sys = orch._resolve_placeholders(sys_instr_raw, target_model)
+            sys_instr = {"parts": [{"text": resolved_sys}]}
+
+            # Sélection du niveau de réflexion selon le modèle
+            if target_model == MODEL_PRO:
+                think = user_valves.PRO_THINKING_LEVEL
+            elif target_model == MODEL_LITE:
+                think = user_valves.LITE_THINKING_LEVEL
+            else:
+                think = user_valves.FLASH_THINKING_LEVEL
+
+            payload = {
+                "contents": context,
+                "systemInstruction": sys_instr,
+                "generationConfig": {
+                    "temperature": user_valves.TEMPERATURE,
+                    "maxOutputTokens": user_valves.MAX_TOKENS,
+                    "thinkingConfig": {
+                        "includeThoughts": True,
+                        "thinkingLevel": think.lower()
+                    }
                 }
             }
-        }
-        
-        tools = orch.convert_owui_tools(body.get("tools"))
-        if tools:
-            payload["tools"] = tools
-            payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
-        
-        if orch.logger: orch.logger.log("google_request", payload)
-        proc = StreamProcessor(orch.user_data_manager, chat_id, events, logger=orch.logger)
-        client = await _get_global_client(self.valves.HTTP_CLIENT_TIMEOUT, self.valves.HTTP_MAX_CONNECTIONS, self.valves.HTTP_MAX_KEEPALIVE, self.valves.HTTP_KEEPALIVE_EXPIRY)
-        
-        current_delay = self.valves.RETRY_TIMEBASE
-        headers = {
-            "x-goog-api-key": api_key, 
-            "Content-Type": "application/json", 
-            "User-Agent": ECHO_USER_AGENT
-        }
 
-        for attempt in range(self.valves.MAX_RETRIES + 1):
+            tools = orch.convert_owui_tools(body.get("tools"))
+            
+            # --- [NOUVEAU] INJECTION OUTIL CHANGEMENT COGNITIF (BIDIRECTIONNEL) ---
+            if is_auto:
+                # Menu évolutif selon le modèle actuel
+                menu_escalade = []
+                if target_model == MODEL_LITE:
+                    menu_escalade = ["FLASH"]
+                    if user_valves.MODEL_SELECTION == "echo-auto-pro": menu_escalade.append("PRO")
+                elif target_model == MODEL_FLASH:
+                    menu_escalade = ["LITE"]
+                    if user_valves.MODEL_SELECTION == "echo-auto-pro": menu_escalade.append("PRO")
+                elif target_model == MODEL_PRO:
+                    menu_escalade = ["LITE", "FLASH"]
+                
+                if menu_escalade:
+                    escalation_tool = {
+                        "name": "changement_niveau_cognitif",
+                        "description": (
+                            "Ajuste la puissance de calcul d'ECHO selon la nature de la tâche et la charge contextuelle.\n\n"
+                            "1. Lois de Sélection du Modèle :\n"
+                            "- LITE (Réflexe) : Salutations, remerciements, extractions simples, traduction courte, questions de culture générale basiques.\n"
+                            "- FLASH (Exécution) : Recherche web, écriture de scripts/fonctions isolés, analyse sémantique de fichiers unitaires, synthèse de documents, exécution d'outils simples.\n"
+                            "- PRO (Expertise) : Architectures, orchestration de tâche, exécution d'outils complexes, refactoring multi-fichiers, logique mathématique complexe, philosophie profonde.\n\n"
+                            "2. Loi de Corrélation Contextuelle (Vallée de la Mort) :\n"
+                            "Plus le contexte (tokens) est chargé, plus le niveau cognitif doit être élevé, indépendamment de la simplicité apparente de la tâche.\n"
+                            "- [0-25%] (SAFE) : Le modèle actuel traite la tâche si elle correspond à sa catégorie.\n"
+                            "- [25-50%] (WARNING) : Si vous êtes en LITE/FLASH, privilégiez une montée d'un cran pour éviter la dérive sémantique.\n"
+                            "- [> 50%] (CRITICAL) : Délégation impérative au plus haut niveau (PRO/FLASH) pour tout traitement exigeant la lecture de l'historique lointain.\n\n"
+                            "Usage : Utilisez context_gauge pour situer votre position dans la Vallée de la Mort avant de décider."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "niveau_requis": {"type": "string", "enum": menu_escalade},
+                                "plan_de_transfert": {"type": "string", "description": "Plan Markdown structuré (Objectif, Analyse, Stratégie, Contraintes)."},
+                                "raison": {"type": "string"}
+                            },
+                            "required": ["niveau_requis", "plan_de_transfert"]
+                        }
+                    }
+                    if not tools: tools = [{"functionDeclarations": []}]
+                    tools[0]["functionDeclarations"].append(escalation_tool)
+
+            if tools:
+                payload["tools"] = tools
+                payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
+
+            if orch.logger: orch.logger.log("google_request", payload, metadata={"cascade_attempt": cascade_attempt, "model": target_model})
+            proc = StreamProcessor(orch.user_data_manager, chat_id, events, logger=orch.logger)
+
+            # Tentative d'appel au moteur Gemini
             try:
-                async with client.stream("POST", api_url, content=orjson.dumps(payload), headers=headers) as r:
-                    if r.status_code in [429, 500, 503]:
-                        if attempt < self.valves.MAX_RETRIES:
-                            # Retry Jitter : +/- 30% de variation aléatoire
-                            wait_time = current_delay * random.uniform(0.7, 1.3)
-                            await events.status(f"⚠️ Surcharge API Google ({r.status_code}). Essai {attempt + 1}/{self.valves.MAX_RETRIES} dans {wait_time:.1f}s...")
-                            await asyncio.sleep(wait_time)
-                            current_delay *= 3
-                            continue
-                        else: yield f"❌ Erreur API Google ({r.status_code})."; return
-                    r.raise_for_status()
-                    
-                    # Vérification HTTP/2
-                    if r.http_version != "HTTP/2":
-                        yield "❌ Erreur de protocole : HTTP/2 obligatoire pour Gemini AI Studio."; return
-                        
-                    async for chunk in proc.process(r): yield chunk
-                break
+                # Appel au client factorisé avec gestion du fallback
+                async for chunk in EchoGeminiClient.stream(
+                    keys=api_keys,
+                    target_model=target_model,
+                    payload=payload,
+                    threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                    max_retries=self.valves.MAX_RETRIES,
+                    events=events,
+                    process_callback=proc.process,
+                    timeout=self.valves.HTTP_CLIENT_TIMEOUT
+                ):
+                    # On ne yield le texte que si aucune escalade n'est en cours (Gateway Pattern)
+                    if isinstance(chunk, dict) or not proc.escalation_requested:
+                        yield chunk
             except Exception as e:
-                if attempt < self.valves.MAX_RETRIES:
-                    wait_time = current_delay * random.uniform(0.7, 1.3)
-                    await events.status(f"⚠️ Instabilité réseau. Essai {attempt + 1}/{self.valves.MAX_RETRIES} dans {wait_time:.1f}s...")
-                    await asyncio.sleep(wait_time)
-                    current_delay *= 2
+                # GESTION DES ÉCHECS TECHNIQUES (API/RÉSEAU)
+                if is_auto and cascade_attempt < max_cascade_attempts:
+                    await events.status(f"⚠️ Indisponibilité technique du modèle cible. Repli...")
+                    # Suture d'échec technique pour le modèle actuel
+                    context.append({
+                        "role": "user",
+                        "parts": [{"text": f"### ⚠️ ERREUR SYSTÈME\nL'appel au modèle expert a échoué ({str(e)}). Veuillez poursuivre le traitement avec vos ressources actuelles ou proposer une alternative."}]
+                    })
+                    continue # On reboucle avec le même modèle (target_model n'a pas encore changé)
+                else:
+                    yield f"❌ Erreur critique lors de la communication API : {str(e)}"
+                    break
+
+            # --- [NOUVEAU] GESTION DE LA CASCADE ---
+            if is_auto and proc.escalation_requested:
+                req = proc.escalation_requested
+                target_req = req.get("niveau_requis")
+                
+                # Mapping explicite pour gérer la montée ET la redescente
+                level_map = {
+                    "LITE": MODEL_LITE,
+                    "FLASH": MODEL_FLASH,
+                    "PRO": MODEL_PRO
+                }
+                new_target = level_map.get(target_req)
+                
+                if not new_target:
+                    # Signalement d'erreur de paramètre au modèle actuel
+                    context.append({
+                        "role": "model",
+                        "parts": [{"functionCall": {"name": "changement_niveau_cognitif", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                    })
+                    context.append({
+                        "role": "user",
+                        "parts": [{"functionResponse": {"name": "changement_niveau_cognitif", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi LITE, FLASH ou PRO."}}}]
+                    })
                     continue
-                else: yield f"❌ Erreur système : {str(e)}"; return
+                
+                # Vérification des droits (Valve)
+                if user_valves.MODEL_SELECTION == "echo-auto" and new_target == MODEL_PRO:
+                    await events.status(f"⚠️ Transfert vers PRO refusé (Valve AUTO).")
+                    # Signalement de refus au modèle actuel
+                    context.append({
+                        "role": "model",
+                        "parts": [{"functionCall": {"name": "changement_niveau_cognitif", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                    })
+                    context.append({
+                        "role": "user",
+                        "parts": [{"functionResponse": {"name": "changement_niveau_cognitif", "response": {"status": "denied", "message": "ÉCHEC : Le transfert vers PRO est refusé par la configuration utilisateur (Valve AUTO). Veuillez traiter la demande immédiatement avec vos capacités actuelles."}}}]
+                    })
+                    continue # On reboucle avec le MÊME target_model
+                
+                if new_target == target_model:
+                    break
+
+                await events.status(f"🚀 Transfert cognitif vers {new_target}...")
+                
+                if proc.captured_sig:
+                    orch.user_data_manager.save_call_bridge(f"esc-{secrets.token_hex(4)}", proc.captured_sig, "changement_niveau_cognitif", req)
+                
+                plan_md = req.get("plan_de_transfert", "Exécution du relais.")
+                
+                # 1. Mutation Chirurgicale de l'identité dans le contexte via Regex
+                identity_format = orch._build_identity(new_target)
+                origin_format = orch._build_identity(target_model)
+
+                for part in context[-1]["parts"]:
+                    if "text" in part and "modèle_actuel" in part["text"]:
+                        # Remplacement de l'identité actuelle
+                        part["text"] = re.sub(r'("modèle_actuel"\s*:\s*")[^"]+(")', rf'\g<1>{identity_format}\g<2>', part["text"])
+                        # Mise à jour de l'origine pour le modèle suivant
+                        part["text"] = re.sub(r'("modèle_origine"\s*:\s*")[^"]+(")', rf'\g<1>{origin_format}\g<2>', part["text"])
+                
+                # Mise à jour de l'état de l'orchestrateur pour les placeholders système
+                orch.model_origin = target_model
+                
+                # 2. Suture Sémantique (Relais Protocolé)
+                context.append({
+                    "role": "model",
+                    "parts": [
+                        {"functionCall": {"name": "changement_niveau_cognitif", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}
+                    ]
+                })
+                context.append({
+                    "role": "user",
+                    "parts": [
+                        {"functionResponse": {"name": "changement_niveau_cognitif", "response": {"status": "success", "message": f"Relais vers {new_target} activé. Exécutez le plan maintenant.", "plan": plan_md}}}
+                    ]
+                })
+
+                target_model = new_target
+                continue
+            else:
+                # Pas d'escalade demandée, on sort de la boucle de cascade
+                break
 
         # --- SCELLEMENT FINAL (SUTURE DÉFINITIVE) ---
+
         if chat_id and proc.usage_stats:
             meta = __metadata__ or body.get("metadata", {})
             
@@ -638,7 +698,7 @@ class Pipe:
             tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
             inv = orch.user_data_manager.calculate_invariant("assistant", proc.accumulated_text, tool_io=tool_io)
             new_cumul = orch.user_data_manager.calculate_cumulative(inv, body.get("_echo_last_cumul"))
-            orch.user_data_manager.save_cognitive(new_cumul, proc.captured_sig, None, tool_io)
+            orch.user_data_manager.save_cognitive(new_cumul, proc.captured_sig, None, tool_io, user_msg_id, target_model)
             for c in proc.accumulated_calls: orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig, c["name"], c["args"])
             orch.user_data_manager.index_suture(new_cumul, chat_id, inv, body.get("_echo_last_cumul"))
 
@@ -649,14 +709,11 @@ class Pipe:
             g_t = proc.usage_stats.get("candidatesTokenCount", 0)
             max_t = self.valves.MAX_CONTEXT_SIZE
             
-            plan_data = orch.user_data_manager.get_auth_data('google_plan_name')
-            plan_name = plan_data[0] if plan_data else ""
-            credits_data = orch.user_data_manager.get_auth_data('google_credits')
-            credits_val = credits_data[0] if credits_data else "0"
-            q_rem = orch.user_data_manager.get_auth_data('google_quota_remaining')
-            q_lim = orch.user_data_manager.get_auth_data('google_quota_limit')
-            q_rem_str = q_rem[0] if q_rem else "?"
-            q_lim_str = q_lim[0] if q_lim else "?"
+            plan_data = echo_auth.get_api_keys() # Fallback for now
+            plan_name = "ECHO Standard" if plan_data else ""
+            credits_val = "0"
+            q_rem_str = "?"
+            q_lim_str = "?"
             quota_str = f"🎯 {q_rem_str}/{q_lim_str} req. | " if (q_rem_str != "?" and q_lim_str != "?") else ""
             
             active_p_t = max(0, p_t - c_t)
@@ -664,36 +721,8 @@ class Pipe:
             prompt_pct = min(100, (active_p_t / max_t) * 100)
             gen_pct = min(100, (g_t / max_t) * 100)
 
-            js_code = f"""
-            (function() {{
-                var navContainer = document.querySelector('nav div.flex.items-center.w-full.max-w-full');
-                if (!navContainer) return;
-                var rightControls = navContainer.querySelector('div.self-start.flex.flex-none.items-center');
-                var oldHud = document.getElementById('echo-nav-context-hud');
-                if (oldHud) oldHud.remove();
-                var hud = document.createElement('div');
-                hud.id = 'echo-nav-context-hud';
-                hud.style.cssText = 'display:flex;align-items:center;margin:0 12px;flex-grow:8;width:66%;min-width:350px;opacity:0.9;transition:opacity 0.2s;';
-                hud.onmouseover = function() {{ this.style.opacity = '1'; }};
-                hud.onmouseout = function() {{ this.style.opacity = '0.9'; }};
-                var billingInfo = "";
-                if ("{plan_name}") billingInfo += `💳 {plan_name} | {quota_str}`;
-                if ("{credits_val}" !== "0") billingInfo += `🔋 {credits_val} crédits IA | `;
-                hud.title = billingInfo + `🟪 Cache: {c_t} | 🟩 User/Prompt: {active_p_t} | 🟧 Generated: {g_t} | ⬜ Max: {max_t}`;
-                var label = document.createElement('span');
-                label.innerText = 'CTX'; label.style.cssText = 'font-size:10px;font-weight:bold;color:var(--color-gray-500, #6b7280);margin-right:6px;white-space:nowrap;';
-                if (window.innerWidth < 640) label.style.display = 'none';
-                hud.appendChild(label);
-                var barContainer = document.createElement('div');
-                barContainer.style.cssText = 'display:flex;width:100%;height:8px;background-color:rgba(128,128,128,0.2);border-radius:4px;overflow:hidden;';
-                var bars = [['#8b5cf6', {cache_pct}], ['#10b981', {prompt_pct}], ['#f59e0b', {gen_pct}]];
-                bars.forEach(b => {{
-                    var div = document.createElement('div');
-                    div.style.width = b[1] + '%'; div.style.backgroundColor = b[0];
-                    barContainer.appendChild(div);
-                }});
-                hud.appendChild(barContainer);
-                if (rightControls) navContainer.insertBefore(hud, rightControls); else navContainer.appendChild(hud);
-            }})();
-            """
-            await events.emit("execute", {"code": js_code})
+            await EchoUI.deploy_context_gauge(
+                events=events, plan_name=plan_name, credits_val=credits_val, quota_str=quota_str,
+                c_t=c_t, active_p_t=active_p_t, g_t=g_t, max_t=max_t,
+                cache_pct=cache_pct, prompt_pct=prompt_pct, gen_pct=gen_pct
+            )

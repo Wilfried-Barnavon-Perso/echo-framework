@@ -76,10 +76,6 @@ app.secret_key = secrets.token_hex(32)
 app.config['JSON_AS_ASCII'] = False
 
 @app.after_request
-def set_charset(response):
-    if response.headers.get('Content-Type', '').startswith('text/html'):
-        response.headers['Content-Type'] = 'text/html; charset=utf-8'
-    return response
 
 TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'echo-webui-core')
 BACKUP_DIR = "/backups"

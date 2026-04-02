@@ -1,13 +1,12 @@
 """
 title: ECHO Cognitive Core
 author: ECHO Framework
-version: 3.14
-description: 3.14: Fixed 400 error by aligning payload structure with pipe_engine.
+version: 3.20
+description: 3.20: Renamed flash_distillation to lite_reasoning for better alignment.
 """
 
 import sys
 import orjson as json
-import httpx
 import asyncio
 import re
 from pydantic import BaseModel, Field
@@ -15,24 +14,16 @@ from typing import Optional, List, Dict, Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoAuth, EchoEvents, split_thought_process
+from echo_utils import wrap_tool_output, EchoAuth, EchoEvents, split_thought_process, EchoGeminiClient
 from echo_constants import GOOGLE_API_BASE_URL, ECHO_USER_AGENT, MODEL_LITE, MODEL_PRO
 
-async def _call_gemini_direct(user_id: str, model_id: str, prompt: str, thinking_level: str = "MEDIUM", events: Optional[EchoEvents] = None) -> str:
-    """Appel direct à l'API Gemini AI Studio via API Key pour délégation cognitive."""
+async def _call_gemini_direct(user_id: str, model_id: str, prompt: str, thinking_level: str = "MEDIUM", events: Optional[EchoEvents] = None, threshold: int = 3, timeout: int = 120) -> str:
+    """Appel direct à l'API Gemini AI Studio via EchoGeminiClient pour délégation cognitive."""
     auth = EchoAuth(user_id=user_id)
-    api_key = auth.get_api_key(user_id)
-    if not api_key: 
+    api_keys = auth.get_api_keys(user_id)
+    if not api_keys: 
         return "❌ Erreur: Non authentifié. Aucune clé API Google AI Studio trouvée pour cet utilisateur."
 
-    # Construction URL standard AI Studio (v1beta)
-    url = f"{GOOGLE_API_BASE_URL}/models/{model_id}:streamGenerateContent?key={api_key}&alt=sse"
-    headers = {
-        "x-goog-api-key": api_key, 
-        "Content-Type": "application/json", 
-        "User-Agent": ECHO_USER_AGENT
-    }
-    
     payload = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -45,37 +36,30 @@ async def _call_gemini_direct(user_id: str, model_id: str, prompt: str, thinking
         }
     }
 
-    full_text = ""
     try:
-        async with httpx.AsyncClient(timeout=120, http2=True) as client:
-            # Utilisation de orjson pour la sérialisation (plus robuste)
-            async with client.stream("POST", url, headers=headers, content=json.dumps(payload)) as response:
-                if response.status_code != 200:
-                    err_body = await response.aread()
-                    return f"❌ Erreur API Gemini ({response.status_code}): {err_body.decode()}"
-                
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        try:
-                            # Suppression du préfixe 'data: ' et nettoyage
-                            clean_line = line[6:].strip()
-                            if not clean_line: continue
-                            
-                            chunk_data = json.loads(clean_line)
-                            # La structure peut varier selon la réponse (SSE direct ou enveloppé)
-                            target = chunk_data.get("response", {}) if "response" in chunk_data else chunk_data
-                            
-                            candidates = target.get("candidates", [])
-                            if candidates and candidates[0].get("content"):
-                                for p in candidates[0]["content"].get("parts", []):
-                                    if "text" in p: 
-                                        full_text += p["text"]
-                        except Exception:
-                            continue
+        data = await EchoGeminiClient.call(
+            keys=api_keys,
+            target_model=model_id,
+            payload=payload,
+            threshold=threshold,
+            max_retries=3,
+            events=events,
+            timeout=timeout
+        )
+        
+        target = data.get("response", {}) if "response" in data else data
+        candidates = target.get("candidates", [])
+        if candidates and candidates[0].get("content"):
+            full_text = ""
+            for p in candidates[0]["content"].get("parts", []):
+                if "text" in p: 
+                    full_text += p["text"]
+            return full_text
+            
     except Exception as e: 
-        return f"❌ Erreur système : {str(e)}"
+        return f"❌ Erreur système ou API : {str(e)}"
     
-    return full_text
+    return "❌ Erreur: Réponse Gemini vide ou invalide."
 
 class Tools:
     class Valves(BaseModel):
@@ -83,6 +67,8 @@ class Tools:
         FLASH_THINKING: str = Field(default="MEDIUM")
         PRO_MODEL: str = Field(default=MODEL_PRO)
         PRO_THINKING: str = Field(default="HIGH")
+        KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        COGNITIVE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour la délégation cognitive.")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -109,13 +95,15 @@ class Tools:
             self.valves.PRO_MODEL,
             question,
             thinking_level=self.valves.PRO_THINKING,
-            events=events
+            events=events,
+            threshold=self.valves.KEY_SWITCH_THRESHOLD,
+            timeout=self.valves.COGNITIVE_TIMEOUT
         )
         
         await events.status("Raisonnement terminé.", done=True)
         return res
 
-    async def flash_distillation(
+    async def lite_reasoning(
         self,
         text_to_distill: str,
         instruction: str = "Distille ce texte pour n'en extraire que l'essentiel (points clés, faits, résumé).",
@@ -124,7 +112,7 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Distillation rapide et efficace de textes longs ou de données brutes via un modèle Flash Lite.
+        Raisonnement léger et distillation rapide de textes longs ou de données brutes via un modèle Flash Lite.
         Libère le contexte principal en déléguant l'extraction d'information essentielle.
         :param text_to_distill: Le texte ou les données à traiter (distiller).
         :param instruction: L'instruction spécifique pour la distillation.
@@ -132,7 +120,7 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         
-        await events.status(f"⚡ Distillation Flash (Lite) pour {user_id}...")
+        await events.status(f"⚡ Raisonnement Lite (Flash) pour {user_id}...")
         
         prompt = f"INSTRUCTION: {instruction}\n\nTEXTE À DISTILLER:\n{text_to_distill}"
         
@@ -141,7 +129,9 @@ class Tools:
             self.valves.FLASH_MODEL,
             prompt,
             thinking_level=self.valves.FLASH_THINKING,
-            events=events
+            events=events,
+            threshold=self.valves.KEY_SWITCH_THRESHOLD,
+            timeout=self.valves.COGNITIVE_TIMEOUT
         )
         
         await events.status("Distillation terminée.", done=True)

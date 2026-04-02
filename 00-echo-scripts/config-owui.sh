@@ -1,10 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.53
+# VERSION : 7.54
 # ==============================================================================
 # CHANGELOG :
-# 7.53: Fix double encoding issues (mojibake).
+# 7.53: New system prompt format.
 
 # --- CONFIGURATION ---
 DEBUG_MODE="false"
@@ -15,7 +15,7 @@ ADMIN_SECRET_FILE="/opt/.owui-secrets/.owui-admin-secret"
 # Fichiers de Configuration
 CONFIG_DIR="/opt/config"
 MODEL_CONFIG_FILE="$CONFIG_DIR/model-config.json"
-SYSTEM_PROMPT_FILE="$CONFIG_DIR/system-prompt.json"
+SYSTEM_PROMPT_FILE="$CONFIG_DIR/system-prompt.md"
 SETTINGS_FILE="$CONFIG_DIR/webui-settings.json"
 IMAGE_BASE_DIR="/opt/echo-images"
 

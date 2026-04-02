@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 3.10
+# VERSION : 3.11
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -140,8 +140,8 @@ if [ -f "$SRC_DIR/VERSION" ]; then cp "$SRC_DIR/VERSION" "/opt/ECHO_VERSION"; ch
 
 # Nettoyage et Permissions (Fix Windows EOL)
 echo "   🧹 Nettoyage des caractères Windows et permissions..."
-find /opt/echo-scripts /opt/config /opt/docker-admin-manager /opt/docker-python-worker /opt/docker-browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
-find /opt/echo-scripts /opt/config /opt/docker-admin-manager /opt/docker-python-worker /opt/docker-browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "VERSION" \) -exec sed -i 's/\r$//' {} +
+find /opt/echo-scripts /opt/config /opt/docker-admin-manager /opt/docker-python-worker /opt/docker-browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
+find /opt/echo-scripts /opt/config /opt/docker-admin-manager /opt/docker-python-worker /opt/docker-browser-agent -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" \) -exec sed -i 's/\r$//' {} +
 chmod +x /opt/echo-scripts/*.sh
 
 # RELANCE DU SCRIPT SI MIS A JOUR

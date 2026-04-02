@@ -41,4 +41,4 @@ L'installation et le déploiement sont gérés par des scripts automatisés.
 - **Legacy** : Les concepts de la v4 sont archivés dans `_v4-legacy-concept/`.
 
 ---
-*Version actuelle : v5.20.0 (Stable)*
+*Version actuelle : v5.96.0 (Stable)*

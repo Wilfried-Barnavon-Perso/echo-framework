@@ -1,25 +1,30 @@
 """
 title: ECHO Memory Search
 author: ECHO Framework
-version: 1.9
-description: 1.9: Migrated to Google AI Studio API Key authentication and standard Gemini Embedding.
+version: 2.0
+description: 2.0: Integrated Centralized EchoGeminiClient for multi-key resilience.
 """
 
 import sys
-import httpx
 import orjson as json
+from pydantic import BaseModel, Field
 from typing import Optional, Any
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, EchoEvents, wrap_tool_output
+from echo_utils import EchoAuth, EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL
 
 QDRANT_URL = "http://echo-qdrant:6333"
 COLLECTION = "echo_knowledge"
 
 class Tools:
+    class Valves(BaseModel):
+        KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        KNOWLEDGE_TIMEOUT: int = Field(default=30, description="Délai d'attente maximum (secondes) pour l'embedding de recherche.")
+
     def __init__(self):
+        self.valves = self.Valves()
         self.auth = EchoAuth()
 
     async def search_knowledge_base(
@@ -39,30 +44,28 @@ class Tools:
         user_id = __user__.get("id")
         await events.status(f"📚 Recherche dans la base de connaissance : '{query}'...")
         
-        # Récupération de la clé API
-        api_key = self.auth.get_api_key(user_id)
-        if not api_key: 
+        # Récupération des clés API (v5.94+)
+        api_keys = self.auth.get_api_keys(user_id)
+        if not api_keys: 
             return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune clé API Google AI Studio trouvée.", status={"status": "error"})
 
-        headers = {"x-goog-api-key": api_key, "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
-        
-        async with httpx.AsyncClient(timeout=30) as client:
-            # 1. Vectorisation (Embedding AI Studio)
-            url_embed = f"{GOOGLE_API_BASE_URL}/models/text-embedding-004:embedContent?key={api_key}"
-            try:
-                payload_embed = {
-                    "model": "models/text-embedding-004",
-                    "content": {"parts": [{"text": query}]}
-                }
-                resp_embed = await client.post(url_embed, headers=headers, content=json.dumps(payload_embed))
-                if resp_embed.status_code != 200:
-                    return wrap_tool_output(text="❌ Impossible de vectoriser la recherche (AI Studio).")
-                
-                vector = resp_embed.json()["embedding"]["values"]
-            except Exception as e: 
-                return wrap_tool_output(text=f"❌ Erreur Vectorisation : {str(e)}", status={"status": "error"})
+        try:
+            # 1. Vectorisation (Embedding AI Studio via EchoGeminiClient)
+            embed_data = await EchoGeminiClient.embed(
+                keys=api_keys,
+                model="text-embedding-004",
+                content={"parts": [{"text": query}]},
+                threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                events=events,
+                timeout=self.valves.KNOWLEDGE_TIMEOUT
+            )
+            vector = embed_data["embedding"]["values"]
+        except Exception as e: 
+            return wrap_tool_output(text=f"❌ Erreur Vectorisation : {str(e)}", status={"status": "error"})
 
-            # 2. Recherche Qdrant
+        # 2. Recherche Qdrant
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as client:
             try:
                 payload_qdrant = {
                     "vector": vector, 

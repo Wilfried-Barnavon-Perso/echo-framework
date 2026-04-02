@@ -1,8 +1,8 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 1.9
-description: 1.9: Added Gemini models constants for Dynamic Routing.
+version: 1.10
+description: 1.10: Updated constants for ECHO Framework.
 """
 
 import os
@@ -28,18 +28,19 @@ ECHO_USER_DBS_DIR = ECHO_OLD_USER_DBS_DIR
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
 # Identité Réseau
-ECHO_USER_AGENT = "GeminiCLI/0.33.1"
+ECHO_USER_AGENT = "ECHO-Framework/5"
 
 # ==============================================================================
 # 1. PROTOCOLE GOOGLE AI STUDIO (GEMINI API)
 # ==============================================================================
 
 GOOGLE_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-GOOGLE_AI_STUDIO_URL = GOOGLE_API_BASE_URL
+GOOGLE_AI_STUDIO_WEB_URL = "https://aistudio.google.com/app/apikey"
 
-# Regex de validation de clé API Google (AIza...)
+# Regex de validation et extraction de clé API Google (AIza...)
 # Le tiret doit être à la fin de la classe de caractères pour éviter les erreurs de plage
-GOOGLE_API_KEY_REGEX = r"^AIza[0-9A-Za-z_-]{35}$"
+GOOGLE_API_KEY_REGEX = r"AIza[0-9A-Za-z_-]{35}"
+GOOGLE_API_KEY_PATTERN = GOOGLE_API_KEY_REGEX
 
 # ==============================================================================
 # 1.1 MODÈLES ECHO & ROUTAGE DYNAMIQUE
@@ -47,10 +48,6 @@ GOOGLE_API_KEY_REGEX = r"^AIza[0-9A-Za-z_-]{35}$"
 MODEL_PRO = "gemini-3.1-pro-preview"
 MODEL_FLASH = "gemini-3-flash-preview"
 MODEL_LITE = "gemini-3.1-flash-lite-preview"
-MODEL_ROUTER = "gemma-3n-e4b-it"
-
-# Regex Cognitive Totale (v1.20) - Capture l'intention de haut niveau (FR/EN, racines linguistiques)
-ECHO_COGNITIVE_TERMS = r"\b(analy[sz]|synth|refactor|optimi[sz]|compar|pourquoi|why|r[eé]fl[eé]ch|think|raisonn|reason|logiq|meta|bias|fallac|sophis|parado|d[eé]montr|demonstrat|expliq|explain|justifi|prouv|prove|v[eé]rifi|valida?t|audit|contr[ôo]l|check|concev|design|architectur|r[eé]sou|resolv|d[eé]?bug|structur|organi[sz]|planifi|method|prioris|decid|arbitr|summar|r[eé]sum|distil|extra[ic]|affin|clarifi|elucid|pr[eé]ci[sz]|abstra|generali|theori|formali|conceptua|integr|consolida|assembl|merg|nuanc|deba|contradic|objec|argumen|ethic|moral|philosoph|deontolo|perspectiv|vision|inno|inven|imagin|creat|pedago|didac)\w*"
 
 # ==============================================================================
 # 2. MAPPING MIME TYPES

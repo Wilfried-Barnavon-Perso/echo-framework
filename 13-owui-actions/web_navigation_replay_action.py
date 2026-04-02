@@ -1,8 +1,8 @@
 """
 title: Show Web Replay
 author: Wilfried BARNAVON
-version: 3.3
-description: 3.3: Fixed date formatting to prevent year 58000+ bug (timestamp in ms).
+version: 3.4
+description: 3.4: Fixed SyntaxError by escaping javascript curly braces in python f-string.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTEyIDN2MTgiLz48cGF0aCBkPSJNMTcgM3YxOCIvPjxwYXRoIGQ9Ik0zIDdoMTgiLz48cGF0aCBkPSJNMyAxMmgyMSIvPjxwYXRoIGQ9Ik0zIDE3aDE4Ii8+PC9zdmc+
 """
 
@@ -137,10 +137,10 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                     const img = document.getElementById(`${{REPLAY_ID}}-img`);
                     const canvas = document.getElementById(`${{REPLAY_ID}}-canvas`);
                     const cropBox = document.getElementById(`${{REPLAY_ID}}-crop-box`);
-                    const loupe = document.getElementById(`${REPLAY_ID}-loupe`);
+                    const loupe = document.getElementById(`${{REPLAY_ID}}-loupe`);
                     const date = new Date(ts).toLocaleString('fr-FR');
 
-                    img.onload = () => {
+                    img.onload = () => {{
                         img.style.opacity = '1'; 
                         const r = img.naturalHeight / img.naturalWidth;
                         const targetH = Math.min(window.innerHeight * 0.75, img.naturalHeight);

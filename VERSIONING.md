@@ -50,6 +50,27 @@ Chaque composant possède son propre cycle de vie et sa propre numérotation, do
 
 Pour garantir la cohérence, chaque Release de la Stack (`5.Y.Z`) est définie par un snapshot précis des versions de composants.
 
+**Exemple pour la 5.94.0 (Dual-Key Resilience & Factorized API Client) :**
+
+{
+  "stack_version": "5.94.0",
+  "release_date": "2026-03-31",
+  "description": "Dual-Key Resilience & Factorized API Client (Multi-Key Fallback + Centralized Gemini Engine)",
+  "components": {
+    "pipe_engine": "170.0",
+    "echo_constants": "1.10",
+    "echo_utils": "2.32",
+    "echo_auth": "1.4",
+    "new_context_filter": "6.44",
+    "cognitive_core": "3.15",
+    "file_content_explorer": "5.84",
+    "gemini_maps_grounding": "12.31",
+    "memory_organic_tool": "1.3",
+    "memory_search": "2.0",
+    "web_navigation_replay_action": "3.4"
+  }
+}
+
 **Exemple pour la 5.93.0 (Dynamic Model Routing) :**
 
 {

@@ -1,8 +1,8 @@
 """
 title: ECHO Smart Memory Filter
 author: Wilfried BARNAVON
-version: 1.3
-description: 1.3: Fixed API Key authentication and syntax errors.
+version: 1.4
+description: 1.4: Correction du pluralisme des clés API (get_api_keys).
 """
 
 from pydantic import BaseModel, Field
@@ -184,7 +184,8 @@ class Filter:
 
         # 3. Lancement asynchrone
         user_id = __user__.get("id")
-        api_key = self.auth.get_api_key(user_id)
+        api_keys = self.auth.get_api_keys(user_id)
+        api_key = api_keys[0] if api_keys else None
         
         if api_key:
             if self.valves.DEBUG_MODE:

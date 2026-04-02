@@ -1,21 +1,21 @@
 """
 title: ECHO Organic Memory Retrieval
 author: Wilfried BARNAVON
-version: 1.2
-description: 1.2: Migrated to Google AI Studio API Key authentication and standard Gemini Embedding.
+version: 1.3
+description: 1.3: Integrated Centralized EchoGeminiClient for multi-key resilience.
 """
 
 from typing import Optional, List, Any, Dict
 import orjson as json
 import os
 import sys
-import httpx
 import logging
 import time
+from pydantic import BaseModel, Field
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, EchoEvents, wrap_tool_output
+from echo_utils import EchoAuth, EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL
 
 # Configuration du Logger
@@ -23,7 +23,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ECHO-MEMORY-TOOL")
 
 class Tools:
+    class Valves(BaseModel):
+        KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        RECALL_TIMEOUT: int = Field(default=30, description="Délai d'attente maximum (secondes) pour l'embedding de recherche.")
+
     def __init__(self):
+        self.valves = self.Valves()
         self.auth = EchoAuth()
         self.qdrant_url = "http://echo-qdrant:6333"
         self.collection_name = "echo_memory"
@@ -54,27 +59,26 @@ class Tools:
         try:
             await events.status(f"🧠 Recherche dans la mémoire organique : '{query}'...")
             
-            # 1. Récupération de la clé API (v5.90+)
-            api_key = self.auth.get_api_key(user_id)
-            if not api_key:
+            # 1. Récupération des clés API (v5.94+)
+            api_keys = self.auth.get_api_keys(user_id)
+            if not api_keys:
                 return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune clé API Google AI Studio trouvée.")
 
-            # 2. Vectorisation de la requête (Embedding AI Studio)
-            embed_url = f"{GOOGLE_API_BASE_URL}/models/text-embedding-004:embedContent?key={api_key}"
-            payload_embed = {
-                "model": "models/text-embedding-004",
-                "content": {"parts": [{"text": query}]}
-            }
+            # 2. Vectorisation de la requête (Embedding AI Studio via EchoGeminiClient)
+            embed_data = await EchoGeminiClient.embed(
+                keys=api_keys,
+                model="text-embedding-004",
+                content={"parts": [{"text": query}]},
+                threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                events=events,
+                timeout=self.valves.RECALL_TIMEOUT
+            )
             
-            async with httpx.AsyncClient() as client:
-                resp_embed = await client.post(embed_url, headers={"User-Agent": ECHO_USER_AGENT}, json=payload_embed, timeout=30)
-                if resp_embed.status_code != 200:
-                    logger.error(f"[ECHO-MEMORY-TOOL] Erreur Embedding: {resp_embed.text}")
-                    return wrap_tool_output(text="❌ Impossible de vectoriser la recherche (AI Studio).")
-                
-                query_vector = resp_embed.json()["embedding"]["values"]
+            query_vector = embed_data["embedding"]["values"]
 
-                # 3. Recherche dans Qdrant avec filtre strict sur user_id
+            # 3. Recherche dans Qdrant avec filtre strict sur user_id
+            import httpx
+            async with httpx.AsyncClient() as client:
                 search_payload = {
                     "vector": query_vector,
                     "limit": limit,
