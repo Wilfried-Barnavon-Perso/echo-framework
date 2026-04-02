@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
 # VERSION : 5.24.1
@@ -45,8 +45,8 @@ $DNS_SERVERS = "[86.54.11.100, 1.1.1.1, 8.8.8.8]"
 $SWITCH_NAME = "Bridge LAN"
 
 # --- CONFIGURATION BRANCHE ---
-#$BRANCHE = "dev"
-$BRANCHE = "main"
+$BRANCHE = "dev"
+#$BRANCHE = "main"
 
 function Pause-OnError {
   param([string]$Message)
