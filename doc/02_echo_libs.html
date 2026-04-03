@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>ECHO v5 - 2. Librairies Partagées (libs)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="logo-container">
+            <img src="../_assets/images/logo-echo.png" alt="ECHO Logo">
+        </div>
+        <h2>ECHO v5</h2>
+        <nav>
+            <ul>
+                <li><a href="index.html">Introduction</a></li>
+                <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
+                <li><a href="01_deploiement.html">1. Déploiement & Infra</a></li>
+                <li><a href="02_echo_libs.html" class="active">2. Librairies Partagées (libs)</a></li>
+                <li><a href="03_hud_ui.html">3. Écosystème HUD & UI</a></li>
+                <li><a href="04_filtre.html">4. Le Filtre (Conscience)</a></li>
+                <li><a href="05_pipe.html">5. Le Pipe (Cortex)</a></li>
+                <li><a href="06_arsenal_outils.html">6. L'Arsenal des Outils</a>
+                    <ul class="sub-nav">
+                        <li><a href="06a_web_intelligence.html">6a. Web Intelligence</a></li>
+                        <li><a href="06b_vault_explorer.html">6b. Vault & Data Explorer</a></li>
+                        <li><a href="06c_memory_cognition.html">6c. Mémoire & Cognition</a></li>
+                        <li><a href="06d_execution_monitoring.html">6d. Exécution & Pilotage</a></li>
+                    </ul>
+                </li>
+                <li><a href="07_admin_manager.html">7. Admin Manager</a></li>
+                <li><a href="08_annexes.html">8. Annexes Techniques</a></li>
+            </ul>
+        </nav>
+    </aside>
+
+    <main>
+        <h1>2. Librairies Partagées (echo_libs)</h1>
+        <p>Le socle technique d'ECHO repose sur un triptyque de librairies situées dans <code>14-owui-libs/</code>. Ces modules assurent la cohérence, la résilience et l'interopérabilité de tout l'écosystème.</p>
+
+        <div class="audit-note">
+            <h4>Architecture Strictement Factorisée</h4>
+            <p>Toutes les couches (Filtres, Pipes, Outils) importent ces libs. Toute modification ici impacte l'intégralité du framework. L'utilisation de <code>httpx</code> avec support <strong>HTTP/2</strong> est le standard obligatoire.</p>
+        </div>
+
+        <section id="constants">
+            <h2>echo_constants.py : Constantes & Topologie</h2>
+            <p>Définit l'environnement d'exécution et les paramètres globaux du protocole Gemini.</p>
+
+            <h3>Topologie Système</h3>
+            <table>
+                <thead>
+                    <tr><th>Constante</th><th>Valeur / Rôle</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>ECHO_USERS_ROOT</code></td><td><code>/app/backend/data/users</code> (Stockage des BDD et Vaults)</td></tr>
+                    <tr><td><code>ECHO_UPLOADS_DIR</code></td><td><code>/app/backend/data/uploads</code> (Transit des fichiers OWUI)</td></tr>
+                    <tr><td><code>ECHO_USER_AGENT</code></td><td><code>ECHO-Framework/5</code> (Identité réseau pour l'API Google)</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Détection MIME Intelligente</h3>
+            <p>La fonction <code>get_gemini_mime(file_path)</code> est le crible d'entrée pour Gemini. Elle utilise une cascade de 6 niveaux :</p>
+            <ol>
+                <li><strong>Mapping ECHO</strong> : Extensions prioritaires (code source, configs).</li>
+                <li><strong>Mimetypes Std</strong> : Bibliothèque standard Python.</li>
+                <li><strong>Magic Numbers</strong> : Signature binaire via <code>filetype</code>.</li>
+                <li><strong>Whitelist Gemini</strong> : Filtrage natif Google (PDF, Images, Vidéos, Audio).</li>
+                <li><strong>Null-Byte Sniffing</strong> : Épreuve textuelle pour identifier le texte brut sans extension.</li>
+                <li><strong>Fallback</strong> : Rejet sécurisé en <code>application/octet-stream</code>.</li>
+            </ol>
+        </section>
+
+        <section id="auth-service">
+            <h2>echo_auth.py : Validation d'Identité</h2>
+            <p>Gère le workflow d'enrôlement des clés API des utilisateurs.</p>
+            <h3>AuthService</h3>
+            <ul>
+                <li><code>get_auth_prompt()</code> : Retourne le message formaté demandant à l'utilisateur de configurer ses clés.</li>
+                <li><code>validate_and_save_api_key(raw_input)</code> : 
+                    <ul>
+                        <li>Extrait les clés via Regex (<code>AIza...</code>).</li>
+                        <li>Valide <strong>en parallèle</strong> (<code>asyncio.gather</code>) jusqu'à 2 clés auprès de Google.</li>
+                        <li>Enregistre la clé primaire et la clé de secours.</li>
+                        <li>Nettoie les anciens tokens OAuth obsolètes.</li>
+                    </ul>
+                </li>
+            </ul>
+        </section>
+
+        <section id="utils-core">
+            <h2>echo_utils.py : Le Cœur Réactif</h2>
+            <p>Contient les classes maîtresses de gestion d'état, de communication et d'interface.</p>
+
+            <h3 id="gemini-client">EchoGeminiClient : Moteur de Résilience & HTTP/2</h3>
+            <p>Ce moteur factorisé est le point de passage unique pour toutes les requêtes sortantes vers l'API Google AI Studio. Il implémente une stratégie de "Cognitive Cascade" et de "Failover" automatique.</p>
+            
+            <div class="info-block">
+                <h4>Protocole HTTP/2 Strict</h4>
+                <p>ECHO exige un client <code>httpx.AsyncClient</code> configuré en <strong>HTTP/2 strict</strong>. Ce choix technique est vital pour le streaming Gemini (SSE), permettant de maintenir des connexions multiplexées sans subir les limitations de performance du HTTP/1.1 (Head-of-line blocking). Le singleton <code>_SHARED_ASYNC_CLIENT</code> gère dynamiquement l'expiration des sessions pour prévenir les fuites de mémoire.</p>
+            </div>
+
+            <h4>Mécanique de Failover (Switching Seuil)</h4>
+            <p>L'algorithme de tentative ne se contente pas de répéter l'appel. Il surveille les erreurs <code>429</code> (Rate Limit) et <code>503</code> (Service Unavailable) :</p>
+            <ul>
+                <li><strong>Seuil de Bascule (Valve <code>KEY_SWITCH_THRESHOLD</code>)</strong> : Si le nombre d'erreurs consécutives sur une clé dépasse ce seuil, ECHO bascule instantanément sur la clé de secours (<code>google_api_key_secondary</code>) sans interrompre la session utilisateur.</li>
+                <li><strong>Jitter & Backoff</strong> : Les tentatives utilisent une gigue aléatoire (0.7x à 1.3x) pour éviter la synchronisation des requêtes lors d'une reprise de service Google.</li>
+            </ul>
+
+            <h3 id="state-manager">EchoStateManager : L'Architecture Bit-Perfect</h3>
+            <p>Le <code>state_manager</code> est l'organe de mémoire persistante d'ECHO. Il assure que le modèle ne perd jamais le fil, même lors de restructurations complexes du chat.</p>
+
+            <div class="audit-note">
+                <h4>Le Système des Ombres (Shadowing)</h4>
+                <p>ECHO ne se fie jamais au texte renvoyé par Open WebUI pour reconstruire le passé. Il utilise la table <code>message_shadows</code> pour stocker le "Moulage Original" (parts JSON) de chaque message associé à son <code>updated_at</code> physique. Si un message est édité, l'empreinte temporelle change, invalidant l'ombre et forçant une suture fraîche.</p>
+            </div>
+
+            <h4>Algorithmes de Hachage & Suture</h4>
+            <p>La continuité cognitive repose sur un double hachage SHA-256 :</p>
+            <ul>
+                <li><strong>Invariant Hash (SHA-256)</strong> : Calculé sur le triplet <code>(rôle, contenu, tool_io)</code>. Il identifie de manière unique une "unité de sens". Si un outil a été appelé, ses entrées/sorties sont incluses dans le calcul pour garantir l'intégrité de la réponse.</li>
+                <li><strong>Cumulative Hash (SHA-256)</strong> : Se calcule par <code>hash(invariant + parent_cumulative)</code>. C'est l'ADN de la session. Chaque message porte en lui l'empreinte de toute la chaîne de réflexion précédente.</li>
+            </ul>
+
+            <div class="code-header">Logique de scellement (Python)</div>
+            <pre><code># Exemple de calcul de l'invariant bit-perfect
+norm_c = json.dumps(content, option=json.OPT_SORT_KEYS)
+norm_t = json.dumps(tool_io, option=json.OPT_SORT_KEYS) if tool_io else ""
+invariant = hashlib.sha256(f"{role}|{norm_c}|{norm_t}".encode()).hexdigest()</code></pre>
+
+            <h3 id="echo-events">EchoEvents : Communication Inter-Couches</h3>
+            <p>Cette classe agit comme un bus d'événements asynchrone facilitant la remontée d'informations depuis les tréfonds du backend Python vers l'interface utilisateur OWUI.</p>
+            
+            <table>
+                <thead>
+                    <tr><th>Méthode</th><th>Événement OWUI</th><th>Impact UI</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>emit("status", ...)</code></td>
+                        <td><code>status</code></td>
+                        <td>Affiche une étape de réflexion avec une icône de chargement ou de succès dans le chat.</td>
+                    </tr>
+                    <tr>
+                        <td><code>toast(content, level)</code></td>
+                        <td><code>notification</code></td>
+                        <td>Affiche une bannière temporaire (Toasts) en haut à droite (info, success, warning, error).</td>
+                    </tr>
+                    <tr>
+                        <td><code>call("input", ...)</code></td>
+                        <td><code>input</code></td>
+                        <td>Interrompt l'exécution pour demander une saisie à l'utilisateur via une modale.</td>
+                    </tr>
+                    <tr>
+                        <td><code>call("execute", ...)</code></td>
+                        <td><code>execute</code></td>
+                        <td>Injecte et exécute du JavaScript arbitraire dans le DOM du navigateur.</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3 id="echo-ui">EchoUI : Le Moteur HUD (Heads-Up Display)</h3>
+            <p>Le module <code>monitor_ECHO</code> est le cœur visuel d'ECHO. Il déploie un micro-système d'exploitation graphique injecté dynamiquement pour la supervision des artefacts.</p>
+
+            <div class="info-block">
+                <h4>Architecture du Moteur JS Injecté</h4>
+                <p>Le JavaScript généré par <code>_generate_universal_hud_js</code> crée un objet <code>window.echoEngine_xxx</code> isolé. Il gère son propre état (position, zoom, timer) dans le <strong>LocalStorage</strong>, permettant au HUD de survivre aux rafraîchissements de page.</p>
+            </div>
+
+            <h4>Capacités du HUD</h4>
+            <ul>
+                <li><strong>Gestion de l'Espace</strong> : Calcul intelligent de la taille optimale (<code>getBestSize</code>) basée sur le ratio de l'image et le viewport.</li>
+                <li><strong>Outils de Précision</strong> : 
+                    <ul>
+                        <li><code>Loupe (Zoom Active)</code> : Rendu d'un canvas secondaire avec facteur 2.5x pour l'analyse de détails.</li>
+                        <li><code>Crop (Découpe)</code> : Système de 8 poignées de redimensionnement pour extraire une zone spécifique.</li>
+                    </ul>
+                </li>
+                <li><strong>Exportation Avancée</strong> : Supporte la copie directe vers le presse-papier ou le téléchargement local (PNG).</li>
+                <li><strong>Auto-Destruction</strong> : Gestion d'un <code>timeout</code> optionnel avec fondu d'opacité avant suppression automatique du DOM.</li>
+            </ul>
+
+            <h3 id="semantic-suture">Protocoles Sémantiques & Suture</h3>
+            <p>ECHO utilise des fonctions utilitaires pour normaliser les échanges cognitifs entre Gemini et l'utilisateur.</p>
+
+            <h4>Traitement de la Pensée (Thought Splitting)</h4>
+            <p>La fonction <code>split_thought_process(text)</code> détecte les balises <code>&lt;think&gt;</code> ou <code>&lt;thought&gt;</code>. Elle sépare le raisonnement pur du texte final pour permettre l'archivage dans <code>thought_archive</code> et l'affichage différencié.</p>
+
+            <h4>Standardisation des Sorties d'Outils</h4>
+            <p>La fonction <code>wrap_tool_output()</code> est le contrat de sortie obligatoire. Elle garantit que les métadonnées (statut, nouveaux fichiers, multiparts) sont correctement encapsulées pour être interprétées par le <strong>Filtre</strong> et le <strong>Pipe</strong> lors de la phase de Suture.</p>
+        </section>
+
+        <footer>
+            ECHO Framework v5.98.10 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
+        </footer>
+    </main>
+</body>
+</html>

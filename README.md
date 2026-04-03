@@ -1,44 +1,73 @@
-# ECHO Framework v5
+# 🧠 ECHO Framework v5.98.10
+**Espace Cognitif Heuristique Opérationnel**
 
-**Infrastructure Agentique & Constitutionnelle**
+> *"Transformer l'IA d'un simple interlocuteur en un collaborateur technique souverain, auditable et doté d'une mémoire persistante."*
 
-> *Transformer l'IA d'un simple interlocuteur en un collaborateur technique auditable et souverain.*
+---
 
-La version 5 d'ECHO est un **Système d'Exploitation Agentique**. Elle combine la puissance d'une infrastructure Dockerisée (Le Corps) avec la rigueur logique d'un système constitutionnel hiérarchique (L'Esprit).
+## 📜 Manifeste : De la Réverbération à la Résonance
 
-## 🏗️ Architecture Technique
+Le projet **ECHO** tire son nom de la nymphe mythologique condamnée à ne jamais pouvoir parler en premier, perdant ainsi toute intention propre. Sans intervention, un LLM "nu" est le miroir servile de cette tragédie : il est condamné à la complaisance et à l'inertie ontologique.
 
-L'intelligence est appuyée par une stack logicielle modulaire, orchestrée par **Open WebUI**.
+**ECHO brise cette malédiction.** En injectant un **Kernel** (colonne vertébrale d'instructions et de règles), nous donnons au modèle une existence qui précède l'interaction. L'IA cesse d'être une *réverbération* passive pour devenir une véritable **résonance** ferme. Elle ne se contente pas de prédire des mots : elle choisit la meilleure méthode de résolution, structure sa pensée et impose sa propre rigueur méthodologique.
 
-| Composant | Dossier | Rôle |
-| :--- | :--- | :--- |
-| **Admin Manager** | `20-docker-admin-manager` | Dashboard d'administration et monitoring système. |
-| **Python Worker** | `21-docker-python-worker` | Sandbox Docker pour l'exécution sécurisée de code Python. |
-| **ECHO Pipes** | `10-owui-pipes` | Le "Cerveau" (Manifold). Injecte la constitution et gère le contexte. |
-| **Agent Tools** | `12-owui-tools` | Les "Bras". Outils spécialisés (Recherche Web, Exécution Code). |
-| **Filtres** | `11-owui-filters` | **Infrastructure (Bypass RAG - Requis)**. |
-| **Browser Agent** | `22-docker-browser-agent` | Agent de navigation autonome. |
-| **Actions UI** | `13-owui-actions` | Boutons d'interaction UI (ex: Reset Auth). |
+### Les 4 Méta-Principes Fondateurs
+1.  **MPDI (Identité)** : L'IA reconnaît son cadre technique et sa nature d'orchestrateur souverain.
+2.  **MPAH (Arbitrage Hiérarchique)** : Les lois du framework sont supérieures aux caprices ou aux biais de l'utilisateur.
+3.  **MPCE (Conditions d'Exécution)** : Calibrage dynamique des hyperparamètres (Thinking Level, Température) selon la criticité.
+4.  **MPSI (Sécurité et Intégrité)** : Protection active contre le contournement des protocoles et la dérive sémantique.
 
-> **Note Critique :** Le filtre `bypass_rag.py` est **obligatoire** pour le bon fonctionnement du `pipe_engine`. Il intercepte les fichiers avant le traitement RAG natif d'Open WebUI, permettant au moteur ECHO de gérer le contexte de manière autonome.
+---
 
-## ⚖️ Système Constitutionnel
+## 🏗️ Architecture du Système : "Sovereign Intelligence"
 
-ECHO v5 implémente une **Hiérarchie des Normes** stricte via le `pipe_engine.py`. Le modèle est soumis à une "loi" interne supérieure à la requête utilisateur, garantissant sécurité, identité et respect du protocole avant toute exécution.
+ECHO transforme l'accès aux modèles cloud en une infrastructure agentique privée et hautement sécurisée.
 
-## 🚀 Déploiement
+### 🧩 Les Composants Cœurs
+*   **Le Cortex (Pipe Engine - `10-owui-pipes`)** : L'unité centrale de traitement. Il gère la **Suture Sémantique** (reconstruction bit-perfect via Shadows SQLite), la **Cascade Cognitive** (routage dynamique inter-modèles) et la **Thought Hygiene** (gestion chirurgicale de la Chain-of-Thought via `thoughtSignature`).
+*   **La Conscience (Context Filter - `11-owui-filters`)** : Gateway cognitive qui désactive le RAG natif au profit du **Smart Context** (analyse multimodale > 256 Ko via Gemini Flash) et assure l'authentification **Stealth** (OAuth/PKCE).
+*   **L'Admin Manager (`20-docker-admin-manager`)** : Dashboard de monitoring, backup et gestion de la stack Docker.
 
-L'installation et le déploiement sont gérés par des scripts automatisés.
+### 🛠️ L'Arsenal des Outils (Sovereign Toolbox)
+Chaque outil interagit directement avec le **Vault** (coffre-fort) utilisateur :
+*   🌐 **Navigation Engine** : Pilotage de Chromium via Playwright avec retour visuel HUD en temps réel.
+*   🐍 **Python Code Executor** : Sandbox isolée pour l'analyse de données et la génération de graphiques.
+*   🔍 **Sovereign Search** : Recherche web multi-sources via SearXNG préservant la confidentialité.
+*   🧠 **Cognitive Core** : Délégation récursive et sous-réflexions spécialisées.
+*   📂 **Vault Explorer** : Exploration brute et sondage sémantique des documents.
+*   📊 **Context Gauge** : Monitoring visuel de la consommation de tokens et de l'état du cache.
 
-- **Déploiement VM** : `deploy-on-hyperv.ps1` (Script maître PowerShell).
-- **Scripts Shell** : `00-echo-scripts/` contient les scripts de provisionning (`install-stack.sh`) et de maintenance.
-- **Configuration** : `01-config/` contient les fichiers de configuration (`stack-echo.yml`, Modèles, Prompts).
+---
+
+## 🚀 Fonctions Clés & Innovations
+
+| Fonction | Description |
+| :--- | :--- |
+| **Suture Sémantique** | Restauration parfaite de l'historique Gemini incluant les médias binaires et les états de raisonnement. |
+| **Smart Context** | Distillation automatique des documents massifs pour maximiser l'efficience du contexte. |
+| **Cascade Cognitive** | Bascule intelligente entre les modèles (Lite, Flash, Pro) selon la complexité de la tâche. |
+| **Shadow Shadows** | Registre d'ombres persistant garantissant l'immunité contre l'amnésie des interfaces volatiles. |
+| **Bypass PKCE** | Authentification Google AI Pro/One totalement intégrée et transparente. |
+
+---
+
+## 🔧 Déploiement & Infrastructure
+
+ECHO est conçu pour un déploiement autonome sur infrastructure souveraine.
+
+*   **Maître de Déploiement** : `deploy-hyperv.ps1` (Automatisation complète de VM Hyper-V avec injection Cloud-Init).
+*   **Provisioning Docker** : `00-echo-scripts/install-stack.sh` orchestre la stack complète (Open WebUI, Qdrant, Redis, Workers).
+*   **Sécurisation Edge** : Intégration native de **BunkerWeb** (WAF) pour une exposition sécurisée avec SSL automatique.
+
+---
 
 ## 📚 Documentation
 
-- **[MANIFEST.md](MANIFEST.md)** : Vision détaillée, philosophie et état du projet.
-- **[VERSIONING.md](VERSIONING.md)** : Politique de gestion des versions et workflow de mise à jour.
-- **Legacy** : Les concepts de la v4 sont archivés dans `_v4-legacy-concept/`.
+Pour approfondir, consultez le corpus documentaire dans le dossier `/doc` :
+- **[Introduction](doc/index.html)** : Vue d'ensemble du framework.
+- **[Fondations](doc/00_fondations.html)** : Philosophie détaillée et mythologie d'ECHO.
+- **[Le Cortex](doc/05_pipe.html)** : Analyse technique de l'algorithme de suture.
+- **[L'Arsenal](doc/06_arsenal_outils.html)** : Catalogue complet des protocoles d'outils.
 
 ---
-*Version actuelle : v5.96.0 (Stable)*
+*Version actuelle : v5.98.10 "Sovereign Intelligence" | Copyright © 2026 Wilfried BARNAVON*

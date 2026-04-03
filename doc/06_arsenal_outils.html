@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>ECHO v5 - 6. L'Arsenal des Outils</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="logo-container">
+            <img src="../_assets/images/logo-echo.png" alt="ECHO Logo">
+        </div>
+        <h2>ECHO v5</h2>
+        <nav>
+            <ul>
+                <li><a href="index.html">Introduction</a></li>
+                <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
+                <li><a href="01_deploiement.html">1. Déploiement & Infra</a></li>
+                <li><a href="02_echo_libs.html">2. Librairies Partagées (libs)</a></li>
+                <li><a href="03_hud_ui.html">3. Écosystème HUD & UI</a></li>
+                <li><a href="04_filtre.html">4. Le Filtre (Conscience)</a></li>
+                <li><a href="05_pipe.html">5. Le Pipe (Cortex)</a></li>
+                <li><a href="06_arsenal_outils.html" class="active">6. L'Arsenal des Outils</a>
+                    <ul class="sub-nav">
+                        <li><a href="06a_web_intelligence.html">6a. Web Intelligence</a></li>
+                        <li><a href="06b_vault_explorer.html">6b. Vault & Data Explorer</a></li>
+                        <li><a href="06c_memory_cognition.html">6c. Mémoire & Cognition</a></li>
+                        <li><a href="06d_execution_monitoring.html">6d. Exécution & Pilotage</a></li>
+                    </ul>
+                </li>
+                <li><a href="07_admin_manager.html">7. Admin Manager</a></li>
+                <li><a href="08_annexes.html">8. Annexes Techniques</a></li>
+            </ul>
+        </nav>
+    </aside>
+
+    <main>
+        <h1>6. L'Arsenal des Outils (Sovereign Toolbox)</h1>
+        <p>L'Arsenal ECHO n'est pas une simple collection de fonctions, mais un écosystème d'outils souverains conçus pour l'autonomie cognitive. Chaque outil respecte un protocole de communication multimodal strict et interagit directement avec le Vault utilisateur.</p>
+
+        <div class="audit-note">
+            <h4>Principes Directeurs</h4>
+            <ul>
+                <li><strong>Souveraineté</strong> : Les données ne quittent jamais l'infrastructure ECHO sauf pour les appels API chiffrés.</li>
+                <li><strong>Multimodalité native</strong> : Capacité à renvoyer du texte, des pensées, des médias et des artefacts dans un seul flux.</li>
+                <li><strong>Auditabilité</strong> : Chaque appel d'outil est journalisé dans la table <code>tool_journal</code> du StateManager.</li>
+            </ul>
+        </div>
+
+        <h2>Le Protocole Multipart (<code>wrap_tool_output</code>)</h2>
+        <p>Pour dépasser les limites des réponses textuelles, ECHO utilise un format JSON structuré encapsulant plusieurs types de données. Ce format est dépaqueté par le Pipe (Cortex) avant d'être injecté dans le contexte du modèle.</p>
+        
+        <div class="code-header">Signature technique (echo_utils.py)</div>
+        <pre><code>def wrap_tool_output(
+    text: str, 
+    status: dict = None, 
+    echo_tool_multiparts: List[dict] = None, 
+    nouveaux_fichiers: List[dict] = None
+) -> dict:
+    # Encapsulation des données pour le Pipe</code></pre>
+
+        <h3>Composants du Multipart</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th>Traitement par le Pipe</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>text</code></td>
+                    <td>La réponse textuelle principale de l'outil.</td>
+                    <td>Injecté comme <code>functionResponse</code>.</td>
+                </tr>
+                <tr>
+                    <td><code>thought</code></td>
+                    <td>Raisonnement interne de l'outil ou du sous-modèle.</td>
+                    <td>Isolé pour enrichir la Chain-of-Thought sans polluer la sortie finale.</td>
+                </tr>
+                <tr>
+                    <td><code>media</code></td>
+                    <td>Binaire (Base64) avec MIME type (Image, PDF, HTML).</td>
+                    <td>Converti en <code>inlineData</code> Gemini et inséré immédiatement après la réponse.</td>
+                </tr>
+                <tr>
+                    <td><code>nouveaux_fichiers</code></td>
+                    <td>Métadonnées des fichiers créés ou téléchargés.</td>
+                    <td>Injecté via le protocole "Suture" pour assurer la rémanence au tour suivant.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>Le Système "Vault" (Coffre-Fort)</h2>
+        <p>Le Vault est l'espace de stockage persistant et isolé de chaque utilisateur. Contrairement aux dossiers de transit classiques, le Vault est géré par le <code>EchoStateManager</code> et assure l'intégrité des fichiers via une indexation SQLite (<code>processed_files</code>).</p>
+        <ul>
+            <li><strong>Isolation</strong> : Chemin physique <code>/app/backend/echo_users/{user_id}/files/</code>.</li>
+            <li><strong>Indexation</strong> : Chaque fichier possède un <code>file_id</code> unique au format <code>U_{uid}_C_{cid}_T_{ts}</code>.</li>
+            <li><strong>Persistance</strong> : Les outils comme le <code>Navigation Engine</code> scellent automatiquement les captures d'écran dans le Vault.</li>
+        </ul>
+
+        <h2>Architecture de l'Arsenal</h2>
+        <p>L'arsenal est segmenté en quatre domaines d'expertise, détaillés dans les sections suivantes :</p>
+        <div class="grid-container">
+            <div class="card">
+                <h3>🌐 Web Intelligence</h3>
+                <p>Pilotage de Chromium, cartographie du DOM, Replay visuel et Recherche Web Souveraine (SearxNG/DDG).</p>
+                <a href="06a_web_intelligence.html" class="btn">📁 Explorer</a>
+            </div>
+            <div class="card">
+                <h3>📂 Vault & Data</h3>
+                <p>Exploration brute, sondage sémantique et gestion des métadonnées.</p>
+                <a href="06b_vault_explorer.html" class="btn">📁 Explorer</a>
+            </div>
+            <div class="card">
+                <h3>🧠 Mémoire & Cognition</h3>
+                <p>RAG Organique, Base de Connaissances et Cascade Cognitive.</p>
+                <a href="06c_memory_cognition.html" class="btn">📁 Explorer</a>
+            </div>
+            <div class="card">
+                <h3>🐍 Exécution & Pilotage</h3>
+                <p>Sandbox Python isolée et Monitoring avancé de la jauge de Contexte.</p>
+                <a href="06d_execution_monitoring.html" class="btn">📁 Explorer</a>
+            </div>
+        </div>
+
+        <footer>
+            ECHO Framework v5.98.10 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
+        </footer>
+    </main>
+</body>
+</html>
