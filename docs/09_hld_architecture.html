@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECHO v5 - 9. High-Level Design (HLD)</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="module">
+      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+      mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+    </script>
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="logo-container">
+            <img src="logo-echo.png" alt="ECHO Logo">
+        </div>
+        <h2>ECHO v5</h2>
+        <nav>
+            <ul>
+                <li><a href="index.html">Introduction</a></li>
+                <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
+                <li><a href="01_deploiement.html">1. Déploiement & Infra</a></li>
+                <li><a href="02_echo_libs.html">2. Librairies Partagées (libs)</a></li>
+                <li><a href="03_hud_ui.html">3. Écosystème HUD & UI</a></li>
+                <li><a href="04_filtre.html">4. Le Filtre (Conscience)</a></li>
+                <li><a href="05_pipe.html">5. Le Pipe (Cortex)</a></li>
+                <li><a href="06_arsenal_outils.html">6. L'Arsenal des Outils</a>
+                    <ul class="sub-nav">
+                        <li><a href="06a_web_intelligence.html">6a. Web Intelligence</a></li>
+                        <li><a href="06b_vault_explorer.html">6b. Vault & Data Explorer</a></li>
+                        <li><a href="06c_memory_cognition.html">6c. Mémoire & Cognition</a></li>
+                        <li><a href="06d_execution_monitoring.html">6d. Exécution & Pilotage</a></li>
+                    </ul>
+                </li>
+                <li><a href="07_admin_manager.html">7. Admin Manager</a></li>
+                <li><a href="08_annexes.html">8. Annexes Techniques</a></li>
+                <li><a href="09_hld_architecture.html" class="active">9. High-Level Design (HLD)</a></li>
+                <li><a href="10_dat_technique.html">10. Architecture Technique (DAT)</a></li>
+            </ul>
+        </nav>
+    </aside>
+
+    <main>
+        <h1>9. High-Level Design (HLD)</h1>
+        <h2>L'Architecture "Ombre Riche" (Rich Shadow)</h2>
+        <p>Le framework ECHO repose sur un constat critique audité sur l'architecture standard : <strong>l'historique des messages est volatil.</strong> Les interfaces de chat "nettoient" systématiquement les injections faites par les filtres avant de stocker les messages en base de données.</p>
+        
+        <p>Pour garantir que Gemini conserve une mémoire parfaite (Smart Context, Raisonnement CoT, Artefacts), ECHO implémente une <strong>Ombre Riche</strong> : un miroir haute-fidélité de la session stocké dans une base SQLite locale (<code>user-XXX.db</code>), capable de "réparer" l'historique avant chaque envoi à l'API Gemini.</p>
+
+        <div class="note-box" style="margin-bottom: 2rem;">
+            <h3>Diagramme de Flux de la Suture Cognitive</h3>
+            <p>Le diagramme ci-dessous illustre le parcours d'une requête et la reconstruction du contexte bit-perfect.</p>
+            <div class="mermaid">
+sequenceDiagram
+    participant U as Utilisateur
+    participant F as Filtre (Inlet)
+    participant O as Open WebUI
+    participant P as Pipe (Moteur)
+    participant B as SQLite ECHO
+    participant G as API Gemini
+
+    U->>F: Envoi Message + Fichiers
+    F->>F: Calcul Invariant Hash
+    F->>F: Aiguillage (Smart Context)
+    F->>O: Payload + Metadata (InvHash)
+    O->>P: Historique Volatil + Metadata
+    P->>B: Restauration du Passé (Cumulative Hash)
+    P->>P: Suture Bit-Perfect (Signatures, Outils)
+    P->>G: Payload Gemini Normalisé
+    G->>P: Stream Réponse + Thought + Signature
+    P->>U: Affichage Temps Réel
+    P->>B: Archivage Suture Riche (Fin de tour)
+            </div>
+        </div>
+
+        <h2>Infrastructure de Données & Moteur de Hachage</h2>
+        <p>Situé dans : <code>14-owui-libs/echo_utils.py</code> (Classe <code>EchoStateManager</code>)</p>
+
+        <h3>Le Schéma SQL (Tables Spécialisées)</h3>
+        <ul>
+            <li><strong><code>suture_index</code></strong> : PK <code>cumulative_hash</code>. Lie un point temporel à un contenu riche.</li>
+            <li><strong><code>rich_payloads</code></strong> : PK <code>invariant_hash</code>. Stocke les contenus lourds (Résumés, Base64) de façon factorisée (déduplication).</li>
+            <li><strong><code>cognitive_signatures</code></strong> : PK <code>cumulative_hash</code>. Stocke les <code>thoughtSignature</code> de Google (Ancres logiques).</li>
+            <li><strong><code>tool_journal</code></strong> : PK <code>cumulative_hash</code>. Stocke les entrées/sorties des outils (<code>functionCall</code>).</li>
+        </ul>
+
+        <h3>Les Algorithmes de Hachage (Blockchain-like)</h3>
+        <p><strong>1. Invariant Hash :</strong> <code>calculate_invariant_hash(role, content, files)</code><br>
+        Crée une empreinte unique du message "propre" (Hash du rôle + texte brut + IDs de fichiers triés). Utilisé pour identifier la source sémantique d'un message.</p>
+
+        <p><strong>2. Cumulative Hash :</strong> <code>calculate_cumulative_hash(invariant, parent_hash)</code><br>
+        Crée une chaîne cryptographique. (Hash de l'invariant actuel + hash cumulatif du message précédent). Permet de détecter instantanément le <em>Branching</em> (édition d'un message passé).</p>
+
+        <footer>
+            ECHO Framework v5.98.10 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
+        </footer>
+    </main>
+</body>
+</html>
