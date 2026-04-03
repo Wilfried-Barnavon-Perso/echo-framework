@@ -1,4 +1,9 @@
 # 🧠 ECHO Framework v5.98.10
+
+<div align="center">
+  <img src="_assets/images/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
+</div>
+
 **Espace Cognitif Heuristique Opérationnel**
 
 > *"Transformer l'IA d'un simple interlocuteur en un collaborateur technique souverain, auditable et doté d'une mémoire persistante."*
