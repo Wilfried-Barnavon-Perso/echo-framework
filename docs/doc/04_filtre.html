@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>ECHO v5 - 4. Le Filtre (Conscience Périphérique)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="logo-container">
+            <img src="../_assets/images/logo-echo.png" alt="ECHO Logo">
+        </div>
+        <h2>ECHO v5</h2>
+        <nav>
+            <ul>
+                <li><a href="index.html">Introduction</a></li>
+                <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
+                <li><a href="01_deploiement.html">1. Déploiement & Infra</a></li>
+                <li><a href="02_echo_libs.html">2. Librairies Partagées (libs)</a></li>
+                <li><a href="03_hud_ui.html">3. Écosystème HUD & UI</a></li>
+                <li><a href="04_filtre.html" class="active">4. Le Filtre (Conscience)</a></li>
+                <li><a href="05_pipe.html">5. Le Pipe (Cortex)</a></li>
+                <li><a href="06_arsenal_outils.html">6. L'Arsenal des Outils</a>
+                    <ul class="sub-nav">
+                        <li><a href="06a_web_intelligence.html">6a. Web Intelligence</a></li>
+                        <li><a href="06b_vault_explorer.html">6b. Vault & Data Explorer</a></li>
+                        <li><a href="06c_memory_cognition.html">6c. M�moire & Cognition</a></li>
+                        <li><a href="06d_execution_monitoring.html">6d. Ex�cution & Pilotage</a></li>
+                    </ul>
+                </li>
+                <li><a href="07_admin_manager.html">7. Admin Manager</a></li>
+                <li><a href="08_annexes.html">8. Annexes Techniques</a></li>
+            </ul>
+        </nav>
+    </aside>
+
+    <main>
+        <h1>4. Le Filtre (Conscience Périphérique)</h1>
+        <p>Le <code>new_context_filter.py</code> (v6.60) constitue la <strong>Gateway Cognitive</strong> d'ECHO. Positionné en amont du Pipe, il intercepte, analyse et transmute chaque signal entrant en un "Draft" sémantique haute fidélité. Sa mission est de préparer un terrain bit-perfect pour la suture neuronale.</p>
+
+        <div class="note-box">
+            <strong>Contrôle Souverain :</strong> ECHO définit <code>self.file_handler = True</code>. Ce réglage critique désactive l'unité de Retrieval (RAG) native d'Open WebUI, transférant l'intégralité de la gestion documentaire à la logique propriétaire d'ECHO.
+        </div>
+
+        <h2>Smart Context 3.0 : L'Aiguillage Multimodal</h2>
+        <p>ECHO n'injecte pas les fichiers aveuglément. Il pratique une analyse granulaire pilotée par la fonction <code>_process_file_task</code>, capable de traiter les fichiers en parallèle avec un contrôle de flux strict.</p>
+        
+        <h3>1. L'Algorithme de Décision (Quadruple Flux)</h3>
+        <p>Chaque fichier subit une évaluation basée sur son type MIME et sa taille réelle (Valve <code>MAX_DIRECT_TEXT_SIZE</code> fixée à 256 Ko).</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Flux</th>
+                    <th>Conditions</th>
+                    <th>Action ECHO</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Binaire Direct</strong></td>
+                    <td>Image/Audio/Vidéo/PDF < 256 Ko</td>
+                    <td>Encapsulation Base64 (inlineData) native.</td>
+                </tr>
+                <tr>
+                    <td><strong>Injection Texte</strong></td>
+                    <td>Texte/Code < 256 Ko</td>
+                    <td>Insertion brute dans un bloc Markdown Code.</td>
+                </tr>
+                <tr>
+                    <td><strong>Smart Context</strong></td>
+                    <td>Document Volumineux (> 256 Ko)</td>
+                    <td>Distillation via <strong>Gemini Flash</strong> (Résumé technique).</td>
+                </tr>
+                <tr>
+                    <td><strong>Indexation</strong></td>
+                    <td>Format non supporté par Gemini</td>
+                    <td>Marquage simple dans le registre (Fallback).</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>2. Moteur de Sniffing MIME (ECHO-Logic)</h3>
+        <p>Le protocole <code>get_gemini_mime</code> assure une identification robuste là où les systèmes standards échouent :</p>
+        <ul>
+            <li><strong>Phase 1 : Mappings ECHO</strong> : Reconnaissance immédiate des formats de développement (<code>.py</code>, <code>.sh</code>, <code>.ts</code>, etc.).</li>
+            <li><strong>Phase 2 : Magic Number Sniffing</strong> : Analyse de la signature binaire via <code>filetype</code> pour les fichiers sans extension.</li>
+            <li><strong>Phase 3 : Null-Byte Sniffing (Text-Sniffing)</strong> : Si aucun caractère nul (<code>\x00</code>) n'est détecté dans les 1024 premiers octets, le fichier est forcé en <code>text/plain</code>, autorisant l'IA à analyser du code source exotique.</li>
+        </ul>
+
+        <h3>3. Moulage Sémantique (Smart Context)</h3>
+        <p>Pour les documents massifs, le Filtre invoque Gemini Flash de manière autonome avec une <code>systemInstruction</code> chirurgicale : <i>"Tu es l'unité de prétraitement contextuel d'ECHO. Produire un résumé technique exhaustif, identifier la structure, le but et les points clefs."</i> Le résultat est injecté dans le Draft avec le statut <code>summarized</code>.</p>
+
+        <h2>Authentification Stealth : Le Coffre-Fort Temporaire</h2>
+        <p>Le filtre assure la sécurité des identifiants sans jamais les exposer à l'interface utilisateur.</p>
+        <ul>
+            <li><strong>Interception</strong> : Le filtre surveille l'état <code>ECHO_SESSION_AUTH_PENDING</code>. Toute chaîne capturée par <code>GOOGLE_API_KEY_REGEX</code> est extraite du message.</li>
+            <li><strong>Masquage UI</strong> : Le message complet de l'utilisateur est remplacé par : <br>
+                <code style="color:var(--accent-color);">🔐 *Vérification des clés API Google en cours...*</code>
+            </li>
+            <li><strong>Handover</strong> : La clé brute est passée au Pipe via <code>body["_api_key"]</code>. C'est le Pipe qui validera et scellera la clé dans la base de données <code>identity.db</code> via l'<code>AuthService</code>.</li>
+        </ul>
+
+        <h2>Architecture du Draft & Cycle de Vie</h2>
+        <p>Contrairement aux filtres standards, ECHO ne modifie pas directement le contenu du message en phase Inlet. Il construit un <strong>Draft</strong> complexe dans les métadonnées.</p>
+        
+        <div class="diagram-container">
+            <div style="display: flex; gap: 20px; align-items: center; justify-content: center;">
+                <div class="diagram-node node-filter">Filtre (Inlet)<br><small>Génération Draft</small></div>
+                <div style="font-size: 20px;">➔</div>
+                <div class="diagram-node" style="border-color: var(--accent-color);">Métadonnées OWUI<br><small>_echo_user_parts_draft</small></div>
+                <div style="font-size: 20px;">➔</div>
+                <div class="diagram-node" style="background: var(--bg-dark); border-color: var(--purple-color);">Pipe (Cortex)<br><small>Suture & Scellement DB</small></div>
+            </div>
+        </div>
+
+        <h3>Le Manifeste de Vérité : etat_echo</h3>
+        <p>Le bloc JSON injecté au sommet du Draft est le pivot de la coordination cognitive. Il contient les placeholders <code>##MODEL_ID##</code> et <code>##MODEL_ORIGIN##</code>, qui seront résolus dynamiquement par le Pipe au moment de la reconstruction du contexte.</p>
+        
+        <div class="code-header">Structure du bloc etat_echo (Injecté par le Filtre)</div>
+        <pre><code>{
+  "version_framework_echo": "##ECHO_VERSION##",
+  "modèle_actuel": "##MODEL_ID##",
+  "modèle_origine": "##MODEL_ORIGIN##",
+  "nom_utilisateur": "...",
+  "date_et_heure": "2026-04-03 12:00",
+  "localisation": "Paris, France",
+  "timezone": "Europe/Paris",
+  "registre_fichiers": {
+     "source.py": { "id": "F1", "mime": "text/plain", "statut": "transmitted" }
+  }
+}</code></pre>
+
+        <h2>Smart Memory : La Conscience Persistante</h2>
+        <p>Le <code>conversation_memory_filter.py</code> (v1.4) gère la mémoire à long terme d'ECHO en phase <strong>Outlet</strong>.</p>
+        <ul>
+            <li><strong>Distillation</strong> : Si le seuil minimal de messages est atteint, une tâche asynchrone est lancée. Gemini Flash-Lite résume la conversation en un JSON technique dense.</li>
+            <li><strong>Vectorisation</strong> : Le résumé est transformé en vecteurs par <strong>Gemini Embedding-2</strong>.</li>
+            <li><strong>Stockage Qdrant</strong> : Le "souvenir sémantique" est ancré dans la collection <code>echo_memory</code>, prêt à être rappelé par les outils de recherche de mémoire.</li>
+            <li><strong>Probabilisme</strong> : Pour optimiser les ressources, le déclenchement est soumis à la valve <code>TRIGGER_PROBABILITY</code>.</li>
+        </ul>
+
+        <h2>Sécurité Outlet : Masquage Chirurgical</h2>
+        <p>En phase Outlet (post-génération), le filtre applique un balayage final via Regex pour s'assurer qu'aucune clé API ou secret technique ne "fuit" dans l'interface visuelle, même en cas de comportement erratique du modèle. Toute clé détectée est remplacée par la mention stricte : <code>[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]</code>.</p>
+
+        <footer>
+            ECHO Framework v5.98.10 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
+        </footer>
+    </main>
+</body>
+</html>
+
