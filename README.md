@@ -71,8 +71,8 @@ ECHO est conçu pour un déploiement autonome sur infrastructure souveraine.
 Pour approfondir, consultez le corpus documentaire dans le dossier `/docs` :
 - **[Introduction](docs/index.html)** : Vue d'ensemble du framework.
 - **[Fondations](docs/00_fondations.html)** : Philosophie détaillée et mythologie d'ECHO.
-- **[Le Cortex](docs/05_pipe.html)** : Analyse technique de l'algorithme de suture.
-- **[L'Arsenal](docs/06_arsenal_outils.html)** : Catalogue complet des protocoles d'outils.
+- **[Le Cortex](docs/06_pipe.html)** : Analyse technique de l'algorithme de suture.
+- **[L'Arsenal](docs/07_arsenal_outils.html)** : Catalogue complet des protocoles d'outils.
 
 ---
 *Version actuelle : v5.98.10 "Sovereign Intelligence" | Copyright © 2026 Wilfried BARNAVON*
