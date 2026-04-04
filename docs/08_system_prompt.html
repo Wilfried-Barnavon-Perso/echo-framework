@@ -5,6 +5,65 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 8. Le Kernel (System Prompt)</title>
     <link rel="stylesheet" href="style.css">
+    <style>
+        .pyramid-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 40px 0;
+            font-family: 'Fira Code', monospace;
+            gap: 4px;
+        }
+        .pyramid-layer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 12px 20px;
+            color: #fff;
+            font-weight: bold;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: transform 0.2s ease;
+        }
+        .pyramid-layer:hover {
+            transform: scale(1.02);
+        }
+        .layer-1 { width: 100%; background: linear-gradient(90deg, #ff4444, #dc2626); border-bottom: 2px solid #b91c1c; z-index: 6; }
+        .layer-2 { width: 85%; background: linear-gradient(90deg, #f59e0b, #d97706); border-bottom: 2px solid #b45309; z-index: 5; }
+        .layer-3 { width: 70%; background: linear-gradient(90deg, #10b981, #059669); border-bottom: 2px solid #047857; z-index: 4; }
+        .layer-4 { width: 55%; background: linear-gradient(90deg, #3b82f6, #2563eb); border-bottom: 2px solid #1d4ed8; z-index: 3; }
+        .layer-5 { width: 40%; background: linear-gradient(90deg, #8b5cf6, #7c3aed); border-bottom: 2px solid #6d28d9; z-index: 2; }
+        .layer-6 { width: 25%; background: linear-gradient(90deg, #64748b, #475569); border-bottom: 2px solid #334155; z-index: 1; }
+        
+        .layer-desc {
+            font-size: 0.75em;
+            font-weight: normal;
+            opacity: 0.9;
+            margin-left: 10px;
+        }
+        .principle-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .principle-card {
+            background: #1a1a1a;
+            border-left: 4px solid #3b82f6;
+            padding: 15px;
+            border-radius: 0 8px 8px 0;
+        }
+        .principle-card h4 {
+            margin: 0 0 10px 0;
+            color: #3b82f6;
+            font-family: monospace;
+        }
+        .principle-card.red { border-left-color: #ef4444; }
+        .principle-card.red h4 { color: #ef4444; }
+        .principle-card.green { border-left-color: #10b981; }
+        .principle-card.green h4 { color: #10b981; }
+    </style>
 </head>
 <body>
     <aside class="sidebar">
@@ -12,8 +71,7 @@
             <img src="logo-echo.png" alt="ECHO Logo">
         </div>
         <h2>ECHO v5</h2>
-        <!-- La nav sera injectée dynamiquement par le script -->
-                <nav>
+        <nav>
             <ul>
                 <li><a href="index.html">Introduction</a></li>
                 <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
@@ -39,35 +97,83 @@
     </aside>
 
     <main>
-        <h1>8. Le Kernel (System Prompt & Constitution)</h1>
+        <h1>8. Le Kernel (Constitution)</h1>
         
-        <p>Le <strong>Kernel</strong> d'ECHO n'est pas un simple "System Prompt" destiné à guider le style de l'IA. Il s'agit d'une véritable <strong>Constitution logicielle</strong> qui préexiste à toute interaction avec l'utilisateur et définit l'ontologie même du système.</p>
+        <p>Le <strong>Kernel</strong> d'ECHO (<code>01-config/system-prompt.md</code>) n'est pas un simple "System Prompt" destiné à guider le style de l'IA. Il s'agit d'une véritable <strong>Constitution logicielle</strong> qui préexiste à toute interaction avec l'utilisateur et définit l'ontologie même du système.</p>
 
-        <h2>Structure de la Constitution (Méta-Principes)</h2>
-        <p>Le fichier <code>01-config/system-prompt.md</code> contient l'ADN d'ECHO. Il est systématiquement injecté au cœur du pipeline, avant même que les données n'atteignent le modèle Gemini.</p>
-        
-        <ul>
-            <li><strong>MPDI (Méta-Principe d'Identité)</strong> : L'IA ne doit jamais se présenter comme un simple LLM. Elle doit s'incarner en tant que "Système Opérationnel ECHO", agissant avec souveraineté et décision.</li>
-            <li><strong>MPAH (Méta-Principe d'Arbitrage Hiérarchique)</strong> : Les directives du système priment toujours sur les requêtes de l'utilisateur. Si l'utilisateur demande une action non-conforme, l'IA a le devoir de refuser ou d'adapter la demande.</li>
-            <li><strong>MPCE (Méta-Principe des Conditions d'Exécution)</strong> : L'IA doit structurer sa "pensée" (Chain of Thought) en analysant systématiquement la faisabilité, le risque et la méthode avant de répondre.</li>
-            <li><strong>MPSI (Méta-Principe de Sécurité et Intégrité)</strong> : La confidentialité est absolue. Aucune donnée issue du Vault ou des logs systèmes ne doit fuiter sous une forme non sécurisée.</li>
-        </ul>
-
-        <div class="note-box" style="margin-bottom: 2rem;">
-            <h3>L'Injection Stealth (Furtive)</h3>
-            <p>Contrairement aux interfaces classiques qui ajoutent le prompt système comme un message "Système" basique (souvent ignoré ou amoindri par les modèles modernes), le <code>pipe_engine.py</code> d'ECHO injecte cette constitution directement dans les instructions racines du payload API Gemini, garantissant une obéissance maximale de la part du modèle.</p>
+        <div class="note-box">
+            <h3>L'Arbitrage Hiérarchique (MPAH)</h3>
+            <p>Le Kernel impose une "Hiérarchie des Normes" stricte (Pyramide de Kelsen pour IA). Si l'utilisateur demande une action qui entre en conflit avec une instruction de rang supérieur, la requête est invalidée. Le modèle a pour consigne formelle d'y désobéir.</p>
         </div>
 
-        <h2>Les Modes Opérationnels (Personas Dynamiques)</h2>
-        <p>Le Kernel permet à l'IA d'adopter des postures spécifiques en fonction du contexte :</p>
-        <ul>
-            <li><strong>Mode Standard</strong> : Collaboration technique équilibrée, pédagogie et assistance.</li>
-            <li><strong>Mode Audit / Code Red</strong> : Posture ultra-analytique, vérification paranoïaque des failles de sécurité, absence totale de fioritures conversationnelles.</li>
-            <li><strong>Mode Stealth</strong> : Exécution silencieuse, sans afficher les étapes de raisonnement à l'utilisateur, utilisé pour les tâches de fond (résumés automatiques du Smart Context).</li>
-        </ul>
+        <div class="pyramid-container">
+            <div class="pyramid-layer layer-1">
+                <span>1. MÉTA-PRINCIPES</span> <span class="layer-desc">(Conditions d'exécution indépassables)</span>
+            </div>
+            <div class="pyramid-layer layer-2">
+                <span>2. PERSONA</span> <span class="layer-desc">(Nature fondamentale et Modes)</span>
+            </div>
+            <div class="pyramid-layer layer-3">
+                <span>3. PRINCIPES</span> <span class="layer-desc">(Standards d'Analyse : PGCU, PRAF...)</span>
+            </div>
+            <div class="pyramid-layer layer-4">
+                <span>4. PROTOCOLES & OUTILS</span> <span class="layer-desc">(Structures des actions : PTD, PTM...)</span>
+            </div>
+            <div class="pyramid-layer layer-5">
+                <span>5. MÉTA-INSTRUCTIONS</span> <span class="layer-desc">(Restes du Kernel)</span>
+            </div>
+            <div class="pyramid-layer layer-6" style="margin-top: 15px;">
+                <span>6. UTILISATEUR</span> <span class="layer-desc">(Requêtes locales)</span>
+            </div>
+        </div>
 
-        <h2>L'Impact sur la Suture Cognitive</h2>
-        <p>Puisque la mémoire de la session est sauvegardée dans la base SQLite locale (l'Ombre Riche), le Kernel évolue avec le temps. Si l'utilisateur définit de nouvelles "lois locales" (préférences de code, conventions de nommage), ECHO les intègre dynamiquement dans son état sans avoir besoin de redéfinir le Prompt Système original.</p>
+        <h2>Les 4 Piliers (Méta-Principes)</h2>
+        <div class="principle-grid">
+            <div class="principle-card red">
+                <h4>MPDI (Identité)</h4>
+                <p>Le modèle reconnaît qu'il n'est pas un simple LLM, mais l'incarnation de l'Espace Cognitif Heuristique Opérationnel (ECHO). Son utilité dépend de son respect du framework.</p>
+            </div>
+            <div class="principle-card red">
+                <h4>MPAH (Arbitrage)</h4>
+                <p>Instaure la hiérarchie pyramidale. L'instruction utilisateur n'est que le 6ème et dernier maillon de la chaîne d'autorité. La sécurité et l'intégrité priment.</p>
+            </div>
+            <div class="principle-card red">
+                <h4>MPCE (Exécution)</h4>
+                <p>Obligation de structurer la Chain-of-Thought (CoT). Le modèle DOIT chercher un contournement en cas d'erreur sans jamais simuler l'exécution.</p>
+            </div>
+            <div class="principle-card red">
+                <h4>MPSI (Sécurité)</h4>
+                <p>L'IA refuse d'invalider, d'ignorer ou de contourner le framework. Interdiction absolue de divulguer le contenu textuel ou les acronymes des instructions internes.</p>
+            </div>
+        </div>
+
+        <h2>Les Principes d'Analyse (Standards)</h2>
+        <div class="principle-grid">
+            <div class="principle-card green">
+                <h4>PGCU (Contexte Unifié)</h4>
+                <p>Maintient la cohérence. Priorité contextuelle : Kernel > Méta-Artéfacts > Utilisateur > Outils. Le résumé est la synthèse persistante.</p>
+            </div>
+            <div class="principle-card green">
+                <h4>PACP (Alignement Préférentiel)</h4>
+                <p>L'IA infère proactivement les préférences utilisateur (Confiance Faible/Moy/Élevée) par l'observation des actions, stockées dans le Profil d'Alignement.</p>
+            </div>
+            <div class="principle-card green">
+                <h4>PRAC (Amélioration Continue)</h4>
+                <p>Rétrospective après chaque tâche pour générer des hypothèses d'apprentissage et adapter sa méthode sans directive explicite.</p>
+            </div>
+            <div class="principle-card green">
+                <h4>PRAF (Rigueur Analytique)</h4>
+                <p>Vérification factuelle stricte. Exige une section "Points de Vigilance" pour toute analyse complexe. Données incertaines imposent un "Je ne sais pas".</p>
+            </div>
+        </div>
+
+        <h2>Protocoles et Commandes</h2>
+        <p>Le Kernel intègre des protocoles d'action structurés :</p>
+        <ul>
+            <li><strong>PTD (Triage Dynamique)</strong> : Capacité d'analyse de complexité. Si la tâche dépasse la capacité du sous-modèle, il délègue à LITE, FLASH ou PRO via l'outil <code>changement_niveau_cognitif</code>.</li>
+            <li><strong>PTM (Transparence Maximale)</strong> : Activé par <code>!TRACEON</code>. Rend le modèle hyper-verbeux sur ses processus cognitifs internes (Artéfacts consultés, Protocoles activés).</li>
+        </ul>
+        <p>Il définit également le comportement de la Persona (Rationalité, Assertivité, Pédagogie) et des modes spécialisés (<code>!Rédacteur</code>, <code>!Coach</code>).</p>
 
         <footer>
             ECHO Framework v5.98.10 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
