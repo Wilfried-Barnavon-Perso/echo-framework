@@ -16,22 +16,22 @@
             <img src="logo-echo.png" alt="ECHO Logo">
         </div>
         <h2>ECHO v5</h2>
-                <nav>
+        <nav>
             <ul>
                 <li><a href="index.html">Introduction</a></li>
                 <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
                 <li><a href="01_hld_architecture.html">1. High-Level Design (HLD)</a></li>
-                <li><a href="02_deploiement.html">2. D�ploiement & Infra</a></li>
-                <li><a href="03_echo_libs.html">3. Librairies Partag�es (libs)</a></li>
-                <li><a href="04_hud_ui.html">4. �cosyst�me HUD & UI</a></li>
+                <li><a href="02_deploiement.html">2. Déploiement & Infra</a></li>
+                <li><a href="03_echo_libs.html">3. Librairies Partagées (libs)</a></li>
+                <li><a href="04_hud_ui.html">4. Écosystème HUD & UI</a></li>
                 <li><a href="05_filtre.html">5. Le Filtre (Conscience)</a></li>
                 <li><a href="06_pipe.html">6. Le Pipe (Cortex)</a></li>
                 <li><a href="07_arsenal_outils.html">7. L'Arsenal des Outils</a>
                     <ul class="sub-nav">
                         <li><a href="07a_web_intelligence.html">7a. Web Intelligence</a></li>
                         <li><a href="07b_vault_explorer.html">7b. Vault & Data Explorer</a></li>
-                        <li><a href="07c_memory_cognition.html">7c. M�moire & Cognition</a></li>
-                        <li><a href="07d_execution_monitoring.html">7d. Ex�cution & Pilotage</a></li>
+                        <li><a href="07c_memory_cognition.html">7c. Mémoire & Cognition</a></li>
+                        <li><a href="07d_execution_monitoring.html">7d. Exécution & Pilotage</a></li>
                     </ul>
                 </li>
                 <li><a href="08_admin_manager.html">8. Admin Manager</a></li>
@@ -49,30 +49,30 @@
 
         <div class="note-box" style="margin-bottom: 2rem;">
             <h3>Diagramme de Flux de la Suture Cognitive</h3>
-            <p>Le diagramme ci-dessous illustre le parcours d'une requête et la reconstruction du contexte bit-perfect.</p>
+            <p>Ce diagramme illustre le parcours de l'information, plaçant <strong>Open WebUI comme Middleware</strong> entre le frontend utilisateur, le Kernel ECHO et l'API de génération.</p>
             <div class="mermaid">
 sequenceDiagram
     autonumber
     box rgb(30, 30, 40) "Frontend / Interface"
-        participant U as ?? Utilisateur
+        participant U as 👤 Utilisateur
     end
     box rgb(20, 40, 50) "Middleware (Open WebUI)"
-        participant OWUI as ??? Open WebUI
+        participant OWUI as 🖥️ Open WebUI
     end
     box rgb(40, 20, 40) "ECHO Kernel (Backend)"
-        participant F as ?? Filtre (Conscience)
-        participant P as ?? Pipe (Cortex)
-        participant B as ??? SQLite (Shadows)
+        participant F as 🧠 Filtre (Conscience)
+        participant P as ⚙️ Pipe (Cortex)
+        participant B as 🗄️ SQLite (Shadows)
     end
     box rgb(20, 40, 20) "External Provider"
-        participant G as ?? API Gemini
+        participant G as ☁️ API Gemini
     end
 
     U->>OWUI: Saisie du prompt + Fichiers
     OWUI->>F: Interception Inlet (Payload brut)
     
     rect rgb(50, 40, 60)
-        note right of F: Smart Context & Pr�-traitement
+        note right of F: Smart Context & Pré-traitement
         F->>F: Calcul Invariant Hash
         F->>F: Analyse fichiers (RAG Bypass)
     end
@@ -86,12 +86,12 @@ sequenceDiagram
         P->>P: Injection Thought Signatures & Outils
     end
     
-    P->>G: Requ�te Gemini (Bit-Perfect)
-    G-->>P: R�ponse Stream + Thoughts
+    P->>G: Requête Gemini (Bit-Perfect)
+    G-->>P: Réponse Stream + Thoughts
     
     P->>B: Archivage de l'Ombre Riche (Fin de tour)
     P-->>OWUI: Transmission Stream
-    OWUI-->>U: Affichage temps r�el (Markdown + HUD)
+    OWUI-->>U: Affichage temps réel (Markdown + HUD)
             </div>
         </div>
 
