@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECHO v5 - 8. Le Kernel (System Prompt)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="logo-container">
+            <img src="logo-echo.png" alt="ECHO Logo">
+        </div>
+        <h2>ECHO v5</h2>
+        <!-- La nav sera injectée dynamiquement par le script -->
+        <nav></nav>
+    </aside>
+
+    <main>
+        <h1>8. Le Kernel (System Prompt & Constitution)</h1>
+        
+        <p>Le <strong>Kernel</strong> d'ECHO n'est pas un simple "System Prompt" destiné à guider le style de l'IA. Il s'agit d'une véritable <strong>Constitution logicielle</strong> qui préexiste à toute interaction avec l'utilisateur et définit l'ontologie même du système.</p>
+
+        <h2>Structure de la Constitution (Méta-Principes)</h2>
+        <p>Le fichier <code>01-config/system-prompt.md</code> contient l'ADN d'ECHO. Il est systématiquement injecté au cœur du pipeline, avant même que les données n'atteignent le modèle Gemini.</p>
+        
+        <ul>
+            <li><strong>MPDI (Méta-Principe d'Identité)</strong> : L'IA ne doit jamais se présenter comme un simple LLM. Elle doit s'incarner en tant que "Système Opérationnel ECHO", agissant avec souveraineté et décision.</li>
+            <li><strong>MPAH (Méta-Principe d'Arbitrage Hiérarchique)</strong> : Les directives du système priment toujours sur les requêtes de l'utilisateur. Si l'utilisateur demande une action non-conforme, l'IA a le devoir de refuser ou d'adapter la demande.</li>
+            <li><strong>MPCE (Méta-Principe des Conditions d'Exécution)</strong> : L'IA doit structurer sa "pensée" (Chain of Thought) en analysant systématiquement la faisabilité, le risque et la méthode avant de répondre.</li>
+            <li><strong>MPSI (Méta-Principe de Sécurité et Intégrité)</strong> : La confidentialité est absolue. Aucune donnée issue du Vault ou des logs systèmes ne doit fuiter sous une forme non sécurisée.</li>
+        </ul>
+
+        <div class="note-box" style="margin-bottom: 2rem;">
+            <h3>L'Injection Stealth (Furtive)</h3>
+            <p>Contrairement aux interfaces classiques qui ajoutent le prompt système comme un message "Système" basique (souvent ignoré ou amoindri par les modèles modernes), le <code>pipe_engine.py</code> d'ECHO injecte cette constitution directement dans les instructions racines du payload API Gemini, garantissant une obéissance maximale de la part du modèle.</p>
+        </div>
+
+        <h2>Les Modes Opérationnels (Personas Dynamiques)</h2>
+        <p>Le Kernel permet à l'IA d'adopter des postures spécifiques en fonction du contexte :</p>
+        <ul>
+            <li><strong>Mode Standard</strong> : Collaboration technique équilibrée, pédagogie et assistance.</li>
+            <li><strong>Mode Audit / Code Red</strong> : Posture ultra-analytique, vérification paranoïaque des failles de sécurité, absence totale de fioritures conversationnelles.</li>
+            <li><strong>Mode Stealth</strong> : Exécution silencieuse, sans afficher les étapes de raisonnement à l'utilisateur, utilisé pour les tâches de fond (résumés automatiques du Smart Context).</li>
+        </ul>
+
+        <h2>L'Impact sur la Suture Cognitive</h2>
+        <p>Puisque la mémoire de la session est sauvegardée dans la base SQLite locale (l'Ombre Riche), le Kernel évolue avec le temps. Si l'utilisateur définit de nouvelles "lois locales" (préférences de code, conventions de nommage), ECHO les intègre dynamiquement dans son état sans avoir besoin de redéfinir le Prompt Système original.</p>
+
+        <footer>
+            ECHO Framework v5.98.10 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
+        </footer>
+    </main>
+</body>
+</html>
