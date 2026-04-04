@@ -53,18 +53,18 @@
             <div class="mermaid">
 sequenceDiagram
     autonumber
-    box rgb(30, 30, 40) "Frontend / Interface"
+    box "Frontend / Interface"
         participant U as 👤 Utilisateur
     end
-    box rgb(20, 40, 50) "Middleware (Open WebUI)"
+    box "Middleware (Open WebUI)"
         participant OWUI as 🖥️ Open WebUI
     end
-    box rgb(40, 20, 40) "ECHO Kernel (Backend)"
+    box "ECHO Kernel (Backend)"
         participant F as 🧠 Filtre (Conscience)
         participant P as ⚙️ Pipe (Cortex)
         participant B as 🗄️ SQLite (Shadows)
     end
-    box rgb(20, 40, 20) "External Provider"
+    box "External Provider"
         participant G as ☁️ API Gemini
     end
 

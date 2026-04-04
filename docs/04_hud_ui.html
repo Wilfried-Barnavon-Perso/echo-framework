@@ -84,6 +84,25 @@
         <p>Invoqué via <code>EchoUI.monitor_ECHO</code>, ce composant est le pivot de l'analyse visuelle.</p>
 
         <div class="hud-demo">
+            <div style="background: #111; border-radius: 8px; padding: 15px; margin: 20px 0; font-family: monospace; color: #4ade80; font-size: 14px; box-shadow: inset 0 0 20px rgba(0,0,0,0.8); border: 1px solid #333;">
+              <div>[SYS] ECHO HUD Engine v5.9</div>
+              <div>==================================================</div>
+              <div style="display:flex; justify-content: space-between; margin-top: 10px;">
+                <div style="flex:1;">
+                  <span style="color:#888;">CPU:</span> ||||||||-- [80%] <br>
+                  <span style="color:#888;">MEM:</span> ||||------ [40%] <br>
+                  <span style="color:#888;">CTX:</span> 1,024k / 2,000k
+                </div>
+                <div style="flex:1; border-left: 1px dashed #444; padding-left: 15px;">
+                  <span style="color:#38bdf8;">ACTIVE TOOLS</span><br>
+                  > python_worker : <span style="color:#facc15;">IDLE</span><br>
+                  > browser_nav   : <span style="color:#4ade80;">RUNNING</span>
+                </div>
+              </div>
+              <div style="margin-top: 10px; border-top: 1px dashed #444; padding-top: 10px; color: #f87171;">
+                ! WARNING: Context cache miss. Rebuilding suture...
+              </div>
+            </div>
             <div class="hud-header">
                 <div style="display:flex; align-items:center; gap:10px;">
                     <span style="color:#4ade80; font-size:16px;">🌐</span>
