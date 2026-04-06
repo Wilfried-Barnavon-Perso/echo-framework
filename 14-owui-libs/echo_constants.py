@@ -1,8 +1,8 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 1.10
-description: 1.10: Updated constants for ECHO Framework.
+version: 1.22
+description: 1.22: Ajout des constantes pour la Mémoire Organique V2 (gemini-embedding-2-preview, gemini-2.5-flash).
 """
 
 import os
@@ -16,7 +16,7 @@ import filetype
 # Racine unique de l'infrastructure de données
 ECHO_BASE_DATA_DIR = "/app/backend/data"
 
-# NOUVELLE HIÉRARCHIE ECHO (v5.76.0)
+# NOUVELLE HIÉRARCHIE ECHO (v5.99.1)
 ECHO_USERS_ROOT = f"{ECHO_BASE_DATA_DIR}/users"
 ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
@@ -43,11 +43,41 @@ GOOGLE_API_KEY_REGEX = r"AIza[0-9A-Za-z_-]{35}"
 GOOGLE_API_KEY_PATTERN = GOOGLE_API_KEY_REGEX
 
 # ==============================================================================
-# 1.1 MODÈLES ECHO & ROUTAGE DYNAMIQUE
+# 1.1 MODÈLES ECHO & REGISTRE COGNITIF (v5.99.1)
 # ==============================================================================
-MODEL_PRO = "gemini-3.1-pro-preview"
+
+# 1. IDENTIFIANTS TECHNIQUES (STRICTS)
+MODEL_PRO = "gemini-3.1-pro-preview-customtools"
 MODEL_FLASH = "gemini-3-flash-preview"
 MODEL_LITE = "gemini-3.1-flash-lite-preview"
+
+# --- MÉMOIRE ORGANIQUE V2 ---
+MODEL_DISTILLATION = "gemini-2.5-flash"
+MODEL_EMBEDDING = "gemini-embedding-2-preview"
+EMBEDDING_DIM_V2 = 3072
+COLLECTION_MEMORY = "echo_memory"
+# ----------------------------
+
+# 2. REGISTRE COGNITIF ECHO (UNIFIÉ & STATIQUE)
+
+# ROUTAGE : Clé Entrée (UI ou Cascade) -> ID Technique
+MODEL_ROUTING = {
+    "MODEL_LITE": MODEL_LITE,
+    "MODEL_FLASH": MODEL_FLASH,
+    "MODEL_PRO": MODEL_PRO
+}
+
+# IDENTITÉ : ID Technique -> Label de Catégorie (Pour le badge ##MODEL_ID##)
+MODEL_IDENTITY = {
+    MODEL_LITE: "MODEL_LITE",
+    MODEL_FLASH: "MODEL_FLASH",
+    MODEL_PRO: "MODEL_PRO"
+}
+
+# Mapping de compatibilité ascendante (Dernière v5.99.0)
+CAT_TO_MODEL = MODEL_ROUTING
+ID_TO_COGNITION = MODEL_IDENTITY
+UI_TO_MODEL = MODEL_ROUTING
 
 # ==============================================================================
 # 2. MAPPING MIME TYPES

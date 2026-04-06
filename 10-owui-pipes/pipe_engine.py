@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 179.0
-description: 179.0: Nettoyage final des vestiges de la v5 (Placeholders et Constantes obsolètes).
+version: 180.2
+description: 180.2: Alignement final avec le Registre Cognitif v1.21 (Unification des UI).
 """
 
 # ==============================================================================
@@ -141,8 +141,7 @@ class Orchestrator:
 
     def _build_identity(self, m_id: str) -> str:
         if m_id == "aucun": return "aucun"
-        categories = { MODEL_LITE: "LITE", MODEL_FLASH: "FLASH", MODEL_PRO: "PRO" }
-        cat = categories.get(m_id, "UNKNOWN")
+        cat = MODEL_IDENTITY.get(m_id, "UNKNOWN")
         return f"{cat} ({m_id})"
 
     def _resolve_placeholders(self, text: str, model_id: str) -> str:
@@ -403,7 +402,7 @@ class Pipe:
         KEY_SWITCH_THRESHOLD: int = Field(default=2, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
-        MODEL_SELECTION: Literal["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview", "echo-auto", "echo-auto-pro"] = Field(default="echo-auto")
+        MODEL_SELECTION: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO", "AUTO", "AUTO_PRO"] = Field(default="AUTO")
         PRO_THINKING_LEVEL: Literal["LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
         LITE_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
@@ -447,7 +446,7 @@ class Pipe:
         model_selection = user_valves.MODEL_SELECTION
         last_model = orch.user_data_manager.get_last_active_model()
         
-        if model_selection in ["echo-auto", "echo-auto-pro"]:
+        if model_selection in ["AUTO", "AUTO_PRO"]:
             if last_model and last_model in [MODEL_LITE, MODEL_FLASH, MODEL_PRO]:
                 target_model = last_model
                 origine_model = last_model
@@ -455,9 +454,10 @@ class Pipe:
             else:
                 target_model = MODEL_LITE
                 origine_model = "aucun"
-                await events.status(f"🧠 Initialisation de session (LITE)...")
+                await events.status(f"🧠 Initialisation de session (MODEL_LITE)...")
         else:
-            target_model = model_selection
+            # Résolution de l'étiquette UI vers le modèle technique via le Registre Global
+            target_model = MODEL_ROUTING.get(model_selection, MODEL_LITE)
             origine_model = last_model if last_model else "aucun"
             await events.status(f"Model Fixé : {target_model}")
 
@@ -468,10 +468,10 @@ class Pipe:
         context = await orch.prepare_context(body, chat_id, target_model, __metadata__, events)
 
         # --- [NOUVEAU] CONFIGURATION CASCADE ---
-        is_auto = user_valves.MODEL_SELECTION in ["echo-auto", "echo-auto-pro"]
+        is_auto = user_valves.MODEL_SELECTION in ["AUTO", "AUTO_PRO"]
         # Détermination des niveaux autorisés pour le schéma de l'outil (Approach: Clean Prompt)
-        niveaux_autorises = ["FLASH"]
-        if user_valves.MODEL_SELECTION == "echo-auto-pro": niveaux_autorises.append("PRO")
+        niveaux_autorises = ["MODEL_FLASH"]
+        if user_valves.MODEL_SELECTION == "AUTO_PRO": niveaux_autorises.append("MODEL_PRO")
         
         max_cascade_attempts = user_valves.MAX_CASCADE_ATTEMPTS
         cascade_attempt = 0
@@ -512,13 +512,13 @@ class Pipe:
                 # Menu évolutif selon le modèle actuel
                 menu_escalade = []
                 if target_model == MODEL_LITE:
-                    menu_escalade = ["FLASH"]
-                    if user_valves.MODEL_SELECTION == "echo-auto-pro": menu_escalade.append("PRO")
+                    menu_escalade = ["MODEL_FLASH"]
+                    if user_valves.MODEL_SELECTION == "AUTO_PRO": menu_escalade.append("MODEL_PRO")
                 elif target_model == MODEL_FLASH:
-                    menu_escalade = ["LITE"]
-                    if user_valves.MODEL_SELECTION == "echo-auto-pro": menu_escalade.append("PRO")
+                    menu_escalade = ["MODEL_LITE"]
+                    if user_valves.MODEL_SELECTION == "AUTO_PRO": menu_escalade.append("MODEL_PRO")
                 elif target_model == MODEL_PRO:
-                    menu_escalade = ["LITE", "FLASH"]
+                    menu_escalade = ["MODEL_LITE", "MODEL_FLASH"]
                 
                 if menu_escalade:
                     escalation_tool = {
@@ -526,14 +526,14 @@ class Pipe:
                         "description": (
                             "Ajuste la puissance de calcul d'ECHO selon la nature de la tâche et la charge contextuelle.\n\n"
                             "1. Lois de Sélection du Modèle :\n"
-                            "- LITE (Réflexe) : Salutations, remerciements, extractions simples, traduction courte, questions de culture générale basiques.\n"
-                            "- FLASH (Exécution) : Recherche web, écriture de scripts/fonctions isolés, analyse sémantique de fichiers unitaires, synthèse de documents, exécution d'outils simples.\n"
-                            "- PRO (Expertise) : Architectures, orchestration de tâche, exécution d'outils complexes, refactoring multi-fichiers, logique mathématique complexe, philosophie profonde.\n\n"
+                            "- MODEL_LITE (Réflexe) : Salutations, remerciements, extractions simples, traduction courte, questions de culture générale basiques.\n"
+                            "- MODEL_FLASH (Exécution) : Recherche web, écriture de scripts/fonctions isolés, analyse sémantique de fichiers unitaires, synthèse de documents, exécution d'outils simples.\n"
+                            "- MODEL_PRO (Expertise) : Architectures, orchestration de tâche, exécution d'outils complexes, refactoring multi-fichiers, logique mathématique complexe, philosophie profonde.\n\n"
                             "2. Loi de Corrélation Contextuelle (Vallée de la Mort) :\n"
                             "Plus le contexte (tokens) est chargé, plus le niveau cognitif doit être élevé, indépendamment de la simplicité apparente de la tâche.\n"
                             "- [0-25%] (SAFE) : Le modèle actuel traite la tâche si elle correspond à sa catégorie.\n"
-                            "- [25-50%] (WARNING) : Si vous êtes en LITE/FLASH, privilégiez une montée d'un cran pour éviter la dérive sémantique.\n"
-                            "- [> 50%] (CRITICAL) : Délégation impérative au plus haut niveau (PRO/FLASH) pour tout traitement exigeant la lecture de l'historique lointain.\n\n"
+                            "- [25-50%] (WARNING) : Si vous êtes en MODEL_LITE/MODEL_FLASH, privilégiez une montée d'un cran pour éviter la dérive sémantique.\n"
+                            "- [> 50%] (CRITICAL) : Délégation impérative au plus haut niveau (MODEL_PRO/MODEL_FLASH) pour tout traitement exigeant la lecture de l'historique lointain.\n\n"
                             "Usage : Utilisez context_gauge pour situer votre position dans la Vallée de la Mort avant de décider."
                         ),
                         "parameters": {
@@ -592,12 +592,7 @@ class Pipe:
                 target_req = req.get("niveau_requis")
                 
                 # Mapping explicite pour gérer la montée ET la redescente
-                level_map = {
-                    "LITE": MODEL_LITE,
-                    "FLASH": MODEL_FLASH,
-                    "PRO": MODEL_PRO
-                }
-                new_target = level_map.get(target_req)
+                new_target = MODEL_ROUTING.get(target_req)
                 
                 if not new_target:
                     # Signalement d'erreur de paramètre au modèle actuel
@@ -607,13 +602,13 @@ class Pipe:
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "changement_niveau_cognitif", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi LITE, FLASH ou PRO."}}}]
+                        "parts": [{"functionResponse": {"name": "changement_niveau_cognitif", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi MODEL_LITE, MODEL_FLASH ou MODEL_PRO."}}}]
                     })
                     continue
                 
                 # Vérification des droits (Valve)
-                if user_valves.MODEL_SELECTION == "echo-auto" and new_target == MODEL_PRO:
-                    await events.status(f"⚠️ Transfert vers PRO refusé (Valve AUTO).")
+                if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PRO:
+                    await events.status(f"⚠️ Transfert vers MODEL_PRO refusé (Valve AUTO).")
                     # Signalement de refus au modèle actuel
                     context.append({
                         "role": "model",
@@ -621,7 +616,7 @@ class Pipe:
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "changement_niveau_cognitif", "response": {"status": "denied", "message": "ÉCHEC : Le transfert vers PRO est refusé par la configuration utilisateur (Valve AUTO). Veuillez traiter la demande immédiatement avec vos capacités actuelles."}}}]
+                        "parts": [{"functionResponse": {"name": "changement_niveau_cognitif", "response": {"status": "denied", "message": "ÉCHEC : Le transfert vers MODEL_PRO est refusé par la configuration utilisateur (Valve AUTO). Veuillez traiter la demande immédiatement avec vos capacités actuelles."}}}]
                     })
                     continue # On reboucle avec le MÊME target_model
                 

@@ -64,12 +64,12 @@
         <p>L'unité <code>_ensure_gemini_parts</code> assure la conformité stricte avec l'API Google Vertex/AI-Studio. C'est ici que s'opère la <strong>Résolution Dynamique des Identités</strong> :</p>
         <ul>
             <li><code>##ECHO_VERSION##</code> : Injecte la version exacte du framework (ex: v5.98.10).</li>
-            <li><code>##MODEL_ID##</code> : Résout l'identité du modèle actif (ex: <i>PRO (gemini-3.1-pro-preview)</i>).</li>
-            <li><code>##MODEL_ORIGIN##</code> : Identifie le modèle ayant initié le tour, crucial pour les stratégies de cascade où un modèle PRO doit savoir s'il prend le relais d'un LITE.</li>
+            <li><code>##MODEL_ID##</code> : Résout l'identité du modèle actif (ex: <i>MODEL_PRO (gemini-3.1-pro-preview-customtools)</i>).</li>
+            <li><code>##MODEL_ORIGIN##</code> : Identifie le modèle ayant initié le tour, crucial pour les stratégies de cascade où un modèle MODEL_PRO doit savoir s'il prend le relais d'un MODEL_LITE.</li>
         </ul>
 
         <h2>La Cascade Cognitive (Fluctuation Continue)</h2>
-        <p>ECHO introduit le concept de <strong>Routage Dynamique Inter-Modèle</strong>. En mode <code>echo-auto</code> ou <code>echo-auto-pro</code>, le Pipe gère une boucle de récursion intelligente.</p>
+        <p>ECHO introduit le concept de <strong>Routage Dynamique Inter-Modèle</strong>. En mode <code>AUTO</code> ou <code>AUTO_PRO</code>, le Pipe gère une boucle de récursion intelligente.</p>
 
         <div class="diagram-container">
             <div class="diagram-row">
@@ -82,25 +82,25 @@
             <div class="diagram-row">
                 <div class="diagram-node" style="border-color: #10b981;">
                     <h5>SAFE (0-25%)</h5>
-                    <p>Usage LITE/FLASH<br>Tâches réflexes simples</p>
+                    <p>Usage MODEL_LITE/MODEL_FLASH<br>Tâches réflexes simples</p>
                 </div>
                 <div class="diagram-node" style="border-color: var(--warning-color);">
                     <h5>WARNING (25-50%)</h5>
-                    <p>Montée FLASH/PRO recommandée<br>Maintien de la cohérence sémantique</p>
+                    <p>Montée MODEL_FLASH/MODEL_PRO recommandée<br>Maintien de la cohérence sémantique</p>
                 </div>
                 <div class="diagram-node" style="border-color: var(--danger-color);">
                     <h5>CRITICAL (>50%)</h5>
-                    <p><b>Escalade PRO Impérative</b><br>Gestion de l'historique lointain</p>
+                    <p><b>Escalade MODEL_PRO Impérative</b><br>Gestion de l'historique lointain</p>
                 </div>
             </div>
         </div>
 
         <h3>L'Outil de Transfert : <code>changement_niveau_cognitif</code></h3>
-        <p>Injecté dynamiquement dans le schéma d'outils, il permet à un modèle (ex: FLASH) de se déclarer incompétent ou d'anticiper une surcharge contextuelle.</p>
+        <p>Injecté dynamiquement dans le schéma d'outils, il permet à un modèle (ex: MODEL_FLASH) de se déclarer incompétent ou d'anticiper une surcharge contextuelle.</p>
         <ul>
             <li><strong>Plan de Transfert</strong> : Le modèle sortant doit rédiger un plan Markdown (Objectif, Analyse, Stratégie, Contraintes) pour son successeur.</li>
             <li><strong>Mutation Chirurgicale</strong> : Le Pipe intercepte cet appel, modifie l'identité du modèle dans le contexte via Regex (<code>re.sub</code>) et relance immédiatement une requête sur le nouveau modèle expert avec le plan injecté comme dernière réponse système.</li>
-            <li><strong>Redescente Cognitive</strong> : Le protocole est bidirectionnel. Un modèle PRO peut déléguer des tâches de routine à un modèle LITE pour économiser les quotas.</li>
+            <li><strong>Redescente Cognitive</strong> : Le protocole est bidirectionnel. Un modèle MODEL_PRO peut déléguer des tâches de routine à un modèle MODEL_LITE pour économiser les quotas.</li>
         </ul>
 
         <h2>Gestion Chirurgicale des Pensées (CoT)</h2>
@@ -133,7 +133,7 @@
         </ol>
 
         <footer>
-            ECHO Framework v5.98.10 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
+            ECHO Framework v5.99.1 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
         </footer>
     </main>
 </body>

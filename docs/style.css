@@ -51,7 +51,8 @@ body::after {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(11, 14, 20, 0.70); /* 70% Opacity Tint */
+    background-color: rgba(11, 14, 20, 0.70);
+    /* 70% Opacity Tint */
     z-index: -1;
 }
 
@@ -114,7 +115,8 @@ table a {
     text-decoration-color: var(--accent-color);
 }
 
-.sidebar nav ul li a:hover, .sidebar nav ul li a.active {
+.sidebar nav ul li a:hover,
+.sidebar nav ul li a.active {
     background-color: var(--accent-glow);
     color: var(--accent-color);
     border-color: rgba(74, 222, 128, 0.3);
@@ -179,7 +181,8 @@ p {
     font-size: 1.05rem;
 }
 
-ul, ol {
+ul,
+ol {
     margin-bottom: 1.5rem;
     padding-left: 1.5rem;
     color: #cbd5e0;
@@ -198,7 +201,7 @@ pre {
     border: 1px solid var(--border-color);
     margin: 1.5rem 0;
     position: relative;
-    box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
 }
 
 code {
@@ -240,7 +243,9 @@ code {
     gap: 8px;
 }
 
-.audit-note h4::before { content: "🔍"; }
+.audit-note h4::before {
+    content: "🔍";
+}
 
 .info-block {
     background: linear-gradient(90deg, rgba(74, 222, 128, 0.1), transparent);
@@ -269,7 +274,8 @@ table {
     border: 1px solid var(--border-color);
 }
 
-th, td {
+th,
+td {
     text-align: left;
     padding: 1.2rem;
     border-bottom: 1px solid var(--border-color);
@@ -304,7 +310,7 @@ tr:hover td {
     align-items: center;
     gap: 1rem;
     overflow-x: auto;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
 }
 
 .diagram-row {
@@ -324,7 +330,7 @@ tr:hover td {
     text-align: center;
     min-width: 160px;
     max-width: 220px;
-    box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
     position: relative;
     z-index: 5;
     transition: transform 0.2s;
@@ -403,18 +409,41 @@ tr:hover td {
 }
 
 /* Thematic Node Styles */
-.node-vault { border-color: var(--warning-color); }
-.node-vault h5 { color: var(--warning-color); }
-.node-vault .diagram-label { color: var(--warning-color); }
+.node-vault {
+    border-color: var(--warning-color);
+}
 
-.node-filter { border-color: var(--link-color); }
-.node-filter h5 { color: var(--link-color); }
+.node-vault h5 {
+    color: var(--warning-color);
+}
 
-.node-pipe { border-color: var(--purple-color); }
-.node-pipe h5 { color: var(--purple-color); }
+.node-vault .diagram-label {
+    color: var(--warning-color);
+}
 
-.node-danger { border-color: var(--danger-color); }
-.node-danger h5 { color: var(--danger-color); }
+.node-filter {
+    border-color: var(--link-color);
+}
+
+.node-filter h5 {
+    color: var(--link-color);
+}
+
+.node-pipe {
+    border-color: var(--purple-color);
+}
+
+.node-pipe h5 {
+    color: var(--purple-color);
+}
+
+.node-danger {
+    border-color: var(--danger-color);
+}
+
+.node-danger h5 {
+    color: var(--danger-color);
+}
 
 /* HUD Demo */
 .hud-demo {
@@ -423,11 +452,11 @@ tr:hover td {
     background: #1a1a1a;
     overflow: hidden;
     margin: 2.5rem 0;
-    box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.6);
 }
 
 .hud-header {
-    background: rgba(0,0,0,0.7);
+    background: rgba(0, 0, 0, 0.7);
     padding: 10px 20px;
     display: flex;
     justify-content: space-between;
@@ -453,14 +482,32 @@ footer {
 
 /* Responsive */
 @media (max-width: 1024px) {
-    .sidebar { width: 240px; }
-    main { margin-left: 270px; padding: 2rem; }
+    .sidebar {
+        width: 240px;
+    }
+
+    main {
+        margin-left: 270px;
+        padding: 2rem;
+    }
 }
 
 @media (max-width: 768px) {
-    body { flex-direction: column; }
-    .sidebar { width: 100%; height: auto; position: relative; }
-    main { margin-left: 10px; margin-right: 10px; padding: 1.5rem; }
+    body {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        height: auto;
+        position: relative;
+    }
+
+    main {
+        margin-left: 10px;
+        margin-right: 10px;
+        padding: 1.5rem;
+    }
 }
 
 /* Grid and Cards for Hub Pages */
@@ -483,7 +530,7 @@ footer {
 
 .card:hover {
     transform: translateY(-5px);
-    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
     border-color: var(--accent-color);
 }
 

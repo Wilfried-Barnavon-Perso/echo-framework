@@ -1,8 +1,8 @@
 """
 title: Show Web Replay
 author: Wilfried BARNAVON
-version: 3.4
-description: 3.4: Fixed SyntaxError by escaping javascript curly braces in python f-string.
+version: 3.5
+description: 3.5: Changement de priorité d'affichage par défaut (passe en 3ème position).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTEyIDN2MTgiLz48cGF0aCBkPSJNMTcgM3YxOCIvPjxwYXRoIGQ9Ik0zIDdoMTgiLz48cGF0aCBkPSJNMyAxMmgyMSIvPjxwYXRoIGQ9Ik0zIDE3aDE4Ii8+PC9zdmc+
 """
 
@@ -317,7 +317,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
 
 class Action:
     class Valves(BaseModel):
-        priority: int = Field(default=2, description="Priorité d'affichage (2 = Deuxième).")
+        priority: int = Field(default=3, description="Priorité d'affichage (3 = Troisième).")
 
     def __init__(self):
         self.valves = self.Valves()

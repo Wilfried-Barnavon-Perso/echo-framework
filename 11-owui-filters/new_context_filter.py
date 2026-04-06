@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.60
-description: 6.60: Implémentation de la structure d'identité duale (actuel/origine) dans le bloc etat_echo.
+version: 6.63
+description: 6.63: Verrouillage de la priorité d'exécution (priority=1) pour l'inlet.
 """
 
 from pydantic import BaseModel, Field
@@ -29,6 +29,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ECHO-FILTER")
 
 class Filter:
+    # Priorité basse (1) pour s'exécuter en tout premier (Inlet) avant les autres filtres
+    priority: int = 1
+
     class Valves(BaseModel):
         ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Active le résumé intelligent des fichiers volumineux via Gemini Flash.")
         MAX_DIRECT_TEXT_SIZE: int = Field(default=262144, description="Taille max (octets) pour l'injection directe sans résumé.")
@@ -241,6 +244,7 @@ class Filter:
                 
                 # 5. Génération du bloc JSON etat_echo complet
                 etat_echo = {
+                    "description": "Ce bloc, bien qu'Utilisateur, est en réalité injecté par le Système. Il contient l'état de données contextuelles d'ECHO, incluant les informations sur l'environnement, les fichiers actifs et les métadonnées utilisateur. Il est destiné à être utilisé par les modèles pour comprendre le contexte global de la conversation et des interactions en cours.",
                     "version_framework_echo": "##ECHO_VERSION##",
                     "modèle_actuel": "##MODEL_ID##",
                     "modèle_origine": "##MODEL_ORIGIN##",

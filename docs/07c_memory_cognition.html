@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>ECHO v5 - 6c. Mémoire & Cognition</title>
+    <title>ECHO v5 - 7c. Mémoire & Cognition</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -37,8 +37,8 @@
     </aside>
 
     <main>
-        <h1>6c. Mémoire Organique & Cœur Cognitif</h1>
-        <p>Ce module gère l'intelligence répartie d'ECHO, permettant au modèle principal de déléguer des tâches de réflexion et de puiser dans les souvenirs passés ou la base de connaissances globale.</p>
+        <h1>7c. Mémoire Organique & Cœur Cognitif</h1>
+        <p>Ce module gère l'intelligence persistante d'ECHO. Il transforme le flux volatil des conversations en une base de connaissances structurée, fusionnée et auto-nettoyée, strictement cloisonnée par utilisateur.</p>
 
         <h2>Le Cœur Cognitif (<code>cognitive_core.py</code>)</h2>
         <p>ECHO utilise une architecture de <strong>Cascade Cognitive</strong>. Le modèle PRO peut instancier des sous-unités de réflexion pour résoudre des problèmes sans polluer son propre contexte.</p>
@@ -65,40 +65,41 @@
             </tbody>
         </table>
 
-        <h2>Mémoire Organique (<code>memory_organic_tool.py</code>)</h2>
-        <p>Contrairement au RAG classique, la mémoire organique d'ECHO stocke les <strong>interactions passées</strong>, les décisions techniques et les préférences utilisateur mémorisées.</p>
+        <h2>Mémoire Organique V2 (Suture Cognitive)</h2>
+        <p>La mémoire organique d'ECHO ne se contente pas de stocker du texte ; elle <strong>distille</strong> l'intention et <strong>fusionne</strong> les connaissances pour éviter la redondance.</p>
         
+        <div class="info-block">
+            <h4>Cycle de Vie d'un Souvenir</h4>
+            <ol>
+                <li><strong>Distillation (Gemini 2.5 Flash)</strong> : Analyse multimodale de la fenêtre de messages pour extraire l'essence technique et un score d'importance (1 à 5).</li>
+                <li><strong>Vectorisation (Gemini Embedding 2)</strong> : Encodage haute-fidélité (3072 dimensions) avec préfixage sémantique.</li>
+                <li><strong>Fusion & Suture</strong> : Si un souvenir similaire existe (> 0.85), le système fusionne l'ancien et le nouveau via LLM pour une mise à jour continue.</li>
+                <li><strong>Auto-Pruning</strong> : Suppression automatique basée sur l'importance (Niveau 1: 30 jours, Niveau 5: 18 mois).</li>
+            </ol>
+        </div>
+
+        <h3>Infrastructure Technique</h3>
         <ul>
-            <li><strong>Moteur Vectoriel</strong> : Utilise <strong>Qdrant</strong> (collection <code>echo_memory</code>).</li>
-            <li><strong>Embedding</strong> : Modèle <code>text-embedding-004</code> via <code>EchoGeminiClient</code>.</li>
-            <li><strong>Filtre Strict</strong> : Isolation par <code>user_id</code> au niveau de la requête vectorielle (Score Threshold: 0.45).</li>
-            <li><strong>Recall</strong> : Renvoie des "souvenirs" structurés avec type de mémoire (INFO, DECISION, PREF), timestamp et score de confiance.</li>
+            <li><strong>Moteur Vectoriel</strong> : <strong>Qdrant</strong> (collection <code>echo_memory</code>).</li>
+            <li><strong>Embedding V2</strong> : Modèle <code>gemini-embedding-2-preview</code> (3072d) via <code>EchoGeminiClient</code>.</li>
+            <li><strong>Formatage Query</strong> : <code>task: search result | query: {query}</code>.</li>
+            <li><strong>Formatage Doc</strong> : <code>title: {slug} | text: {summary}</code>.</li>
         </ul>
 
-        <h2>Base de Connaissance (<code>memory_search.py</code>)</h2>
-        <p>Recherche sémantique dans la collection <code>echo_knowledge</code>. C'est ici que sont stockés les documents de référence, les manuels techniques et le corpus de connaissances partagé du framework.</p>
-        
-        <div class="code-header">Flux de recherche sémantique</div>
-        <pre><code>Requête -> Embedding (AI Studio) -> Recherche Qdrant -> Snippets Markdown</code></pre>
+        <h2>Outils de Rappel (<code>memory_organic_tool.py</code>)</h2>
+        <p>L'IA utilise cet outil pour interroger sa mémoire. La recherche est <strong>strictement isolée par <code>user_id</code></strong>, garantissant qu'aucun souvenir ne fuit entre les utilisateurs du framework.</p>
 
-        <h2>Ancrage Géographique (<code>gemini_maps_grounding.py</code>)</h2>
-        <p>L'outil de <strong>Grounding</strong> permet d'ancrer les réponses de l'IA dans le monde réel via l'API Google Maps.</p>
-        
-        <ul>
-            <li><strong>Widget Maps</strong> : Capacité à générer des composants interactifs Maps dans l'interface (si supporté par le client).</li>
-            <li><strong>Géolocalisation</strong> : Support optionnel des paramètres <code>latitude</code> et <code>longitude</code> pour les recherches de proximité ("près de moi").</li>
-            <li><strong>Métadonnées</strong> : Extraction automatique des URIs et titres des lieux trouvés pour citation directe.</li>
-        </ul>
+        <div class="code-header">Flux de mémorisation asynchrone</div>
+        <pre><code>Outlet -> Hasard/Seuil -> Tâche Asynchrone -> Distillation -> Vectorisation -> Fusion -> Qdrant</code></pre>
 
         <div class="audit-note">
-            <h4>Résilience Multi-Clés</h4>
-            <p>Tous les outils de ce module utilisent le <code>EchoGeminiClient</code>. En cas d'erreur <code>429 (Too Many Requests)</code> sur une clé API, le système bascule automatiquement sur la clé de secours (threshold paramétrable) pour garantir la continuité du service.</p>
+            <h4>Résilience & Efficience</h4>
+            <p>Le pipeline de mémorisation est <strong>non-bloquant</strong> (exécuté en tâche de fond). Il utilise une logique de <strong>Lazy Update</strong> (score > 0.95) pour minimiser la consommation de tokens en évitant les appels de fusion inutiles.</p>
         </div>
 
         <footer>
-            ECHO Framework v5.98.10 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
+            ECHO Framework v5.100.0 - "Organic Intelligence" - Copyright © 2026 Wilfried BARNAVON
         </footer>
     </main>
 </body>
 </html>
-

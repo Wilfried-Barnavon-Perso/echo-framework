@@ -1,14 +1,13 @@
 """
-title: ECHO Smart Memory Filter
+title: ECHO Organic Memory Filter V2
 author: Wilfried BARNAVON
-version: 1.4
-description: 1.4: Correction du pluralisme des clés API (get_api_keys).
+version: 2.1
+description: 2.1: Intégration UI (Toggle, Icon) et Souveraineté (UserValves pour ENABLE_MEMORY).
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Union
 import orjson as json
-
 import os
 import sys
 import asyncio
@@ -17,179 +16,238 @@ import time
 import httpx
 import random
 import hashlib
-
+import uuid
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth
-from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, MODEL_LITE
+from echo_utils import EchoAuth, EchoGeminiClient, EchoEvents
+from echo_constants import (
+    ECHO_USER_AGENT, GOOGLE_API_BASE_URL, 
+    MODEL_DISTILLATION, MODEL_EMBEDDING, 
+    EMBEDDING_DIM_V2, COLLECTION_MEMORY
+)
 
 # Configuration du Logger
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ECHO-MEMORY-FILTER")
+logger = logging.getLogger("ECHO-MEMORY-V2")
 
 class Filter:
-    # Priorité élevée pour s'exécuter après les autres filtres (Outlet)
+    # Priorité élevée pour s'exécuter en fin de chaîne (Outlet)
     priority: int = 100
 
     class Valves(BaseModel):
-        ENABLE_MEMORY: bool = Field(default=True, description="Active la mémorisation automatique des conversations.")
         TRIGGER_PROBABILITY: float = Field(default=0.1, description="Probabilité (0.0 à 1.0) de déclenchement à chaque fin de message.")
-        MIN_MESSAGES: int = Field(default=4, description="Nombre minimum de messages dans le chat avant d'envisager la mémorisation.")
-        QDRANT_URL: str = Field(default="http://echo-qdrant:6333", description="URL interne du service Qdrant.")
-        COLLECTION_NAME: str = Field(default="echo_memory", description="Nom de la collection vectorielle.")
-        DEBUG_MODE: bool = Field(default=False)
+        RECOVERY_FACTOR: float = Field(default=1.3, description="Facteur de recouvrement de la fenêtre de messages (1.3 = 30% d'overlap).")
+        FORCE_TRIGGER_THRESHOLD: int = Field(default=20, description="Force la mémorisation si aucun déclenchement après N messages.")
+        
+        SIMILARITY_THRESHOLD: float = Field(default=0.85, description="Seuil de similarité pour déclencher la fusion LLM (0.0 à 1.0).")
+        EXACT_MATCH_THRESHOLD: float = Field(default=0.95, description="Seuil pour simple mise à jour de date (sans coût LLM).")
+        
+        TTL_LVL_1: int = Field(default=30, description="Rétention (jours) Niveau 1 (Trivial/Éphémère).")
+        TTL_LVL_2: int = Field(default=60, description="Rétention (jours) Niveau 2.")
+        TTL_LVL_3: int = Field(default=180, description="Rétention (jours) Niveau 3.")
+        TTL_LVL_4: int = Field(default=365, description="Rétention (jours) Niveau 4.")
+        TTL_LVL_5: int = Field(default=540, description="Rétention (jours) Niveau 5 (Axiome/Critique).")
+        
+        QDRANT_URL: str = Field(default="http://echo-qdrant:6333", description="URL interne de Qdrant.")
+        DEBUG_MEMORY: bool = Field(default=False, description="Affiche les détails de fusion et de pruning dans les logs.")
+
+    class UserValves(BaseModel):
+        ENABLE_MEMORY: bool = Field(default=True, description="🧠 Autoriser ECHO à mémoriser cette conversation pour enrichir ma mémoire organique.")
 
     def __init__(self):
         self.valves = self.Valves()
+        self.user_valves = self.UserValves()
         self.auth = EchoAuth()
         self.collection_verified = False
-        self.icon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMjEgMTJ2N2ExIDEgMCAwIDEtMSAxSDRhMSAxIDAgMCAxLTEtMVY1YTEgMSAwIDAgMSAxLTFoNSIvPjxwYXRoIGQ9Ik05IDEzaDVsLTUgNXYtNHoiLz48cGF0aCBkPSJNMTUgM2g2djZoLTZ6Ii8+PC9zdmc+"
+        self.last_triggered_count = {} 
+        
+        # --- CONFIGURATION UI OPEN WEBUI ---
+        self.toggle = True  # Affiche le switch dans le menu Intégrations (icône engrenage)
+        # Icône SVG : Cerveau avec circuit (Cognition)
+        self.icon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNOSAxMmExIDEsMCwxLDAsMiwxLDEsMCwxLDAtMi0weiIvPjxwYXRoIGQ9Ik0xNSAxMmExIDEsMCwxLDAsMiwxLDEsMCwxLDAtMi0weiIvPjxwYXRoIGQ9Ik04IDE3YTUgNSAwIDAgMSAxMCAwIi8+PHBhdGggZD0iTTEyIDN2Mm0wIDE0djJtLTktOWgtMm0xNCAwaC0yIi8+PC9zdmc+"
 
     async def _ensure_collection(self):
-        """Vérifie et crée la collection Qdrant si nécessaire."""
-        if self.collection_verified:
-            return
-        
+        if self.collection_verified: return
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(f"{self.valves.QDRANT_URL}/collections/{self.valves.COLLECTION_NAME}")
+                resp = await client.get(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}")
                 if resp.status_code == 200:
-                    self.collection_verified = True
-                    return
+                    self.collection_verified = True; return
                 
-                # Création de la collection
-                logger.info(f"[ECHO-MEMORY] Création de la collection {self.valves.COLLECTION_NAME}...")
-                create_payload = {
-                    "vectors": {
-                        "size": 3072, # Dimension pour gemini-embedding-2-preview
-                        "distance": "Cosine"
-                    }
-                }
-                await client.put(f"{self.valves.QDRANT_URL}/collections/{self.valves.COLLECTION_NAME}", json=create_payload)
+                logger.info(f"[ECHO-MEMORY-V2] 🏗️ Création de la collection {COLLECTION_MEMORY} ({EMBEDDING_DIM_V2}d)...")
+                create_payload = {"vectors": {"size": EMBEDDING_DIM_V2, "distance": "Cosine"}}
+                await client.put(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}", json=create_payload)
                 self.collection_verified = True
         except Exception as e:
-            logger.error(f"[ECHO-MEMORY] ❌ Erreur Qdrant Initialisation: {e}")
+            logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Qdrant: {e}")
 
-    async def _distill_and_store(self, chat_id: str, user_id: str, messages: List[Dict], api_key: str):
-        """Tâche de fond : Distillation, Vectorisation et Stockage."""
+    async def _get_distilled_json(self, messages: List[Dict], api_keys: List[str]) -> Optional[Dict]:
+        """Distillation multimodale via Gemini 2.5 Flash."""
+        distill_prompt = (
+            "Tu es l'unité de distillation de mémoire d'ECHO. Analyse cet extrait de conversation.\n"
+            "Ta mission est d'extraire les connaissances, décisions techniques ou préférences utilisateur.\n"
+            "Produis un JSON STRICT avec :\n"
+            "- 'summary': Résumé ultra-dense et technique (sans fioriture).\n"
+            "- 'importance': Score de 1 (Trivial) à 5 (Critique/Fondateur).\n"
+            "- 'slug': Identifiant sémantique court (ex: 'pref_python_format', 'archi_db_cluster').\n"
+            "- 'tags': 3 à 5 tags techniques."
+        )
+
+        parts = [{"text": distill_prompt}]
+        for m in messages:
+            role = m.get('role', 'user').upper()
+            content = m.get('content', '')
+            if isinstance(content, list):
+                for p in content:
+                    if isinstance(p, dict):
+                        if 'text' in p: parts.append({"text": f"{role}: {p['text']}"})
+                        elif 'inline_data' in p: parts.append({"inline_data": p['inline_data']})
+            else:
+                parts.append({"text": f"{role}: {content}"})
+
+        payload = {
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {"temperature": 0.1, "response_mime_type": "application/json"}
+        }
+
+        try:
+            data = await EchoGeminiClient.call(keys=api_keys, target_model=MODEL_DISTILLATION, payload=payload)
+            content_text = data["candidates"][0]["content"]["parts"][0]["text"]
+            return json.loads(content_text)
+        except Exception as e:
+            logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Distillation: {e}")
+            return None
+
+    async def _prune_expired_memories(self, user_id: str):
+        """Nettoyage automatique basé sur les valves TTL."""
+        now = int(time.time())
+        ttl_map = {
+            1: self.valves.TTL_LVL_1 * 86400,
+            2: self.valves.TTL_LVL_2 * 86400,
+            3: self.valves.TTL_LVL_3 * 86400,
+            4: self.valves.TTL_LVL_4 * 86400,
+            5: self.valves.TTL_LVL_5 * 86400
+        }
+
+        filters = []
+        for level, seconds in ttl_map.items():
+            filters.append({
+                "must": [
+                    {"key": "user_id", "match": {"value": user_id}},
+                    {"key": "importance", "match": {"value": level}},
+                    {"key": "timestamp", "range": {"lt": now - seconds}}
+                ]
+            })
+
+        try:
+            async with httpx.AsyncClient() as client:
+                for f in filters:
+                    await client.post(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", json={"filter": f})
+            if self.valves.DEBUG_MEMORY:
+                logger.info(f"[ECHO-MEMORY-V2] 🧹 Auto-Pruning terminé pour l'utilisateur {user_id}")
+        except Exception as e:
+            logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Pruning: {e}")
+
+    async def _distill_and_store(self, chat_id: str, user_id: str, messages: List[Dict], api_keys: List[str]):
+        """Pipeline Asynchrone V2."""
         try:
             await self._ensure_collection()
             
-            # 1. Distillation via Gemini Flash-Lite
-            # On ne prend que le texte pour la distillation
-            history_text = ""
-            for m in messages:
-                content = m.get('content', '')
-                if isinstance(content, list):
-                    # Cas multimodal : on extrait les parties texte
-                    text_parts = [p.get('text', '') for p in content if isinstance(p, dict) and 'text' in p]
-                    content = " ".join(text_parts)
-                history_text += f"{m['role'].upper()}: {content}\n"
+            # 1. Distillation
+            distilled = await self._get_distilled_json(messages, api_keys)
+            if not distilled or not distilled.get("summary"): return
             
-            distill_prompt = (
-                "Tu es l'unité de mémoire d'ECHO. Analyse cet historique de conversation.\n"
-                "Ta mission est d'extraire les connaissances techniques, les décisions ou les faits importants.\n"
-                "Produis un JSON strict avec les champs suivants :\n"
-                "- 'summary': Un résumé ultra-dense, factuel et technique (sans fioriture).\n"
-                "- 'memory_type': Une catégorie courte et explicite (ex: ARCHITECTURE, FIX_BUG, CONFIG_SHELL).\n"
-                "- 'tags': Une liste de 3 à 5 mots-clés techniques.\n\n"
-                f"HISTORIQUE :\n{history_text}"
+            summary = distilled["summary"]
+            importance = int(distilled.get("importance", 1))
+            slug = distilled.get("slug", "generic_note")
+            
+            # 2. Vectorisation V2
+            embed_data = await EchoGeminiClient.embed(
+                keys=api_keys, 
+                model=MODEL_EMBEDDING, 
+                content={"parts": [{"text": f"title: {slug} | text: {summary}"}]}
             )
+            vector = embed_data["embedding"]["values"]
 
-            headers = {
-                "x-goog-api-key": api_key,
-                "Content-Type": "application/json",
-                "User-Agent": ECHO_USER_AGENT
-            }
+            # 3. Collision & Fusion
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{slug}"))
             
-            payload_flash = {
-                "contents": [{"role": "user", "parts": [{"text": distill_prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "response_mime_type": "application/json"
+            async with httpx.AsyncClient() as client:
+                search_payload = {
+                    "vector": vector, "limit": 1, "with_payload": True,
+                    "filter": {"must": [{"key": "user_id", "match": {"value": user_id}}, {"key": "slug", "match": {"value": slug}}]}
                 }
-            }
-            
-            # Endpoint standardisé via Google API Base URL
-            flash_url = f"{GOOGLE_API_BASE_URL}/models/{MODEL_LITE}:generateContent?key={api_key}"
-
-            async with httpx.AsyncClient(http2=True) as client:
-                resp_flash = await client.post(flash_url, headers=headers, json=payload_flash, timeout=60)
-                if resp_flash.status_code != 200:
-                    logger.error(f"[ECHO-MEMORY] Erreur Distillation Flash: {resp_flash.text}")
-                    return
+                resp_search = await client.post(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/search", json=search_payload)
+                results = resp_search.json().get("result", [])
                 
-                data = resp_flash.json()
-                content_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                distilled_data = json.loads(content_text)
+                final_summary = summary
+                if results:
+                    hit = results[0]
+                    score = hit.get("score", 0)
+                    old_payload = hit.get("payload", {})
+                    
+                    if score > self.valves.EXACT_MATCH_THRESHOLD:
+                        if self.valves.DEBUG_MEMORY: logger.info(f"[ECHO-MEMORY-V2] 🔄 Doublon détecté pour '{slug}'. Rafraîchissement date.")
+                    elif score > self.valves.SIMILARITY_THRESHOLD:
+                        if self.valves.DEBUG_MEMORY: logger.info(f"[ECHO-MEMORY-V2] 🧩 Fusion sémantique pour '{slug}'...")
+                        fusion_prompt = f"Fusionne ces deux résumés techniques en un seul paragraphe cohérent et à jour :\n1. {old_payload.get('summary')}\n2. {summary}"
+                        fusion_data = await EchoGeminiClient.call(keys=api_keys, target_model=MODEL_DISTILLATION, payload={"contents": [{"role":"user", "parts":[{"text": fusion_prompt}]}]})
+                        final_summary = fusion_data["candidates"][0]["content"]["parts"][0]["text"]
                 
-                summary = distilled_data.get("summary", "")
-                if not summary:
-                    return
-
-                # 2. Vectorisation via Gemini Embedding-2
-                embed_url = f"{GOOGLE_API_BASE_URL}/models/gemini-embedding-2-preview:embedContent?key={api_key}"
-                payload_embed = {
-                    "content": {"parts": [{"text": summary}]}
-                }
-                
-                resp_embed = await client.post(embed_url, headers=headers, json=payload_embed, timeout=30)
-                if resp_embed.status_code != 200:
-                    logger.error(f"[ECHO-MEMORY] Erreur Embedding: {resp_embed.text}")
-                    return
-                
-                vector = resp_embed.json()["embedding"]["values"]
-                
-                # 3. Stockage dans Qdrant
-                # ID déterministe pour éviter les doublons de mémorisation sur une même version du chat
-                point_id = hashlib.md5(f"{chat_id}_{summary[:100]}".encode()).hexdigest()
-                
+                # 4. Insertion/Update
                 point_payload = {
                     "points": [{
-                        "id": point_id,
-                        "vector": vector,
+                        "id": point_id, "vector": vector,
                         "payload": {
-                            "user_id": user_id,
-                            "chat_id": chat_id,
-                            "timestamp": int(time.time()),
-                            "memory_type": distilled_data.get("memory_type", "GENERIC"),
-                            "tags": distilled_data.get("tags", []),
-                            "summary": summary
+                            "user_id": user_id, "chat_id": chat_id, "timestamp": int(time.time()),
+                            "importance": importance, "slug": slug, "tags": distilled.get("tags", []), "summary": final_summary
                         }
                     }]
                 }
+                await client.put(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points", json=point_payload)
                 
-                await client.put(f"{self.valves.QDRANT_URL}/collections/{self.valves.COLLECTION_NAME}/points", json=point_payload)
-                logger.info(f"[ECHO-MEMORY] ✅ Souvenir sémantique mémorisé (User: {user_id}, Chat: {chat_id})")
+            logger.info(f"[ECHO-MEMORY-V2] ✅ Souvenir '{slug}' (Lvl {importance}) mémorisé.")
+            
+            # 5. Nettoyage
+            await self._prune_expired_memories(user_id)
 
         except Exception as e:
-            logger.error(f"[ECHO-MEMORY] ❌ Erreur critique dans la tâche de mémorisation: {e}")
+            logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Pipeline: {e}")
 
-    async def outlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None) -> dict:
+    async def outlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
         """Phase Outlet : Déclenchement de la mémorisation après la réponse de l'IA."""
-        if not self.valves.ENABLE_MEMORY or not __user__:
+        # On vérifie la UserValve de souveraineté
+        if not self.user_valves.ENABLE_MEMORY or not __user__:
             return body
 
         messages = body.get("messages", [])
         chat_id = (__metadata__ or {}).get("chat_id") or body.get("chat_id")
-        
-        # 1. Vérification du seuil minimal de messages
-        if len(messages) < self.valves.MIN_MESSAGES:
-            return body
-            
-        # 2. Tirage probabiliste pour éviter de saturer l'API/Base à chaque message
-        if random.random() > self.valves.TRIGGER_PROBABILITY:
-            return body
-
-        # 3. Lancement asynchrone
         user_id = __user__.get("id")
-        api_keys = self.auth.get_api_keys(user_id)
-        api_key = api_keys[0] if api_keys else None
         
-        if api_key:
-            if self.valves.DEBUG_MODE:
-                logger.info(f"[ECHO-MEMORY] 🧠 Analyse de mémorisation lancée pour {chat_id}")
-            asyncio.create_task(self._distill_and_store(chat_id, user_id, messages, api_key))
+        # Hard Limit logic
+        count = self.last_triggered_count.get(chat_id, 0) + 1
+        self.last_triggered_count[chat_id] = count
+
+        triggered = (random.random() < self.valves.TRIGGER_PROBABILITY) or (count >= self.valves.FORCE_TRIGGER_THRESHOLD)
+        
+        if triggered and len(messages) >= 4:
+            self.last_triggered_count[chat_id] = 0
+            api_keys = self.auth.get_api_keys(user_id)
+            if api_keys:
+                # Fenêtre de recouvrement sémantique
+                window_size = int(self.valves.RECOVERY_FACTOR / self.valves.TRIGGER_PROBABILITY)
+                window_msgs = messages[-window_size:]
+                if self.valves.DEBUG_MEMORY:
+                    logger.info(f"[ECHO-MEMORY-V2] 🧠 Déclenchement (Fenêtre: {len(window_msgs)} msgs)")
+                
+                # Feedback visuel (Optionnel, masqué si hidden=True)
+                if __event_emitter__:
+                    await __event_emitter__({
+                        "type": "status",
+                        "data": {"description": "🧠 Consolidation de la mémoire organique...", "done": False, "hidden": not self.valves.DEBUG_MEMORY}
+                    })
+                
+                asyncio.create_task(self._distill_and_store(chat_id, user_id, window_msgs, api_keys))
 
         return body

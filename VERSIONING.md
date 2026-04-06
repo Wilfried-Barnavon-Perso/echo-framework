@@ -50,6 +50,67 @@ Chaque composant possède son propre cycle de vie et sa propre numérotation, do
 
 Pour garantir la cohérence, chaque Release de la Stack (`5.Y.Z`) est définie par un snapshot précis des versions de composants.
 
+**Exemple pour la 5.101.0 (Memory Governance Update) :**
+
+{
+  "stack_version": "5.101.0",
+  "release_date": "2026-04-06",
+  "description": "Introduction du 'Droit à l'oubli' (Purge Action) et réorganisation des priorités UI des filtres et actions.",
+  "components": {
+    "new_context_filter": "6.63",
+    "web_navigation_replay_action": "3.5",
+    "purge_memory_action": "1.0"
+  }
+}
+
+**Exemple pour la 5.100.0 (Organic Memory V2 & Cognitive Suture) :**
+
+{
+  "stack_version": "5.100.0",
+  "release_date": "2026-04-06",
+  "description": "Suture Cognitive V2 : Distillation Flash 2.5, Fusion Sémantique et Auto-Pruning via Qdrant (gemini-embedding-2-preview).",
+  "components": {
+    "echo_constants": "1.22",
+    "conversation_memory_filter": "2.0",
+    "memory_organic_tool": "2.0"
+  }
+}
+
+**Exemple pour la 5.99.7 (Pydantic Strict Fix - Multimodal Suture) :**
+
+{
+  "stack_version": "5.99.7",
+  "release_date": "2026-04-06",
+  "description": "Fix strict Pydantic binding pour les valves multimodales (Clean architecture).",
+  "components": {
+    "file_content_explorer": "5.99.1"
+  }
+}
+
+**Exemple pour la 5.99.6 (Native Multimodal Suture) :**
+
+{
+  "stack_version": "5.99.6",
+  "release_date": "2026-04-06",
+  "description": "Native Multimodal Suture (Injection Video/Audio/Image via file_content_explorer)",
+  "components": {
+    "file_content_explorer": "5.99",
+    "pipe_engine": "180.2"
+  }
+}
+
+**Exemple pour la 5.99.2 (Unification UI & Registre Cognitif Statique) :**
+
+{
+  "stack_version": "5.99.2",
+  "release_date": "2026-04-05",
+  "description": "Unification Totale (MODEL_PRO, AUTO) et stabilisation statique du Registre Cognitif",
+  "components": {
+    "pipe_engine": "180.2",
+    "echo_constants": "1.21"
+  }
+}
+
 **Exemple pour la 5.94.0 (Dual-Key Resilience & Factorized API Client) :**
 
 {

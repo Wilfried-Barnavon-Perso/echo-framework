@@ -43,6 +43,19 @@
         <h2>Exploration Brute (<code>read_raw_file_content</code>)</h2>
         <p>Contrairement aux lecteurs standards, ECHO implémente une lecture paginée "Tell-Safe" pour éviter les bugs d'itération sur les fichiers volumineux.</p>
         
+        <h2>Injection Multimédia Native (<code>read_multimedia_file</code>)</h2>
+        <p>Cette fonction majeure permet au modèle d'accéder directement au contenu binaire d'un fichier (Image, Vidéo, Audio, PDF) sans passer par une analyse intermédiaire. Le fichier est injecté directement dans le cortex multimodal de Gemini.</p>
+        
+        <div class="note-box">
+            <h4>Spécifications Techniques (ECHO v5.99+)</h4>
+            <ul>
+                <li><strong>Capacité</strong> : Jusqu'à <strong>100 Mo</strong> (configurable via la valve <code>MAX_MULTIMODAL_SIZE_KB</code>).</li>
+                <li><strong>Protocole</strong> : Encodage Base64 injecté via le paramètre <code>echo_tool_multiparts</code>.</li>
+                <li><strong>Types Supportés</strong> : Tous les types MIME définis dans <code>MIME_MAPPING_BIN</code> (MP4, MP3, PNG, JPG, PDF, etc.).</li>
+                <li><strong>Rétroaction UI</strong> : Utilise <code>EchoEvents</code> pour afficher le statut du chargement binaire en temps réel à l'utilisateur.</li>
+            </ul>
+        </div>
+        
         <div class="info-block">
             <h4>Limitation de Sécurité Gemini</h4>
             <p>Toute sortie brute est bridée à <strong>16 Ko</strong> pour garantir la conformité avec les APIs Gemini et prévenir les plantages de flux. Pour les fichiers plus gros, utilisez les <code>byte_offset</code>.</p>

@@ -1,8 +1,8 @@
 """
 title: ECHO File Content Explorer
 author: Wilfried BARNAVON
-version: 5.97
-description: 5.97: Refonte et factorisation de l'injection HUD via echo_utils.EchoUI.
+version: 5.99.1
+description: 5.99.1: Fix Pydantic strict attribute binding pour MAX_MULTIMODAL_SIZE_KB.
 """
 
 import os
@@ -28,11 +28,11 @@ from echo_constants import ECHO_UPLOADS_DIR, ECHO_USER_AGENT, GOOGLE_API_BASE_UR
 
 class Tools:
     class Valves(BaseModel):
-        GEMINI_FLASH_MODEL: str = Field(default=MODEL_FLASH)
         UPLOADS_DIR: str = Field(default=ECHO_UPLOADS_DIR)
         KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
         PROBE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour le sondage sémantique.")
         MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW). Brider à 16 pour conformité API.")
+        MAX_MULTIMODAL_SIZE_KB: int = Field(default=102400, description="Taille maximale (en Ko) pour l'injection multimédia au modèle (défaut: 100Mo).")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -181,7 +181,7 @@ class Tools:
 
             data = await EchoGeminiClient.call(
                 keys=api_keys,
-                target_model=self.valves.GEMINI_FLASH_MODEL,
+                target_model=MODEL_FLASH,
                 payload=payload,
                 threshold=self.valves.KEY_SWITCH_THRESHOLD,
                 max_retries=3,
@@ -203,6 +203,59 @@ class Tools:
 
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur Sonde: {str(e)}", status={"status": "error"})
+
+    async def read_multimedia_file(
+        self, 
+        file_id: str, 
+        __user__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None
+    ) -> str:
+        """
+        Lit et transmet un fichier multimédia complet (Vidéo, Audio, Image, PDF) au Modèle.
+        Utilisez cet outil UNIQUEMENT pour les médias, pas pour le texte.
+        Limite de poids par défaut : 100 Mo (102400 Ko). Si la taille dépasse la limite autorisée par l'administrateur, un message d'erreur vous le signalera.
+        
+        :param file_id: L'identifiant du fichier multimédia dans le Vault ECHO.
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        uid = __user__.get("id", "anonymous")
+        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
+        
+        if not fpath:
+            return wrap_tool_output(text="❌ Fichier multimédia introuvable dans le Vault ECHO.", status={"status": "error"})
+
+        size_kb = os.path.getsize(fpath) / 1024
+        limit_kb = self.valves.MAX_MULTIMODAL_SIZE_KB
+        
+        if size_kb > limit_kb:
+            msg = f"❌ Fichier trop volumineux ({size_kb / 1024:.1f} Mo). La limite est fixée à {limit_kb / 1024:.1f} Mo."
+            await events.status(msg, done=True)
+            return wrap_tool_output(text=msg, status={"status": "error"})
+
+        mime, supported = get_gemini_mime(fpath)
+        # On rejette explicitement le texte brut ou l'octet-stream inconnu pour réserver cet outil au multimodal
+        if not supported or mime == "application/octet-stream" or mime.startswith("text/"):
+            msg = f"❌ Le type de fichier ({mime}) n'est pas reconnu comme un média valide ou est un simple texte. Utilisez read_raw_file_content pour le texte."
+            await events.status(msg, done=True)
+            return wrap_tool_output(text=msg, status={"status": "error"})
+
+        await events.status(f"👁️ Chargement média ({mime}, {size_kb / 1024:.1f} Mo)...")
+
+        try:
+            with open(fpath, 'rb') as f:
+                b64 = base64.b64encode(f.read()).decode('utf-8')
+            
+            await events.status("✅ Média transmis au Modèle.", done=True)
+            
+            multiparts = [{"type": "media", "mime_type": mime, "data": b64}]
+            return wrap_tool_output(
+                text=f"✅ Média chargé avec succès.\nType: {mime}\nTaille: {size_kb / 1024:.1f} Mo.\nLe fichier est maintenant dans votre contexte d'analyse visuel/auditif.", 
+                status={"status": "success"},
+                echo_tool_multiparts=multiparts
+            )
+        except Exception as e:
+            return wrap_tool_output(text=f"❌ Erreur lors du chargement multimédia : {str(e)}", status={"status": "error"})
 
     async def get_file_metadata(
         self, 

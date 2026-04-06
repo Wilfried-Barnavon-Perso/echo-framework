@@ -1,8 +1,8 @@
 """
 title: ECHO Cognitive Core
 author: ECHO Framework
-version: 3.20
-description: 3.20: Renamed flash_distillation to lite_reasoning for better alignment.
+version: 3.21
+description: 3.21: Alignement sur le Registre Cognitif (Suppression des modèles en Valves).
 """
 
 import sys
@@ -63,9 +63,7 @@ async def _call_gemini_direct(user_id: str, model_id: str, prompt: str, thinking
 
 class Tools:
     class Valves(BaseModel):
-        FLASH_MODEL: str = Field(default=MODEL_LITE)
         FLASH_THINKING: str = Field(default="MEDIUM")
-        PRO_MODEL: str = Field(default=MODEL_PRO)
         PRO_THINKING: str = Field(default="HIGH")
         KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
         COGNITIVE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour la délégation cognitive.")
@@ -92,7 +90,7 @@ class Tools:
         
         res = await _call_gemini_direct(
             user_id,
-            self.valves.PRO_MODEL,
+            MODEL_PRO,
             question,
             thinking_level=self.valves.PRO_THINKING,
             events=events,
@@ -126,7 +124,7 @@ class Tools:
         
         res = await _call_gemini_direct(
             user_id,
-            self.valves.FLASH_MODEL,
+            MODEL_LITE,
             prompt,
             thinking_level=self.valves.FLASH_THINKING,
             events=events,

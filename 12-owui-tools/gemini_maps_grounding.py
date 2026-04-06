@@ -1,8 +1,8 @@
 """
 title: ECHO Google Maps Grounding
 author: Wilfried BARNAVON
-version: 12.31
-description: 12.31: Integrated Centralized EchoGeminiClient for multi-key resilience.
+version: 12.32
+description: 12.32: Alignement sur le Registre Cognitif (Suppression des modèles en Valves).
 """
 
 import orjson as json
@@ -18,7 +18,6 @@ from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, MODEL_LITE
 
 class Tools:
     class Valves(BaseModel):
-        GEMINI_FLASH_MODEL: str = Field(default=MODEL_LITE)
         KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
         MAPS_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour la recherche Maps.")
 
@@ -66,7 +65,7 @@ class Tools:
         try:
             data = await EchoGeminiClient.call(
                 keys=api_keys,
-                target_model=self.valves.GEMINI_FLASH_MODEL,
+                target_model=MODEL_LITE,
                 payload=payload,
                 threshold=self.valves.KEY_SWITCH_THRESHOLD,
                 max_retries=3,
