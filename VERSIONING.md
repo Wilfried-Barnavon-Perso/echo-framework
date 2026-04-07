@@ -50,6 +50,68 @@ Chaque composant possède son propre cycle de vie et sa propre numérotation, do
 
 Pour garantir la cohérence, chaque Release de la Stack (`5.Y.Z`) est définie par un snapshot précis des versions de composants.
 
+**Exemple pour la 5.105.2 (Premium Viewer Unification) :**
+
+{
+  "stack_version": "5.105.2",
+  "release_date": "2026-04-07",
+  "description": "Unification UX du Premium Viewer (HUD + Fichiers) avec moteur de Zoom/Pan, Aide interactive intégrée, Fallback CORS et fix de l'extraction multi-canvas.",
+  "components": {
+    "echo_utils": "2.72",
+    "file_content_explorer": "5.105.1",
+    "gemini_maps_grounding": "12.51"
+  }
+}
+
+**Exemple pour la 5.105.1 (Premium Viewer Refactoring & Context Fix) :**
+
+{
+  "stack_version": "5.105.1",
+  "release_date": "2026-04-07",
+  "description": "Fix strict sur le retour du contexte pour le Rich UI (string au lieu de dictionnaire) et introduction complète du Premium Viewer avec zoom interactif et pan.",
+  "components": {
+    "echo_utils": "2.71",
+    "file_content_explorer": "5.105.1",
+    "gemini_maps_grounding": "12.51"
+  }
+}
+
+**Exemple pour la 5.105.0 (Stealth Downloader & Premium Visualizer) :**
+
+{
+  "stack_version": "5.105.0",
+  "release_date": "2026-04-06",
+  "description": "Renforcement massif du Stealth Engine (Anti-403 Wikimedia), unification du viewer d'images (Local/Remote) et outils de précision Rich UI (Loupe native, Sélecteur de zone interactif).",
+  "components": {
+    "echo_utils": "2.70",
+    "file_content_explorer": "5.105.0"
+  }
+}
+
+**Exemple pour la 5.103.0 (Rich UI Suture & Sovereign Maps) :**
+
+{
+  "stack_version": "5.103.0",
+  "release_date": "2026-04-06",
+  "description": "Introduction du Framework Rich UI : Visualisation d'images interactive (Base64) et intégration de cartes OpenStreetMap via Leaflet.js pour une souveraineté totale.",
+  "components": {
+    "echo_utils": "2.50",
+    "file_content_explorer": "5.103.0",
+    "gemini_maps_grounding": "12.50"
+  }
+}
+
+**Exemple pour la 5.102.0 (Dynamic Cognitive Delegation & Memory Filter Documentation) :**
+
+{
+  "stack_version": "5.102.0",
+  "release_date": "2026-04-06",
+  "description": "Refonte du Cognitive Core : Fusion des outils de raisonnement en 'delegate_reasoning' avec routage dynamique de modèle (LITE, FLASH, PRO) et support des System Instructions. Mise à jour critique de la documentation sur la cascade cognitive et la mémoire organique.",
+  "components": {
+    "cognitive_core": "3.50"
+  }
+}
+
 **Exemple pour la 5.101.0 (Memory Governance Update) :**
 
 {

@@ -172,14 +172,15 @@ invariant = hashlib.sha256(f"{role}|{norm_c}|{norm_t}".encode()).hexdigest()</co
             <h4>Capacités du HUD</h4>
             <ul>
                 <li><strong>Gestion de l'Espace</strong> : Calcul intelligent de la taille optimale (<code>getBestSize</code>) basée sur le ratio de l'image et le viewport.</li>
-                <li><strong>Outils de Précision</strong> : 
+                <li><strong>Moteur Zoom & Pan Universel</strong> :
                     <ul>
-                        <li><code>Loupe (Zoom Active)</code> : Rendu d'un canvas secondaire avec facteur 2.5x pour l'analyse de détails.</li>
-                        <li><code>Crop (Découpe)</code> : Système de 8 poignées de redimensionnement pour extraire une zone spécifique.</li>
+                        <li><code>Zoom Matriciel (Ctrl+Molette)</code> : Modifie dynamiquement le <code>transform: scale()</code> de l'image jusqu'à 15x sans perte de qualité de la fenêtre parente.</li>
+                        <li><code>Pan Interactif (Clic+Glisse)</code> : Calcule le vecteur de déplacement divisé par le niveau de zoom (<code>imgScale</code>) pour une navigation fluide au pixel près au sein du conteneur.</li>
                     </ul>
                 </li>
-                <li><strong>Exportation Avancée</strong> : Supporte la copie directe vers le presse-papier ou le téléchargement local (PNG).</li>
-                <li><strong>Auto-Destruction</strong> : Gestion d'un <code>timeout</code> optionnel avec fondu d'opacité avant suppression automatique du DOM.</li>
+                <li><strong>Outil de Rognage (Crop)</strong> : Système de 8 poignées de redimensionnement interactives permettant de définir une zone d'extraction précise, même lorsque l'image est zoomée.</li>
+                <li><strong>Exportation et Fallback CORS</strong> : Le système d'export utilise un Canvas 2D adaptatif. Si l'image provient d'un domaine distant strict (CORS Tainted Canvas), le système bascule intelligemment sur un Overlay de Secours (Fallback) ou ouvre l'image d'origine pour garantir que l'utilisateur puisse toujours copier ses données.</li>
+                <li><strong>Aide Contextuelle Unifiée</strong> : Un composant <code>[ ? ]</code> intégré affiche un lexique éphémère (Tooltip) des commandes interactives.</li>
             </ul>
 
             <h3 id="semantic-suture">Protocoles Sémantiques & Suture</h3>

@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>ECHO v5 - 7c. Mémoire & Cognition</title>
+    <title>ECHO v5 - 7c. Cognition Profonde & Mémoire Organique</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
             <img src="logo-echo.png" alt="ECHO Logo">
         </div>
         <h2>ECHO v5</h2>
-                                <nav>
+        <nav>
             <ul>
                 <li><a href="index.html">Introduction</a></li>
                 <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
@@ -37,68 +37,102 @@
     </aside>
 
     <main>
-        <h1>7c. Mémoire Organique & Cœur Cognitif</h1>
-        <p>Ce module gère l'intelligence persistante d'ECHO. Il transforme le flux volatil des conversations en une base de connaissances structurée, fusionnée et auto-nettoyée, strictement cloisonnée par utilisateur.</p>
+        <h1>7c. Cognition Profonde & Mémoire Organique</h1>
+        <p>L'intelligence d'ECHO v5 repose sur une dualité fondamentale : le <strong>Cortex Réactif</strong> (Le Pipe) et le <strong>Registre Cognitif Persistant</strong> (La Mémoire). Cette architecture garantit une puissance de calcul maximale tout en préservant une cohérence historique absolue.</p>
 
-        <h2>Le Cœur Cognitif (<code>cognitive_core.py</code>)</h2>
-        <p>ECHO utilise une architecture de <strong>Cascade Cognitive</strong>. Le modèle PRO peut instancier des sous-unités de réflexion pour résoudre des problèmes sans polluer son propre contexte.</p>
+        <h2>1. Architecture de la Cascade Cognitive (Le Cortex)</h2>
+        <p>Le <strong>Pipe Engine</strong> (<code>pipe_engine.py</code>) n'est pas un simple tunnel de données. C'est un moteur de routage dynamique bidirectionnel qui gère la puissance de calcul en temps réel.</p>
+
+        <h3>A. Cascade Native & Outil Virtuel d'Ajustement</h3>
+        <p>Lors d'une requête en mode <code>AUTO</code>, ECHO initialise systématiquement la session sur <strong>MODEL_LITE</strong> (le point d'entrée par défaut). Cependant, le Cortex injecte dynamiquement un outil virtuel invisible pour l'utilisateur : <code>changement_niveau_cognitif</code>.</p>
+        
+        <div class="note-box">
+            <h4>Mécanique de l'Escalade & Redescente</h4>
+            <p>Cet outil permet au modèle actuel de modifier sa propre puissance de calcul selon deux lois fondamentales :</p>
+            <ol>
+                <li><strong>Loi de Nature de Tâche</strong> :
+                    <ul>
+                        <li><strong>MODEL_LITE (Réflexe)</strong> : Salutations, extractions simples, culture générale basique.</li>
+                        <li><strong>MODEL_FLASH (Exécution)</strong> : Recherche web, scripts isolés, synthèse unitaire, outils simples.</li>
+                        <li><strong>MODEL_PRO (Expertise)</strong> : Architecture, orchestration, refactoring complexe, philosophie profonde.</li>
+                    </ul>
+                </li>
+                <li><strong>Loi de Corrélation Contextuelle (La Vallée de la Mort)</strong> : 
+                    Plus le contexte (tokens) s'alourdit, plus le niveau cognitif doit augmenter pour maintenir la cohérence, indépendamment de la simplicité de la tâche. Si le contexte dépasse 50% de la fenêtre, le passage en <strong>MODEL_PRO</strong> est impératif.</li>
+            </ol>
+        </div>
+
+        <h3>B. Délégation Explicite (Cognitive Core)</h3>
+        <p>L'outil <code>delegate_reasoning</code> permet à l'orchestrateur de déléguer consciemment une portion de la tâche à un sous-système. Contrairement à la cascade native (qui change de modèle pour la réponse en cours), ici le résultat est réinjecté comme une <strong>donnée isolée</strong>.</p>
         
         <table>
             <thead>
                 <tr>
-                    <th>Unité</th>
                     <th>Modèle Cible</th>
-                    <th>Usage Recommandé</th>
+                    <th>Niveau de Pensée (Valve)</th>
+                    <th>Usage Recommandé (Délégation)</th>
                 </tr>
             </thead>
             <tbody>
                 <tr>
-                    <td><code>deep_reasoning</code></td>
-                    <td>Gemini Pro</td>
-                    <td>Problèmes d'architecture, debug complexe, planification stratégique. Niveau de réflexion : <strong>HIGH</strong>.</td>
+                    <td><strong>MODEL_PRO</strong></td>
+                    <td><code>PRO_THINKING</code> (HIGH)</td>
+                    <td>Debug de fichiers multiples, Planification multicouche.</td>
                 </tr>
                 <tr>
-                    <td><code>lite_reasoning</code></td>
-                    <td>Gemini Flash Lite</td>
-                    <td>Distillation de textes longs, extraction de faits, résumé rapide de données brutes. Niveau de réflexion : <strong>MEDIUM</strong>.</td>
+                    <td><strong>MODEL_FLASH</strong></td>
+                    <td><code>FLASH_THINKING</code> (HIGH)</td>
+                    <td>Formatage JSON complexe, Traduction sémantique riche.</td>
+                </tr>
+                <tr>
+                    <td><strong>MODEL_LITE</strong></td>
+                    <td><code>LOW</code></td>
+                    <td>Distillation de texte brut, Résumé de documents volumineux.</td>
                 </tr>
             </tbody>
         </table>
 
-        <h2>Mémoire Organique V2 (Suture Cognitive)</h2>
-        <p>La mémoire organique d'ECHO ne se contente pas de stocker du texte ; elle <strong>distille</strong> l'intention et <strong>fusionne</strong> les connaissances pour éviter la redondance.</p>
-        
-        <div class="info-block">
-            <h4>Cycle de Vie d'un Souvenir</h4>
-            <ol>
-                <li><strong>Distillation (Gemini 2.5 Flash)</strong> : Analyse multimodale de la fenêtre de messages pour extraire l'essence technique et un score d'importance (1 à 5).</li>
-                <li><strong>Vectorisation (Gemini Embedding 2)</strong> : Encodage haute-fidélité (3072 dimensions) avec préfixage sémantique.</li>
-                <li><strong>Fusion & Suture</strong> : Si un souvenir similaire existe (> 0.85), le système fusionne l'ancien et le nouveau via LLM pour une mise à jour continue.</li>
-                <li><strong>Auto-Pruning</strong> : Suppression automatique basée sur l'importance (Niveau 1: 30 jours, Niveau 5: 18 mois).</li>
-            </ol>
-        </div>
+        <h2>2. Mémoire Organique V2 : La Suture Sémantique</h2>
+        <p>La mémorisation dans ECHO n'est pas un simple stockage de logs. C'est un pipeline de <strong>distillation vectorielle</strong> géré par le filtre <code>conversation_memory_filter.py</code>.</p>
 
-        <h3>Infrastructure Technique</h3>
+        <h3>A. Le Cycle de Mémorisation (Non-bloquant)</h3>
+        <p>Le déclenchement est piloté par deux facteurs : la probabilité (<code>TRIGGER_PROBABILITY=0.1</code>) et le seuil de sécurité (<code>FORCE_TRIGGER_THRESHOLD=20 messages</code>). Une fois déclenché, le pipeline s'exécute en tâche de fond :</p>
+
+        <div class="code-header">Pipeline Technique de Mémorisation</div>
+        <pre><code>
+1. Distillation (Gemini 2.5 Flash) -> Génère un JSON (Summary, Importance 1-5, Slug, Tags)
+2. Vectorisation (Gemini Embedding 2) -> 3072 Dimensions, Distance: Cosine
+3. Recherche (Qdrant) -> Similarité Seuil 0.85
+4. Action :
+   - Similitude < 0.85 : Création d'un nouveau point vectoriel.
+   - 0.85 < Similitude < 0.95 : Fusion LLM (Ancien + Nouveau) pour mise à jour sémantique.
+   - Similitude > 0.95 : Simple "Touch" (Mise à jour du timestamp de rétention).
+        </code></pre>
+
+        <h3>B. Gouvernance des Données & TTL (Time To Live)</h3>
+        <p>chaque souvenir possède une date d'expiration calculée dynamiquement selon son importance :</p>
         <ul>
-            <li><strong>Moteur Vectoriel</strong> : <strong>Qdrant</strong> (collection <code>echo_memory</code>).</li>
-            <li><strong>Embedding V2</strong> : Modèle <code>gemini-embedding-2-preview</code> (3072d) via <code>EchoGeminiClient</code>.</li>
-            <li><strong>Formatage Query</strong> : <code>task: search result | query: {query}</code>.</li>
-            <li><strong>Formatage Doc</strong> : <code>title: {slug} | text: {summary}</code>.</li>
+            <li><strong>Niveau 1 (Éphémère)</strong> : 30 jours (Trivial / Éphémère).</li>
+            <li><strong>Niveau 2 (Utilitaire)</strong> : 60 jours (Contexte de session étendue).</li>
+            <li><strong>Niveau 3 (Structurel)</strong> : 180 jours (Préférences techniques, noms de projets).</li>
+            <li><strong>Niveau 4 (Fondateur)</strong> : 365 jours (Logique métier stable, décisions d'architecture).</li>
+            <li><strong>Niveau 5 (Axiome)</strong> : 540 jours (Règles de sécurité, Principes ECHO fondamentaux).</li>
         </ul>
 
-        <h2>Outils de Rappel (<code>memory_organic_tool.py</code>)</h2>
-        <p>L'IA utilise cet outil pour interroger sa mémoire. La recherche est <strong>strictement isolée par <code>user_id</code></strong>, garantissant qu'aucun souvenir ne fuit entre les utilisateurs du framework.</p>
-
-        <div class="code-header">Flux de mémorisation asynchrone</div>
-        <pre><code>Outlet -> Hasard/Seuil -> Tâche Asynchrone -> Distillation -> Vectorisation -> Fusion -> Qdrant</code></pre>
+        <h2>3. Interaction Cortex / Registre</h2>
+        <p>L'IA utilise l'outil <code>memory_organic_tool.py</code> pour interroger son registre. Cela permet de décider *quand* elle a besoin de contexte historique, évitant ainsi le "bruit" dans la fenêtre de contexte actuelle.</p>
 
         <div class="audit-note">
-            <h4>Résilience & Efficience</h4>
-            <p>Le pipeline de mémorisation est <strong>non-bloquant</strong> (exécuté en tâche de fond). Il utilise une logique de <strong>Lazy Update</strong> (score > 0.95) pour minimiser la consommation de tokens en évitant les appels de fusion inutiles.</p>
+            <h4>Spécifications Qdrant</h4>
+            <ul>
+                <li><strong>Collection</strong> : <code>echo_memory</code></li>
+                <li><strong>Partitionnement</strong> : Isolation stricte par <code>user_id</code> via payload filter.</li>
+                <li><strong>Indexation</strong> : HNSW pour une recherche ultra-rapide.</li>
+            </ul>
         </div>
 
         <footer>
-            ECHO Framework v5.100.0 - "Organic Intelligence" - Copyright © 2026 Wilfried BARNAVON
+            ECHO Framework v5.102.0 - "Sovereign Intelligence & Memory Governance" - Copyright © 2026 Wilfried BARNAVON
         </footer>
     </main>
 </body>

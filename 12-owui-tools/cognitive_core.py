@@ -1,8 +1,8 @@
 """
 title: ECHO Cognitive Core
 author: ECHO Framework
-version: 3.21
-description: 3.21: Alignement sur le Registre Cognitif (Suppression des modèles en Valves).
+version: 3.50
+description: 3.50: Délégation Cognitive Dynamique (Fusion Pro/Flash/Lite avec System Instructions).
 """
 
 import sys
@@ -10,14 +10,23 @@ import orjson as json
 import asyncio
 import re
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, EchoAuth, EchoEvents, split_thought_process, EchoGeminiClient
-from echo_constants import GOOGLE_API_BASE_URL, ECHO_USER_AGENT, MODEL_LITE, MODEL_PRO
+from echo_constants import GOOGLE_API_BASE_URL, ECHO_USER_AGENT, MODEL_LITE, MODEL_FLASH, MODEL_PRO
 
-async def _call_gemini_direct(user_id: str, model_id: str, prompt: str, thinking_level: str = "MEDIUM", events: Optional[EchoEvents] = None, threshold: int = 3, timeout: int = 120) -> str:
+async def _call_gemini_direct(
+    user_id: str, 
+    model_id: str, 
+    prompt: str, 
+    system_instruction: Optional[str] = None,
+    thinking_level: str = "HIGH", 
+    events: Optional[EchoEvents] = None, 
+    threshold: int = 3, 
+    timeout: int = 120
+) -> str:
     """Appel direct à l'API Gemini AI Studio via EchoGeminiClient pour délégation cognitive."""
     auth = EchoAuth(user_id=user_id)
     api_keys = auth.get_api_keys(user_id)
@@ -35,6 +44,12 @@ async def _call_gemini_direct(user_id: str, model_id: str, prompt: str, thinking
             }
         }
     }
+
+    if system_instruction:
+        payload["systemInstruction"] = {
+            "role": "system",
+            "parts": [{"text": system_instruction}]
+        }
 
     try:
         data = await EchoGeminiClient.call(
@@ -63,74 +78,64 @@ async def _call_gemini_direct(user_id: str, model_id: str, prompt: str, thinking
 
 class Tools:
     class Valves(BaseModel):
-        FLASH_THINKING: str = Field(default="MEDIUM")
-        PRO_THINKING: str = Field(default="HIGH")
+        FLASH_THINKING: str = Field(default="HIGH", description="Niveau de réflexion pour le modèle FLASH (LOW, MEDIUM, HIGH)")
+        PRO_THINKING: str = Field(default="HIGH", description="Niveau de réflexion pour le modèle PRO (LOW, MEDIUM, HIGH)")
         KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
         COGNITIVE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour la délégation cognitive.")
 
     def __init__(self):
         self.valves = self.Valves()
 
-    async def deep_reasoning(
+    async def delegate_reasoning(
         self,
-        question: str,
+        prompt: str,
+        target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"],
+        system_instruction: Optional[str] = None,
         __user__: Optional[dict] = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
         """
-        Unité de raisonnement profond pour problèmes textuels complexes, architecture, debug ou planification.
-        Utilise le modèle Gemini Pro avec un niveau de réflexion élevé.
-        :param question: La question complexe ou la tâche nécessitant une réflexion approfondie.
+        Délégation cognitive dynamique. Permet de sous-traiter une tâche à un sous-modèle pour économiser le contexte principal ou paralléliser la réflexion.
+        Utilisez MODEL_LITE pour la distillation rapide et l'extraction de données.
+        Utilisez MODEL_FLASH pour les tâches intermédiaires, le formatage ou la logique standard.
+        Utilisez MODEL_PRO pour l'architecture complexe, le debug profond ou la planification stratégique.
+        Le paramètre 'system_instruction' permet de définir un comportement strict ou un format de sortie attendu pour le modèle délégué.
+        
+        :param prompt: L'instruction ou la tâche complète à exécuter (inclure les données si nécessaire).
+        :param target_model: Le modèle à utiliser (MODEL_LITE, MODEL_FLASH, MODEL_PRO).
+        :param system_instruction: (Optionnel) Instruction système stricte pour forcer le comportement (ex: format JSON).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         
-        await events.status(f"🧠 Délégation Expert (Gemini Pro) pour {user_id}...")
+        # Résolution du modèle
+        model_map = {
+            "MODEL_LITE": MODEL_LITE,
+            "MODEL_FLASH": MODEL_FLASH,
+            "MODEL_PRO": MODEL_PRO
+        }
+        actual_model = model_map.get(target_model, MODEL_PRO)
         
-        res = await _call_gemini_direct(
-            user_id,
-            MODEL_PRO,
-            question,
-            thinking_level=self.valves.PRO_THINKING,
-            events=events,
-            threshold=self.valves.KEY_SWITCH_THRESHOLD,
-            timeout=self.valves.COGNITIVE_TIMEOUT
-        )
-        
-        await events.status("Raisonnement terminé.", done=True)
-        return res
+        # Résolution du niveau de réflexion
+        thinking_level = self.valves.PRO_THINKING
+        if target_model == "MODEL_FLASH":
+            thinking_level = self.valves.FLASH_THINKING
+        elif target_model == "MODEL_LITE":
+            thinking_level = "LOW" # Lite ne supporte généralement pas de hauts niveaux de pensée
 
-    async def lite_reasoning(
-        self,
-        text_to_distill: str,
-        instruction: str = "Distille ce texte pour n'en extraire que l'essentiel (points clés, faits, résumé).",
-        __user__: Optional[dict] = None,
-        __event_emitter__: Any = None,
-        __event_call__: Any = None
-    ) -> str:
-        """
-        Raisonnement léger et distillation rapide de textes longs ou de données brutes via un modèle Flash Lite.
-        Libère le contexte principal en déléguant l'extraction d'information essentielle.
-        :param text_to_distill: Le texte ou les données à traiter (distiller).
-        :param instruction: L'instruction spécifique pour la distillation.
-        """
-        events = EchoEvents(__event_emitter__, __event_call__)
-        user_id = __user__.get("id", "system") if __user__ else "system"
-        
-        await events.status(f"⚡ Raisonnement Lite (Flash) pour {user_id}...")
-        
-        prompt = f"INSTRUCTION: {instruction}\n\nTEXTE À DISTILLER:\n{text_to_distill}"
+        await events.status(f"🧠 Délégation Cognitive ({target_model}) pour {user_id}...")
         
         res = await _call_gemini_direct(
-            user_id,
-            MODEL_LITE,
-            prompt,
-            thinking_level=self.valves.FLASH_THINKING,
+            user_id=user_id,
+            model_id=actual_model,
+            prompt=prompt,
+            system_instruction=system_instruction,
+            thinking_level=thinking_level,
             events=events,
             threshold=self.valves.KEY_SWITCH_THRESHOLD,
             timeout=self.valves.COGNITIVE_TIMEOUT
         )
         
-        await events.status("Distillation terminée.", done=True)
+        await events.status(f"Délégation terminée ({target_model}).", done=True)
         return res

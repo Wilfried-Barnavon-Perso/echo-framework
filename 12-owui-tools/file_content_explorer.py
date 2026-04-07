@@ -1,8 +1,8 @@
 """
 title: ECHO File Content Explorer
 author: Wilfried BARNAVON
-version: 5.99.1
-description: 5.99.1: Fix Pydantic strict attribute binding pour MAX_MULTIMODAL_SIZE_KB.
+version: 5.105.1
+description: 5.105.1: Fix retour contexte (string pure) pour show_image_to_user et optimisation read_multimedia_file.
 """
 
 import os
@@ -16,13 +16,15 @@ import zlib
 from urllib.parse import urlparse, quote
 from typing import Optional, List, Dict, Any, Union, Tuple, Literal
 from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import (
     EchoAuth, EchoEvents, wrap_tool_output, 
     resolve_upload_file_path, get_echo_version, split_thought_process,
-    EchoGeminiClient, EchoStateManager, generate_echo_file_id, EchoUI
+    EchoGeminiClient, EchoStateManager, generate_echo_file_id, EchoUI, EchoRichUI,
+    get_stealth_headers
 )
 from echo_constants import ECHO_UPLOADS_DIR, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, MODEL_FLASH
 
@@ -31,8 +33,8 @@ class Tools:
         UPLOADS_DIR: str = Field(default=ECHO_UPLOADS_DIR)
         KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
         PROBE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour le sondage sémantique.")
-        MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW). Brider à 16 pour conformité API.")
-        MAX_MULTIMODAL_SIZE_KB: int = Field(default=102400, description="Taille maximale (en Ko) pour l'injection multimédia au modèle (défaut: 100Mo).")
+        MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW).")
+        MAX_MULTIMODAL_SIZE_KB: int = Field(default=102400, description="Taille maximale (en Ko) pour l'injection multimédia.")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -51,91 +53,49 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Lit le contenu brut d'un fichier en mode Tell-Safe (évite le bug next() call).
-        Supporte la pagination par octets (byte_offset) pour les fichiers massifs.
-        Note : La sortie est strictement limitée à 16 Ko pour garantir la conformité avec l'API Gemini.
-        :param file_id: L'identifiant du fichier.
-        :param start_line: Ligne de début (ignoré si byte_offset > 0 ou mode != text).
-        :param end_line: Ligne de fin (inclusive, ou limite relative si byte_offset > 0).
-        :param output_mode: Mode d'affichage ('text', 'base64' ou 'hex').
-        :param byte_offset: (Optionnel) Déplacement en octets depuis le début du fichier.
+        Lit le contenu brut d'un fichier en mode pagination (offset).
+        Note : La sortie est strictement limitée à 16 Ko pour conformité API Gemini.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
-        
-        if not fpath:
-            return wrap_tool_output(text="❌ Fichier introuvable dans le Vault ECHO.", status={"status": "error"})
+        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
 
         size = os.path.getsize(fpath)
-        if byte_offset > size:
-            return wrap_tool_output(text=f"❌ L'offset ({byte_offset}) dépasse la taille du fichier ({size} octets).", status={"status": "error"})
+        if byte_offset > size: return wrap_tool_output(text=f"❌ Offset invalide.", status={"status": "error"})
 
         MAX_CHARS = self.valves.MAX_READ_SIZE_KB * 1024
-        msg = f"📂 Lecture ({output_mode}) : {os.path.basename(fpath)} (Offset: {byte_offset})..."
-        await events.status(msg)
+        await events.status(f"📂 Lecture : {os.path.basename(fpath)}...")
 
         try:
             new_offset = byte_offset
-            
             if output_mode == "text":
-                lines_to_read = []
-                # Utilisation de f.readline() au lieu de for line in f pour éviter le bug d'itération/tell()
+                lines = []
                 with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                    if byte_offset > 0:
-                        f.seek(byte_offset)
-                        limit = max(1, end_line - start_line + 1)
-                        for i in range(limit):
-                            line = f.readline()
-                            if not line: break
-                            lines_to_read.append(f"+{i} | {line.rstrip()}")
-                            if len("\n".join(lines_to_read)) >= MAX_CHARS: break
-                    else:
-                        # Recherche de la ligne de début
-                        current_l = 1
-                        while current_l < start_line:
-                            if not f.readline(): break
-                            current_l += 1
-                        
-                        while current_l <= end_line:
-                            line = f.readline()
-                            if not line: break
-                            lines_to_read.append(f"{current_l:4d} | {line.rstrip()}")
-                            current_l += 1
-                            if len("\n".join(lines_to_read)) >= MAX_CHARS: break
-                    
+                    f.seek(byte_offset)
+                    for i in range(end_line - start_line + 1):
+                        line = f.readline()
+                        if not line: break
+                        lines.append(f"+{i} | {line.rstrip()}")
+                        if len("\n".join(lines)) >= MAX_CHARS: break
                     new_offset = f.tell()
-                    content = "\n".join(lines_to_read)
-                    suffix = "\n[... SORTIE TRONQUÉE À 16Ko ...]" if len(content) >= MAX_CHARS else ""
-                    res_text = f"--- CONTENU TEXTE (Offset {byte_offset} à {new_offset}) ---\n\n{content}{suffix}\n\n--- FIN (Nouvel offset: {new_offset} / {size}) ---"
-            
+                res_text = f"--- CONTENU TEXTE (Offset {byte_offset} à {new_offset}) ---\n\n" + "\n".join(lines)
             elif output_mode == "base64":
-                # Limite Base64 : 12Ko source -> 16Ko destination
-                max_bytes = 12288
                 with open(fpath, 'rb') as f:
                     f.seek(byte_offset)
-                    raw_data = f.read(max_bytes)
+                    content = base64.b64encode(f.read(12288)).decode('utf-8')
                     new_offset = f.tell()
-                    content = base64.b64encode(raw_data).decode('utf-8')
-                
-                suffix = " (TRONQUÉ À 12Ko SOURCE)" if (size - byte_offset) > max_bytes else ""
-                res_text = f"--- CONTENU BASE64{suffix} (Offset {byte_offset} à {new_offset}) ---\n\n{content}\n\n--- FIN ---"
-
+                res_text = f"--- CONTENU BASE64 ---\n\n{content}"
             else:
-                # Mode HEX : 8Ko source -> 16Ko destination
-                max_bytes = 8192
                 with open(fpath, 'rb') as f:
                     f.seek(byte_offset)
-                    raw_data = f.read(max_bytes)
+                    import binascii
+                    content = binascii.hexlify(f.read(8192), sep=' ', bytes_per_sep=2).decode('utf-8')
                     new_offset = f.tell()
-                
-                import binascii
-                content = binascii.hexlify(raw_data, sep=' ', bytes_per_sep=2).decode('utf-8')
-                suffix = " (TRONQUÉ À 8Ko)" if (size - byte_offset) > max_bytes else ""
-                res_text = f"--- CONTENU HEXADECIMAL{suffix} (Offset {byte_offset} à {new_offset}) ---\n\n{content}\n\n--- FIN ---"
+                res_text = f"--- CONTENU HEXADECIMAL ---\n\n{content}"
 
-            await events.status(f"Lecture terminée.", done=True)
-            return wrap_tool_output(text=res_text, status={"status": "success", "file": os.path.basename(fpath), "new_offset": new_offset})
+            await events.status("Lecture terminée.", done=True)
+            return wrap_tool_output(text=res_text, status={"status": "success", "new_offset": new_offset, "total_size": size})
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
 
@@ -148,61 +108,33 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Sonde sémantiquement un fichier volumineux ou complexe via Gemini Flash.
-        Supporte la résilience multi-clés.
-        :param file_id: L'identifiant du fichier à analyser.
-        :param query: Votre question ou instruction précise pour l'analyse.
-        :param thinking_level: Niveau de réflexion du modèle (MINIMAL, LOW, MEDIUM, HIGH). Par défaut HIGH.
-        """
+        """Sonde sémantiquement un fichier volumineux ou complexe via Gemini Flash."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
 
         api_keys = self.auth.get_api_keys(uid)
-        if not api_keys: return wrap_tool_output(text="❌ Erreur Auth: Clé API Google AI Studio introuvable.", status={"status": "error"})
+        if not api_keys: return wrap_tool_output(text="❌ Clé API manquante.", status={"status": "error"})
 
         mime, supported = get_gemini_mime(fpath)
         if not supported: return wrap_tool_output(text=f"❌ Type {mime} non supporté.", status={"status": "error"})
 
-        await events.status(f"🤖 Sondage Sémantique de {os.path.basename(fpath)}...")
-
+        await events.status(f"🤖 Analyse de {os.path.basename(fpath)}...")
         try:
             with open(fpath, 'rb') as f: b64 = base64.b64encode(f.read()).decode('utf-8')
-            
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": query}, {"inlineData": {"mimeType": mime, "data": b64}}]}],
-                "generationConfig": {
-                    "thinkingConfig": {"includeThoughts": True, "thinkingLevel": thinking_level.lower()},
-                    "responseMimeType": "text/plain"
-                }
+                "generationConfig": {"thinkingConfig": {"includeThoughts": True, "thinkingLevel": thinking_level.lower()}}
             }
-
-            data = await EchoGeminiClient.call(
-                keys=api_keys,
-                target_model=MODEL_FLASH,
-                payload=payload,
-                threshold=self.valves.KEY_SWITCH_THRESHOLD,
-                max_retries=3,
-                events=events,
-                timeout=self.valves.PROBE_TIMEOUT
-            )
-            
+            data = await EchoGeminiClient.call(keys=api_keys, target_model=MODEL_FLASH, payload=payload, events=events)
             target = data.get("response", {}) if "response" in data else data
-            candidates = target.get("candidates", [])
-            full_text = ""
-            if candidates and candidates[0].get("content"):
-                for p in candidates[0]["content"].get("parts", []):
-                    if "text" in p: full_text += p["text"]
-
-            clean_text, thoughts = split_thought_process(full_text)
-            await events.status(f"🤖 Analyse terminée.", done=True)
-            multiparts = [{"type": "thought", "content": thoughts}] if thoughts else []
-            return wrap_tool_output(text=clean_text, status={"status": "success"}, echo_tool_multiparts=multiparts)
-
+            cand = target.get("candidates", [])[0]
+            full_text = "".join([p["text"] for p in cand["content"]["parts"] if "text" in p])
+            clean, thought = split_thought_process(full_text)
+            return wrap_tool_output(text=clean, status={"status": "success"}, echo_tool_multiparts=[{"type": "thought", "content": thought}] if thought else [])
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur Sonde: {str(e)}", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Erreur Sonde : {str(e)}", status={"status": "error"})
 
     async def read_multimedia_file(
         self, 
@@ -211,158 +143,68 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Lit et transmet un fichier multimédia complet (Vidéo, Audio, Image, PDF) au Modèle.
-        Utilisez cet outil UNIQUEMENT pour les médias, pas pour le texte.
-        Limite de poids par défaut : 100 Mo (102400 Ko). Si la taille dépasse la limite autorisée par l'administrateur, un message d'erreur vous le signalera.
-        
-        :param file_id: L'identifiant du fichier multimédia dans le Vault ECHO.
-        """
+        """Transmet un fichier multimédia au cortex Gemini."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
-        
-        if not fpath:
-            return wrap_tool_output(text="❌ Fichier multimédia introuvable dans le Vault ECHO.", status={"status": "error"})
-
-        size_kb = os.path.getsize(fpath) / 1024
-        limit_kb = self.valves.MAX_MULTIMODAL_SIZE_KB
-        
-        if size_kb > limit_kb:
-            msg = f"❌ Fichier trop volumineux ({size_kb / 1024:.1f} Mo). La limite est fixée à {limit_kb / 1024:.1f} Mo."
-            await events.status(msg, done=True)
-            return wrap_tool_output(text=msg, status={"status": "error"})
+        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
 
         mime, supported = get_gemini_mime(fpath)
-        # On rejette explicitement le texte brut ou l'octet-stream inconnu pour réserver cet outil au multimodal
-        if not supported or mime == "application/octet-stream" or mime.startswith("text/"):
-            msg = f"❌ Le type de fichier ({mime}) n'est pas reconnu comme un média valide ou est un simple texte. Utilisez read_raw_file_content pour le texte."
-            await events.status(msg, done=True)
-            return wrap_tool_output(text=msg, status={"status": "error"})
+        if not supported: return wrap_tool_output(text=f"❌ Type {mime} non supporté.", status={"status": "error"})
 
-        await events.status(f"👁️ Chargement média ({mime}, {size_kb / 1024:.1f} Mo)...")
-
+        await events.status(f"👁️ Injection {os.path.basename(fpath)}...")
         try:
-            with open(fpath, 'rb') as f:
-                b64 = base64.b64encode(f.read()).decode('utf-8')
-            
-            await events.status("✅ Média transmis au Modèle.", done=True)
-            
-            multiparts = [{"type": "media", "mime_type": mime, "data": b64}]
+            with open(fpath, 'rb') as f: b64 = base64.b64encode(f.read()).decode('utf-8')
             return wrap_tool_output(
-                text=f"✅ Média chargé avec succès.\nType: {mime}\nTaille: {size_kb / 1024:.1f} Mo.\nLe fichier est maintenant dans votre contexte d'analyse visuel/auditif.", 
+                text=f"✅ Média chargé dans le cortex.", 
                 status={"status": "success"},
-                echo_tool_multiparts=multiparts
+                echo_tool_multiparts=[{"type": "media", "mime_type": mime, "data": b64}]
             )
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur lors du chargement multimédia : {str(e)}", status={"status": "error"})
-
-    async def get_file_metadata(
-        self, 
-        file_id: str, 
-        __user__: dict = {},
-        __event_emitter__: Any = None
-    ) -> str:
-        """
-        Récupère les métadonnées techniques d'un fichier.
-        """
-        import datetime
-        events = EchoEvents(__event_emitter__)
-        uid = __user__.get("id", "anonymous")
-        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
-        
-        if not fpath:
-            return wrap_tool_output(text="❌ Fichier introuvable dans le Vault ECHO.", status={"status": "error"})
-
-        try:
-            stat_info = os.stat(fpath)
-            size_bytes = stat_info.st_size
-            
-            for unit in ['octets', 'Ko', 'Mo', 'Go', 'To']:
-                if size_bytes < 1024.0:
-                    size_str = f"{size_bytes:3.1f} {unit}"
-                    break
-                size_bytes /= 1024.0
-            else:
-                size_str = f"{size_bytes:.1f} Po"
-                
-            mime, _ = get_gemini_mime(fpath)
-            mod_time = datetime.datetime.fromtimestamp(stat_info.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-            
-            metadata = {
-                "Nom": os.path.basename(fpath),
-                "Taille (octets)": stat_info.st_size,
-                "Taille (lisible)": size_str,
-                "Type MIME": mime,
-                "Dernière modification": mod_time
-            }
-            
-            output = "📊 **Métadonnées du fichier**\n"
-            for k, v in metadata.items():
-                output += f"- **{k}** : {v}\n"
-                
-            return wrap_tool_output(text=output, status={"status": "success", "size_bytes": stat_info.st_size})
-        except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur lecture métadonnées : {str(e)}", status={"status": "error"})
-
-    async def calculate_file_hashes(
-        self, 
-        file_ids: List[str], 
-        __user__: dict = {},
-        __event_emitter__: Any = None
-    ) -> str:
-        """
-        Calcule les hashs SHA-256 de plusieurs fichiers.
-        """
-        events = EchoEvents(__event_emitter__)
-        uid = __user__.get("id", "anonymous")
-        results = []
-        
-        for fid in file_ids:
-            fpath = resolve_upload_file_path(uid, fid, self.uploads_dir)
-            if fpath:
-                with open(fpath, 'rb') as f:
-                    h = hashlib.sha256(f.read()).hexdigest()
-                results.append(f"{os.path.basename(fpath)}: {h}")
-            else:
-                results.append(f"{fid}: INTROUVABLE")
-        
-        return "Hashs SHA-256 :\n" + "\n".join(results)
+            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
 
     async def show_image_to_user(
         self, 
-        file_id: str, 
+        target: str, 
         __user__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> str:
+    ) -> Union[dict, Tuple[HTMLResponse, str]]:
         """
-        Affiche une image stockée dans le Vault ECHO avec interface HUD interactive.
+        Affiche une image (Locale ou Distante) dans le viewer Premium ECHO.
+        Supporte file_id ou URL. Outils : Loupe (L), Sélection (S), Copie Coordonnées.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
-        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
-        if not fpath: return wrap_tool_output(text="❌ Image introuvable.", status={"status": "error"})
+        is_url = target.lower().startswith(("http://", "https://"))
         
-        mime, _ = mimetypes.guess_type(fpath)
-        with open(fpath, 'rb') as f:
-            b64 = base64.b64encode(f.read()).decode('utf-8')
-        
-        if __event_call__:
-            await EchoUI.monitor_ECHO(
-                events=events,
-                b64=b64,
-                mime=mime or "image/png",
-                hud_id=f"echo-viewer-{file_id}",
-                title="📸 ECHO VIEWER",
-                state_key=f"echo_viewer_state_{file_id}",
-                timeout=0
-            )
+        # Sécurité anti-chemins absolus
+        if not is_url and (target.startswith("/") or (len(target) > 1 and target[1] == ":")):
+             return wrap_tool_output(text="❌ Sécurité : Accès restreint.", status={"status": "error"})
 
-        return wrap_tool_output(
-            text=f"✅ L'image '{os.path.basename(fpath)}' a été affichée physiquement à l'utilisateur.", 
-            status={"status": "success"}
-        )
+        try:
+            if is_url:
+                await events.status(f"🌐 Ouverture image distante...")
+                # On tente une requête HEAD pour valider l'existence et lever les 403 tôt
+                h = get_stealth_headers(target)
+                async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+                    r = await c.head(target, headers=h)
+                    if r.status_code >= 400:
+                         # Si HEAD échoue, on tente GET partiel (certains serveurs bloquent HEAD)
+                         r = await c.get(target, headers=h, timeout=10.0)
+                         r.raise_for_status()
+
+                response = EchoRichUI.image_viewer(target_data=target, is_url=True, title=f"Remote : {target[:30]}...")
+                return response, f"L'image distante est affichée. L'utilisateur peut utiliser la Loupe ou le Sélecteur."
+            else:
+                fpath = resolve_upload_file_path(uid, target, self.uploads_dir)
+                if not fpath: return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"})
+                mime, _ = mimetypes.guess_type(fpath)
+                with open(fpath, 'rb') as f: b64 = base64.b64encode(f.read()).decode('utf-8')
+                response = EchoRichUI.image_viewer(target_data=b64, is_url=False, mime=mime or "image/png", title=f"Vault : {os.path.basename(fpath)}")
+                return response, f"L'image locale '{os.path.basename(fpath)}' est affichée dans le viewer Premium."
+        except Exception as e:
+            return wrap_tool_output(text=f"❌ Échec affichage : {str(e)}", status={"status": "error"})
 
     async def download_from_url(
         self, 
@@ -374,54 +216,56 @@ class Tools:
         __event_call__: Any = None
     ) -> dict:
         """
-        Télécharge un fichier depuis une URL et l'intègre au Registre ECHO.
+        Télécharge un fichier avec le Stealth Engine (Mimic Browser).
+        Gère les redirections (302) et les protections anti-bot (403).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         cid = __metadata__.get("chat_id", "unknown")
-        
-        user_vault = os.path.join(self.uploads_dir, f"U_{uid}")
-        os.makedirs(user_vault, exist_ok=True)
-        
-        # Génération d'un ID ECHO unique
+        os.makedirs(os.path.join(self.uploads_dir, f"U_{uid}"), exist_ok=True)
         file_id = generate_echo_file_id(uid, cid)
+        orig_name = filename or os.path.basename(urlparse(url).path.split('?')[0]) or "file"
+        fpath = os.path.join(self.uploads_dir, f"{file_id}_{quote(orig_name)}")
         
-        parsed_url = urlparse(url)
-        orig_name = filename or os.path.basename(parsed_url.path) or "downloaded_file"
-        safe_name = quote(orig_name)
-        
-        final_filename = f"{file_id}_{safe_name}"
-        fpath = os.path.join(self.uploads_dir, final_filename)
-        
-        await events.status(f"📥 Téléchargement de {url}...")
+        await events.status(f"📥 Récupération Stealth : {url[:50]}...")
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                async with client.stream("GET", url, headers={"User-Agent": ECHO_USER_AGENT}) as resp:
+            h = get_stealth_headers(url)
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                # Wikimedia/Wikipedia nécessitent souvent une session cohérente
+                async with client.stream("GET", url, headers=h) as resp:
                     resp.raise_for_status()
-                    mime_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
+                    furl = str(resp.url)
+                    mime = resp.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
                     with open(fpath, 'wb') as f:
-                        async for chunk in resp.aiter_bytes():
-                            f.write(chunk)
+                        async for chunk in resp.aiter_bytes(): f.write(chunk)
             
-            # SCELLEMENT BDD (Pour Suture au prochain tour)
-            state_manager = EchoStateManager(user_id=uid, chat_id=cid)
-            state_manager.mark_processed(cid, file_id, orig_name, mime_type, "transmitted")
-            state_manager.move_to_vault(file_id, orig_name)
+            EchoStateManager(user_id=uid, chat_id=cid).mark_processed(cid, file_id, orig_name, mime, "transmitted")
+            EchoStateManager(user_id=uid, chat_id=cid).move_to_vault(file_id, orig_name)
 
-            await events.status(f"✅ Téléchargé et Scellé : {orig_name}", done=True)
-            
-            nouveau_fichier = {
-                "id": file_id,
-                "name": orig_name,
-                "meta": {"content_type": mime_type},
-                "type": "file"
-            }
-            
             return wrap_tool_output(
-                text=f"✅ Fichier '{orig_name}' téléchargé avec succès (ID: {file_id}).", 
-                status={"status": "success"},
-                nouveaux_fichiers=[nouveau_fichier]
+                text=f"✅ Téléchargement réussi (ID: {file_id}).\nSource: {url}\nDestination finale: {furl}", 
+                status={"status": "success", "file_id": file_id}
             )
         except Exception as e:
             if os.path.exists(fpath): os.remove(fpath)
-            return wrap_tool_output(text=f"❌ Échec du téléchargement : {str(e)}", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Échec téléchargement : {str(e)}", status={"status": "error"})
+
+    async def get_file_metadata(self, file_id: str, __user__: dict = {}, __event_emitter__: Any = None) -> str:
+        """Récupère les métadonnées techniques d'un fichier."""
+        uid = __user__.get("id", "anonymous")
+        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
+        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
+        stat = os.stat(fpath)
+        mime, _ = get_gemini_mime(fpath)
+        return wrap_tool_output(text=f"📊 **{os.path.basename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}", status={"status": "success"})
+
+    async def calculate_file_hashes(self, file_ids: List[str], __user__: dict = {}, __event_emitter__: Any = None) -> str:
+        """Calcule les hashs SHA-256 de fichiers."""
+        uid = __user__.get("id", "anonymous")
+        res = []
+        for fid in file_ids:
+            p = resolve_upload_file_path(uid, fid, self.uploads_dir)
+            if p:
+                with open(p, 'rb') as f: h = hashlib.sha256(f.read()).hexdigest()
+                res.append(f"{os.path.basename(p)}: {h}")
+        return "\n".join(res)

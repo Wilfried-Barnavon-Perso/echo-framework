@@ -37,7 +37,7 @@
     </aside>
 
     <main>
-        <h1>6a. Web Intelligence : Navigation & Recherche Souveraine</h1>
+        <h1>7a. Web Intelligence : Navigation & Recherche Souveraine</h1>
         <p>Le module Web Intelligence permet à ECHO d'interagir avec le Web de manière humaine, via une instance Chromium pilotée, un retour visuel en temps réel (HUD), et d'effectuer des recherches sémantiques profondes sans traceur (tracker).</p>
 
         <h2>Architecture du Moteur (<code>navigation_engine_tool.py</code>)</h2>
@@ -132,8 +132,21 @@
             <p>Toutes les requêtes web sortantes utilisent le <code>ECHO_USER_AGENT</code> personnalisé. SearxNG agit comme un proxy, empêchant les moteurs tiers d'identifier l'utilisateur final ou l'infrastructure ECHO.</p>
         </div>
 
+        <h2>Visualisation Cartographique Souveraine (<code>gemini_maps_grounding.py</code>)</h2>
+        <p>ECHO v5.103.0 introduit le rendu cartographique interactif basé sur le <strong>Rich UI Embedding</strong>. Contrairement aux solutions propriétaires, ECHO utilise des technologies open-source pour garantir la confidentialité des recherches géographiques.</p>
+        
+        <div class="info-block">
+            <h4>Intégration Leaflet & OpenStreetMap</h4>
+            <ul>
+                <li><strong>Moteur de Rendu</strong> : <strong>Leaflet.js</strong> (v1.9.4) injecté dynamiquement dans l'iframe de discussion.</li>
+                <li><strong>Source de Données</strong> : Tuiles <strong>OpenStreetMap</strong> (OSM) sans clé API et sans pistage publicitaire.</li>
+                <li><strong>Interaction</strong> : Cartes entièrement manipulables (Zoom, Pan, Popups) avec marqueurs de position précis.</li>
+                <li><strong>Confidentialité</strong> : Les coordonnées sont extraites du <code>groundingMetadata</code> de Google Maps Grounding, mais le rendu final s'effectue dans une enclave HTML isolée.</li>
+            </ul>
+        </div>
+
         <footer>
-            ECHO Framework v5.98.10 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
+            ECHO Framework v5.103.0 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
         </footer>
     </main>
 </body>

@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils
 author: ECHO Framework
-version: 2.40
-description: 2.40: Ajout de la persistance de l'identité du modèle et de la table session_state.
+version: 2.72
+description: 2.72: Premium Viewer Unifié (Zoom Interactif, Pan, Aide UI, Fallback CORS) et restauration des sécurités du Client Gemini.
 """
 
 import os
@@ -19,6 +19,7 @@ import httpx
 import random
 import shutil
 from typing import Optional, Tuple, List, Set, Any, Union, Dict, AsyncGenerator
+from fastapi.responses import HTMLResponse
 
 # Alias pour json standard si besoin
 import orjson as std_json
@@ -62,6 +63,36 @@ async def _get_global_client(
     
     _LAST_CLIENT_ACCESS = now
     return _SHARED_ASYNC_CLIENT
+
+def get_stealth_headers(url: Optional[str] = None) -> Dict[str, str]:
+    """Génère des en-têtes HTTP de haute fidélité pour simuler un navigateur réel (Stealth)."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "max-age=0",
+        "sec-ch-ua": '"Chromium";v="123", "Not:A-Brand";v="8", "Google Chrome";v="123"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "image",
+        "sec-fetch-mode": "no-cors",
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-user": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "DNT": "1"
+    }
+    if url:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+        headers["Host"] = parsed.netloc
+        # Wikimedia et sites sensibles exigent un comportement documentaire pour les URLs directes
+        if any(x in parsed.netloc for x in ["wikimedia", "wikipedia"]):
+             headers["sec-fetch-dest"] = "document"
+             headers["sec-fetch-mode"] = "navigate"
+             headers["sec-fetch-site"] = "none"
+             headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    return headers
 
 # ==============================================================================
 # SECTION 1 : STANDARDS DE COMMUNICATION (MULTI-PARTS)
@@ -140,6 +171,335 @@ class EchoEvents:
     async def confirm(self, title: str, message: str) -> bool:
         res = await self.call("confirmation", {"title": title, "message": message})
         return bool(res)
+
+# ==============================================================================
+# SECTION 3b : ECHO RICH UI FRAMEWORK (OWUI EMBEDDING)
+# ==============================================================================
+
+class EchoRichUI:
+    @staticmethod
+    def _get_boilerplate(content: str, title: str = "ECHO Visualizer") -> str:
+        """Encapsule le contenu selon le standard strict Rich UI d'Open WebUI."""
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>{title}</title>
+            <style>
+                body {{ 
+                    margin: 0; padding: 12px; 
+                    font-family: -apple-system, sans-serif; 
+                    background: transparent; 
+                    color: inherit;
+                    overflow: hidden;
+                }}
+                .rich-card {{
+                    border-radius: 12px;
+                    overflow: hidden;
+                    background: rgba(255, 255, 255, 0.05);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="rich-card">
+                {content}
+            </div>
+            <script>
+                // Script de rapport de hauteur STRICT de la documentation Open WebUI
+                function reportHeight() {{
+                    const h = document.documentElement.scrollHeight;
+                    parent.postMessage({{ type: 'iframe:height', height: h }}, '*');
+                }}
+                window.addEventListener('load', reportHeight);
+                // Observation dynamique des changements de taille
+                new ResizeObserver(reportHeight).observe(document.body);
+            </script>
+        </body>
+        </html>
+        """
+
+    @classmethod
+    def image_viewer(cls, target_data: str, is_url: bool = False, mime: str = "image/png", title: str = "Premium Viewer") -> HTMLResponse:
+        """
+        Génère un viewer d'image Premium avec Zoom interactif (Ctrl+Molette), Pan et Sélection.
+        """
+        src = target_data if is_url else f"data:{mime};base64,{target_data}"
+        
+        content = f"""
+        <style>
+            .img-container {{ 
+                position: relative; width: 100%; height: 550px; 
+                background: #0a0a0a; overflow: auto; 
+                display: flex; justify-content: center; align-items: center;
+                cursor: grab; user-select: none;
+            }}
+            .img-container:active {{ cursor: grabbing; }}
+            #main-img {{ 
+                max-width: none; max-height: none; 
+                transition: transform 0.1s ease-out; 
+                transform-origin: center center;
+                will-change: transform;
+            }}
+            
+            .hud-bar {{
+                position: absolute; top: 12px; right: 12px; display: flex; gap: 10px; z-index: 1000;
+                background: rgba(15, 15, 20, 0.85); padding: 6px 12px; border-radius: 25px; 
+                backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.15);
+            }}
+            .hud-btn {{
+                background: none; border: none; color: #ccc; font-size: 16px; cursor: pointer; 
+                transition: all 0.2s; padding: 2px 6px;
+            }}
+            .hud-btn:hover {{ color: #fff; transform: scale(1.1); }}
+            .hud-btn.active {{ color: #4ade80; text-shadow: 0 0 8px rgba(74, 222, 128, 0.5); }}
+            
+            .help-tooltip {{
+                position: absolute; top: 55px; right: 12px; width: 220px;
+                background: rgba(0, 0, 0, 0.95); color: #eee; padding: 12px; border-radius: 8px;
+                border: 1px solid #4ade80; font-size: 11px; line-height: 1.8; z-index: 2000;
+                display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.6); pointer-events: none;
+            }}
+            .hud-btn:hover + .help-tooltip {{ display: block; }}
+            
+            #crop-box {{
+                position: absolute; border: 2px dashed #4ade80; background: rgba(74, 222, 128, 0.1); 
+                display: none; box-sizing: border-box; z-index: 400; pointer-events: none;
+            }}
+            .coords-panel {{
+                position: absolute; bottom: 12px; left: 12px; background: rgba(15, 15, 20, 0.85); 
+                color: #4ade80; padding: 4px 10px; border-radius: 6px; font-size: 11px; 
+                display: none; z-index: 1000; font-family: monospace;
+            }}
+            .img-container::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+            .img-container::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.2); border-radius: 4px; }}
+        </style>
+
+        <div class="img-container" id="v-container">
+            <div class="hud-bar">
+                <button class="hud-btn" title="Aide">❓</button>
+                <div class="help-tooltip">
+                    <b>COMMANDES ECHO :</b><br>
+                    🖱️ <b>Ctrl + Molette</b> : Zoomer<br>
+                    ✋ <b>Clic + Glisse</b> : Déplacer l'image<br>
+                    ⛶ <b>Touche S</b> : Mode Sélection<br>
+                    ❐ <b>Touche C</b> : Copier (Crop/Full)<br>
+                    🔄 <b>Touche R</b> : Réinitialiser la vue
+                </div>
+                <button id="btn-sel" class="hud-btn" onclick="toggleSel()" title="Sélection (S)">⛶</button>
+                <button id="btn-copy" class="hud-btn" onclick="exportMedia('copy')" title="Copier l'image (C)">❐</button>
+                <button class="hud-btn" onclick="exportMedia('save')" title="Télécharger">📥</button>
+                <button class="hud-btn" onclick="resetAll()" title="Réinitialiser (R)">↺</button>
+            </div>
+            
+            <img src="{src}" id="main-img" alt="{title}" draggable="false">
+            <div id="crop-box"></div>
+            <div id="coords" class="coords-panel"></div>
+        </div>
+
+        <script>
+            const img = document.getElementById('main-img');
+            const container = document.getElementById('v-container');
+            const crop = document.getElementById('crop-box');
+            const coords = document.getElementById('coords');
+            
+            let selOn = false, isDragging = false, isPanning = false;
+            let startX, startY, scrollLeft, scrollTop;
+            let scale = 1;
+
+            function toggleSel() {{
+                selOn = !selOn;
+                document.getElementById('btn-sel').classList.toggle('active', selOn);
+                crop.style.display = 'none';
+                coords.style.display = 'none';
+                container.style.cursor = selOn ? 'crosshair' : 'grab';
+            }}
+
+            function resetAll() {{
+                selOn = false; scale = 1;
+                img.style.transform = `scale(${{scale}})`;
+                document.getElementById('btn-sel').classList.remove('active');
+                crop.style.display = 'none';
+                coords.style.display = 'none';
+                container.style.cursor = 'grab';
+            }}
+
+            function exportMedia(mode) {{
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const natW = img.naturalWidth, natH = img.naturalHeight;
+
+                let isCropped = false;
+                if (selOn && crop.style.display !== 'none' && crop.offsetWidth > 5) {{
+                    const rect = crop.getBoundingClientRect();
+                    const iRect = img.getBoundingClientRect();
+                    const scaleX = natW / iRect.width;
+                    const scaleY = natH / iRect.height;
+                    
+                    const sx = (rect.left - iRect.left) * scaleX;
+                    const sy = (rect.top - iRect.top) * scaleY;
+                    const sw = rect.width * scaleX;
+                    const sh = rect.height * scaleY;
+                    
+                    canvas.width = sw; canvas.height = sh;
+                    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+                    isCropped = true;
+                }} else {{
+                    canvas.width = natW; canvas.height = natH;
+                    ctx.drawImage(img, 0, 0);
+                }}
+
+                let dataUrl;
+                try {{
+                    dataUrl = canvas.toDataURL('image/png');
+                }} catch (e) {{
+                    // Fallback natif si l'image distante lève une erreur de sécurité (CORS Tainted)
+                    if (isCropped) {{
+                        parent.postMessage({{ type: 'notification', data: {{ content: 'CORS: Impossible de rogner. L\\'image d\\'origine va s\\'ouvrir.', type: 'warning' }} }}, '*');
+                    }}
+                    window.open(img.src, '_blank');
+                    return;
+                }}
+
+                if (mode === 'copy') {{
+                    try {{
+                        if (!navigator.clipboard || !window.ClipboardItem) throw new Error("API Clipboard absente.");
+                        canvas.toBlob(async (blob) => {{
+                            try {{
+                                await navigator.clipboard.write([new ClipboardItem({{ 'image/png': blob }})]);
+                                parent.postMessage({{ type: 'notification', data: {{ content: 'Image copiée !', type: 'success' }} }}, '*');
+                                const btn = document.getElementById('btn-copy');
+                                if(btn) {{ const old = btn.innerText; btn.innerText='✓'; setTimeout(()=>btn.innerText=old, 1000); }}
+                            }} catch (err) {{
+                                showFallbackOverlay(dataUrl);
+                            }}
+                        }}, 'image/png');
+                    }} catch(err) {{
+                        showFallbackOverlay(dataUrl);
+                    }}
+                }} else {{
+                    const link = document.createElement('a');
+                    link.download = "ECHO_" + (isCropped ? "Crop_" : "Full_") + Date.now() + ".png";
+                    link.href = dataUrl;
+                    link.click();
+                }}
+            }}
+
+            function showFallbackOverlay(dataUrl) {{
+                const over = document.createElement('div');
+                over.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;backdrop-filter:blur(4px);';
+                over.innerHTML = '<p style="margin-bottom:15px;font-size:14px;background:#4ade80;color:#000;padding:4px 12px;border-radius:4px;font-weight:bold;">Mode HTTP/Iframe restreint. Faites Clic droit -> Copier l\\'image</p><img src="' + dataUrl + '" style="max-width:80%;max-height:75%;border:2px solid #555;border-radius:4px;box-shadow:0 0 20px rgba(0,0,0,0.5);" /><p style="margin-top:15px;font-size:12px;color:#aaa;cursor:pointer;">[ Cliquez n\\'importe où pour fermer ]</p>';
+                over.onclick = () => over.remove();
+                document.body.appendChild(over);
+            }}
+
+            // Zoom interactif
+            container.addEventListener('wheel', (e) => {{
+                if (e.ctrlKey) {{
+                    e.preventDefault();
+                    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                    scale = Math.min(Math.max(0.1, scale * delta), 10);
+                    img.style.transform = `scale(${{scale}})`;
+                }}
+            }}, {{ passive: false }});
+
+            container.onmousedown = (e) => {{
+                if (e.target.closest('.hud-bar')) return;
+                if (selOn) {{
+                    isDragging = true;
+                    const rect = container.getBoundingClientRect();
+                    startX = e.clientX - rect.left + container.scrollLeft;
+                    startY = e.clientY - rect.top + container.scrollTop;
+                    crop.style.display = 'block';
+                    crop.style.width = '0';
+                    crop.style.height = '0';
+                    crop.style.left = startX + 'px';
+                    crop.style.top = startY + 'px';
+                }} else {{
+                    isPanning = true;
+                    container.style.cursor = 'grabbing';
+                    startX = e.pageX - container.offsetLeft;
+                    startY = e.pageY - container.offsetTop;
+                    scrollLeft = container.scrollLeft;
+                    scrollTop = container.scrollTop;
+                }}
+            }};
+
+            window.onmousemove = (e) => {{
+                if (isDragging && selOn) {{
+                    const rect = container.getBoundingClientRect();
+                    const currentX = e.clientX - rect.left + container.scrollLeft;
+                    const currentY = e.clientY - rect.top + container.scrollTop;
+                    
+                    const left = Math.min(startX, currentX);
+                    const top = Math.min(startY, currentY);
+                    const width = Math.abs(currentX - startX);
+                    const height = Math.abs(currentY - startY);
+                    
+                    crop.style.left = left + 'px';
+                    crop.style.top = top + 'px';
+                    crop.style.width = width + 'px';
+                    crop.style.height = height + 'px';
+                    
+                    const iRect = img.getBoundingClientRect();
+                    const rx = img.naturalWidth / iRect.width;
+                    const ry = img.naturalHeight / iRect.height;
+                    coords.style.display = 'block';
+                    coords.textContent = `${{Math.round(width*rx)}}x${{Math.round(height*ry)}}px`;
+                }} else if (isPanning) {{
+                    e.preventDefault();
+                    const x = e.pageX - container.offsetLeft;
+                    const y = e.pageY - container.offsetTop;
+                    const walkX = (x - startX);
+                    const walkY = (y - startY);
+                    container.scrollLeft = scrollLeft - walkX;
+                    container.scrollTop = scrollTop - walkY;
+                }}
+            }};
+
+            window.onmouseup = () => {{
+                isDragging = false;
+                isPanning = false;
+                if (!selOn) container.style.cursor = 'grab';
+            }};
+
+            // Shortcuts
+            window.addEventListener('keydown', (e) => {{
+                if (e.key.toLowerCase() === 's') toggleSel();
+                if (e.key.toLowerCase() === 'r') resetAll();
+            }});
+        </script>
+        """
+        html = cls._get_boilerplate(content, title)
+        return HTMLResponse(content=html, headers={"Content-Disposition": "inline"})
+
+    @classmethod
+    def map_viewer(cls, query: str, title: str = "Localisation") -> HTMLResponse:
+        """
+        Génère un HTMLResponse pour l'embed Google Maps natif (sans clé API).
+        Supporte les recherches de lieux et les itinéraires (ex: "A vers B").
+        """
+        from urllib.parse import quote
+        # Nettoyage et encodage de la requête pour l'URL Google Maps
+        safe_query = quote(query.strip())
+        
+        content = f"""
+        <div style="width: 100%; height: 500px; background: #1a1a1b;">
+            <iframe 
+                width="100%" 
+                height="100%" 
+                frameborder="0" 
+                style="border:0; display: block;" 
+                src="https://www.google.com/maps?q={safe_query}&output=embed" 
+                allowfullscreen
+                loading="lazy">
+            </iframe>
+        </div>
+        """
+        html = cls._get_boilerplate(content, title)
+        return HTMLResponse(content=html, headers={"Content-Disposition": "inline"})
 
 # ==============================================================================
 # SECTION 4 : SERVICE D'AUTHENTIFICATION (DAL) & CLIENT GEMINI
@@ -271,7 +631,7 @@ class EchoGeminiClient:
         timeout: int = 300
     ) -> AsyncGenerator[Union[str, Dict], None]:
         """Appel SSE avec streaming (pour le Pipe)."""
-        if not keys: yield "❌ Aucune clé API configurée."; return
+        if not keys: yield "🚫 Aucune clé API configurée."; return
         
         client = await _get_global_client()
         active_key_idx = 0
@@ -304,12 +664,12 @@ class EchoGeminiClient:
                             await asyncio.sleep(wait_time)
                             current_delay *= 3
                             continue
-                        else: yield f"❌ Erreur API Google ({r.status_code})."; return
+                        else: yield f"🚫 Erreur API Google ({r.status_code})."; return
                     
                     r.raise_for_status()
                     
                     if r.http_version != "HTTP/2":
-                        yield "❌ Erreur de protocole : HTTP/2 obligatoire pour Gemini AI Studio."; return
+                        yield "🚫 Erreur de protocole : HTTP/2 obligatoire pour Gemini AI Studio."; return
                     
                     if process_callback:
                         async for chunk in process_callback(r): yield chunk
@@ -322,7 +682,7 @@ class EchoGeminiClient:
                     await asyncio.sleep(wait_time)
                     current_delay *= 2
                     continue
-                else: yield f"❌ Erreur système : {str(e)}"; return
+                else: yield f"🚫 Erreur système : {str(e)}"; return
 
     @staticmethod
     async def embed(
@@ -648,7 +1008,8 @@ class EchoUI:
 
         if (!window[ENGINE_KEY]) {{
             window[ENGINE_KEY] = {{
-                hud: null, isCropping: false, zoomActive: false, ratio: 1.0, posX: 0, posY: 0,
+                hud: null, isCropping: false, ratio: 1.0, posX: 0, posY: 0,
+                imgScale: 1.0, imgX: 0, imgY: 0,
                 timeLeft: 0, timerInt: null,
 
                 getBestSize: function(ratio, percent = 0.25) {{
@@ -687,6 +1048,12 @@ class EchoUI:
                     this.hud.style.transition = enabled ? 'opacity 0.3s, transform 0.3s ease-out, width 0.3s ease-out, height 0.3s ease-out' : 'opacity 0.3s';
                 }},
 
+                resetImg: function() {{
+                    this.imgScale = 1.0; this.imgX = 0; this.imgY = 0;
+                    const img = document.getElementById(HUD_ID + "-img");
+                    if(img) img.style.transform = "scale(1) translate3d(0,0,0)";
+                }},
+
                 exportMedia: async function(mode) {{
                     const img = document.getElementById(HUD_ID + "-img");
                     const cropBox = document.getElementById(HUD_ID + "-crop-box");
@@ -695,45 +1062,57 @@ class EchoUI:
                     const ctx = canvas.getContext('2d');
                     const natW = img.naturalWidth, natH = img.naturalHeight;
 
-                    if (this.isCropping && cropBox.style.display !== 'none') {{
-                        const rect = cropBox.getBoundingClientRect(), aRect = area.getBoundingClientRect();
-                        const scaleX = natW / aRect.width, scaleY = natH / aRect.height;
-                        const sx = (rect.left - aRect.left) * scaleX, sy = (rect.top - aRect.top) * scaleY;
+                    let isCropped = false;
+                    if (this.isCropping && cropBox.style.display !== 'none' && cropBox.offsetWidth > 5) {{
+                        const rect = cropBox.getBoundingClientRect(), iRect = img.getBoundingClientRect();
+                        const scaleX = natW / iRect.width, scaleY = natH / iRect.height;
+                        const sx = (rect.left - iRect.left) * scaleX, sy = (rect.top - iRect.top) * scaleY;
                         const sw = rect.width * scaleX, sh = rect.height * scaleY;
                         canvas.width = sw; canvas.height = sh;
                         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+                        isCropped = true;
                     }} else {{
                         canvas.width = natW; canvas.height = natH;
                         ctx.drawImage(img, 0, 0);
                     }}
 
+                    let dataUrl;
+                    try {{
+                        dataUrl = canvas.toDataURL('image/png');
+                    }} catch (e) {{
+                        window.open(img.src, '_blank'); return;
+                    }}
+
                     if (mode === 'copy') {{
-                        if (!navigator.clipboard || !navigator.clipboard.write) {{
-                            const win = window.open();
-                            win.document.write('<p>Mode non-sécurisé (HTTP). <br>Faites <b>Clic droit -> Copier</b> :</p><img src="' + canvas.toDataURL('image/png') + '" style="max-width:100%; border:1px solid #ccc;" />');
-                            return;
-                        }}
+                        if (!navigator.clipboard || !window.ClipboardItem) throw new Error("Clipboard API not available");
                         canvas.toBlob(async (blob) => {{
                             try {{
                                 await navigator.clipboard.write([new ClipboardItem({{ 'image/png': blob }})]);
                                 const btn = document.getElementById(HUD_ID + "-btn-copy");
-                                const old = btn.innerText; btn.innerText = '✓'; btn.style.color = '#4ade80';
-                                setTimeout(() => {{ btn.innerText = old; btn.style.color = '#aaa'; }}, 1000);
-                            }} catch (err) {{ alert("Erreur copie : " + err); }}
+                                if(btn) {{
+                                    const old = btn.innerText; btn.innerText = '✓'; btn.style.color = '#4ade80';
+                                    setTimeout(() => {{ btn.innerText = old; btn.style.color = '#aaa'; }}, 1000);
+                                }}
+                            }} catch (err) {{ this.showFallbackOverlay(dataUrl); }}
                         }}, 'image/png');
                     }} else {{
                         const link = document.createElement('a');
-                        const label = this.isCropping ? 'Crop' : 'Full';
-                        link.download = "ECHO_MEDIA_" + label + "_" + Date.now() + ".png";
-                        link.href = canvas.toDataURL('image/png');
-                        link.click();
+                        link.download = "ECHO_" + (isCropped ? "Crop" : "Full") + "_" + Date.now() + ".png";
+                        link.href = dataUrl; link.click();
                     }}
+                }},
+
+                showFallbackOverlay: function(dataUrl) {{
+                    const over = document.createElement('div');
+                    over.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:10005;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;backdrop-filter:blur(4px);';
+                    over.innerHTML = '<p style="margin-bottom:15px;font-size:14px;background:#4ade80;color:#000;padding:4px 12px;border-radius:4px;font-weight:bold;">Mode HTTP restreint. Faites Clic droit -> Copier l\'image</p><img src="' + dataUrl + '" style="max-width:80%;max-height:75%;border:2px solid #555;border-radius:4px;box-shadow:0 0 20px rgba(0,0,0,0.5);" /><p style="margin-top:15px;font-size:12px;color:#aaa;cursor:pointer;">[ Cliquez n\'importe où pour fermer ]</p>';
+                    over.onclick = () => over.remove();
+                    document.body.appendChild(over);
                 }},
 
                 attachEvents: function() {{
                     if (!this.hud) return;
                     const area = document.getElementById(HUD_ID + "-area");
-                    const lens = document.getElementById(HUD_ID + "-lens");
                     const img = document.getElementById(HUD_ID + "-img");
 
                     this.hud.ondblclick = (e) => {{
@@ -744,6 +1123,7 @@ class EchoUI:
                         this.posX = (window.innerWidth - size.w) / 2; this.posY = (window.innerHeight - size.h) / 2;
                         this.clampHud();
                         if(area) area.style.display = 'flex';
+                        this.resetImg();
                         setTimeout(() => this.saveState(false), 350);
                     }};
 
@@ -758,6 +1138,30 @@ class EchoUI:
                             this.clampHud();
                         }};
                         document.onmouseup = () => {{ document.onmousemove = null; this.saveState(false); }};
+                    }};
+
+                    // Moteur Zoom / Pan ECHO
+                    area.addEventListener('wheel', (e) => {{
+                        if (e.ctrlKey) {{
+                            e.preventDefault();
+                            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                            this.imgScale = Math.min(Math.max(0.1, this.imgScale * delta), 15);
+                            img.style.transform = "scale(" + this.imgScale + ") translate3d(" + this.imgX + "px, " + this.imgY + "px, 0px)";
+                        }}
+                    }}, {{ passive: false }});
+
+                    area.onmousedown = (e) => {{
+                        if (this.isCropping || e.target.closest('#' + HUD_ID + '-header')) return;
+                        e.preventDefault();
+                        let ox = e.clientX, oy = e.clientY;
+                        area.style.cursor = 'grabbing';
+                        document.onmousemove = (me) => {{
+                            this.imgX += (me.clientX - ox) / this.imgScale;
+                            this.imgY += (me.clientY - oy) / this.imgScale;
+                            ox = me.clientX; oy = me.clientY;
+                            img.style.transform = "scale(" + this.imgScale + ") translate3d(" + this.imgX + "px, " + this.imgY + "px, 0px)";
+                        }};
+                        document.onmouseup = () => {{ document.onmousemove = null; area.style.cursor = 'crosshair'; }};
                     }};
 
                     this.hud.querySelectorAll('.hdl').forEach(hdl => {{
@@ -780,28 +1184,6 @@ class EchoUI:
                             document.onmouseup = () => {{ document.onmousemove = null; this.saveState(false); }};
                         }};
                     }});
-
-                    area.onmousemove = (e) => {{
-                        if (!this.zoomActive) return;
-                        const aRect = area.getBoundingClientRect(), hRect = this.hud.getBoundingClientRect();
-                        const lx = e.clientX - hRect.left - 75, ly = e.clientY - hRect.top - 75;
-                        lens.style.transform = "translate3d(" + lx + "px, " + ly + "px, 0px)";
-                        
-                        const natW = img.naturalWidth, natH = img.naturalHeight;
-                        if (!natW || !natH) return;
-                        
-                        let renderW = aRect.width, renderH = renderW * (natH / natW);
-                        if (renderH > aRect.height) {{ renderH = aRect.height; renderW = renderH * (natW / natH); }}
-                        
-                        const offsetX = (aRect.width - renderW) / 2, offsetY = (aRect.height - renderH) / 2;
-                        const mouseX_on_image = e.clientX - aRect.left - offsetX, mouseY_on_image = e.clientY - aRect.top - offsetY;
-                        
-                        const zoomFactor = 2.5;
-                        lens.style.backgroundSize = (renderW * zoomFactor) + "px " + (renderH * zoomFactor) + "px";
-                        lens.style.backgroundPosition = (75 - (mouseX_on_image * zoomFactor)) + "px " + (75 - (mouseY_on_image * zoomFactor)) + "px";
-                    }};
-                    area.onmouseenter = () => {{ if(this.zoomActive) lens.style.display = 'block'; }};
-                    area.onmouseleave = () => {{ lens.style.display = 'none'; }};
 
                     document.getElementById(HUD_ID + "-btn-crop").onclick = (e) => {{
                         e.stopPropagation(); this.isCropping = !this.isCropping;
@@ -862,11 +1244,7 @@ class EchoUI:
 
                     document.getElementById(HUD_ID + "-btn-copy").onclick = (e) => {{ e.stopPropagation(); this.exportMedia('copy'); }};
                     document.getElementById(HUD_ID + "-btn-save").onclick = (e) => {{ e.stopPropagation(); this.exportMedia('save'); }};
-                    document.getElementById(HUD_ID + "-btn-zoom").onclick = (e) => {{
-                        e.stopPropagation(); this.zoomActive = !this.zoomActive;
-                        e.target.style.color = this.zoomActive ? '#4ade80' : '#aaa';
-                        if(!this.zoomActive) lens.style.display = 'none';
-                    }};
+                    document.getElementById(HUD_ID + "-btn-zoom").onclick = (e) => {{ e.stopPropagation(); this.resetImg(); }};
                     document.getElementById(HUD_ID + "-btn-min").onclick = (e) => {{
                         e.stopPropagation(); this.applyTransition(true);
                         const a = document.getElementById(HUD_ID + "-area");
@@ -879,6 +1257,7 @@ class EchoUI:
                         const size = this.getBestSize(this.ratio, 0.25);
                         this.hud.style.width = size.w + "px"; this.hud.style.height = size.h + "px";
                         if(area) area.style.display = 'flex'; this.clampHud();
+                        this.resetImg();
                         setTimeout(() => this.saveState(false), 350);
                     }};
                     document.getElementById(HUD_ID + "-btn-full").onclick = (e) => {{
@@ -887,6 +1266,7 @@ class EchoUI:
                         this.hud.style.width = size.w + "px"; this.hud.style.height = size.h + "px";
                         this.posX = (window.innerWidth - size.w) / 2; this.posY = (window.innerHeight - size.h) / 2;
                         if(area) area.style.display = 'flex'; this.clampHud();
+                        this.resetImg();
                         setTimeout(() => this.saveState(true), 350);
                     }};
                     document.getElementById(HUD_ID + "-btn-close").onclick = (e) => {{ e.stopPropagation(); this.hud.remove(); }};
@@ -899,16 +1279,34 @@ class EchoUI:
                     this.hud.style.cssText = 'position:fixed; top:0; left:0; z-index:10000; background:rgba(30,30,30,0.95); backdrop-filter:blur(12px); border:1px solid #444; border-radius:8px; box-shadow:0 10px 50px rgba(0,0,0,0.7); color:white; font-family:sans-serif; display:flex; flex-direction:column; opacity:0; min-width:200px; transition:opacity 0.3s; will-change:transform, opacity; transform: translate3d(20px, 50px, 0px);';
                     
                     this.hud.innerHTML = `
+                        <style>
+                            .echo-help-tooltip {{
+                                position: absolute; top: 35px; right: 10px; width: 200px;
+                                background: rgba(0, 0, 0, 0.95); color: #eee; padding: 10px; border-radius: 6px;
+                                border: 1px solid #4ade80; font-size: 10px; line-height: 1.6; z-index: 10010;
+                                display: none; box-shadow: 0 5px 20px rgba(0,0,0,0.5); pointer-events: none;
+                            }}
+                            #${{HUD_ID}}-btn-help:hover + .echo-help-tooltip {{ display: block; }}
+                        </style>
                         <div id="${{HUD_ID}}-header" style="padding:6px 12px; background:rgba(0,0,0,0.4); display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #444; cursor:move; user-select:none; border-radius: 8px 8px 0 0; min-height: 32px;">
                             <div style="display:flex; align-items:center; gap:8px;">
                                 <span style="font-size:11px; font-weight:bold; color:#4ade80;">{title}</span>
                                 <span id="${{HUD_ID}}-timer" style="font-size:10px; color:#888;"></span>
                             </div>
-                            <div style="display:flex; gap:10px;">
+                            <div style="display:flex; gap:10px; position:relative;">
+                                <button id="${{HUD_ID}}-btn-help" title="Aide" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">❓</button>
+                                <div class="echo-help-tooltip">
+                                    <b>COMMANDES ECHO :</b><br>
+                                    🖱️ <b>Ctrl + Molette</b> : Zoomer<br>
+                                    ✋ <b>Clic + Glisse</b> : Déplacer<br>
+                                    ⛶ <b>Bouton Crop</b> : Sélection<br>
+                                    ❐ <b>Bouton Copier</b> : Capture<br>
+                                    🔄 <b>Bouton Reset</b> : Vue initiale
+                                </div>
                                 <button id="${{HUD_ID}}-btn-crop" title="Sélection" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">⛶</button>
                                 <button id="${{HUD_ID}}-btn-copy" title="Copier" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">❐</button>
                                 <button id="${{HUD_ID}}-btn-save" title="Télécharger" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">📥</button>
-                                <button id="${{HUD_ID}}-btn-zoom" title="Loupe" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">🔍</button>
+                                <button id="${{HUD_ID}}-btn-zoom" title="Reset Vue" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">🔄</button>
                                 <button id="${{HUD_ID}}-btn-min" title="Réduire" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">_</button>
                                 <button id="${{HUD_ID}}-btn-def" title="Taille Défaut" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">↺</button>
                                 <button id="${{HUD_ID}}-btn-full" title="Plein Écran" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">□</button>
@@ -916,7 +1314,7 @@ class EchoUI:
                             </div>
                         </div>
                         <div id="${{HUD_ID}}-area" style="flex:1; width:100%; height:100%; background:black; display:flex; justify-content:center; overflow:hidden; border-radius: 0 0 8px 8px; position:relative; cursor:crosshair;">
-                            <img id="${{HUD_ID}}-img" style="width:100%; height:100%; object-fit:contain; pointer-events:none;" />
+                            <img id="${{HUD_ID}}-img" style="width:100%; height:100%; object-fit:contain; pointer-events:none; transition: transform 0.1s ease-out; will-change: transform;" />
                             <div id="${{HUD_ID}}-crop-box" style="position:absolute; border:2px dashed #fff; display:none; box-sizing:border-box; z-index:10002; cursor:move; box-shadow: 0 0 0 1px #000; will-change: transform;">
                                 <div class="cp tl" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; left:-5px; top:-5px; cursor:nwse-resize;"></div>
                                 <div class="cp tr" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; right:-5px; top:-5px; cursor:nesw-resize;"></div>
@@ -928,7 +1326,6 @@ class EchoUI:
                                 <div class="cp rc" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; right:-5px; top:50%; margin-top:-5px; cursor:ew-resize;"></div>
                             </div>
                         </div>
-                        <div id="${{HUD_ID}}-lens" style="position:absolute; width:150px; height:150px; border:2px solid #4ade80; border-radius:50%; pointer-events:none; display:none; box-shadow:0 0 30px rgba(0,0,0,0.8); z-index:10005; background-repeat:no-repeat; will-change: transform;"></div>
                         <div class="hdl tl" style="position:absolute; width:20px; height:20px; left:-10px; top:-10px; cursor:nwse-resize; z-index:100;"></div>
                         <div class="hdl tr" style="position:absolute; width:20px; height:20px; right:-10px; top:-10px; cursor:nesw-resize; z-index:100;"></div>
                         <div class="hdl bl" style="position:absolute; width:20px; height:20px; left:-10px; bottom:-10px; cursor:nesw-resize; z-index:100;"></div>
@@ -956,8 +1353,6 @@ class EchoUI:
                     const img = document.getElementById(HUD_ID + "-img");
                     img.onload = () => {{
                         this.ratio = img.naturalHeight / img.naturalWidth;
-                        const lens = document.getElementById(HUD_ID + "-lens");
-                        if (lens) lens.style.backgroundImage = 'url("' + img.src + '")';
                         const area = document.getElementById(HUD_ID + "-area");
                         const saved = JSON.parse(localStorage.getItem(STATE_KEY) || 'null');
                         if (saved && saved.w) {{

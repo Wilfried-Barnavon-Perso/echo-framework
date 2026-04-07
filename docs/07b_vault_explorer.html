@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>ECHO v5 - 6b. Vault & Data Explorer</title>
+    <title>ECHO v5 - 7b. Vault & Data Explorer</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -37,7 +37,7 @@
     </aside>
 
     <main>
-        <h1>6b. Vault & Data Explorer</h1>
+        <h1>7b. Vault & Data Explorer</h1>
         <p>Ce module constitue la porte d'entrée vers les "données froides" du Vault utilisateur. Il permet l'exploration, l'audit et l'analyse sémantique de fichiers massifs sans saturer la fenêtre de contexte du modèle PRO.</p>
 
         <h2>Exploration Brute (<code>read_raw_file_content</code>)</h2>
@@ -94,8 +94,45 @@
             <li><strong>Thinking Levels</strong> : Supporte les niveaux MINIMAL, LOW, MEDIUM et HIGH pour ajuster la précision de l'analyse.</li>
         </ul>
 
-        <h2>Visualisation HUD (<code>show_image_to_user</code>)</h2>
-        <p>Permet d'ouvrir le moniteur ECHO physique pour l'utilisateur. Utilise la librairie <code>EchoUI</code> pour injecter un HUD interactif (Zoom, Crop, Download) par-dessus l'interface Open WebUI.</p>
+        <h2>Visualisation Premium Image Viewer (<code>show_image_to_user</code>)</h2>
+        <p>ECHO v5.104.0 introduit le <strong>Premium Image Viewer</strong>, une interface HUD interactive unifiée capable d'afficher des sources locales (Vault) et distantes (URL).</p>
+
+        <div class="info-block">
+            <h4>Fonctionnalités Avancées du Viewer</h4>
+            <ul>
+                <li><strong>Détection Agnostique</strong> : L'outil <code>show_image_to_user</code> détecte automatiquement si la cible est une URL ou un ID de fichier.</li>
+                <li><strong>Moteur Zoom & Pan Universel</strong> : Navigation haute fidélité via la matrice de transformation CSS (<code>transform: scale() translate3d()</code>). <strong>Ctrl + Molette</strong> gère le zoom, <strong>Clic + Glisse</strong> gère le Pan (déplacement matriciel au pixel près).</li>
+                <li><strong>Outil d'Extraction (Crop)</strong> : Tracé d'une zone de sélection mathématiquement liée au ratio de zoom, permettant d'extraire directement l'image ciblée (Canvas 2D) vers le presse-papier avec un Fallback CORS natif et copie visuelle.</li>
+                <li><strong>Pure Context Return (v5.105.1+)</strong> : Contrairement aux anciens modules, l'outil renvoie désormais une <code>string pure</code> au lieu d'un dictionnaire, évitant au LLM d'ingérer un wrapping JSON inutile et concentrant son attention contextuelle sur les faits bruts.</li>
+                <li><strong>Stealth Engine</strong> : Pour les images distantes, ECHO utilise un moteur de mimétisme humain (Chrome 123 sur Windows 11) pour contourner les protections anti-hotlinking et les redirections (302/403).</li>
+                <li><strong>Souveraineté</strong> : Les images du Vault restent injectées en Base64, garantissant qu'aucune donnée privée ne quitte l'enclave utilisateur vers des services de rendu tiers.</li>
+            </ul>
+        </div>
+
+        <h2>Moteur de Téléchargement Stealth (<code>download_from_url</code>)</h2>
+        <p>Le module de téléchargement a été intégralement refondu pour simuler un comportement humain parfait :</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Fonctionnalité</th>
+                    <th>Spécification Technique</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>Follow Redirects</code></td>
+                    <td>Suivi systématique des redirections HTTP (301/302). Indispensable pour des services comme Picsum ou Unsplash.</td>
+                </tr>
+                <tr>
+                    <td><code>Stealth Headers</code></td>
+                    <td>Injection d'en-têtes <code>sec-ch-ua</code>, <code>Referer</code> dynamique et <code>User-Agent</code> premium pour lever les blocages 403.</td>
+                </tr>
+                <tr>
+                    <td><code>Final URL Capture</code></td>
+                    <td>Extraction de l'URL réelle de destination après redirection pour une indexation précise dans le Vault.</td>
+                </tr>
+            </tbody>
+        </table>
 
         <h2>Intégrité & Métadonnées</h2>
         <table>
@@ -114,10 +151,6 @@
                     <td><code>calculate_file_hashes</code></td>
                     <td>Calcul du hash <strong>SHA-256</strong>. Indispensable pour vérifier l'intégrité après un téléchargement ou une manipulation sandbox.</td>
                 </tr>
-                <tr>
-                    <td><code>download_from_url</code></td>
-                    <td>Téléchargement asynchrone sécurisé (Timeout 60s, User-Agent ECHO). Scelle automatiquement le fichier dans le Vault avec indexation immédiate.</td>
-                </tr>
             </tbody>
         </table>
 
@@ -125,9 +158,8 @@
         <p>Tout fichier dans ECHO est référencé par un <code>file_id</code> souverain généré par <code>echo_utils.generate_echo_file_id</code>. Ce format inclut l'ID utilisateur, l'ID du chat et un timestamp milliseconde, garantissant l'unicité absolue dans le Vault.</p>
 
         <footer>
-            ECHO Framework v5.98.10 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
+            ECHO Framework v5.104.0 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON
         </footer>
     </main>
 </body>
 </html>
-

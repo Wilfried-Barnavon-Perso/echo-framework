@@ -47,7 +47,12 @@
             "defaultFilterIds": [],
             "actionIds": []
         },
-        "_comment_access": "Default (null) = Public Read / Owner Write. To restrict, use: {'read': {'group_ids': ['id']}, 'write': {'group_ids': ['id']}}",
-        "access_control": null
+        "access_grants": [
+            {
+                "principal_type": "user",
+                "principal_id": "*",
+                "permission": "read"
+            }
+        ]
     }
 ]
