@@ -50,6 +50,32 @@ Chaque composant possède son propre cycle de vie et sa propre numérotation, do
 
 Pour garantir la cohérence, chaque Release de la Stack (`5.Y.Z`) est définie par un snapshot précis des versions de composants.
 
+**Exemple pour la 5.107.0 (ECHO WebPlayer v6.1 - Light Visualization) :**
+
+{
+  "stack_version": "5.107.0",
+  "release_date": "2026-04-09",
+  "description": "Optimisation du ECHO WebPlayer v6.1 : Transition vers un mode de visualisation automatique unifié, simplification du moteur JS pour plus de fluidité et retrait du handover complexe IA/Humain.",
+  "components": {
+    "echo_utils": "2.81",
+    "navigation_engine_tool": "7.2",
+    "web_navigation_replay_action": "3.6"
+  }
+}
+
+**Exemple pour la 5.106.0 (ECHO WebPlayer & Co-pilot Edition) :**
+
+{
+  "stack_version": "5.106.0",
+  "release_date": "2026-04-08",
+  "description": "Introduction du ECHO WebPlayer v6.0 : Cockpit de co-pilotage hybride avec Handover IA/Humain, synchronisation mathématique des pixels/hitboxes, Smart Input Proxy et Dead Man's Switch de sécurité.",
+  "components": {
+    "echo_utils": "2.80",
+    "navigation_engine_tool": "7.0",
+    "web_navigation_replay_action": "3.6"
+  }
+}
+
 **Exemple pour la 5.105.2 (Premium Viewer Unification) :**
 
 {

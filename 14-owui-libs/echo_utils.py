@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils
 author: ECHO Framework
-version: 2.72
-description: 2.72: Premium Viewer Unifié (Zoom Interactif, Pan, Aide UI, Fallback CORS) et restauration des sécurités du Client Gemini.
+version: 2.81
+description: 2.81: WebPlayer v6.1 - Optimisation du moteur JS (Visualisation Auto Unifiée) et simplification de la gestion d'état.
 """
 
 import os
@@ -998,26 +998,34 @@ class EchoStateManager:
 
 class EchoUI:
     @staticmethod
-    def _generate_universal_hud_js(b64: str, mime: str, hud_id: str, title: str, state_key: str, timeout: int) -> str:
+    def _generate_webplayer_js(b64: str, mime: str, metadata: list, current_url: str, hud_id: str, state_key: str) -> str:
+        """Génère le moteur de pilotage ECHO WEBPLAYER (Mode Visualisation Uniquement)."""
+        import orjson as std_json
+        meta_json = std_json.dumps(metadata).decode('utf-8')
+        
         return f"""
     (function() {{
         const HUD_ID = '{hud_id}';
         const STATE_KEY = '{state_key}';
-        const payload = {{ b64: "{b64}", mime: "{mime}", timeout: {timeout} }};
-        const ENGINE_KEY = 'echoEngine_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_');
+        const ENGINE_KEY = 'echoWebPlayer_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_');
+        
+        const payload = {{ 
+            b64: "{b64}", mime: "{mime}", metadata: {meta_json}, 
+            url: "{current_url}"
+        }};
 
         if (!window[ENGINE_KEY]) {{
             window[ENGINE_KEY] = {{
-                hud: null, isCropping: false, ratio: 1.0, posX: 0, posY: 0,
+                hud: null, ratio: 1.0, posX: 0, posY: 0, 
                 imgScale: 1.0, imgX: 0, imgY: 0,
-                timeLeft: 0, timerInt: null,
+                isDragging: false, startMouseX: 0, startMouseY: 0,
 
-                getBestSize: function(ratio, percent = 0.25) {{
+                getBestSize: function(ratio, percent = 0.5) {{
                     const vw = window.innerWidth, vh = window.innerHeight;
                     let w = Math.sqrt(percent * vw * vh / ratio);
                     let h = w * ratio;
-                    if (w > vw * 0.97) {{ w = vw * 0.97; h = w * ratio; }}
-                    if (h > vh * 0.97) {{ h = vh * 0.97; w = h / ratio; }}
+                    if (w > vw * 0.95) {{ w = vw * 0.95; h = w * ratio; }}
+                    if (h > (vh * 0.95 - 40)) {{ h = vh * 0.95 - 40; w = h / ratio; }}
                     return {{ w, h }};
                 }},
 
@@ -1025,7 +1033,7 @@ class EchoUI:
                     if (!this.hud) return;
                     const vw = window.innerWidth, vh = window.innerHeight;
                     const rect = this.hud.getBoundingClientRect();
-                    const marginW = 0.015 * vw, marginH = 0.015 * vh;
+                    const marginW = 15, marginH = 15;
                     if (this.posX < marginW) this.posX = marginW;
                     if (this.posY < marginH) this.posY = marginH;
                     if (this.posX + rect.width > vw - marginW) this.posX = vw - marginW - rect.width;
@@ -1033,314 +1041,245 @@ class EchoUI:
                     this.hud.style.transform = "translate3d(" + this.posX + "px, " + this.posY + "px, 0px)";
                 }},
 
-                saveState: function(isFS = null) {{
+                saveState: function() {{
                     if (!this.hud) return;
                     const area = document.getElementById(HUD_ID + "-area");
                     const isM = area && area.style.display === 'none';
-                    const saved = JSON.parse(localStorage.getItem(STATE_KEY) || '{{}}');
                     localStorage.setItem(STATE_KEY, JSON.stringify({{
-                        w: this.hud.offsetWidth, x: this.posX, y: this.posY, m: isM, f: isFS !== null ? isFS : (saved.f || false)
+                        w: this.hud.offsetWidth, x: this.posX, y: this.posY, m: isM
                     }}));
-                }},
-
-                applyTransition: function(enabled) {{
-                    if (!this.hud) return;
-                    this.hud.style.transition = enabled ? 'opacity 0.3s, transform 0.3s ease-out, width 0.3s ease-out, height 0.3s ease-out' : 'opacity 0.3s';
-                }},
-
-                resetImg: function() {{
-                    this.imgScale = 1.0; this.imgX = 0; this.imgY = 0;
-                    const img = document.getElementById(HUD_ID + "-img");
-                    if(img) img.style.transform = "scale(1) translate3d(0,0,0)";
-                }},
-
-                exportMedia: async function(mode) {{
-                    const img = document.getElementById(HUD_ID + "-img");
-                    const cropBox = document.getElementById(HUD_ID + "-crop-box");
-                    const area = document.getElementById(HUD_ID + "-area");
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    const natW = img.naturalWidth, natH = img.naturalHeight;
-
-                    let isCropped = false;
-                    if (this.isCropping && cropBox.style.display !== 'none' && cropBox.offsetWidth > 5) {{
-                        const rect = cropBox.getBoundingClientRect(), iRect = img.getBoundingClientRect();
-                        const scaleX = natW / iRect.width, scaleY = natH / iRect.height;
-                        const sx = (rect.left - iRect.left) * scaleX, sy = (rect.top - iRect.top) * scaleY;
-                        const sw = rect.width * scaleX, sh = rect.height * scaleY;
-                        canvas.width = sw; canvas.height = sh;
-                        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-                        isCropped = true;
-                    }} else {{
-                        canvas.width = natW; canvas.height = natH;
-                        ctx.drawImage(img, 0, 0);
-                    }}
-
-                    let dataUrl;
-                    try {{
-                        dataUrl = canvas.toDataURL('image/png');
-                    }} catch (e) {{
-                        window.open(img.src, '_blank'); return;
-                    }}
-
-                    if (mode === 'copy') {{
-                        if (!navigator.clipboard || !window.ClipboardItem) throw new Error("Clipboard API not available");
-                        canvas.toBlob(async (blob) => {{
-                            try {{
-                                await navigator.clipboard.write([new ClipboardItem({{ 'image/png': blob }})]);
-                                const btn = document.getElementById(HUD_ID + "-btn-copy");
-                                if(btn) {{
-                                    const old = btn.innerText; btn.innerText = '✓'; btn.style.color = '#4ade80';
-                                    setTimeout(() => {{ btn.innerText = old; btn.style.color = '#aaa'; }}, 1000);
-                                }}
-                            }} catch (err) {{ this.showFallbackOverlay(dataUrl); }}
-                        }}, 'image/png');
-                    }} else {{
-                        const link = document.createElement('a');
-                        link.download = "ECHO_" + (isCropped ? "Crop" : "Full") + "_" + Date.now() + ".png";
-                        link.href = dataUrl; link.click();
-                    }}
-                }},
-
-                showFallbackOverlay: function(dataUrl) {{
-                    const over = document.createElement('div');
-                    over.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:10005;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;backdrop-filter:blur(4px);';
-                    over.innerHTML = '<p style="margin-bottom:15px;font-size:14px;background:#4ade80;color:#000;padding:4px 12px;border-radius:4px;font-weight:bold;">Mode HTTP restreint. Faites Clic droit -> Copier l\'image</p><img src="' + dataUrl + '" style="max-width:80%;max-height:75%;border:2px solid #555;border-radius:4px;box-shadow:0 0 20px rgba(0,0,0,0.5);" /><p style="margin-top:15px;font-size:12px;color:#aaa;cursor:pointer;">[ Cliquez n\'importe où pour fermer ]</p>';
-                    over.onclick = () => over.remove();
-                    document.body.appendChild(over);
                 }},
 
                 attachEvents: function() {{
                     if (!this.hud) return;
+                    const matrix = document.getElementById(HUD_ID + "-matrix");
                     const area = document.getElementById(HUD_ID + "-area");
-                    const img = document.getElementById(HUD_ID + "-img");
+                    const header = document.getElementById(HUD_ID + "-header");
 
-                    this.hud.ondblclick = (e) => {{
-                        if (e.target.tagName === 'BUTTON') return;
-                        this.applyTransition(true);
-                        const size = this.getBestSize(this.ratio, 0.25);
-                        this.hud.style.width = size.w + "px"; this.hud.style.height = size.h + "px";
-                        this.posX = (window.innerWidth - size.w) / 2; this.posY = (window.innerHeight - size.h) / 2;
-                        this.clampHud();
-                        if(area) area.style.display = 'flex';
-                        this.resetImg();
-                        setTimeout(() => this.saveState(false), 350);
+                    // --- VUE (ZOOM / PAN) ---
+                    area.addEventListener('wheel', (e) => {{
+                        if (e.ctrlKey) {{
+                            e.preventDefault();
+                            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                            this.imgScale = Math.min(Math.max(0.1, this.imgScale * delta), 15);
+                            matrix.style.transform = "scale(" + this.imgScale + ") translate3d(" + this.imgX + "px, " + this.imgY + "px, 0px)";
+                        }}
+                    }}, {{ passive: false }});
+
+                    area.onmousedown = (e) => {{
+                        if (e.button === 1 || (e.button === 0 && e.altKey)) {{
+                            e.preventDefault();
+                            this.isDragging = true;
+                            this.startMouseX = e.clientX; this.startMouseY = e.clientY;
+                            area.style.cursor = 'grabbing';
+                        }}
                     }};
 
-                    const header = document.getElementById(HUD_ID + "-header");
+                    window.addEventListener('mousemove', (e) => {{
+                        if (this.isDragging) {{
+                            this.imgX += (e.clientX - this.startMouseX) / this.imgScale;
+                            this.imgY += (e.clientY - this.startMouseY) / this.imgScale;
+                            this.startMouseX = e.clientX; this.startMouseY = e.clientY;
+                            matrix.style.transform = "scale(" + this.imgScale + ") translate3d(" + this.imgX + "px, " + this.imgY + "px, 0px)";
+                        }}
+                    }});
+
+                    window.addEventListener('mouseup', () => {{
+                        this.isDragging = false;
+                        if (area) area.style.cursor = 'crosshair';
+                    }});
+
+                    // --- GESTION HEADER ---
                     header.onmousedown = (e) => {{
-                        if (e.target.tagName === 'BUTTON') return;
-                        e.preventDefault(); this.applyTransition(false);
+                        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+                        e.preventDefault();
                         let ox = e.clientX, oy = e.clientY;
                         document.onmousemove = (me) => {{
                             this.posX += (me.clientX - ox); this.posY += (me.clientY - oy);
                             ox = me.clientX; oy = me.clientY;
                             this.clampHud();
                         }};
-                        document.onmouseup = () => {{ document.onmousemove = null; this.saveState(false); }};
+                        document.onmouseup = () => {{ document.onmousemove = null; this.saveState(); }};
                     }};
 
-                    // Moteur Zoom / Pan ECHO
-                    area.addEventListener('wheel', (e) => {{
-                        if (e.ctrlKey) {{
-                            e.preventDefault();
-                            const delta = e.deltaY > 0 ? 0.9 : 1.1;
-                            this.imgScale = Math.min(Math.max(0.1, this.imgScale * delta), 15);
-                            img.style.transform = "scale(" + this.imgScale + ") translate3d(" + this.imgX + "px, " + this.imgY + "px, 0px)";
+                    document.getElementById(HUD_ID + "-btn-help").onclick = () => {{
+                        const help = document.getElementById(HUD_ID + "-help-overlay");
+                        help.style.display = help.style.display === 'none' ? 'flex' : 'none';
+                    }};
+
+                    document.getElementById(HUD_ID + "-btn-zoom").onclick = () => {{
+                        const area = document.getElementById(HUD_ID + "-area");
+                        const img = document.getElementById(HUD_ID + "-img");
+                        if (area && img && img.naturalWidth) {{
+                            const areaRect = area.getBoundingClientRect();
+                            const scaleW = areaRect.width / img.naturalWidth;
+                            const scaleH = areaRect.height / img.naturalHeight;
+                            this.imgScale = Math.min(scaleW, scaleH);
+                            this.imgX = 0; this.imgY = 0;
+                            matrix.style.transform = "scale(" + this.imgScale + ") translate3d(0px, 0px, 0px)";
                         }}
-                    }}, {{ passive: false }});
-
-                    area.onmousedown = (e) => {{
-                        if (this.isCropping || e.target.closest('#' + HUD_ID + '-header')) return;
-                        e.preventDefault();
-                        let ox = e.clientX, oy = e.clientY;
-                        area.style.cursor = 'grabbing';
-                        document.onmousemove = (me) => {{
-                            this.imgX += (me.clientX - ox) / this.imgScale;
-                            this.imgY += (me.clientY - oy) / this.imgScale;
-                            ox = me.clientX; oy = me.clientY;
-                            img.style.transform = "scale(" + this.imgScale + ") translate3d(" + this.imgX + "px, " + this.imgY + "px, 0px)";
-                        }};
-                        document.onmouseup = () => {{ document.onmousemove = null; area.style.cursor = 'crosshair'; }};
                     }};
 
+                    document.getElementById(HUD_ID + "-btn-reset").onclick = () => {{
+                        const a = document.getElementById(HUD_ID + "-area");
+                        if(a) a.style.display = 'block';
+                        const size = this.getBestSize(this.ratio, 0.5);
+                        this.hud.style.width = size.w + "px";
+                        this.hud.style.height = (size.h + 40) + "px";
+                        this.posX = (window.innerWidth - size.w) / 2;
+                        this.posY = (window.innerHeight - (size.h + 40)) / 2;
+                        this.clampHud();
+                        
+                        const img = document.getElementById(HUD_ID + "-img");
+                        if (img && img.naturalWidth && a) {{
+                            const r = a.getBoundingClientRect();
+                            const sc = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+                            this.imgScale = sc; this.imgX = 0; this.imgY = 0;
+                            matrix.style.transform = "scale(" + sc + ") translate3d(0px, 0px, 0px)";
+                        }}
+                        this.saveState();
+                    }};
+
+                    document.getElementById(HUD_ID + "-btn-min").onclick = (e) => {{
+                        e.stopPropagation();
+                        const a = document.getElementById(HUD_ID + "-area");
+                        const isHiding = a.style.display !== 'none';
+                        a.style.display = isHiding ? 'none' : 'block';
+                        this.hud.style.height = isHiding ? 'auto' : (this.hud.offsetWidth * this.ratio + 40) + 'px';
+                        this.saveState();
+                    }};
+                    
+                    document.getElementById(HUD_ID + "-btn-max").onclick = (e) => {{
+                        e.stopPropagation();
+                        const a = document.getElementById(HUD_ID + "-area");
+                        if(a) a.style.display = 'block';
+                        
+                        const maxW = window.innerWidth - 30;
+                        const maxH = window.innerHeight - 30 - 40;
+                        let nw = maxW;
+                        let nh = nw * this.ratio;
+                        if (nh > maxH) {{
+                            nh = maxH;
+                            nw = nh / this.ratio;
+                        }}
+                        
+                        this.hud.style.width = nw + "px";
+                        this.hud.style.height = (nh + 40) + "px";
+                        this.posX = (window.innerWidth - nw) / 2;
+                        this.posY = (window.innerHeight - (nh + 40)) / 2;
+                        this.clampHud();
+                        
+                        const img = document.getElementById(HUD_ID + "-img");
+                        if (img && img.naturalWidth && a) {{
+                            const r = a.getBoundingClientRect();
+                            const sc = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+                            this.imgScale = sc; this.imgX = 0; this.imgY = 0;
+                            matrix.style.transform = "scale(" + sc + ") translate3d(0px, 0px, 0px)";
+                        }}
+                        this.saveState();
+                    }};
+
+                    document.getElementById(HUD_ID + "-btn-close").onclick = () => {{
+                        this.hud.remove();
+                    }};
+                    
+                    // Resizers (hdl)
                     this.hud.querySelectorAll('.hdl').forEach(hdl => {{
                         hdl.onmousedown = (e) => {{
-                            e.preventDefault(); e.stopPropagation(); this.applyTransition(false);
-                            const isR = hdl.classList.contains('tr') || hdl.classList.contains('br'), isT = hdl.classList.contains('tl') || hdl.classList.contains('tr');
-                            const isL = hdl.classList.contains('tl') || hdl.classList.contains('bl'), isB = hdl.classList.contains('bl') || hdl.classList.contains('br');
+                            e.preventDefault(); e.stopPropagation();
+                            const isR = hdl.classList.contains('tr') || hdl.classList.contains('br');
+                            const isT = hdl.classList.contains('tl') || hdl.classList.contains('tr');
+                            const isL = hdl.classList.contains('tl') || hdl.classList.contains('bl');
+                            const isB = hdl.classList.contains('bl') || hdl.classList.contains('br');
                             const startW = this.hud.offsetWidth, startH = this.hud.offsetHeight, startX = this.posX, startY = this.posY;
                             const ox = e.clientX, oy = e.clientY;
+                            
                             document.onmousemove = (me) => {{
                                 let nw = isR ? (startW + (me.clientX - ox)) : (startW - (me.clientX - ox));
-                                if (nw < 200) nw = 200; if (nw > window.innerWidth * 0.97) nw = window.innerWidth * 0.97;
-                                let nh = nw * this.ratio;
-                                if (nh > window.innerHeight * 0.97) {{ nh = window.innerHeight * 0.97; nw = nh / this.ratio; }}
+                                if (nw < 300) nw = 300;
+                                let nh = (nw * this.ratio) + 40;
+                                
+                                const maxW = window.innerWidth - 30;
+                                const maxH = window.innerHeight - 30;
+                                if (nw > maxW || nh > maxH) {{
+                                    if ((maxW * this.ratio + 40) <= maxH) {{
+                                        nw = maxW;
+                                        nh = (nw * this.ratio) + 40;
+                                    }} else {{
+                                        nh = maxH;
+                                        nw = (nh - 40) / this.ratio;
+                                    }}
+                                }}
+                                
                                 if (isL && !isR) this.posX = startX + (startW - nw);
                                 if (isT && !isB) this.posY = startY + (startH - nh);
                                 this.hud.style.width = nw + 'px'; this.hud.style.height = nh + 'px';
                                 this.clampHud();
-                            }};
-                            document.onmouseup = () => {{ document.onmousemove = null; this.saveState(false); }};
-                        }};
-                    }});
-
-                    document.getElementById(HUD_ID + "-btn-crop").onclick = (e) => {{
-                        e.stopPropagation(); this.isCropping = !this.isCropping;
-                        const cropBox = document.getElementById(HUD_ID + "-crop-box");
-                        cropBox.style.display = this.isCropping ? 'block' : 'none';
-                        e.target.style.color = this.isCropping ? '#fff' : '#aaa';
-                        if (this.isCropping) {{
-                            cropBox.style.width = area.offsetWidth + 'px'; cropBox.style.height = area.offsetHeight + 'px';
-                            cropBox.style.transform = 'translate3d(0px, 0px, 0px)';
-                        }}
-                    }};
-
-                    const cropBox = document.getElementById(HUD_ID + "-crop-box");
-                    cropBox.onmousedown = (e) => {{
-                        if (e.target.classList.contains('cp')) return;
-                        e.preventDefault(); e.stopPropagation();
-                        let ox = e.clientX, oy = e.clientY, tx = 0, ty = 0;
-                        const match = cropBox.style.transform.match(/translate3d\\(([-0-9.]+)px,\\s*([-0-9.]+)px/);
-                        if(match) {{ tx = parseFloat(match[1]); ty = parseFloat(match[2]); }}
-                        document.onmousemove = (me) => {{
-                            tx += (me.clientX - ox); ty += (me.clientY - oy);
-                            ox = me.clientX; oy = me.clientY;
-                            cropBox.style.transform = "translate3d(" + tx + "px, " + ty + "px, 0px)";
-                        }};
-                        document.onmouseup = () => document.onmousemove = null;
-                    }};
-
-                    cropBox.querySelectorAll('.cp').forEach(cp => {{
-                        cp.onmousedown = (e) => {{
-                            e.preventDefault(); e.stopPropagation();
-                            const isL = cp.classList.contains('tl') || cp.classList.contains('bl') || cp.classList.contains('lc');
-                            const isR = cp.classList.contains('tr') || cp.classList.contains('br') || cp.classList.contains('rc');
-                            const isT = cp.classList.contains('tl') || cp.classList.contains('tr') || cp.classList.contains('tc');
-                            const isB = cp.classList.contains('bl') || cp.classList.contains('br') || cp.classList.contains('bc');
-                            let startW = cropBox.offsetWidth, startH = cropBox.offsetHeight, ox = e.clientX, oy = e.clientY;
-                            let tx = 0, ty = 0;
-                            const match = cropBox.style.transform.match(/translate3d\\(([-0-9.]+)px,\\s*([-0-9.]+)px/);
-                            if(match) {{ tx = parseFloat(match[1]); ty = parseFloat(match[2]); }}
-                            const startX = tx, startY = ty;
-                            document.onmousemove = (me) => {{
-                                if (isR) cropBox.style.width = (startW + (me.clientX - ox)) + "px";
-                                else if (isL) {{
-                                    const nw = startW - (me.clientX - ox);
-                                    cropBox.style.width = nw + "px"; 
-                                    cropBox.style.transform = "translate3d(" + (startX + (startW - nw)) + "px, " + ty + "px, 0px)";
-                                }}
-                                if (isB) cropBox.style.height = (startH + (me.clientY - oy)) + "px";
-                                else if (isT) {{
-                                    const nh = startH - (me.clientY - oy);
-                                    cropBox.style.height = nh + "px";
-                                    const curX = isL ? (startX + (startW - cropBox.offsetWidth)) : tx;
-                                    cropBox.style.transform = "translate3d(" + curX + "px, " + (startY + (startH - nh)) + "px, 0px)";
+                                
+                                const area = document.getElementById(HUD_ID + "-area");
+                                const img = document.getElementById(HUD_ID + "-img");
+                                if (area && img && img.naturalWidth) {{
+                                    const areaRect = area.getBoundingClientRect();
+                                    const scaleW = areaRect.width / img.naturalWidth;
+                                    const scaleH = areaRect.height / img.naturalHeight;
+                                    this.imgScale = Math.min(scaleW, scaleH);
+                                    this.imgX = 0; this.imgY = 0;
+                                    matrix.style.transform = "scale(" + this.imgScale + ") translate3d(0px, 0px, 0px)";
                                 }}
                             }};
-                            document.onmouseup = () => document.onmousemove = null;
+                            document.onmouseup = () => {{ document.onmousemove = null; this.saveState(); }};
                         }};
                     }});
-
-                    document.getElementById(HUD_ID + "-btn-copy").onclick = (e) => {{ e.stopPropagation(); this.exportMedia('copy'); }};
-                    document.getElementById(HUD_ID + "-btn-save").onclick = (e) => {{ e.stopPropagation(); this.exportMedia('save'); }};
-                    document.getElementById(HUD_ID + "-btn-zoom").onclick = (e) => {{ e.stopPropagation(); this.resetImg(); }};
-                    document.getElementById(HUD_ID + "-btn-min").onclick = (e) => {{
-                        e.stopPropagation(); this.applyTransition(true);
-                        const a = document.getElementById(HUD_ID + "-area");
-                        a.style.display = a.style.display === 'none' ? 'flex' : 'none';
-                        this.hud.style.height = a.style.display === 'none' ? 'auto' : (this.hud.offsetWidth * this.ratio) + 'px';
-                        this.saveState(false);
-                    }};
-                    document.getElementById(HUD_ID + "-btn-def").onclick = (e) => {{
-                        e.stopPropagation(); this.applyTransition(true);
-                        const size = this.getBestSize(this.ratio, 0.25);
-                        this.hud.style.width = size.w + "px"; this.hud.style.height = size.h + "px";
-                        if(area) area.style.display = 'flex'; this.clampHud();
-                        this.resetImg();
-                        setTimeout(() => this.saveState(false), 350);
-                    }};
-                    document.getElementById(HUD_ID + "-btn-full").onclick = (e) => {{
-                        e.stopPropagation(); this.applyTransition(true);
-                        const size = this.getBestSize(this.ratio, 0.97);
-                        this.hud.style.width = size.w + "px"; this.hud.style.height = size.h + "px";
-                        this.posX = (window.innerWidth - size.w) / 2; this.posY = (window.innerHeight - size.h) / 2;
-                        if(area) area.style.display = 'flex'; this.clampHud();
-                        this.resetImg();
-                        setTimeout(() => this.saveState(true), 350);
-                    }};
-                    document.getElementById(HUD_ID + "-btn-close").onclick = (e) => {{ e.stopPropagation(); this.hud.remove(); }};
                 }},
 
                 create: function(data) {{
                     const old = document.getElementById(HUD_ID); if(old) old.remove();
                     this.hud = document.createElement('div');
                     this.hud.id = HUD_ID;
-                    this.hud.style.cssText = 'position:fixed; top:0; left:0; z-index:10000; background:rgba(30,30,30,0.95); backdrop-filter:blur(12px); border:1px solid #444; border-radius:8px; box-shadow:0 10px 50px rgba(0,0,0,0.7); color:white; font-family:sans-serif; display:flex; flex-direction:column; opacity:0; min-width:200px; transition:opacity 0.3s; will-change:transform, opacity; transform: translate3d(20px, 50px, 0px);';
+                    this.hud.style.cssText = 'position:fixed; top:0px; left:0px; z-index:10000; background:rgba(20,20,20,0.98); backdrop-filter:blur(15px); border:1px solid #444; border-radius:10px; box-shadow:0 15px 60px rgba(0,0,0,0.8); color:white; font-family:sans-serif; display:flex; flex-direction:column; min-width:300px; max-width:95vw; overflow:hidden; transition: opacity 0.3s; box-sizing: border-box;';
                     
                     this.hud.innerHTML = `
-                        <style>
-                            .echo-help-tooltip {{
-                                position: absolute; top: 35px; right: 10px; width: 200px;
-                                background: rgba(0, 0, 0, 0.95); color: #eee; padding: 10px; border-radius: 6px;
-                                border: 1px solid #4ade80; font-size: 10px; line-height: 1.6; z-index: 10010;
-                                display: none; box-shadow: 0 5px 20px rgba(0,0,0,0.5); pointer-events: none;
-                            }}
-                            #${{HUD_ID}}-btn-help:hover + .echo-help-tooltip {{ display: block; }}
-                        </style>
-                        <div id="${{HUD_ID}}-header" style="padding:6px 12px; background:rgba(0,0,0,0.4); display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #444; cursor:move; user-select:none; border-radius: 8px 8px 0 0; min-height: 32px;">
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                <span style="font-size:11px; font-weight:bold; color:#4ade80;">{title}</span>
-                                <span id="${{HUD_ID}}-timer" style="font-size:10px; color:#888;"></span>
+                        <div id="${{HUD_ID}}-header" style="padding:8px 12px; background:rgba(0,0,0,0.5); display:flex; align-items:center; gap:8px; border-bottom:1px solid #333; cursor:move; user-select:none; flex-wrap:wrap; box-sizing:border-box;">
+                            <span style="font-size:10px; font-weight:bold; padding:2px 6px; border-radius:4px; text-transform:uppercase; background:#10b981; color:black;">🤖 AUTO</span>
+                            <input id="${{HUD_ID}}-url" type="text" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid #444; border-radius:4px; color:#aaa; font-size:11px; padding:4px 8px; outline:none; min-width:150px;" readonly />
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <button id="${{HUD_ID}}-btn-help" title="Aide" style="background:none; border:none; color:#888; cursor:pointer; font-size:14px;">?</button>
+                                <button id="${{HUD_ID}}-btn-zoom" title="Fit to window" style="background:none; border:none; color:#888; cursor:pointer; font-size:14px;">🔍</button>
+                                <button id="${{HUD_ID}}-btn-reset" title="Default size (50%)" style="background:none; border:none; color:#888; cursor:pointer; font-size:14px;">🔄</button>
+                                <button id="${{HUD_ID}}-btn-min" title="Réduire" style="background:none; border:none; color:#888; cursor:pointer; font-size:14px; font-weight:bold;">_</button>
+                                <button id="${{HUD_ID}}-btn-max" title="Plein Écran" style="background:none; border:none; color:#888; cursor:pointer; font-size:14px; font-weight:bold;">□</button>
+                                <button id="${{HUD_ID}}-btn-close" title="Fermer" style="background:none; border:none; color:#ff4444; cursor:pointer; font-size:18px; font-weight:bold;">×</button>
                             </div>
-                            <div style="display:flex; gap:10px; position:relative;">
-                                <button id="${{HUD_ID}}-btn-help" title="Aide" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">❓</button>
-                                <div class="echo-help-tooltip">
-                                    <b>COMMANDES ECHO :</b><br>
+                        </div>
+                        <div id="${{HUD_ID}}-area" style="flex:1; position:relative; background:black; overflow:hidden; cursor:crosshair;">
+                            <div id="${{HUD_ID}}-matrix" style="width:100%; height:100%; transform-origin: 0 0; will-change: transform;">
+                                <img id="${{HUD_ID}}-img" style="width:100%; height:100%; object-fit:contain; pointer-events:none;" draggable="false" />
+                                <div id="${{HUD_ID}}-hitboxes" style="position:absolute; inset:0; pointer-events:none;"></div>
+                            </div>
+                            
+                            <div id="${{HUD_ID}}-help-overlay" style="position:absolute; inset:0; background:rgba(0,0,0,0.85); display:none; flex-direction:column; align-items:center; justify-content:center; z-index:100; padding:20px; text-align:center;">
+                                <h3 style="color:#4ade80; margin-bottom:15px;">ECHO WEBPLAYER</h3>
+                                <div style="font-size:12px; line-height:1.8; color:#eee;">
                                     🖱️ <b>Ctrl + Molette</b> : Zoomer<br>
-                                    ✋ <b>Clic + Glisse</b> : Déplacer<br>
-                                    ⛶ <b>Bouton Crop</b> : Sélection<br>
-                                    ❐ <b>Bouton Copier</b> : Capture<br>
-                                    🔄 <b>Bouton Reset</b> : Vue initiale
+                                    ✋ <b>Clic milieu (ou Alt+Clic)</b> : Déplacer la vue<br>
                                 </div>
-                                <button id="${{HUD_ID}}-btn-crop" title="Sélection" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">⛶</button>
-                                <button id="${{HUD_ID}}-btn-copy" title="Copier" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">❐</button>
-                                <button id="${{HUD_ID}}-btn-save" title="Télécharger" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">📥</button>
-                                <button id="${{HUD_ID}}-btn-zoom" title="Reset Vue" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">🔄</button>
-                                <button id="${{HUD_ID}}-btn-min" title="Réduire" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">_</button>
-                                <button id="${{HUD_ID}}-btn-def" title="Taille Défaut" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">↺</button>
-                                <button id="${{HUD_ID}}-btn-full" title="Plein Écran" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:14px; padding:2px;">□</button>
-                                <button id="${{HUD_ID}}-btn-close" title="Fermer" style="background:none; border:none; color:#ff4444; cursor:pointer; font-size:18px; font-weight:bold; line-height:1; padding:2px;">×</button>
+                                <button onclick="document.getElementById('${{HUD_ID}}-help-overlay').style.display='none'" style="margin-top:20px; background:#4ade80; border:none; color:black; padding:5px 15px; border-radius:4px; cursor:pointer; font-weight:bold;">Compris</button>
                             </div>
                         </div>
-                        <div id="${{HUD_ID}}-area" style="flex:1; width:100%; height:100%; background:black; display:flex; justify-content:center; overflow:hidden; border-radius: 0 0 8px 8px; position:relative; cursor:crosshair;">
-                            <img id="${{HUD_ID}}-img" style="width:100%; height:100%; object-fit:contain; pointer-events:none; transition: transform 0.1s ease-out; will-change: transform;" />
-                            <div id="${{HUD_ID}}-crop-box" style="position:absolute; border:2px dashed #fff; display:none; box-sizing:border-box; z-index:10002; cursor:move; box-shadow: 0 0 0 1px #000; will-change: transform;">
-                                <div class="cp tl" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; left:-5px; top:-5px; cursor:nwse-resize;"></div>
-                                <div class="cp tr" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; right:-5px; top:-5px; cursor:nesw-resize;"></div>
-                                <div class="cp bl" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; left:-5px; bottom:-5px; cursor:nesw-resize;"></div>
-                                <div class="cp br" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; right:-5px; bottom:-5px; cursor:nwse-resize;"></div>
-                                <div class="cp tc" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; left:50%; top:-5px; margin-left:-5px; cursor:ns-resize;"></div>
-                                <div class="cp bc" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; left:50%; bottom:-5px; margin-left:-5px; cursor:ns-resize;"></div>
-                                <div class="cp lc" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; left:-5px; top:50%; margin-top:-5px; cursor:ew-resize;"></div>
-                                <div class="cp rc" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; right:-5px; top:50%; margin-top:-5px; cursor:ew-resize;"></div>
-                            </div>
-                        </div>
-                        <div class="hdl tl" style="position:absolute; width:20px; height:20px; left:-10px; top:-10px; cursor:nwse-resize; z-index:100;"></div>
-                        <div class="hdl tr" style="position:absolute; width:20px; height:20px; right:-10px; top:-10px; cursor:nesw-resize; z-index:100;"></div>
-                        <div class="hdl bl" style="position:absolute; width:20px; height:20px; left:-10px; bottom:-10px; cursor:nesw-resize; z-index:100;"></div>
-                        <div class="hdl br" style="position:absolute; width:20px; height:20px; right:-10px; bottom:-10px; cursor:nwse-resize; z-index:100;"></div>
+                        
+                        <div class="hdl tl" style="position:absolute; width:15px; height:15px; left:0; top:0; cursor:nwse-resize; z-index:101;"></div>
+                        <div class="hdl tr" style="position:absolute; width:15px; height:15px; right:0; top:0; cursor:nesw-resize; z-index:101;"></div>
+                        <div class="hdl bl" style="position:absolute; width:15px; height:15px; left:0; bottom:0; cursor:nesw-resize; z-index:101;"></div>
+                        <div class="hdl br" style="position:absolute; width:15px; height:15px; right:0; bottom:0; cursor:nwse-resize; z-index:101;"></div>
                     `;
                     document.body.appendChild(this.hud);
                     this.attachEvents();
-                    setTimeout(() => {{ if(this.hud) this.hud.style.opacity = '1'; }}, 50);
-
+                    
                     const saved = JSON.parse(localStorage.getItem(STATE_KEY) || 'null');
                     if (saved && saved.w) {{
-                        this.applyTransition(false);
                         this.posX = saved.x; this.posY = saved.y;
                         this.hud.style.width = saved.w + 'px';
-                        if (!saved.f && saved.m) {{
+                        if (saved.m) {{
                             const a = document.getElementById(HUD_ID + "-area"); if(a) a.style.display = 'none';
                             this.hud.style.height = 'auto';
                         }}
@@ -1350,60 +1289,83 @@ class EchoUI:
 
                 update: function(data) {{
                     if (!this.hud || !document.getElementById(HUD_ID)) {{ this.create(data); }}
+                    
                     const img = document.getElementById(HUD_ID + "-img");
+                    const urlInput = document.getElementById(HUD_ID + "-url");
+                    const hitboxes = document.getElementById(HUD_ID + "-hitboxes");
+                    const matrix = document.getElementById(HUD_ID + "-matrix");
+                    const area = document.getElementById(HUD_ID + "-area");
+
+                    urlInput.value = data.url;
+
                     img.onload = () => {{
-                        this.ratio = img.naturalHeight / img.naturalWidth;
-                        const area = document.getElementById(HUD_ID + "-area");
+                        const natW = img.naturalWidth;
+                        const natH = img.naturalHeight;
+                        this.ratio = natH / natW;
+                        
                         const saved = JSON.parse(localStorage.getItem(STATE_KEY) || 'null');
+                        let targetW, targetH;
+
                         if (saved && saved.w) {{
-                            if (saved.f) {{
-                                const size = this.getBestSize(this.ratio, 0.97);
-                                this.hud.style.width = size.w + "px"; this.hud.style.height = size.h + "px";
-                                this.posX = (window.innerWidth - size.w) / 2; this.posY = (window.innerHeight - size.h) / 2;
-                            }} else if (area && area.style.display !== 'none') {{
-                                this.hud.style.height = (this.hud.offsetWidth * this.ratio) + 'px';
+                            targetW = Math.min(saved.w, window.innerWidth * 0.95);
+                            if (saved.m) {{
+                                targetH = 'auto';
+                            }} else {{
+                                targetH = Math.min(targetW * this.ratio + 40, window.innerHeight * 0.95) + 'px';
                             }}
                         }} else {{
-                            const size = this.getBestSize(this.ratio, 0.25);
-                            this.hud.style.width = size.w + "px"; this.hud.style.height = size.h + "px";
-                            this.posX = (window.innerWidth - size.w) / 2; this.posY = (window.innerHeight - size.h) / 2;
+                            const size = this.getBestSize(this.ratio, 0.5);
+                            targetW = size.w; 
+                            targetH = (size.h + 40) + 'px';
+                            this.posX = (window.innerWidth - targetW) / 2;
+                            this.posY = (window.innerHeight - parseInt(targetH)) / 2;
                         }}
+
+                        this.hud.style.width = targetW + 'px';
+                        this.hud.style.height = targetH;
                         this.clampHud();
+
+                        matrix.style.width = natW + "px";
+                        matrix.style.height = natH + "px";
+                        
+                        const areaRect = area.getBoundingClientRect();
+                        const scaleW = areaRect.width / natW;
+                        const scaleH = areaRect.height / natH;
+                        this.imgScale = Math.min(scaleW, scaleH);
+                        this.imgX = 0; this.imgY = 0;
+                        matrix.style.transform = "scale(" + this.imgScale + ") translate3d(0px, 0px, 0px)";
+                        
+                        hitboxes.innerHTML = "";
+                        data.metadata.forEach(el => {{
+                            const box = document.createElement('div');
+                            box.style.cssText = `position:absolute; left:${{el.x}}px; top:${{el.y}}px; width:${{el.w}}px; height:${{el.h}}px; pointer-events:auto; cursor:pointer; z-index:5;`;
+                            box.onmouseover = () => box.style.background = "rgba(74, 222, 128, 0.25)";
+                            box.onmouseout = () => box.style.background = "transparent";
+                            box.onclick = (e) => {{
+                                e.stopPropagation();
+                                parent.postMessage({{ type: "notification", data: {{ content: "⚠️ Le navigateur est en mode Automatique exclusif.", type: "info" }} }}, "*");
+                            }};
+                            hitboxes.appendChild(box);
+                        }});
                     }};
                     img.src = "data:" + data.mime + ";base64," + data.b64;
-
-                    if (this.timerInt) clearInterval(this.timerInt);
-                    if (data.timeout > 0) {{
-                        this.timeLeft = data.timeout;
-                        const tSpan = document.getElementById(HUD_ID + "-timer");
-                        this.timerInt = setInterval(() => {{
-                            window[ENGINE_KEY].timeLeft--; 
-                            if(tSpan) tSpan.innerText = "[" + window[ENGINE_KEY].timeLeft + "s]";
-                            if (window[ENGINE_KEY].timeLeft <= 5 && this.hud) this.hud.style.opacity = (window[ENGINE_KEY].timeLeft / 5);
-                            if (window[ENGINE_KEY].timeLeft <= 0) {{ 
-                                clearInterval(this.timerInt); 
-                                const h = document.getElementById(HUD_ID); if(h) h.remove();
-                            }}
-                        }}, 1000);
-                    }} else {{
-                        const tSpan = document.getElementById(HUD_ID + "-timer");
-                        if (tSpan) tSpan.innerText = "";
-                    }}
                 }}
             }};
         }}
+        
         window[ENGINE_KEY].update(payload);
     }})();
 """
 
     @staticmethod
-    async def monitor_ECHO(events: EchoEvents, b64: str, mime: str, hud_id: str, title: str, state_key: str, timeout: int = 0):
-        js_code = EchoUI._generate_universal_hud_js(b64, mime, hud_id, title, state_key, timeout)
+    async def monitor_ECHO(events: EchoEvents, b64: str, metadata: list, current_url: str, hud_id: str = "echo-webplayer", title: str = "ECHO WEBPLAYER", state_key: str = "echo_webplayer_state"):
+        """Interface unifiée WEBPLAYER (Mode Visualisation)."""
+        js_code = EchoUI._generate_webplayer_js(b64, "image/png", metadata, current_url, hud_id, state_key)
         try:
             import asyncio
-            await asyncio.wait_for(events.call("execute", {"code": js_code}), timeout=5.0)
+            await events.call("execute", {"code": js_code})
         except Exception as e:
-            print(f"[EchoUI] HUD Injection timeout/error: {e}")
+            pass
 
     @staticmethod
     async def deploy_context_gauge(events: EchoEvents, plan_name: str, credits_val: str, quota_str: str, c_t: int, active_p_t: int, g_t: int, max_t: int, cache_pct: float, prompt_pct: float, gen_pct: float):
