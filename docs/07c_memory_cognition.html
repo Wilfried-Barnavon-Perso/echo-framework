@@ -6,38 +6,16 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <aside class="sidebar">
-        <div class="logo-container">
-            <img src="logo-echo.png" alt="ECHO Logo">
-        </div>
-        <h2>ECHO v5</h2>
-        <nav>
-            <ul>
-                <li><a href="index.html">Introduction</a></li>
-                <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
-                <li><a href="01_hld_architecture.html">1. High-Level Design (HLD)</a></li>
-                <li><a href="02_deploiement.html">2. Déploiement & Infra</a></li>
-                <li><a href="03_echo_libs.html">3. Librairies Partagées (libs)</a></li>
-                <li><a href="04_hud_ui.html">4. Écosystème HUD & UI</a></li>
-                <li><a href="05_filtre.html">5. Le Filtre (Conscience)</a></li>
-                <li><a href="06_pipe.html">6. Le Pipe (Cortex)</a></li>
-                <li><a href="07_arsenal_outils.html">7. L'Arsenal des Outils</a>
-                    <ul class="sub-nav">
-                        <li><a href="07a_web_intelligence.html">7a. Web Intelligence</a></li>
-                        <li><a href="07b_vault_explorer.html">7b. Vault & Data Explorer</a></li>
-                        <li><a href="07c_memory_cognition.html" class="active">7c. Mémoire & Cognition</a></li>
-                        <li><a href="07d_execution_monitoring.html">7d. Exécution & Pilotage</a></li>
-                    </ul>
-                </li>
-                <li><a href="08_system_prompt.html">8. Le Kernel (System Prompt)</a></li>
-                <li><a href="09_admin_manager.html">9. Admin Manager</a></li>
-                <li><a href="10_annexes.html">10. Annexes Techniques</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
         <h1>7c. Cognition Profonde & Mémoire Organique</h1>
+
+        <div class="didactic-box">
+            <h4>💡 Le Concept en 1 minute</h4>
+            <p>ECHO possède deux cerveaux. Le premier est **Réactif** (le Cortex) : il décide instantanément s'il a besoin d'être "très intelligent" (modèle Pro) ou "très rapide" (modèle Flash). Le second est son **Registre** (la Mémoire Organique) : c'est un carnet de notes numérique où il range vos préférences et les faits importants pour ne jamais les oublier, même dans une nouvelle discussion.</p>
+        </div>
+
         <p>L'intelligence d'ECHO v5 repose sur une dualité fondamentale : le <strong>Cortex Réactif</strong> (Le Pipe) et le <strong>Registre Cognitif Persistant</strong> (La Mémoire). Cette architecture garantit une puissance de calcul maximale tout en préservant une cohérence historique absolue.</p>
 
         <h2>1. Architecture de la Cascade Cognitive (Le Cortex)</h2>
@@ -122,6 +100,17 @@
         <h2>3. Interaction Cortex / Registre</h2>
         <p>L'IA utilise l'outil <code>memory_organic_tool.py</code> pour interroger son registre. Cela permet de décider *quand* elle a besoin de contexte historique, évitant ainsi le "bruit" dans la fenêtre de contexte actuelle.</p>
 
+        <div class="card">
+            <h4>Action UI : Purge Granulaire</h4>
+            <p>Pour une gouvernance totale, l'utilisateur peut déclencher manuellement l'action <strong>ECHO Memory Purge</strong>. Elle permet de visualiser les catégories de souvenirs (tags), leur importance, et de procéder à un oubli sélectif sécurisé (Dry Run).</p>
+            <a href="07e_actions_ui.html#memory-purge" class="btn">🧠 Gérer la Purge Mémoire</a>
+        </div>
+
+        <div class="audit-note">
+            <h4>✅ Audit de Vérité (Mémoire)</h4>
+            <p>La logique de mémorisation vectorielle et le cycle de vie (TTL) ont été vérifiés dans <code>conversation_memory_filter.py</code> et <code>memory_organic_tool.py</code>. L'action de purge granulaire dans <code>purge_memory_action.py</code> utilise un filtrage Qdrant strict sur les tags sélectionnés, garantissant qu'aucune donnée collatérale n'est effacée.</p>
+        </div>
+
         <div class="audit-note">
             <h4>Spécifications Qdrant</h4>
             <ul>
@@ -135,5 +124,6 @@
             ECHO Framework v5.102.0 - "Sovereign Intelligence & Memory Governance" - Copyright © 2026 Wilfried BARNAVON
         </footer>
     </main>
+<script src="nav.js"></script>
 </body>
 </html>

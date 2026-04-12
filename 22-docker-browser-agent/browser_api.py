@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 8.9 (ORJSON & PYBASE64)
+VERSION : 9.0 (TURBO JSON)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-03-26
+DATE MAJ : 2026-04-10
 
+CHANGELOG 9.0 :
+- PERF: Allègement du payload JSON (suppression des coordonnées x/y dans le DOM Map).
 CHANGELOG 8.9 :
 - PERF: Migration to orjson and pybase64 with explicit decoding.
 CHANGELOG 8.8 :
@@ -71,8 +73,7 @@ HIGHLIGHT_JS = """
             if (rect.width > 0 && rect.height > 0) {
                 let text = (el.innerText || el.ariaLabel || el.placeholder || "").trim().substring(0, 50);
                 elements.push({
-                    id: count, tag: el.tagName.toLowerCase(), text: text,
-                    x: Math.round(rect.left), y: Math.round(rect.top)
+                    id: count, tag: el.tagName.toLowerCase(), text: text
                 });
                 let marker = document.createElement('div');
                 marker.className = 'echo-marker';

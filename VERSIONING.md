@@ -50,6 +50,140 @@ Chaque composant possède son propre cycle de vie et sa propre numérotation, do
 
 Pour garantir la cohérence, chaque Release de la Stack (`5.Y.Z`) est définie par un snapshot précis des versions de composants.
 
+**Exemple pour la 5.115.1 (UI TTL Integration) :**
+
+{
+  "stack_version": "5.115.1",
+  "release_date": "2026-04-12",
+  "description": "Amélioration UX et Souveraineté : Ajout de 5 champs de configuration dans le Dashboard de l'Admin Manager permettant à l'administrateur de définir librement les durées de rétention (en jours) pour chaque niveau d'importance (Trivial à Axiome) de la mémoire organique.",
+  "components": {
+    "server.py": "5.51"
+  }
+}
+
+**Exemple pour la 5.115.0 (Centralized Organic Decay) :**
+
+{
+  "stack_version": "5.115.0",
+  "release_date": "2026-04-12",
+  "description": "Optimisation des performances : Centralisation de la logique de vieillissement (TTL Decay) de la mémoire organique dans la tâche de fond de l'Admin Manager. Allège significativement le temps de réponse du filtre lors des conversations.",
+  "components": {
+    "server.py": "5.50",
+    "conversation_memory_filter": "2.2"
+  }
+}
+
+**Exemple pour la 5.116.3 (Advanced Memory Sorting) :**
+
+{
+  "stack_version": "5.116.3",
+  "release_date": "2026-04-12",
+  "description": "Amélioration majeure de l'ergonomie de purge : Les catégories (tags) sont désormais agrégées avec leur niveau d'importance et leur fréquence. Le tri hiérarchique (Importance ASC, Liaisons DESC, Alpha ASC) permet d'identifier et de purger prioritairement les souvenirs les plus futiles ou les plus encombrants.",
+  "components": {
+    "purge_memory_action": "2.7"
+  }
+}
+
+**Exemple pour la 5.116.2 (Smart Range Selection) :**
+
+{
+  "stack_version": "5.116.2",
+  "release_date": "2026-04-12",
+  "description": "Amélioration de l'ergonomie de l'action de purge : Le parseur de sélection supporte désormais les plages de numéros (ex: 1-5, 8, 17-20), facilitant grandement la gestion de gros volumes de catégories mémorielles.",
+  "components": {
+    "purge_memory_action": "2.6"
+  }
+}
+
+**Exemple pour la 5.116.1 (Semantic TTL Labels) :**
+
+{
+  "stack_version": "5.116.1",
+  "release_date": "2026-04-12",
+  "description": "Amélioration UX du Dashboard Admin : Ajout de libellés sémantiques explicites (Trivial, Mineur, Utile, Majeur, Axiome) au-dessus des champs de configuration TTL pour faciliter la gestion des durées de rétention mémorielle.",
+  "components": {
+    "server.py": "5.52"
+  }
+}
+
+**Exemple pour la 5.116.0 (Discriminant Memory Tags) :**
+
+{
+  "stack_version": "5.116.0",
+  "release_date": "2026-04-12",
+  "description": "Amélioration de la fiabilité mémorielle : Refonte du prompt de distillation pour forcer la génération de Tags discriminants et interdire les termes génériques. Cette modification garantit l'efficacité du 'Droit à l'oubli' en évitant les collisions sémantiques lors des purges par catégorie.",
+  "components": {
+    "conversation_memory_filter": "2.3"
+  }
+}
+
+**Exemple pour la 5.115.2 (Memory Purge Dry Run) :**
+
+{
+  "stack_version": "5.115.2",
+  "release_date": "2026-04-12",
+  "description": "Amélioration de la purge mémoire : Retour à la sélection par Tags (plus ergonomique que les Slugs) couplée à un mécanisme de 'Dry Run' (prévisualisation). L'utilisateur voit désormais la liste exacte des sujets (slugs) qui seront impactés *avant* de valider la suppression définitive, évitant ainsi les dommages collatéraux.",
+  "components": {
+    "purge_memory_action": "2.5"
+  }
+}
+
+**Exemple pour la 5.114.2 (Surgical Memory Purge) :**
+
+{
+  "stack_version": "5.114.2",
+  "release_date": "2026-04-12",
+  "description": "Sécurisation critique de la purge mémoire : Bascule du ciblage par 'Tags' (trop génériques) vers les 'Slugs' (sujets précis) pour éviter les suppressions accidentelles massives. Amélioration de la sélection de périmètre via un choix numérique explicite.",
+  "components": {
+    "purge_memory_action": "2.4"
+  }
+}
+
+**Exemple pour la 5.114.1 (Maintenance Logs & Action UX Fix) :**
+
+{
+  "stack_version": "5.114.1",
+  "release_date": "2026-04-12",
+  "description": "Correctifs critiques et améliorations UX : Restauration des constantes Qdrant dans l'Admin Manager, ajout d'un bouton 'Logs' explicite pour l'historique de maintenance, correction de l'affichage multiligne de la liste des tags dans l'action de purge et mise à jour de l'icône de l'action.",
+  "components": {
+    "server.py": "5.41",
+    "purge_memory_action": "2.3"
+  }
+}
+
+**Exemple pour la 5.113.1 (Memory Purge UX Enhancement) :**
+
+{
+  "stack_version": "5.113.1",
+  "release_date": "2026-04-12",
+  "description": "Optimisation UX de la purge mémoire : Sélection simplifiée par numéros (simulant des cases à cocher) avec affichage direct des tags identifiés dans la boîte de dialogue pour une sélection facilitée.",
+  "components": {
+    "purge_memory_action": "2.2"
+  }
+}
+
+**Exemple pour la 5.112.0 (Granular Memory Governance) :**
+
+{
+  "stack_version": "5.112.0",
+  "release_date": "2026-04-12",
+  "description": "Amélioration majeure du 'Droit à l'oubli' : L'action de purge mémoire permet désormais une sélection granulaire par Tags (sujets) et par périmètre (conversation actuelle vs mémoire globale).",
+  "components": {
+    "purge_memory_action": "2.0"
+  }
+}
+
+**Exemple pour la 5.111.0 (Organic Memory Sync & Audit History) :**
+
+{
+  "stack_version": "5.111.0",
+  "release_date": "2026-04-12",
+  "description": "Amélioration de la gouvernance des données : L'Admin Manager synchronise désormais automatiquement la base vectorielle Qdrant lors de l'élagage sémantique pour supprimer les souvenirs orphelins (utilisateurs ou chats supprimés). Ajout d'un historique d'audit persistant (rétention 1 an) consultable depuis le Dashboard.",
+  "components": {
+    "server.py": "5.40"
+  }
+}
+
 **Exemple pour la 5.107.0 (ECHO WebPlayer v6.1 - Light Visualization) :**
 
 {

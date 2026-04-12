@@ -1,8 +1,8 @@
 """
 title: ECHO File Content Explorer
 author: Wilfried BARNAVON
-version: 5.105.1
-description: 5.105.1: Fix retour contexte (string pure) pour show_image_to_user et optimisation read_multimedia_file.
+version: 5.106.0
+description: 5.106.0: Standardisation globale des retours (wrap_tool_output) et stabilisation du viewer d'images.
 """
 
 import os
@@ -195,14 +195,14 @@ class Tools:
                          r.raise_for_status()
 
                 response = EchoRichUI.image_viewer(target_data=target, is_url=True, title=f"Remote : {target[:30]}...")
-                return response, f"L'image distante est affichée. L'utilisateur peut utiliser la Loupe ou le Sélecteur."
+                return response, wrap_tool_output(text=f"L'image distante est affichée. L'utilisateur peut utiliser la Loupe ou le Sélecteur.")
             else:
                 fpath = resolve_upload_file_path(uid, target, self.uploads_dir)
                 if not fpath: return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"})
                 mime, _ = mimetypes.guess_type(fpath)
                 with open(fpath, 'rb') as f: b64 = base64.b64encode(f.read()).decode('utf-8')
                 response = EchoRichUI.image_viewer(target_data=b64, is_url=False, mime=mime or "image/png", title=f"Vault : {os.path.basename(fpath)}")
-                return response, f"L'image locale '{os.path.basename(fpath)}' est affichée dans le viewer Premium."
+                return response, wrap_tool_output(text=f"L'image locale '{os.path.basename(fpath)}' est affichée dans le viewer Premium.")
         except Exception as e:
             return wrap_tool_output(text=f"❌ Échec affichage : {str(e)}", status={"status": "error"})
 
@@ -268,4 +268,4 @@ class Tools:
             if p:
                 with open(p, 'rb') as f: h = hashlib.sha256(f.read()).hexdigest()
                 res.append(f"{os.path.basename(p)}: {h}")
-        return "\n".join(res)
+        return wrap_tool_output(text="\n".join(res), status={"status": "success"})

@@ -1,8 +1,8 @@
 """
 title: ECHO Cognitive Core
 author: ECHO Framework
-version: 3.50
-description: 3.50: Délégation Cognitive Dynamique (Fusion Pro/Flash/Lite avec System Instructions).
+version: 3.51
+description: 3.51: Standardisation du retour (wrap_tool_output) pour prévenir les boucles LLM.
 """
 
 import sys
@@ -138,4 +138,4 @@ class Tools:
         )
         
         await events.status(f"Délégation terminée ({target_model}).", done=True)
-        return res
+        return wrap_tool_output(text=res)

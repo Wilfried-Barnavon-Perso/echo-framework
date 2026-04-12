@@ -6,38 +6,16 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <aside class="sidebar">
-        <div class="logo-container">
-            <img src="logo-echo.png" alt="ECHO Logo">
-        </div>
-        <h2>ECHO v5</h2>
-                                <nav>
-            <ul>
-                <li><a href="index.html">Introduction</a></li>
-                <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
-                <li><a href="01_hld_architecture.html">1. High-Level Design (HLD)</a></li>
-                <li><a href="02_deploiement.html">2. Déploiement & Infra</a></li>
-                <li><a href="03_echo_libs.html">3. Librairies Partagées (libs)</a></li>
-                <li><a href="04_hud_ui.html">4. Écosystème HUD & UI</a></li>
-                <li><a href="05_filtre.html">5. Le Filtre (Conscience)</a></li>
-                <li><a href="06_pipe.html">6. Le Pipe (Cortex)</a></li>
-                <li><a href="07_arsenal_outils.html">7. L'Arsenal des Outils</a>
-                    <ul class="sub-nav">
-                        <li><a href="07a_web_intelligence.html" class="active">7a. Web Intelligence</a></li>
-                        <li><a href="07b_vault_explorer.html">7b. Vault & Data Explorer</a></li>
-                        <li><a href="07c_memory_cognition.html">7c. Mémoire & Cognition</a></li>
-                        <li><a href="07d_execution_monitoring.html">7d. Exécution & Pilotage</a></li>
-                    </ul>
-                </li>
-                <li><a href="08_system_prompt.html">8. Le Kernel (System Prompt)</a></li>
-                <li><a href="09_admin_manager.html">9. Admin Manager</a></li>
-                <li><a href="10_annexes.html">10. Annexes Techniques</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
         <h1>7a. Web Intelligence : Navigation & Recherche Souveraine</h1>
+
+        <div class="didactic-box">
+            <h4>💡 Le Concept en 1 minute</h4>
+            <p>ECHO ne se contente pas de "lire" internet. Il possède un <strong>Navigateur Fantôme</strong> (Chromium) qu'il pilote comme un humain. Il peut cliquer, scroller, et même "voir" la page grâce à des captures d'écran. La <strong>Recherche Souveraine</strong> signifie qu'il interroge des moteurs de recherche (SearxNG) qui protègent votre anonymat : personne ne sait ce que vous cherchez, pas même Google.</p>
+        </div>
+
         <p>Le module Web Intelligence permet à ECHO d'interagir avec le Web de manière humaine, via une instance Chromium pilotée, un retour visuel en temps réel (HUD), et d'effectuer des recherches sémantiques profondes sans traceur (tracker).</p>
 
         <h2>Architecture du Moteur (<code>navigation_engine_tool.py</code>)</h2>
@@ -74,22 +52,13 @@
         <h3>Mémoire Visuelle & Proof Protocol</h3>
         <p>À chaque interaction réussie, le moteur capture une frame (PNG) et la scelle dans le Vault. La fonction <code>get_browser_frames_history</code> permet au modèle de consulter les IDs des étapes passées pour reconstruire une chronologie visuelle.</p>
 
-        <h2>Le Replay Visuel (<code>web_navigation_replay_action.py</code>)</h2>
-        <p>Il s'agit d'une interface HUD avancée (Cockpit JS) injectée côté client, permettant à l'utilisateur de "rejouer" la navigation de l'IA.</p>
+        <h2>Le Replay Visuel (HUD Cockpit)</h2>
+        <p>ECHO permet de "rejouer" intégralement une session de navigation via une interface HUD dédiée. Cette action permet d'auditer les décisions visuelles de l'IA, d'extraire des preuves ou de corriger un parcours.</p>
         
-        <div class="info-block">
-            <h4>Fonctionnalités du Replay HUD</h4>
-            <ul>
-                <li><strong>Chronologie Atomique</strong> : Navigation image par image avec lecture automatique (Play/Reverse).</li>
-                <li><strong>Outils Forensiques</strong> :
-                    <ul>
-                        <li>🔍 <strong>Loupe</strong> : Inspection de détails (coordonnées calculées sur le binaire).</li>
-                        <li>⛶ <strong>Crop dynamique</strong> : Sélection d'une zone d'intérêt pour extraction.</li>
-                        <li>❐ <strong>Copie Contextuelle</strong> : Export immédiat vers le presse-papier.</li>
-                    </ul>
-                </li>
-                <li><strong>Souveraineté des Données</strong> : Le Replay puise directement dans le Vault utilisateur (<code>/app/backend/echo_users/{uid}/files/</code>).</li>
-            </ul>
+        <div class="card">
+            <h4>Accès au Cockpit de Navigation</h4>
+            <p>Le Replay offre des outils avancés : Chronologie atomique, Zoom haute fidélité (v3.6), Crop dynamique et Export sécurisé (Fallback CORS).</p>
+            <a href="07e_actions_ui.html#web-replay" class="btn">👁️ Ouvrir la Documentation du Replay</a>
         </div>
 
         <h2>Spécifications du DOM Map</h2>
@@ -149,5 +118,6 @@
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     </main>
+<script src="nav.js"></script>
 </body>
 </html>

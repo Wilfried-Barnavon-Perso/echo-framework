@@ -2,14 +2,32 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.25 (Syntax Fix)
+VERSION : 5.52 (Semantic TTL Labels)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-04-02
+DATE MAJ : 2026-04-12
 
 --- DESCRIPTION ARCHITECTURALE ---
 Ce micro-service assure la régulation et le monitoring du framework ECHO.
 Architecture ECHO-Native avec distinction entre stockage et sessions.
 
+--- CHANGELOG 5.52 ---
+- UX : Ajout de labels sémantiques explicites (Trivial, Mineur, Utile, Majeur, Axiome) au-dessus des champs de rétention TTL pour une meilleure lisibilité administrative.
+--- CHANGELOG 5.51 ---
+- UX : Ajout de champs de configuration dans le Dashboard pour personnaliser les durées de rétention (TTL) des mémoires organiques (Niveaux 1 à 5).
+--- CHANGELOG 5.50 ---
+- Optimisation : Centralisation du processus d'oubli naturel (TTL Decay) de la mémoire organique dans l'Admin Manager pour alléger le traitement temps-réel du filtre conversationnel.
+--- CHANGELOG 5.41 ---
+- Correctif : Restauration des constantes QDRANT_URL et COLLECTION_MEMORY.
+- UX : Ajout du label "Logs" sur le bouton d'historique de maintenance.
+--- CHANGELOG 5.40 ---
+- Ajout : Synchronisation automatique de la mémoire organique (Qdrant) pour éliminer les souvenirs orphelins (utilisateurs ou chats supprimés).
+- Ajout : Historique d'audit persistant (1 an de rétention) affichable directement depuis l'interface UI.
+--- CHANGELOG 5.30 ---
+- Correction : Fallback robuste pour la copie du mot de passe Admin (support HTTP/Non-Secure).
+- Ajout : Route API /api/backups pour le rafraîchissement dynamique.
+- Ajout : Route /download/<filename> pour la récupération des sauvegardes.
+- Sécurité : Vérification d'existence du fichier avant restauration destructive.
+- Harmonisation : Usage strict de OWUI_ADMIN_SECRET_PATH.
 --- CHANGELOG 5.25 ---
 - Correction : Suppression définitive du décorateur @app.after_request orphelin (ligne 78).
 --- CHANGELOG 5.24 ---
@@ -86,6 +104,9 @@ UPLOADS_DIR = os.path.join(OWUI_DATA_ROOT, "uploads")
 WEBUI_DB_PATH = os.path.join(OWUI_DATA_ROOT, "webui.db")
 OWUI_ADMIN_SECRET_PATH = "/app/secrets/.owui-admin-secret"
 
+QDRANT_URL = "http://echo-qdrant:6333"
+COLLECTION_MEMORY = "echo_memory"
+
 DIRS = {
     "uploads": UPLOADS_DIR,
     "echo_vault": ECHO_USERS_ROOT,
@@ -99,7 +120,8 @@ DEFAULT_BACKUP_CONFIG = {
 
 DEFAULT_MAINT_CONFIG = {
     "cleanup_hour": "03:00", "last_run": "Never",
-    "retention": { "uploads_days": 1095, "vault_days": 1095 }
+    "retention": { "uploads_days": 1095, "vault_days": 1095 },
+    "memory_ttl": { "lvl1": 30, "lvl2": 60, "lvl3": 180, "lvl4": 365, "lvl5": 540 }
 }
 
 # ==============================================================================
@@ -171,24 +193,116 @@ def save_maint_config(c):
             json.dump(c, f, indent=4)
     except: pass
 
+MAINT_HISTORY_FILE = os.path.join(OWUI_DATA_ROOT, "maintenance_history.json")
+
+def load_maint_history():
+    if os.path.exists(MAINT_HISTORY_FILE):
+        try:
+            with open(MAINT_HISTORY_FILE, 'r') as f: return json.load(f)
+        except: pass
+    return []
+
+def save_maint_report(report_str):
+    history = load_maint_history()
+    new_entry = {
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "report": report_str
+    }
+    history.insert(0, new_entry)
+    
+    # Auto-purge de l'historique (Rétention 1 an / 365 entrées max)
+    cutoff = time.time() - (365 * 86400)
+    history = [h for h in history if time.mktime(time.strptime(h["timestamp"], "%Y-%m-%d %H:%M:%S")) > cutoff]
+    
+    try:
+        with open(MAINT_HISTORY_FILE, 'w') as f: json.dump(history[:500], f, indent=4)
+    except: pass
+
 def run_semantic_pruning():
-    """Élagage organique (v5.23)."""
-    print(f"🧬 [ECHO-LIFECYCLE] Démarrage...")
+    """Élagage organique (v5.51 + Qdrant Sync & TTL)."""
+    print("🧬 [ECHO-LIFECYCLE] Démarrage...")
     report = []
     config = load_maint_config()
     
-    # 1. Orphelins
+    # 1. Orphelins (Dossiers Utilisateurs et Mémoire Qdrant)
     orphans = 0
+    qdrant_synced = False
     if os.path.exists(ECHO_USERS_ROOT):
         try:
             conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True)
             valid_ids = {row[0] for row in conn.execute("SELECT id FROM user").fetchall()}
             conn.close()
+            
+            # --- A. Purge des dossiers du Vault ---
             for folder in os.listdir(ECHO_USERS_ROOT):
                 if folder not in valid_ids and len(folder) > 30:
-                    shutil.rmtree(os.path.join(ECHO_USERS_ROOT, folder)); orphans += 1
-        except: pass
-    report.append(f"Orphelins: {orphans}")
+                    shutil.rmtree(os.path.join(ECHO_USERS_ROOT, folder))
+                    orphans += 1
+            
+            # --- B. Garbage Collection & Oubli Organique (Qdrant) ---
+            if HAS_HTTPX and valid_ids:
+                try:
+                    # Test de disponibilité Qdrant
+                    r = httpx.get(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}", timeout=5)
+                    if r.status_code == 200:
+                        # 1) Utilisateurs orphelins
+                        httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", 
+                                   json={"filter": {"must_not": [{"key": "user_id", "match": {"any": list(valid_ids)}}]}}, 
+                                   timeout=30)
+                        
+                        # 2) Chats orphelins & TTL
+                        now = int(time.time())
+                        ttl_cfg = config.get("memory_ttl", DEFAULT_MAINT_CONFIG["memory_ttl"])
+                        ttl_map = {
+                            1: int(ttl_cfg.get("lvl1", 30)) * 86400,
+                            2: int(ttl_cfg.get("lvl2", 60)) * 86400,
+                            3: int(ttl_cfg.get("lvl3", 180)) * 86400,
+                            4: int(ttl_cfg.get("lvl4", 365)) * 86400,
+                            5: int(ttl_cfg.get("lvl5", 540)) * 86400
+                        }
+                        
+                        for uid in valid_ids:
+                            str_uid = str(uid)
+                            # Purge Chats
+                            user_chats_dir = os.path.join(ECHO_USERS_ROOT, str_uid, "chats")
+                            valid_chats = []
+                            if os.path.exists(user_chats_dir):
+                                valid_chats = [f.replace('.db', '') for f in os.listdir(user_chats_dir) if f.endswith('.db')]
+                            
+                            if not valid_chats:
+                                payload = {"filter": {"must": [{"key": "user_id", "match": {"value": str_uid}}]}}
+                            else:
+                                payload = {
+                                    "filter": {
+                                        "must": [{"key": "user_id", "match": {"value": str_uid}}],
+                                        "must_not": [{"key": "chat_id", "match": {"any": valid_chats}}]
+                                    }
+                                }
+                            httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", json=payload, timeout=30)
+                            
+                            # Decay TTL
+                            for level, seconds in ttl_map.items():
+                                decay_payload = {
+                                    "filter": {
+                                        "must": [
+                                            {"key": "user_id", "match": {"value": str_uid}},
+                                            {"key": "importance", "match": {"value": level}},
+                                            {"key": "timestamp", "range": {"lt": now - seconds}}
+                                        ]
+                                    }
+                                }
+                                httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", json=decay_payload, timeout=30)
+                        
+                        qdrant_synced = True
+                except Exception as e:
+                    print(f"[ECHO-LIFECYCLE] ❌ Erreur Qdrant : {e}")
+        except Exception as e:
+            print(f"[ECHO-LIFECYCLE] ❌ Erreur DB/Vault : {e}")
+        
+    report_str = f"Orphelins: {orphans}"
+    if qdrant_synced:
+        report_str += " | Qdrant: Synchro (Chats/Users/TTL Decay)"
+    report.append(report_str)
 
     # 2. Atrophie
     rem_u = prune_recursive(UPLOADS_DIR, config["retention"]["uploads_days"])
@@ -202,13 +316,16 @@ def run_semantic_pruning():
             if f.endswith('.db'):
                 try:
                     with sqlite3.connect(os.path.join(root, f), timeout=10.0) as db:
-                        db.execute("VACUUM;"); vax += 1
+                        db.execute("VACUUM;")
+                        vax += 1
                 except: pass
     report.append(f"Optimisés: {vax}")
 
+    final_report = " | ".join(report)
     config["last_run"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     save_maint_config(config)
-    return " | ".join(report)
+    save_maint_report(final_report)
+    return final_report
 
 def setup_lifecycle_scheduler():
     if not HAS_MAINT_SCHEDULER: return
@@ -316,7 +433,13 @@ def index():
     return render_template_string(HTML_DASHBOARD, settings=load_settings(), 
                                 storage_stats=stats, maint=load_maint_config(),
                                 version=get_echo_version(), user=session.get('username'),
-                                backups=get_backup_list(), server_time_iso=datetime.datetime.now().isoformat())
+                                backups=get_backup_list(), history=load_maint_history(),
+                                server_time_iso=datetime.datetime.now().isoformat())
+
+@app.route('/api/maint/history')
+def maint_history():
+    if not session.get('logged_in'): return jsonify([]), 403
+    return jsonify(load_maint_history())
 
 @app.route('/', methods=['POST'])
 def login():
@@ -349,8 +472,23 @@ def user_stats():
 def admin_password():
     if not session.get('logged_in'): return jsonify({}), 403
     try:
-        with open(os.path.join("/app/secrets", ".owui-admin-secret"), 'r') as f: return jsonify({"password": f.read().strip()})
-    except: return jsonify({"password": "N/A"})
+        if os.path.exists(OWUI_ADMIN_SECRET_PATH):
+            with open(OWUI_ADMIN_SECRET_PATH, 'r') as f: return jsonify({"password": f.read().strip()})
+    except: pass
+    return jsonify({"password": "N/A"})
+
+@app.route('/api/backups')
+def api_backups():
+    if not session.get('logged_in'): return jsonify([]), 403
+    return jsonify(get_backup_list())
+
+@app.route('/download/<filename>')
+def download_backup(filename):
+    if not session.get('logged_in'): return redirect(url_for('index'))
+    path = os.path.join(BACKUP_DIR, secure_filename(filename))
+    if os.path.exists(path): return send_file(path, as_attachment=True)
+    flash('Fichier introuvable.', 'danger')
+    return redirect(url_for('index'))
 
 @app.route('/api/stats')
 def sys_stats():
@@ -386,8 +524,11 @@ def handle_action(action):
     elif action == 'restore':
         f = request.form.get('filename')
         if f and DOCKER_AVAILABLE:
+            p = os.path.join(BACKUP_DIR, secure_filename(f))
+            if not os.path.exists(p):
+                flash('Erreur: Fichier de sauvegarde introuvable.', 'danger')
+                return redirect(url_for('index'))
             try:
-                p = os.path.join(BACKUP_DIR, secure_filename(f))
                 client = docker.from_env(); target = client.containers.get(TARGET_CONTAINER)
                 target.stop(); subprocess.run(f"rm -rf {OWUI_DATA_ROOT}/*", shell=True)
                 subprocess.run(['tar', '-xzf', p, '-C', OWUI_DATA_ROOT], check=True); target.start()
@@ -421,7 +562,15 @@ def update_maint():
     c["cleanup_hour"] = request.form.get("cleanup_hour", "03:00")
     c["retention"]["uploads_days"] = int(request.form.get("ret_uploads", 1095))
     c["retention"]["vault_days"] = int(request.form.get("ret_vault", 1095))
-    save_maint_config(c); setup_lifecycle_scheduler(); flash('Cycle de vie mis à jour.', 'success')
+    
+    if "memory_ttl" not in c: c["memory_ttl"] = {}
+    c["memory_ttl"]["lvl1"] = int(request.form.get("ttl_lvl1", 30))
+    c["memory_ttl"]["lvl2"] = int(request.form.get("ttl_lvl2", 60))
+    c["memory_ttl"]["lvl3"] = int(request.form.get("ttl_lvl3", 180))
+    c["memory_ttl"]["lvl4"] = int(request.form.get("ttl_lvl4", 365))
+    c["memory_ttl"]["lvl5"] = int(request.form.get("ttl_lvl5", 540))
+
+    save_maint_config(c); setup_lifecycle_scheduler(); flash('Cycle de vie et Mémoire mis à jour.', 'success')
     return redirect(url_for('index'))
 
 @app.route('/action/security/passwd', methods=['POST'])
@@ -461,14 +610,40 @@ HTML_DASHBOARD = """
                 <div class="card"><div class="card-header d-flex justify-content-between align-items-center"><span><i class="bi bi-hdd-network"></i> Sauvegardes</span><div class="btn-group"><button class="btn btn-sm btn-outline-secondary" onclick="refreshBackups()"><i class="bi bi-arrow-repeat"></i></button><form action="/action/backup" method="post" onsubmit="showLoader()"><button class="btn btn-sm btn-success">+</button></form></div></div><div class="p-0"><table class="table table-sm mb-0"><thead><tr><th class="ps-3">Fichier</th><th>Date</th><th>Taille</th><th class="text-end pe-3">Action</th></tr></thead><tbody id="backup-rows"></tbody></table></div></div>
             </div>
             <div class="col-lg-5">
-                <div class="card mb-4 border-info"><div class="card-header text-info"><i class="bi bi-scissors"></i> Élagage & Cycle de Vie</div><div class="card-body small">
+                <div class="card mb-4 border-info"><div class="card-header text-info"><i class="bi bi-scissors"></i> Élagage & Cycle de Vie (Jours)</div><div class="card-body small">
                     <form action="/settings/maintenance" method="post" class="mb-3">
-                        <div class="row g-2 mb-2"><div class="col-6"><label class="x-small">Uploads (j)</label><input type="number" name="ret_uploads" class="form-control form-control-sm" value="{{maint.retention.uploads_days}}"></div><div class="col-6"><label class="x-small">Vault (j)</label><input type="number" name="ret_vault" class="form-control form-control-sm" value="{{maint.retention.vault_days}}"></div></div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6"><label class="x-small">Uploads</label><input type="number" name="ret_uploads" class="form-control form-control-sm" value="{{maint.retention.uploads_days}}"></div>
+                            <div class="col-6"><label class="x-small">Vault</label><input type="number" name="ret_vault" class="form-control form-control-sm" value="{{maint.retention.vault_days}}"></div>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-12"><label class="x-small text-muted">Durée de conservation de la mémoire (TTL par niveau) :</label></div>
+                            <div class="col text-center"><label class="x-small text-secondary mb-1">Trivial</label><input type="number" name="ttl_lvl1" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl1}}" title="Lv1 (Trivial)"></div>
+                            <div class="col text-center"><label class="x-small text-secondary mb-1">Mineur</label><input type="number" name="ttl_lvl2" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl2}}" title="Lv2"></div>
+                            <div class="col text-center"><label class="x-small text-secondary mb-1">Utile</label><input type="number" name="ttl_lvl3" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl3}}" title="Lv3"></div>
+                            <div class="col text-center"><label class="x-small text-secondary mb-1">Majeur</label><input type="number" name="ttl_lvl4" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl4}}" title="Lv4"></div>
+                            <div class="col text-center"><label class="x-small text-secondary mb-1">Axiome</label><input type="number" name="ttl_lvl5" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl5}}" title="Lv5 (Axiome/Critique)"></div>
+                        </div>
                         <label class="x-small">Heure d'élagage automatique</label><input type="time" name="cleanup_hour" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}">
                         <button class="btn btn-sm btn-info w-100">Programmer le Cycle</button>
                     </form>
                     <hr><p>Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p>
-                    <form action="/action/pruning" method="post" onsubmit="showLoader('Élagage profond...')"><button class="btn btn-outline-info btn-sm w-100">Lancer l'Élagage Immédiat</button></form>
+                    <div class="d-flex gap-2">
+                        <form action="/action/pruning" method="post" onsubmit="showLoader('Élagage profond...')" class="flex-grow-1"><button class="btn btn-outline-info btn-sm w-100">Lancer l'Élagage</button></form>
+                        <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#historyLog"><i class="bi bi-journal-text"></i> Logs</button>
+                    </div>
+                    <div class="collapse mt-3" id="historyLog">
+                        <div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;">
+                            <h6 class="x-small text-uppercase text-muted border-bottom border-secondary pb-1">Historique 1 an</h6>
+                            {% for entry in history %}
+                            <div class="mb-2 pb-1 border-bottom border-secondary last-child-border-0">
+                                <span class="x-small text-info">{{ entry.timestamp }}</span><br>
+                                <span style="font-size: 0.75rem;">{{ entry.report }}</span>
+                            </div>
+                            {% endfor %}
+                            {% if not history %}<span class="x-small text-muted">Aucun log disponible.</span>{% endif %}
+                        </div>
+                    </div>
                 </div></div>
                 <div class="card mb-4 border-warning"><div class="card-header text-warning"><i class="bi bi-shield-lock"></i> Sécurité & Backups Auto</div><div class="card-body small">
                     <form action="/settings" method="post" class="mb-3">
@@ -500,8 +675,28 @@ HTML_DASHBOARD = """
         async function refreshUsers(){const r=await fetch('/api/user_stats');const d=await r.json();document.getElementById('user-list').innerHTML=d.map(u=>`<tr><td class="ps-3">${u.name}</td><td>${u.email}</td><td class="text-center"><span class="badge bg-primary">${u.chat_count}</span></td></tr>`).join('')}
         async function refreshBackups(){const r=await fetch('/api/backups');const d=await r.json();document.getElementById('backup-rows').innerHTML=d.map(b=>`<tr><td class="ps-3 text-truncate" style="max-width:200px;">${b.name}</td><td>${b.date}</td><td><span class="badge bg-secondary">${b.size}</span></td><td class="text-end pe-3"><div class="btn-group"><a href="/download/${b.name}" class="btn btn-sm text-primary"><i class="bi bi-download"></i></a><form action="/action/restore" method="post" onsubmit="return confirm('RESTAURER ?')" class="d-inline"><input type="hidden" name="filename" value="${b.name}"><button class="btn btn-sm text-warning">↺</button></form><form action="/action/delete_backup" method="post" class="d-inline"><input type="hidden" name="filename" value="${b.name}"><button class="btn btn-sm text-danger">×</button></form></div></td></tr>`).join('')}
         async function refreshContainers(){const r=await fetch('/api/containers');const d=await r.json();document.getElementById('container-list').innerHTML=d.map(c=>`<li class="list-group-item bg-transparent small d-flex justify-content-between align-items-center"><span>${c.name}</span><div class="d-flex align-items-center gap-2"><span class="badge ${c.status.startsWith('Up')?'bg-success':'bg-danger'}">${c.status}</span><form action="/action/restart" method="post"><input type="hidden" name="container" value="${c.id}"><button class="btn btn-sm btn-link text-secondary p-0"><i class="bi bi-power"></i></button></form></div></li>`).join('')}
-        async function copyPwd(){const r=await fetch('/api/admin/password');const d=await r.json();navigator.clipboard.writeText(d.password);alert('Copié !')}
-        setInterval(async()=>{const r=await fetch('/api/stats');const d=await r.json();document.getElementById('cpu').innerText=d.cpu_percent;document.getElementById('cpu-bar').style.width=d.cpu_percent+'%';document.getElementById('cpu-details').innerText=`${d.cpu_count} cœurs | Load: ${d.cpu_load.join(', ')}`;document.getElementById('ram').innerText=d.ram_percent;document.getElementById('ram-bar').style.width=d.ram_percent+'%';document.getElementById('ram-text').innerText=d.ram_used+' / '+d.ram_total},3000);
+        async function copyPwd(){
+            try {
+                const r = await fetch('/api/admin/password');
+                const d = await r.json();
+                if (d.password === "N/A") { alert('Erreur : Mot de passe introuvable sur le serveur.'); return; }
+
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(d.password);
+                    alert('Copié dans le presse-papier !');
+                } else {
+                    let textArea = document.createElement("textarea");
+                    textArea.value = d.password;
+                    textArea.style.position = "fixed"; textArea.style.left = "-999999px"; textArea.style.top = "-999999px";
+                    document.body.appendChild(textArea); textArea.focus(); textArea.select();
+                    try { document.execCommand('copy'); alert('Copié ! (Méthode fallback)'); }
+                    catch (err) { alert('Erreur lors de la copie manuelle'); }
+                    document.body.removeChild(textArea);
+                }
+            } catch (e) { alert('Erreur réseau lors de la récupération du mot de passe.'); }
+        }
+        setInterval(async()=>{const r=await fetch('/api/stats');
+const d=await r.json();document.getElementById('cpu').innerText=d.cpu_percent;document.getElementById('cpu-bar').style.width=d.cpu_percent+'%';document.getElementById('cpu-details').innerText=`${d.cpu_count} cœurs | Load: ${d.cpu_load.join(', ')}`;document.getElementById('ram').innerText=d.ram_percent;document.getElementById('ram-bar').style.width=d.ram_percent+'%';document.getElementById('ram-text').innerText=d.ram_used+' / '+d.ram_total},3000);
         initClock();refreshUsers();refreshContainers();refreshBackups();
         var tList=[].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]')).map(function(el){return new bootstrap.Tooltip(el)})
     </script>

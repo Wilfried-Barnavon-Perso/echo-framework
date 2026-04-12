@@ -1,8 +1,8 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 3.1
-description: 3.1: Purge des métriques de facturation obsolètes (Focus exclusif sur la charge cognitive).
+version: 3.2
+description: 3.2: Alignement sur le standard de retour minimaliste (wrap_tool_output).
 """
 
 from pydantic import BaseModel, Field
@@ -103,4 +103,7 @@ class Tools:
             }
         }
             
-        return wrap_tool_output(text=json.dumps(payload, option=json.OPT_INDENT_2).decode('utf-8'), status={"status": "success", "load_percent": percent, "tokens": est_tokens})
+        return wrap_tool_output(
+            text=json.dumps(payload, option=json.OPT_INDENT_2).decode('utf-8'), 
+            status={"status": "success"}
+        )

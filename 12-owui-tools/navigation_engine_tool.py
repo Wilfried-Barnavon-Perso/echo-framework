@@ -10,11 +10,14 @@ from typing import Optional, Literal, Dict, Any, List
 
 """
 ================================================================================
-TOOL : ECHO NAVIGATION ENGINE (v7.2)
-VERSION : 7.2
+TOOL : ECHO NAVIGATION ENGINE (v7.3)
+VERSION : 7.3
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-04-09
+DATE MAJ : 2026-04-10
 
+CHANGELOG 7.3 :
+- FEAT: Ajout de 'analyse_html' pour l'extraction sémantique déléguée via LLM.
+- PERF: Allègement du DOM Map (suppression des coordonnées x/y).
 CHANGELOG 7.2 :
 - REFACTOR: Optimisation du flux de visualisation (Auto Mode) et suppression des dépendances de handover complexes.
 CHANGELOG 7.1 :
@@ -27,8 +30,8 @@ CHANGELOG 7.0 :
 
 # Import Lib Partagée (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoUI
-from echo_constants import ECHO_UPLOADS_DIR
+from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoUI, EchoGeminiClient, EchoAuth
+from echo_constants import ECHO_UPLOADS_DIR, MODEL_FLASH, MODEL_LITE, MODEL_PRO
 
 # --- FONCTIONS UTILITAIRES PRIVÉES ---
 
@@ -67,6 +70,7 @@ class Tools:
         BROWSER_MODE: Literal["mobile", "desktop"] = Field(default="mobile", description="Mode de navigation (Mobile = Tablette)")
         SHOW_BROWSER_HUD: bool = Field(default=True, description="Afficher le moniteur de navigation (HUD)")
         HUD_VISIBLE_SEC: int = Field(default=90, description="Durée de visibilité du moniteur (sec)")
+        ANALYSE_MODEL: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = Field(default="MODEL_FLASH", description="Modèle utilisé pour l'analyse sémantique du HTML")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -98,7 +102,7 @@ class Tools:
 
     async def web_browse_interact(
         self, 
-        action: Literal["click", "type", "hover", "press", "scroll", "read", "read_html", "refresh_map", "tab_new", "tab_switch", "tab_close"], 
+        action: Literal["click", "type", "hover", "press", "scroll", "read", "read_html", "analyse_html", "refresh_map", "tab_new", "tab_switch", "tab_close"], 
         selector: Optional[str] = None, 
         text: Optional[str] = None, 
         key: Optional[str] = "Enter",
@@ -112,8 +116,9 @@ class Tools:
     ) -> dict:
         """
         Exécute une action interactive spécifique sur la page web actuelle.
-        :param action: L'action à effectuer.
+        :param action: L'action à effectuer (read_html pour le code brut, analyse_html pour une extraction sémantique via LLM).
         :param index: ID numérique de l'élément cible (RECOMMANDÉ).
+        :param text: Texte à saisir ou instruction pour analyse_html.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = __metadata__.get("chat_id", "default_session")
@@ -130,7 +135,9 @@ class Tools:
             return wrap_tool_output(text=f"{report}\nCarte du DOM mise à jour : {len(res_view.get('metadata',[]))} éléments.", status=res_view)
 
         params = {"selector": selector, "text": text, "key": key, "direction": direction, "url": url, "index": index}
-        res_action = await _req(self.valves, "/action", {"session_id": chat_id, "action": action, "params": params}, uid)
+        # Routage interne : analyse_html utilise la fonction read_html du worker
+        worker_action = "read_html" if action == "analyse_html" else action
+        res_action = await _req(self.valves, "/action", {"session_id": chat_id, "action": worker_action, "params": params}, uid)
         
         report = ""
         if res_action.get("status") == "success":
@@ -150,6 +157,49 @@ class Tools:
             b64_html = res_action.pop("content", "")
             multiparts =[{"type": "media", "mime_type": "text/plain", "data": b64_html}]
             return wrap_tool_output(text="### Source HTML récupérée.", status=res_action, echo_tool_multiparts=multiparts)
+
+        if action == "analyse_html":
+            res_action.pop("screenshot_b64", None)
+            b64_html = res_action.pop("content", "")
+            
+            # --- ANALYSE SÉMANTIQUE DÉLÉGUÉE (v7.3) ---
+            await events.status(f"🧠 Analyse sémantique HTML ({u_valves.ANALYSE_MODEL})...")
+            try:
+                html_text = base64.b64decode(b64_html).decode('utf-8', errors='ignore')
+                auth = EchoAuth(user_id=uid)
+                api_keys = auth.get_api_keys(uid)
+                
+                if not api_keys:
+                    return wrap_tool_output(text="❌ Erreur: Aucune clé API Google Studio trouvée pour l'analyse.", status=res_action)
+
+                # Résolution du modèle
+                model_map = {"MODEL_LITE": MODEL_LITE, "MODEL_FLASH": MODEL_FLASH, "MODEL_PRO": MODEL_PRO}
+                target_model = model_map.get(u_valves.ANALYSE_MODEL, MODEL_FLASH)
+                
+                # Construction du prompt
+                instruction = text if text else "Analyse ce code HTML et extrais de manière structurée les informations principales, le texte lisible et les liens importants."
+                prompt = f"SOURCE HTML :\n{html_text[:100000]}\n\nINSTRUCTION :\n{instruction}"
+                
+                payload = {
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.3, "maxOutputTokens": 4096}
+                }
+                
+                data = await EchoGeminiClient.call(keys=api_keys, target_model=target_model, payload=payload, events=events)
+                
+                # Extraction de la réponse
+                analysis_res = "Analyse indisponible."
+                target = data.get("response", {}) if "response" in data else data
+                candidates = target.get("candidates", [])
+                if candidates and candidates[0].get("content"):
+                    analysis_res = "".join([p.get("text", "") for p in candidates[0]["content"].get("parts", [])])
+                
+                await events.status("✅ Analyse HTML terminée.", done=True)
+                return wrap_tool_output(text=f"### Analyse Sémantique de la Page ({u_valves.ANALYSE_MODEL})\n\n{analysis_res}", status=res_action)
+                
+            except Exception as e:
+                await events.status(f"❌ Erreur analyse: {str(e)}", done=True)
+                return wrap_tool_output(text=f"❌ Erreur lors de l'analyse sémantique : {str(e)}", status=res_action)
             
         res_action.pop("screenshot_b64", None)
         return wrap_tool_output(text=f"{report}\nAction {action} terminée avec succès.", status=res_action)

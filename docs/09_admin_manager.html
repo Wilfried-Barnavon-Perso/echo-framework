@@ -2,157 +2,46 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>ECHO v5 - 8. Admin Manager (Spécifications Techniques Approfondies)</title>
+    <title>ECHO v5 - 9. Admin Manager (Surveillance & Lifecycle)</title>
     <link rel="stylesheet" href="style.css">
-    <style>
-        .tech-box { background: #1a1a1a; border-left: 4px solid #007bff; padding: 15px; margin: 15px 0; font-family: 'Courier New', Courier, monospace; font-size: 0.9em; color: #e0e0e0; }
-        .function-name { color: #ffcc00; font-weight: bold; }
-        .parameter { color: #4db8ff; }
-        .logic-step { color: #99ff99; }
-        h3 { border-bottom: 1px solid #333; padding-bottom: 10px; margin-top: 30px; color: #4db8ff; }
-        h4 { margin-top: 20px; color: #e0e0e0; }
-        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 5px; background: #333; }
-        .tag-critical { background: #dc3545; color: white; }
-        .tag-security { background: #ffc107; color: black; }
-        .tag-core { background: #28a745; color: white; }
-        .tag-api { background: #6f42c1; color: white; }
-        .code-inline { background: #2d2d2d; padding: 2px 5px; border-radius: 3px; font-family: monospace; font-size: 0.9em; }
-    </style>
 </head>
 <body>
-    <aside class="sidebar">
-        <div class="logo-container">
-            <img src="logo-echo.png" alt="ECHO Logo">
-        </div>
-        <h2>ECHO v5</h2>
-                                <nav>
-            <ul>
-                <li><a href="index.html">Introduction</a></li>
-                <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
-                <li><a href="01_hld_architecture.html">1. High-Level Design (HLD)</a></li>
-                <li><a href="02_deploiement.html">2. Déploiement & Infra</a></li>
-                <li><a href="03_echo_libs.html">3. Librairies Partagées (libs)</a></li>
-                <li><a href="04_hud_ui.html">4. Écosystème HUD & UI</a></li>
-                <li><a href="05_filtre.html">5. Le Filtre (Conscience)</a></li>
-                <li><a href="06_pipe.html">6. Le Pipe (Cortex)</a></li>
-                <li><a href="07_arsenal_outils.html">7. L'Arsenal des Outils</a>
-                    <ul class="sub-nav">
-                        <li><a href="07a_web_intelligence.html">7a. Web Intelligence</a></li>
-                        <li><a href="07b_vault_explorer.html">7b. Vault & Data Explorer</a></li>
-                        <li><a href="07c_memory_cognition.html">7c. Mémoire & Cognition</a></li>
-                        <li><a href="07d_execution_monitoring.html">7d. Exécution & Pilotage</a></li>
-                    </ul>
-                </li>
-                <li><a href="08_system_prompt.html">8. Le Kernel (System Prompt)</a></li>
-                <li><a href="09_admin_manager.html" class="active">9. Admin Manager</a></li>
-                <li><a href="10_annexes.html">10. Annexes Techniques</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
-        <h1>8. Admin Manager : Régulateur de la Citadelle (v5.25)</h1>
-        <p>Le <code>admin-manager</code> est le cœur opérationnel hors-bande du framework ECHO. Il opère en tant que micro-service Python (Flask) isolé. Cette documentation détaille l'intégralité des fonctions, algorithmes et choix architecturaux du code source.</p>
+        <h1>9. Admin Manager (Surveillance & Lifecycle)</h1>
 
-        <div class="info-block">
-            <strong>Architecture</strong> : Micro-service Stateless | <strong>Runtime</strong> : Python 3.11+ | <strong>Port</strong> : 3001
+        <div class="didactic-box">
+            <h4>💡 Le Concept en 1 minute</h4>
+            <p>L'Admin Manager est le <strong>Gardien de la Citadelle</strong>. C'est un service à part qui surveille si tout fonctionne bien : il vérifie que les bases de données sont en bonne santé, il nettoie les vieux fichiers inutiles pour faire de la place, et il vous permet de gérer les accès de sécurité globale. C'est l'outil indispensable pour l'administrateur qui veut garder son système ECHO performant sur la durée.</p>
         </div>
 
-        <h3>1. Résilience & Dégradation Gracieuse (Graceful Degradation)</h3>
-        <p>Le script s'initialise avec une série de blocs <code>try...except ImportError</code>. Cela permet au Manager de démarrer même si l'environnement est partiellement dégradé ou incomplet. Des drapeaux booléens gèrent la disponibilité des sous-systèmes :</p>
-        <ul>
-            <li><span class="code-inline">DOCKER_AVAILABLE</span> : Contrôle l'accès à <code>docker</code> et <code>paramiko</code>. Si False, les sauvegardes et redémarrages sont désactivés silencieusement.</li>
-            <li><span class="code-inline">HAS_PSUTIL</span> : Désactive les statistiques CPU/RAM sans crasher l'API.</li>
-            <li><span class="code-inline">HAS_SCHEDULER</span> / <span class="code-inline">HAS_MAINT_SCHEDULER</span> : Sépare le moteur de backups temporels (APScheduler) du moteur d'élagage (Schedule).</li>
-        </ul>
+        <p>Le module <code>server.py</code> (situé dans <code>20-docker-admin-manager/</code>) agit comme le poste de pilotage infra d'ECHO. Il assure l'interopérabilité entre les couches logicielles et l'orchestration Docker.</p>
 
-        <h3>2. Helpers & Utilitaires Bas Niveau</h3>
-        <p>Plusieurs fonctions de bas niveau assurent la traduction entre le système de fichiers brut et l'interface utilisateur :</p>
-        
-        <div class="tech-box">
-            <span class="function-name">human_size(size)</span> : <br>
-            Convertit itérativement un entier (octets) en format lisible (KB, MB, GB) avec une précision d'une décimale.<br><br>
-            <span class="function-name">get_cpu_model_name()</span> : <br>
-            Lit directement <code>/proc/cpuinfo</code> au lieu d'invoquer des commandes lourdes, en cherchant la première occurrence de "model name".<br><br>
-            <span class="function-name">get_echo_version()</span> : <br>
-            Tente de lire le fichier statique <code>/app/ECHO_VERSION</code> injecté au build. Retourne "v?.?" en cas d'échec (Fail-Safe).
+        <section id="features">
+            <h3>Fonctionnalités Techniques</h3>
+            <ul>
+                <li><strong>Secret Maître</strong> : L'API <code>/api/admin/password</code> lit physiquement le fichier monté dans l'enclave <code>/app/secrets/.owui-admin-secret</code>.</li>
+                <li><strong>Purge des clés (Auth Reset)</strong> : Parcourt tous les fichiers <code>identity.db</code> pour invalider les connexions SSO globales.</li>
+                <li><strong>Schedule (Thread Démon)</strong> : Gère le cycle de vie (LIFECYCLE). Un thread personnalisé exécute une boucle <code>while True: schedule.run_pending(); time.sleep(60)</code>.</li>
+            </ul>
+        </section>
+
+        <div class="card">
+            <h4>Réinitialisation Individuelle (Self-Service)</h4>
+            <p>En complément de la purge globale, l'utilisateur dispose d'une action UI dédiée pour réinitialiser sa propre clé sans intervention administrative.</p>
+            <a href="07e_actions_ui.html#auth-manager" class="btn">🔑 Gérer mon Authentification</a>
         </div>
 
-        <h3>3. Vérité Sémantique & Monitoring Holistique</h3>
-        <p>La fonction <span class="function-name">get_dir_stats(path, filter_ext)</span> parcourt récursivement les dossiers avec <code>os.walk</code>. Elle intègre un bloc <code>try...except</code> autour de <code>os.path.getsize</code> pour ignorer les fichiers verrouillés en cours d'écriture (ex: <code>.db-shm</code> ou journaux actifs).</p>
-        <ul>
-            <li><strong>Sessions Actives (Real Sessions)</strong> : La route <code>index()</code> ignore les bases techniques. Elle filtre chirurgicalement les répertoires contenant <code>/chats/</code> pour ne compter que les vraies conversations.</li>
-        </ul>
-
-        <h3>4. L'Engine d'Élagage Sémantique (LIFECYCLE)</h3>
-        <p>La fonction <span class="function-name">run_semantic_pruning()</span> prévient l'atrophie et la saturation :</p>
-
-        <ol>
-            <li><strong>Purge des Orphelins</strong> : Connexion SQLite en lecture seule (<code>mode=ro</code>) sur <code>webui.db</code> pour extraire les UIDs valides. Tout dossier dans <code>/data/users/</code> non référencé et dont la taille du nom dépasse 30 caractères (UUID) est détruit via <code>shutil.rmtree()</code>.</li>
-            <li><strong>Atrophie Temporelle</strong> : <span class="function-name">prune_recursive()</span> utilise un <code>cutoff = time.time() - (days * 86400)</code>. Le fichier <code>identity.db</code> est passé en argument de <code>sanctuary_files</code> et est immunisé contre la suppression.</li>
-            <li><strong>Optimisation Physique (VACUUM)</strong> : Chaque base de données de chat subit un <code>db.execute("VACUUM;")</code> avec un timeout de 10.0s pour défragmenter les index.</li>
-        </ol>
-
-        <h3>5. Gestion Dynamique des Configurations</h3>
-        <p>Pour éviter les plantages dus à des fichiers JSON malformés, le Manager utilise un pattern de "Fusion avec dictionnaire par défaut" (Dictionary Merging).</p>
-        
-        <div class="tech-box">
-            <span class="function-name">load_settings()</span> / <span class="function-name">load_maint_config()</span> : <br>
-            1. Crée une copie locale de <code>DEFAULT_BACKUP_CONFIG</code> (ou maint).<br>
-            2. Lit le fichier cible (ex: <code>settings.json</code>) via <code>orjson.loads()</code>.<br>
-            3. Applique un <code>c.update(json.load(f))</code> pour écraser les valeurs par défaut avec les valeurs utilisateur, tout en préservant les clés manquantes.<br><br>
-            <span class="function-name">save_settings(new_s)</span> : <br>
-            Met à jour le dictionnaire et force l'écriture asynchrone, puis déclenche immédiatement <code>update_backup_schedule()</code> pour recompiler les tâches CRON.
+        <div class="audit-note">
+            <h4>✅ Audit de Vérité</h4>
+            <p>Le cycle de vie (Lifecycle) est géré par un thread démon dans <code>server.py</code> qui exécute les tâches planifiées toutes les 60 secondes. L'isolation est garantie car ce service communique avec Docker via la socket UNIX locale, sans exposition réseau externe.</p>
         </div>
-
-        <h3>6. Sauvegardes & Atomicité</h3>
-        <p>La fonction <span class="function-name">perform_backup_task()</span> orchestre l'état Docker via le socket :</p>
-        <pre><code># Séquence :
-target.stop()  # Figement immédiat du conteneur
-subprocess.run(['tar', '-czf', fpath, ...])  # Compression
-target.start() # Redémarrage</code></pre>
-        
-        <h4>Logique d'Horodatage</h4>
-        <p>La fonction <span class="function-name">update_backup_schedule()</span> recalcule dynamiquement le point de départ de la prochaine sauvegarde. Si l'heure cible (ex: "03:00") est déjà passée aujourd'hui (<code>start <= now</code>), elle ajoute un <code>datetime.timedelta(days=1)</code> pour programmer à demain, évitant un déclenchement immédiat non désiré.</p>
-
-        <h3>7. Matrice des Routes API & Multiplexeur d'Actions</h3>
-        <p>Le serveur expose une API REST Flask robuste. Les actions longues sont détachées dans des threads démons pour ne pas bloquer l'interface Web (Gunicorn/Flask Worker).</p>
-
-        <ul>
-            <li><span class="tag tag-api">GET /api/user_stats</span> : Ouvre `webui.db` en Read-Only, extrait nom, email et rôle, puis croise ces données avec le système de fichiers pour compter les bases de chat physiques de chaque utilisateur.</li>
-            <li><span class="tag tag-api">GET /api/stats</span> : Interface <code>psutil</code>. Retourne un JSON consolidé (CPU %, Charge 1/5/15m, RAM %, Disk %). Le frontend interroge cette route en polling toutes les 3 secondes via JS.</li>
-            <li><span class="tag tag-api">POST /action/&lt;action&gt;</span> : Le multiplexeur central.
-                <ul>
-                    <li><code>backup</code> / <code>pruning</code> : Lance <code>threading.Thread(target=...)</code> pour exécution asynchrone.</li>
-                    <li><code>restore</code> : Exécute de manière bloquante un <code>rm -rf /app/backend/data/*</code> destructeur, suivi de l'extraction de l'archive.</li>
-                    <li><code>restart</code> : Invoque <code>docker.from_env().containers.get(cid).restart()</code>.</li>
-                </ul>
-            </li>
-        </ul>
-
-        <h3>8. SSH Stealth & Sécurité</h3>
-        <p>L'Admin Manager utilise <code>paramiko</code> via <code>host.docker.internal</code>.</p>
-        
-        <div class="tech-box">
-            <span class="function-name">change_system_password()</span> : <br>
-            Instancie un terminal virtuel interactif (<code>invoke_shell</code>) car la commande Linux <code>passwd</code> exige un TTY. Elle injecte des délais (<code>time.sleep</code>) entre les envois (ancien mot de passe, nouveau x2) pour pallier la latence du shell hôte, puis parse la réponse à la recherche de la sous-chaîne de succès.
-        </div>
-
-        <ul>
-            <li><strong>Secret Maître</strong> : L'API <code>/api/admin/password</code> lit physiquement le fichier monté dans l'enclave <code>/app/secrets/.owui-admin-secret</code>.</li>
-            <li><strong>Purge des clés (Auth Reset)</strong> : Parcourt tous les fichiers <code>identity.db</code> et exécute <code>DELETE FROM auth_data WHERE key LIKE 'google_%'</code> pour invalider les connexions SSO globales.</li>
-        </ul>
-
-        <h3>9. Schedulers & Threads Démons</h3>
-        <p>Le bloc d'exécution principal (<code>if __name__ == '__main__':</code>) initialise deux moteurs distincts :</p>
-        <ul>
-            <li><strong>BackgroundScheduler (APScheduler)</strong> : Gère les sauvegardes. Il offre une précision avancée et permet d'annuler/remplacer des tâches dynamiquement (<code>remove_all_jobs()</code>).</li>
-            <li><strong>Schedule (Thread Démon)</strong> : Gère le cycle de vie (LIFECYCLE). Un thread personnalisé exécute une boucle <code>while True: schedule.run_pending(); time.sleep(60)</code>. Ce thread meurt avec le conteneur (Daemon=True).</li>
-        </ul>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     </main>
+<script src="nav.js"></script>
 </body>
 </html>

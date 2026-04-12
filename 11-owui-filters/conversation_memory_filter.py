@@ -1,8 +1,8 @@
 """
 title: ECHO Organic Memory Filter V2
 author: Wilfried BARNAVON
-version: 2.1
-description: 2.1: Intégration UI (Toggle, Icon) et Souveraineté (UserValves pour ENABLE_MEMORY).
+version: 2.3
+description: 2.3: Affinement des tags (discrimination renforcée) pour une purge granulaire fiable.
 """
 
 from pydantic import BaseModel, Field
@@ -90,8 +90,10 @@ class Filter:
             "Produis un JSON STRICT avec :\n"
             "- 'summary': Résumé ultra-dense et technique (sans fioriture).\n"
             "- 'importance': Score de 1 (Trivial) à 5 (Critique/Fondateur).\n"
-            "- 'slug': Identifiant sémantique court (ex: 'pref_python_format', 'archi_db_cluster').\n"
-            "- 'tags': 3 à 5 tags techniques."
+            "- 'slug': Identifiant sémantique court et unique (ex: 'pref_python_format', 'archi_db_cluster').\n"
+            "- 'tags': 3 à 5 tags techniques TRÈS SPÉCIFIQUES.\n"
+            "IMPORTANT : Interdiction d'utiliser des tags génériques (ex: 'IA', 'technique', 'informatique', 'user', 'preference').\n"
+            "Chaque tag doit être discriminant et lié au sujet réel (ex: 'astrophysique', 'react_hooks', 'docker_security')."
         )
 
         parts = [{"text": distill_prompt}]
@@ -119,36 +121,6 @@ class Filter:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Distillation: {e}")
             return None
 
-    async def _prune_expired_memories(self, user_id: str):
-        """Nettoyage automatique basé sur les valves TTL."""
-        now = int(time.time())
-        ttl_map = {
-            1: self.valves.TTL_LVL_1 * 86400,
-            2: self.valves.TTL_LVL_2 * 86400,
-            3: self.valves.TTL_LVL_3 * 86400,
-            4: self.valves.TTL_LVL_4 * 86400,
-            5: self.valves.TTL_LVL_5 * 86400
-        }
-
-        filters = []
-        for level, seconds in ttl_map.items():
-            filters.append({
-                "must": [
-                    {"key": "user_id", "match": {"value": user_id}},
-                    {"key": "importance", "match": {"value": level}},
-                    {"key": "timestamp", "range": {"lt": now - seconds}}
-                ]
-            })
-
-        try:
-            async with httpx.AsyncClient() as client:
-                for f in filters:
-                    await client.post(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", json={"filter": f})
-            if self.valves.DEBUG_MEMORY:
-                logger.info(f"[ECHO-MEMORY-V2] 🧹 Auto-Pruning terminé pour l'utilisateur {user_id}")
-        except Exception as e:
-            logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Pruning: {e}")
-
     async def _distill_and_store(self, chat_id: str, user_id: str, messages: List[Dict], api_keys: List[str]):
         """Pipeline Asynchrone V2."""
         try:
@@ -173,7 +145,7 @@ class Filter:
             # 3. Collision & Fusion
             point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{slug}"))
             
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=30) as client:
                 search_payload = {
                     "vector": vector, "limit": 1, "with_payload": True,
                     "filter": {"must": [{"key": "user_id", "match": {"value": user_id}}, {"key": "slug", "match": {"value": slug}}]}
@@ -208,9 +180,6 @@ class Filter:
                 await client.put(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points", json=point_payload)
                 
             logger.info(f"[ECHO-MEMORY-V2] ✅ Souvenir '{slug}' (Lvl {importance}) mémorisé.")
-            
-            # 5. Nettoyage
-            await self._prune_expired_memories(user_id)
 
         except Exception as e:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Pipeline: {e}")

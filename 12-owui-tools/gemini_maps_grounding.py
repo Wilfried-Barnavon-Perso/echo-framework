@@ -1,8 +1,8 @@
 """
 title: ECHO Google Maps Grounding
 author: Wilfried BARNAVON
-version: 12.51
-description: 12.51: Fix retour contexte (string pure) pour map_viewer.
+version: 12.52
+description: 12.52: Standardisation du retour contextuel (wrap_tool_output).
 """
 
 import orjson as json
@@ -72,9 +72,8 @@ class Tools:
             # --- RÉUSSITE : RÉPONSE RICH UI (GOOGLE MAPS EMBED) ---
             response = EchoRichUI.map_viewer(query=query, title=f"ECHO Maps : {query}")
 
-            # --- CONTEXTE POUR LE LLM (STRING PURE) ---
-            # En renvoyant une string, le LLM reçoit directement le contenu à traiter.
-            return response, full_text
+            # --- CONTEXTE POUR LE LLM (STRUCTURE) ---
+            return response, wrap_tool_output(text=full_text)
 
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur Maps: {str(e)}", status={"status": "error"})

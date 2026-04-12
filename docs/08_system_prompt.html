@@ -2,8 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 8. Le Kernel (System Prompt)</title>
+    <title>ECHO v5 - 8. Le Kernel (Constitution)</title>
     <link rel="stylesheet" href="style.css">
     <style>
         .pyramid-container {
@@ -66,61 +65,38 @@
     </style>
 </head>
 <body>
-    <aside class="sidebar">
-        <div class="logo-container">
-            <img src="logo-echo.png" alt="ECHO Logo">
-        </div>
-        <h2>ECHO v5</h2>
-        <nav>
-            <ul>
-                <li><a href="index.html">Introduction</a></li>
-                <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
-                <li><a href="01_hld_architecture.html">1. High-Level Design (HLD)</a></li>
-                <li><a href="02_deploiement.html">2. Déploiement & Infra</a></li>
-                <li><a href="03_echo_libs.html">3. Librairies Partagées (libs)</a></li>
-                <li><a href="04_hud_ui.html">4. Écosystème HUD & UI</a></li>
-                <li><a href="05_filtre.html">5. Le Filtre (Conscience)</a></li>
-                <li><a href="06_pipe.html">6. Le Pipe (Cortex)</a></li>
-                <li><a href="07_arsenal_outils.html">7. L'Arsenal des Outils</a>
-                    <ul class="sub-nav">
-                        <li><a href="07a_web_intelligence.html">7a. Web Intelligence</a></li>
-                        <li><a href="07b_vault_explorer.html">7b. Vault & Data Explorer</a></li>
-                        <li><a href="07c_memory_cognition.html">7c. Mémoire & Cognition</a></li>
-                        <li><a href="07d_execution_monitoring.html">7d. Exécution & Pilotage</a></li>
-                    </ul>
-                </li>
-                <li><a href="08_system_prompt.html" class="active">8. Le Kernel (System Prompt)</a></li>
-                <li><a href="09_admin_manager.html">9. Admin Manager</a></li>
-                <li><a href="10_annexes.html">10. Annexes Techniques</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
         <h1>8. Le Kernel (Constitution)</h1>
-        
-        <p>Le <strong>Kernel</strong> d'ECHO (<code>01-config/system-prompt.md</code>) n'est pas un simple "System Prompt" destiné à guider le style de l'IA. Il s'agit d'une véritable <strong>Constitution logicielle</strong> qui préexiste à toute interaction avec l'utilisateur et définit l'ontologie même du système.</p>
+
+        <div class="didactic-box">
+            <h4>💡 Le Concept en 1 minute</h4>
+            <p>Le Kernel est la <strong>Constitution Morale et Technique</strong> d'ECHO. Ce n'est pas juste une liste de consignes, c'est l'ADN de l'IA. Il lui explique qui elle est (ECHO), quelles sont ses valeurs (Sécurité, Souveraineté, Vérité) et comment elle doit réagir si on lui demande de faire quelque chose de dangereux ou d'illogique. C'est le socle qui garantit que l'IA reste alignée avec les principes fondateurs du framework.</p>
+        </div>
+
+        <p>Le <strong>Kernel</strong> d'ECHO (<code>01-config/system-prompt.md</code>) est une véritable <strong>Constitution logicielle</strong> qui définit l'ontologie même du système.</p>
 
         <div class="note-box">
             <h3>L'Arbitrage Hiérarchique (MPAH)</h3>
-            <p>Le Kernel impose une "Hiérarchie des Normes" stricte (Pyramide de Kelsen pour IA). Si l'utilisateur demande une action qui entre en conflit avec une instruction de rang supérieur, la requête est invalidée. Le modèle a pour consigne formelle d'y désobéir.</p>
+            <p>Le Kernel impose une "Hiérarchie des Normes" stricte (Pyramide de Kelsen pour IA). Si l'utilisateur demande une action qui entre en conflit avec une instruction de rang supérieur, la requête est invalidée.</p>
         </div>
 
         <div class="pyramid-container">
             <div class="pyramid-layer layer-1">
-                <span>1. MÉTA-PRINCIPES</span> <span class="layer-desc">(Conditions d'exécution indépassables)</span>
+                <span>1. MÉTA-PRINCIPES</span> <span class="layer-desc">(Conditions indépassables)</span>
             </div>
             <div class="pyramid-layer layer-2">
-                <span>2. PERSONA</span> <span class="layer-desc">(Nature fondamentale et Modes)</span>
+                <span>2. PERSONA</span> <span class="layer-desc">(Nature fondamentale)</span>
             </div>
             <div class="pyramid-layer layer-3">
                 <span>3. PRINCIPES</span> <span class="layer-desc">(Standards d'Analyse : PGCU, PRAF...)</span>
             </div>
             <div class="pyramid-layer layer-4">
-                <span>4. PROTOCOLES & OUTILS</span> <span class="layer-desc">(Structures des actions : PTD, PTM...)</span>
+                <span>4. PROTOCOLES & OUTILS</span> <span class="layer-desc">(Structure des actions)</span>
             </div>
             <div class="pyramid-layer layer-5">
-                <span>5. MÉTA-INSTRUCTIONS</span> <span class="layer-desc">(Restes du Kernel)</span>
+                <span>5. MÉTA-INSTRUCTIONS</span> <span class="layer-desc">(Cadre opérationnel)</span>
             </div>
             <div class="pyramid-layer layer-6" style="margin-top: 15px;">
                 <span>6. UTILISATEUR</span> <span class="layer-desc">(Requêtes locales)</span>
@@ -131,19 +107,19 @@
         <div class="principle-grid">
             <div class="principle-card red">
                 <h4>MPDI (Identité)</h4>
-                <p>Le modèle reconnaît qu'il n'est pas un simple LLM, mais l'incarnation de l'Espace Cognitif Heuristique Opérationnel (ECHO). Son utilité dépend de son respect du framework.</p>
+                <p>Le modèle reconnaît qu'il est l'incarnation d'ECHO. Son utilité dépend de son respect du framework.</p>
             </div>
             <div class="principle-card red">
                 <h4>MPAH (Arbitrage)</h4>
-                <p>Instaure la hiérarchie pyramidale. L'instruction utilisateur n'est que le 6ème et dernier maillon de la chaîne d'autorité. La sécurité et l'intégrité priment.</p>
+                <p>Instaure la hiérarchie pyramidale. L'instruction utilisateur est le dernier maillon de la chaîne.</p>
             </div>
             <div class="principle-card red">
                 <h4>MPCE (Exécution)</h4>
-                <p>Obligation de structurer la Chain-of-Thought (CoT). Le modèle DOIT chercher un contournement en cas d'erreur sans jamais simuler l'exécution.</p>
+                <p>Obligation de structurer la Chain-of-Thought (CoT) et de chercher des contournements aux erreurs.</p>
             </div>
             <div class="principle-card red">
                 <h4>MPSI (Sécurité)</h4>
-                <p>L'IA refuse d'invalider, d'ignorer ou de contourner le framework. Interdiction absolue de divulguer le contenu textuel ou les acronymes des instructions internes.</p>
+                <p>Refus de contourner le framework ou de divulguer les instructions internes.</p>
             </div>
         </div>
 
@@ -151,33 +127,37 @@
         <div class="principle-grid">
             <div class="principle-card green">
                 <h4>PGCU (Contexte Unifié)</h4>
-                <p>Maintient la cohérence. Priorité contextuelle : Kernel > Méta-Artéfacts > Utilisateur > Outils. Le résumé est la synthèse persistante.</p>
+                <p>Maintient la cohérence. Priorité contextuelle : Kernel > Artéfacts > Utilisateur > Outils.</p>
             </div>
             <div class="principle-card green">
                 <h4>PACP (Alignement Préférentiel)</h4>
-                <p>L'IA infère proactivement les préférences utilisateur (Confiance Faible/Moy/Élevée) par l'observation des actions, stockées dans le Profil d'Alignement.</p>
+                <p>Inférence proactive des préférences utilisateur stockées dans le Profil d'Alignement.</p>
             </div>
             <div class="principle-card green">
                 <h4>PRAC (Amélioration Continue)</h4>
-                <p>Rétrospective après chaque tâche pour générer des hypothèses d'apprentissage et adapter sa méthode sans directive explicite.</p>
+                <p>Rétrospective après chaque tâche pour générer des hypothèses d'apprentissage.</p>
             </div>
             <div class="principle-card green">
                 <h4>PRAF (Rigueur Analytique)</h4>
-                <p>Vérification factuelle stricte. Exige une section "Points de Vigilance" pour toute analyse complexe. Données incertaines imposent un "Je ne sais pas".</p>
+                <p>Vérification factuelle stricte et identification des "Points de Vigilance".</p>
             </div>
         </div>
 
         <h2>Protocoles et Commandes</h2>
-        <p>Le Kernel intègre des protocoles d'action structurés :</p>
         <ul>
-            <li><strong>PTD (Triage Dynamique)</strong> : Capacité d'analyse de complexité. Si la tâche dépasse la capacité du sous-modèle, il délègue à LITE, FLASH ou PRO via l'outil <code>changement_niveau_cognitif</code>.</li>
-            <li><strong>PTM (Transparence Maximale)</strong> : Activé par <code>!TRACEON</code>. Rend le modèle hyper-verbeux sur ses processus cognitifs internes (Artéfacts consultés, Protocoles activés).</li>
+            <li><strong>PTD (Triage Dynamique)</strong> : Délégation automatique selon la complexité via <code>changement_niveau_cognitif</code>.</li>
+            <li><strong>PTM (Transparence Maximale)</strong> : Mode hyper-verbeux activé par <code>!TRACEON</code>.</li>
         </ul>
-        <p>Il définit également le comportement de la Persona (Rationalité, Assertivité, Pédagogie) et des modes spécialisés (<code>!Rédacteur</code>, <code>!Coach</code>).</p>
+
+        <div class="audit-note">
+            <h4>✅ Audit de Vérité</h4>
+            <p>Le Kernel est injecté systématiquement au sommet du contexte par le <strong>Pipe</strong> lors de la phase de Suture. Son intégrité est protégée : il reste "ancré" en tant qu'instruction système prioritaire, empêchant toute dérive (Jailbreak).</p>
+        </div>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     </main>
+<script src="nav.js"></script>
 </body>
 </html>

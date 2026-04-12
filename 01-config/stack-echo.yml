@@ -207,8 +207,9 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # 5. Watchtower (Auto-Update)
   watchtower:
-    image: containrrr/watchtower
+    image: containrrr/watchtower:latest
     container_name: echo-watchtower
     restart: always
     networks:
@@ -217,6 +218,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - TZ=Europe/Paris
+      - DOCKER_API_VERSION=1.44
     command: --interval 3600 --cleanup
 
   # ============================================================================

@@ -7,116 +7,258 @@
     <link rel="stylesheet" href="style.css">
     <script type="module">
       import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-      mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+      mermaid.initialize({ 
+        startOnLoad: true, 
+        theme: 'dark',
+        securityLevel: 'loose',
+        flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', padding: 20 },
+        sequence: { useMaxWidth: true, showSequenceNumbers: true, actorMargin: 50, messageMargin: 35 }
+      });
     </script>
 </head>
 <body>
-    <aside class="sidebar">
-        <div class="logo-container">
-            <img src="logo-echo.png" alt="ECHO Logo">
-        </div>
-        <h2>ECHO v5</h2>
-                        <nav>
-            <ul>
-                <li><a href="index.html">Introduction</a></li>
-                <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
-                <li><a href="01_hld_architecture.html" class="active">1. High-Level Design (HLD)</a></li>
-                <li><a href="02_deploiement.html">2. Déploiement & Infra</a></li>
-                <li><a href="03_echo_libs.html">3. Librairies Partagées (libs)</a></li>
-                <li><a href="04_hud_ui.html">4. Écosystème HUD & UI</a></li>
-                <li><a href="05_filtre.html">5. Le Filtre (Conscience)</a></li>
-                <li><a href="06_pipe.html">6. Le Pipe (Cortex)</a></li>
-                <li><a href="07_arsenal_outils.html">7. L'Arsenal des Outils</a>
-                    <ul class="sub-nav">
-                        <li><a href="07a_web_intelligence.html">7a. Web Intelligence</a></li>
-                        <li><a href="07b_vault_explorer.html">7b. Vault & Data Explorer</a></li>
-                        <li><a href="07c_memory_cognition.html">7c. Mémoire & Cognition</a></li>
-                        <li><a href="07d_execution_monitoring.html">7d. Exécution & Pilotage</a></li>
-                    </ul>
-                </li>
-                <li><a href="08_system_prompt.html">8. Le Kernel (System Prompt)</a></li>
-                <li><a href="09_admin_manager.html">9. Admin Manager</a></li>
-                <li><a href="10_annexes.html">10. Annexes Techniques</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
         <h1>1. High-Level Design (HLD)</h1>
-        <h2>L'Architecture "Ombre Riche" (Rich Shadow)</h2>
-        <p>Le framework ECHO repose sur un constat critique audité sur l'architecture standard : <strong>l'historique des messages est volatil.</strong> Les interfaces de chat "nettoient" systématiquement les injections faites par les filtres avant de stocker les messages en base de données.</p>
-        
-        <p>Pour garantir que Gemini conserve une mémoire parfaite (Smart Context, Raisonnement CoT, Artefacts), ECHO implémente une <strong>Ombre Riche</strong> : un miroir haute-fidélité de la session stocké dans une base SQLite locale (<code>user-XXX.db</code>), capable de "réparer" l'historique avant chaque envoi à l'API Gemini.</p>
 
-        <div class="note-box" style="margin-bottom: 2rem;">
-            <h3>Diagramme de Flux de la Suture Cognitive</h3>
-            <p>Ce diagramme illustre le parcours de l'information, plaçant <strong>Open WebUI comme Middleware</strong> entre le frontend utilisateur, le Kernel ECHO et l'API de génération.</p>
+        <div class="didactic-box">
+            <h4>💡 Le Concept en 1 minute</h4>
+            <p>ECHO possède une <strong>double conscience</strong>. D'un côté, le chat que vous voyez. De l'autre, l'<strong>Ombre Riche</strong> : une base SQLite qui enregistre tout (pensées CoT, logs d'outils, fichiers). Le système "recoud" (suture) l'historique avant chaque message pour que l'IA ne perde jamais le fil de sa réflexion.</p>
+        </div>
+
+        <h2>Pipeline de Suture Cognitive</h2>
+        <p>Le framework ECHO repose sur un constat critique audité sur l'architecture standard : <strong>l'historique des messages est volatil.</strong> Pour garantir que Gemini conserve une mémoire parfaite, ECHO implémente une <strong>Ombre Riche</strong> : un miroir haute-fidélité de la session capable de "réparer" l'historique avant chaque envoi à l'API Gemini.</p>
+
+        <div class="mermaid-wrapper">
+            <div class="mermaid-header">
+                <span>Diagramme de Séquence : Pipeline de Bout en Bout</span>
+                <span>[INLET ➔ SUTURE ➔ OUTLET]</span>
+            </div>
             <div class="mermaid">
 sequenceDiagram
     autonumber
-    box "Frontend / Interface"
+    box rgb(15, 23, 42) Edge
         participant U as 👤 Utilisateur
     end
-    box "Middleware (Open WebUI)"
+    box rgb(2, 6, 23) Middlewares
         participant OWUI as 🖥️ Open WebUI
     end
-    box "ECHO Kernel (Backend)"
-        participant F as 🧠 Filtre (Conscience)
-        participant P as ⚙️ Pipe (Cortex)
-        participant B as 🗄️ SQLite (Shadows)
+    box rgb(30, 41, 59) ECHO Kernel
+        participant F as 🌗 Filtre (Inlet)
+        participant P as ⚙️ Pipe (Outlet)
+        participant DB as 🗄️ SQLite (State)
     end
-    box "External Provider"
-        participant G as ☁️ API Gemini
+    box rgb(6, 78, 59) Sandbox
+        participant T as 🛠️ Arsenal
+    end
+    box rgb(76, 29, 149) Cloud
+        participant G as ☁️ Gemini API
     end
 
-    U->>OWUI: Saisie du prompt + Fichiers
-    OWUI->>F: Interception Inlet (Payload brut)
+    U->>OWUI: Prompt + Fichiers (HTTPS)
+    OWUI->>F: Interception hook.inlet()
     
-    rect rgb(50, 40, 60)
-        note right of F: Smart Context & Pré-traitement
-        F->>F: Calcul Invariant Hash
-        F->>F: Analyse fichiers (RAG Bypass)
+    note over F,DB: PHASE 1: PRÉPARATION & DRAFT
+    F->>F: Sniffing MIME & Analyse Multimodale
+    F->>DB: save_rich_payload(metadata)
+    F->>F: Calculate Invariant Hash
+    F-->>OWUI: Injection etat_echo (Draft)
+
+    OWUI->>P: Routage /api/chat/completions
+    
+    note over P,DB: PHASE 2: SUTURE (BIT-PERFECT)
+    P->>DB: get_message_shadow(msg_id, updated_at)
+    DB-->>P: Original Parts + Verrou de Version
+    P->>DB: get_thought_signature(parent_hash)
+    P->>P: Fusion Draft + Historique (Suture)
+    
+    note over P,G: PHASE 3: INFÉRENCE & BOUCLE OUTILS
+    P->>G: Stream Request (HTTP/2 SSE)
+    loop Appels d'Outils
+        G-->>P: Tool Call Request
+        P->>T: Exécution Locale (Sandbox)
+        T-->>P: Résultat Multipart (JSON/Media)
+        P->>G: Tool Call Response
     end
+    G-->>P: Génération Finale (Stream Markdown)
     
-    F-->>OWUI: Payload enrichi + Metadata (InvHash)
-    OWUI->>P: Routage Outlet (Historique Volatil)
+    note over P,DB: PHASE 4: SCELLEMENT
+    P->>DB: save_message_shadow(final_parts)
+    P->>DB: save_cognitive_data(signatures)
+    P->>DB: Insertion tool_journal
     
-    rect rgb(60, 40, 50)
-        note right of P: Suture Cognitive & Restauration
-        P->>B: Lecture Historique (Cumulative Hash)
-        P->>P: Injection Thought Signatures & Outils
+    P-->>OWUI: Forward SSE Stream
+    OWUI-->>U: Rendu HUD & Markdown
+            </div>
+        </div>
+
+        <h2>Topologie Système et Réseau (Plan de Masse v5.0)</h2>
+
+        <div class="didactic-box">
+            <h4>💡 Lecture d'Architecte</h4>
+            <p>Ce schéma représente la topologie réelle du cluster Docker ECHO. Notez l'isolation stricte : le trafic WAN (Internet) échoue dans la DMZ (BunkerWeb). L'Arsenal (Worker, Browser) tourne sur un sous-réseau Docker privé sans accès entrant, tandis que les volumes SQLite garantissent la persistance hors-conteneur.</p>
+        </div>
+
+        <div class="mermaid-wrapper">
+            <div class="mermaid-header">
+                <span>Network & System Topology</span>
+                <span>[MODE: DOCKER CLUSTER]</span>
+            </div>
+            <div class="mermaid">
+flowchart TB
+    %% Network Zones
+    subgraph WAN ["🌐 ZONE 0: PUBLIC WAN (Untrusted)"]
+        U([👤 Utilisateur Client])
     end
+
+    subgraph DMZ ["🛡️ ZONE 1: DMZ (Edge Network)"]
+        BW{{"🛡️ BunkerWeb WAF<br/>[:80/443]"}}
+    end
+
+    subgraph APP ["🖥️ ZONE 2: APPLICATION & KERNEL TIER"]
+        direction TB
+        OWUI["🖥️ Open WebUI<br/>[:8080]"]
+        subgraph Kernel ["🧠 ECHO Kernel (In-Process)"]
+            direction LR
+            F("🌗 Filtre (Inlet)")
+            P("⚙️ Pipe (Outlet)")
+        end
+        OWUI --- Kernel
+    end
+
+    subgraph DATA ["🗄️ ZONE 3: PERSISTENCE TIER (Volumes)"]
+        direction LR
+        SQL[("🗄️ SQLite Shadows<br/>(Local Volume)")]
+        QD[("🧠 Qdrant Engine<br/>[:6333]")]
+        FS[("📂 Vault<br/>(File System)")]
+    end
+
+    subgraph SANDBOX ["🛠️ ZONE 4: ISOLATED ARSENAL (No Inbound)"]
+        direction LR
+        BA["🌐 Browser Agent<br/>[:3000]"]
+        PW["🐍 Python Worker<br/>[:3001]"]
+        SNG["🔍 SearxNG Proxy<br/>[:8080]"]
+    end
+
+    subgraph MGMT ["⚙️ ZONE 5: CONTROL PLANE"]
+        AM["📊 Admin Manager<br/>(server.py)"]
+        DOCKER("🐳 Docker Daemon<br/>(/var/run/docker.sock)")
+    end
+
+    subgraph CLOUD ["☁️ ZONE 6: CLOUD OUTBOUND"]
+        GEMINI(("🌩️ Google Gemini API<br/>[TCP 443]"))
+        WWW(("🕸️ World Wide Web<br/>[TCP 443]"))
+    end
+
+    %% Connections
+    U == "HTTPS" ==> BW
+    BW == "Reverse Proxy" ==> OWUI
+    BW -. "Admin Access" .-> AM
     
-    P->>G: Requête Gemini (Bit-Perfect)
-    G-->>P: Réponse Stream + Thoughts
+    P == "SQL R/W" ==> SQL
+    P == "HTTP Internal" ==> BA & PW & SNG
+    P == "HTTP/2 SSE" ==> GEMINI
     
-    P->>B: Archivage de l'Ombre Riche (Fin de tour)
-    P-->>OWUI: Transmission Stream
-    OWUI-->>U: Affichage temps réel (Markdown + HUD)
+    F -. "Hash Uploads" .-> SQL
+    
+    BA & SNG == "Outbound HTTPS" ==> WWW
+    
+    AM == "Orchestration" ==> DOCKER
+    AM -. "Health/Prune" .-> Kernel & SQL
+
+    %% Styling
+    classDef zone fill:none,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef wan stroke:#ef4444,color:#ef4444;
+    classDef dmz stroke:#f97316,color:#f97316;
+    classDef app stroke:#3b82f6,color:#3b82f6;
+    classDef data stroke:#eab308,color:#eab308;
+    classDef sandbox stroke:#10b981,color:#10b981;
+    classDef cloud stroke:#8b5cf6,color:#8b5cf6;
+    classDef mgmt stroke:#64748b,color:#64748b;
+
+    class WAN wan; class DMZ dmz; class APP app; class DATA data; class SANDBOX sandbox; class CLOUD cloud; class MGMT mgmt;
+    
+    classDef node fill:#1e293b,stroke:#475569,stroke-width:2px,color:#f8fafc,rx:5,ry:5;
+    classDef db fill:#0f172a,stroke:#f59e0b,stroke-width:2px,color:#f8fafc,rx:10,ry:10;
+    classDef core fill:#172554,stroke:#60a5fa,stroke-width:2px,color:#f8fafc,rx:5,ry:5;
+    classDef tool fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#f8fafc,rx:5,ry:5;
+
+    class U,BW,OWUI,AM,DOCKER node;
+    class SQL,QD,FS db;
+    class F,P core;
+    class BA,PW,SNG tool;
             </div>
         </div>
 
         <h2>Infrastructure de Données & Moteur de Hachage</h2>
-        <p>Situé dans : <code>14-owui-libs/echo_utils.py</code> (Classe <code>EchoStateManager</code>)</p>
+        <p>Le cœur technique de la persistance réside dans la classe <code>EchoStateManager</code> (<code>14-owui-libs/echo_utils.py</code>). Elle garantit qu'aucune information cognitive ne soit dégradée par l'interface middleware.</p>
 
-        <h3>Le Schéma SQL (Tables Spécialisées)</h3>
-        <ul>
-            <li><strong><code>suture_index</code></strong> : PK <code>cumulative_hash</code>. Lie un point temporel à un contenu riche.</li>
-            <li><strong><code>rich_payloads</code></strong> : PK <code>invariant_hash</code>. Stocke les contenus lourds (Résumés, Base64) de façon factorisée (déduplication).</li>
-            <li><strong><code>cognitive_signatures</code></strong> : PK <code>cumulative_hash</code>. Stocke les <code>thoughtSignature</code> de Google (Ancres logiques).</li>
-            <li><strong><code>tool_journal</code></strong> : PK <code>cumulative_hash</code>. Stocke les entrées/sorties des outils (<code>functionCall</code>).</li>
-        </ul>
+        <div class="mermaid-wrapper">
+            <div class="mermaid-header">
+                <span>Entity-Relationship Diagram (ERD)</span>
+                <span>[RICH SHADOWS SQL SCHEMA]</span>
+            </div>
+            <div class="mermaid">
+erDiagram
+    MESSAGE_SHADOWS {
+        string message_id PK "UUID du Middleware"
+        integer updated_at "Verrou de Version"
+        string parent_id FK
+        string cumulative_hash FK
+        json parts "Format Gemini Original"
+    }
+    SUTURE_INDEX {
+        string cumulative_hash PK
+        string message_id FK
+        integer created_at
+    }
+    COGNITIVE_SIGNATURES {
+        string cumulative_hash PK
+        string thought_signature "Ancre Google KV Cache"
+        integer updated_at
+    }
+    TOOL_JOURNAL {
+        string cumulative_hash PK
+        json io_json "Arguments & Multipart outputs"
+        integer updated_at
+    }
+    RICH_PAYLOADS {
+        string invariant_hash PK
+        string content_type "MIME Type"
+        blob binary_data
+        string summary "Smart Context"
+    }
+    PROCESSED_FILES {
+        string file_id PK
+        string user_id
+        string mime_type
+        string vault_path
+    }
 
-        <h3>Les Algorithmes de Hachage (Blockchain-like)</h3>
-        <p><strong>1. Invariant Hash :</strong> <code>calculate_invariant_hash(role, content, files)</code><br>
-        Crée une empreinte unique du message "propre" (Hash du rôle + texte brut + IDs de fichiers triés). Utilisé pour identifier la source sémantique d'un message.</p>
+    MESSAGE_SHADOWS ||--o| SUTURE_INDEX : "anchors"
+    SUTURE_INDEX ||--o{ COGNITIVE_SIGNATURES : "contains"
+    SUTURE_INDEX ||--o{ TOOL_JOURNAL : "logs"
+    MESSAGE_SHADOWS }|--o{ RICH_PAYLOADS : "references via Invariant Hash"
+    TOOL_JOURNAL }|--o{ PROCESSED_FILES : "generates / reads"
+            </div>
+        </div>
 
-        <p><strong>2. Cumulative Hash :</strong> <code>calculate_cumulative_hash(invariant, parent_hash)</code><br>
-        Crée une chaîne cryptographique. (Hash de l'invariant actuel + hash cumulatif du message précédent). Permet de détecter instantanément le <em>Branching</em> (édition d'un message passé).</p>
+        <div class="tech-spec">
+            <h4>Algorithmes de Hachage (Merkle Core)</h4>
+            <p><strong>1. Invariant Hash :</strong> <code>SHA-256(role + content_sorted + tool_io)</code>. Identité pure du tour.</p>
+            <p><strong>2. Cumulative Hash :</strong> <code>SHA-256(invariant + parent_hash)</code>. ADN de la conversation.</p>
+        </div>
+
+        <div class="audit-note">
+            <h4>✅ Audit de Vérité (v180.2)</h4>
+            <p>Le <strong>Verrou de Version</strong> compare le triplet <code>(message_id, updated_at, parent_hash)</code>. Si un <i>Ghost Message</i> (message modifié manuellement dans OWUI) est détecté, le Kernel bascule en <i>Cold Recovery</i> pour préserver la vérité sémantique.</p>
+        </div>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     </main>
+<script src="nav.js"></script>
 </body>
 </html>

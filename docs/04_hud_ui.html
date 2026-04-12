@@ -2,71 +2,20 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>ECHO v5 - 3. Écosystème HUD & UI</title>
+    <title>ECHO v5 - 4. Écosystème HUD & UI (EchoUI)</title>
     <link rel="stylesheet" href="style.css">
-    <style>
-        .tech-spec {
-            background: #1a1a1a;
-            border-left: 4px solid #4ade80;
-            padding: 15px;
-            margin: 20px 0;
-            font-family: 'Fira Code', monospace;
-            font-size: 0.9em;
-        }
-        .component-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-        }
-        .component-card {
-            background: #252525;
-            border: 1px solid #444;
-            border-radius: 8px;
-            padding: 20px;
-        }
-        .component-card h4 {
-            color: #4ade80;
-            margin-top: 0;
-        }
-        code {
-            color: #f472b6;
-        }
-    </style>
 </head>
 <body>
-    <aside class="sidebar">
-        <div class="logo-container">
-            <img src="logo-echo.png" alt="ECHO Logo">
-        </div>
-        <h2>ECHO v5</h2>
-                                <nav>
-            <ul>
-                <li><a href="index.html">Introduction</a></li>
-                <li><a href="00_fondations.html">0. Fondations & Philosophie</a></li>
-                <li><a href="01_hld_architecture.html">1. High-Level Design (HLD)</a></li>
-                <li><a href="02_deploiement.html">2. Déploiement & Infra</a></li>
-                <li><a href="03_echo_libs.html">3. Librairies Partagées (libs)</a></li>
-                <li><a href="04_hud_ui.html" class="active">4. Écosystème HUD & UI</a></li>
-                <li><a href="05_filtre.html">5. Le Filtre (Conscience)</a></li>
-                <li><a href="06_pipe.html">6. Le Pipe (Cortex)</a></li>
-                <li><a href="07_arsenal_outils.html">7. L'Arsenal des Outils</a>
-                    <ul class="sub-nav">
-                        <li><a href="07a_web_intelligence.html">7a. Web Intelligence</a></li>
-                        <li><a href="07b_vault_explorer.html">7b. Vault & Data Explorer</a></li>
-                        <li><a href="07c_memory_cognition.html">7c. Mémoire & Cognition</a></li>
-                        <li><a href="07d_execution_monitoring.html">7d. Exécution & Pilotage</a></li>
-                    </ul>
-                </li>
-                <li><a href="08_system_prompt.html">8. Le Kernel (System Prompt)</a></li>
-                <li><a href="09_admin_manager.html">9. Admin Manager</a></li>
-                <li><a href="10_annexes.html">10. Annexes Techniques</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
-        <h1>3. Écosystème HUD & UI (EchoUI)</h1>
+        <h1>4. Écosystème HUD & UI (EchoUI)</h1>
+
+        <div class="didactic-box">
+            <h4>💡 Le Concept en 1 minute</h4>
+            <p>Le HUD (Heads-Up Display) est le <strong>Tableau de Bord Immersif</strong> d'ECHO. Au lieu de vous donner juste du texte, ECHO injecte des fenêtres interactives directement dans votre chat. Vous pouvez zoomer sur des captures d'écran, surveiller la mémoire de l'IA en temps réel, ou utiliser le Replay pour voir ce que l'IA a fait sur le web. C'est ce qui transforme un simple chat en une véritable station de pilotage.</p>
+        </div>
+
         <p>L'interface utilisateur d'ECHO, baptisée <strong>EchoUI</strong>, n'est pas une simple surcouche CSS, mais un moteur d'injection dynamique asynchrone. Elle permet de briser le "bac à sable" visuel d'Open WebUI pour offrir une expérience HUD (Heads-Up Display) digne d'une station de travail de renseignement.</p>
 
         <h2>Architecture de Communication</h2>
@@ -74,7 +23,7 @@
         <ol>
             <li><strong>Backend (<code>echo_utils.EchoUI</code>)</strong> : Génère des payloads JavaScript polymorphes encapsulant les données (Images Base64, métadonnées, états).</li>
             <li><strong>Canal d'Événements (<code>EchoEvents</code>)</strong> : Utilise les ponts <code>emit</code> et <code>call</code> d'Open WebUI pour injecter le code dans le DOM global.</li>
-            <li><strong>Runtime Frontend (Engine)</strong> : Un objet singleton éphémère (ex: <code>window.echoEngine_HUD_ID</code>) prend le relais pour gérer les interactions locales sans solliciter le serveur.</li>
+            <li><strong>Runtime Frontend (Engine)</strong> : Un objet singleton éphémère (ex: <code>window.echoEngine_HUD_ID</code>) prend le relais pour gérer les interactions locales.</li>
         </ol>
 
         <div class="tech-spec">
@@ -84,114 +33,39 @@
         <h2>1. Le Monitor ECHO (Visualiseur Intelligent)</h2>
         <p>Invoqué via <code>EchoUI.monitor_ECHO</code>, ce composant est le pivot de l'analyse visuelle.</p>
 
-        <div class="hud-demo">
-            <div style="background: #111; border-radius: 8px; padding: 15px; margin: 20px 0; font-family: monospace; color: #4ade80; font-size: 14px; box-shadow: inset 0 0 20px rgba(0,0,0,0.8); border: 1px solid #333;">
-              <div>[SYS] ECHO HUD Engine v5.9</div>
-              <div>==================================================</div>
-              <div style="display:flex; justify-content: space-between; margin-top: 10px;">
-                <div style="flex:1;">
-                  <span style="color:#888;">CPU:</span> ||||||||-- [80%] <br>
-                  <span style="color:#888;">MEM:</span> ||||------ [40%] <br>
-                  <span style="color:#888;">CTX:</span> 1,024k / 2,000k
-                </div>
-                <div style="flex:1; border-left: 1px dashed #444; padding-left: 15px;">
-                  <span style="color:#38bdf8;">ACTIVE TOOLS</span><br>
-                  > python_worker : <span style="color:#facc15;">IDLE</span><br>
-                  > browser_nav   : <span style="color:#4ade80;">RUNNING</span>
-                </div>
-              </div>
-              <div style="margin-top: 10px; border-top: 1px dashed #444; padding-top: 10px; color: #f87171;">
-                ! WARNING: Context cache miss. Rebuilding suture...
-              </div>
-            </div>
-            <div class="hud-header">
-                <div style="display:flex; align-items:center; gap:10px;">
-                    <span style="color:#4ade80; font-size:16px;">🌐</span>
-                    <span class="hud-title">ECHO MONITOR</span>
-                </div>
-                <div style="display:flex; gap:12px; align-items:center;">
-                    <span style="color:#888; font-family:monospace; font-size:11px;">[90s]</span>
-                    <button style="background:none; border:1px solid #444; color:#fff; cursor:pointer; font-size:10px; padding:2px 6px; border-radius:4px;">❐</button>
-                    <button style="background:none; border:1px solid #444; color:#fff; cursor:pointer; font-size:10px; padding:2px 6px; border-radius:4px;">📥</button>
-                    <button style="background:none; border:none; color:#ff4444; cursor:pointer; font-weight:bold;">×</button>
-                </div>
-            </div>
-            <div style="height:320px; position:relative; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:0 0 8px 8px;">
-                <div style="width:100%; height:100%; background:url('../_assets/images/logo-echo-full.png'); background-size:contain; background-position:center; background-repeat:no-repeat; filter:brightness(0.6);"></div>
-                <div style="position:absolute; bottom:15px; left:15px; right:15px; display:flex; justify-content:space-between; align-items:flex-end;">
-                    <div style="background:rgba(0,0,0,0.6); padding:8px; border-radius:6px; border:1px solid rgba(255,255,255,0.1); font-family:monospace; font-size:10px; color:#4ade80;">
-                        ZOOM: 1.0x [INTERACTIVE]<br>                        RENDER: GPU_TRANS3D
-                    </div>
-                </div>
-            </div>
-            <div style="text-align:center; font-style:italic; font-size:12px; color:#888; margin-top:10px;">
-                Mockup conceptuel de l'ECHO Monitor (HUD injecté via JS)
-            </div>
-        </div>
-
-        <div class="component-grid">
-            <div class="component-card">
-                <h4>Moteur de Rendu & Performance</h4>
-                <ul>
-                    <li><strong>Accélération GPU</strong> : Utilisation systématique de <code>translate3d(x,y,0)</code> et <code>will-change</code> pour forcer la création de calques de composition matérielle.</li>
-                    <li><strong>Calcul de Ratio Dynamique</strong> : La fonction <code>getBestSize</code> ajuste automatiquement la fenêtre pour respecter les proportions de l'image (Aspect Ratio) tout en évitant les débordements du viewport (max 97%).</li>
-                    <li><strong>Système de Clamp</strong> : Empêche physiquement le HUD de sortir de l'écran lors du drag ou du resize.</li>
-                </ul>
-            </div>
-            <div class="component-card">
-                <h4>Outils d'Interrogation</h4>
-                <ul>
-                    <li><strong>Moteur Zoom & Pan Universel</strong> : Navigation haute fidélité via la matrice de transformation CSS (<code>transform: scale() translate3d()</code>). <strong>Ctrl + Molette</strong> gère le zoom, <strong>Clic + Glisse</strong> gère le Pan (déplacement matriciel au pixel près).</li>
-                    <li><strong>Crop-Box Interactif</strong> : Permet de définir une zone d'intérêt via une boîte de sélection redimensionnable. Ses coordonnées sont interprétées mathématiquement en fonction de l'échelle d'image en cours.</li>
-                    <li><strong>Export Polymorphe (Fallback CORS)</strong> : Un Canvas 2D interne extrait l'image complète ou la zone rognée pour l'injecter au presse-papier. Si le canvas est "Tainted" par les règles de sécurité CORS (images distantes HTTPS restrictives), l'interface déploie automatiquement un <strong>Overlay de Secours</strong> ou ouvre un onglet natif.</li>
-                    <li><strong>Aide Intégrée [ ? ]</strong> : Lexique éphémère unifié des contrôles (S pour Sélection, C pour Copier, R ou 🔄 pour Reset Vue).</li>
-                </ul>
-            </div>
+        <div class="tech-spec">
+            <h4>⚙️ Moteur de Rendu & Performance</h4>
+            <ul>
+                <li><strong>Accélération GPU</strong> : Utilisation de <code>translate3d(x,y,0)</code> et <code>will-change</code> pour forcer la création de calques de composition matérielle.</li>
+                <li><strong>Calcul de Ratio Dynamique</strong> : La fonction <code>getBestSize</code> ajuste automatiquement la fenêtre pour respecter les proportions de l'image (Aspect Ratio).</li>
+                <li><strong>Moteur Zoom & Pan Universel</strong> : Navigation haute fidélité via la matrice de transformation CSS (<code>transform: scale()</code>). <strong>Ctrl + Molette</strong> gère le zoom (jusqu'à 15x), <strong>Clic + Glisse</strong> gère le Pan.</li>
+                <li><strong>Crop-Box Interactif</strong> : Permet de définir une zone d'intérêt via une boîte de sélection redimensionnable.</li>
+            </ul>
         </div>
 
         <h3>Persistance de l'État (LocalStorage)</h3>
-        <p>Le HUD implémente une mémoire de session. Chaque manipulation est enregistrée sous la clé <code>STATE_KEY</code> définie par le backend (souvent liée au <code>file_id</code>) :</p>
-        <div class="tech-spec">
-            { "w": 800, "x": 120, "y": 45, "m": false, "f": false }
-            <br><em>(Largeur, Position X, Position Y, État Minifié, Mode Plein Écran)</em>
-        </div>
+        <p>Le HUD implémente une mémoire de session. Chaque manipulation est enregistrée sous la clé <code>STATE_KEY</code> définie par le backend : <code>{ "w": 800, "x": 120, "y": 45, "m": false, "f": false }</code>.</p>
 
         <h2>2. La Context Gauge (Cortex Monitoring)</h2>
         <p>Injectée dans la barre de navigation via <code>EchoUI.deploy_context_gauge</code>, cette jauge est l'outil de pilotage du "Context Caching" de Gemini.</p>
 
-        <div style="background:#1e1e1e; padding:15px; border-radius:8px; border:1px solid #444; display:flex; align-items:center; gap:15px; margin:20px 0;">
-            <span style="font-size:10px; font-weight:bold; color:#888;">CTX</span>
-            <div style="flex:1; height:10px; background:rgba(255,255,255,0.1); border-radius:5px; display:flex; overflow:hidden;">
-                <div style="width:60%; background:#8b5cf6;" title="Cache"></div>
-                <div style="width:25%; background:#10b981;" title="Prompt"></div>
-                <div style="width:5%; background:#f59e0b;" title="Generated"></div>
-            </div>
-        </div>
-
         <h3>Compréhension des Segments de Jauge</h3>
         <ul>
-            <li><span style="color:#8b5cf6; font-weight:bold;">🟪 Cache (Purple)</span> : Représente les tokens déjà "ingérés" et mis en cache par l'infrastructure Google. Les données représentées par ce segment sont gérées par le cache implicite de Gemini côté Google, et coûtent jusqu'à 90% moins cher qu'un contexte entier retraité par le modèle.</li>
-            <li><span style="color:#10b981; font-weight:bold;">🟩 User/Prompt (Green)</span> : La charge active du message actuel. C'est la zone de consommation dynamique.</li>
-            <li><span style="color:#f59e0b; font-weight:bold;">🟧 Generated (Orange)</span> : Les tokens produits par ECHO. Une croissance rapide ici indique une verbosité élevée.</li>
-            <li><span style="color:rgba(255,255,255,0.2); font-weight:bold;">⬜ Vide</span> : Espace de mémoire de travail restant avant la saturation du contexte (défini par <code>MAX_CONTEXT_SIZE</code>).</li>
-        </ul>
-
-        <h3>Fonctionnalités avancées de la Jauge</h3>
-        <ul>
-            <li><strong>Hover Info</strong> : Le survol de la jauge affiche un <code>title</code> détaillant le volume exact de tokens pour chaque catégorie (Cache, User/Prompt, Generated) par rapport à la limite maximale (Max). Les informations de Plan IA ou de crédits, initialement prévues, agissent actuellement comme des espaces réservés (placeholders).</li>
-            <li><strong>Adaptabilité Mobile</strong> : Le label "CTX" s'auto-dissimule sur les écrans inférieurs à 640px pour préserver l'espace de la navbar.</li>
-            <li><strong>Fréquence de Mise à Jour</strong> : Rafraîchie à chaque cycle de pensée du <code>pipe_engine</code>.</li>
+            <li><span style="color:#8b5cf6; font-weight:bold;">🟪 Cache (Purple)</span> : Tokens déjà ingérés et mis en cache par Google (économie de coût de 90%).</li>
+            <li><span style="color:#10b981; font-weight:bold;">🟩 User/Prompt (Green)</span> : La charge active du message actuel.</li>
+            <li><span style="color:#f59e0b; font-weight:bold;">🟧 Generated (Orange)</span> : Les tokens produits par ECHO.</li>
+            <li><span style="color:rgba(255,255,255,0.2); font-weight:bold;">⬜ Vide</span> : Espace de mémoire de travail restant avant saturation.</li>
         </ul>
 
         <div class="audit-note">
-            <h4>Analyse d'Audit : Optimisation DOM</h4>
-            <p>Pour éviter les fuites de mémoire et les ralentissements, EchoUI utilise systématiquement <code>oldHud.remove()</code> avant toute nouvelle injection. L'utilisation du flou (<code>backdrop-filter</code>) est optimisée via les calques GPU pour garantir 60 FPS même lors des animations complexes.</p>
+            <h4>✅ Audit de Vérité (v2.81)</h4>
+            <p>L'utilisation de <code>translate3d</code> et <code>will-change</code> a été confirmée dans les templates JS de <code>echo_utils.py</code>. Ces optimisations garantissent une fluidité de 60 FPS lors des zooms matriciels (jusqu'à 15x), même sur les captures d'écran haute résolution.</p>
         </div>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     </main>
+<script src="nav.js"></script>
 </body>
 </html>
-
