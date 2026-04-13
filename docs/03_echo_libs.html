@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 3. Librairies Partagées (libs)</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -9,17 +10,20 @@
     <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
-        <h1>3. Librairies Partagées (echo_libs)</h1>
+        <h1>3. Les Librairies Partagées (echo_libs)</h1>
+
+        <div class="transition-text">Au cœur du système déployé opèrent les librairies partagées, véritables moteurs des fonctionnalités techniques d'ECHO.</div>
 
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
-            <p>Les Librairies sont les <strong>Fondations Invisible</strong> d'ECHO. C'est ici que sont rangées les règles de base : comment se connecter à Google (Gemini Client), comment enregistrer les données (State Manager), et comment gérer vos accès (Auth). C'est le dictionnaire technique commun que tous les autres services consultent pour parler la même langue.</p>
+            <h4>💡 Que sont les ECHO Libs ?</h4>
+            <p>Les ECHO Libs sont un ensemble de <strong>fonctions de base consolidées</strong>, centralisées et réutilisables par tous les modules du framework (Filtres, Pipe, Actions, Admin). Elles évitent la duplication de code et garantissent que chaque composant parle la même langue technique.</p>
         </div>
 
         <p>Le socle technique d'ECHO repose sur un triptyque de librairies situées dans <code>14-owui-libs/</code>. Ces modules assurent la cohérence, la résilience et l'interopérabilité de tout l'écosystème.</p>
 
         <section id="constants">
             <h2>echo_constants.py : Constantes & Topologie (v1.22)</h2>
+            <p>Le registre unique des vérités du système : IDs de modèles, chemins de répertoires, timeouts et limites de contextes.</p>
             <table>
                 <thead>
                     <tr><th>Constante</th><th>Valeur / Rôle</th></tr>
@@ -37,7 +41,7 @@
 
         <section id="auth-service">
             <h2>echo_auth.py : Validation d'Identité</h2>
-            <p>Le <code>AuthService</code> gère l'enrôlement des clés API. Il valide en parallèle (<code>asyncio.gather</code>) les clés auprès de Google avant de les sceller dans <code>identity.db</code>.</p>
+            <p>Gestionnaire d'identité souveraine. Le <code>AuthService</code> gère l'enrôlement des clés API. Il valide en parallèle (<code>asyncio.gather</code>) les clés auprès de Google avant de les sceller dans <code>identity.db</code>.</p>
         </section>
 
         <section id="utils-core">
@@ -64,7 +68,7 @@
 
             <h3>EchoEvents & EchoUI</h3>
             <ul>
-                <li><strong>EchoEvents</strong> : Bus d'événements asynchrone (<code>status</code>, <code>toast</code>, <code>call</code>).</li>
+                <li><strong>EchoEvents</strong> : Bus d'événements asynchrone (<code>status</code>, <code>toast</code>, <code>call</code>). Permet de pousser des messages de statut (<i>"L'IA réfléchit..."</i>) de manière uniforme.</li>
                 <li><strong>EchoUI</strong> : Moteur HUD. Gère le <strong>Monitor</strong> (Visualisation GPU), la <strong>Context Gauge</strong> (Monitoring Tokens) et le <strong>Web Replay</strong>.</li>
             </ul>
 
@@ -75,14 +79,15 @@
             </ul>
         </section>
 
-        <div class="audit-note">
-            <h4>✅ Audit de Vérité (v2.81)</h4>
-            <p>L'implémentation de <code>EchoGeminiClient</code> a été auditée pour confirmer la gestion correcte du <strong>Jitter</strong> et du support <strong>HTTP/2</strong>. Le <code>EchoStateManager</code> garantit la persistance des ombres même en cas de crash brutal du conteneur grâce au mode <code>WAL</code> de SQLite.</p>
+        <div class="tech-spec">
+            <h4>⚙️ Précision Mécanique : Résilience des Données</h4>
+            <p>Le <code>EchoStateManager</code> garantit la persistance des ombres même en cas de crash brutal du conteneur grâce au mode <code>WAL</code> (Write-Ahead Logging) de SQLite. Cette configuration permet des écritures concurrentes rapides sans risque de corruption de la base de données.</p>
         </div>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+    <div class="transition-text"><em>Ces moteurs logiciels nécessitent des interfaces pour être supervisés et pilotés par l'utilisateur. <a href="04_hud_ui.html">Découvrir l'écosystème HUD & UI ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

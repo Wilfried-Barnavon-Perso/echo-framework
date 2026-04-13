@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 6a. Web Intelligence</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -11,8 +12,28 @@
     <main>
         <h1>7a. Web Intelligence : Navigation & Recherche Souveraine</h1>
 
+        <div class="transition-text">Pour comprendre le monde extérieur, l'Arsenal met à disposition de l'IA un navigateur et un moteur de recherche souverains.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>🌐 Web Intelligence</h3>
+                <p><strong>Nature :</strong> Cluster de Micro-services (Browser Headless + Proxy de recherche).</p>
+                <p><strong>Source :</strong> <code>12-owui-tools/navigation_engine_tool.py</code> & <code>sovereign_web_search.py</code>. Conteneur : <code>22-docker-browser-agent/</code>.</p>
+                <p><strong>Rôle :</strong> Fournir à l'IA la capacité de naviguer sur le web public (cliquer, scroller, lire) et de rechercher des informations sans exposer l'utilisateur aux traqueurs (SearxNG).</p>
+                <p><strong>Exécutant :</strong> Ordres émis par le Pipe (Python), exécutés par les conteneurs isolés <code>browser-agent</code> (Node.js/Playwright) et <code>searxng</code>.</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Requêtes structurées de l'IA (URLs, requêtes de recherche, index de clics).</li>
+                        <li><strong>Action réseau :</strong> Trafic HTTPS sortant vers le World Wide Web via la zone sécurisée.</li>
+                        <li><strong>Output :</strong> Cartographie DOM (JSON), images Base64 (screenshots), et résultats de recherche parsés au Pipe.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
+            <h4>💡 Comprendre la Web Intelligence</h4>
             <p>ECHO ne se contente pas de "lire" internet. Il possède un <strong>Navigateur Fantôme</strong> (Chromium) qu'il pilote comme un humain. Il peut cliquer, scroller, et même "voir" la page grâce à des captures d'écran. La <strong>Recherche Souveraine</strong> signifie qu'il interroge des moteurs de recherche (SearxNG) qui protègent votre anonymat : personne ne sait ce que vous cherchez, pas même Google.</p>
         </div>
 
@@ -53,7 +74,7 @@
         <p>À chaque interaction réussie, le moteur capture une frame (PNG) et la scelle dans le Vault. La fonction <code>get_browser_frames_history</code> permet au modèle de consulter les IDs des étapes passées pour reconstruire une chronologie visuelle.</p>
 
         <h2>Le Replay Visuel (HUD Cockpit)</h2>
-        <p>ECHO permet de "rejouer" intégralement une session de navigation via une interface HUD dédiée. Cette action permet d'auditer les décisions visuelles de l'IA, d'extraire des preuves ou de corriger un parcours.</p>
+        <p>ECHO permet de "rejouer" intégralement une session de navigation via une interface HUD dédiée. Cette action permet d'analyser les décisions visuelles de l'IA, d'extraire des preuves ou de corriger un parcours.</p>
         
         <div class="card">
             <h4>Accès au Cockpit de Navigation</h4>
@@ -117,6 +138,7 @@
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+        <div class="transition-text"><em>Après avoir exploré le monde extérieur, ECHO doit également pouvoir manipuler vos fichiers internes. <a href="07b_vault_explorer.html">Découvrir le Vault & Data Explorer ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

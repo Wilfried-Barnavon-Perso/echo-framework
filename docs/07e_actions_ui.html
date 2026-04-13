@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 7e. Actions UI (HUD)</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -10,15 +11,36 @@
 
     <main>
         <h1>7e. Actions UI : Les Commandes du HUD</h1>
+
+        <div class="transition-text">En complément des outils automatisés utilisés par l'IA, les Actions UI redonnent le contrôle manuel à l'utilisateur sur des fonctions système critiques.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>🎮 Actions UI (HUD)</h3>
+                <p><strong>Nature :</strong> Composants interactifs d'interface utilisateur (Boutons Open WebUI) déclenchant des scripts Python backend.</p>
+                <p><strong>Source :</strong> Dossier <code>13-owui-actions/</code> (ex: <code>purge_memory_action.py</code>, <code>web_navigation_replay_action.py</code>).</p>
+                <p><strong>Rôle :</strong> Fournir à l'utilisateur final une surface de contrôle (HUD) pour interagir manuellement avec l'état du framework ECHO (Purge de la mémoire Qdrant, réinitialisation des clés API, rejeu visuel d'une navigation web).</p>
+                <p><strong>Exécutant :</strong> L'action est déclenchée par un clic utilisateur dans le navigateur, et le script Python correspondant est exécuté par le Backend Open WebUI.</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Clic utilisateur, accompagné de paramètres éventuels (ex: IDs à purger).</li>
+                        <li><strong>Action locale :</strong> Modifie directement les bases de données (<code>echo_shadows.db</code>, <code>identity.db</code>) ou interroge le Vault.</li>
+                        <li><strong>Output :</strong> Retourne des flux d'événements (Event Streams) ou du code HTML/JS injecté dynamiquement dans le chat pour un affichage interactif.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
         <p>Les <strong>Actions UI</strong> sont des modules interactifs injectés directement dans l'interface utilisateur d'Open WebUI. Elles permettent à l'utilisateur de piloter les fonctions critiques du framework via des boutons contextuels, sans passer par des commandes textuelles.</p>
 
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
+            <h4>💡 Comprendre les Actions UI</h4>
             <p>Imaginez que votre IA est un pilote d'avion. Les <strong>Outils</strong> sont ses commandes automatiques, mais les <strong>Actions UI</strong> sont les boutons physiques sur le tableau de bord (le HUD) sur lesquels <strong>VOUS</strong> pouvez appuyer pour reprendre le contrôle manuel sur la mémoire, l'accès ou la vision de l'IA.</p>
         </div>
 
         <section id="memory-purge">
-            <h2>1. ECHO Memory Purge (Granulaire) - v2.7</h2>
+            <h2>1. ECHO Memory Purge (Granulaire)</h2>
             <p>Cet outil de gouvernance permet un élagage chirurgical de la mémoire organique (Qdrant) pour éviter les hallucinations dues à des souvenirs obsolètes ou contradictoires.</p>
             
             <div class="info-block">
@@ -27,7 +49,7 @@
             </div>
 
             <div class="tech-spec">
-                <h4>⚙️ Sous le capot (Audit Code : v2.7)</h4>
+                <h4>⚙️ Sous le capot (Le point sur le code)</h4>
                 <ul>
                     <li><strong>Tri Hiérarchique</strong> : Les catégories sont présentées selon une logique de priorité :
                         <ol>
@@ -57,7 +79,7 @@
         </section>
 
         <section id="auth-manager">
-            <h2>2. ECHO Auth Manager - v3.7</h2>
+            <h2>2. ECHO Auth Manager (<code>reset_auth_action.py</code>)</h2>
             <p>Le gestionnaire d'authentification HUD permet une rotation souveraine des clés API sans intervention de l'administrateur système.</p>
             
             <div class="info-block">
@@ -66,14 +88,14 @@
             </div>
 
             <div class="tech-spec">
-                <h4>⚙️ Sous le capot (Audit Code : v3.7)</h4>
+                <h4>⚙️ Sous le capot (Le point sur le code)</h4>
                 <p>L'action cible exclusivement la base <code>identity.db</code> située dans l'enclave utilisateur du Vault. Elle exécute un <code>DELETE FROM auth_data WHERE key LIKE 'google_%'</code>. C'est propre, local et sécurisé.</p>
             </div>
         </section>
 
         <section id="web-replay">
-            <h2>3. Show Web Replay (Cockpit JS) - v3.6</h2>
-            <p>Véritable "Boîte Noire" de la navigation, le Replay permet d'auditer visuellement chaque étape du <code>navigation_engine_tool</code>.</p>
+            <h2>3. Show Web Replay (Cockpit JS)</h2>
+            <p>Mécanisme de journalisation détaillé de la navigation, le Replay permet d'analyser visuellement chaque étape du <code>navigation_engine_tool</code>.</p>
 
             <div class="info-block">
                 <h4>👁️ Pourquoi est-ce important ?</h4>
@@ -81,7 +103,7 @@
             </div>
 
             <div class="tech-spec">
-                <h4>⚙️ Sous le capot (Audit Code : v3.6)</h4>
+                <h4>⚙️ Sous le capot (Le point sur le code)</h4>
                 <ul>
                     <li><strong>Moteur Zoom & Pan</strong> : Navigation haute fidélité via <code>Ctrl + Molette</code> (Zoom 0.1x à 15x).</li>
                     <li><strong>Streaming Atomique</strong> : Python pousse les images une par une vers le navigateur. Le thread Python s'arrête (Promise JS) tant que vous n'avez pas cliqué sur "Suivant" ou "Play".</li>
@@ -101,13 +123,14 @@
         </section>
 
         <div class="audit-note">
-            <h4>✅ Contrôle de Vérité</h4>
-            <p>Toutes les informations ci-dessus ont été vérifiées par analyse statique des fichiers <code>13-owui-actions/*.py</code>. Aucun "bullshit" : les comportements décrits correspondent aux fonctions SQL, JS et Python réelles du framework.</p>
+            <h4>✅ Contrôle de l'Exactitude</h4>
+            <p>Toutes les informations ci-dessus ont été vérifiées par analyse statique des fichiers <code>13-owui-actions/*.py</code>. Les comportements décrits correspondent rigoureusement aux fonctions SQL, JS et Python réelles du framework.</p>
         </div>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+        <div class="transition-text"><em>Maintenant que nous connaissons tous les outils, voyons comment l'IA est programmée pour s'en servir et se comporter. <a href="08_system_prompt.html">Passer au cœur des directives : le Kernel (System Prompt) ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

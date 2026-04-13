@@ -1,32 +1,80 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 0. Fondations & Philosophie</title>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
         <h1>0. Fondations & Philosophie</h1>
 
+        <div class="transition-text">Ce corpus documentaire vous guide pas à pas à travers l'architecture, les concepts et les modules d'ECHO. Suivez ce fil rouge pour comprendre comment chaque pièce s'intègre au système global.</div>
+
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
-            <p>ECHO est né d'une idée simple : l'Intelligence Artificielle ne doit pas être un service lointain qui nous surveille, mais un <strong>Outil Personnel</strong> qui nous protège. Sa philosophie repose sur la <strong>Souveraineté</strong> : vous possédez vos données, vous contrôlez votre IA, et rien de ce qui est privé ne sort de votre infrastructure. C'est le passage d'une IA de "nuage" (cloud) à une IA de "citadelle" (local).</p>
+            <h4>💡 ECHO : De l'IA "Diffuse" à l'IA "Citadelle"</h4>
+            <p>ECHO (Espace Cognitif Heuristique Opérationnel) est né d'une idée simple : l'Intelligence Artificielle ne doit pas devenir un outil de dépendance, mais un <strong>Outil Personnel</strong> véritablement utile. Sa philosophie repose sur la <strong>Souveraineté</strong> : vous possédez vos données, vous contrôlez votre IA, et rien de ce qui est privé ne sort de votre infrastructure. C'est le passage d'une IA "diffuse" (cloud public sans contrôle) à une IA de "citadelle" (votre enclave privée).</p>
         </div>
 
-        <p>ECHO (Espace Cognitif Heuristique Opérationnel) est un framework agentique de cinquième génération conçu pour transformer l'interaction homme-machine par le prisme de la souveraineté numérique et de la continuité cognitive.</p>
+        <p>ECHO n'est pas un modèle d'intelligence artificielle (LLM) au sens strict, mais un <strong>Framework d'intelligence souveraine</strong>. Là où un LLM comme Gemini est le "moteur", ECHO est le "véhicule complet" (châssis, capteurs, mémoire et habitacle) qui permet à ce moteur d'interagir avec votre monde réel en toute sécurité.</p>
 
-        <div class="audit-note">
-            <h4>✅ Audit de Vérité</h4>
-            <p>Les principes de souveraineté décrits ici sont appliqués techniquement par l'isolation stricte des conteneurs Docker et le stockage local systématique des bases de données SQLite et vectorielles Qdrant.</p>
+        <h2>Origine et Évolution</h2>
+        <ul>
+            <li><strong>Le Nom :</strong> ECHO est l'acronyme d'<strong>Espace Cognitif Heuristique Opérationnel</strong>. 
+                <ul>
+                    <li><i>Espace Cognitif</i> : Un lieu où l'IA peut "penser" avec ses propres outils.</li>
+                    <li><i>Heuristique</i> : Sa capacité à découvrir par elle-même et à apprendre de ses erreurs.</li>
+                    <li><i>Opérationnel</i> : Son aptitude à agir concrètement (naviguer, coder, trier).</li>
+                </ul>
+            </li>
+            <li><strong>Historique (V4 vs V5) :</strong> 
+                <ul>
+                    <li>La <strong>V4 (Legacy)</strong> était un concept d'agent autonome tournant dans un simple terminal (voir le dossier <code>_v4-legacy-concept</code>). Elle a posé les bases de la boucle de réflexion <abbr title="Chain of Thought : La capacité de l'IA à exprimer et conserver son raisonnement étape par étape.">CoT</abbr>.</li>
+                    <li>La <strong>V5 (Actuelle)</strong> transforme ce concept en une infrastructure robuste, conteneurisée et intégrée à une interface web moderne (Open WebUI), capable de gérer des sessions massives grâce à l'<abbr title="Base de données SQLite locale qui conserve une copie parfaite et non altérée de toute la conversation.">Ombre Riche</abbr>.</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h2>Les 3 Piliers Fondamentaux</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Pilier</th>
+                    <th>Engagement Technique</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Souveraineté</strong></td>
+                    <td>Isolation totale des données. Pas de télémétrie. Le Vault est local.</td>
+                </tr>
+                <tr>
+                    <td><strong>Véracité</strong></td>
+                    <td>Refus des hallucinations par l'audit systématique des sources et la <abbr title="Processus qui reconstruit l'historique complet de la conversation avant chaque envoi à l'IA pour éviter l'amnésie.">Suture</abbr>.</td>
+                </tr>
+                <tr>
+                    <td><strong>Autonomie</strong></td>
+                    <td>L'IA planifie et exécute ses tâches via l'Arsenal sans intervention humaine constante.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="tech-spec">
+            <h4>⚙️ Précision Mécanique : L'Abstraction du Modèle</h4>
+            <p>ECHO est conçu pour être <strong>agnostique au moteur</strong>. Bien qu'il soit optimisé pour la famille Gemini (Pro, Flash, Lite), son architecture de <abbr title="Processus qui reconstruit l'historique complet de la conversation avant chaque envoi à l'IA pour éviter l'amnésie.">Suture</abbr> permet théoriquement de basculer d'un fournisseur à l'autre sans perdre la structure de la conversation, car ECHO gère sa propre "conscience" (Shadows) indépendamment des APIs cloud.</p>
         </div>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+    <div class="transition-text"><em>Maintenant que les fondations conceptuelles sont posées, découvrons comment ces principes s'articulent dans l'architecture globale du système. <a href="01_hld_architecture.html">Passer à l'architecture (HLD) ➔</a></em></div>
     </main>
-<script src="nav.js"></script>
+    <script src="nav.js"></script>
 </body>
+
 </html>

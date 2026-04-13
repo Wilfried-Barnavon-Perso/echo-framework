@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 4. Écosystème HUD & UI (EchoUI)</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -9,14 +10,16 @@
     <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
-        <h1>4. Écosystème HUD & UI (EchoUI)</h1>
+        <h1>4. L'Écosystème HUD & UI (EchoUI)</h1>
+
+        <div class="transition-text">Pour interagir avec la complexité des librairies sous-jacentes, ECHO propose des interfaces visuelles claires, regroupées sous l'appellation HUD.</div>
 
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
-            <p>Le HUD (Heads-Up Display) est le <strong>Tableau de Bord Immersif</strong> d'ECHO. Au lieu de vous donner juste du texte, ECHO injecte des fenêtres interactives directement dans votre chat. Vous pouvez zoomer sur des captures d'écran, surveiller la mémoire de l'IA en temps réel, ou utiliser le Replay pour voir ce que l'IA a fait sur le web. C'est ce qui transforme un simple chat en une véritable station de pilotage.</p>
+            <h4>💡 Qu'est-ce que le HUD ?</h4>
+            <p>Le <strong>HUD (Heads-Up Display)</strong> n'est pas une nouvelle interface graphique, mais une <strong>surcouche d'affichage standardisée</strong> injectée dynamiquement par-dessus le DOM d'Open WebUI. Il permet d'afficher en temps réel des informations techniques (jauge de contexte, rejeu web, moniteur de performance) directement dans le flux de votre conversation, sans polluer le texte de l'IA.</p>
         </div>
 
-        <p>L'interface utilisateur d'ECHO, baptisée <strong>EchoUI</strong>, n'est pas une simple surcouche CSS, mais un moteur d'injection dynamique asynchrone. Elle permet de briser le "bac à sable" visuel d'Open WebUI pour offrir une expérience HUD (Heads-Up Display) digne d'une station de travail de renseignement.</p>
+        <p>L'interface utilisateur d'ECHO, baptisée <strong>EchoUI</strong>, n'est pas une simple surcouche CSS, mais un moteur d'injection dynamique asynchrone. Elle permet de briser le "bac à sable" visuel d'Open WebUI pour offrir une expérience HUD digne d'une station de travail de renseignement.</p>
 
         <h2>Architecture de Communication</h2>
         <p>Le système repose sur une symbiose entre le Backend (Python) et le Frontend (JavaScript) :</p>
@@ -27,16 +30,17 @@
         </ol>
 
         <div class="tech-spec">
-            <strong>Sécurité du Flux :</strong> Aucune URL de fichier temporaire n'est exposée. Les médias transitent exclusivement via des flux <code>data:mime/type;base64</code>, garantissant l'étanchéité des données entre le Vault et l'affichage.
+            <h4>⚙️ Précision Mécanique : Fluidité d'Affichage</h4>
+            <p>L'utilisation des propriétés CSS <code>translate3d</code> et <code>will-change</code> dans les templates JS de <code>echo_utils.py</code> garantit une fluidité d'affichage constante de <strong>60 FPS</strong> lors des zooms matriciels (jusqu'à 15x), même sur les captures d'écran haute résolution ou des fichiers PDF complexes.</p>
         </div>
 
         <h2>1. Le Monitor ECHO (Visualiseur Intelligent)</h2>
         <p>Invoqué via <code>EchoUI.monitor_ECHO</code>, ce composant est le pivot de l'analyse visuelle.</p>
 
         <div class="tech-spec">
-            <h4>⚙️ Moteur de Rendu & Performance</h4>
+            <h4>🔎 Détail Technique : Moteur de Rendu & Performance</h4>
             <ul>
-                <li><strong>Accélération GPU</strong> : Utilisation de <code>translate3d(x,y,0)</code> et <code>will-change</code> pour forcer la création de calques de composition matérielle.</li>
+                <li><strong>Accélération GPU</strong> : Utilisation de <code>translate3d(x,y,0)</code> pour forcer la création de calques de composition matérielle.</li>
                 <li><strong>Calcul de Ratio Dynamique</strong> : La fonction <code>getBestSize</code> ajuste automatiquement la fenêtre pour respecter les proportions de l'image (Aspect Ratio).</li>
                 <li><strong>Moteur Zoom & Pan Universel</strong> : Navigation haute fidélité via la matrice de transformation CSS (<code>transform: scale()</code>). <strong>Ctrl + Molette</strong> gère le zoom (jusqu'à 15x), <strong>Clic + Glisse</strong> gère le Pan.</li>
                 <li><strong>Crop-Box Interactif</strong> : Permet de définir une zone d'intérêt via une boîte de sélection redimensionnable.</li>
@@ -57,14 +61,10 @@
             <li><span style="color:rgba(255,255,255,0.2); font-weight:bold;">⬜ Vide</span> : Espace de mémoire de travail restant avant saturation.</li>
         </ul>
 
-        <div class="audit-note">
-            <h4>✅ Audit de Vérité (v2.81)</h4>
-            <p>L'utilisation de <code>translate3d</code> et <code>will-change</code> a été confirmée dans les templates JS de <code>echo_utils.py</code>. Ces optimisations garantissent une fluidité de 60 FPS lors des zooms matriciels (jusqu'à 15x), même sur les captures d'écran haute résolution.</p>
-        </div>
-
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+    <div class="transition-text"><em>Mais avant qu'interaction utilisateur n'atteigne le cœur du traitement logique, elle doit franchir un premier rempart cognitif. <a href="05_filtre.html">Passer au Filtre (Conscience) ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

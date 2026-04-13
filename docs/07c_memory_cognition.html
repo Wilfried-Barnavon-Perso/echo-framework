@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 7c. Cognition Profonde & Mémoire Organique</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -11,8 +12,28 @@
     <main>
         <h1>7c. Cognition Profonde & Mémoire Organique</h1>
 
+        <div class="transition-text">Pour ne pas être qu'une simple calculatrice amnésique, ECHO s'appuie sur une mémoire vectorielle persistante et un moteur de routage cognitif dynamique.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>🧠 Cognition & Mémoire Organique</h3>
+                <p><strong>Nature :</strong> Pipeline de Mémorisation (RAG Vectoriel) et Orchestrateur de Sous-Modèles.</p>
+                <p><strong>Source :</strong> <code>11-owui-filters/conversation_memory_filter.py</code>, <code>12-owui-tools/memory_organic_tool.py</code>, <code>12-owui-tools/cognitive_core.py</code>.</p>
+                <p><strong>Rôle :</strong> Assurer la persistance à long terme des connaissances utilisateur (Préférences, Faits) et orchestrer le routage dynamique (LITE/FLASH/PRO) selon la complexité de la tâche.</p>
+                <p><strong>Exécutant :</strong> Processus Python local (Backend) couplé à une base vectorielle Qdrant.</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Historique de conversation (distillé par Gemini Flash).</li>
+                        <li><strong>Stockage :</strong> Vectors (Gemini Embedding-2) insérés dans la collection <code>echo_memory</code> de Qdrant.</li>
+                        <li><strong>Output :</strong> Souvenirs réinjectés comme contexte textuel dans les outils de mémoire.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
+            <h4>💡 Comprendre la Mémoire Organique</h4>
             <p>ECHO possède deux cerveaux. Le premier est **Réactif** (le Cortex) : il décide instantanément s'il a besoin d'être "très intelligent" (modèle Pro) ou "très rapide" (modèle Flash). Le second est son **Registre** (la Mémoire Organique) : c'est un carnet de notes numérique où il range vos préférences et les faits importants pour ne jamais les oublier, même dans une nouvelle discussion.</p>
         </div>
 
@@ -74,7 +95,12 @@
         <p>La mémorisation dans ECHO n'est pas un simple stockage de logs. C'est un pipeline de <strong>distillation vectorielle</strong> géré par le filtre <code>conversation_memory_filter.py</code>.</p>
 
         <h3>A. Le Cycle de Mémorisation (Non-bloquant)</h3>
-        <p>Le déclenchement est piloté par deux facteurs : la probabilité (<code>TRIGGER_PROBABILITY=0.1</code>) et le seuil de sécurité (<code>FORCE_TRIGGER_THRESHOLD=20 messages</code>). Une fois déclenché, le pipeline s'exécute en tâche de fond :</p>
+        <p>Le déclenchement est piloté par deux facteurs : la probabilité (<code>TRIGGER_PROBABILITY=0.1</code>) et le seuil de sécurité (<code>FORCE_TRIGGER_THRESHOLD=20 messages</code>).</p>
+        <div class="note-box">
+            <h4>💡 Pourquoi 10% de probabilité ?</h4>
+            <p>Pour ne pas saturer le backend après chaque phrase (ce qui ralentirait l'IA inutilement), la mémorisation se déclenche aléatoirement avec 10% de chances par tour court, MAIS se déclenche obligatoirement tous les 20 messages via le seuil de sécurité pour garantir la capture du contexte long.</p>
+        </div>
+        <p>Une fois déclenché, le pipeline s'exécute en tâche de fond :</p>
 
         <div class="code-header">Pipeline Technique de Mémorisation</div>
         <pre><code>
@@ -107,7 +133,7 @@
         </div>
 
         <div class="audit-note">
-            <h4>✅ Audit de Vérité (Mémoire)</h4>
+            <h4>✅ Le point sur l'exactitude (Mémoire)</h4>
             <p>La logique de mémorisation vectorielle et le cycle de vie (TTL) ont été vérifiés dans <code>conversation_memory_filter.py</code> et <code>memory_organic_tool.py</code>. L'action de purge granulaire dans <code>purge_memory_action.py</code> utilise un filtrage Qdrant strict sur les tags sélectionnés, garantissant qu'aucune donnée collatérale n'est effacée.</p>
         </div>
 
@@ -123,6 +149,7 @@
         <footer>
             ECHO Framework v5.102.0 - "Sovereign Intelligence & Memory Governance" - Copyright © 2026 Wilfried BARNAVON
         </footer>
+        <div class="transition-text"><em>Pour réfléchir et agir, l'IA a aussi besoin d'un espace d'exécution sécurisé pour son code. <a href="07d_execution_monitoring.html">Découvrir l'Exécution Sandbox & Pilotage ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

@@ -2,101 +2,78 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>ECHO v5 - 5. Le Filtre (Conscience Périphérique)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECHO v5 - 5. Les Filtres (Conscience & Mémoire)</title>
     <link rel="stylesheet" href="style.css">
+    <script type="module">
+      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+      mermaid.initialize({ 
+        startOnLoad: true, 
+        theme: 'dark',
+        securityLevel: 'loose',
+        flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+      });
+    </script>
 </head>
 <body>
     <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
-        <h1>5. Le Filtre (Conscience Périphérique)</h1>
+        <h1>5. Les Filtres (Conscience & Mémoire)</h1>
+
+        <div class="transition-text">En provenance de l'interface utilisateur, chaque requête transite par une couche de filtrage double qui prépare le contexte et gère la mémoire organique.</div>
 
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
-            <p>Le Filtre est le <strong>Secrétaire Particulier</strong> d'ECHO. Avant que l'IA ne lise votre message, le Filtre l'intercepte pour faire le tri : il résume les gros fichiers, vérifie vos clés de sécurité, et prépare un dossier complet (le Draft) pour le cerveau central (le Pipe). C'est lui qui s'assure que l'IA ne soit pas submergée par trop d'informations d'un coup.</p>
+            <h4>💡 Pourquoi deux filtres ?</h4>
+            <p>ECHO utilise deux filtres spécialisés pour gérer son flux :
+                <ul>
+                    <li><strong>Le Filtre de Conscience (Inlet/Outlet)</strong> : Il préanalyse les données entrantes pour éviter de surcharger le cerveau central.</li>
+                    <li><strong>Le Filtre de Mémoire (Outlet)</strong> : Il s'occupe de ranger les informations importantes dans le registre vectoriel (Qdrant) après chaque réponse.</li>
+                </ul>
+            </p>
         </div>
 
-        <p>Le <code>new_context_filter.py</code> (v6.63) constitue la <strong>Gateway Cognitive</strong> d'ECHO. Positionné en amont du Pipe, il intercepte, analyse et transmute chaque signal entrant en un "Draft" sémantique haute fidélité. Sa mission est de préparer un terrain bit-perfect pour la suture neuronale.</p>
-
-        <div class="note-box">
-            <strong>Contrôle Souverain :</strong> ECHO définit <code>self.file_handler = True</code>. Ce réglage critique désactive l'unité de Retrieval (RAG) native d'Open WebUI, transférant l'intégralité de la gestion documentaire à la logique propriétaire d'ECHO.
+        <h2>1. Le Filtre de Conscience (new_context_filter.py)</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>🌗 Filtre New Context</h3>
+                <p><strong>Nature :</strong> Middleware d'interception Inlet/Outlet.</p>
+                <p><strong>Source :</strong> <code>11-owui-filters/new_context_filter.py</code></p>
+                <p><strong>Rôle :</strong> Gateway Cognitive. En phase <strong>Inlet</strong>, il effectue le "Smart Context" : il résume les fichiers massifs via Gemini Flash pour que le Pipe reçoive un dictionnaire exploitable sans saturer son contexte.</p>
+                <p><strong>Exécutant :</strong> Processus Python d'Open WebUI.</p>
+                <p><strong>Connexions :</strong> Alimente le Pipe (via les métadonnées <code>etat_echo</code>).</p>
+            </div>
         </div>
 
-        <h2>Smart Context 3.0 : L'Aiguillage Multimodal</h2>
-        <p>ECHO n'injecte pas les fichiers aveuglément. Il pratique une analyse granulaire pilotée par la fonction <code>_process_file_task</code>, capable de traiter les fichiers en parallèle avec un contrôle de flux strict.</p>
-        
-        <h3>1. L'Algorithme de Décision (Quadruple Flux)</h3>
-        <p>Chaque fichier subit une évaluation basée sur son type MIME et sa taille réelle (Valve <code>MAX_DIRECT_TEXT_SIZE</code> fixée à 256 Ko).</p>
-
-        <table>
-            <thead>
-                <tr>
-                    <th>Flux</th>
-                    <th>Conditions</th>
-                    <th>Action ECHO</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><strong>Binaire Direct</strong></td>
-                    <td>Image/Audio/Vidéo/PDF < 256 Ko</td>
-                    <td>Encapsulation Base64 (inlineData) native.</td>
-                </tr>
-                <tr>
-                    <td><strong>Injection Texte</strong></td>
-                    <td>Texte/Code < 256 Ko</td>
-                    <td>Insertion brute dans un bloc Markdown Code.</td>
-                </tr>
-                <tr>
-                    <td><strong>Smart Context</strong></td>
-                    <td>Document Volumineux (> 256 Ko)</td>
-                    <td>Distillation via <strong>Gemini Flash</strong> (Résumé technique).</td>
-                </tr>
-                <tr>
-                    <td><strong>Indexation</strong></td>
-                    <td>Format non supporté par Gemini</td>
-                    <td>Marquage simple dans le registre (Fallback).</td>
-                </tr>
-            </tbody>
-        </table>
-
-        <div class="tech-spec">
-            <h4>⚙️ Moteur de Sniffing MIME (ECHO-Logic)</h4>
-            <p>Le protocole <code>get_gemini_mime</code> assure une identification robuste là où les systèmes standards échouent :</p>
-            <ul>
-                <li><strong>Phase 1 : Mappings ECHO</strong> : Reconnaissance immédiate des formats de développement (<code>.py</code>, <code>.sh</code>, <code>.ts</code>, etc.).</li>
-                <li><strong>Phase 2 : Magic Number Sniffing</strong> : Analyse de la signature binaire via <code>filetype</code> pour les fichiers sans extension.</li>
-                <li><strong>Phase 3 : Null-Byte Sniffing</strong> : Si aucun caractère nul (<code>\x00</code>) n'est détecté dans les 1024 premiers octets, le fichier est forcé en <code>text/plain</code>, autorisant l'IA à analyser du code source exotique.</li>
-            </ul>
-        </div>
-
-        <h3>Moulage Sémantique (Smart Context)</h3>
-        <p>Pour les documents massifs, le Filtre invoque Gemini Flash de manière autonome avec une <code>systemInstruction</code> chirurgicale : <i>"Tu es l'unité de prétraitement contextuel d'ECHO. Produire un résumé technique exhaustif, identifier la structure, le but et les points clefs."</i> Le résultat est injecté dans le Draft avec le statut <code>summarized</code>.</p>
-
-        <h2>Authentification Stealth : Le Coffre-Fort Temporaire</h2>
-        <p>Le filtre assure la sécurité des identifiants sans jamais les exposer à l'interface utilisateur.</p>
-        <ul>
-            <li><strong>Interception</strong> : Le filtre surveille l'état <code>ECHO_SESSION_AUTH_PENDING</code>. Toute chaîne capturée par <code>GOOGLE_API_KEY_REGEX</code> est extraite du message.</li>
-            <li><strong>Masquage UI</strong> : Le message complet de l'utilisateur est remplacé par : <br>
-                <code style="color:var(--accent-color);">🔐 *Vérification des clés API Google en cours...*</code>
-            </li>
-            <li><strong>Handover</strong> : La clé brute est passée au Pipe via <code>body["_api_key"]</code>. C'est le Pipe qui validera et scellera la clé dans la base de données <code>identity.db</code> via l'<code>AuthService</code>.</li>
-        </ul>
-
-        <h2>Architecture du Draft & Cycle de Vie</h2>
-        <p>Contrairement aux filtres standards, ECHO ne modifie pas directement le contenu du message en phase Inlet. Il construit un <strong>Draft</strong> complexe dans les métadonnées (<code>_echo_user_parts_draft</code>).</p>
-        
         <div class="diagram-container">
             <div class="mermaid">
 flowchart LR
-    A[Utilisateur] --> B[Filtre Inlet]
+    U([Utilisateur]) -->|Upload Fichiers| OWUI[Open WebUI]
+    OWUI -->|hook.inlet| B[Filtre ECHO]
     B --> C{Analyse Multimodale}
-    C -->|Images/PDF| D[Base64 Inline]
-    C -->|Gros Fichiers| E[Résumé Flash]
-    C -->|Texte/Code| F[Bloc Markdown]
-    D & E & F --> G[<b>Draft Sémantique</b>]
-    G --> H[Pipe Outlet]
+    C -->|Images/Audio/PDF < 256 Ko| D[Encapsulation Base64]
+    C -->|Gros Fichiers > 256 Ko| E[Distillation Gemini Flash]
+    C -->|Texte/Code < 256 Ko| F[Injection Texte Brut]
+    D & E & F --> G[Draft Sémantique]
+    G -->|Injection| P[Pipe Outlet]
             </div>
+        </div>
+
+        <h2>2. Le Filtre de Mémoire (conversation_memory_filter.py)</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>🧠 Filtre Memory</h3>
+                <p><strong>Nature :</strong> Middleware d'interception Outlet (Post-génération).</p>
+                <p><strong>Source :</strong> <code>11-owui-filters/conversation_memory_filter.py</code></p>
+                <p><strong>Rôle :</strong> Gestionnaire de la Mémoire Organique. Il distille les échanges, génère des vecteurs et les stocke dans Qdrant avec un système de TTL (Time To Live).</p>
+                <p><strong>Exécutant :</strong> Processus Python d'Open WebUI.</p>
+                <p><strong>Connexions :</strong> Envoie les souvenirs vers Qdrant.</p>
+            </div>
+        </div>
+
+        <div class="tech-spec">
+            <h4>⚙️ Précision Mécanique : L'Aiguillage Inlet</h4>
+            <p>Le <code>new_context_filter</code> utilise la valve <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko par défaut). Si un fichier dépasse ce seuil, il est automatiquement routé vers l'unité de distillation (Gemini Flash). Cela garantit que le modèle principal (Gemini Pro) reçoit une synthèse structurée plutôt que des milliers de lignes de données brutes, préservant ainsi sa capacité de raisonnement critique.</p>
         </div>
 
         <h3>Le Manifeste de Vérité : etat_echo</h3>
@@ -128,13 +105,14 @@ flowchart LR
         <p>En phase Outlet (post-génération), le filtre applique un balayage final via Regex pour s'assurer qu'aucune clé API ne "fuit" dans l'interface visuelle. Toute clé détectée est remplacée par : <code>[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]</code>.</p>
 
         <div class="audit-note">
-            <h4>✅ Audit de Vérité (v6.63)</h4>
+            <h4>✅ Le point sur l'exactitude (v6.63)</h4>
             <p>Le Filtre implémente un système de <strong>Dédoublonnage Invariant</strong> : avant d'envoyer un fichier volumineux au Pipe, il calcule son hash. Si le fichier est déjà présent dans le Vault, il ne transmet que la référence, économisant ainsi de la bande passante et des ressources de stockage temporaires.</p>
         </div>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+    <div class="transition-text"><em>Une fois la requête analysée et mise en contexte, elle est transmise au centre de traitement principal. <a href="06_pipe.html">Explorer le Pipe (Cortex) ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

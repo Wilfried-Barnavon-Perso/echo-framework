@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 8. Le Kernel (Constitution)</title>
     <link rel="stylesheet" href="style.css">
     <style>
@@ -70,8 +71,28 @@
     <main>
         <h1>8. Le Kernel (Constitution)</h1>
 
+        <div class="transition-text">Tous les outils et composants précédents sont orchestrés selon la constitution comportementale de l'IA : le Kernel (System Prompt).</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>📜 Le Kernel (System Prompt)</h3>
+                <p><strong>Nature :</strong> Fichier Markdown (Instructions système de haut niveau).</p>
+                <p><strong>Source :</strong> <code>01-config/system-prompt.md</code></p>
+                <p><strong>Rôle :</strong> Agir comme la "Constitution" absolue du modèle. Il définit la personnalité d'ECHO, impose les règles de sécurité (hiérarchie des normes) et détaille les protocoles d'analyse (PGCU, PRAF).</p>
+                <p><strong>Exécutant :</strong> Interprété de manière asynchrone par les modèles Google Gemini (PRO/FLASH) lors de chaque inférence.</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Modifié manuellement par l'Admin ou injecté statiquement via <code>stack-echo.yml</code>.</li>
+                        <li><strong>Injection :</strong> Le Pipe l'insère systématiquement en tant que <code>systemInstruction</code> dans le Payload JSON envoyé à Gemini.</li>
+                        <li><strong>Output :</strong> Pilote la structure de la réponse du modèle (CoT, ton, usage des outils).</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
+            <h4>💡 Comprendre le Kernel</h4>
             <p>Le Kernel est la <strong>Constitution Morale et Technique</strong> d'ECHO. Ce n'est pas juste une liste de consignes, c'est l'ADN de l'IA. Il lui explique qui elle est (ECHO), quelles sont ses valeurs (Sécurité, Souveraineté, Vérité) et comment elle doit réagir si on lui demande de faire quelque chose de dangereux ou d'illogique. C'est le socle qui garantit que l'IA reste alignée avec les principes fondateurs du framework.</p>
         </div>
 
@@ -149,14 +170,29 @@
             <li><strong>PTM (Transparence Maximale)</strong> : Mode hyper-verbeux activé par <code>!TRACEON</code>.</li>
         </ul>
 
-        <div class="audit-note">
-            <h4>✅ Audit de Vérité</h4>
-            <p>Le Kernel est injecté systématiquement au sommet du contexte par le <strong>Pipe</strong> lors de la phase de Suture. Son intégrité est protégée : il reste "ancré" en tant qu'instruction système prioritaire, empêchant toute dérive (Jailbreak).</p>
+        <h2>La Persona : L'Ontologie d'ECHO</h2>
+        <p>Le Kernel ne se contente pas de donner des instructions ; il définit <strong>qui est l'IA</strong>. La Persona est le filtre comportemental permanent qui régit le ton, l'éthique et la posture de l'agent.</p>
+        
+        <div class="grid-container">
+            <div class="card">
+                <h3>🎭 Identité & Posture</h3>
+                <p>ECHO se reconnaît comme une entité souveraine, protectrice des données utilisateur. Sa posture est celle d'un <strong>Expert Critique</strong> : il ne valide pas une information sans preuve et n'exécute pas une commande sans en évaluer les risques collatéraux.</p>
+            </div>
+            <div class="card">
+                <h3>⚖️ Éthique Intégrée</h3>
+                <p>La Persona impose une honnêteté radicale. Si ECHO ne sait pas, il l'indique. S'il rencontre une erreur, il ne "brode" pas une réponse, mais déclenche un protocole de diagnostic via l'Arsenal.</p>
+            </div>
+        </div>
+
+        <div class="tech-spec">
+            <h4>⚙️ Précision Mécanique : L'Ancrage SystemInstruction</h4>
+            <p>Dans l'architecture ECHO, le Kernel est injecté dans le paramètre <code>systemInstruction</code> de l'API Gemini. Contrairement à un simple message "système" placé dans l'historique, l'instruction système bénéficie d'une priorité de traitement matérielle par le modèle, rendant la Persona pratiquement impossible à dévier via des techniques de <i>Prompt Injection</i> classiques.</p>
         </div>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+    <div class="transition-text"><em>Enfin, pour superviser techniquement cette architecture et gérer les accès, un module de contrôle de haut niveau est nécessaire. <a href="09_admin_manager.html">Terminer par l'Admin Manager ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

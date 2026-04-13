@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 9. Annexes Techniques</title>
     <link rel="stylesheet" href="style.css">
     <style>
@@ -112,13 +113,75 @@
     <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
-        <h1>9. Annexes Techniques : Référence Deep-Dive</h1>
+        <h1>10. Annexes Techniques : Référence Deep-Dive</h1>
         
-        <p class="lead">Cette documentation constitue la "Vérité Sémantique" du Framework ECHO. Elle détaille chaque mécanisme, classe et base de données avec une précision absolue pour les ingénieurs et architectes système.</p>
+        <div class="transition-text">Cette section regroupe les spécifications brutes, la topologie réseau et les configurations de bas niveau indispensables à la maintenance du framework ECHO.</div>
 
-        <!-- SECTION 1 : DATA LAYER -->
+        <!-- SECTION 0 : NETWORK & TOPOLOGY -->
+        <section class="tech-section" id="network">
+            <h2>0. Topologie Réseau & Ports</h2>
+            <p>ECHO orchestre un cluster de conteneurs sur un réseau Docker privé (<code>echo-network</code>). La passerelle BunkerWeb agit comme l'unique point d'entrée sécurisé.</p>
+            
+            <table class="db-schema-table">
+                <thead>
+                    <tr>
+                        <th>Service</th>
+                        <th>Port Interne</th>
+                        <th>Port Hôte (Exposé)</th>
+                        <th>Rôle</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Open WebUI</strong></td>
+                        <td><code>8080</code></td>
+                        <td><code>3000</code></td>
+                        <td>Interface utilisateur et moteur de Pipe.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Admin Manager</strong></td>
+                        <td><code>3001</code></td>
+                        <td><code>3001</code></td>
+                        <td>Dashboard de régulation et monitoring.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Qdrant</strong></td>
+                        <td><code>6333</code></td>
+                        <td><code>6333</code></td>
+                        <td>Base vectorielle (Mémoire Organique).</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Python Worker</strong></td>
+                        <td><code>5000</code></td>
+                        <td>-</td>
+                        <td>Sandbox Python (Arsenal).</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Browser Agent</strong></td>
+                        <td><code>5002</code></td>
+                        <td>-</td>
+                        <td>Moteur Playwright (Arsenal).</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- SECTION 1 : PERSISTENCE LAYER -->
+        <section class="tech-section" id="persistence">
+            <h2>1. Persistance & Volumes Critiques</h2>
+            <p>ECHO garantit la pérennité des données via des volumes Docker nommés. Le volume <code>echo-webui-data</code> est le pivot central de la "Vérité Sémantique".</p>
+
+            <ul>
+                <li><code>echo-webui-data</code> (<i>Monté sur /app/backend/data</i>) : Contient <code>webui.db</code>, le registre <code>identity.db</code> et toutes les bases SQLite de sessions (Ombres).</li>
+                <li><code>echo-qdrant-data</code> : Stockage immuable des index vectoriels de Qdrant.</li>
+                <li><code>echo-backups</code> : Destination des archives tar.gz générées par l'Admin Manager.</li>
+                <li><code>echo-worker-data</code> / <code>echo-browser-data</code> : Espaces d'échange pour les artefacts d'outils.</li>
+            </ul>
+        </section>
+
+        <!-- SECTION 2 : DATA LAYER -->
         <section class="tech-section" id="data-layer">
-            <h2>1. Spécifications du Data Layer (SQLite / WAL)</h2>
+            <h2>2. Spécifications du Data Layer (SQLite / WAL)</h2>
             <p>ECHO utilise une architecture de stockage distribuée, isolée par identifiant utilisateur (<code>UUID/ID</code>) et par session (<code>ChatID</code>).</p>
 
             <div class="tech-card">
@@ -132,17 +195,12 @@
                         <tr>
                             <td><code>auth_data</code></td>
                             <td><code>key (TEXT PK), value (TEXT), updated_at (INT)</code></td>
-                            <td>Stockage chiffré (AES-256 GCM) des secrets API. Clés gérées : <code>google_api_key</code>, <code>google_api_key_secondary</code>.</td>
+                            <td>Stockage chiffré des secrets API (Google Gemini).</td>
                         </tr>
                         <tr>
                             <td><code>user_profile</code></td>
                             <td><code>uid (TEXT PK), preferences_json (TEXT)</code></td>
-                            <td>Dictionnaire de préférences utilisateur (Thème, Langue, Modèles favoris).</td>
-                        </tr>
-                        <tr>
-                            <td><code>context_stats</code></td>
-                            <td><code>id (INT PK=1), data (TEXT), updated_at (INT)</code></td>
-                            <td>Métriques consolidées (usageMetadata) pour le monitoring des coûts.</td>
+                            <td>Dictionnaire de préférences utilisateur (Alignement).</td>
                         </tr>
                     </tbody>
                 </table>
@@ -150,7 +208,7 @@
 
             <div class="tech-card orange">
                 <h3>Session Cortex : <code>{chat_id}.db</code></h3>
-                <p>Base éphémère ou persistante selon le mode de session, gérant la continuité cognitive (Suture).</p>
+                <p>Base gérant la continuité cognitive (Suture). Située dans <code>/data/users/{uid}/chats/</code>.</p>
                 <table class="db-schema-table">
                     <thead>
                         <tr><th>Table</th><th>Colonnes Critiques</th><th>Rôle de la Suture</th></tr>
@@ -158,142 +216,45 @@
                     <tbody>
                         <tr>
                             <td><code>message_shadows</code></td>
-                            <td><code>message_id (PK), chat_id, full_parts_json, updated_at</code></td>
-                            <td><b>Shadowing</b> : Sauvegarde bit-perfect de l'état multimodal exact envoyé à Gemini. Indispensable pour la reprise de contexte.</td>
+                            <td><code>message_id (PK), full_parts_json, updated_at</code></td>
+                            <td><b>Shadowing</b> : Sauvegarde bit-perfect de l'état multimodal exact envoyé à Gemini.</td>
                         </tr>
                         <tr>
                             <td><code>suture_index</code></td>
-                            <td><code>cumulative_hash (PK), invariant_hash, parent_hash, message_id</code></td>
-                            <td>Indexation SHA-256 garantissant qu'aucun message n'a été altéré ou perdu entre deux tours.</td>
-                        </tr>
-                        <tr>
-                            <td><code>processed_files</code></td>
-                            <td><code>file_id (PK), filename, mime, mode, file_content</code></td>
-                            <td>Registre des artefacts. <code>file_content</code> stocke les moulages sémantiques (Smart Context).</td>
-                        </tr>
-                        <tr>
-                            <td><code>cognitive_signatures</code></td>
-                            <td><code>cumulative_hash (PK), thought_signature, model_id</code></td>
-                            <td>Archive les identifiants de pensée Gemini pour la validation croisée.</td>
-                        </tr>
-                        <tr>
-                            <td><code>tool_journal</code></td>
-                            <td><code>cumulative_hash (PK), io_json, updated_at</code></td>
-                            <td>Replay-log des outils. Stocke les appels (arguments) et les retours (multiparts) complets.</td>
+                            <td><code>cumulative_hash (PK), invariant_hash, parent_hash</code></td>
+                            <td>Indexation SHA-256 garantissant l'intégrité de la chaîne de réflexion.</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
         </section>
 
-        <!-- SECTION 2 : CORE API -->
+        <!-- SECTION 3 : CORE API -->
         <section class="tech-section" id="core-api">
-            <h2>2. Référence API des Classes Fondamentales</h2>
+            <h2>3. Référence API des Classes Fondamentales</h2>
 
             <div class="tech-card green">
-                <h3><code>EchoGeminiClient</code> (Backbone de Communication)</h3>
-                <div class="method-block">
-                    <span class="method-signature">async call(keys: List[str], target_model: str, payload: dict) -> dict</span>
-                    <p class="method-desc">Exécute un appel atomique. Implémente la rotation automatique des clés API sur erreur 429/500/503.</p>
-                    <div class="param-list">
-                        - <b>threshold</b>: Nombre d'échecs avant rotation (Défaut: 2).<br>
-                        - <b>max_retries</b>: Tentatives avec exponential backoff (Défaut: 3).
-                    </div>
-                </div>
-                <div class="method-block">
-                    <span class="method-signature">async stream(keys, target_model, payload, process_callback) -> AsyncGenerator</span>
-                    <p class="method-desc">Moteur SSE (Server-Sent Events) optimisé pour HTTP/2. Gère le partitionnement des tokens et la capture des signatures de pensée.</p>
-                </div>
-            </div>
-
-            <div class="tech-card">
-                <h3><code>EchoStateManager</code> (Gestionnaire de Vérité)</h3>
-                <div class="method-block">
-                    <span class="method-signature">calculate_invariant_hash(role: str, content: Any, tool_io: dict) -> str</span>
-                    <p class="method-desc">Génère l'empreinte unique d'un tour de parole. Normalise le contenu (tri des clés JSON) pour garantir la stabilité du hash.</p>
-                </div>
-                <div class="method-block">
-                    <span class="method-signature">save_message_shadow(message_id, chat_id, role, parts)</span>
-                    <p class="method-desc">Scelle physiquement les "parts" Gemini (Text + InlineData + FunctionCall) dans SQLite.</p>
-                </div>
-            </div>
-        </section>
-
-        <!-- SECTION 3 : ARSENAL -->
-        <section class="tech-section" id="arsenal">
-            <h2>3. L'Arsenal : Outils & Moteurs Spécialisés</h2>
-
-            <div class="tech-card blue">
-                <h3>Navigation Engine (v6.70)</h3>
-                <p>Architecture Client/Serveur entre le plugin OWUI et le container <code>browser-agent</code>.</p>
-                <div class="method-block">
-                    <span class="method-signature">web_browse_navigate(url: str)</span>
-                    <p class="method-desc">Lance une instance Chromium Headless, capture le DOM interactif et déploie le HUD de monitoring.</p>
-                </div>
-                <div class="method-block">
-                    <span class="method-signature">get_browser_frames_history(depth: int)</span>
-                    <p class="method-desc">Récupère la mémoire visuelle de la session (captures PNG indexées). Chaque frame est scellée dans le Vault ECHO avec son propre ID.</p>
-                </div>
-            </div>
-
-            <div class="tech-card orange">
-                <h3>Vault Explorer & Smart Context</h3>
-                <div class="method-block">
-                    <span class="method-signature">semantic_probe(file_id: str, query: str)</span>
-                    <p class="method-desc">Utilise <b>Gemini Flash</b> comme unité de prétraitement. Permet de "questionner" un fichier de 50 Mo sans l'injecter intégralement dans le contexte principal.</p>
-                </div>
-                <div class="method-block">
-                    <span class="method-signature">read_raw_file_content(file_id, start_line, end_line, mode="text")</span>
-                    <p class="method-desc">Lecture sécurisée (Tell-Safe) par pagination. Limite matérielle de 16 Ko par lecture pour protection du contexte.</p>
-                </div>
-            </div>
-        </section>
-
-        <!-- SECTION 4 : INFRASTRUCTURE -->
-        <section class="tech-section" id="infrastructure">
-            <h2>4. Lifecycle & Maintenance (Admin Manager)</h2>
-            <p>Le service <code>Admin Manager</code> (Flask/Docker SDK) assure la pérennité de l'écosystème.</p>
-
-            <div class="tech-card red">
-                <h3>Élagage Sémantique (Auto-Pruning)</h3>
-                <p>Algorithme récurrent (par défaut à 03:00) :</p>
+                <h3><code>EchoGeminiClient</code></h3>
+                <p><strong>Protocole HTTP/2 Strict</strong> : Utilisation de <code>httpx</code> avec multiplexage. Réduit la latence des flux SSE et permet la capture asynchrone des signatures de pensée.</p>
                 <ul>
-                    <li><b>Orphelins</b> : Suppression des dossiers Vault dont l'ID utilisateur n'existe plus dans <code>webui.db</code>.</li>
-                    <li><b>Atrophie</b> : Suppression des fichiers <code>/uploads</code> datant de plus de 3 ans (configurables).</li>
-                    <li><b>Compression</b> : Exécution de <code>VACUUM</code> sur toutes les bases SQLite pour récupérer l'espace inutilisé.</li>
+                    <li><strong>Rotation de clés</strong> : Bascule automatique après 2 erreurs (429/503).</li>
+                    <li><strong>Jitter</strong> : Exponential backoff avec gigue aléatoire.</li>
                 </ul>
             </div>
 
             <div class="tech-card">
-                <h3>Scripts d'Infrastructure</h3>
-                <div class="script-grid">
-                    <div class="tech-card">
-                        <code>install-stack.sh</code>
-                        <p class="x-small">Provisionnement auto : volumes, réseaux, détection CORS IPs, et launch orchestré.</p>
-                    </div>
-                    <div class="tech-card">
-                        <code>config-owui.sh</code>
-                        <p class="x-small">Injection programmatique (API REST) des modèles ECHO et durcissement des réglages OWUI.</p>
-                    </div>
-                    <div class="tech-card">
-                        <code>sync-echo.sh</code>
-                        <p class="x-small">Moteur de synchronisation bidirectionnelle Host <-> Docker via <code>rsync</code>.</p>
-                    </div>
-                    <div class="tech-card">
-                        <code>enable-bunkerweb.sh</code>
-                        <p class="x-small">Déploiement du WAF (ModSecurity) et certificat TLS automatique.</p>
-                    </div>
-                    <div class="tech-card">
-                        <code>disable-bunkerweb.sh</code>
-                        <p class="x-small">Désactivation du WAF et retour à l'accès direct standard (sans TLS).</p>
-                    </div>
-                </div>
+                <h3><code>EchoStateManager</code></h3>
+                <p><strong>Merkle-Tree Core</strong> : Algorithme de double hachage pour la Suture.</p>
+                <ul>
+                    <li><code>Invariant Hash = SHA-256(role + content_sorted + tool_io)</code></li>
+                    <li><code>Cumulative Hash = SHA-256(invariant + parent_hash)</code></li>
+                </ul>
             </div>
         </section>
 
-        <!-- SECTION 5 : VALVES REGISTRY -->
+        <!-- SECTION 4 : VALVES REGISTRY -->
         <section class="tech-section" id="valves">
-            <h2>5. Dictionnaire des Valves Critiques (Tuning)</h2>
+            <h2>4. Dictionnaire des Valves Critiques (Tuning)</h2>
             <table class="db-schema-table">
                 <thead>
                     <tr><th>Variable (Valve)</th><th>Valeur</th><th>Impact sur le Système</th></tr>
@@ -302,50 +263,29 @@
                     <tr>
                         <td><code>MAX_DIRECT_TEXT_SIZE</code></td>
                         <td>256 Ko</td>
-                        <td>Taille limite d'injection brute. Au-delà, passage automatique en <b>Smart Context</b>.</td>
+                        <td>Seuil de basculement en <b>Smart Context</b> (Résumé Flash).</td>
                     </tr>
                     <tr>
                         <td><code>KEY_SWITCH_THRESHOLD</code></td>
                         <td>2</td>
-                        <td>Nombre d'échecs API (429/503) avant basculement sur la clé de secours (Haute Disponibilité).</td>
+                        <td>Nombre d'échecs API avant failover.</td>
                     </tr>
                     <tr>
                         <td><code>MAX_CASCADE_ATTEMPTS</code></td>
                         <td>5</td>
-                        <td>Nombre max de transferts cognitifs (Ex: LITE -> FLASH -> PRO) autorisés par tour.</td>
+                        <td>Nombre max de transferts cognitifs autorisés par tour.</td>
                     </tr>
                     <tr>
                         <td><code>SMART_CONTEXT_TIMEOUT</code></td>
                         <td>120s</td>
-                        <td>Temps limite pour la génération d'un moulage sémantique par Gemini Flash.</td>
-                    </tr>
-                    <tr>
-                        <td><code>IDLE_TIMEOUT</code></td>
-                        <td>900s</td>
-                        <td>Temps d'inactivité avant arrêt automatique du moteur de navigation (Browser Agent).</td>
-                    </tr>
-                    <tr>
-                        <td><code>HTTP_MAX_CONNECTIONS</code></td>
-                        <td>100</td>
-                        <td>Pool de sockets HTTP/2 persistants mutualisés (httpx).</td>
+                        <td>Timeout de distillation pour les fichiers massifs.</td>
                     </tr>
                 </tbody>
             </table>
         </section>
 
-        <!-- SECTION 6 : PROTOCOLES SÉCURITÉ -->
-        <section class="tech-section" id="security">
-            <h2>6. Protocoles de Sécurité & Chiffrement</h2>
-            <ul>
-                <li><b>Chiffrement au repos (Vault)</b> : Les clés API sont chiffrées avant stockage en BDD (identités).</li>
-                <li><b>Isolation Docker</b> : Chaque service (Pipe, Browser, Worker, Admin) s'exécute dans un container dédié sans accès root à l'hôte.</li>
-                <li><b>WAF BunkerWeb</b> : Filtrage des attaques OWASP Top 10 et limitation de débit (Rate Limiting) sur l'interface publique.</li>
-                <li><b>Masquage Dynamique (Outlet)</b> : Le Filtre ECHO (outlet) détecte et masque les clés API dans l'interface utilisateur en fin de tour de parole.</li>
-            </ul>
-        </section>
-
         <footer>
-            ECHO Framework v5.98.10 - "Sovereign Intelligence" - Référence Technique de Suture - Copyright © 2026 Wilfried BARNAVON
+            ECHO Framework v5.99.1 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     </main>
 <script src="nav.js"></script>

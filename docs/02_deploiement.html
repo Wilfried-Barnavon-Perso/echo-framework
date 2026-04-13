@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 1. Déploiement & Infrastructure</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -9,14 +10,16 @@
     <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
-        <h1>1. Déploiement & Infrastructure</h1>
+        <h1>2. Déploiement & Infrastructure</h1>
+
+        <div class="transition-text">Pour concrétiser l'architecture conceptuelle vue précédemment, ECHO s'appuie sur une pile (stack) de déploiement conteneurisée et précise.</div>
 
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
-            <p>ECHO n'est pas un logiciel que l'on installe "clic-clic" sur Windows. C'est une <strong>Citadelle Virtuelle</strong>. Le script de déploiement prend tout le code, le compresse, et l'injecte dans une machine Linux isolée (Hyper-V). Cela garantit que vos données restent chez vous, dans un coffre-fort numérique dont vous avez la clé.</p>
+            <h4>💡 Stratégie de Déploiement</h4>
+            <p>ECHO est conçu pour transformer une machine standard en un serveur d'intelligence souveraine. Le scénario nominal de déploiement consiste à utiliser un PC sous <strong>Windows 11 Pro</strong> comme hôte matériel, lequel fait tourner une <strong>Machine Virtuelle (VM) Linux</strong> isolée via <strong>Hyper-V</strong>. C'est à l'intérieur de cette VM que la pile Docker d'ECHO s'exécute, garantissant une étanchéité totale entre vos outils de travail quotidiens et votre IA personnelle.</p>
         </div>
 
-        <p>Le déploiement d'ECHO repose sur une philosophie de <strong>"Souveraineté par l'Injection"</strong>. Contrairement aux installations classiques nécessitant un accès internet permanent ou des configurations manuelles fastidieuses, ECHO utilise un pipeline d'automatisation hybride qui transforme le code source en une infrastructure vivante en quelques minutes.</p>
+        <p>Le déploiement d'ECHO repose sur une infrastructure conteneurisée automatisée. Le script de déploiement prépare l'environnement, configure les réseaux isolés et installe les différents modules sous forme de services Docker.</p>
 
         <h2>Le Cycle de Vie des 5 Phases</h2>
 
@@ -50,8 +53,8 @@
                     <ul>
                         <li><code>/opt/echo-scripts</code> : Scripts de contrôle (SH).</li>
                         <li><code>/opt/config</code> : Fichiers YAML et JSON de configuration.</li>
-                        <li><code>/opt/owui-tools/libs/filters/pipes</code> : Logique métier injectée dans Open WebUI.</li>
-                        <li><code>/opt/docker-*</code> : Code source des micro-services (Admin Manager, Worker, Browser).</li>
+                        <li><code>/opt/10-owui-pipes/</code> à <code>/opt/14-owui-libs/</code> : Logique métier injectée dans Open WebUI (Filtres, Pipes, Outils, Actions, Libs).</li>
+                        <li><code>/opt/20-docker-*</code> à <code>/opt/22-docker-*</code> : Code source des micro-services (Admin Manager, Worker, Browser).</li>
                     </ul>
                 </li>
                 <li><strong>Normalisation (Sanitization)</strong> : Conversion forcée des caractères Windows (CRLF) en Linux (LF) et suppression des BOM UTF-8 pour éviter les erreurs d'exécution silencieuses des scripts Python.</li>
@@ -115,6 +118,21 @@
             </table>
         </section>
 
+        <section>
+            <h3>Phase 6 : Déploiement Développeur (Local)</h3>
+            <p>Pour un environnement de développement ou de test rapide, sans passer par Hyper-V, vous pouvez instancier ECHO directement si vous disposez d'un hôte Linux avec Docker et Docker Compose déjà installés.</p>
+            <div class="code-header">Quickstart Dev</div>
+            <pre><code># Depuis la racine du dépôt git ECHO sur une machine Linux :
+cd 00-echo-scripts
+sudo ./install-stack.sh
+
+# L'interface sera ensuite accessible sur http://localhost:8080
+# Pour récupérer les mots de passe générés :
+sudo ./show-echo-admin.sh
+            </code></pre>
+            <p>Dans ce mode, l'étape de provisionnement initial de la VM est ignorée, et le cluster Docker est monté de façon standard en local.</p>
+        </section>
+
         <h2>Réseau & Sécurité : Le Bouclier BunkerWeb</h2>
         <p>Pour l'exposition publique, ECHO intègre <strong>BunkerWeb</strong> (Secure Edge). L'activation via <code>enable-bunkerweb</code> transforme l'infrastructure locale en une plateforme sécurisée :</p>
         <ul>
@@ -130,6 +148,7 @@
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+    <div class="transition-text"><em>Une fois le système déployé, les traitements s'appuient sur des fondations logicielles partagées. <a href="03_echo_libs.html">Explorer les librairies partagées (libs) ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

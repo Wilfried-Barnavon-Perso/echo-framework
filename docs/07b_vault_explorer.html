@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 7b. Vault & Data Explorer</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -10,7 +11,28 @@
 
     <main>
         <h1>7b. Vault & Data Explorer</h1>
-        <p>Ce module constitue la porte d'entrée vers les "données froides" du Vault utilisateur. Il permet l'exploration, l'audit et l'analyse sémantique de fichiers massifs sans saturer la fenêtre de contexte du modèle PRO.</p>
+
+        <div class="transition-text">Parmi les outils de l'Arsenal, le Vault agit comme l'espace de stockage sécurisé. Il permet à l'IA d'interagir avec les fichiers locaux sans compromettre l'environnement.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>📂 Vault Explorer</h3>
+                <p><strong>Nature :</strong> Outil de l'Arsenal (Gestionnaire de Fichiers Souverain).</p>
+                <p><strong>Source :</strong> <code>12-owui-tools/file_content_explorer.py</code></p>
+                <p><strong>Rôle :</strong> Permettre au modèle d'explorer, lire, télécharger, et analyser sémantiquement les fichiers persistants associés à la session utilisateur.</p>
+                <p><strong>Exécutant :</strong> Le Pipe (Open WebUI) déclenche la requête HTTP, exécutée dans le périmètre de sécurité du Backend.</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Ordres Gemini (Lire un fichier spécifique, lancer un sondage sémantique).</li>
+                        <li><strong>Action locale :</strong> Lecture/Écriture dans le répertoire <code>/app/backend/echo_users/{user_id}/files/</code>.</li>
+                        <li><strong>Analyse :</strong> Invoque un modèle Gemini (FLASH) secondaire pour des résumés massifs.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
+        <p>Ce module constitue la porte d'entrée vers les "données froides" du Vault utilisateur. Il permet l'exploration, l'analyse structurelle et l'analyse sémantique de fichiers massifs sans saturer la fenêtre de contexte du modèle PRO (Cortex).</p>
 
         <h2>Exploration Brute (<code>read_raw_file_content</code>)</h2>
         <p>Contrairement aux lecteurs standards, ECHO implémente une lecture paginée "Tell-Safe" pour éviter les bugs d'itération sur les fichiers volumineux.</p>
@@ -51,7 +73,7 @@
                 </tr>
                 <tr>
                     <td><code>hex</code></td>
-                    <td>Affichage hexadécimal indexé. Indispensable pour l'audit de fichiers binaires ou corrompus.</td>
+                    <td>Affichage hexadécimal indexé. Indispensable pour l\'analyse de fichiers binaires ou corrompus.</td>
                 </tr>
             </tbody>
         </table>
@@ -61,7 +83,7 @@
         
         <ul>
             <li><strong>Délégation</strong> : Le modèle PRO demande une analyse (ex: "Quels sont les points clés de ce contrat ?").</li>
-            <li><strong>Audit</strong> : Le modèle FLASH lit le document intégral et renvoie une synthèse structurée.</li>
+            <li><strong>Analyse approfondie</strong> : Le modèle FLASH lit le document intégral et renvoie une synthèse structurée.</li>
             <li><strong>Multipart</strong> : Les pensées internes du modèle FLASH sont encapsulées dans la section <code>thought</code> du multipart.</li>
             <li><strong>Thinking Levels</strong> : Supporte les niveaux MINIMAL, LOW, MEDIUM et HIGH pour ajuster la précision de l'analyse.</li>
         </ul>
@@ -132,6 +154,7 @@
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+        <div class="transition-text"><em>Au-delà des fichiers physiques, ECHO maintient également une mémoire de ses interactions et connaissances. <a href="07c_memory_cognition.html">Découvrir la Cognition Profonde & Mémoire Organique ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

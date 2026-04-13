@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 6d. Exécution & Pilotage</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -10,6 +11,27 @@
 
     <main>
         <h1>6d. Exécution Sandbox & Pilotage du Contexte</h1>
+
+        <div class="transition-text">Pour exécuter des calculs complexes sans risquer la sécurité du système hôte, l'Arsenal dispose d'un environnement d'exécution isolé (Sandbox) et de sondes de surveillance.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>🐍 Exécution Sandbox & Pilotage</h3>
+                <p><strong>Nature :</strong> Environnement d'exécution de code isolé (Sandbox Docker) et Outil de diagnostic contextuel.</p>
+                <p><strong>Source :</strong> <code>12-owui-tools/python_code_executor.py</code> (Interface), <code>21-docker-python-worker/worker_api.py</code> (Exécution), <code>12-owui-tools/context_gauge.py</code> (Sonde).</p>
+                <p><strong>Rôle :</strong> Permettre à l'IA d'exécuter du code Python généré dynamiquement en toute sécurité, de générer des graphiques, et de surveiller l'état de saturation de sa propre mémoire de travail (Contexte).</p>
+                <p><strong>Exécutant :</strong> Ordres émis par le Pipe (Python), code brut exécuté par le conteneur <code>python-worker</code> (isolé du réseau public).</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Scripts Python bruts générés par le modèle.</li>
+                        <li><strong>Sandbox :</strong> Le Worker exécute le script avec un timeout strict (30s) et intercepte <code>stdout</code> et <code>stderr</code>.</li>
+                        <li><strong>Output :</strong> Résultats textes et graphiques (interceptés via <code>matplotlib</code>) renvoyés au Pipe au format Multipart.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
         <p>Ce module regroupe les outils permettant à ECHO d'exécuter du code de manière sécurisée et de surveiller sa propre santé cognitive.</p>
 
         <h2>Exécution Python Sandbox (<code>python_code_executor.py</code>)</h2>
@@ -45,6 +67,7 @@
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+        <div class="transition-text"><em>Tous ces outils sont automatiques, mais l'utilisateur garde le contrôle manuel via des interfaces dédiées. <a href="07e_actions_ui.html">Découvrir les Actions UI (HUD) ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

@@ -22,13 +22,240 @@
     <main>
         <h1>1. High-Level Design (HLD)</h1>
 
+        <div class="transition-text">Dans le prolongement de notre philosophie, cette section détaille comment l'architecture d'ECHO est techniquement structurée en modules interconnectés.</div>
+
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
-            <p>ECHO possède une <strong>double conscience</strong>. D'un côté, le chat que vous voyez. De l'autre, l'<strong>Ombre Riche</strong> : une base SQLite qui enregistre tout (pensées CoT, logs d'outils, fichiers). Le système "recoud" (suture) l'historique avant chaque message pour que l'IA ne perde jamais le fil de sa réflexion.</p>
+            <h4>💡 Vue d'Ensemble Holistique</h4>
+            <p>Le schéma ci-dessous représente la <strong>"Grande Boucle"</strong> d'ECHO. Chaque requête traverse quatre zones de souveraineté avant de produire une réponse : l'Interception (Filtre), la Reconstruction (Suture), l'Action (Arsenal) et le Scellement (Ombre).</p>
+            <p><em>Note : Sur les petits écrans, n'hésitez pas à scroller horizontalement ou à dézoomer pour apprécier l'ensemble des flux du diagramme ci-dessous.</em></p>
+        </div>
+
+        <div class="mermaid-wrapper">
+            <div class="mermaid-header">
+                <span>Plan de Masse Holistique : Architecture ECHO v5</span>
+                <span>[FLUX DE SOUVERAINETÉ]</span>
+            </div>
+            <div class="mermaid">
+flowchart TD
+    %% Zones definitions
+    subgraph UI ["👤 ZONE 0 : INTERACTION"]
+        U([Utilisateur]) <--> OWUI[🖥️ Open WebUI]
+    end
+
+    subgraph INLET ["🌘 ZONE 1 : INTERCEPTION"]
+        F{{"🌗 FILTRE ECHO<br/>(Inlet Hook)"}}
+        F --> SC[Smart Context / Moulage]
+    end
+
+    subgraph CORE ["🧠 ZONE 2 : CŒUR & SUTURE"]
+        P("⚙️ PIPE ENGINE<br/>(Cortex)")
+        S[["🪡 SUTURE SÉMANTIQUE<br/>(Reconstruction)"]]
+        DB[("🗄️ OMBRE RICHE<br/>(SQLite Shadows)")]
+        P <--> S
+        S <--> DB
+    end
+
+    subgraph ACTION ["🛠️ ZONE 3 : ARSENAL & VAULT"]
+        direction LR
+        Tools["🛠️ Outils Sensoriels & Exécutifs"]
+        V[("📂 Vault Local")]
+        Tools <--> V
+    end
+
+    subgraph CLOUD ["☁️ ZONE 4 : INFÉRENCE"]
+        G(("🌩️ API GEMINI<br/>(PRO / FLASH)"))
+    end
+
+    %% Main Flow
+    U -->|1. Requête| OWUI
+    OWUI -->|2. Inlet| F
+    F -->|3. Draft| P
+    P -->|4. Suture| S
+    P <-->|5. Action| Tools
+    P <-->|6. Pensée| G
+    P -->|7. Scellement| DB
+    P -->|8. Réponse SSE| OWUI
+    OWUI -->|9. Rendu HUD| U
+
+    %% Styling
+    classDef ui fill:#1e293b,stroke:#475569,color:#fff
+    classDef inlet fill:#334155,stroke:#64748b,color:#fff
+    classDef core fill:#1e1b4b,stroke:#4338ca,stroke-width:2px,color:#fff
+    classDef action fill:#064e3b,stroke:#10b981,color:#fff
+    classDef cloud fill:#4c1d95,stroke:#8b5cf6,color:#fff
+
+    class UI ui; class INLET inlet; class CORE core; class ACTION action; class CLOUD cloud;
+            </div>
+        </div>
+
+        <h2>Écorché Structurel : Fonctions & Classes</h2>
+        <p>Pour les développeurs, ce schéma détaille l'imbrication réelle des modules Python et les appels de fonctions critiques qui maintiennent l'intégrité du système.</p>
+
+        <div class="mermaid-wrapper">
+            <div class="mermaid-header">
+                <span>Architecture Interne : Fonctions & Flux de Données</span>
+                <span>[DÉTAILS D'IMPLÉMENTATION & TYPES D'OUTILS]</span>
+            </div>
+            <div class="mermaid">
+flowchart LR
+    subgraph ADMIN ["📊 20-docker-admin-manager / server.py"]
+        direction TB
+        m1["<b>Monitoring</b><br/>psutil & docker-py"]
+        m2["<b>Lifecycle</b><br/>run_semantic_pruning()"]
+        m3["<b>Auth Management</b><br/>reset_auth_action()"]
+        m1 --- m2 --- m3
+    end
+
+    subgraph FILTRE ["🌘 11-owui-filters"]
+        direction TB
+        f1["<b>Inlet Hook</b><br/>inlet(body)"]
+        f2["<b>Multimodal Engine</b><br/>_process_file_task()"]
+        f3["<b>Sniffer</b><br/>get_gemini_mime()"]
+        f4["<b>Smart Context</b><br/>Invoque Flash API"]
+        f5["<b>Memory Filter</b><br/>conversation_memory_filter.py (Outlet)"]
+        f1 --> f2 --> f3 --> f4
+        f4 -.-> f5
+    end
+
+    subgraph PIPE ["⚙️ 10-owui-pipes / pipe_engine.py"]
+        direction TB
+        p1["<b>Pipe Hook</b><br/>pipe(body)"]
+        p2["<b>Suture Engine</b><br/>prepare_context()"]
+        p3["<b>Shadow Matcher</b><br/>get_message_shadow()"]
+        p4["<b>Stream Processor</b><br/>_process_stream()"]
+        p1 --> p2 --> p3 --> p4
+    end
+
+    subgraph ARSENAL ["🛠️ 12-owui-tools / L'Arsenal"]
+        direction TB
+        subgraph T_SENS ["🌐 SENSORIELS"]
+            t1["Browser Agent<br/>SearxNG Search"]
+        end
+        subgraph T_EXEC ["🐍 EXÉCUTIFS"]
+            t2["Python Sandbox<br/>API Client"]
+        end
+        subgraph T_COGN ["🧠 COGNITIFS"]
+            t3["Memory Qdrant<br/>Cognitive Core"]
+        end
+    end
+
+    subgraph LIBS ["📚 14-owui-libs / echo_utils.py"]
+        direction TB
+        l1["<b>EchoStateManager</b><br/>(SQLite Manager)"]
+        l2["<b>EchoGeminiClient</b><br/>(HTTP/2 SSE)"]
+        l3["<b>EchoEvents</b><br/>(Bus HUD)"]
+        l1 --- l2
+    end
+
+    %% Flux Inter-Modules
+    f4 -->|Injection etat_echo| p1
+    p3 <-->|Query Shadows| l1
+    p4 <-->|Call API| l2
+    p4 -->|Emit status/HUD| l3
+    
+    %% Pilotage Arsenal
+    p4 <-->|Tool Call| T_SENS & T_EXEC & T_COGN
+    
+    %% Monitoring & Control
+    ADMIN -.->|Watchdog| PIPE & FILTRE
+    m2 -.->|TTL Decay| T_COGN
+    m2 -.->|Vacuum| l1
+
+    %% Styling
+    classDef file fill:#0f172a,stroke:#334155,color:#cbd5e1,font-size:12px;
+    classDef func fill:#1e293b,stroke:#3b82f6,color:#fff,font-size:11px;
+    classDef tool fill:#064e3b,stroke:#10b981,color:#fff,font-size:10px;
+    classDef admin fill:#450a0a,stroke:#dc2626,color:#fff,font-size:12px;
+
+    class FILTRE,LIBS,PIPE file;
+    class ARSENAL tool;
+    class ADMIN admin;
+    class f1,f2,f3,f4,l1,l2,l3,p1,p2,p3,p4 func;
+    class t1,t2,t3 tool;
+            </div>
+        </div>
+
+        <div class="didactic-box">
+            <h4>💡 Pourquoi l'Ombre Riche et la Suture ?</h4>
+            <p>Les interfaces standards comme Open WebUI (OWUI) souffrent d'une amnésie structurelle : elles perdent le détail des appels d'outils et des fichiers entre chaque tour. Pour corriger cela, ECHO <strong>désactive le RAG natif d'OWUI</strong> au profit de son propre moteur. ECHO génère une <strong>Ombre Riche</strong> (un miroir parfait de la session) et pratique une <strong>Suture Cognitive</strong> : il recoud l'historique complet avant chaque envoi à l'IA, garantissant que Gemini "voit" tout ce qui a été fait, même les pensées cachées et les retours d'outils.</p>
+        </div>
+
+        <h2>Glossaire de Précision Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>👥 L'Ombre (Rich Shadow)</h3>
+                <p><strong>Définition :</strong> Enregistrement <i>Bit-Perfect</i> d'un tour de parole dans SQLite.</p>
+                <p><strong>Précision :</strong> Contrairement au texte visible dans le chat, l'Ombre contient la structure JSON brute (Multiparts) envoyée à l'API. Elle conserve les binaires Base64, les appels d'outils (`tool_calls`) et les pensées internes (`thoughts`) que le Middleware Open WebUI ignore ou tronque.</p>
+            </div>
+            <div class="card">
+                <h3>🪡 La Suture (Cognitive Suture)</h3>
+                <p><strong>Définition :</strong> Algorithme de restauration de la continuité sémantique.</p>
+                <p><strong>Précision :</strong> Processus par lequel le Pipe intercepte la liste de messages incomplète d'Open WebUI et la "recoud" en injectant les **Ombres** correspondantes. Cela garantit que chaque nouvelle inférence Gemini s'appuie sur une vérité historique absolue et non sur un résumé dégradé.</p>
+            </div>
+            <div class="card">
+                <h3>📝 Le Draft (Brouillon Sémantique)</h3>
+                <p><strong>Définition :</strong> État mémoire volatile créé par le Filtre en phase <i>Inlet</i>.</p>
+                <p><strong>Précision :</strong> Conteneur JSON (injecté dans `metadata`) regroupant les métadonnées de fichiers, les résultats du Smart Context et les signatures de sécurité. Le Draft est la "matière première" que le Pipe fusionnera lors de la Suture.</p>
+            </div>
+            <div class="card">
+                <h3>⚓ L'Ancre (Cognitive Anchor)</h3>
+                <p><strong>Définition :</strong> Identifiant de session persistant (`thoughtSignature`).</p>
+                <p><strong>Précision :</strong> Jeton cryptographique fourni par l'API Google permettant de référencer un état de réflexion complexe mis en cache côté serveur. L'usage des Ancres réduit le poids du contexte de 30 à 70% lors de la Suture.</p>
+            </div>
+            <div class="card">
+                <h3>🏗️ Le Moulage (Semantic Molding)</h3>
+                <p><strong>Définition :</strong> Compression sémantique de fichiers massifs via Gemini Flash.</p>
+                <p><strong>Précision :</strong> Transformation d'un document brut (ex: PDF > 1 Mo) en un résumé technique structuré et indexé. Ce moulage permet au modèle principal (PRO) de manipuler des données massives sans saturer sa mémoire de travail immédiate.</p>
+            </div>
+        </div>
+
+        <h2>Lexique Opérationnel & Définitions</h2>
+        <p>Pour comprendre l'architecture ECHO, chaque concept doit être défini par sa nature technique et sa place dans le flux de données.</p>
+
+        <div class="grid-container">
+            <!-- Concept: Filtre -->
+            <div class="card">
+                <h3>🌗 Le Filtre (Inlet)</h3>
+                <p><strong>Nature :</strong> Middleware d'interception de type <i>Filter</i> (Open WebUI).</p>
+                <p><strong>Source :</strong> <code>11-owui-filters/new_context_filter.py</code></p>
+                <p><strong>Rôle :</strong> Intercepte la requête. Gère le "Smart Context" (préanalyse des fichiers) pour décharger le modèle principal. Prépare l'état initial dans <code>echo_shadows.db</code>.</p>
+                <p><strong>Exécutant :</strong> Instance Python d'Open WebUI.</p>
+                <p><strong>Connexions :</strong> Reçoit de l'Utilisateur ; Alimente le Pipe via les métadonnées.</p>
+            </div>
+
+            <!-- Concept: Pipe -->
+            <div class="card">
+                <h3>⚙️ Le Pipe (Outlet)</h3>
+                <p><strong>Nature :</strong> Moteur d'orchestration de type <i>Pipe</i> (Open WebUI).</p>
+                <p><strong>Source :</strong> <code>10-owui-pipes/pipe_engine.py</code></p>
+                <p><strong>Rôle :</strong> Se présente comme un <strong>modèle de GenAI</strong> auprès d'OWUI. Pratique la Suture Cognitive, gère les appels Gemini et la boucle d'outils de l'Arsenal.</p>
+                <p><strong>Exécutant :</strong> Instance Python d'Open WebUI.</p>
+                <p><strong>Connexions :</strong> Point central entre OWUI, Gemini et l'Arsenal.</p>
+            </div>
+
+            <!-- Concept: Ombre Riche -->
+            <div class="card">
+                <h3>🗄️ Ombre Riche (Rich Shadow)</h3>
+                <p><strong>Nature :</strong> Base de données relationnelle persistante (SQLite).</p>
+                <p><strong>Source :</strong> <code>/app/backend/data/user_dbs/echo_shadows.db</code></p>
+                <p><strong>Rôle :</strong> Registre immuable de la vérité cognitive (pensées CoT, logs outils, signatures). Permet la Suture bit-perfect.</p>
+                <p><strong>Exécutant :</strong> Moteur SQLite3 invoqué via les librairies <code>14-owui-libs/echo_utils.py</code>.</p>
+                <p><strong>Connexions :</strong> Consultée et mise à jour par le Filtre et le Pipe.</p>
+            </div>
+
+            <!-- Concept: Arsenal -->
+            <div class="card">
+                <h3>🛠️ L'Arsenal</h3>
+                <p><strong>Nature :</strong> Micro-services conteneurisés (Sandboxed API).</p>
+                <p><strong>Source :</strong> Dossiers <code>20-docker-*</code>.</p>
+                <p><strong>Rôle :</strong> Exécution concrète des outils (Python, Navigation Web, Recherche).</p>
+                <p><strong>Exécutant :</strong> Conteneurs Docker isolés (Python Worker, Browser Agent).</p>
+                <p><strong>Connexions :</strong> Piloté par le Pipe via des appels HTTP REST internes.</p>
+            </div>
         </div>
 
         <h2>Pipeline de Suture Cognitive</h2>
-        <p>Le framework ECHO repose sur un constat critique audité sur l'architecture standard : <strong>l'historique des messages est volatil.</strong> Pour garantir que Gemini conserve une mémoire parfaite, ECHO implémente une <strong>Ombre Riche</strong> : un miroir haute-fidélité de la session capable de "réparer" l'historique avant chaque envoi à l'API Gemini.</p>
+        <p>Le framework ECHO repose sur un constat critique : <strong>l'historique standard est incomplet.</strong> Pour garantir que Gemini conserve une mémoire parfaite, ECHO implémente une <strong>Ombre Riche</strong> : un miroir haute-fidélité capable de "réparer" et de "suturer" l'historique avant chaque envoi à l'API Gemini.</p>
 
         <div class="mermaid-wrapper">
             <div class="mermaid-header">
@@ -61,9 +288,9 @@ sequenceDiagram
     
     note over F,DB: PHASE 1: PRÉPARATION & DRAFT
     F->>F: Sniffing MIME & Analyse Multimodale
-    F->>DB: save_rich_payload(metadata)
-    F->>F: Calculate Invariant Hash
-    F-->>OWUI: Injection etat_echo (Draft)
+    F->>DB: get_session_registry(chat_id)
+    F->>F: Intégration des Métadonnées Fichiers
+    F-->>OWUI: Injection etat_echo (Draft JSON)
 
     OWUI->>P: Routage /api/chat/completions
     
@@ -84,6 +311,7 @@ sequenceDiagram
     G-->>P: Génération Finale (Stream Markdown)
     
     note over P,DB: PHASE 4: SCELLEMENT
+    P->>DB: save_rich_payload(metadata)
     P->>DB: save_message_shadow(final_parts)
     P->>DB: save_cognitive_data(signatures)
     P->>DB: Insertion tool_journal
@@ -251,13 +479,15 @@ erDiagram
         </div>
 
         <div class="audit-note">
-            <h4>✅ Audit de Vérité (v180.2)</h4>
+            <h4>✅ Le point sur l'exactitude</h4>
             <p>Le <strong>Verrou de Version</strong> compare le triplet <code>(message_id, updated_at, parent_hash)</code>. Si un <i>Ghost Message</i> (message modifié manuellement dans OWUI) est détecté, le Kernel bascule en <i>Cold Recovery</i> pour préserver la vérité sémantique.</p>
+            <p><strong>Cold Recovery :</strong> Si l'Ombre SQLite est perdue, corrompue ou désynchronisée, ECHO bascule en mode de récupération à froid. Il utilise alors le texte brut fourni par le middleware Open WebUI, perdant temporairement les pièces jointes binaires passées et les appels d'outils, mais évitant le crash complet de la conversation.</p>
         </div>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+    <div class="transition-text"><em>Cette architecture bien définie nécessite une infrastructure robuste pour s'exécuter de manière fiable. <a href="02_deploiement.html">Passer à la stratégie de déploiement ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

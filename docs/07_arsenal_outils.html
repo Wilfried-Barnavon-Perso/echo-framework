@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECHO v5 - 7. L'Arsenal des Outils</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -11,9 +12,30 @@
     <main>
         <h1>7. L'Arsenal des Outils (Sovereign Toolbox)</h1>
 
+        <div class="transition-text">L'intelligence du Pipe serait théorique sans moyens d'action. L'Arsenal des Outils fournit les capacités d'interaction et d'analyse requises.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>🛠️ L'Arsenal (Outils d'Action)</h3>
+                <p><strong>Nature :</strong> Écosystème de Micro-services conteneurisés et d'API REST (Tool Calling).</p>
+                <p><strong>Source :</strong> Dossiers <code>12-owui-tools/</code> (Définition API) et <code>20-docker-*/</code> (Moteurs d'exécution).</p>
+                <p><strong>Rôle :</strong> Fournir au Pipe les capacités exécutives pour interagir avec l'extérieur (Navigation Web, Exécution de code Python, Gestion de fichiers) tout en maintenant l'isolation sécuritaire.</p>
+                <p><strong>Exécutant :</strong> Le Pipe (Open WebUI) déclenche la requête HTTP, qui est ensuite exécutée par les conteneurs Docker spécialisés (Sandbox).</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Reçoit les arguments JSON générés par l'API Gemini (Tool Call).</li>
+                        <li><strong>Action locale :</strong> Exécute des scripts, lit/écrit dans le Vault (système de fichiers local).</li>
+                        <li><strong>Action réseau :</strong> Navigue sur le WAN (Headless Browser) ou requête le proxy SearxNG.</li>
+                        <li><strong>Output :</strong> Retourne le résultat structuré (JSON multipart) au Pipe.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
         <div class="didactic-box">
-            <h4>💡 Le Concept en 1 minute</h4>
-            <p>L'Arsenal est la <strong>Boîte à Outils Spécialisée</strong> d'ECHO. Une IA classique ne sait que "parler". ECHO, lui, possède des mains et des yeux : il peut naviguer sur le web (Web Intelligence), ranger des fichiers dans son coffre (Vault), faire des calculs complexes (Python Worker) et même modifier sa propre interface (Actions UI). Chaque outil a été conçu pour respecter votre vie privée et garder vos données chez vous.</p>
+            <h4>💡 Comprendre l'Arsenal</h4>
+            <p>Une IA standard est "enfermée" dans une boîte de texte. L'Arsenal agit comme les "mains" et les "outils" d'ECHO. Lorsque le cerveau (le Pipe) réalise qu'il ne sait pas quelque chose (ex: la météo du jour, ou comment trier un fichier Excel complexe), il rédige une consigne précise et la transmet à l'un des outils de l'Arsenal. Ce dernier exécute la tâche de manière sécurisée et renvoie le résultat au cerveau.</p>
         </div>
 
         <p>L'Arsenal ECHO n'est pas une simple collection de fonctions, mais un écosystème d'outils souverains conçus pour l'autonomie cognitive. Chaque outil respecte un protocole de communication multimodal strict et interagit directement avec le Vault utilisateur.</p>
@@ -23,7 +45,7 @@
             <ul>
                 <li><strong>Souveraineté</strong> : Les données ne quittent jamais l'infrastructure ECHO sauf pour les appels API chiffrés.</li>
                 <li><strong>Multimodalité native</strong> : Capacité à renvoyer du texte, des pensées, des médias et des artefacts dans un seul flux.</li>
-                <li><strong>Auditabilité</strong> : Chaque appel d'outil est journalisé dans la table <code>tool_journal</code>.</li>
+                <li><strong>Traçabilité</strong> : Chaque appel d'outil est journalisé dans la table <code>tool_journal</code>.</li>
             </ul>
         </div>
 
@@ -48,7 +70,7 @@
                 <tr>
                     <td><code>thought</code></td>
                     <td>Raisonnement interne de l'outil ou du sous-modèle.</td>
-                    <td>Isolé pour enrichir la Chain-of-Thought sans polluer la sortie finale.</td>
+                    <td>Isolé pour afficher la Chain-of-Thought sans polluer la sortie finale. Ces données seront ensuite réinjectées dans le contexte à travers la Suture lors du tour suivant.</td>
                 </tr>
                 <tr>
                     <td><code>media</code></td>
@@ -100,13 +122,14 @@
         </div>
 
         <div class="audit-note">
-            <h4>✅ Audit de Vérité</h4>
+            <h4>✅ Le point sur l'exactitude</h4>
             <p>Tous les outils de l'arsenal ont été vérifiés pour leur conformité au <strong>Protocole Multipart</strong>. Ils garantissent l'isolation des données entre les utilisateurs (User ID Isolation) et le scellement systématique des preuves dans la table <code>tool_journal</code>.</p>
         </div>
 
         <footer>
             ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
+    <div class="transition-text"><em>L'utilisation de ces outils est dictée par les directives fondamentales et l'identité de l'IA. <a href="08_system_prompt.html">Passer au cœur de ces directives : le System Prompt (Kernel) ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>
