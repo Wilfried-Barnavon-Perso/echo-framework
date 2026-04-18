@@ -1,8 +1,8 @@
 """
 title: ECHO Organic Memory Filter V2
 author: Wilfried BARNAVON
-version: 2.3
-description: 2.3: Affinement des tags (discrimination renforcée) pour une purge granulaire fiable.
+version: 2.5
+description: 2.5: Recouvrement dynamique R, fusion vectorielle pure et protection anti-atrophie (max importance).
 """
 
 from pydantic import BaseModel, Field
@@ -17,6 +17,7 @@ import httpx
 import random
 import hashlib
 import uuid
+import math
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
@@ -37,17 +38,10 @@ class Filter:
 
     class Valves(BaseModel):
         TRIGGER_PROBABILITY: float = Field(default=0.1, description="Probabilité (0.0 à 1.0) de déclenchement à chaque fin de message.")
-        RECOVERY_FACTOR: float = Field(default=1.3, description="Facteur de recouvrement de la fenêtre de messages (1.3 = 30% d'overlap).")
         FORCE_TRIGGER_THRESHOLD: int = Field(default=20, description="Force la mémorisation si aucun déclenchement après N messages.")
         
         SIMILARITY_THRESHOLD: float = Field(default=0.85, description="Seuil de similarité pour déclencher la fusion LLM (0.0 à 1.0).")
         EXACT_MATCH_THRESHOLD: float = Field(default=0.95, description="Seuil pour simple mise à jour de date (sans coût LLM).")
-        
-        TTL_LVL_1: int = Field(default=30, description="Rétention (jours) Niveau 1 (Trivial/Éphémère).")
-        TTL_LVL_2: int = Field(default=60, description="Rétention (jours) Niveau 2.")
-        TTL_LVL_3: int = Field(default=180, description="Rétention (jours) Niveau 3.")
-        TTL_LVL_4: int = Field(default=365, description="Rétention (jours) Niveau 4.")
-        TTL_LVL_5: int = Field(default=540, description="Rétention (jours) Niveau 5 (Axiome/Critique).")
         
         QDRANT_URL: str = Field(default="http://echo-qdrant:6333", description="URL interne de Qdrant.")
         DEBUG_MEMORY: bool = Field(default=False, description="Affiche les détails de fusion et de pruning dans les logs.")
@@ -131,41 +125,56 @@ class Filter:
             if not distilled or not distilled.get("summary"): return
             
             summary = distilled["summary"]
-            importance = int(distilled.get("importance", 1))
-            slug = distilled.get("slug", "generic_note")
+            new_importance = int(distilled.get("importance", 1))
+            new_slug = distilled.get("slug", "generic_note")
+            tags = distilled.get("tags", [])
             
             # 2. Vectorisation V2
             embed_data = await EchoGeminiClient.embed(
                 keys=api_keys, 
                 model=MODEL_EMBEDDING, 
-                content={"parts": [{"text": f"title: {slug} | text: {summary}"}]}
+                content={"parts": [{"text": f"title: {new_slug} | text: {summary}"}]}
             )
             vector = embed_data["embedding"]["values"]
 
-            # 3. Collision & Fusion
-            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{slug}"))
-            
+            # 3. Collision Sémantique (Recherche vectorielle pure)
             async with httpx.AsyncClient(timeout=30) as client:
                 search_payload = {
                     "vector": vector, "limit": 1, "with_payload": True,
-                    "filter": {"must": [{"key": "user_id", "match": {"value": user_id}}, {"key": "slug", "match": {"value": slug}}]}
+                    "filter": {"must": [{"key": "user_id", "match": {"value": user_id}}]}
                 }
                 resp_search = await client.post(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/search", json=search_payload)
                 results = resp_search.json().get("result", [])
                 
+                # Valeurs par défaut (Nouvelle création)
                 final_summary = summary
+                final_slug = new_slug
+                final_importance = new_importance
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{new_slug}"))
+                
+                # Analyse de la collision
                 if results:
                     hit = results[0]
                     score = hit.get("score", 0)
                     old_payload = hit.get("payload", {})
                     
-                    if score > self.valves.EXACT_MATCH_THRESHOLD:
-                        if self.valves.DEBUG_MEMORY: logger.info(f"[ECHO-MEMORY-V2] 🔄 Doublon détecté pour '{slug}'. Rafraîchissement date.")
-                    elif score > self.valves.SIMILARITY_THRESHOLD:
-                        if self.valves.DEBUG_MEMORY: logger.info(f"[ECHO-MEMORY-V2] 🧩 Fusion sémantique pour '{slug}'...")
-                        fusion_prompt = f"Fusionne ces deux résumés techniques en un seul paragraphe cohérent et à jour :\n1. {old_payload.get('summary')}\n2. {summary}"
-                        fusion_data = await EchoGeminiClient.call(keys=api_keys, target_model=MODEL_DISTILLATION, payload={"contents": [{"role":"user", "parts":[{"text": fusion_prompt}]}]})
-                        final_summary = fusion_data["candidates"][0]["content"]["parts"][0]["text"]
+                    if score > self.valves.SIMILARITY_THRESHOLD:
+                        # Collision sémantique avérée : on réutilise le point existant
+                        point_id = hit.get("id")
+                        final_slug = old_payload.get("slug", new_slug) # Continuité du nommage
+                        
+                        # Règle du Max (Protection anti-atrophie)
+                        old_importance = int(old_payload.get("importance", 1))
+                        final_importance = max(old_importance, new_importance)
+                        
+                        if score > self.valves.EXACT_MATCH_THRESHOLD:
+                            if self.valves.DEBUG_MEMORY: logger.info(f"[ECHO-MEMORY-V2] 🔄 Rafraîchissement date pour '{final_slug}'.")
+                            final_summary = old_payload.get("summary", summary)
+                        else:
+                            if self.valves.DEBUG_MEMORY: logger.info(f"[ECHO-MEMORY-V2] 🧩 Fusion sémantique pour '{final_slug}'...")
+                            fusion_prompt = f"Fusionne ces deux résumés techniques en un seul paragraphe cohérent et à jour :\n1. {old_payload.get('summary')}\n2. {summary}"
+                            fusion_data = await EchoGeminiClient.call(keys=api_keys, target_model=MODEL_DISTILLATION, payload={"contents": [{"role":"user", "parts":[{"text": fusion_prompt}]}]})
+                            final_summary = fusion_data["candidates"][0]["content"]["parts"][0]["text"]
                 
                 # 4. Insertion/Update
                 point_payload = {
@@ -173,13 +182,13 @@ class Filter:
                         "id": point_id, "vector": vector,
                         "payload": {
                             "user_id": user_id, "chat_id": chat_id, "timestamp": int(time.time()),
-                            "importance": importance, "slug": slug, "tags": distilled.get("tags", []), "summary": final_summary
+                            "importance": final_importance, "slug": final_slug, "tags": tags, "summary": final_summary
                         }
                     }]
                 }
                 await client.put(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points", json=point_payload)
                 
-            logger.info(f"[ECHO-MEMORY-V2] ✅ Souvenir '{slug}' (Lvl {importance}) mémorisé.")
+            logger.info(f"[ECHO-MEMORY-V2] ✅ Souvenir '{final_slug}' (Lvl {final_importance}) mémorisé.")
 
         except Exception as e:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Pipeline: {e}")
@@ -204,8 +213,12 @@ class Filter:
             self.last_triggered_count[chat_id] = 0
             api_keys = self.auth.get_api_keys(user_id)
             if api_keys:
-                # Fenêtre de recouvrement sémantique
-                window_size = int(self.valves.RECOVERY_FACTOR / self.valves.TRIGGER_PROBABILITY)
+                # Fenêtre de recouvrement sémantique intelligente
+                # R = norme de l'écart à la certitude : sqrt(1 + (1-P)^2)
+                p = self.valves.TRIGGER_PROBABILITY
+                r = math.sqrt(1.0 + (1.0 - p)**2)
+                
+                window_size = int(r / p)
                 window_msgs = messages[-window_size:]
                 if self.valves.DEBUG_MEMORY:
                     logger.info(f"[ECHO-MEMORY-V2] 🧠 Déclenchement (Fenêtre: {len(window_msgs)} msgs)")

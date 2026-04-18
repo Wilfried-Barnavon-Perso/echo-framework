@@ -2,7 +2,7 @@ version: '3.8'
 
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 7.4
+# Version : 7.7
 # ==============================================================================
 # ARCHITECTURE :
 # Ce fichier ne gère QUE la couche applicative "ECHO".
@@ -90,6 +90,9 @@ services:
       # EXCLUSION CRITIQUE : Ne pas bannir sur 404 (Assets manquants) ni 429 (Rate Limit)
       - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=400 401 403 405 444 500 502 503 504"
       
+      # Autoriser les verbes HTTP pour l'API (Suppression de chat, etc.)
+      - "bunkerweb.ALLOWED_METHODS=GET|POST|HEAD|PUT|DELETE|OPTIONS"
+      
       # Tuning ModSecurity pour API (Prompts IA)
       # Désactivation totale du moteur de règles pour /api/ afin d'éviter les faux positifs sur le contenu des chats (code, urls, etc.)
       - 'bunkerweb.CUSTOM_CONF_MODSEC_openwebui_tuning=SecRule REQUEST_URI "@beginsWith /api/" "id:10002,phase:1,pass,nolog,ctl:ruleEngine=Off"'
@@ -104,7 +107,7 @@ services:
 
   # 2. Admin Manager (Dashboard Système ECHO)
   admin-manager:
-    image: python:3.11-slim
+    image: python:3.14-slim
     container_name: echo-admin-manager
     restart: always
     networks:
@@ -118,6 +121,7 @@ services:
     
     # Intégration BunkerWeb
     labels:
+      - "com.centurylinklabs.watchtower.enable=false"
       - "bunkerweb.SERVER_NAME=am.${ECHO_DOMAIN:-localhost}"
       - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
@@ -154,7 +158,7 @@ services:
   # ============================================================================
   
   python-worker:
-    image: python:3.11-slim
+    image: python:3.14-slim
     container_name: echo-python-worker
     restart: always
     networks:
@@ -164,11 +168,13 @@ services:
     volumes:
       - /opt/docker-python-worker/worker_api.py:/app/app.py:ro
       - echo-worker-data:/app/data
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
     command: >
-      /bin/bash -c "pip install --no-cache-dir flask flask-cors requests pandas numpy scipy scikit-learn matplotlib seaborn yfinance beautifulsoup4 openpyxl regex sympy mgzip orjson pybase64 && python /app/app.py"
+      /bin/bash -c "pip install --no-cache-dir flask flask-cors requests pandas numpy scipy scikit-learn yfinance beautifulsoup4 openpyxl regex sympy mgzip orjson pybase64 networkx && python /app/app.py"
 
   browser-agent:
-    image: python:3.11-slim
+    image: python:3.14-slim
     container_name: echo-browser-agent
     restart: always
     networks:
@@ -180,6 +186,8 @@ services:
     volumes:
       - /opt/docker-browser-agent/browser_api.py:/app/browser_api.py:ro
       - echo-browser-data:/app/data
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
     command: >
       /bin/bash -c "pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002"
 
@@ -195,6 +203,7 @@ services:
     environment:
       - TZ=Europe/Paris
       - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+      - SEARXNG_SECRET=${SEARXNG_SECRET}
     cap_drop:
       - ALL
     cap_add:
@@ -227,7 +236,7 @@ services:
 
   # 4. Qdrant (Base Vectorielle)
   qdrant:
-    image: qdrant/qdrant:v1.13.4
+    image: qdrant/qdrant:v1.17.1
     container_name: echo-qdrant
     restart: always
     networks:
@@ -238,49 +247,8 @@ services:
       - echo-qdrant-data:/qdrant/storage
     environment:
       - TZ=Europe/Paris
-
-  # 5. n8n (Orchestrateur Low-Code)
-  n8n:
-    image: n8nio/n8n:1.77.1
-    container_name: echo-n8n
-    restart: always
-    networks:
-      - echo-network
-    ports:
-      - "5678:5678"
-    environment:
-      - N8N_HOST=${ECHO_DOMAIN:-localhost}
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=https
-      - NODE_ENV=production
-      - WEBHOOK_URL=https://n8n.${ECHO_DOMAIN:-localhost}/
-      - GENERIC_TIMEZONE=Europe/Paris
-      - TZ=Europe/Paris
-    volumes:
-      - echo-n8n-data:/home/node/.n8n
     labels:
-      - "bunkerweb.SERVER_NAME=n8n.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.USE_REVERSE_PROXY=yes"
-      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-n8n:5678"
-      - "bunkerweb.USE_WEBSOCKETS=yes"
-
-  # 3. Redirector (Redirection Root/WWW -> UI)
-  redirector:
-    image: alpine:latest
-    container_name: echo-redirector
-    restart: always
-    networks:
-      - echo-network
-    command: tail -f /dev/null
-    labels:
-      - "bunkerweb.SERVER_NAME=${ECHO_DOMAIN:-localhost} www.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
-      - "bunkerweb.USE_REVERSE_PROXY=no"
-      # Redirection 301 Permanente vers le sous-domaine UI (Plugin Natif)
-      - "bunkerweb.REDIRECT_TO=https://ui.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.REDIRECT_TO_REQUEST_URI=yes"
-      - "bunkerweb.REDIRECT_TO_STATUS_CODE=301"
-      - "bunkerweb.USE_BAD_BEHAVIOR=no"
+      - "com.centurylinklabs.watchtower.enable=false"
 
 # ==============================================================================
 # NETWORKS & VOLUMES
@@ -301,6 +269,4 @@ volumes:
   echo-backups:
     external: true
   echo-qdrant-data:
-    external: true
-  echo-n8n-data:
     external: true

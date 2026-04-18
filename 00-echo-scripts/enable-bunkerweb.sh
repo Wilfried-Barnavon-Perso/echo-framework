@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : enable-bunkerweb.sh
-# VERSION : 3.1
+# VERSION : 3.4
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Activation de la couche de sécurité BunkerWeb (Secure Edge).
@@ -10,9 +10,8 @@
 export COMPOSE_PROJECT_NAME="echo"
 
 CONFIG_DIR="/opt/config"
-BW_DATA_DIR="/opt/bunkerweb"
-# Stockage du .env HORS du dossier config synchronisé pour éviter l'écrasement
-ENV_FILE="$BW_DATA_DIR/.env"
+# Centralisation du .env à la racine de /opt pour survie aux updates
+ENV_FILE="/opt/.env"
 BW_STACK_FILE="$CONFIG_DIR/bunkerweb-stack.yml"
 ECHO_STACK_FILE="$CONFIG_DIR/stack-echo.yml"
 DOCKER_COMPOSE_CMD="docker-compose"
@@ -25,9 +24,12 @@ if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
     DOCKER_COMPOSE_CMD="docker compose"
 fi
 
+# Initialisation du .env si absent
+touch "$ENV_FILE" && chmod 600 "$ENV_FILE"
+
 clear
 echo "=================================================="
-echo "🛡️  ECHO SECURE EDGE (Standard Edition v3.0)"
+echo "🛡️  ECHO SECURE EDGE (Standard Edition v3.4)"
 echo "=================================================="
 echo "Ce script configure votre domaine pour l'accès HTTPS."
 echo ""
@@ -45,9 +47,9 @@ if [ -z "$DOMAIN" ]; then
     # Tentative de lecture de l'ancien domaine si .env existe
     DEFAULT_DOMAIN=""
     if [ -f "$ENV_FILE" ]; then
-        DEFAULT_DOMAIN=$(grep "ECHO_DOMAIN" "$ENV_FILE" | cut -d '=' -f2)
+        DEFAULT_DOMAIN=$(grep "^ECHO_DOMAIN=" "$ENV_FILE" | cut -d '=' -f2)
     fi
-    
+
     echo "Architecture cible :"
     echo " - IA    : https://ui.DOMAINE"
     echo " - Admin : https://am.DOMAINE"
@@ -60,43 +62,74 @@ if [ -z "$DOMAIN" ]; then DOMAIN="echo-ai.eu"; fi # Valeur par défaut ultime
 
 echo "🚀 Configuration pour : $DOMAIN"
 
-# --- 2. GENERATION .ENV ---
-echo "📝 Génération du fichier d'environnement standard ($ENV_FILE)..."
+# --- 2. DÉTECTION CORS & IP ---
+echo "🌍 Calcul des origines CORS locales..."
+OWUI_PORT=$(grep -A 10 "open-webui:" "$ECHO_STACK_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
+if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi
+HOST_IPS=$(hostname -I 2>/dev/null || ip addr show | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1)
+ECHO_DETECTED_ORIGINS=""
+for ip in $HOST_IPS; do
+    if [ -z "$ECHO_DETECTED_ORIGINS" ]; then ECHO_DETECTED_ORIGINS="http://$ip:$OWUI_PORT"; else ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS;http://$ip:$OWUI_PORT"; fi
+done
 
-cat > "$ENV_FILE" <<EOF
-# Configuration ECHO Framework
-# Généré par enable-bunkerweb.sh le $(date)
+# --- 3. MISE À JOUR .ENV ---
+echo "📝 Mise à jour du fichier d'environnement centralisé ($ENV_FILE)..."
 
-# Domaine racine pour le routing BunkerWeb
-ECHO_DOMAIN=$DOMAIN
+update_env() {
+    local key=$1
+    local value=$2
+    if grep -q "^$key=" "$ENV_FILE"; then
+        sed -i "s|^$key=.*|$key=$value|" "$ENV_FILE"
+    else
+        echo "$key=$value" >> "$ENV_FILE"
+    fi
+}
 
-# Fuseau horaire des conteneurs
-TZ=Europe/Paris
-EOF
+update_env "ECHO_DOMAIN" "$DOMAIN"
+update_env "TZ" "Europe/Paris"
+update_env "ECHO_DETECTED_ORIGINS" "$ECHO_DETECTED_ORIGINS"
 
-# --- 3. PREPARATION SYSTEME ---
-mkdir -p "$BW_DATA_DIR"
+# Génération des secrets si absents
+generate_secret() {
+    local key=$1
+    local length=$2
+    if ! grep -q "^$key=" "$ENV_FILE"; then
+        local secret=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$length")
+        echo "$key=$secret" >> "$ENV_FILE"
+        echo "   🔑 Génération du secret : $key"
+    fi
+}
+
+generate_secret "BW_DB_PASSWORD" 24
+generate_secret "SEARXNG_SECRET" 64
+
+# Export immédiat pour le process courant
+export ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS"
 
 # --- 4. LANCEMENT UNIFIÉ ---
 echo "🐳 Redémarrage de l'infrastructure..."
 
-# Création préventive du réseau (Requis car external: true dans les YAML)
+# Création préventive du réseau
 docker network create echo-network 2>/dev/null || true
 
-# Arrêt pour prise en compte des nouvelles variables .env
-$DOCKER_COMPOSE_CMD -f "$BW_STACK_FILE" -f "$ECHO_STACK_FILE" down --remove-orphans
+# Arrêt PROPRE avec le .env pour éviter les warnings
+$DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$ECHO_STACK_FILE" down --remove-orphans
 
 # Lancement
-# Docker Compose chargera automatiquement le .env car il est dans le même dossier que les YAML
-# (si on lance depuis ce dossier, ou si on précise --env-file)
-# Par sécurité, on se place dans le dossier config pour lancer
-cd "$CONFIG_DIR" || exit 1
-
 $DOCKER_COMPOSE_CMD \
     --env-file "$ENV_FILE" \
-    -f "bunkerweb-stack.yml" \
-    -f "stack-echo.yml" \
+    -f "$BW_STACK_FILE" \
+    -f "$ECHO_STACK_FILE" \
     up -d --build --quiet --remove-orphans
+
+# --- 5. RECONSTRUCTION ET RECONFIGURATION ---
+echo "🔧 Reconfiguration des paramètres internes d'Open WebUI (CORS, URLs)..."
+if [ -f "/opt/echo-scripts/config-owui.sh" ]; then
+    /bin/bash /opt/echo-scripts/config-owui.sh
+    echo "   ✅ Reconfiguration terminée."
+else
+    echo "   ⚠️  Script 'config-owui.sh' non trouvé."
+fi
 
 echo ""
 echo "✅ INSTALLATION TERMINÉE !"

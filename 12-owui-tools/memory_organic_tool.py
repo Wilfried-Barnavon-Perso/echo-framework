@@ -1,8 +1,8 @@
 """
 title: ECHO Organic Memory Retrieval V2
 author: Wilfried BARNAVON
-version: 2.0
-description: 2.0: Suture Cognitive V2 (Sync avec Embedding V2 3072d et formatage Query).
+version: 2.1
+description: 2.1: Intégration tactique des Principes PRAF (Vérification interne) et PRAC (Rétrospective).
 """
 
 from typing import Optional, List, Any, Dict
@@ -48,8 +48,10 @@ class Tools:
         Recherche sémantique dans votre mémoire organique ECHO.
         Utilisez cette fonction pour retrouver des faits, des décisions techniques, 
         des préférences ou des contextes mémorisés lors de vos échanges passés.
+        Indispensable pour l'application du Principe PRAF (vérification interne) 
+        et du Principe PRAC (analyse rétrospective des patterns).
         
-        :param query: La question ou le sujet à rechercher dans votre mémoire.
+        :param query: La question ou le sujet à rechercher (ex: 'Quelles étaient mes préférences sur le tri ?').
         :param limit: Nombre maximum de souvenirs à récupérer (défaut: 5).
         """
         events = EchoEvents(__event_emitter__, __event_call__)

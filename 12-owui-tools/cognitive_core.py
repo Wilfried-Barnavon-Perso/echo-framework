@@ -1,8 +1,8 @@
 """
 title: ECHO Cognitive Core
 author: ECHO Framework
-version: 3.51
-description: 3.51: Standardisation du retour (wrap_tool_output) pour prévenir les boucles LLM.
+version: 3.52
+description: 3.52: Ajout du champ context obligatoire (Stateless Reasoning).
 """
 
 import sys
@@ -88,6 +88,7 @@ class Tools:
 
     async def delegate_reasoning(
         self,
+        context: str,
         prompt: str,
         target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"],
         system_instruction: Optional[str] = None,
@@ -96,15 +97,17 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Délégation cognitive dynamique. Permet de sous-traiter une tâche à un sous-modèle pour économiser le contexte principal ou paralléliser la réflexion.
+        Délégation cognitive sans état (stateless). Chaque appel est indépendant et ne conserve aucune mémoire des échanges précédents.
+        Le paramètre 'context' est obligatoire pour injecter sémantiquement les faits, la mémoire ou les données nécessaires à la réflexion.
+        
         Utilisez MODEL_LITE pour la distillation rapide et l'extraction de données.
         Utilisez MODEL_FLASH pour les tâches intermédiaires, le formatage ou la logique standard.
         Utilisez MODEL_PRO pour l'architecture complexe, le debug profond ou la planification stratégique.
-        Le paramètre 'system_instruction' permet de définir un comportement strict ou un format de sortie attendu pour le modèle délégué.
         
-        :param prompt: L'instruction ou la tâche complète à exécuter (inclure les données si nécessaire).
+        :param context: Contexte sémantique (Markdown) de référence pour la tâche.
+        :param prompt: L'instruction ou la tâche spécifique à exécuter.
         :param target_model: Le modèle à utiliser (MODEL_LITE, MODEL_FLASH, MODEL_PRO).
-        :param system_instruction: (Optionnel) Instruction système stricte pour forcer le comportement (ex: format JSON).
+        :param system_instruction: (Optionnel) Comportement strict ou format de sortie attendu.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -126,10 +129,13 @@ class Tools:
 
         await events.status(f"🧠 Délégation Cognitive ({target_model}) pour {user_id}...")
         
+        # Construction du prompt sémantique
+        combined_prompt = f"### CONTEXTE\n{context}\n\n### TÂCHE\n{prompt}"
+
         res = await _call_gemini_direct(
             user_id=user_id,
             model_id=actual_model,
-            prompt=prompt,
+            prompt=combined_prompt,
             system_instruction=system_instruction,
             thinking_level=thinking_level,
             events=events,

@@ -1,8 +1,8 @@
 """
 title: ECHO Google Maps Grounding
 author: Wilfried BARNAVON
-version: 12.52
-description: 12.52: Standardisation du retour contextuel (wrap_tool_output).
+version: 12.54
+description: 12.54: Instruction agentique sur la gestion des indisponibilités de modèles.
 """
 
 import orjson as json
@@ -14,8 +14,9 @@ from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, EchoEvents, wrap_tool_output, EchoGeminiClient, EchoRichUI
-from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, MODEL_LITE
+from echo_utils import EchoAuth, EchoEvents, wrap_tool_output, EchoGeminiClient
+from echo_ui import EchoRichUI
+from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, MODEL_FLASH, MODEL_PRO, MODEL_LITE
 
 class Tools:
     class Valves(BaseModel):
@@ -38,6 +39,9 @@ class Tools:
         """
         Recherche des lieux, commerces ou itinéraires via Google Maps.
         Affiche une interface visuelle interactive et fournit les détails textuels au modèle.
+        
+        NOTE : Cet outil utilise une délégation cognitive (MODEL_LITE). En cas d'erreur de quota (429) 
+        ou d'indisponibilité, le Modèle doit signaler cette limitation technique à l'utilisateur.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"🗺️ Exploration Maps : {query}...")

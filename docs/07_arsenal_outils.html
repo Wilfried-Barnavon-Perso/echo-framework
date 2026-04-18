@@ -1,136 +1,284 @@
 <!DOCTYPE html>
+
 <html lang="fr">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 7. L'Arsenal des Outils</title>
-    <link rel="stylesheet" href="style.css">
+
+  <meta charset="UTF-8">
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>ECHO v5 - 7. L'Arsenal des Outils</title>
+
+  <link rel="stylesheet" href="style.css">
+
 </head>
+
 <body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
-    <main>
-        <h1>7. L'Arsenal des Outils (Sovereign Toolbox)</h1>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
-        <div class="transition-text">L'intelligence du Pipe serait théorique sans moyens d'action. L'Arsenal des Outils fournit les capacités d'interaction et d'analyse requises.</div>
 
-        <h2>Fiche d'Identité Technique</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>🛠️ L'Arsenal (Outils d'Action)</h3>
-                <p><strong>Nature :</strong> Écosystème de Micro-services conteneurisés et d'API REST (Tool Calling).</p>
-                <p><strong>Source :</strong> Dossiers <code>12-owui-tools/</code> (Définition API) et <code>20-docker-*/</code> (Moteurs d'exécution).</p>
-                <p><strong>Rôle :</strong> Fournir au Pipe les capacités exécutives pour interagir avec l'extérieur (Navigation Web, Exécution de code Python, Gestion de fichiers) tout en maintenant l'isolation sécuritaire.</p>
-                <p><strong>Exécutant :</strong> Le Pipe (Open WebUI) déclenche la requête HTTP, qui est ensuite exécutée par les conteneurs Docker spécialisés (Sandbox).</p>
-                <p><strong>Interconnexions :</strong> 
-                    <ul>
-                        <li><strong>Input :</strong> Reçoit les arguments JSON générés par l'API Gemini (Tool Call).</li>
-                        <li><strong>Action locale :</strong> Exécute des scripts, lit/écrit dans le Vault (système de fichiers local).</li>
-                        <li><strong>Action réseau :</strong> Navigue sur le WAN (Headless Browser) ou requête le proxy SearxNG.</li>
-                        <li><strong>Output :</strong> Retourne le résultat structuré (JSON multipart) au Pipe.</li>
-                    </ul>
-                </p>
-            </div>
-        </div>
 
-        <div class="didactic-box">
-            <h4>💡 Comprendre l'Arsenal</h4>
-            <p>Une IA standard est "enfermée" dans une boîte de texte. L'Arsenal agit comme les "mains" et les "outils" d'ECHO. Lorsque le cerveau (le Pipe) réalise qu'il ne sait pas quelque chose (ex: la météo du jour, ou comment trier un fichier Excel complexe), il rédige une consigne précise et la transmet à l'un des outils de l'Arsenal. Ce dernier exécute la tâche de manière sécurisée et renvoie le résultat au cerveau.</p>
-        </div>
+  <main>
 
-        <p>L'Arsenal ECHO n'est pas une simple collection de fonctions, mais un écosystème d'outils souverains conçus pour l'autonomie cognitive. Chaque outil respecte un protocole de communication multimodal strict et interagit directement avec le Vault utilisateur.</p>
+    <h1>7. L'Arsenal des Outils (Sovereign Toolbox)</h1>
 
-        <div class="audit-note">
-            <h4>Principes Directeurs</h4>
-            <ul>
-                <li><strong>Souveraineté</strong> : Les données ne quittent jamais l'infrastructure ECHO sauf pour les appels API chiffrés.</li>
-                <li><strong>Multimodalité native</strong> : Capacité à renvoyer du texte, des pensées, des médias et des artefacts dans un seul flux.</li>
-                <li><strong>Traçabilité</strong> : Chaque appel d'outil est journalisé dans la table <code>tool_journal</code>.</li>
-            </ul>
-        </div>
 
-        <h2>Le Protocole Multipart (<code>wrap_tool_output</code>)</h2>
-        <p>Pour dépasser les limites des réponses textuelles, ECHO utilise un format JSON structuré encapsulant plusieurs types de données.</p>
-        
-        <h3>Composants du Multipart</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Type</th>
-                    <th>Description</th>
-                    <th>Traitement par le Pipe</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><code>text</code></td>
-                    <td>La réponse textuelle principale de l'outil.</td>
-                    <td>Injecté comme <code>functionResponse</code>.</td>
-                </tr>
-                <tr>
-                    <td><code>thought</code></td>
-                    <td>Raisonnement interne de l'outil ou du sous-modèle.</td>
-                    <td>Isolé pour afficher la Chain-of-Thought sans polluer la sortie finale. Ces données seront ensuite réinjectées dans le contexte à travers la Suture lors du tour suivant.</td>
-                </tr>
-                <tr>
-                    <td><code>media</code></td>
-                    <td>Binaire (Base64) avec MIME type (Image, PDF, HTML).</td>
-                    <td>Converti en <code>inlineData</code> Gemini.</td>
-                </tr>
-                <tr>
-                    <td><code>nouveaux_fichiers</code></td>
-                    <td>Métadonnées des fichiers créés ou téléchargés.</td>
-                    <td>Injecté via le protocole "Suture" pour assurer la rémanence.</td>
-                </tr>
-            </tbody>
-        </table>
 
-        <h2>Le Système "Vault" (Coffre-Fort)</h2>
-        <p>Le Vault est l'espace de stockage persistant et isolé de chaque utilisateur (<code>/app/backend/echo_users/{user_id}/files/</code>).</p>
-        <ul>
-            <li><strong>Indexation</strong> : Chaque fichier possède un <code>file_id</code> unique au format <code>U_{uid}_C_{cid}_T_{ts}</code>.</li>
-            <li><strong>Persistance</strong> : Les outils scellent automatiquement les artefacts (captures d'écran, logs) dans le Vault.</li>
-        </ul>
+    <div class="transition-text">L'intelligence du Pipe serait théorique sans moyens d'action. L'Arsenal des Outils fournit les capacités d'interaction et d'analyse requises.</div>
 
-        <h2>Architecture de l'Arsenal</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>🌐 Web Intelligence</h3>
-                <p>Pilotage de Chromium, cartographie du DOM, Replay visuel et Recherche Web Souveraine (SearxNG).</p>
-                <a href="07a_web_intelligence.html" class="btn">📁 Explorer</a>
-            </div>
-            <div class="card">
-                <h3>📂 Vault & Data</h3>
-                <p>Exploration brute, sondage sémantique et gestion des métadonnées.</p>
-                <a href="07b_vault_explorer.html" class="btn">📁 Explorer</a>
-            </div>
-            <div class="card">
-                <h3>🧠 Mémoire & Cognition</h3>
-                <p>RAG Organique, Base de Connaissances et Cascade Cognitive.</p>
-                <a href="07c_memory_cognition.html" class="btn">📁 Explorer</a>
-            </div>
-            <div class="card">
-                <h3>🐍 Exécution & Pilotage</h3>
-                <p>Sandbox Python isolée et Monitoring avancé de la jauge de Contexte.</p>
-                <a href="07d_execution_monitoring.html" class="btn">📁 Explorer</a>
-            </div>
-            <div class="card">
-                <h3>🎮 Actions UI (HUD)</h3>
-                <p>Boutons de contrôle manuel : Purge Mémoire, Auth Manager et Pilotage du Replay.</p>
-                <a href="07e_actions_ui.html" class="btn">📁 Explorer</a>
-            </div>
-        </div>
 
-        <div class="audit-note">
-            <h4>✅ Le point sur l'exactitude</h4>
-            <p>Tous les outils de l'arsenal ont été vérifiés pour leur conformité au <strong>Protocole Multipart</strong>. Ils garantissent l'isolation des données entre les utilisateurs (User ID Isolation) et le scellement systématique des preuves dans la table <code>tool_journal</code>.</p>
-        </div>
 
-        <footer>
-            ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-    <div class="transition-text"><em>L'utilisation de ces outils est dictée par les directives fondamentales et l'identité de l'IA. <a href="08_system_prompt.html">Passer au cœur de ces directives : le System Prompt (Kernel) ➔</a></em></div>
-    </main>
+    <h2>Fiche d'Identité Technique</h2>
+
+    <div class="grid-container">
+
+      <div class="card">
+
+        <h3>🛠️ L'Arsenal (Outils d'Action)</h3>
+
+        <p><strong>Nature :</strong> Écosystème de Micro-services conteneurisés et d'API REST (Tool Calling).</p>
+
+        <p><strong>Source :</strong> Dossiers <code>12-owui-tools/</code> (Définition API) et <code>20-docker-*/</code> (Moteurs d'exécution).</p>
+
+        <p><strong>Rôle :</strong> Fournir au Pipe les capacités exécutives pour interagir avec l'extérieur (Navigation Web, Exécution de code Python, Gestion de fichiers) tout en maintenant l'isolation sécuritaire.</p>
+
+        <p><strong>Exécutant :</strong> Le Pipe (Open WebUI) déclenche la requête HTTP, qui est ensuite exécutée par les conteneurs Docker spécialisés (Sandbox).</p>
+
+        <p><strong>Interconnexions :</strong> 
+
+          <ul>
+
+            <li><strong>Input :</strong> Reçoit les arguments JSON générés par l'API Gemini (Tool Call).</li>
+
+            <li><strong>Action locale :</strong> Exécute des scripts, lit/écrit dans le Vault (système de fichiers local).</li>
+
+            <li><strong>Action réseau :</strong> Navigue sur le WAN (Headless Browser) ou requête le proxy SearxNG.</li>
+
+            <li><strong>Output :</strong> Retourne le résultat structuré (JSON multipart) au Pipe.</li>
+
+          </ul>
+
+        </p>
+
+      </div>
+
+    </div>
+
+
+
+    <div class="didactic-box">
+
+      <h4>💡 Comprendre l'Arsenal</h4>
+
+      <p>Une IA standard est "enfermée" dans une boîte de texte. L'Arsenal agit comme les "mains" et les "outils" d'ECHO. Lorsque le cerveau (le Pipe) réalise qu'il ne sait pas quelque chose (ex: la météo du jour, ou comment trier un fichier Excel complexe), il rédige une consigne précise et la transmet à l'un des outils de l'Arsenal. Ce dernier exécute la tâche de manière sécurisée et renvoie le résultat au cerveau.</p>
+
+    </div>
+
+
+
+    <p>L'Arsenal ECHO n'est pas une simple collection de fonctions, mais un écosystème d'outils souverains conçus pour l'autonomie cognitive. Chaque outil respecte un protocole de communication multimodal strict et interagit directement avec le Vault utilisateur.</p>
+
+
+
+    <div class="audit-note">
+
+      <h4>Principes Directeurs</h4>
+
+      <ul>
+
+        <li><strong>Souveraineté</strong> : Les données ne quittent jamais l'infrastructure ECHO sauf pour les appels API chiffrés.</li>
+
+        <li><strong>Multimodalité native</strong> : Capacité à renvoyer du texte, des pensées, des médias et des artefacts dans un seul flux.</li>
+
+        <li><strong>Traçabilité</strong> : Chaque appel d'outil est journalisé dans la table <code>tool_journal</code>.</li>
+
+      </ul>
+
+    </div>
+
+
+
+    <h2>Le Protocole Multipart (<code>wrap_tool_output</code>)</h2>
+
+    <p>Pour dépasser les limites des réponses textuelles, ECHO utilise un format JSON structuré encapsulant plusieurs types de données.</p>
+
+    
+
+    <h3>Composants du Multipart</h3>
+
+    <table>
+
+      <thead>
+
+        <tr>
+
+          <th>Type</th>
+
+          <th>Description</th>
+
+          <th>Traitement par le Pipe</th>
+
+        </tr>
+
+      </thead>
+
+      <tbody>
+
+        <tr>
+
+          <td><code>text</code></td>
+
+          <td>La réponse textuelle principale de l'outil.</td>
+
+          <td>Injecté comme <code>functionResponse</code>.</td>
+
+        </tr>
+
+        <tr>
+
+          <td><code>thought</code></td>
+
+          <td>Raisonnement interne de l'outil ou du sous-modèle.</td>
+
+          <td>Isolé pour afficher la Chain-of-Thought sans polluer la sortie finale. Ces données seront ensuite réinjectées dans le contexte à travers la Suture lors du tour suivant.</td>
+
+        </tr>
+
+        <tr>
+
+          <td><code>media</code></td>
+
+          <td>Binaire (Base64) avec MIME type (Image, PDF, HTML).</td>
+
+          <td>Converti en <code>inlineData</code> Gemini.</td>
+
+        </tr>
+
+        <tr>
+
+          <td><code>nouveaux_fichiers</code></td>
+
+          <td>Métadonnées des fichiers créés ou téléchargés.</td>
+
+          <td>Injecté via le protocole "Suture" pour assurer la rémanence.</td>
+
+        </tr>
+
+      </tbody>
+
+    </table>
+
+
+
+    <h2>Le Système "Vault" (Coffre-Fort)</h2>
+
+    <p>Le Vault est l'espace de stockage persistant et isolé de chaque utilisateur (<code>/app/backend/echo_users/{user_id}/files/</code>).</p>
+
+    <ul>
+
+      <li><strong>Indexation</strong> : Chaque fichier possède un <code>file_id</code> unique au format <code>U_{uid}_C_{cid}_T_{ts}</code>.</li>
+
+      <li><strong>Persistance</strong> : Les outils scellent automatiquement les artefacts (captures d'écran, logs) dans le Vault.</li>
+
+    </ul>
+
+
+
+    <h2>Architecture de l'Arsenal</h2>
+
+    <div class="grid-container">
+
+      <div class="card">
+
+        <h3>🌐 Web Intelligence</h3>
+
+        <p>Pilotage de Chromium, cartographie du DOM, Replay visuel et Recherche Web Souveraine (SearxNG).</p>
+
+        <a href="07a_web_intelligence.html" class="btn">📁 Explorer</a>
+
+      </div>
+
+      <div class="card">
+
+        <h3>📂 Vault & Data</h3>
+
+        <p>Exploration brute, sondage sémantique et gestion des métadonnées.</p>
+
+        <a href="07b_vault_explorer.html" class="btn">📁 Explorer</a>
+
+      </div>
+
+      <div class="card">
+
+        <h3>🧠 Mémoire & Cognition</h3>
+
+        <p>RAG Organique, Base de Connaissances et Cascade Cognitive.</p>
+
+        <a href="07c_memory_cognition.html" class="btn">📁 Explorer</a>
+
+      </div>
+
+      <div class="card">
+
+        <h3>🐍 Exécution & Pilotage</h3>
+
+        <p>Sandbox Python isolée et Monitoring avancé de la jauge de Contexte.</p>
+
+        <a href="07d_execution_monitoring.html" class="btn">📁 Explorer</a>
+
+      </div>
+
+      <div class="card">
+
+        <h3>🎮 Actions UI (HUD)</h3>
+
+        <p>Boutons de contrôle manuel : Purge Mémoire, Auth Manager et Pilotage du Replay.</p>
+
+        <a href="07e_actions_ui.html" class="btn">📁 Explorer</a>
+
+      </div>
+
+      <div class="card">
+
+        <h3>🎨 Visual Intelligence (Rendu Visuel)</h3>
+
+        <p>Système d'Exploitation Visuel (Grande Bibliothèque de l'Arsenal Visuel).</p>
+
+        <p>Déploiement dynamique d'interfaces multi-moteurs (Markmap, Mermaid, ECharts).</p>
+
+        <a href="#" class="btn">🖼️ Rich UI Universel</a>
+
+      </div>
+
+    </div>
+
+
+
+    <div class="audit-note">
+
+      <h4>✅ Le point sur l'exactitude</h4>
+
+      <p>Tous les outils de l'arsenal ont été vérifiés pour leur conformité au <strong>Protocole Multipart</strong>. Ils garantissent l'isolation des données entre les utilisateurs (User ID Isolation) et le scellement systématique des preuves dans la table <code>tool_journal</code>.</p>
+
+    </div>
+
+
+
+    <footer>
+
+      ECHO Framework - Version 5 - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
+
+    </footer>
+
+  <div class="transition-text"><em>L'utilisation de ces outils est dictée par les directives fondamentales et l'identité de l'IA. <a href="08_system_prompt.html">Passer au cœur de ces directives : le System Prompt (Kernel) ➔</a></em></div>
+
+  </main>
+
 <script src="nav.js"></script>
+
 </body>
+
 </html>
+

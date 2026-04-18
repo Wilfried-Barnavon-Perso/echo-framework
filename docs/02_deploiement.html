@@ -1,155 +1,157 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 1. Déploiement & Infrastructure</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
-
-    <main>
-        <h1>2. Déploiement & Infrastructure</h1>
-
-        <div class="transition-text">Pour concrétiser l'architecture conceptuelle vue précédemment, ECHO s'appuie sur une pile (stack) de déploiement conteneurisée et précise.</div>
-
-        <div class="didactic-box">
-            <h4>💡 Stratégie de Déploiement</h4>
-            <p>ECHO est conçu pour transformer une machine standard en un serveur d'intelligence souveraine. Le scénario nominal de déploiement consiste à utiliser un PC sous <strong>Windows 11 Pro</strong> comme hôte matériel, lequel fait tourner une <strong>Machine Virtuelle (VM) Linux</strong> isolée via <strong>Hyper-V</strong>. C'est à l'intérieur de cette VM que la pile Docker d'ECHO s'exécute, garantissant une étanchéité totale entre vos outils de travail quotidiens et votre IA personnelle.</p>
-        </div>
-
-        <p>Le déploiement d'ECHO repose sur une infrastructure conteneurisée automatisée. Le script de déploiement prépare l'environnement, configure les réseaux isolés et installe les différents modules sous forme de services Docker.</p>
-
-        <h2>Le Cycle de Vie des 5 Phases</h2>
-
-        <section>
-            <h3>Phase 1 : L'Assemblage & L'Injection (Windows Host)</h3>
-            <p>Tout commence sur le poste de développement via le script <code>deploy-hyperv.ps1</code>. Ce script joue le rôle d'<strong>Assembleur</strong>.</p>
-            <ul>
-                <li><strong>Packaging Intelligent</strong> : Le script scanne le répertoire du projet et crée une archive ZIP temporaire en excluant les dossiers lourds (<code>.git</code>, <code>node_modules</code>, <code>.venv</code>).</li>
-                <li><strong>Encodage Base64</strong> : L'archive est convertie en chaîne Base64 pour être injectée directement dans le YAML de configuration <code>cloud-init</code>.</li>
-                <li><strong>Génération du CIDATA</strong> : ECHO crée dynamiquement un disque dur virtuel (VHD) de 100 Mo contenant les fichiers <code>user-data</code> et <code>meta-data</code>. Ce disque "Seed" permet de transmettre la configuration et le code à la VM sans réseau.</li>
-                <li><strong>Provisioning Hyper-V</strong> : Crée une VM de Génération 2, désactive le Secure Boot (requis pour l'auto-install Ubuntu) et attache l'ISO d'installation ainsi que le disque Seed.</li>
-            </ul>
-        </section>
-
-        <section>
-            <h3>Phase 2 : Le Provisioning Automatisé (Linux VM)</h3>
-            <p>Dès le premier boot, l'installateur Ubuntu (Subiquity) détecte le disque CIDATA et exécute les instructions <code>cloud-init</code>.</p>
-            <ul>
-                <li><strong>Installation du Socle</strong> : Déploiement automatique de Docker, Docker Compose, <code>jq</code>, <code>yq</code>, <code>git</code> et <code>unzip</code>.</li>
-                <li><strong>Extraction Chirurgicale</strong> : L'archive ZIP injectée est décodée et extraite dans <code>/opt/echo-framework-source</code>.</li>
-                <li><strong>Amorçage (Bootstrap)</strong> : Le système lance immédiatement <code>sync-echo.sh --local-only</code> pour finaliser la structure interne.</li>
-            </ul>
-        </section>
-
-        <section>
-            <h3>Phase 3 : La Synchronisation des Sources (<code>sync-echo</code>)</h3>
-            <p>Le script <code>sync-echo.sh</code> est le <strong>Distributeur</strong> du framework. Il garantit l'intégrité du code sur le système de fichiers Linux.</p>
-            <ul>
-                <li><strong>Mode Local vs Git</strong> : En déploiement initial, il utilise la source injectée. En maintenance, il peut se synchroniser directement avec GitHub (via <code>git reset --hard</code> pour écraser toute dérive locale).</li>
-                <li><strong>Cartographie des Cibles</strong> :
-                    <ul>
-                        <li><code>/opt/echo-scripts</code> : Scripts de contrôle (SH).</li>
-                        <li><code>/opt/config</code> : Fichiers YAML et JSON de configuration.</li>
-                        <li><code>/opt/10-owui-pipes/</code> à <code>/opt/14-owui-libs/</code> : Logique métier injectée dans Open WebUI (Filtres, Pipes, Outils, Actions, Libs).</li>
-                        <li><code>/opt/20-docker-*</code> à <code>/opt/22-docker-*</code> : Code source des micro-services (Admin Manager, Worker, Browser).</li>
-                    </ul>
-                </li>
-                <li><strong>Normalisation (Sanitization)</strong> : Conversion forcée des caractères Windows (CRLF) en Linux (LF) et suppression des BOM UTF-8 pour éviter les erreurs d'exécution silencieuses des scripts Python.</li>
-                <li><strong>Universalité</strong> : Crée des liens symboliques dans <code>/usr/local/bin/</code> pour que toutes les commandes ECHO soient accessibles globalement (ex: <code>update-echo</code> au lieu de <code>/opt/echo-scripts/update-echo.sh</code>).</li>
-            </ul>
-        </section>
-
-        <section>
-            <h3>Phase 4 : L'Orchestration & L'Éveil (`install-stack`)</h3>
-            <p>Le script <code>install-stack.sh</code> est le <strong>Chef d'Orchestre</strong> de Docker Compose, suivi de l'éveil applicatif via <code>config-owui.sh</code>.</p>
-            <ul>
-                <li><strong>Analyse Dynamique</strong> : Le script parse <code>stack-echo.yml</code> pour identifier les réseaux et volumes marqués <code>external: true</code> et les crée automatiquement.</li>
-                <li><strong>CORS IP-Driven</strong> : Calcule dynamiquement <code>ECHO_DETECTED_ORIGINS</code> pour autoriser les communications Cross-Origin locales.</li>
-                <li><strong>Hard Clean</strong> : Purge préventive (<code>docker rm -f</code>) pour une reconstruction sans résidus.</li>
-                <li><strong>Bootstrapping de l'Intelligence (`config-owui.sh`)</strong> : Une fois les conteneurs levés, ce script prend le relais pour :
-                    <ul>
-                        <li><strong>Génération des Secrets</strong> : Création automatique d'un compte service interne et du compte administrateur humain (secrets stockés dans <code>/opt/.owui-secrets</code>).</li>
-                        <li><strong>Auto-Upsert de l'Arsenal</strong> : Scan récursif des dossiers <code>/opt/owui-[tools|filters|pipes|actions]</code> et injection automatique dans la base de données d'Open WebUI via son API.</li>
-                        <li><strong>Alignement du Modèle</strong> : Injection du <code>system-prompt.md</code>, configuration des IDs d'outils par défaut et chargement de l'avatar de la marque ECHO.</li>
-                    </ul>
-                </li>
-            </ul>
-        </section>
-
-        <section>
-            <h3>Phase 5 : Cycle de Vie & Maintenance</h3>
-            <p>Une fois déployée, la Citadelle ECHO se gère via trois commandes souveraines et permet un basculement dynamique de sa posture de sécurité :</p>
-            <ul>
-                <li><strong>Gestion de la Posture de Sécurité</strong> : 
-                    <ul>
-                        <li><code>enable-bunkerweb</code> : Active le WAF, génère les certificats SSL et route le trafic via HTTPS sur vos sous-domaines personnalisés.</li>
-                        <li><code>disable-bunkerweb</code> : Désactive la couche de sécurité, archive la configuration et repasse en mode accès direct HTTP (Local Only).</li>
-                    </ul>
-                </li>
-            </ul>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Commande</th>
-                        <th>Action</th>
-                        <th>Impact</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td><code>update-echo</code></td>
-                        <td>Mise à jour rapide du code uniquement.</td>
-                        <td>Redémarrage "Hot Reload" des micro-services Python sans couper l'interface utilisateur.</td>
-                    </tr>
-                    <tr>
-                        <td><code>upgrade-echo</code></td>
-                        <td>Mise à niveau majeure.</td>
-                        <td>Re-synchronisation complète, rebuild des images Docker et recréation de la stack.</td>
-                    </tr>
-                    <tr>
-                        <td><code>rebuild-echo</code></td>
-                        <td><strong>Option Nucléaire</strong>.</td>
-                        <td>Suppression de TOUS les conteneurs, volumes, images et secrets. Remise à zéro totale (Factory Reset).</td>
-                    </tr>
-                </tbody>
-            </table>
-        </section>
-
-        <section>
-            <h3>Phase 6 : Déploiement Développeur (Local)</h3>
-            <p>Pour un environnement de développement ou de test rapide, sans passer par Hyper-V, vous pouvez instancier ECHO directement si vous disposez d'un hôte Linux avec Docker et Docker Compose déjà installés.</p>
-            <div class="code-header">Quickstart Dev</div>
-            <pre><code># Depuis la racine du dépôt git ECHO sur une machine Linux :
-cd 00-echo-scripts
-sudo ./install-stack.sh
-
-# L'interface sera ensuite accessible sur http://localhost:8080
-# Pour récupérer les mots de passe générés :
-sudo ./show-echo-admin.sh
-            </code></pre>
-            <p>Dans ce mode, l'étape de provisionnement initial de la VM est ignorée, et le cluster Docker est monté de façon standard en local.</p>
-        </section>
-
-        <h2>Réseau & Sécurité : Le Bouclier BunkerWeb</h2>
-        <p>Pour l'exposition publique, ECHO intègre <strong>BunkerWeb</strong> (Secure Edge). L'activation via <code>enable-bunkerweb</code> transforme l'infrastructure locale en une plateforme sécurisée :</p>
-        <ul>
-            <li><strong>Automated HTTPS</strong> : Gestion automatique des certificats Let's Encrypt via DNS ou HTTP challenge.</li>
-            <li><strong>Routing Souverain</strong> : <code>ui.votre-domaine.com</code> (IA) et <code>am.votre-domaine.com</code> (Admin).</li>
-            <li><strong>Hardening WAF</strong> : Protection native contre les injections, le brute-force et les scans de vulnérabilités.</li>
-        </ul>
-
-        <div class="note">
-            <strong>Récupération des Accès :</strong> Après un premier déploiement ou un <code>rebuild-echo</code>, utilisez la commande <code>show-echo-admin</code> pour afficher (et masquer automatiquement) les identifiants générés pour l'interface d'administration.
-        </div>
-
-        <footer>
-            ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-    <div class="transition-text"><em>Une fois le système déployé, les traitements s'appuient sur des fondations logicielles partagées. <a href="03_echo_libs.html">Explorer les librairies partagées (libs) ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
-</body>
-</html>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECHO v5 - 1. Déploiement & Infrastructure</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+    <main>
+        <h1>2. Déploiement & Infrastructure</h1>
+
+        <div class="transition-text">Pour concrétiser l'architecture conceptuelle vue précédemment, ECHO s'appuie sur une pile (stack) de déploiement conteneurisée et précise.</div>
+
+        <div class="didactic-box">
+            <h4>💡 Stratégie de Déploiement</h4>
+            <p>ECHO est conçu pour transformer une machine standard en un serveur d'intelligence souveraine. Le scénario nominal de déploiement consiste à utiliser un PC sous <strong>Windows 11 Pro</strong> comme hôte matériel, lequel fait tourner une <strong>Machine Virtuelle (VM) Linux</strong> isolée via <strong>Hyper-V</strong>. C'est à l'intérieur de cette VM que la pile Docker d'ECHO s'exécute, garantissant une étanchéité totale entre vos outils de travail quotidiens et votre IA personnelle.</p>
+        </div>
+
+        <p>Le déploiement d'ECHO repose sur une infrastructure conteneurisée automatisée. Le script de déploiement prépare l'environnement, configure les réseaux isolés et installe les différents modules sous forme de services Docker.</p>
+
+        <h2>Le Cycle de Vie des 5 Phases</h2>
+
+        <section>
+            <h3>Phase 1 : L'Assemblage & L'Injection (Windows Host)</h3>
+            <p>Tout commence sur le poste de développement via le script <code>deploy-hyperv.ps1</code>. Ce script joue le rôle d'<strong>Assembleur</strong>.</p>
+            <ul>
+                <li><strong>Packaging Intelligent</strong> : Le script scanne le répertoire du projet et crée une archive ZIP temporaire en excluant les dossiers lourds (<code>.git</code>, <code>node_modules</code>, <code>.venv</code>).</li>
+                <li><strong>Encodage Base64</strong> : L'archive est convertie en chaîne Base64 pour être injectée directement dans le YAML de configuration <code>cloud-init</code>.</li>
+                <li><strong>Génération du CIDATA</strong> : ECHO crée dynamiquement un disque dur virtuel (VHD) de 100 Mo contenant les fichiers <code>user-data</code> et <code>meta-data</code>. Ce disque "Seed" permet de transmettre la configuration et le code à la VM sans réseau.</li>
+                <li><strong>Provisioning Hyper-V</strong> : Crée une VM de Génération 2, désactive le Secure Boot (requis pour l'auto-install Ubuntu) et attache l'ISO d'installation ainsi que le disque Seed.</li>
+            </ul>
+        </section>
+
+        <section>
+            <h3>Phase 2 : Le Provisioning Automatisé (Linux VM)</h3>
+            <p>Dès le premier boot, l'installateur Ubuntu (Subiquity) détecte le disque CIDATA et exécute les instructions <code>cloud-init</code>.</p>
+            <ul>
+                <li><strong>Socle Technique</strong> : Déploiement automatique de Docker, Docker Compose, <code>jq</code>, <code>yq</code>, <code>git</code> et <code>unzip</code>.</li>
+                <li><strong>Extraction Chirurgicale</strong> : L'archive ZIP injectée est décodée et extraite dans <code>/opt/echo-framework-source</code>.</li>
+                <li><strong>Amorçage (Bootstrap)</strong> : Le système lance immédiatement <code>sync-echo.sh --local-only</code> pour finaliser la structure interne.</li>
+            </ul>
+        </section>
+
+        <section>
+            <h3>Phase 3 : La Synchronisation des Sources (<code>sync-echo</code>)</h3>
+            <p>Le script <code>sync-echo.sh</code> est le <strong>Distributeur</strong> du framework. Il garantit l'intégrité du code sur le système de fichiers Linux.</p>
+            <ul>
+                <li><strong>Mode Local vs Git</strong> : En déploiement initial, il utilise la source injectée. En maintenance, il peut se synchroniser directement avec GitHub (via <code>git reset --hard</code> pour écraser toute dérive locale).</li>
+                <li><strong>Cartographie des Cibles</strong> :
+                    <ul>
+                        <li><code>/opt/echo-scripts</code> : Scripts de contrôle (SH).</li>
+                        <li><code>/opt/config</code> : Fichiers YAML et JSON de configuration.</li>
+                        <li><code>/opt/10-owui-pipes/</code> à <code>/opt/14-owui-libs/</code> : Logique métier injectée dans Open WebUI (Filtres, Pipes, Outils, Actions, Libs).</li>
+                        <li><code>/opt/20-docker-*</code> à <code>/opt/22-docker-*</code> : Code source des micro-services (Admin Manager, Worker, Browser).</li>
+                    </ul>
+                </li>
+                <li><strong>Normalisation (Sanitization)</strong> : Conversion forcée des caractères Windows (CRLF) en Linux (LF) et suppression des BOM UTF-8 pour éviter les erreurs d'exécution silencieuses des scripts Python.</li>
+                <li><strong>Universalité</strong> : Crée des liens symboliques dans <code>/usr/local/bin/</code> pour que toutes les commandes ECHO soient accessibles globalement (ex: <code>update-echo</code> au lieu de <code>/opt/echo-scripts/update-echo.sh</code>).</li>
+            </ul>
+        </section>
+
+        <section>
+            <h3>Phase 4 : L'Orchestration & L'Éveil (`install-stack`)</h3>
+            <p>Le script <code>install-stack.sh</code> est le <strong>Chef d'Orchestre</strong> de Docker Compose, suivi de l'éveil applicatif via <code>config-owui.sh</code>.</p>
+            <ul>
+                <li><strong>Gestion de l'Environnement</strong> : Le script centralise les secrets d'infrastructure (MariaDB, SearxNG) et les variables de routage (CORS, Domaine) dans un fichier maître persistant <code>/opt/.env</code>.</li>
+                <li><strong>Analyse Dynamique</strong> : Le script parse <code>stack-echo.yml</code> pour identifier les réseaux et volumes marqués <code>external: true</code> et les crée automatiquement.</li>
+                <li><strong>CORS IP-Driven</strong> : Calcule dynamiquement <code>ECHO_DETECTED_ORIGINS</code> pour autoriser les communications Cross-Origin locales.</li>
+                <li><strong>Hard Clean</strong> : Purge préventive dynamique de tous les conteneurs pour une reconstruction sans résidus.</li>
+                <li><strong>Bootstrapping de l'Intelligence (`config-owui.sh`)</strong> : Une fois les conteneurs levés, ce script prend le relais pour :
+                    <ul>
+                        <li><strong>Génération des Secrets</strong> : Création automatique d'un compte service interne et du compte administrateur humain (secrets applicatifs stockés dans <code>/opt/.owui-secrets</code>).</li>
+                        <li><strong>Auto-Upsert de l'Arsenal</strong> : Scan récursif des dossiers et injection automatique dans la base de données d'Open WebUI via son API.</li>
+                        <li><strong>Alignement du Modèle</strong> : Injection du <code>system-prompt.md</code>, configuration des IDs d'outils par défaut et chargement de l'avatar de la marque ECHO.</li>
+                        <li><strong>Suture de Configuration</strong> : Réinjection dynamique des paramètres de domaine et de CORS directement dans la base de données pour assurer la continuité du service.</li>
+                    </ul>
+                </li>
+            </ul>
+        </section>
+
+        <section>
+            <h3>Phase 5 : Cycle de Vie & Maintenance</h3>
+            <p>Une fois déployée, la Citadelle ECHO se gère via trois commandes souveraines et permet un basculement dynamique de sa posture de sécurité :</p>
+            <ul>
+                <li><strong>Gestion de la Posture de Sécurité</strong> : 
+                    <ul>
+                        <li><code>enable-bunkerweb</code> : Active le WAF, génère les certificats SSL, route le trafic via HTTPS et lance une reconfiguration atomique de l'API.</li>
+                        <li><code>disable-bunkerweb</code> : Désactive la couche de sécurité et le routage public, rétablit le CORS pour un accès local (HTTP), et assure la suture des configurations par API.</li>
+                    </ul>
+                </li>
+            </ul>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Commande</th>
+                        <th>Action</th>
+                        <th>Impact</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>update-echo</code></td>
+                        <td>Mise à jour rapide du code uniquement.</td>
+                        <td>Redémarrage "Hot Reload" des micro-services Python sans couper l'interface utilisateur.</td>
+                    </tr>
+                    <tr>
+                        <td><code>upgrade-echo</code></td>
+                        <td>Mise à niveau majeure.</td>
+                        <td>Re-synchronisation complète, rebuild des images Docker et recréation de la stack.</td>
+                    </tr>
+                    <tr>
+                        <td><code>rebuild-echo</code></td>
+                        <td><strong>Option Nucléaire</strong>.</td>
+                        <td>Suppression de TOUS les conteneurs, volumes, images et secrets. Remise à zéro totale (Factory Reset).</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section>
+            <h3>Phase 6 : Déploiement Développeur (Local)</h3>
+            <p>Pour un environnement de développement ou de test rapide, sans passer par Hyper-V, vous pouvez instancier ECHO directement si vous disposez d'un hôte Linux avec Docker et Docker Compose déjà installés.</p>
+            <div class="code-header">Quickstart Dev</div>
+            <pre><code># Depuis la racine du dépôt git ECHO sur une machine Linux :
+cd 00-echo-scripts
+sudo ./install-stack.sh
+
+# L'interface sera ensuite accessible sur http://localhost:3000
+# Pour récupérer les mots de passe générés :
+sudo ./show-echo-admin.sh
+            </code></pre>
+            <p>Dans ce mode, l'étape de provisionnement initial de la VM est ignorée, et le cluster Docker est monté de façon standard en local.</p>
+        </section>
+
+        <h2>Réseau & Sécurité : Le Bouclier BunkerWeb</h2>
+        <p>Pour l'exposition publique, ECHO intègre <strong>BunkerWeb</strong> (Secure Edge). L'activation via <code>enable-bunkerweb</code> transforme l'infrastructure locale en une plateforme sécurisée :</p>
+        <ul>
+            <li><strong>Automated HTTPS</strong> : Gestion automatique des certificats Let's Encrypt via DNS ou HTTP challenge.</li>
+            <li><strong>Routing Souverain</strong> : <code>ui.votre-domaine.com</code> (IA) et <code>am.votre-domaine.com</code> (Admin).</li>
+            <li><strong>Hardening WAF</strong> : Protection native contre les injections, le brute-force et les scans de vulnérabilités.</li>
+        </ul>
+
+        <div class="note">
+            <strong>Récupération des Accès :</strong> Après un premier déploiement ou un <code>rebuild-echo</code>, utilisez la commande <code>show-echo-admin</code> pour afficher (et masquer automatiquement) les identifiants générés pour l'interface d'administration.
+        </div>
+
+        <footer>
+            ECHO Framework - Version 5 - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
+        </footer>
+    <div class="transition-text"><em>Une fois le système déployé, les traitements s'appuient sur des fondations logicielles partagées. <a href="03_echo_libs.html">Explorer les librairies partagées (libs) ➔</a></em></div>
+    </main>
+<script src="nav.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework v5.98.10
+# 🧠 ECHO Framework v5.117.1
 
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
@@ -30,11 +30,12 @@ ECHO transforme l'accès aux modèles cloud en une infrastructure agentique priv
 
 ### 🧩 Les Composants Cœurs
 *   **Le Cortex (Pipe Engine - `10-owui-pipes`)** : L'unité centrale de traitement. Il gère la **Suture Sémantique** (reconstruction bit-perfect via Shadows SQLite), la **Cascade Cognitive** (routage dynamique inter-modèles) et la **Thought Hygiene** (gestion chirurgicale de la Chain-of-Thought via `thoughtSignature`).
-*   **La Conscience (Context Filter - `11-owui-filters`)** : Gateway cognitive qui désactive le RAG natif au profit du **Smart Context** (analyse multimodale > 256 Ko via Gemini Flash) et assure l'authentification **Stealth** (OAuth/PKCE).
+*   **La Conscience (Context Filter - `11-owui-filters`)** : Gateway cognitive incluant la **Mémoire Organique V2.5** (distillation probabiliste avec recouvrement adaptatif et fusion sémantique vectorielle) et le **Smart Context** (analyse multimodale > 256 Ko via Gemini Flash).
 *   **L'Admin Manager (`20-docker-admin-manager`)** : Dashboard de monitoring, backup et gestion de la stack Docker.
 
 ### 🛠️ L'Arsenal des Outils (Sovereign Toolbox)
 Chaque outil interagit directement avec le **Vault** (coffre-fort) utilisateur :
+*   🧠 **Proactive Memory** : Commandes chirurgicales `memorize_that`, `prepare_forget_memory`, `execute_forget_memory` et `list_memory_topics` sous contrôle utilisateur.
 *   🌐 **Navigation Engine** : Pilotage de Chromium via Playwright avec retour visuel HUD en temps réel.
 *   🐍 **Python Code Executor** : Sandbox isolée pour l'analyse de données et la génération de graphiques.
 *   🔍 **Sovereign Search** : Recherche web multi-sources via SearXNG préservant la confidentialité.
@@ -50,7 +51,8 @@ Chaque outil interagit directement avec le **Vault** (coffre-fort) utilisateur :
 | :--- | :--- |
 | **Suture Sémantique** | Restauration parfaite de l'historique Gemini incluant les médias binaires et les états de raisonnement. |
 | **Smart Context** | Distillation automatique des documents massifs pour maximiser l'efficience du contexte. |
-| **Cascade Cognitive** | Bascule intelligente entre les modèles (Lite, Flash, Pro) selon la complexité de la tâche. |
+| **Mémoire Organique** | Système de mémorisation asynchrone avec fusion sémantique et fenêtre de recouvrement adaptative. |
+| **Arsenal Proactif** | Contrôle granulaire de la mémoire vectorielle par l'IA via function-calling avec confirmation humaine. |
 | **Shadow Shadows** | Registre d'ombres persistant garantissant l'immunité contre l'amnésie des interfaces volatiles. |
 | **Bypass PKCE** | Authentification Google AI Pro/One totalement intégrée et transparente. |
 
@@ -76,4 +78,4 @@ Pour approfondir, consultez le corpus documentaire dans le dossier `/docs` :
 - **[L'Arsenal](docs/07_arsenal_outils.html)** : Catalogue complet des protocoles d'outils.
 
 ---
-*Version actuelle : v5.98.10 "Sovereign Intelligence" | Copyright © 2026 Wilfried BARNAVON*
+*Version actuelle : v5.117.1 "Sovereign Intelligence" | Copyright © 2026 Wilfried BARNAVON*

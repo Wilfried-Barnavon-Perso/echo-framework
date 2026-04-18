@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.15
+# VERSION : 6.17
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -98,6 +98,24 @@ docker pull alpine:latest >/dev/null 2>&1 || echo "⚠️  Impossible de téléc
 # --- 2. PROVISIONING RESSOURCES (AUTOMATIQUE) ---
 echo "🏗️  Analyse du fichier Docker Compose pour les ressources externes..."
 
+# 2.0 Gestion des Secrets Centralisés
+ENV_FILE="/opt/.env"
+touch "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+
+generate_secret() {
+    local key=$1
+    local length=$2
+    if ! grep -q "^$key=" "$ENV_FILE"; then
+        local secret=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$length")
+        echo "$key=$secret" >> "$ENV_FILE"
+        echo "   🔑 Génération du secret : $key"
+    fi
+}
+
+generate_secret "BW_DB_PASSWORD" 24
+generate_secret "SEARXNG_SECRET" 64
+
 # 2.1 Réseaux Externes (Détection Dynamique)
 echo "🔍 Recherche des réseaux externes définis dans $COMPOSE_FILE..."
 NETWORKS_BLOCK=$(awk '/^networks:/{flag=1; next} /^[a-z]/{flag=0} flag' "$COMPOSE_FILE")
@@ -182,15 +200,13 @@ set -e
 # --- DEMARRAGE UNIFIÉ (INTELLIGENT) ---
 # On détermine si on doit lancer la version sécurisée (BunkerWeb) ou standard
 BW_STACK_FILE="/opt/config/bunkerweb-stack.yml"
-# Le fichier .env est stocké dans les données persistantes pour survivre aux updates
-ENV_FILE="/opt/bunkerweb/.env"
+# Le fichier .env est stocké à la racine de /opt pour survie aux updates
+ENV_FILE="/opt/.env"
 
 # Condition : Fichiers présents ET domaine configuré
 if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -q "^ECHO_DOMAIN=" "$ENV_FILE"; then
     echo "🔒 Mode SECURE EDGE détecté. Lancement de l'infrastructure complète (ECHO + BunkerWeb)..."
     
-    # Lancement unique de toute la stack pour éviter le crash "KeyError: ContainerConfig"
-    # du vieux docker-compose lors des recréations à chaud.
     $DOCKER_COMPOSE_CMD \
         --env-file "$ENV_FILE" \
         -f "$BW_STACK_FILE" \
@@ -200,7 +216,7 @@ if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -q "^ECHO_DOMAIN=" "$EN
 else
     echo "🔓 Mode STANDARD (Local) détecté."
     # Démarrage standard
-    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d --build --remove-orphans
+    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans
 fi
 
 if [ $? -eq 0 ]; then

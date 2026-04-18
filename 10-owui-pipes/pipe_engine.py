@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 180.2
-description: 180.2: Alignement final avec le Registre Cognitif v1.21 (Unification des UI).
+version: 180.4
+description: 180.4: Refactoring UI - Import de EchoUI depuis la nouvelle bibliothèque echo_ui.py.
 """
 
 # ==============================================================================
@@ -27,7 +27,8 @@ from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Un
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient, _get_global_client, EchoUI
+from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient, _get_global_client
+from echo_ui import EchoUI
 from echo_constants import *
 from echo_auth import AuthService
 
@@ -342,7 +343,7 @@ class StreamProcessor:
     def _create_tool_call_part(self, func_call: dict, tool_index: int) -> Optional[dict]:
         name = func_call["name"]
         args = func_call.get("args", {})
-        if name == "changement_niveau_cognitif":
+        if name == "new_cognitive_level":
             self.escalation_requested = args
             return None
         tc_id = f"echo-{secrets.token_hex(8)}"
@@ -522,7 +523,7 @@ class Pipe:
                 
                 if menu_escalade:
                     escalation_tool = {
-                        "name": "changement_niveau_cognitif",
+                        "name": "new_cognitive_level",
                         "description": (
                             "Ajuste la puissance de calcul d'ECHO selon la nature de la tâche et la charge contextuelle.\n\n"
                             "1. Lois de Sélection du Modèle :\n"
@@ -598,11 +599,11 @@ class Pipe:
                     # Signalement d'erreur de paramètre au modèle actuel
                     context.append({
                         "role": "model",
-                        "parts": [{"functionCall": {"name": "changement_niveau_cognitif", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "changement_niveau_cognitif", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi MODEL_LITE, MODEL_FLASH ou MODEL_PRO."}}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi MODEL_LITE, MODEL_FLASH ou MODEL_PRO."}}}]
                     })
                     continue
                 
@@ -612,11 +613,11 @@ class Pipe:
                     # Signalement de refus au modèle actuel
                     context.append({
                         "role": "model",
-                        "parts": [{"functionCall": {"name": "changement_niveau_cognitif", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "changement_niveau_cognitif", "response": {"status": "denied", "message": "ÉCHEC : Le transfert vers MODEL_PRO est refusé par la configuration utilisateur (Valve AUTO). Veuillez traiter la demande immédiatement avec vos capacités actuelles."}}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "denied", "message": "ÉCHEC : Le transfert vers MODEL_PRO est refusé par la configuration utilisateur (Valve AUTO). Veuillez traiter la demande immédiatement avec vos capacités actuelles."}}}]
                     })
                     continue # On reboucle avec le MÊME target_model
                 
@@ -626,7 +627,7 @@ class Pipe:
                 await events.status(f"🚀 Transfert cognitif vers {new_target}...")
                 
                 if proc.captured_sig:
-                    orch.user_data_manager.save_call_bridge(f"esc-{secrets.token_hex(4)}", proc.captured_sig, "changement_niveau_cognitif", req)
+                    orch.user_data_manager.save_call_bridge(f"esc-{secrets.token_hex(4)}", proc.captured_sig, "new_cognitive_level", req)
                 
                 plan_md = req.get("plan_de_transfert", "Exécution du relais.")
                 
@@ -648,13 +649,13 @@ class Pipe:
                 context.append({
                     "role": "model",
                     "parts": [
-                        {"functionCall": {"name": "changement_niveau_cognitif", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}
+                        {"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}
                     ]
                 })
                 context.append({
                     "role": "user",
                     "parts": [
-                        {"functionResponse": {"name": "changement_niveau_cognitif", "response": {"status": "success", "message": f"Relais vers {new_target} activé. Exécutez le plan maintenant.", "plan": plan_md}}}
+                        {"functionResponse": {"name": "new_cognitive_level", "response": {"status": "success", "message": f"Relais vers {new_target} activé. Exécutez le plan maintenant.", "plan": plan_md}}}
                     ]
                 })
 

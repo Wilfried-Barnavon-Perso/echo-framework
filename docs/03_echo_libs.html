@@ -1,94 +1,95 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 3. Librairies Partagées (libs)</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ECHO v5 - 3. Librairies Partagées (libs)</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
-    <main>
-        <h1>3. Les Librairies Partagées (echo_libs)</h1>
+  <main>
+    <h1>3. Les Librairies Partagées (echo_libs)</h1>
 
-        <div class="transition-text">Au cœur du système déployé opèrent les librairies partagées, véritables moteurs des fonctionnalités techniques d'ECHO.</div>
+    <div class="transition-text">Au cœur du système déployé opèrent les librairies partagées, véritables moteurs des fonctionnalités techniques d'ECHO.</div>
 
-        <div class="didactic-box">
-            <h4>💡 Que sont les ECHO Libs ?</h4>
-            <p>Les ECHO Libs sont un ensemble de <strong>fonctions de base consolidées</strong>, centralisées et réutilisables par tous les modules du framework (Filtres, Pipe, Actions, Admin). Elles évitent la duplication de code et garantissent que chaque composant parle la même langue technique.</p>
-        </div>
+    <div class="didactic-box">
+      <h4>💡 Que sont les ECHO Libs ?</h4>
+      <p>Les ECHO Libs sont un ensemble de <strong>fonctions de base consolidées</strong>, centralisées et réutilisables par tous les modules du framework (Filtres, Pipe, Actions, Admin). Elles évitent la duplication de code et garantissent que chaque composant parle la même langue technique.</p>
+    </div>
 
-        <p>Le socle technique d'ECHO repose sur un triptyque de librairies situées dans <code>14-owui-libs/</code>. Ces modules assurent la cohérence, la résilience et l'interopérabilité de tout l'écosystème.</p>
+    <p>Le socle technique d'ECHO repose sur un triptyque de librairies situées dans <code>14-owui-libs/</code>. Ces modules assurent la cohérence, la résilience et l'interoperabilité de tout l'écosystème.</p>
 
-        <section id="constants">
-            <h2>echo_constants.py : Constantes & Topologie (v1.22)</h2>
-            <p>Le registre unique des vérités du système : IDs de modèles, chemins de répertoires, timeouts et limites de contextes.</p>
-            <table>
-                <thead>
-                    <tr><th>Constante</th><th>Valeur / Rôle</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td><code>ECHO_USERS_ROOT</code></td><td><code>/app/backend/data/users</code> (Stockage des BDD et Vaults)</td></tr>
-                    <tr><td><code>ECHO_UPLOADS_DIR</code></td><td><code>/app/backend/data/uploads</code> (Transit des fichiers OWUI)</td></tr>
-                    <tr><td><code>ECHO_USER_AGENT</code></td><td><code>ECHO-Framework/5</code> (Identité réseau)</td></tr>
-                </tbody>
-            </table>
+    <section id="constants">
+      <h2>echo_constants.py : Constantes & Topologie (v1.22)</h2>
+      <p>Le registre unique des vérités du système : IDs de modèles, chemins de répertoires, timeouts et limites de contextes.</p>
+      <table>
+        <thead>
+          <tr><th>Constante</th><th>Valeur / Rôle</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>ECHO_USERS_ROOT</code></td><td><code>/app/backend/data/users</code> (Stockage des BDD et Vaults)</td></tr>
+          <tr><td><code>ECHO_UPLOADS_DIR</code></td><td><code>/app/backend/data/uploads</code> (Transit des fichiers OWUI)</td></tr>
+          <tr><td><code>ECHO_USER_AGENT</code></td><td><code>ECHO-Framework/5</code> (Identité réseau)</td></tr>
+        </tbody>
+      </table>
 
-            <h3>Détection MIME Intelligente</h3>
-            <p>La fonction <code>get_gemini_mime</code> utilise une cascade de 6 niveaux : Mapping ECHO, Mimetypes Std, Magic Numbers, Whitelist Gemini, Null-Byte Sniffing (Text-Sniffing), et Fallback.</p>
-        </section>
+      <h3>Détection MIME Intelligente</h3>
+      <p>La fonction <code>get_gemini_mime</code> utilise une cascade de 6 niveaux : Mapping ECHO, Mimetypes Std, Magic Numbers, Whitelist Gemini, Null-Byte Sniffing (Text-Sniffing), et Fallback.</p>
+    </section>
 
-        <section id="auth-service">
-            <h2>echo_auth.py : Validation d'Identité</h2>
-            <p>Gestionnaire d'identité souveraine. Le <code>AuthService</code> gère l'enrôlement des clés API. Il valide en parallèle (<code>asyncio.gather</code>) les clés auprès de Google avant de les sceller dans <code>identity.db</code>.</p>
-        </section>
+    <section id="auth-service">
+      <h2>echo_auth.py : Validation d'Identité</h2>
+      <p>Gestionnaire d'identité souveraine. Le <code>AuthService</code> gère l'enrôlement des clés API. Il valide en parallèle (<code>asyncio.gather</code>) les clés auprès de Google avant de les sceller dans <code>identity.db</code>.</p>
+    </section>
 
-        <section id="utils-core">
-            <h2>echo_utils.py : Le Cœur Réactif (v2.81)</h2>
-            
-            <div class="tech-spec">
-                <h4>⚙️ EchoStateManager : L'Architecture Bit-Perfect</h4>
-                <p>Le <code>state_manager</code> est l'organe de mémoire persistante. Il utilise un double hachage SHA-256 pour garantir l'intégrité :</p>
-                <ul>
-                    <li><strong>Invariant Hash</strong> : SHA-256 du triplet <code>(rôle, contenu, tool_io)</code>.</li>
-                    <li><strong>Cumulative Hash</strong> : SHA-256 de <code>(invariant + parent_cumulative)</code>.</li>
-                    <li><strong>Table <code>message_shadows</code></strong> : Stockage du JSON brut original (Shadowing) lié au timestamp <code>updated_at</code> physique.</li>
-                </ul>
-            </div>
+    <section id="utils-core">
+      <h2>echo_utils.py : Le Cœur Réactif (v3.0)</h2>
+      
+      <div class="tech-spec">
+        <h4>⚙️ EchoStateManager : L'Architecture Bit-Perfect</h4>
+        <p>Le <code>state_manager</code> est l'organe de mémoire persistante. Il utilise un double hachage SHA-256 pour garantir l'intégrité :</p>
+        <ul>
+          <li><strong>Invariant Hash</strong> : SHA-256 du triplet <code>(rôle, contenu, tool_io)</code>.</li>
+          <li><strong>Cumulative Hash</strong> : SHA-256 de <code>(invariant + parent_cumulative)</code>.</li>
+          <li><strong>Table <code>message_shadows</code></strong> : Stockage du JSON brut original (Shadowing) lié au timestamp <code>updated_at</code> physique.</li>
+        </ul>
+      </div>
 
-            <div class="tech-spec">
-                <h4>⚙️ EchoGeminiClient : Résilience HTTP/2</h4>
-                <p>Moteur d'appel API avec support <strong>HTTP/2 Strict</strong> (via <code>httpx</code> et <code>h2</code>). Permet le multiplexage des flux SSE (Server-Sent Events) et une latence réduite de 40% sur les réponses longues.</p>
-                <ul>
-                    <li><strong>Failover</strong> : Bascule automatique de clé après <code>KEY_SWITCH_THRESHOLD</code> échecs sur une clé saturée (429/503).</li>
-                    <li><strong>Jitter</strong> : Utilisation d'une gigue aléatoire (0.7x à 1.3x) lors des tentatives de reconnexion.</li>
-                </ul>
-            </div>
+      <div class="tech-spec">
+        <h4>⚙️ EchoGeminiClient : Résilience HTTP/2</h4>
+        <p>Moteur d'appel API avec support <strong>HTTP/2 Strict</strong> (via <code>httpx</code> et <code>h2</code>). Permet le multiplexage des flux SSE (Server-Sent Events) et une latence réduite de 40% sur les réponses longues.</p>
+        <ul>
+          <li><strong>Failover</strong> : Bascule automatique de clé après <code>KEY_SWITCH_THRESHOLD</code> échecs sur une clé saturée (429/503).</li>
+          <li><strong>Jitter</strong> : Utilisation d'une gigue aléatoire (0.7x à 1.3x) lors des tentatives de reconnexion.</li>
+        </ul>
+      </div>
 
-            <h3>EchoEvents & EchoUI</h3>
-            <ul>
-                <li><strong>EchoEvents</strong> : Bus d'événements asynchrone (<code>status</code>, <code>toast</code>, <code>call</code>). Permet de pousser des messages de statut (<i>"L'IA réfléchit..."</i>) de manière uniforme.</li>
-                <li><strong>EchoUI</strong> : Moteur HUD. Gère le <strong>Monitor</strong> (Visualisation GPU), la <strong>Context Gauge</strong> (Monitoring Tokens) et le <strong>Web Replay</strong>.</li>
-            </ul>
+      <h3>EchoEvents, EchoUI & VisualEngine</h3>
+      <ul>
+        <li><strong>EchoEvents</strong> : Bus d'événements asynchrone (<code>status</code>, <code>toast</code>, <code>call</code>). Permet de pousser des messages de statut de manière uniforme.</li>
+        <li><strong>EchoUI</strong> : Moteur HUD. Gère le <strong>Monitor</strong>, la <strong>Context Gauge</strong> et le <strong>Web Replay</strong>. (Déplacé dans <code>echo_ui.py</code>).</li>
+        <li><strong>VisualEngine</strong> : Registre universel des moteurs visuels (Markmap, Mermaid, ECharts, Vega, etc.). (Nouveau : <code>echo_visuals.py</code>).</li>
+      </ul>
 
-            <h4>Protocoles Sémantique</h4>
-            <ul>
-                <li><code>split_thought_process</code> : Isolation des balises <code>&lt;think&gt;</code> pour l'archivage CoT.</li>
-                <li><code>wrap_tool_output</code> : Contrat de sortie multipart (Text, Thoughts, Media, New Files).</li>
-            </ul>
-        </section>
+      <h4>Protocoles Sémantiques</h4>
+      <ul>
+        <li><code>split_thought_process</code> : Isolation des balises <code>&lt;think&gt;</code> pour l'archivage CoT.</li>
+        <li><code>wrap_tool_output</code> : Contrat de sortie multipart (Text, Thoughts, Media, New Files).</li>
+      </ul>
+    </section>
 
-        <div class="tech-spec">
-            <h4>⚙️ Précision Mécanique : Résilience des Données</h4>
-            <p>Le <code>EchoStateManager</code> garantit la persistance des ombres même en cas de crash brutal du conteneur grâce au mode <code>WAL</code> (Write-Ahead Logging) de SQLite. Cette configuration permet des écritures concurrentes rapides sans risque de corruption de la base de données.</p>
-        </div>
+    <div class="tech-spec">
+      <h4>⚙️ Précision Mécanique : Résilience des Données</h4>
+      <p>Le <code>EchoStateManager</code> garantit la persistance des ombres même en cas de crash brutal du conteneur grâce au mode <code>WAL</code> (Write-Ahead Logging) de SQLite. Cette configuration permet des écritures concurrentes rapides sans risque de corruption de la base de données.</p>
+    </div>
 
-        <footer>
-            ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-    <div class="transition-text"><em>Ces moteurs logiciels nécessitent des interfaces pour être supervisés et pilotés par l'utilisateur. <a href="04_hud_ui.html">Découvrir l'écosystème HUD & UI ➔</a></em></div>
-    </main>
+    <footer>
+      ECHO Framework - Version 5.120.1 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  <div class="transition-text"><em>Ces moteurs logiciels nécessitent des interfaces pour être supervisés et pilotés par l'utilisateur. <a href="04_hud_ui.html">Découvrir l'écosystème HUD & UI ➔</a></em></div>
+  </main>
 <script src="nav.js"></script>
 </body>
 </html>

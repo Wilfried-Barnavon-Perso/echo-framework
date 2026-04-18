@@ -23,9 +23,10 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import (
     EchoAuth, EchoEvents, wrap_tool_output, 
     resolve_upload_file_path, get_echo_version, split_thought_process,
-    EchoGeminiClient, EchoStateManager, generate_echo_file_id, EchoUI, EchoRichUI,
+    EchoGeminiClient, EchoStateManager, generate_echo_file_id,
     get_stealth_headers
 )
+from echo_ui import EchoRichUI
 from echo_constants import ECHO_UPLOADS_DIR, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, MODEL_FLASH
 
 class Tools:

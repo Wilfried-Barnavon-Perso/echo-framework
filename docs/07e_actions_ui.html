@@ -1,137 +1,137 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 7e. Actions UI (HUD)</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
-
-    <main>
-        <h1>7e. Actions UI : Les Commandes du HUD</h1>
-
-        <div class="transition-text">En complément des outils automatisés utilisés par l'IA, les Actions UI redonnent le contrôle manuel à l'utilisateur sur des fonctions système critiques.</div>
-
-        <h2>Fiche d'Identité Technique</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>🎮 Actions UI (HUD)</h3>
-                <p><strong>Nature :</strong> Composants interactifs d'interface utilisateur (Boutons Open WebUI) déclenchant des scripts Python backend.</p>
-                <p><strong>Source :</strong> Dossier <code>13-owui-actions/</code> (ex: <code>purge_memory_action.py</code>, <code>web_navigation_replay_action.py</code>).</p>
-                <p><strong>Rôle :</strong> Fournir à l'utilisateur final une surface de contrôle (HUD) pour interagir manuellement avec l'état du framework ECHO (Purge de la mémoire Qdrant, réinitialisation des clés API, rejeu visuel d'une navigation web).</p>
-                <p><strong>Exécutant :</strong> L'action est déclenchée par un clic utilisateur dans le navigateur, et le script Python correspondant est exécuté par le Backend Open WebUI.</p>
-                <p><strong>Interconnexions :</strong> 
-                    <ul>
-                        <li><strong>Input :</strong> Clic utilisateur, accompagné de paramètres éventuels (ex: IDs à purger).</li>
-                        <li><strong>Action locale :</strong> Modifie directement les bases de données (<code>echo_shadows.db</code>, <code>identity.db</code>) ou interroge le Vault.</li>
-                        <li><strong>Output :</strong> Retourne des flux d'événements (Event Streams) ou du code HTML/JS injecté dynamiquement dans le chat pour un affichage interactif.</li>
-                    </ul>
-                </p>
-            </div>
-        </div>
-
-        <p>Les <strong>Actions UI</strong> sont des modules interactifs injectés directement dans l'interface utilisateur d'Open WebUI. Elles permettent à l'utilisateur de piloter les fonctions critiques du framework via des boutons contextuels, sans passer par des commandes textuelles.</p>
-
-        <div class="didactic-box">
-            <h4>💡 Comprendre les Actions UI</h4>
-            <p>Imaginez que votre IA est un pilote d'avion. Les <strong>Outils</strong> sont ses commandes automatiques, mais les <strong>Actions UI</strong> sont les boutons physiques sur le tableau de bord (le HUD) sur lesquels <strong>VOUS</strong> pouvez appuyer pour reprendre le contrôle manuel sur la mémoire, l'accès ou la vision de l'IA.</p>
-        </div>
-
-        <section id="memory-purge">
-            <h2>1. ECHO Memory Purge (Granulaire)</h2>
-            <p>Cet outil de gouvernance permet un élagage chirurgical de la mémoire organique (Qdrant) pour éviter les hallucinations dues à des souvenirs obsolètes ou contradictoires.</p>
-            
-            <div class="info-block">
-                <h4>🧠 Pourquoi est-ce important ?</h4>
-                <p>Avec le temps, une IA peut accumuler des souvenirs contradictoires (ex: vous avez changé d'avis sur un projet). La purge permet de dire à ECHO : "Oublie tout ce que tu sais sur le Projet X, on recommence sur de nouvelles bases".</p>
-            </div>
-
-            <div class="tech-spec">
-                <h4>⚙️ Sous le capot (Le point sur le code)</h4>
-                <ul>
-                    <li><strong>Tri Hiérarchique</strong> : Les catégories sont présentées selon une logique de priorité :
-                        <ol>
-                            <li><strong>Importance</strong> (ASC) : Les souvenirs les plus "faibles" en premier.</li>
-                            <li><strong>Fréquence</strong> (DESC) : Les sujets les plus discutés en premier.</li>
-                        </ol>
-                    </li>
-                    <li><strong>Code Couleur Sémantique</strong> :
-                        <span class="tag" style="background: #28a745;">🟢 Nv 1 (Trivial)</span>
-                        <span class="tag" style="background: #007bff;">🔵 Nv 2 (Utile)</span>
-                        <span class="tag" style="background: #ffc107; color: black;">🟡 Nv 3 (Structurel)</span>
-                        <span class="tag" style="background: #fd7e14;">🟠 Nv 4 (Fondateur)</span>
-                        <span class="tag" style="background: #dc3545;">🔴 Nv 5 (Axiome)</span>
-                    </li>
-                </ul>
-            </div>
-
-            <div class="didactic-box">
-                <h4>🎯 Guide d'utilisation rapide</h4>
-                <ol>
-                    <li>Cliquez sur le bouton <strong>Purge</strong>.</li>
-                    <li>Regardez la liste des thèmes (tags) classés par importance.</li>
-                    <li>Saisissez les numéros souhaités (ex: <code>1-3</code> pour tout ce qui est trivial).</li>
-                    <li>Confirmez après avoir lu la prévisualisation (Dry Run). <strong>C'est irréversible !</strong></li>
-                </ol>
-            </div>
-        </section>
-
-        <section id="auth-manager">
-            <h2>2. ECHO Auth Manager (<code>reset_auth_action.py</code>)</h2>
-            <p>Le gestionnaire d'authentification HUD permet une rotation souveraine des clés API sans intervention de l'administrateur système.</p>
-            
-            <div class="info-block">
-                <h4>🔑 Pourquoi est-ce important ?</h4>
-                <p>Si votre clé API Google est expirée ou si vous voulez changer de compte, vous n'avez pas besoin de fouiller dans les fichiers de configuration. Vous "nettoyez" votre accès ici, et ECHO vous redemandera proprement vos nouveaux accès au prochain besoin.</p>
-            </div>
-
-            <div class="tech-spec">
-                <h4>⚙️ Sous le capot (Le point sur le code)</h4>
-                <p>L'action cible exclusivement la base <code>identity.db</code> située dans l'enclave utilisateur du Vault. Elle exécute un <code>DELETE FROM auth_data WHERE key LIKE 'google_%'</code>. C'est propre, local et sécurisé.</p>
-            </div>
-        </section>
-
-        <section id="web-replay">
-            <h2>3. Show Web Replay (Cockpit JS)</h2>
-            <p>Mécanisme de journalisation détaillé de la navigation, le Replay permet d'analyser visuellement chaque étape du <code>navigation_engine_tool</code>.</p>
-
-            <div class="info-block">
-                <h4>👁️ Pourquoi est-ce important ?</h4>
-                <p>Parfois l'IA dit : "Je n'ai pas trouvé le bouton Valider". Avec le Replay, vous pouvez voir ce qu'elle a RÉELLEMENT vu à ce moment précis, zoomer sur la page, et comprendre si c'était un bug d'affichage ou une erreur de raisonnement.</p>
-            </div>
-
-            <div class="tech-spec">
-                <h4>⚙️ Sous le capot (Le point sur le code)</h4>
-                <ul>
-                    <li><strong>Moteur Zoom & Pan</strong> : Navigation haute fidélité via <code>Ctrl + Molette</code> (Zoom 0.1x à 15x).</li>
-                    <li><strong>Streaming Atomique</strong> : Python pousse les images une par une vers le navigateur. Le thread Python s'arrête (Promise JS) tant que vous n'avez pas cliqué sur "Suivant" ou "Play".</li>
-                    <li><strong>Fallback CORS</strong> : Si la sécurité du navigateur bloque la copie, ECHO crée un calque spécial pour vous permettre de faire un clic droit manuel.</li>
-                </ul>
-            </div>
-
-            <div class="didactic-box">
-                <h4>🎮 Contrôles du Cockpit</h4>
-                <ul>
-                    <li><strong>Ctrl + Molette</strong> : Zoomer/Dézoomer.</li>
-                    <li><strong>Clic + Glisser</strong> : Se déplacer dans l'image.</li>
-                    <li><strong>Bouton ⛶</strong> : Tracer une zone pour l'extraire (Crop).</li>
-                    <li><strong>Bouton ❐</strong> : Copier l'image actuelle pour la partager ou l'analyser ailleurs.</li>
-                </ul>
-            </div>
-        </section>
-
-        <div class="audit-note">
-            <h4>✅ Contrôle de l'Exactitude</h4>
-            <p>Toutes les informations ci-dessus ont été vérifiées par analyse statique des fichiers <code>13-owui-actions/*.py</code>. Les comportements décrits correspondent rigoureusement aux fonctions SQL, JS et Python réelles du framework.</p>
-        </div>
-
-        <footer>
-            ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-        <div class="transition-text"><em>Maintenant que nous connaissons tous les outils, voyons comment l'IA est programmée pour s'en servir et se comporter. <a href="08_system_prompt.html">Passer au cœur des directives : le Kernel (System Prompt) ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
-</body>
-</html>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECHO v5 - 7e. Actions UI (HUD)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+    <main>
+        <h1>7e. Actions UI : Les Commandes du HUD</h1>
+
+        <div class="transition-text">En complément des outils automatisés utilisés par l'IA, les Actions UI redonnent le contrôle manuel à l'utilisateur sur des fonctions système critiques.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>🎮 Actions UI (HUD)</h3>
+                <p><strong>Nature :</strong> Composants interactifs d'interface utilisateur (Boutons Open WebUI) déclenchant des scripts Python backend.</p>
+                <p><strong>Source :</strong> Dossier <code>13-owui-actions/</code> (ex: <code>purge_memory_action.py</code>, <code>web_navigation_replay_action.py</code>).</p>
+                <p><strong>Rôle :</strong> Fournir à l'utilisateur final une surface de contrôle (HUD) pour interagir manuellement avec l'état du framework ECHO (Purge de la mémoire Qdrant, réinitialisation des clés API, rejeu visuel d'une navigation web).</p>
+                <p><strong>Exécutant :</strong> L'action est déclenchée par un clic utilisateur dans le navigateur, et le script Python correspondant est exécuté par le Backend Open WebUI.</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Clic utilisateur, accompagné de paramètres éventuels (ex: IDs à purger).</li>
+                        <li><strong>Action locale :</strong> Modifie directement les bases de données (<code>echo_shadows.db</code>, <code>identity.db</code>) ou interroge le Vault.</li>
+                        <li><strong>Output :</strong> Retourne des flux d'événements (Event Streams) ou du code HTML/JS injecté dynamiquement dans le chat pour un affichage interactif.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
+        <p>Les <strong>Actions UI</strong> sont des modules interactifs injectés directement dans l'interface utilisateur d'Open WebUI. Elles permettent à l'utilisateur de piloter les fonctions critiques du framework via des boutons contextuels, sans passer par des commandes textuelles.</p>
+
+        <div class="didactic-box">
+            <h4>💡 Comprendre les Actions UI</h4>
+            <p>Imaginez que votre IA est un pilote d'avion. Les <strong>Outils</strong> sont ses commandes automatiques, mais les <strong>Actions UI</strong> sont les boutons physiques sur le tableau de bord (le HUD) sur lesquels <strong>VOUS</strong> pouvez appuyer pour reprendre le contrôle manuel sur la mémoire, l'accès ou la vision de l'IA.</p>
+        </div>
+
+        <section id="memory-purge">
+            <h2>1. ECHO Memory Purge (Granulaire)</h2>
+            <p>Cet outil de gouvernance permet un élagage chirurgical de la mémoire organique (Qdrant) pour éviter les hallucinations dues à des souvenirs obsolètes ou contradictoires.</p>
+            
+            <div class="info-block">
+                <h4>🧠 Pourquoi est-ce important ?</h4>
+                <p>Avec le temps, une IA peut accumuler des souvenirs contradictoires (ex: vous avez changé d'avis sur un projet). La purge permet de dire à ECHO : "Oublie tout ce que tu sais sur le Projet X, on recommence sur de nouvelles bases".</p>
+            </div>
+
+            <div class="tech-spec">
+                <h4>⚙️ Sous le capot (Le point sur le code)</h4>
+                <ul>
+                    <li><strong>Tri Hiérarchique</strong> : Les catégories sont présentées selon une logique de priorité :
+                        <ol>
+                            <li><strong>Importance</strong> (ASC) : Les souvenirs les plus "faibles" en premier.</li>
+                            <li><strong>Fréquence</strong> (DESC) : Les sujets les plus discutés en premier.</li>
+                        </ol>
+                    </li>
+                    <li><strong>Code Couleur Sémantique</strong> :
+                        <span class="tag" style="background: #28a745;">🟢 Nv 1 (Trivial)</span>
+                        <span class="tag" style="background: #007bff;">🔵 Nv 2 (Utile)</span>
+                        <span class="tag" style="background: #ffc107; color: black;">🟡 Nv 3 (Structurel)</span>
+                        <span class="tag" style="background: #fd7e14;">🟠 Nv 4 (Fondateur)</span>
+                        <span class="tag" style="background: #dc3545;">🔴 Nv 5 (Axiome)</span>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="didactic-box">
+                <h4>🎯 Guide d'utilisation rapide</h4>
+                <ol>
+                    <li>Cliquez sur le bouton <strong>Purge</strong>.</li>
+                    <li>Regardez la liste des thèmes (tags) classés par importance.</li>
+                    <li>Saisissez les numéros souhaités (ex: <code>1-3</code> pour tout ce qui est trivial).</li>
+                    <li>Confirmez après avoir lu la prévisualisation (Dry Run). <strong>C'est irréversible !</strong></li>
+                </ol>
+            </div>
+        </section>
+
+        <section id="auth-manager">
+            <h2>2. ECHO Auth Manager (<code>reset_auth_action.py</code>)</h2>
+            <p>Le gestionnaire d'authentification HUD permet une rotation souveraine des clés API sans intervention de l'administrateur système.</p>
+            
+            <div class="info-block">
+                <h4>🔑 Pourquoi est-ce important ?</h4>
+                <p>Si votre clé API Google est expirée ou si vous voulez changer de compte, vous n'avez pas besoin de fouiller dans les fichiers de configuration. Vous "nettoyez" votre accès ici, et ECHO vous redemandera proprement vos nouveaux accès au prochain besoin.</p>
+            </div>
+
+            <div class="tech-spec">
+                <h4>⚙️ Sous le capot (Le point sur le code)</h4>
+                <p>L'action cible exclusivement la base <code>identity.db</code> située dans l'enclave utilisateur du Vault. Elle exécute un <code>DELETE FROM auth_data WHERE key LIKE 'google_%'</code>. C'est propre, local et sécurisé.</p>
+            </div>
+        </section>
+
+        <section id="web-replay">
+            <h2>3. Show Web Replay (Cockpit JS)</h2>
+            <p>Mécanisme de journalisation détaillé de la navigation, le Replay permet d'analyser visuellement chaque étape du <code>navigation_engine_tool</code>.</p>
+
+            <div class="info-block">
+                <h4>👁️ Pourquoi est-ce important ?</h4>
+                <p>Parfois l'IA dit : "Je n'ai pas trouvé le bouton Valider". Avec le Replay, vous pouvez voir ce qu'elle a RÉELLEMENT vu à ce moment précis, zoomer sur la page, et comprendre si c'était un bug d'affichage ou une erreur de raisonnement.</p>
+            </div>
+
+            <div class="tech-spec">
+                <h4>⚙️ Sous le capot (Le point sur le code)</h4>
+                <ul>
+                    <li><strong>Moteur Zoom & Pan</strong> : Navigation haute fidélité via <code>Ctrl + Molette</code> (Zoom 0.1x à 15x).</li>
+                    <li><strong>Streaming Atomique</strong> : Python pousse les images une par une vers le navigateur. Le thread Python s'arrête (Promise JS) tant que vous n'avez pas cliqué sur "Suivant" ou "Play".</li>
+                    <li><strong>Fallback CORS</strong> : Si la sécurité du navigateur bloque la copie, ECHO crée un calque spécial pour vous permettre de faire un clic droit manuel.</li>
+                </ul>
+            </div>
+
+            <div class="didactic-box">
+                <h4>🎮 Contrôles du Cockpit</h4>
+                <ul>
+                    <li><strong>Ctrl + Molette</strong> : Zoomer/Dézoomer.</li>
+                    <li><strong>Clic + Glisser</strong> : Se déplacer dans l'image.</li>
+                    <li><strong>Bouton â›¶</strong> : Tracer une zone pour l'extraire (Crop).</li>
+                    <li><strong>Bouton â</strong> : Copier l'image actuelle pour la partager ou l'analyser ailleurs.</li>
+                </ul>
+            </div>
+        </section>
+
+        <div class="audit-note">
+            <h4>✅ Contrôle de l'Exactitude</h4>
+            <p>Toutes les informations ci-dessus ont été vérifiées par analyse statique des fichiers <code>13-owui-actions/*.py</code>. Les comportements décrits correspondent rigoureusement aux fonctions SQL, JS et Python réelles du framework.</p>
+        </div>
+
+        <footer>
+            ECHO Framework - Version 5 - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
+        </footer>
+        <div class="transition-text"><em>Maintenant que nous connaissons tous les outils, voyons comment l'IA est programmée pour s'en servir et se comporter. <a href="08_system_prompt.html">Passer au cœur des directives : le Kernel (System Prompt) ➔</a></em></div>
+    </main>
+<script src="nav.js"></script>
+</body>
+</html>

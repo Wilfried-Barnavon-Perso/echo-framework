@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.63
-description: 6.63: Verrouillage de la priorité d'exécution (priority=1) pour l'inlet.
+version: 6.64
+description: 6.64: Wrapping XML des blocs 'etat_echo' et 'smart_context' pour une meilleure délimitation sémantique.
 """
 
 from pydantic import BaseModel, Field
@@ -141,7 +141,7 @@ class Filter:
                     if candidates and candidates[0].get("content"):
                         summary = candidates[0]["content"]["parts"][0].get("text", "")
                         print(f"[ECHO-FILTER] ✅ Résumé Flash généré pour {filename}.", flush=True)
-                        return {"status": "success", "type": "summarized", "fid": file_id, "name": filename, "mime": mime, "content": f"🧠 **Smart Context : {filename}**\n\n{summary}"}
+                        return {"status": "success", "type": "summarized", "fid": file_id, "name": filename, "mime": mime, "content": f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\">\n{summary}\n</smart_context>"}
                     else:
                         print(f"[ECHO-FILTER] !! Format inattendu ou blocage Google pour {filename}: {data}", flush=True)
 
@@ -264,7 +264,7 @@ class Filter:
                 
                 rich_parts = []
                 # 6. Injection de l'état en premier
-                rich_parts.append({"text": f"```json:etat_echo\n{json.dumps(etat_echo).decode('utf-8')}\n```\n\n"})
+                rich_parts.append({"text": f"<etat_echo>\n{json.dumps(etat_echo).decode('utf-8')}\n</etat_echo>\n\n"})
                 
                 if native_parts: rich_parts.extend(native_parts)
                 

@@ -1,8 +1,8 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 5.7
-description: 5.7: Migration to orjson for consistency.
+version: 6.0
+description: 6.0: Validation analytique (PRAF) par calcul empirique. Capacité graphique retirée (Headless).
 """
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
@@ -26,7 +26,7 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
-    async def execute_python_code(
+    async def execute_python(
         self,
         code: str,
         __user__: dict = {},
@@ -34,9 +34,10 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Exécute du code Python dans un environnement sandbox sécurisé et isolé.
-        Idéal pour les calculs complexes, l'analyse de données (pandas, numpy), la génération de graphiques (matplotlib) ou la manipulation de structures JSON.
+        Exécute du code Python dans un environnement sandbox sécurisé et isolé pour la validation analytique (PRAF).
+        Idéal pour les calculs complexes, l'analyse de données (pandas, numpy, networkx) ou la manipulation de structures JSON.
         Le code a accès à Internet mais ne partage pas ses fichiers avec les autres outils ECHO.
+        NOTE : La génération de graphiques ou schémas visuels n'est pas supportée par cet outil.
         :param code: Le code Python complet à exécuter (ex: import pandas as pd; ...).
         """
         events = EchoEvents(__event_emitter__, __event_call__)

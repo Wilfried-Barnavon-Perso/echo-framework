@@ -242,6 +242,21 @@
                 </ul>
             </div>
 
+            <div class="tech-card orange">
+                <h3><code>ECHO Cognitive Core</code></h3>
+                <p>Interface de sous-traitance cognitive asynchrone pour l'exécution de tâches isolées (Stateless).</p>
+                <div class="method-block">
+                    <span class="method-signature">delegate_reasoning(context, prompt, target_model, ...)</span>
+                    <p class="method-desc">Exécute une réflexion isolée sur un modèle cible avec injection sémantique obligatoire.</p>
+                    <ul class="param-list">
+                        <li><code>context</code> (str) : <b>Obligatoire.</b> Faits et mémoire de référence (Markdown).</li>
+                        <li><code>prompt</code> (str) : Tâche ou instruction spécifique à accomplir.</li>
+                        <li><code>target_model</code> (enum) : Choix du moteur (MODEL_LITE, FLASH, PRO).</li>
+                        <li><code>system_instruction</code> (str) : Instruction système optionnelle pour forcer un comportement.</li>
+                    </ul>
+                </div>
+            </div>
+
             <div class="tech-card">
                 <h3><code>EchoStateManager</code></h3>
                 <p><strong>Merkle-Tree Core</strong> : Algorithme de double hachage pour la Suture.</p>
@@ -285,7 +300,7 @@
         </section>
 
         <footer>
-            ECHO Framework v5.99.1 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework v5.99.1 - "Sovereign Intelligence" - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     </main>
 <script src="nav.js"></script>

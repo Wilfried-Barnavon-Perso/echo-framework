@@ -10,17 +10,16 @@ from typing import Optional, Literal, Dict, Any, List
 
 """
 ================================================================================
-TOOL : ECHO NAVIGATION ENGINE (v7.3)
-VERSION : 7.3
+TOOL : ECHO NAVIGATION ENGINE (v7.5)
+VERSION : 7.5
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-04-10
+DATE MAJ : 2026-04-17
 
+CHANGELOG 7.5 :
+- FEAT: Instruction agentique sur la gestion des erreurs de délégation (analyse_html).
+CHANGELOG 7.4 :
+- REFACTOR: Mise à jour des imports suite à l'éclatement de echo_utils.py.
 CHANGELOG 7.3 :
-- FEAT: Ajout de 'analyse_html' pour l'extraction sémantique déléguée via LLM.
-- PERF: Allègement du DOM Map (suppression des coordonnées x/y).
-CHANGELOG 7.2 :
-- REFACTOR: Optimisation du flux de visualisation (Auto Mode) et suppression des dépendances de handover complexes.
-CHANGELOG 7.1 :
 - FEAT: Ajout de l'outil `web_browse_manual_control` permettant à l'utilisateur de forcer l'ouverture du HUD en mode Humain sans action préalable de l'IA.
 CHANGELOG 7.0 :
 - FEAT: Co-pilot Edition. Implémentation du Handover hybride (IA/Humain).
@@ -30,7 +29,8 @@ CHANGELOG 7.0 :
 
 # Import Lib Partagée (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoUI, EchoGeminiClient, EchoAuth
+from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, EchoAuth
+from echo_ui import EchoUI
 from echo_constants import ECHO_UPLOADS_DIR, MODEL_FLASH, MODEL_LITE, MODEL_PRO
 
 # --- FONCTIONS UTILITAIRES PRIVÉES ---
@@ -119,6 +119,10 @@ class Tools:
         :param action: L'action à effectuer (read_html pour le code brut, analyse_html pour une extraction sémantique via LLM).
         :param index: ID numérique de l'élément cible (RECOMMANDÉ).
         :param text: Texte à saisir ou instruction pour analyse_html.
+
+        NOTE ANALYSE_HTML : En cas d'échec de la délégation cognitive (ex: erreur quota 429), 
+        le Modèle peut décider de renouveler sa demande avec un niveau cognitif différent 
+        (configurable via les Valves utilisateur) ou procéder par lecture brute.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = __metadata__.get("chat_id", "default_session")

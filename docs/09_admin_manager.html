@@ -1,93 +1,93 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 9. Admin Manager (Surveillance & Lifecycle)</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
-
-    <main>
-        <h1>9. Admin Manager (Console de Régulation)</h1>
-
-        <div class="transition-text">Afin de garder un contrôle absolu sur le Kernel et l'ensemble des modules conteneurisés, l'Admin Manager offre une surface de supervision complète.</div>
-
-        <h2>Fiche d'Identité Technique</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>📊 Admin Manager</h3>
-                <p><strong>Nature :</strong> Micro-service de régulation et monitoring (Flask API).</p>
-                <p><strong>Source :</strong> <code>20-docker-admin-manager/server.py</code></p>
-                <p><strong>Rôle :</strong> Assurer la santé du cluster ECHO, gérer les sauvegardes à chaud, orchestrer l'oubli organique de la mémoire Qdrant et fournir une interface de sécurité (rotation des mots de passe).</p>
-                <p><strong>Exécutant :</strong> Conteneur Docker <code>echo-admin-manager</code> tournant sous Python 3.11.</p>
-                <p><strong>Interconnexions :</strong> 
-                    <ul>
-                        <li><strong>Docker :</strong> Commande le Docker Daemon via <code>/var/run/docker.sock</code>.</li>
-                        <li><strong>Stockage :</strong> Accès direct au volume <code>/app/backend/data</code> pour les backups.</li>
-                        <li><strong>Mémoire :</strong> Requête l'API Qdrant pour la maintenance des vecteurs.</li>
-                    </ul>
-                </p>
-            </div>
-        </div>
-
-        <div class="didactic-box">
-            <h4>💡 À quoi sert la Console Admin ?</h4>
-            <p>Si ECHO est un organisme vivant, l'Admin Manager est son <strong>système immunitaire et métabolique</strong>. Il surveille que tout fonctionne bien, fait le ménage dans les vieux souvenirs inutiles (Élagage), et crée des copies de sécurité pour que vous puissiez restaurer votre IA en cas de problème technique. C'est l'outil de l'administrateur système pour garantir la pérennité de la citadelle.</p>
-        </div>
-
-        <p>Le module <code>server.py</code> agit comme le poste de pilotage infrastructure d'ECHO. Il assure l'interopérabilité entre les couches logicielles et l'orchestration Docker.</p>
-
-        <section id="monitoring">
-            <h3>1. Monitoring Holistique</h3>
-            <p>L'interface affiche en temps réel les constantes vitales de l'infrastructure :</p>
-            <ul>
-                <li><strong>Sessions Actives</strong> : Compteur réel basé sur les fichiers <code>.db</code> présents dans les répertoires <code>/chats/</code> du Vault.</li>
-                <li><strong>Volume Vault</strong> : Taille totale occupée par les documents, les bases SQLite et les identités.</li>
-                <li><strong>Santé Docker</strong> : État (Up/Down) de chaque conteneur de la stack ECHO, avec possibilité de redémarrage forcé.</li>
-            </ul>
-        </section>
-
-        <section id="lifecycle">
-            <h3>2. Cycle de Vie & Oubli Organique</h3>
-            <p>L'Admin Manager centralise la logique d'<strong>Atrophie Sémantique</strong> pour alléger le traitement en temps réel des filtres :</p>
-            <ul>
-                <li><strong>Sync Qdrant</strong> : Élimination automatique des points vectoriels orphelins (liés à des utilisateurs ou chats supprimés dans OWUI).</li>
-                <li><strong>TTL Decay</strong> : Application des durées de rétention (30 à 540 jours) selon l'importance du souvenir. Les souvenirs périmés sont définitivement purgés de la base vectorielle.</li>
-                <li><strong>Vacuum SQLite</strong> : Optimisation physique régulière des bases de données de session (commande <code>VACUUM</code>) pour maintenir les performances d'accès.</li>
-            </ul>
-        </section>
-
-        <section id="backups">
-            <h3>3. Sauvegardes & Restauration à Chaud</h3>
-            <p>Le module de backup garantit une reprise d'activité après sinistre :</p>
-            <ul>
-                <li><strong>Procédure</strong> : Arrêt temporaire du conteneur Core, compression atomique (<code>tar.gz</code>) de l'infrastructure de données, et redémarrage immédiat.</li>
-                <li><strong>Rotation</strong> : Nettoyage automatique des anciennes archives selon un nombre limite ou un âge maximum.</li>
-            </ul>
-        </section>
-
-        <section id="security">
-            <h3>4. Surface de Sécurité</h3>
-            <p>La console offre des leviers de contrôle direct sur l'identité :</p>
-            <ul>
-                <li><strong>Reset Auth</strong> : Purge instantanée de tous les tokens Google enregistrés dans les fichiers <code>identity.db</code> du Vault.</li>
-                <li><strong>Passwd Rotation</strong> : Modification du mot de passe de l'hôte système via un pont SSH sécurisé utilisant <code>paramiko</code>.</li>
-                <li><strong>Secret Maître</strong> : L'API <code>/api/admin/password</code> permet la récupération sécurisée du mot de passe administrateur généré lors du bootstrap.</li>
-            </ul>
-        </section>
-
-        <div class="tech-spec">
-            <h4>⚙️ Précision Mécanique : L'Isolation Privilégiée</h4>
-            <p>Bien que l'Admin Manager ait accès au Docker Daemon, il n'est <strong>jamais exposé directement au WAN</strong> par défaut. Son accès est filtré par BunkerWeb et nécessite une authentification forte. En cas de déploiement local pur, il n'est accessible que via le réseau bridge interne ou le proxy inverse sécurisé.</p>
-        </div>
-
-        <footer>
-            ECHO Framework - Version 5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-        <div class="transition-text"><em>Vous avez parcouru l'architecture complète d'ECHO. Pour des détails plus spécifiques ou du code, <a href="10_annexes.html">consultez les Annexes Techniques ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
-</body>
-</html>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECHO v5 - 9. Admin Manager (Surveillance & Lifecycle)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+    <main>
+        <h1>9. Admin Manager (Console de Régulation)</h1>
+
+        <div class="transition-text">Afin de garder un contrôle absolu sur le Kernel et l'ensemble des modules conteneurisés, l'Admin Manager offre une surface de supervision complète.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>📊 Admin Manager</h3>
+                <p><strong>Nature :</strong> Micro-service de régulation et monitoring (Flask API).</p>
+                <p><strong>Source :</strong> <code>20-docker-admin-manager/server.py</code></p>
+                <p><strong>Rôle :</strong> Assurer la santé du cluster ECHO, gérer les sauvegardes à chaud, orchestrer l'oubli organique de la mémoire Qdrant et fournir une interface de sécurité (rotation des mots de passe).</p>
+                <p><strong>Exécutant :</strong> Conteneur Docker <code>echo-admin-manager</code> tournant sous Python 3.11.</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Docker :</strong> Commande le Docker Daemon via <code>/var/run/docker.sock</code>.</li>
+                        <li><strong>Stockage :</strong> Accès direct au volume <code>/app/backend/data</code> pour les backups.</li>
+                        <li><strong>Mémoire :</strong> Requête l'API Qdrant pour la maintenance des vecteurs.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
+        <div class="didactic-box">
+            <h4>💡 À quoi sert la Console Admin ?</h4>
+            <p>Si ECHO est un organisme vivant, l'Admin Manager est son <strong>système immunitaire et métabolique</strong>. Il surveille que tout fonctionne bien, fait le ménage dans les vieux souvenirs inutiles (Élagage), et crée des copies de sécurité pour que vous puissiez restaurer votre IA en cas de problème technique. C'est l'outil de l'administrateur système pour garantir la pérennité de la citadelle.</p>
+        </div>
+
+        <p>Le module <code>server.py</code> agit comme le poste de pilotage infrastructure d'ECHO. Il assure l'interopérabilité entre les couches logicielles et l'orchestration Docker.</p>
+
+        <section id="monitoring">
+            <h3>1. Monitoring Holistique</h3>
+            <p>L'interface affiche en temps réel les constantes vitales de l'infrastructure :</p>
+            <ul>
+                <li><strong>Sessions Actives</strong> : Compteur réel basé sur les fichiers <code>.db</code> présents dans les répertoires <code>/chats/</code> du Vault.</li>
+                <li><strong>Volume Vault</strong> : Taille totale occupée par les documents, les bases SQLite et les identités.</li>
+                <li><strong>Santé Docker</strong> : État (Up/Down) de chaque conteneur de la stack ECHO, avec possibilité de redémarrage forcé.</li>
+            </ul>
+        </section>
+
+        <section id="lifecycle">
+            <h3>2. Cycle de Vie & Oubli Organique</h3>
+            <p>L'Admin Manager centralise la logique d'<strong>Atrophie Sémantique</strong> pour alléger le traitement en temps réel des filtres :</p>
+            <ul>
+                <li><strong>Sync Qdrant</strong> : Élimination automatique des points vectoriels orphelins (liés à des utilisateurs ou chats supprimés dans OWUI).</li>
+                <li><strong>TTL Decay</strong> : Application des durées de rétention (30 à 540 jours) selon l'importance du souvenir. Les souvenirs périmés sont définitivement purgés de la base vectorielle.</li>
+                <li><strong>Vacuum SQLite</strong> : Optimisation physique régulière des bases de données de session (commande <code>VACUUM</code>) pour maintenir les performances d'accès.</li>
+            </ul>
+        </section>
+
+        <section id="backups">
+            <h3>3. Sauvegardes & Restauration à Chaud</h3>
+            <p>Le module de backup garantit une reprise d'activité après sinistre :</p>
+            <ul>
+                <li><strong>Procédure</strong> : Arrêt temporaire du conteneur Core, compression atomique (<code>tar.gz</code>) de l'infrastructure de données, et redémarrage immédiat.</li>
+                <li><strong>Rotation</strong> : Nettoyage automatique des anciennes archives selon un nombre limite ou un âge maximum.</li>
+            </ul>
+        </section>
+
+        <section id="security">
+            <h3>4. Surface de Sécurité</h3>
+            <p>La console offre des leviers de contrôle direct sur l'identité :</p>
+            <ul>
+                <li><strong>Reset Auth</strong> : Purge instantanée de tous les tokens Google enregistrés dans les fichiers <code>identity.db</code> du Vault.</li>
+                <li><strong>Passwd Rotation</strong> : Modification du mot de passe de l'hôte système via un pont SSH sécurisé utilisant <code>paramiko</code>.</li>
+                <li><strong>Secret Maître</strong> : L'API <code>/api/admin/password</code> permet la récupération sécurisée du mot de passe administrateur généré lors du bootstrap.</li>
+            </ul>
+        </section>
+
+        <div class="tech-spec">
+            <h4>⚙️ Précision Mécanique : L'Isolation Privilégiée</h4>
+            <p>Bien que l'Admin Manager ait accès au Docker Daemon, il n'est <strong>jamais exposé directement au WAN</strong> par défaut. Son accès est filtré par BunkerWeb et nécessite une authentification forte. En cas de déploiement local pur, il n'est accessible que via le réseau bridge interne ou le proxy inverse sécurisé.</p>
+        </div>
+
+        <footer>
+            ECHO Framework - Version 5 - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
+        </footer>
+        <div class="transition-text"><em>Vous avez parcouru l'architecture complète d'ECHO. Pour des détails plus spécifiques ou du code, <a href="10_annexes.html">consultez les Annexes Techniques ➔</a></em></div>
+    </main>
+<script src="nav.js"></script>
+</body>
+</html>

@@ -4,7 +4,7 @@ use_default_settings: true
 server:
   port: 8080
   bind_address: "0.0.0.0"
-  secret_key: "echo_secret_key_change_me" # À changer en prod
+  # secret_key: "echo_secret_key_change_me" # Injecté via variable d'env SEARXNG_SECRET
   base_url: false
   image_proxy: true
 

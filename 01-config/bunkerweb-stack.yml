@@ -2,7 +2,7 @@ version: '3.8'
 
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.17
+# VERSION : 1.21
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
 # ==============================================================================
@@ -10,7 +10,7 @@ version: '3.8'
 # --- BLOC DE CONFIGURATION PARTAGÉ (YAML ANCHOR) ---
 x-bw-config: &bw-config
   # Backend de base de données (MariaDB)
-  DATABASE_URI: "mysql://bunkerweb:changeme@bw-db:3306/db"
+  DATABASE_URI: "mysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/db"
   
   # Whitelist API critique
   API_WHITELIST_IP: "127.0.0.0/8 10.20.30.0/24 172.16.0.0/12 192.168.0.0/16"
@@ -25,7 +25,7 @@ services:
   
   # 1. BunkerWeb (Frontal HTTP/HTTPS)
   bunkerweb:
-    image: bunkerity/bunkerweb:1.6.8
+    image: bunkerity/bunkerweb:1.6.9
     container_name: bunkerweb
     restart: unless-stopped
     ports:
@@ -55,7 +55,7 @@ services:
 
   # 2. Autoconf (Contrôleur Dynamique)
   bw-autoconf:
-    image: bunkerity/bunkerweb-autoconf:1.6.8
+    image: bunkerity/bunkerweb-autoconf:1.6.9
     container_name: bw-autoconf
     restart: unless-stopped
     depends_on:
@@ -73,7 +73,7 @@ services:
 
   # 3. Scheduler (Tâches de fond)
   bw-scheduler:
-    image: bunkerity/bunkerweb-scheduler:1.6.8
+    image: bunkerity/bunkerweb-scheduler:1.6.9
     container_name: bw-scheduler
     restart: unless-stopped
     depends_on:
@@ -116,11 +116,32 @@ services:
       MYSQL_RANDOM_ROOT_PASSWORD: "yes"
       MYSQL_DATABASE: "db"
       MYSQL_USER: "bunkerweb"
-      MYSQL_PASSWORD: "changeme"
+      MYSQL_PASSWORD: "${BW_DB_PASSWORD}"
     volumes:
       - bw-db-data:/var/lib/mysql
     networks:
       - bw-universe
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+
+  # 6. Redirector (Redirection Root/WWW -> UI)
+  redirector:
+    image: alpine:latest
+    container_name: echo-redirector
+    restart: unless-stopped
+    networks:
+      - bw-universe
+      - echo-network
+    command: tail -f /dev/null
+    labels:
+      - "bunkerweb.SERVER_NAME=${ECHO_DOMAIN:-localhost} www.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
+      - "bunkerweb.USE_REVERSE_PROXY=no"
+      # Redirection 301 Permanente vers le sous-domaine UI (Plugin Natif)
+      - "bunkerweb.REDIRECT_TO=https://ui.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.REDIRECT_TO_REQUEST_URI=yes"
+      - "bunkerweb.REDIRECT_TO_STATUS_CODE=301"
+      - "bunkerweb.USE_BAD_BEHAVIOR=no"
 
 # ==============================================================================
 # Réseaux

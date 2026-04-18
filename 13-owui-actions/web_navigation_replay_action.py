@@ -1,9 +1,9 @@
 """
 title: Show Web Replay
 author: Wilfried BARNAVON
-version: 3.6
-description: 3.6: Refonte de l'ergonomie (Zoom Ctrl+Molette, Pan via Scroll) et fiabilisation de l'export.
-icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTEyIDN2MTgiLz48cGF0aCBkPSJNMTcgM3YxOCIvPjxwYXRoIGQ9Ik0zIDdoMTgiLz48cGF0aCBkPSJNMyAxMmgyMSIvPjxwYXRoIGQ9Ik0zIDE3aDE4Ii8+PC9zdmc+
+version: 3.8
+description: 3.8: Restauration de l'icône SVG de l'Action.
+icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIyOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTEyIDN2MTgiLz48cGF0aCBkPSJNMTcgM3YxOCIvPjxwYXRoIGQ9Ik0zIDdoMTgiLz48cGF0aCBkPSJNMyAxMmgyMSIvPjxwYXRoIGQ9Ik0zIDE3aDE4Ii8+PC9zdmc+
 """
 
 import os
@@ -15,17 +15,11 @@ import sys
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
-# Import Lib Partagée (Volume Docker)
+# Importations ECHO
 sys.path.append("/app/backend/echo_libs")
 from echo_constants import ECHO_USERS_ROOT
-try:
-    from echo_utils import EchoEvents
-except ImportError:
-    class EchoEvents:
-        def __init__(self, e=None, c=None): pass
-        async def status(self, d, done=False): pass
-        async def toast(self, c, l="info"): pass
-        async def call(self, t, d): return None
+from echo_utils import EchoEvents, EchoAuth, wrap_tool_output
+from echo_ui import EchoRichUI
 
 # --- CONFIGURATION LOGGING ---
 logging.basicConfig(level=logging.INFO)

@@ -1,8 +1,8 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.0
-description: 1.0: Sovereign search engine using DuckDuckGo (Instant Answers) and SearxNG (Deep Web). Zero tracking, aggregated results.
+version: 1.1
+description: 1.1: Outil de vérification externe prioritaire pour satisfaire le Principe de Rigueur Analytique et Factuelle (PRAF).
 """
 
 import httpx
