@@ -11,10 +11,12 @@ from typing import Optional, Literal, Dict, Any, List
 """
 ================================================================================
 TOOL : ECHO NAVIGATION ENGINE (v7.5)
-VERSION : 7.5
+VERSION : 7.6
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-04-17
+DATE MAJ : 2026-04-19
 
+CHANGELOG 7.6 :
+- REFACTOR: Harmonisation de la résilience (KeySwitch 2, Retries 5) via echo_constants.py.
 CHANGELOG 7.5 :
 - FEAT: Instruction agentique sur la gestion des erreurs de délégation (analyse_html).
 CHANGELOG 7.4 :
@@ -31,7 +33,10 @@ CHANGELOG 7.0 :
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, EchoAuth
 from echo_ui import EchoUI
-from echo_constants import ECHO_UPLOADS_DIR, MODEL_FLASH, MODEL_LITE, MODEL_PRO
+from echo_constants import (
+    ECHO_UPLOADS_DIR, MODEL_FLASH, MODEL_LITE, MODEL_PRO,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
+)
 
 # --- FONCTIONS UTILITAIRES PRIVÉES ---
 
@@ -64,6 +69,8 @@ class Tools:
         AGENT_URL: str = Field(default="http://browser-agent:5002", description="URL du container Browser Agent")
         HTTP_TIMEOUT: int = Field(default=120, description="Timeout global (sec).")
         IDLE_TIMEOUT: int = Field(default=900, description="Délai auto-fermeture (sec).")
+        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Seuil de basculement de clé.")
+        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
         UPLOADS_DIR: str = Field(default=ECHO_UPLOADS_DIR, description="Dossier des uploads OWUI")
 
     class UserValves(BaseModel):
@@ -189,7 +196,14 @@ class Tools:
                     "generationConfig": {"temperature": 0.3, "maxOutputTokens": 4096}
                 }
                 
-                data = await EchoGeminiClient.call(keys=api_keys, target_model=target_model, payload=payload, events=events)
+                data = await EchoGeminiClient.call(
+                    keys=api_keys, 
+                    target_model=target_model, 
+                    payload=payload, 
+                    threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                    max_retries=self.valves.MAX_RETRIES,
+                    events=events
+                )
                 
                 # Extraction de la réponse
                 analysis_res = "Analyse indisponible."

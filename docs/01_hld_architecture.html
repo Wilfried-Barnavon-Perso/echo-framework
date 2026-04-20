@@ -191,7 +191,7 @@ flowchart LR
       <div class="card">
         <h3>📡 AEC (Artéfacts Environnementaux)</h3>
         <p><strong>Définition :</strong> Composante dynamique certifiée du Framework injectée en XML.</p>
-        <p><strong>Précision :</strong> Regroupe <code>&lt;etat_echo&gt;</code> (proprioception infrastructurelle) et <code>&lt;smart_context&gt;</code> (distillation sémantique). Ces balises constituent la frontière cognitive entre le système et l'utilisateur.</p>
+        <p><strong>Précision :</strong> Regroupe <code>&lt;environnement_contexte&gt;</code> (proprioception infrastructurelle) et <code>&lt;smart_context&gt;</code> (distillation sémantique). Ces balises constituent la frontière cognitive entre le système et l'utilisateur.</p>
       </div>
       <div class="card">
         <h3>🎨 Rendu Visuel (Arsenal Visuel)</h3>
@@ -211,7 +211,7 @@ flowchart LR
       <div class="card">
         <h3>📝 Le Draft (Brouillon Sémantique)</h3>
         <p><strong>Définition :</strong> État mémoire volatile créé par le Filtre en phase <i>Inlet</i>.</p>
-        <p><strong>Précision :</strong> Conteneur JSON (injecté dans `metadata`) regroupant les métadonnées de fichiers, les résultats du Smart Context et les signatures de sécurité. Le Draft est la "matière première" que le Pipe fusionnera lors de la Suture.</p>
+        <p><strong>Précision :</strong> Conteneur YAML (injecté dans <code>metadata</code>) regroupant les métadonnées de fichiers, les résultats du Smart Context et les signatures de sécurité. Le Draft est la "matière première" que le Pipe fusionnera lors de la Suture.</p>
       </div>
       <div class="card">
         <h3>⚓ L'Ancre (Cognitive Anchor)</h3>
@@ -306,7 +306,7 @@ sequenceDiagram
   F->>F: Sniffing MIME & Analyse Multimodale
   F->>DB: get_session_registry(chat_id)
   F->>F: Intégration des Métadonnées Fichiers
-  F-->>OWUI: Injection etat_echo (Draft JSON)
+  F-->>OWUI: Injection environnement_contexte (Draft YAML)
 
   OWUI->>P: Routage /api/chat/completions
   
@@ -321,7 +321,7 @@ sequenceDiagram
   loop Appels d'Outils
     G-->>P: Tool Call Request
     P->>T: Exécution Locale (Sandbox)
-    T-->>P: Résultat Multipart (JSON/Media)
+    T-->>P: Résultat Multipart (YAML/Media)
     P->>G: Tool Call Response
   end
   G-->>P: Génération Finale (Stream Markdown)

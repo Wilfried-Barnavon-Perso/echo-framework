@@ -1,8 +1,8 @@
 """
 title: ECHO File Content Explorer
 author: Wilfried BARNAVON
-version: 5.106.0
-description: 5.106.0: Standardisation globale des retours (wrap_tool_output) et stabilisation du viewer d'images.
+version: 5.107.0
+description: 5.107.0: Harmonisation de la résilience (Threshold 2, Retries 5) pour le sondage sémantique.
 """
 
 import os
@@ -27,12 +27,16 @@ from echo_utils import (
     get_stealth_headers
 )
 from echo_ui import EchoRichUI
-from echo_constants import ECHO_UPLOADS_DIR, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, MODEL_FLASH
+from echo_constants import (
+    ECHO_UPLOADS_DIR, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, MODEL_FLASH,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
+)
 
 class Tools:
     class Valves(BaseModel):
         UPLOADS_DIR: str = Field(default=ECHO_UPLOADS_DIR)
-        KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
         PROBE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour le sondage sémantique.")
         MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW).")
         MAX_MULTIMODAL_SIZE_KB: int = Field(default=102400, description="Taille maximale (en Ko) pour l'injection multimédia.")
@@ -128,7 +132,15 @@ class Tools:
                 "contents": [{"role": "user", "parts": [{"text": query}, {"inlineData": {"mimeType": mime, "data": b64}}]}],
                 "generationConfig": {"thinkingConfig": {"includeThoughts": True, "thinkingLevel": thinking_level.lower()}}
             }
-            data = await EchoGeminiClient.call(keys=api_keys, target_model=MODEL_FLASH, payload=payload, events=events)
+            data = await EchoGeminiClient.call(
+                keys=api_keys, 
+                target_model=MODEL_FLASH, 
+                payload=payload, 
+                threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                max_retries=self.valves.MAX_RETRIES,
+                events=events,
+                timeout=self.valves.PROBE_TIMEOUT
+            )
             target = data.get("response", {}) if "response" in data else data
             cand = target.get("candidates", [])[0]
             full_text = "".join([p["text"] for p in cand["content"]["parts"] if "text" in p])

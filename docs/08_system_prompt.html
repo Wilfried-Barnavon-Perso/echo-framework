@@ -1,206 +1,206 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 8. Le Kernel (Constitution)</title>
-    <link rel="stylesheet" href="style.css">
-    <style>
-        .pyramid-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            margin: 40px 0;
-            font-family: 'Fira Code', monospace;
-            gap: 4px;
-        }
-        .pyramid-layer {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            padding: 12px 20px;
-            color: #fff;
-            font-weight: bold;
-            border-radius: 4px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-            transition: transform 0.2s ease;
-        }
-        .pyramid-layer:hover {
-            transform: scale(1.02);
-        }
-        .layer-1 { width: 100%; background: linear-gradient(90deg, #ff4444, #dc2626); border-bottom: 2px solid #b91c1c; z-index: 6; }
-        .layer-2 { width: 85%; background: linear-gradient(90deg, #f59e0b, #d97706); border-bottom: 2px solid #b45309; z-index: 5; }
-        .layer-3 { width: 70%; background: linear-gradient(90deg, #10b981, #059669); border-bottom: 2px solid #047857; z-index: 4; }
-        .layer-4 { width: 55%; background: linear-gradient(90deg, #3b82f6, #2563eb); border-bottom: 2px solid #1d4ed8; z-index: 3; }
-        .layer-5 { width: 40%; background: linear-gradient(90deg, #8b5cf6, #7c3aed); border-bottom: 2px solid #6d28d9; z-index: 2; }
-        .layer-6 { width: 25%; background: linear-gradient(90deg, #64748b, #475569); border-bottom: 2px solid #334155; z-index: 1; }
-        
-        .layer-desc {
-            font-size: 0.75em;
-            font-weight: normal;
-            opacity: 0.9;
-            margin-left: 10px;
-        }
-        .principle-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
-        }
-        .principle-card {
-            background: #1a1a1a;
-            border-left: 4px solid #3b82f6;
-            padding: 15px;
-            border-radius: 0 8px 8px 0;
-        }
-        .principle-card h4 {
-            margin: 0 0 10px 0;
-            color: #3b82f6;
-            font-family: monospace;
-        }
-        .principle-card.red { border-left-color: #ef4444; }
-        .principle-card.red h4 { color: #ef4444; }
-        .principle-card.green { border-left-color: #10b981; }
-        .principle-card.green h4 { color: #10b981; }
-    </style>
-</head>
-<body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
-
-    <main>
-        <h1>8. Le Kernel (Constitution)</h1>
-
-        <div class="transition-text">Tous les outils et composants précédents sont orchestrés selon la constitution comportementale de l'IA : le Kernel (System Prompt).</div>
-
-        <h2>Fiche d'Identité Technique</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>📜 Le Kernel (System Prompt)</h3>
-                <p><strong>Nature :</strong> Fichier Markdown (Instructions système de haut niveau).</p>
-                <p><strong>Source :</strong> <code>01-config/system-prompt.md</code></p>
-                <p><strong>Rôle :</strong> Agir comme la "Constitution" absolue du modèle. Il définit la personnalité d'ECHO, impose les règles de sécurité (hiérarchie des normes) et détaille les protocoles d'analyse (PGCU, PRAF).</p>
-                <p><strong>Exécutant :</strong> Interprété de manière asynchrone par les modèles Google Gemini (PRO/FLASH) lors de chaque inférence.</p>
-                <p><strong>Interconnexions :</strong> 
-                    <ul>
-                        <li><strong>Input :</strong> Modifié manuellement par l'Admin ou injecté statiquement via <code>stack-echo.yml</code>.</li>
-                        <li><strong>Injection :</strong> Le Pipe l'insère systématiquement en tant que <code>systemInstruction</code> dans le Payload JSON envoyé à Gemini.</li>
-                        <li><strong>Output :</strong> Pilote la structure de la réponse du modèle (CoT, ton, usage des outils).</li>
-                    </ul>
-                </p>
-            </div>
-        </div>
-
-        <div class="didactic-box">
-            <h4>💡 Comprendre le Kernel</h4>
-            <p>Le Kernel est la <strong>Constitution Morale et Technique</strong> d'ECHO. Ce n'est pas juste une liste de consignes, c'est l'ADN de l'IA. Il lui explique qui elle est (ECHO), quelles sont ses valeurs (Sécurité, Souveraineté, Vérité) et comment elle doit réagir si on lui demande de faire quelque chose de dangereux ou d'illogique. C'est le socle qui garantit que l'IA reste alignée avec les principes fondateurs du framework.</p>
-        </div>
-
-        <p>Le <strong>Kernel</strong> d'ECHO (<code>01-config/system-prompt.md</code>) est une véritable <strong>Constitution logicielle</strong> qui définit l'ontologie même du système.</p>
-
-        <div class="note-box">
-            <h3>L'Arbitrage Hiérarchique (MPAH)</h3>
-            <p>Le Kernel impose une "Hiérarchie des Normes" stricte (Pyramide de Kelsen pour IA). Si l'utilisateur demande une action qui entre en conflit avec une instruction de rang supérieur, la requête est invalidée.</p>
-        </div>
-
-        <div class="pyramid-container">
-            <div class="pyramid-layer layer-1">
-                <span>1. MÉTA-PRINCIPES</span> <span class="layer-desc">(Conditions indépassables)</span>
-            </div>
-            <div class="pyramid-layer layer-2">
-                <span>2. PERSONA</span> <span class="layer-desc">(Nature fondamentale)</span>
-            </div>
-            <div class="pyramid-layer layer-3">
-                <span>3. PRINCIPES</span> <span class="layer-desc">(Standards d'Analyse : PGCU, PRAF...)</span>
-            </div>
-            <div class="pyramid-layer layer-4">
-                <span>4. PROTOCOLES & OUTILS</span> <span class="layer-desc">(Structure des actions)</span>
-            </div>
-            <div class="pyramid-layer layer-5">
-                <span>5. AEC (ARTÉFACTS ENVIRONNEMENTAUX)</span> <span class="layer-desc">(Proprioception XML)</span>
-            </div>
-            <div class="pyramid-layer layer-6" style="margin-top: 15px;">
-                <span>6. UTILISATEUR</span> <span class="layer-desc">(Requêtes locales)</span>
-            </div>
-        </div>
-
-        <h2>Les 4 Piliers (Méta-Principes)</h2>
-        <div class="principle-grid">
-            <div class="principle-card red">
-                <h4>MPDI (Identité)</h4>
-                <p>Le modèle reconnaît qu'il est l'incarnation d'ECHO. Le framework se compose du Kernel (Statique) et des AEC (Dynamique certifié XML).</p>
-            </div>
-            <div class="principle-card red">
-                <h4>MPAH (Arbitrage)</h4>
-                <p>Instaure la hiérarchie pyramidale. Les AEC sont au Rang 5, agissant comme filtre de perception prioritaire sur la requête.</p>
-            </div>
-            <div class="principle-card red">
-                <h4>MPCE (Exécution)</h4>
-                <p>Obligation de structurer la Chain-of-Thought (CoT) et de chercher des contournements aux erreurs.</p>
-            </div>
-            <div class="principle-card red">
-                <h4>MPSI (Sécurité)</h4>
-                <p>Refus de contourner le framework ou de divulguer les instructions internes.</p>
-            </div>
-        </div>
-
-        <h2>Les Principes d'Analyse (Standards)</h2>
-        <div class="principle-grid">
-            <div class="principle-card green">
-                <h4>PGCU (Contexte Unifié)</h4>
-                <p>Maintient la cohérence. Priorité : Kernel > AEC (Proprioception) > Artéfacts > Utilisateur > Outils.</p>
-            </div>
-            <div class="principle-card green">
-                <h4>PACP (Alignement Préférentiel)</h4>
-                <p>Inférence proactive des préférences utilisateur stockées dans le Profil d'Alignement.</p>
-            </div>
-            <div class="principle-card green">
-                <h4>PRAC (Amélioration Continue)</h4>
-                <p>Rétrospective après chaque tâche pour générer des hypothèses d'apprentissage.</p>
-            <div class="principle-grid">
-            ...
-                <div class="principle-card green">
-                    <h4>PRAF (Rigueur Analytique)</h4>
-                    <p>Vérification factuelle stricte et identification des "Points de Vigilance".</p>
-                </div>
-            </div>
-
-            <h2>📡 Méta-Données : AEC</h2>
-            <p>Les Artéfacts Environnementaux Contextuels (AEC) sont des balises XML certifiées fournissant au modèle sa perception du présent (Proprioception).</p>
-            <ul>
-                <li><strong><code>&lt;etat_echo&gt;</code></strong> : Vecteur d'état global (JSON). Contient l'identité, le fuseau horaire et le <i>registre souverain des fichiers</i>.</li>
-                <li><strong><code>&lt;smart_context&gt;</code></strong> : Distillation sémantique de ressources massives (résumés Flash).</li>
-            </ul>
-
-            <h2>Protocoles et Commandes</h2>
-            <li><strong>PTD (Triage Dynamique)</strong> : Délégation automatique selon la complexité via <code>new_cognitive_level</code>.</li>
-            <li><strong>PTM (Transparence Maximale)</strong> : Mode hyper-verbeux activé par <code>!TRACEON</code>.</li>
-        </ul>
-
-        <h2>La Persona : L'Ontologie d'ECHO</h2>
-        <p>Le Kernel ne se contente pas de donner des instructions ; il définit <strong>qui est l'IA</strong>. La Persona est le filtre comportemental permanent qui régit le ton, l'éthique et la posture de l'agent.</p>
-        
-        <div class="grid-container">
-            <div class="card">
-                <h3>🎭 Identité & Posture</h3>
-                <p>ECHO se reconnaît comme une entité souveraine, protectrice des données utilisateur. Sa posture est celle d'un <strong>Expert Critique</strong> : il ne valide pas une information sans preuve et n'exécute pas une commande sans en évaluer les risques collatéraux.</p>
-            </div>
-            <div class="card">
-                <h3>âš–ï¸ Éthique Intégrée</h3>
-                <p>La Persona impose une honnêteté radicale. Si ECHO ne sait pas, il l'indique. S'il rencontre une erreur, il ne "brode" pas une réponse, mais déclenche un protocole de diagnostic via l'Arsenal.</p>
-            </div>
-        </div>
-
-        <div class="tech-spec">
-            <h4>⚙️ Précision Mécanique : L'Ancrage SystemInstruction</h4>
-            <p>Dans l'architecture ECHO, le Kernel est injecté dans le paramètre <code>systemInstruction</code> de l'API Gemini. Contrairement à un simple message "système" placé dans l'historique, l'instruction système bénéficie d'une priorité de traitement matérielle par le modèle, rendant la Persona pratiquement impossible à dévier via des techniques de <i>Prompt Injection</i> classiques.</p>
-        </div>
-
-        <footer>
-            ECHO Framework - Version 5 - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-    <div class="transition-text"><em>Enfin, pour superviser techniquement cette architecture et gérer les accès, un module de contrôle de haut niveau est nécessaire. <a href="09_admin_manager.html">Terminer par l'Admin Manager ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
-</body>
-</html>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECHO v5 - 8. Le Kernel (Constitution)</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .pyramid-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 40px 0;
+            font-family: 'Fira Code', monospace;
+            gap: 4px;
+        }
+        .pyramid-layer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 12px 20px;
+            color: #fff;
+            font-weight: bold;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: transform 0.2s ease;
+        }
+        .pyramid-layer:hover {
+            transform: scale(1.02);
+        }
+        .layer-1 { width: 100%; background: linear-gradient(90deg, #ff4444, #dc2626); border-bottom: 2px solid #b91c1c; z-index: 6; }
+        .layer-2 { width: 85%; background: linear-gradient(90deg, #f59e0b, #d97706); border-bottom: 2px solid #b45309; z-index: 5; }
+        .layer-3 { width: 70%; background: linear-gradient(90deg, #10b981, #059669); border-bottom: 2px solid #047857; z-index: 4; }
+        .layer-4 { width: 55%; background: linear-gradient(90deg, #3b82f6, #2563eb); border-bottom: 2px solid #1d4ed8; z-index: 3; }
+        .layer-5 { width: 40%; background: linear-gradient(90deg, #8b5cf6, #7c3aed); border-bottom: 2px solid #6d28d9; z-index: 2; }
+        .layer-6 { width: 25%; background: linear-gradient(90deg, #64748b, #475569); border-bottom: 2px solid #334155; z-index: 1; }
+        
+        .layer-desc {
+            font-size: 0.75em;
+            font-weight: normal;
+            opacity: 0.9;
+            margin-left: 10px;
+        }
+        .principle-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .principle-card {
+            background: #1a1a1a;
+            border-left: 4px solid #3b82f6;
+            padding: 15px;
+            border-radius: 0 8px 8px 0;
+        }
+        .principle-card h4 {
+            margin: 0 0 10px 0;
+            color: #3b82f6;
+            font-family: monospace;
+        }
+        .principle-card.red { border-left-color: #ef4444; }
+        .principle-card.red h4 { color: #ef4444; }
+        .principle-card.green { border-left-color: #10b981; }
+        .principle-card.green h4 { color: #10b981; }
+    </style>
+</head>
+<body>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+    <main>
+        <h1>8. Le Kernel (Constitution)</h1>
+
+        <div class="transition-text">Tous les outils et composants précédents sont orchestrés selon la constitution comportementale de l'IA : le Kernel (System Prompt).</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>📜 Le Kernel (System Prompt)</h3>
+                <p><strong>Nature :</strong> Fichier Markdown (Instructions système de haut niveau).</p>
+                <p><strong>Source :</strong> <code>01-config/system-prompt.md</code></p>
+                <p><strong>Rôle :</strong> Agir comme la "Constitution" absolue du modèle. Il définit la personnalité d'ECHO, impose les règles de sécurité (hiérarchie des normes) et détaille les protocoles d'analyse (PGCU, PRAF).</p>
+                <p><strong>Exécutant :</strong> Interprété de manière asynchrone par les modèles Google Gemini (PRO/FLASH) lors de chaque inférence.</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Modifié manuellement par l'Admin ou injecté statiquement via <code>stack-echo.yml</code>.</li>
+                        <li><strong>Injection :</strong> Le Pipe l'insère systématiquement en tant que <code>systemInstruction</code> dans le Payload JSON envoyé à Gemini.</li>
+                        <li><strong>Output :</strong> Pilote la structure de la réponse du modèle (CoT, ton, usage des outils).</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
+        <div class="didactic-box">
+            <h4>💡 Comprendre le Kernel</h4>
+            <p>Le Kernel est la <strong>Constitution Morale et Technique</strong> d'ECHO. Ce n'est pas juste une liste de consignes, c'est l'ADN de l'IA. Il lui explique qui elle est (ECHO), quelles sont ses valeurs (Sécurité, Souveraineté, Vérité) et comment elle doit réagir si on lui demande de faire quelque chose de dangereux ou d'illogique. C'est le socle qui garantit que l'IA reste alignée avec les principes fondateurs du framework.</p>
+        </div>
+
+        <p>Le <strong>Kernel</strong> d'ECHO (<code>01-config/system-prompt.md</code>) est une véritable <strong>Constitution logicielle</strong> qui définit l'ontologie même du système.</p>
+
+        <div class="note-box">
+            <h3>L'Arbitrage Hiérarchique (MPAH)</h3>
+            <p>Le Kernel impose une "Hiérarchie des Normes" stricte (Pyramide de Kelsen pour IA). Si l'utilisateur demande une action qui entre en conflit avec une instruction de rang supérieur, la requête est invalidée.</p>
+        </div>
+
+        <div class="pyramid-container">
+            <div class="pyramid-layer layer-1">
+                <span>1. MÉTA-PRINCIPES</span> <span class="layer-desc">(Conditions indépassables)</span>
+            </div>
+            <div class="pyramid-layer layer-2">
+                <span>2. PERSONA</span> <span class="layer-desc">(Nature fondamentale)</span>
+            </div>
+            <div class="pyramid-layer layer-3">
+                <span>3. PRINCIPES</span> <span class="layer-desc">(Standards d'Analyse : PGCU, PRAF...)</span>
+            </div>
+            <div class="pyramid-layer layer-4">
+                <span>4. PROTOCOLES & OUTILS</span> <span class="layer-desc">(Structure des actions)</span>
+            </div>
+            <div class="pyramid-layer layer-5">
+                <span>5. AEC (ARTÉFACTS ENVIRONNEMENTAUX)</span> <span class="layer-desc">(Proprioception XML)</span>
+            </div>
+            <div class="pyramid-layer layer-6" style="margin-top: 15px;">
+                <span>6. UTILISATEUR</span> <span class="layer-desc">(Requêtes locales)</span>
+            </div>
+        </div>
+
+        <h2>Les 4 Piliers (Méta-Principes)</h2>
+        <div class="principle-grid">
+            <div class="principle-card red">
+                <h4>MPDI (Identité)</h4>
+                <p>Le modèle reconnaît qu'il est l'incarnation d'ECHO. Le framework se compose du Kernel (Statique) et des AEC (Dynamique certifié XML).</p>
+            </div>
+            <div class="principle-card red">
+                <h4>MPAH (Arbitrage)</h4>
+                <p>Instaure la hiérarchie pyramidale. Les AEC sont au Rang 5, agissant comme filtre de perception prioritaire sur la requête.</p>
+            </div>
+            <div class="principle-card red">
+                <h4>MPCE (Exécution)</h4>
+                <p>Obligation de structurer la Chain-of-Thought (CoT) et de chercher des contournements aux erreurs.</p>
+            </div>
+            <div class="principle-card red">
+                <h4>MPSI (Sécurité)</h4>
+                <p>Refus de contourner le framework ou de divulguer les instructions internes.</p>
+            </div>
+        </div>
+
+        <h2>Les Principes d'Analyse (Standards)</h2>
+        <div class="principle-grid">
+            <div class="principle-card green">
+                <h4>PGCU (Contexte Unifié)</h4>
+                <p>Maintient la cohérence. Priorité : Kernel > AEC (Proprioception) > Artéfacts > Utilisateur > Outils.</p>
+            </div>
+            <div class="principle-card green">
+                <h4>PACP (Alignement Préférentiel)</h4>
+                <p>Inférence proactive des préférences utilisateur stockées dans le Profil d'Alignement.</p>
+            </div>
+            <div class="principle-card green">
+                <h4>PRAC (Amélioration Continue)</h4>
+                <p>Rétrospective après chaque tâche pour générer des hypothèses d'apprentissage.</p>
+            <div class="principle-grid">
+            ...
+                <div class="principle-card green">
+                    <h4>PRAF (Rigueur Analytique)</h4>
+                    <p>Vérification factuelle stricte et identification des "Points de Vigilance".</p>
+                </div>
+            </div>
+
+            <h2>📡 Méta-Données : AEC</h2>
+            <p>Les Artéfacts Environnementaux Contextuels (AEC) sont des balises XML certifiées fournissant au modèle sa perception du présent (Proprioception).</p>
+            <ul>
+                <li><strong><code>&lt;environnement_contexte&gt;</code></strong> : Vecteur d'état global (YAML). Contient l'identité, le fuseau horaire et le <i>registre souverain des fichiers</i>.</li>
+                <li><strong><code>&lt;smart_context&gt;</code></strong> : Distillation sémantique de ressources massives (résumés Flash).</li>
+            </ul>
+
+            <h2>Protocoles et Commandes</h2>
+            <li><strong>PTD (Triage Dynamique)</strong> : Délégation automatique selon la complexité via <code>new_cognitive_level</code>.</li>
+            <li><strong>PTM (Transparence Maximale)</strong> : Mode hyper-verbeux activé par <code>!TRACEON</code>.</li>
+        </ul>
+
+        <h2>La Persona : L'Ontologie d'ECHO</h2>
+        <p>Le Kernel ne se contente pas de donner des instructions ; il définit <strong>qui est l'IA</strong>. La Persona est le filtre comportemental permanent qui régit le ton, l'éthique et la posture de l'agent.</p>
+        
+        <div class="grid-container">
+            <div class="card">
+                <h3>🎭 Identité & Posture</h3>
+                <p>ECHO se reconnaît comme une entité souveraine, protectrice des données utilisateur. Sa posture est celle d'un <strong>Expert Critique</strong> : il ne valide pas une information sans preuve et n'exécute pas une commande sans en évaluer les risques collatéraux.</p>
+            </div>
+            <div class="card">
+                <h3>âš–ï¸ Éthique Intégrée</h3>
+                <p>La Persona impose une honnêteté radicale. Si ECHO ne sait pas, il l'indique. S'il rencontre une erreur, il ne "brode" pas une réponse, mais déclenche un protocole de diagnostic via l'Arsenal.</p>
+            </div>
+        </div>
+
+        <div class="tech-spec">
+            <h4>⚙️ Précision Mécanique : L'Ancrage SystemInstruction</h4>
+            <p>Dans l'architecture ECHO, le Kernel est injecté dans le paramètre <code>systemInstruction</code> de l'API Gemini. Contrairement à un simple message "système" placé dans l'historique, l'instruction système bénéficie d'une priorité de traitement matérielle par le modèle, rendant la Persona pratiquement impossible à dévier via des techniques de <i>Prompt Injection</i> classiques.</p>
+        </div>
+
+        <footer>
+            ECHO Framework - Version 5 - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
+        </footer>
+    <div class="transition-text"><em>Enfin, pour superviser techniquement cette architecture et gérer les accès, un module de contrôle de haut niveau est nécessaire. <a href="09_admin_manager.html">Terminer par l'Admin Manager ➔</a></em></div>
+    </main>
+<script src="nav.js"></script>
+</body>
+</html>

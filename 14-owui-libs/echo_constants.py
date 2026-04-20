@@ -1,8 +1,8 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 1.22
-description: 1.22: Ajout des constantes pour la Mémoire Organique V2 (gemini-embedding-2-preview, gemini-2.5-flash).
+version: 1.23
+description: 1.23: Unification de la résilience (Threshold 2, Retries 5) pour l'API Gemini.
 """
 
 import os
@@ -41,6 +41,17 @@ GOOGLE_AI_STUDIO_WEB_URL = "https://aistudio.google.com/app/apikey"
 # Le tiret doit être à la fin de la classe de caractères pour éviter les erreurs de plage
 GOOGLE_API_KEY_REGEX = r"AIza[0-9A-Za-z_-]{35}"
 GOOGLE_API_KEY_PATTERN = GOOGLE_API_KEY_REGEX
+
+# ==============================================================================
+# 1.2 RÉSILIENCE ET RETRIES (API GEMINI)
+# ==============================================================================
+
+ECHO_API_KEY_THRESHOLD = 2
+ECHO_API_MAX_RETRIES = 5
+ECHO_RETRY_BASE_DELAY = 2.0
+ECHO_RETRY_MULTIPLIER = 2.0
+ECHO_RETRY_JITTER_MIN = 0.7
+ECHO_RETRY_JITTER_MAX = 1.3
 
 # ==============================================================================
 # 1.1 MODÈLES ECHO & REGISTRE COGNITIF (v5.99.1)

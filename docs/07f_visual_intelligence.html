@@ -21,12 +21,12 @@
         <p><strong>Nature :</strong> Système d'Exploitation Visuel (13 moteurs intégrés).</p>
         <p><strong>Composants :</strong> <code>universal_visual_generator.py</code> (Orchestrateur) & <code>echo_visuals.py</code> (Registre des moteurs).</p>
         <p><strong>Rôle :</strong> Traduire une intention sémantique en une interface interactive (Rich UI) couvrant 360° des besoins (3D, Droit, Finance, Science, etc.).</p>
-        <p><strong>Sécurité :</strong> Pattern <i>Data Island</i> via balises <code>&lt;template&gt;</code> garantissant l'étanchéité entre les données de l'IA et le code JavaScript de rendu.</p>
+        <p><strong>Sécurité :</strong> Tunnel <i>Base64</i> garantissant l'intégrité absolue des données entre l'IA et le navigateur.</p>
       </div>
     </div>
 
     <h2>La Matrice des Moteurs (Omniscience Visuelle)</h2>
-    <p>ECHO sélectionne automatiquement le moteur optimal selon le pôle de connaissance sollicité.</p>
+    <p>ECHO sélectionne automatiquement le moteur optimal, mais permet un pilotage explicite via le paramètre <code>moteur</code>.</p>
 
     <table>
       <thead>
@@ -87,18 +87,18 @@
 
     <h2>Architecture de Suture Visuelle</h2>
     <div class="info-block">
-      <h4>Le Pattern Data Island</h4>
-      <p>Pour prévenir les erreurs de syntaxe causées par les caractères spéciaux générés par l'IA (apostrophes, backticks, symboles mathématiques), ECHO n'injecte jamais les données directement dans le code JavaScript. 
-      Les données sont scellées dans une balise HTML <code>&lt;template&gt;</code>. Le script de rendu extrait ensuite ces données de manière brute et sécurisée, assurant une robustesse totale du HUD.</p>
+      <h4>Le Tunnel Base64 & Validation Option A</h4>
+      <p>Pour prévenir les corruptions de syntaxe (flèches Mermaid, quotes JSON, balises HTML), ECHO utilise un tunnel d'encodage Base64. Les données sont validées côté serveur (Python) avant l'affichage. En cas d'erreur de conformité, le système remonte une erreur explicite à l'IA pour une auto-correction immédiate (Option A).</p>
     </div>
 
     <ul>
-      <li><strong>Auto-dimensionnement Dynamique</strong> : Utilisation de <code>ResizeObserver</code> pour que l'Iframe s'adapte en temps réel à l'extension du schéma (ex: dépliage d'un nœud).</li>
-      <li><strong>Thémage ECHO Neon</strong> : Unification visuelle (Dark Mode, Cyan, Émeraude) appliquée systématiquement à tous les frameworks tiers.</li>
+      <li><strong>Pilotage Explicite</strong> : L'orchestrateur peut imposer un moteur spécifique, transformant le sous-agent en un traducteur technique strict.</li>
+      <li><strong>Auto-dimensionnement Dynamique</strong> : Utilisation de <code>ResizeObserver</code> pour que l'Iframe s'adapte en temps réel à l'extension du schéma.</li>
+      <li><strong>Thémage ECHO Neon</strong> : Unification visuelle (Dark Mode, Cyan, Émeraude) appliquée systématiquement.</li>
     </ul>
 
     <footer>
-      ECHO Framework v5.121.0 - "Omniscience Visuelle" - Copyright © 2026 Wilfried BARNAVON
+      ECHO Framework v5.122.0 - "Suture Visuelle Bit-Perfect" - Copyright © 2026 Wilfried BARNAVON
     </footer>
     <div class="transition-text"><em>Toutes les expressions visuelles sont cadrées par le Kernel. <a href="08_system_prompt.html">Voir le System Prompt ➔</a></em></div>
   </main>

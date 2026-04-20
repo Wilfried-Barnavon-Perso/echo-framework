@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 180.4
-description: 180.4: Refactoring UI - Import de EchoUI depuis la nouvelle bibliothèque echo_ui.py.
+version: 181.0
+description: 181.0: Uniformisation de la résilience (Threshold 2, Retries 5) via l'Arsenal de Constantes 1.23.
 """
 
 # ==============================================================================
@@ -29,7 +29,10 @@ from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Un
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient, _get_global_client
 from echo_ui import EchoUI
-from echo_constants import *
+from echo_constants import (
+    MODEL_PRO, MODEL_FLASH, MODEL_LITE, MODEL_ROUTING, MODEL_IDENTITY,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, ECHO_RETRY_BASE_DELAY
+)
 from echo_auth import AuthService
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
@@ -399,8 +402,9 @@ class Pipe:
         HTTP_MAX_CONNECTIONS: int = Field(default=100); HTTP_MAX_KEEPALIVE: int = Field(default=20)
         HTTP_KEEPALIVE_EXPIRY: int = Field(default=300)
         DEBUG_MODE: bool = Field(default=False); MAX_CONTEXT_SIZE: int = Field(default=1048576)
-        RETRY_TIMEBASE: int = Field(default=2); MAX_RETRIES: int = Field(default=5)
-        KEY_SWITCH_THRESHOLD: int = Field(default=2, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        RETRY_TIMEBASE: int = Field(default=ECHO_RETRY_BASE_DELAY)
+        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES)
+        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
         MODEL_SELECTION: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO", "AUTO", "AUTO_PRO"] = Field(default="AUTO")
@@ -637,10 +641,10 @@ class Pipe:
 
                 for part in context[-1]["parts"]:
                     if "text" in part and "modèle_actuel" in part["text"]:
-                        # Remplacement de l'identité actuelle
-                        part["text"] = re.sub(r'("modèle_actuel"\s*:\s*")[^"]+(")', rf'\g<1>{identity_format}\g<2>', part["text"])
-                        # Mise à jour de l'origine pour le modèle suivant
-                        part["text"] = re.sub(r'("modèle_origine"\s*:\s*")[^"]+(")', rf'\g<1>{origin_format}\g<2>', part["text"])
+                        # Remplacement de l'identité actuelle (Support hybride JSON/YAML)
+                        part["text"] = re.sub(r'("?modèle_actuel"?\s*:\s*"?)([^"\n]+)("?)', rf'\g<1>{identity_format}\g<3>', part["text"])
+                        # Mise à jour de l'origine pour le modèle suivant (Support hybride JSON/YAML)
+                        part["text"] = re.sub(r'("?modèle_origine"?\s*:\s*"?)([^"\n]+)("?)', rf'\g<1>{origin_format}\g<3>', part["text"])
                 
                 # Mise à jour de l'état de l'orchestrateur pour les placeholders système
                 orch.model_origin = target_model

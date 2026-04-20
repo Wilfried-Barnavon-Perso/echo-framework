@@ -1,8 +1,8 @@
 """
 title: ECHO Proactive Memory Arsenal
 author: Wilfried BARNAVON
-version: 3.1
-description: 3.1: Correction du endpoint Qdrant /scroll vers /points/scroll pour l'outil de listing.
+version: 3.2
+description: 3.2: Harmonisation de la résilience (KeySwitch 2, Retries 5) pour la distillation et l'ancrage.
 """
 
 from typing import Optional, List, Any, Dict, Union
@@ -21,7 +21,8 @@ from echo_utils import EchoAuth, EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_constants import (
     ECHO_USER_AGENT, GOOGLE_API_BASE_URL,
     MODEL_DISTILLATION, MODEL_EMBEDDING, 
-    EMBEDDING_DIM_V2, COLLECTION_MEMORY
+    EMBEDDING_DIM_V2, COLLECTION_MEMORY,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
 )
 
 # Configuration du Logger
@@ -32,6 +33,8 @@ class Tools:
     class Valves(BaseModel):
         QDRANT_URL: str = Field(default="http://echo-qdrant:6333", description="URL interne de Qdrant.")
         SIMILARITY_THRESHOLD: float = Field(default=0.45, description="Seuil de confiance minimal pour la recherche.")
+        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
         DEBUG_MODE: bool = Field(default=False, description="Affiche les détails techniques dans les logs.")
 
     def __init__(self):
@@ -147,7 +150,9 @@ class Tools:
                 payload={
                     "contents": [{"role": "user", "parts": [{"text": distill_prompt}]}],
                     "generationConfig": {"response_mime_type": "application/json"}
-                }
+                },
+                threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                max_retries=self.valves.MAX_RETRIES
             )
             distilled = json.loads(distill_data["candidates"][0]["content"]["parts"][0]["text"])
             slug = distilled.get("slug", f"note_{int(time.time())}")
@@ -157,7 +162,9 @@ class Tools:
             embed_data = await EchoGeminiClient.embed(
                 keys=api_keys, 
                 model=MODEL_EMBEDDING, 
-                content={"parts": [{"text": f"title: {slug} | text: {fact}"}]}
+                content={"parts": [{"text": f"title: {slug} | text: {fact}"}]},
+                threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                max_retries=self.valves.MAX_RETRIES
             )
             vector = embed_data["embedding"]["values"]
 
@@ -211,7 +218,9 @@ class Tools:
             embed_data = await EchoGeminiClient.embed(
                 keys=api_keys, 
                 model=MODEL_EMBEDDING, 
-                content={"parts": [{"text": f"task: search result | query: {topic_query}"}]}
+                content={"parts": [{"text": f"task: search result | query: {topic_query}"}]},
+                threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                max_retries=self.valves.MAX_RETRIES
             )
             query_vector = embed_data["embedding"]["values"]
 

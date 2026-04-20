@@ -1,8 +1,8 @@
 """
 title: ECHO Organic Memory Retrieval V2
 author: Wilfried BARNAVON
-version: 2.1
-description: 2.1: Intégration tactique des Principes PRAF (Vérification interne) et PRAC (Rétrospective).
+version: 2.2
+description: 2.2: Harmonisation de la résilience d'embedding (Threshold 2, Retries 5) via echo_constants.py.
 """
 
 from typing import Optional, List, Any, Dict
@@ -17,8 +17,10 @@ from pydantic import BaseModel, Field
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoAuth, EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_constants import (
-    ECHO_USER_AGENT, GOOGLE_API_BASE_URL,
-    MODEL_EMBEDDING, COLLECTION_MEMORY
+    ECHO_UPLOADS_DIR, ECHO_USER_DBS_DIR, ECHO_VERSION_PATH,
+    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_USERS_ROOT,
+    MODEL_EMBEDDING, COLLECTION_MEMORY,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
 )
 
 # Configuration du Logger
@@ -27,7 +29,8 @@ logger = logging.getLogger("ECHO-MEMORY-TOOL-V2")
 
 class Tools:
     class Valves(BaseModel):
-        KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
         RECALL_TIMEOUT: int = Field(default=30, description="Délai d'attente maximum (secondes) pour l'embedding de recherche.")
         SCORE_THRESHOLD: float = Field(default=0.45, description="Seuil de confiance minimal (0.0 à 1.0).")
 
@@ -78,6 +81,7 @@ class Tools:
                 model=MODEL_EMBEDDING,
                 content={"parts": [{"text": query_text}]},
                 threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                max_retries=self.valves.MAX_RETRIES,
                 events=events,
                 timeout=self.valves.RECALL_TIMEOUT
             )

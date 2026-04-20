@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 3.0
-description: 3.0: Refactoring architectural - Extraction de l'UI vers echo_ui.py. Cœur de services ECHO.
+version: 3.2
+description: 3.2: Harmonisation de l'Exponential Backoff (Multiplier 2.0) et standardisation des retries (5) via les constantes globales.
 """
 
 import os
@@ -26,7 +26,10 @@ import orjson as std_json
 # Importation directe (Strict)
 from echo_constants import (
     ECHO_UPLOADS_DIR, ECHO_USER_DBS_DIR, ECHO_VERSION_PATH,
-    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_USERS_ROOT
+    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_USERS_ROOT,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
+    ECHO_RETRY_BASE_DELAY, ECHO_RETRY_MULTIPLIER,
+    ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX
 )
 
 # ==============================================================================
@@ -229,8 +232,8 @@ class EchoGeminiClient:
         keys: List[str],
         target_model: str,
         payload: dict,
-        threshold: int = 2,
-        max_retries: int = 3,
+        threshold: int = ECHO_API_KEY_THRESHOLD,
+        max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
         timeout: int = 120
     ) -> dict:
@@ -238,7 +241,7 @@ class EchoGeminiClient:
         client = await _get_global_client()
         active_key_idx = 0
         consecutive_errors = 0
-        current_delay = 2
+        current_delay = ECHO_RETRY_BASE_DELAY
         for attempt in range(max_retries + 1):
             api_key = keys[active_key_idx]
             api_url = f"{GOOGLE_API_BASE_URL}/models/{target_model}:generateContent?key={api_key}"
@@ -254,18 +257,18 @@ class EchoGeminiClient:
                         if events: await events.status(f"🔄 Surcharge API ({resp.status_code}). Bascule sur la clé de secours...", done=False)
                         continue
                     if attempt < max_retries:
-                        wait_time = current_delay * random.uniform(0.7, 1.3)
+                        wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                         if events: await events.status(f"⚠️ Surcharge API Google ({resp.status_code}). Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
                         await asyncio.sleep(wait_time)
-                        current_delay *= 2
+                        current_delay *= ECHO_RETRY_MULTIPLIER
                         continue
                 resp.raise_for_status()
             except Exception as e:
                 if attempt < max_retries:
-                    wait_time = current_delay * random.uniform(0.7, 1.3)
+                    wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                     if events: await events.status(f"⚠️ Instabilité réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
-                    current_delay *= 2
+                    current_delay *= ECHO_RETRY_MULTIPLIER
                     continue
                 raise e
         raise Exception(f"Échec après {max_retries} tentatives.")
@@ -275,8 +278,8 @@ class EchoGeminiClient:
         keys: List[str],
         target_model: str,
         payload: dict,
-        threshold: int = 2,
-        max_retries: int = 5,
+        threshold: int = ECHO_API_KEY_THRESHOLD,
+        max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
         process_callback: Optional[Any] = None,
         timeout: int = 300
@@ -285,7 +288,7 @@ class EchoGeminiClient:
         client = await _get_global_client()
         active_key_idx = 0
         consecutive_errors = 0
-        current_delay = 2
+        current_delay = ECHO_RETRY_BASE_DELAY
         for attempt in range(max_retries + 1):
             api_key = keys[active_key_idx]
             api_url = f"{GOOGLE_API_BASE_URL}/models/{target_model}:streamGenerateContent?key={api_key}&alt=sse"
@@ -300,10 +303,10 @@ class EchoGeminiClient:
                             if events: await events.status(f"🔄 Surcharge API ({r.status_code}). Bascule sur la clé de secours...", done=False)
                             continue
                         if attempt < max_retries:
-                            wait_time = current_delay * random.uniform(0.7, 1.3)
+                            wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                             if events: await events.status(f"⚠️ Surcharge API Google ({r.status_code}). Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
                             await asyncio.sleep(wait_time)
-                            current_delay *= 3
+                            current_delay *= ECHO_RETRY_MULTIPLIER
                             continue
                         else: yield f"🚫 Erreur API Google ({r.status_code})."; return
                     r.raise_for_status()
@@ -313,10 +316,10 @@ class EchoGeminiClient:
                 break
             except Exception as e:
                 if attempt < max_retries:
-                    wait_time = current_delay * random.uniform(0.7, 1.3)
+                    wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                     if events: await events.status(f"⚠️ Instabilité réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
-                    current_delay *= 2
+                    current_delay *= ECHO_RETRY_MULTIPLIER
                     continue
                 else: yield f"🚫 Erreur système : {str(e)}"; return
 
@@ -325,8 +328,8 @@ class EchoGeminiClient:
         keys: List[str],
         model: str,
         content: dict,
-        threshold: int = 2,
-        max_retries: int = 3,
+        threshold: int = ECHO_API_KEY_THRESHOLD,
+        max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
         timeout: int = 30
     ) -> dict:
@@ -334,7 +337,7 @@ class EchoGeminiClient:
         client = await _get_global_client()
         active_key_idx = 0
         consecutive_errors = 0
-        current_delay = 2
+        current_delay = ECHO_RETRY_BASE_DELAY
         for attempt in range(max_retries + 1):
             api_key = keys[active_key_idx]
             api_url = f"{GOOGLE_API_BASE_URL}/models/{model}:embedContent?key={api_key}"
@@ -351,16 +354,16 @@ class EchoGeminiClient:
                         if events: await events.status(f"🔄 Surcharge API Embedding ({resp.status_code}). Bascule sur la clé de secours...", done=False)
                         continue
                     if attempt < max_retries:
-                        wait_time = current_delay * random.uniform(0.7, 1.3)
+                        wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                         await asyncio.sleep(wait_time)
-                        current_delay *= 2
+                        current_delay *= ECHO_RETRY_MULTIPLIER
                         continue
                 resp.raise_for_status()
             except Exception as e:
                 if attempt < max_retries:
-                    wait_time = current_delay * random.uniform(0.7, 1.3)
+                    wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                     await asyncio.sleep(wait_time)
-                    current_delay *= 2
+                    current_delay *= ECHO_RETRY_MULTIPLIER
                     continue
                 raise e
         raise Exception(f"Échec Embedding après {max_retries} tentatives.")

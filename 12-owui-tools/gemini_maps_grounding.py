@@ -1,8 +1,8 @@
 """
 title: ECHO Google Maps Grounding
 author: Wilfried BARNAVON
-version: 12.54
-description: 12.54: Instruction agentique sur la gestion des indisponibilités de modèles.
+version: 12.60
+description: 12.60: Harmonisation de la résilience (Threshold 2, Retries 5) via echo_constants.py.
 """
 
 import orjson as json
@@ -16,11 +16,15 @@ from fastapi.responses import HTMLResponse
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoAuth, EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_ui import EchoRichUI
-from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, MODEL_FLASH, MODEL_PRO, MODEL_LITE
+from echo_constants import (
+    ECHO_USER_AGENT, GOOGLE_API_BASE_URL, MODEL_FLASH, MODEL_PRO, MODEL_LITE,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
+)
 
 class Tools:
     class Valves(BaseModel):
-        KEY_SWITCH_THRESHOLD: int = Field(default=3, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
         MAPS_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour la recherche Maps.")
 
     def __init__(self):
@@ -61,8 +65,13 @@ class Tools:
 
         try:
             data = await EchoGeminiClient.call(
-                keys=api_keys, target_model=MODEL_LITE, payload=payload,
-                threshold=self.valves.KEY_SWITCH_THRESHOLD, events=events, timeout=self.valves.MAPS_TIMEOUT
+                keys=api_keys, 
+                target_model=MODEL_LITE, 
+                payload=payload,
+                threshold=self.valves.KEY_SWITCH_THRESHOLD, 
+                max_retries=self.valves.MAX_RETRIES,
+                events=events, 
+                timeout=self.valves.MAPS_TIMEOUT
             )
             
             cand = data.get("candidates", [])[0]

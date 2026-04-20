@@ -1,8 +1,8 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 1.5
-description: 1.5: Centralisation de la Suture Visuelle (Auto-resize) dans le boilerplate global. Optimisation de l'Iframe Maps (mode Cinéma).
+version: 1.7
+description: 1.7: Stabilisation accrue de la Suture Visuelle (Debounce 250ms).
 """
 
 from fastapi.responses import HTMLResponse
@@ -43,14 +43,28 @@ class EchoRichUI:
       {content}
       <script>
         // --- SUTURE VISUELLE ECHO (OWUI COMPAT) ---
+        let lastHeight = 0;
+        let resizeTimeout;
+
         function reportHeight() {{
           const h = document.documentElement.scrollHeight || document.body.scrollHeight;
-          // On envoie la hauteur au parent Open WebUI pour ajuster l'Iframe
-          parent.postMessage({{ type: 'iframe:height', height: h }}, '*');
+          // On évite les boucles infinies en vérifiant si la hauteur a réellement changé (> 2px)
+          if (Math.abs(h - lastHeight) > 2) {{
+            lastHeight = h;
+            parent.postMessage({{ type: 'iframe:height', height: h }}, '*');
+          }}
         }}
-        window.addEventListener('load', reportHeight);
-        // Surveillance des changements de taille (ex: dépliage, chargement dynamique)
-        new ResizeObserver(reportHeight).observe(document.body);
+
+        window.addEventListener('load', () => {{
+          setTimeout(reportHeight, 100);
+        }});
+
+        const observer = new ResizeObserver(entries => {{
+          clearTimeout(resizeTimeout);
+          // Délai augmenté à 250ms pour plus de stabilité
+          resizeTimeout = setTimeout(reportHeight, 250);
+        }});
+        observer.observe(document.body);
       </script>
     </body>
     </html>

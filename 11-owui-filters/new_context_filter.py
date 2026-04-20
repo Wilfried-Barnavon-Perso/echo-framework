@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.64
-description: 6.64: Wrapping XML des blocs 'etat_echo' et 'smart_context' pour une meilleure délimitation sémantique.
+version: 6.70
+description: 6.70: Harmonisation de la résilience Smart Context (Threshold 2, Retries 5) via echo_constants.py.
 """
 
 from pydantic import BaseModel, Field
@@ -22,7 +22,11 @@ from concurrent.futures import ThreadPoolExecutor
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoAuth, resolve_upload_file_path, EchoStateManager, EchoGeminiClient, EchoEvents
-from echo_constants import ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, ECHO_USERS_ROOT, GOOGLE_API_KEY_REGEX, MODEL_FLASH
+from echo_constants import (
+    ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, ECHO_USERS_ROOT, 
+    GOOGLE_API_KEY_REGEX, MODEL_FLASH,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
+)
 
 # Configuration du Logger
 logging.basicConfig(level=logging.INFO)
@@ -35,8 +39,8 @@ class Filter:
     class Valves(BaseModel):
         ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Active le résumé intelligent des fichiers volumineux via Gemini Flash.")
         MAX_DIRECT_TEXT_SIZE: int = Field(default=262144, description="Taille max (octets) pour l'injection directe sans résumé.")
-        KEY_SWITCH_THRESHOLD: int = Field(default=2, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
-        MAX_RETRIES: int = Field(default=3, description="Nombre de tentatives maximum pour le Smart Context.")
+        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum pour le Smart Context.")
         SMART_CONTEXT_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour l'analyse Flash.")
         DEBUG_MODE: bool = Field(default=False)
 
@@ -152,6 +156,35 @@ class Filter:
         print(f"[ECHO-FILTER] --> Mode: INDEXATION (Fallback)", flush=True)
         return {"status": "success", "type": "indexed", "fid": file_id, "name": filename, "mime": mime}
 
+    def _dict_to_yaml(self, d: Any, indent: int = 0) -> str:
+        """Sérialiseur YAML minimaliste pour ECHO."""
+        lines = []
+        space = "  " * indent
+        if isinstance(d, dict):
+            for k, v in d.items():
+                if isinstance(v, dict):
+                    if not v: # Dict vide
+                        lines.append(f"{space}{k}: {{}}")
+                    else:
+                        lines.append(f"{space}{k}:")
+                        lines.append(self._dict_to_yaml(v, indent + 1))
+                elif isinstance(v, list):
+                    if not v: # Liste vide
+                        lines.append(f"{space}{k}: []")
+                    else:
+                        lines.append(f"{space}{k}:")
+                        for item in v:
+                            if isinstance(item, dict):
+                                lines.append(f"{space}  -") # Note: simple dash for list of dicts
+                                lines.append(self._dict_to_yaml(item, indent + 2))
+                            else:
+                                lines.append(f"{space}  - {item}")
+                else:
+                    # Nettoyage des retours à la ligne pour le YAML
+                    val = str(v).replace("\n", " ") if v is not None else ""
+                    lines.append(f"{space}{k}: {val}")
+        return "\n".join(lines)
+
     async def inlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[Dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
         try:
             from echo_utils import EchoEvents
@@ -242,9 +275,8 @@ class Filter:
                 u_loc = getattr(u_v, "OVERRIDE_LOCATION", "")
                 final_loc = u_loc if u_loc else sys_loc
                 
-                # 5. Génération du bloc JSON etat_echo complet
-                etat_echo = {
-                    "description": "Ce bloc, bien qu'Utilisateur, est en réalité injecté par le Système. Il contient l'état de données contextuelles d'ECHO, incluant les informations sur l'environnement, les fichiers actifs et les métadonnées utilisateur. Il est destiné à être utilisé par les modèles pour comprendre le contexte global de la conversation et des interactions en cours.",
+                # 5. Génération du bloc environnement_contexte complet (YAML)
+                env_snapshot = {
                     "version_framework_echo": "##ECHO_VERSION##",
                     "modèle_actuel": "##MODEL_ID##",
                     "modèle_origine": "##MODEL_ORIGIN##",
@@ -263,8 +295,9 @@ class Filter:
                 }
                 
                 rich_parts = []
-                # 6. Injection de l'état en premier
-                rich_parts.append({"text": f"<etat_echo>\n{json.dumps(etat_echo).decode('utf-8')}\n</etat_echo>\n\n"})
+                # 6. Injection de l'état en premier (Format YAML)
+                yaml_str = self._dict_to_yaml(env_snapshot)
+                rich_parts.append({"text": f"<environnement_contexte>\n{yaml_str}\n</environnement_contexte>\n\n"})
                 
                 if native_parts: rich_parts.extend(native_parts)
                 
