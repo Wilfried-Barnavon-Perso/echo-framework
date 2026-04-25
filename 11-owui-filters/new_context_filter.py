@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.70
-description: 6.70: Harmonisation de la résilience Smart Context (Threshold 2, Retries 5) via echo_constants.py.
+version: 6.91
+description: 6.91: Sécurisation du masquage Outlet (Clés API & Codes OAuth2).
 """
 
 from pydantic import BaseModel, Field
@@ -25,7 +25,8 @@ from echo_utils import EchoAuth, resolve_upload_file_path, EchoStateManager, Ech
 from echo_constants import (
     ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, ECHO_USERS_ROOT, 
     GOOGLE_API_KEY_REGEX, MODEL_FLASH,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
+    GOOGLE_OAUTH_CODE_REGEX
 )
 
 # Configuration du Logger
@@ -109,7 +110,8 @@ class Filter:
 
         # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (Smart Context via Gemini Flash) ---
         if self.valves.ENABLE_SMART_CONTEXT and is_supported:
-            if tokens:
+            auth_mesh = await self.auth.get_ordered_auth_mesh(user_id)
+            if auth_mesh:
                 try:
                     print(f"[ECHO-FILTER] --> Mode: SMART_CONTEXT (Gemini Flash)", flush=True)
                     await events.status(f"Analyse intelligente de {filename}...", False)
@@ -130,7 +132,7 @@ class Filter:
                     }
 
                     data = await EchoGeminiClient.call(
-                        keys=tokens,
+                        auth_mesh=auth_mesh,
                         target_model=MODEL_FLASH,
                         payload=payload,
                         threshold=self.valves.KEY_SWITCH_THRESHOLD,
@@ -197,18 +199,19 @@ class Filter:
             
             if not msgs: return body
 
-            # --- AUTH API KEY INTERCEPTION ---
+            # --- AUTH API KEY & OAUTH CODE INTERCEPTION ---
             if len(msgs) >= 2:
                 prev_content = str(msgs[-2].get("content", ""))
                 if "(ECHO_SESSION_AUTH_PENDING)" in prev_content:
                     last_content = str(msgs[-1].get("content", "")).strip()
-                    # Capture de toutes les clés valides (separateurs: espace, tab, \n)
+                    # Capture des clés API ET des codes OAuth
                     keys = re.findall(GOOGLE_API_KEY_REGEX, last_content)
-                    if keys:
-                        # Le filtre intercepte et passe les clés au Pipe via le body
-                        # et masque le contenu du message dans l'interface utilisateur.
-                        body["_api_key"] = last_content # Le Pipe repassera par validate_and_save_api_key qui sait spliter
-                        msgs[-1]["content"] = "🔐 *Vérification des clés API Google en cours...*"
+                    oauth_codes = re.findall(GOOGLE_OAUTH_CODE_REGEX, last_content)
+                    
+                    if keys or oauth_codes:
+                        # Le filtre intercepte et passe les identifiants au Pipe via le body
+                        body["_api_key"] = last_content 
+                        msgs[-1]["content"] = "🔐 *Vérification de l'authentification Google en cours...*"
                         return body
 
             # --- 3. TRAITEMENT DES FICHIERS (DRAFT) ---
@@ -330,7 +333,13 @@ class Filter:
         msgs = body.get("messages", [])
         for m in msgs:
             content = str(m.get("content", ""))
-            # Masquage chirurgical des clés API sans détruire le reste du message
+            # Masquage chirurgical des clés API
             if re.search(GOOGLE_API_KEY_REGEX, content):
-                m["content"] = re.sub(GOOGLE_API_KEY_REGEX, "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]", content)
+                content = re.sub(GOOGLE_API_KEY_REGEX, "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]", content)
+            
+            # Masquage chirurgical des codes OAuth2
+            if re.search(GOOGLE_OAUTH_CODE_REGEX, content):
+                content = re.sub(GOOGLE_OAUTH_CODE_REGEX, "[CODE OAUTH GOOGLE MASQUÉ PAR SÉCURITÉ]", content)
+                
+            m["content"] = content
         return body

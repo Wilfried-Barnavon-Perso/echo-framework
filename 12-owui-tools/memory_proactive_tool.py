@@ -1,8 +1,8 @@
 """
-title: ECHO Proactive Memory Arsenal
+title: ECHO Proactive Memory Tool
 author: Wilfried BARNAVON
-version: 3.2
-description: 3.2: Harmonisation de la résilience (KeySwitch 2, Retries 5) pour la distillation et l'ancrage.
+version: 3.3
+description: 3.3: Migration vers le Unified Auth Mesh.
 """
 
 from typing import Optional, List, Any, Dict, Union
@@ -130,9 +130,9 @@ class Tools:
             return "❌ Erreur : Utilisateur non identifié."
 
         user_id = __user__.get("id")
-        api_keys = self.auth.get_api_keys(user_id)
-        if not api_keys:
-            return "❌ Clé API Google requise."
+        auth_mesh = await self.auth.get_ordered_auth_mesh(user_id)
+        if not auth_mesh:
+            return "❌ Authentification Google requise."
 
         await events.status(f"🧠 Distillation du souvenir : '{fact[:30]}...'")
 
@@ -145,7 +145,7 @@ class Tools:
                 f"Contenu : {fact}"
             )
             distill_data = await EchoGeminiClient.call(
-                keys=api_keys, 
+                auth_mesh=auth_mesh, 
                 target_model=MODEL_DISTILLATION, 
                 payload={
                     "contents": [{"role": "user", "parts": [{"text": distill_prompt}]}],
@@ -160,7 +160,7 @@ class Tools:
 
             # 2. Vectorisation
             embed_data = await EchoGeminiClient.embed(
-                keys=api_keys, 
+                auth_mesh=auth_mesh, 
                 model=MODEL_EMBEDDING, 
                 content={"parts": [{"text": f"title: {slug} | text: {fact}"}]},
                 threshold=self.valves.KEY_SWITCH_THRESHOLD,
@@ -207,16 +207,16 @@ class Tools:
             return "❌ Erreur : Utilisateur non identifié."
 
         user_id = __user__.get("id")
-        api_keys = self.auth.get_api_keys(user_id)
-        if not api_keys:
-            return "❌ Clé API Google requise."
+        auth_mesh = await self.auth.get_ordered_auth_mesh(user_id)
+        if not auth_mesh:
+            return "❌ Authentification Google requise."
 
         await events.status(f"🧠 Recherche des souvenirs liés à '{topic_query}'...")
 
         try:
             # 1. Vectorisation de la requête
             embed_data = await EchoGeminiClient.embed(
-                keys=api_keys, 
+                auth_mesh=auth_mesh, 
                 model=MODEL_EMBEDDING, 
                 content={"parts": [{"text": f"task: search result | query: {topic_query}"}]},
                 threshold=self.valves.KEY_SWITCH_THRESHOLD,

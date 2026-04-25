@@ -1,8 +1,8 @@
 """
-title: ECHO Google Maps Grounding
+title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 12.60
-description: 12.60: Harmonisation de la résilience (Threshold 2, Retries 5) via echo_constants.py.
+version: 12.8
+description: 12.8: Retouche de la Docstring.
 """
 
 import orjson as json
@@ -41,8 +41,8 @@ class Tools:
         __event_call__: Any = None
     ) -> Union[dict, Tuple[HTMLResponse, dict]]:
         """
-        Recherche des lieux, commerces ou itinéraires via Google Maps.
-        Affiche une interface visuelle interactive et fournit les détails textuels au modèle.
+        Recherche des lieux, commerces ou itinéraires, affiche une carte via Google Maps.
+        Affiche une interface visuelle interactive à l'utilisateur et fournit les détails textuels au modèle.
         
         NOTE : Cet outil utilise une délégation cognitive (MODEL_LITE). En cas d'erreur de quota (429) 
         ou d'indisponibilité, le Modèle doit signaler cette limitation technique à l'utilisateur.
@@ -50,9 +50,9 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"🗺️ Exploration Maps : {query}...")
 
-        api_keys = self.auth.get_api_keys(__user__.get("id"))
-        if not api_keys: 
-            return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune clé API Google AI Studio trouvée.", status={"status": "error"})
+        auth_mesh = await self.auth.get_ordered_auth_mesh(__user__.get("id"))
+        if not auth_mesh: 
+            return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune authentification Google configurée.", status={"status": "error"})
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": query}]}],
@@ -65,7 +65,7 @@ class Tools:
 
         try:
             data = await EchoGeminiClient.call(
-                keys=api_keys, 
+                auth_mesh=auth_mesh, 
                 target_model=MODEL_LITE, 
                 payload=payload,
                 threshold=self.valves.KEY_SWITCH_THRESHOLD, 

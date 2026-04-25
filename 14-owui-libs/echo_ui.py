@@ -1,8 +1,8 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 1.7
-description: 1.7: Stabilisation accrue de la Suture Visuelle (Debounce 250ms).
+version: 3.0
+description: 3.0: Refonte complète du HUD (Centrage Navbar, Tooltips Identité & Tokens).
 """
 
 from fastapi.responses import HTMLResponse
@@ -38,6 +38,29 @@ class EchoRichUI:
         ::-webkit-scrollbar-thumb {{ background: #334155; border-radius: 10px; }}
         ::-webkit-scrollbar-thumb:hover {{ background: #475569; }}
       </style>
+      <script>
+        // --- POLYFILL STORAGE ECHO (Fix Sandbox OWUI) ---
+        (function() {{
+          function createMockStorage() {{
+            let storage = {{}};
+            return {{
+              getItem: (key) => key in storage ? storage[key] : null,
+              setItem: (key, value) => storage[key] = value || '',
+              removeItem: (key) => delete storage[key],
+              clear: () => storage = {{}},
+              key: (i) => Object.keys(storage)[i] || null,
+              get length() {{ return Object.keys(storage).length; }}
+            }};
+          }}
+          try {{
+            const test = window.localStorage;
+          }} catch (e) {{
+            console.warn("ECHO: LocalStorage inaccessible (Sandbox). Activation du Polyfill Mémoire.");
+            Object.defineProperty(window, 'localStorage', {{ value: createMockStorage() }});
+            Object.defineProperty(window, 'sessionStorage', {{ value: createMockStorage() }});
+          }}
+        }})();
+      </script>
     </head>
     <body>
       {content}
@@ -48,7 +71,6 @@ class EchoRichUI:
 
         function reportHeight() {{
           const h = document.documentElement.scrollHeight || document.body.scrollHeight;
-          // On évite les boucles infinies en vérifiant si la hauteur a réellement changé (> 2px)
           if (Math.abs(h - lastHeight) > 2) {{
             lastHeight = h;
             parent.postMessage({{ type: 'iframe:height', height: h }}, '*');
@@ -61,7 +83,6 @@ class EchoRichUI:
 
         const observer = new ResizeObserver(entries => {{
           clearTimeout(resizeTimeout);
-          // Délai augmenté à 250ms pour plus de stabilité
           resizeTimeout = setTimeout(reportHeight, 250);
         }});
         observer.observe(document.body);
@@ -206,9 +227,9 @@ class EchoRichUI:
     return HTMLResponse(content=html, headers={"Content-Disposition": "inline"})
 
   @classmethod
-  def generate_rich_view(cls, moteur: str, payload: str, title: str = "ECHO Rendu Visuel") -> HTMLResponse:
-    """Usine de rendu universelle (Rendu Visuel). Le redimensionnement est géré par le boilerplate."""
-    cfg = VisualEngine.get_config(moteur, payload)
+  def generate_rich_view(cls, moteur: str, payload: str, title: str = "ECHO Rendu Visuel", cdn_timeout_ms: int = 30000) -> HTMLResponse:
+    """Usine de rendu universelle (Rendu Visuel)."""
+    cfg = VisualEngine.get_config(moteur, payload, cdn_timeout_ms=cdn_timeout_ms)
     
     # Gestion des styles CSS et JS
     styles_list = [s for s in cfg["scripts"] if s.endswith('.css')]
@@ -243,221 +264,130 @@ class EchoUI(EchoRichUI):
   """Moteur de pilotage HUD pour ECHO."""
   
   @staticmethod
-  def _generate_webplayer_js(b64: str, mime: str, metadata: list, current_url: str, hud_id: str, state_key: str) -> str:
-    """Génère le moteur de pilotage ECHO WEBPLAYER."""
-    import orjson as std_json
-    meta_json = std_json.dumps(metadata).decode('utf-8')
+  async def deploy_context_gauge(
+      events: Any, 
+      plan_name: str, 
+      credits_val: str, 
+      quota_str: str, 
+      c_t: int, 
+      active_p_t: int, 
+      g_t: int, 
+      max_t: int, 
+      cache_pct: float, 
+      prompt_pct: float, 
+      gen_pct: float,
+      user_email: Optional[str] = None,
+      user_tier: Optional[str] = None,
+      project_id: Optional[str] = None,
+      auth_sources: Optional[list] = None
+  ):
+    """Déploie le HUD ECHO centré avec tooltips avancés (Identité API & Consommation)."""
     
-    return f"""
-  (function() {{
-    const HUD_ID = '{hud_id}';
-    const STATE_KEY = '{state_key}';
-    const ENGINE_KEY = 'echoWebPlayer_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_');
+    auth_list = ", ".join(auth_sources) if auth_sources else "N/A"
+    total_t = c_t + active_p_t + g_t
     
-    const payload = {{ 
-      b64: "{b64}", mime: "{mime}", metadata: {meta_json}, 
-      url: "{current_url}"
-    }};
-
-    if (!window[ENGINE_KEY]) {{
-      window[ENGINE_KEY] = {{
-        hud: null, ratio: 1.0, posX: 0, posY: 0, 
-        imgScale: 1.0, imgX: 0, imgY: 0,
-        isDragging: false, startMouseX: 0, startMouseY: 0,
-
-        getBestSize: function(ratio, percent = 0.5) {{
-          const vw = window.innerWidth, vh = window.innerHeight;
-          let w = Math.sqrt(percent * vw * vh / ratio);
-          let h = w * ratio;
-          if (w > vw * 0.95) {{ w = vw * 0.95; h = w * ratio; }}
-          if (h > (vh * 0.95 - 40)) {{ h = vh * 0.95 - 40; w = h / ratio; }}
-          return {{ w, h }};
-        }},
-
-        clampHud: function() {{
-          if (!this.hud) return;
-          const vw = window.innerWidth, vh = window.innerHeight;
-          const rect = this.hud.getBoundingClientRect();
-          const marginW = 15, marginH = 15;
-          if (this.posX < marginW) this.posX = marginW;
-          if (this.posY < marginH) this.posY = marginH;
-          if (this.posX + rect.width > vw - marginW) this.posX = vw - marginW - rect.width;
-          if (this.posY + rect.height > vh - marginH) this.posY = vh - marginH - rect.height;
-          this.hud.style.transform = "translate3d(" + this.posX + "px, " + this.posY + "px, 0px)";
-        }},
-
-        saveState: function() {{
-          if (!this.hud) return;
-          const area = document.getElementById(HUD_ID + "-area");
-          const isM = area && area.style.display === 'none';
-          localStorage.setItem(STATE_KEY, JSON.stringify({{
-            w: this.hud.offsetWidth, x: this.posX, y: this.posY, m: isM
-          }}));
-        }},
-
-        attachEvents: function() {{
-          if (!this.hud) return;
-          const matrix = document.getElementById(HUD_ID + "-matrix");
-          const area = document.getElementById(HUD_ID + "-area");
-          const header = document.getElementById(HUD_ID + "-header");
-
-          area.addEventListener('wheel', (e) => {{
-            if (e.ctrlKey) {{
-              e.preventDefault();
-              const delta = e.deltaY > 0 ? 0.9 : 1.1;
-              this.imgScale = Math.min(Math.max(0.1, this.imgScale * delta), 15);
-              matrix.style.transform = "scale(" + this.imgScale + ") translate3d(" + this.imgX + "px, " + this.imgY + "px, 0px)";
-            }}
-          }}, {{ passive: false }});
-
-          area.onmousedown = (e) => {{
-            if (e.button === 1 || (e.button === 0 && e.altKey)) {{
-              e.preventDefault();
-              this.isDragging = true;
-              this.startMouseX = e.clientX; this.startMouseY = e.clientY;
-              area.style.cursor = 'grabbing';
-            }}
-          }};
-
-          window.addEventListener('mousemove', (e) => {{
-            if (this.isDragging) {{
-              this.imgX += (e.clientX - this.startMouseX) / this.imgScale;
-              this.imgY += (e.clientY - this.startMouseY) / this.imgScale;
-              this.startMouseX = e.clientX; this.startMouseY = e.clientY;
-              matrix.style.transform = "scale(" + this.imgScale + ") translate3d(" + this.imgX + "px, " + this.imgY + "px, 0px)";
-            }}
-          }});
-
-          window.addEventListener('mouseup', () => {{
-            this.isDragging = false;
-            if (area) area.style.cursor = 'crosshair';
-          }});
-
-          header.onmousedown = (e) => {{
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
-            e.preventDefault();
-            let ox = e.clientX, oy = e.clientY;
-            document.onmousemove = (me) => {{
-              this.posX += (me.clientX - ox); this.posY += (me.clientY - oy);
-              ox = me.clientX; oy = me.clientY;
-              this.clampHud();
-            }};
-            document.onmouseup = () => {{ document.onmousemove = null; this.saveState(); }};
-          }};
-
-          document.getElementById(HUD_ID + "-btn-help").onclick = () => {{
-            const help = document.getElementById(HUD_ID + "-help-overlay");
-            help.style.display = help.style.display === 'none' ? 'flex' : 'none';
-          }};
-
-          document.getElementById(HUD_ID + "-btn-zoom").onclick = () => {{
-            const area = document.getElementById(HUD_ID + "-area");
-            const img = document.getElementById(HUD_ID + "-img");
-            if (area && img && img.naturalWidth) {{
-              const areaRect = area.getBoundingClientRect();
-              const scaleW = areaRect.width / img.naturalWidth;
-              const scaleH = areaRect.height / img.naturalHeight;
-              this.imgScale = Math.min(scaleW, scaleH);
-              this.imgX = 0; this.imgY = 0;
-              matrix.style.transform = "scale(" + this.imgScale + ") translate3d(0px, 0px, 0px)";
-            }}
-          }};
-
-          document.getElementById(HUD_ID + "-btn-reset").onclick = () => {{
-            const size = this.getBestSize(this.ratio, 0.5);
-            this.hud.style.width = size.w + "px";
-            this.hud.style.height = (size.h + 40) + "px";
-            this.posX = (window.innerWidth - size.w) / 2;
-            this.posY = (window.innerHeight - (size.h + 40)) / 2;
-            this.clampHud();
-            this.saveState();
-          }};
-
-          document.getElementById(HUD_ID + "-btn-min").onclick = (e) => {{
-            e.stopPropagation();
-            const a = document.getElementById(HUD_ID + "-area");
-            const isHiding = a.style.display !== 'none';
-            a.style.display = isHiding ? 'none' : 'block';
-            this.hud.style.height = isHiding ? 'auto' : (this.hud.offsetWidth * this.ratio + 40) + 'px';
-            this.saveState();
-          }};
-
-          document.getElementById(HUD_ID + "-btn-close").onclick = () => {{ this.hud.remove(); }};
-        }},
-
-        create: function(data) {{
-          const old = document.getElementById(HUD_ID); if(old) old.remove();
-          this.hud = document.createElement('div');
-          this.hud.id = HUD_ID;
-          this.hud.style.cssText = 'position:fixed; top:0px; left:0px; z-index:10000; background:rgba(20,20,20,0.98); backdrop-filter:blur(15px); border:1px solid #444; border-radius:10px; box-shadow:0 15px 60px rgba(0,0,0,0.8); color:white; font-family:sans-serif; display:flex; flex-direction:column; min-width:300px; box-sizing: border-box;';
-          this.hud.innerHTML = `
-            <div id="${HUD_ID}-header" style="padding:8px 12px; background:rgba(0,0,0,0.5); display:flex; align-items:center; gap:8px; border-bottom:1px solid #333; cursor:move; user-select:none;">
-              <span style="font-size:10px; font-weight:bold; padding:2px 6px; border-radius:4px; background:#10b981; color:black;">🤖 AUTO</span>
-              <input id="${HUD_ID}-url" type="text" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid #444; border-radius:4px; color:#aaa; font-size:11px; padding:4px 8px; outline:none;" readonly />
-              <div style="display:flex; gap:10px;">
-                <button id="${HUD_ID}-btn-help">?</button>
-                <button id="${HUD_ID}-btn-zoom">🔍</button>
-                <button id="${HUD_ID}-btn-reset">🔄</button>
-                <button id="${HUD_ID}-btn-min">_</button>
-                <button id="${HUD_ID}-btn-close" style="color:#ff4444;">×</button>
-              </div>
-            </div>
-            <div id="${HUD_ID}-area" style="flex:1; position:relative; background:black; overflow:hidden; cursor:crosshair;">
-              <div id="${HUD_ID}-matrix" style="width:100%; height:100%; transform-origin: 0 0; will-change: transform;">
-                <img id="${HUD_ID}-img" style="width:100%; height:100%; object-fit:contain; pointer-events:none;" draggable="false" />
-                <div id="${HUD_ID}-hitboxes" style="position:absolute; inset:0; pointer-events:none;"></div>
-              </div>
-              <div id="${HUD_ID}-help-overlay" style="position:absolute; inset:0; background:rgba(0,0,0,0.85); display:none; flex-direction:column; align-items:center; justify-content:center; z-index:100;">
-                <button onclick="this.parentElement.style.display='none'">Compris</button>
-              </div>
-            </div>
-          `;
-          document.body.appendChild(this.hud);
-          this.attachEvents();
-        }},
-
-        update: function(data) {{
-          if (!this.hud) this.create(data);
-          const img = document.getElementById(HUD_ID + "-img");
-          document.getElementById(HUD_ID + "-url").value = data.url;
-          img.onload = () => {{
-            this.ratio = img.naturalHeight / img.naturalWidth;
-            const size = this.getBestSize(this.ratio, 0.5);
-            this.hud.style.width = size.w + "px";
-            this.hud.style.height = (size.h + 40) + "px";
-            this.clampHud();
-          }};
-          img.src = "data:" + data.mime + ";base64," + data.b64;
-        }}
-      }};
-    }}
-    window[ENGINE_KEY].update(payload);
-  }})();
-"""
-
-  @staticmethod
-  async def monitor_ECHO(events: Any, b64: str, metadata: list, current_url: str, hud_id: str = "echo-webplayer", title: str = "ECHO WEBPLAYER", state_key: str = "echo_webplayer_state"):
-    """Interface unifiée WEBPLAYER."""
-    js_code = EchoUI._generate_webplayer_js(b64, "image/png", metadata, current_url, hud_id, state_key)
-    await events.call("execute", {"code": js_code})
-
-  @staticmethod
-  async def deploy_context_gauge(events: Any, plan_name: str, credits_val: str, quota_str: str, c_t: int, active_p_t: int, g_t: int, max_t: int, cache_pct: float, prompt_pct: float, gen_pct: float):
-    """Déploie la jauge de contexte dans le HUD."""
     js_code = f"""
     (function() {{
-      var navContainer = document.querySelector('nav div.flex.items-center.w-full.max-w-full');
-      if (!navContainer) return;
+      var navbar = document.querySelector('nav div.flex.items-center.w-full.pl-1.5.pr-1');
+      if (!navbar) return;
+      
       var hud = document.getElementById('echo-nav-context-hud');
       if (hud) hud.remove();
+      
+      // --- STYLES TOOLTIP ECHO ---
+      var styleId = 'echo-hud-styles';
+      if (!document.getElementById(styleId)) {{
+        var style = document.createElement('style');
+        style.id = styleId;
+        style.innerHTML = `
+          .echo-tooltip {{
+            position: relative;
+            display: flex;
+            align-items: center;
+          }}
+          .echo-tooltip .tooltip-box {{
+            visibility: hidden;
+            width: 240px;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(8px);
+            color: #f8fafc;
+            text-align: left;
+            border-radius: 8px;
+            padding: 12px;
+            position: absolute;
+            z-index: 100;
+            top: 150%;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.3s, transform 0.3s;
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 0 15px rgba(0, 212, 255, 0.1);
+            font-size: 11px;
+            line-height: 1.5;
+            pointer-events: none;
+          }}
+          .echo-tooltip:hover .tooltip-box {{
+            visibility: visible;
+            opacity: 1;
+            transform: translateX(-50%) translateY(-5px);
+          }}
+          .tooltip-title {{
+            color: #00d4ff;
+            font-weight: bold;
+            margin-bottom: 8px;
+            border-bottom: 1px solid rgba(0, 212, 255, 0.2);
+            padding-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }}
+          .tooltip-row {{ display: flex; justify-content: space-between; margin-bottom: 4px; }}
+          .dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }}
+        `;
+        document.head.appendChild(style);
+      }}
+
       hud = document.createElement('div');
       hud.id = 'echo-nav-context-hud';
-      hud.style.cssText = 'display:flex;align-items:center;margin:0 12px;flex-grow:8;width:66%;min-width:350px;';
-      hud.innerHTML = '<div style="display:flex;width:100%;height:8px;background:rgba(128,128,128,0.2);border-radius:4px;overflow:hidden;">' +
-        '<div style="width:{cache_pct}%;background:#8b5cf6;"></div>' +
-        '<div style="width:{prompt_pct}%;background:#10b981;"></div>' +
-        '<div style="width:{gen_pct}%;background:#f59e0b;"></div></div>';
-      navContainer.appendChild(hud);
+      // Centrage Absolu entre Sélecteur et Menus
+      hud.style.cssText = 'position:absolute;left:50%;transform:translateX(-50%);display:flex;align-items:center;justify-content:center;width:auto;max-width:30%;z-index:40;gap:12px;';
+      
+      var iconHtml = `
+        <div class="echo-tooltip">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="width:16px;height:16px;color:#00d4ff;cursor:help;opacity:0.8;">
+            <path fill-rule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clip-rule="evenodd" />
+          </svg>
+          <div class="tooltip-box">
+            <div class="tooltip-title">INFO GEMINI CODE ASSIST</div>
+            <div class="tooltip-row"><span>🔐 Sources:</span> <span>{auth_list}</span></div>
+            <div class="tooltip-row"><span>👤 Compte:</span> <span>{user_email or 'N/A'}</span></div>
+            <div class="tooltip-row"><span>🏗️ Projet:</span> <span>{project_id or 'N/A'}</span></div>
+            <div class="tooltip-row"><span>🏆 Tier:</span> <span style="color:#10b981;font-weight:bold;">{user_tier or 'N/A'}</span></div>
+          </div>
+        </div>
+      `;
+      
+      var barHtml = `
+        <div class="echo-tooltip" style="flex-grow:1;min-width:150px;">
+          <div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);">
+            <div style="width:{cache_pct}%;background:linear-gradient(90deg, #7c3aed, #8b5cf6);" title="Cache"></div>
+            <div style="width:{prompt_pct}%;background:linear-gradient(90deg, #059669, #10b981);" title="Prompt"></div>
+            <div style="width:{gen_pct}%;background:linear-gradient(90deg, #d97706, #f59e0b);" title="Gen"></div>
+          </div>
+          <div class="tooltip-box" style="width:200px;">
+            <div class="tooltip-title">CONSOMMATION CONTEXTUELLE</div>
+            <div class="tooltip-row"><span><span class="dot" style="background:#8b5cf6;"></span>Cache:</span> <span>{c_t}</span></div>
+            <div class="tooltip-row"><span><span class="dot" style="background:#10b981;"></span>Prompt:</span> <span>{active_p_t}</span></div>
+            <div class="tooltip-row"><span><span class="dot" style="background:#f59e0b;"></span>Génération:</span> <span>{g_t}</span></div>
+            <div class="tooltip-row" style="margin-top:6px;border-top:1px solid rgba(255,255,255,0.1);padding-top:4px;font-weight:bold;">
+              <span>Total:</span> <span>{total_t} / {max_t}</span>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      hud.innerHTML = iconHtml + barHtml;
+      navbar.appendChild(hud);
     }})();
     """
     await events.emit("execute", {"code": js_code})

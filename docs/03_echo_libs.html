@@ -45,7 +45,7 @@
     </section>
 
     <section id="utils-core">
-      <h2>echo_utils.py : Le Cœur Réactif (v3.0)</h2>
+      <h2>echo_utils.py : Le Cœur Réactif (v3.8)</h2>
       
       <div class="tech-spec">
         <h4>⚙️ EchoStateManager : L'Architecture Bit-Perfect</h4>
@@ -58,11 +58,17 @@
       </div>
 
       <div class="tech-spec">
-        <h4>⚙️ EchoGeminiClient : Résilience HTTP/2</h4>
-        <p>Moteur d'appel API avec support <strong>HTTP/2 Strict</strong> (via <code>httpx</code> et <code>h2</code>). Permet le multiplexage des flux SSE (Server-Sent Events) et une latence réduite de 40% sur les réponses longues.</p>
+        <h4>⚙️ EchoGeminiClient : Résilience & Mesh d'Authentification</h4>
+        <p>Moteur d'appel API avec support <strong>HTTP/2 Strict</strong> et architecture symétrique (AI Studio & Google Cloud Code Assist). Il orchestre un "Mesh" d'identifiants (Clés API, OAuth2) pour une autonomie maximale et permet la capture asynchrone des <strong>signatures de pensée</strong> via les flux SSE.</p>
         <ul>
-          <li><strong>Failover</strong> : Bascule automatique de clé après <code>KEY_SWITCH_THRESHOLD</code> échecs sur une clé saturée (429/503).</li>
-          <li><strong>Jitter</strong> : Utilisation d'une gigue aléatoire (0.7x à 1.3x) lors des tentatives de reconnexion.</li>
+          <li><strong>Failover Hybride</strong> : 
+            <ul>
+              <li><em>Erreurs de Flux (429, 500, 503)</em> : Bascule automatique après <code>KEY_SWITCH_THRESHOLD</code> échecs avec Backoff exponentiel.</li>
+              <li><em>Erreurs de Droits (403, 404)</em> : <strong>Bascule immédiate</strong> vers la source suivante si le modèle (ex: PRO) n'est pas autorisé sur l'identifiant actuel.</li>
+            </ul>
+          </li>
+          <li><strong>Transparence Totale</strong> : Notification en temps réel via <code>events.status</code> lors des périodes de réessai (Retries) et des basculements de mesh, éliminant l'impression de gel de l'interface en mode Streaming.</li>
+          <li><strong>Support OAuth2</strong> : Rafraîchissement proactif et silencieux des jetons Bearer (cycle de 50 min) pour les comptes Google Cloud.</li>
         </ul>
       </div>
 
@@ -86,7 +92,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.120.1 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.133.5 - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   <div class="transition-text"><em>Ces moteurs logiciels nécessitent des interfaces pour être supervisés et pilotés par l'utilisateur. <a href="04_hud_ui.html">Découvrir l'écosystème HUD & UI ➔</a></em></div>
   </main>

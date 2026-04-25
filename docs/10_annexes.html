@@ -235,10 +235,11 @@
 
             <div class="tech-card green">
                 <h3><code>EchoGeminiClient</code></h3>
-                <p><strong>Protocole HTTP/2 Strict</strong> : Utilisation de <code>httpx</code> avec multiplexage. Réduit la latence des flux SSE et permet la capture asynchrone des signatures de pensée.</p>
+                <p><strong>Protocole HTTP/2 Strict & Failover Hybride</strong> : Utilisation de <code>httpx</code> avec multiplexage. Réduit la latence des flux SSE et permet la capture asynchrone des <strong>signatures de pensée</strong>. Gère un "Mesh" d'authentification symétrique (AI Studio / OAuth2 Code Assist).</p>
                 <ul>
-                    <li><strong>Rotation de clés</strong> : Bascule automatique après 2 erreurs (429/503).</li>
-                    <li><strong>Jitter</strong> : Exponential backoff avec gigue aléatoire.</li>
+                    <li><strong>Bascule (Surcharge)</strong> : Rotation automatique après 2 échecs (429/500/503) avec Jitter (0.7x-1.3x).</li>
+                    <li><strong>Bascule (Autorisation)</strong> : Bascule **immédiate** vers l'identifiant suivant du mesh en cas d'erreur 403 (Forbidden) ou 404 (Not Found).</li>
+                    <li><strong>Monitor Streaming</strong> : Emission systématique de <code>events.status</code> lors des réessais pour garantir la transparence UX.</li>
                 </ul>
             </div>
 
@@ -300,7 +301,7 @@
         </section>
 
         <footer>
-            ECHO Framework v5.99.1 - "Sovereign Intelligence" - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework v5.133.5 - "Sovereign Intelligence" - Copyright © 2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     </main>
 <script src="nav.js"></script>

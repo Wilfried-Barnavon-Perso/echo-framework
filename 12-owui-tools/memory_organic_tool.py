@@ -1,8 +1,8 @@
 """
-title: ECHO Organic Memory Retrieval V2
+title: ECHO Organic Memory Tool
 author: Wilfried BARNAVON
-version: 2.2
-description: 2.2: Harmonisation de la résilience d'embedding (Threshold 2, Retries 5) via echo_constants.py.
+version: 2.3
+description: 2.3: Migration vers le Unified Auth Mesh.
 """
 
 from typing import Optional, List, Any, Dict
@@ -66,18 +66,18 @@ class Tools:
         
         try:
             await events.status(f"🧠 Consultation de la mémoire organique : '{query}'...")
-            
-            # 1. Récupération des clés API
-            api_keys = self.auth.get_api_keys(user_id)
-            if not api_keys:
-                return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune clé API Google AI Studio trouvée.")
+
+            # 1. Récupération du mesh d'authentification
+            auth_mesh = await self.auth.get_ordered_auth_mesh(user_id)
+            if not auth_mesh:
+                return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune authentification Google ou Clé API trouvée.")
 
             # 2. Vectorisation V2 (Asymétrique Query)
             # Formatage requis par gemini-embedding-2-preview
             query_text = f"task: search result | query: {query}"
-            
+
             embed_data = await EchoGeminiClient.embed(
-                keys=api_keys,
+                auth_mesh=auth_mesh,
                 model=MODEL_EMBEDDING,
                 content={"parts": [{"text": query_text}]},
                 threshold=self.valves.KEY_SWITCH_THRESHOLD,
@@ -85,7 +85,6 @@ class Tools:
                 events=events,
                 timeout=self.valves.RECALL_TIMEOUT
             )
-            
             query_vector = embed_data["embedding"]["values"]
 
             # 3. Recherche Qdrant avec filtrage strict

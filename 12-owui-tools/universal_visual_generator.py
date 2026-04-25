@@ -1,8 +1,8 @@
 """
-title: ECHO Universal Visual Generator
+title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 3.1
-description: 3.1: Intégration du moteur 'sketch' pour les diagrammes façon croquis à main levée.
+version: 3.8
+description: 3.8: Intégration de la ECHO Scientific Suite (STEM).
 """
 
 import os
@@ -28,6 +28,7 @@ class Tools:
     KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
     MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre total de tentatives avant d'abandonner.")
     GENERATOR_TIMEOUT: int = Field(default=60, description="Délai d'attente maximum (secondes) pour la génération Rendu Visuel.")
+    CDN_TIMEOUT_MS: int = Field(default=10000, description="Délai maximum (en ms) d'attente pour le chargement des librairies graphiques via CDN dans le navigateur.")
 
   def __init__(self):
     self.valves = self.Valves()
@@ -58,24 +59,28 @@ class Tools:
     - 'svg' : Plans 2D, Schémas vectoriels sur mesure.
     - 'leaflet' : Cartographie et données géographiques (JSON/GeoJSON).
     - 'cytoscape' : Réseaux, Graphes de force, Clusters (JSON).
-    - 'smiles' : Structures moléculaires et chimie (SMILES).
     - 'wavedrom' : Électronique, Signaux numériques (JSON).
+    - 'chem' : Chimie moléculaire. Fournir uniquement une chaîne SMILES valide (ex: CCO).
+    - 'science' : Physique & Mathématiques. Fournir un objet JSON de configuration Plotly.js pour tracer des graphiques/fonctions.
+    - 'bio' : Biologie structurelle. Fournir uniquement un identifiant PDB (ex: 1A8M) pour afficher une protéine 3D.
+    - 'astro' : Astronomie. Fournir un objet JSON avec { "target": "nom_objet", "fov": 1.0 } pour la cartographie céleste (Aladin). 'target' DOIT être un nom d'objet (ex: M31, Orion) ou des coordonnées. Pas de phrases descriptives.
     
-    :param intention: Description du besoin visuel (ex: "Plan 3D d'un bureau", "Structure de la molécule d'aspirine").
+    :param intention: Description du besoin visuel (ex: "Plan 3D d'un bureau", "Structure de la hiérarchie").
     :param donnees_contextuelles: Faits, chiffres et relations à modéliser.
     :param moteur: Optionnel. Force un moteur spécifique parmi la liste ci-dessus.
     :param niveau_cognitif: Choisir selon la complexité : 
         - 'MODEL_LITE' : Mindmaps simples, Flowcharts basiques.
-        - 'MODEL_FLASH' : Standard (ECharts, BPMN, Leaflet, SMILES, SVG).
+        - 'MODEL_FLASH' : Standard (ECharts, BPMN, Leaflet, SVG).
         - 'MODEL_PRO' : Complexe (3D A-Frame, Réseaux Cytoscape, Signaux WaveDrom, Vega) ou après échec de validation.
     """
     events = EchoEvents(__event_emitter__, __event_call__)
     await events.status(f"🧠 Rendu Visuel : Orchestration {moteur or 'Auto'}...")
+    user_id = __user__.get("id") if __user__ else "system"
 
     # 1. Auth
-    api_keys = self.auth.get_api_keys(__user__.get("id"))
-    if not api_keys: 
-      return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune clé API trouvée.", status={"status": "error"})
+    auth_mesh = await self.auth.get_ordered_auth_mesh(user_id)
+    if not auth_mesh: 
+      return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune authentification Google configurée.", status={"status": "error"})
 
     # 2. Manuel Technique de l'Architecte
     directive_moteur = f"Tu DOIS impérativement utiliser le moteur : '{moteur}'." if moteur else "Choisis le moteur le plus adapté."
@@ -96,8 +101,7 @@ class Tools:
       "9. 'svg' : Code SVG complet avec viewBox. Pas de scripts.\n"
       "10. 'leaflet' : JSON GeoJSON ou objet {'lat':..., 'lon':..., 'zoom':..., 'features':[...]}.\n"
       "11. 'cytoscape' : JSON Elements. Structure : {'nodes': [{'data':{'id':...}}], 'edges': [...]}.\n"
-      "12. 'smiles' : Chaîne SMILES brute (ex: 'CC(=O)OC1=CC=CC=C1C(=O)O').\n"
-      "13. 'wavedrom' : JSON WaveDrom. Structure : {'signal': [{'name':..., 'wave':...}]}.\n\n"
+      "12. 'wavedrom' : JSON WaveDrom. Structure : {'signal': [{'name':..., 'wave':...}]}.\n\n"
       "RÈGLE D'OR : Réponds EXCLUSIVEMENT par un objet JSON :\n"
       "{\n"
       " \"moteur\": \"nom_du_moteur\",\n"
@@ -122,7 +126,7 @@ class Tools:
     target_model = MODEL_ROUTING.get(niveau_cognitif, niveau_cognitif)
     try:
       data = await EchoGeminiClient.call(
-        keys=api_keys, target_model=target_model, payload=payload_request,
+        auth_mesh=auth_mesh, target_model=target_model, payload=payload_request,
         threshold=self.valves.KEY_SWITCH_THRESHOLD, max_retries=self.valves.MAX_RETRIES,
         events=events, timeout=self.valves.GENERATOR_TIMEOUT
       )
@@ -133,20 +137,20 @@ class Tools:
         for p in cand["content"].get("parts", []):
           if "text" in p: raw_response += p["text"]
       
-      # Nettoyage JSON du sous-agent
-      raw_response = raw_response.strip()
-      if "```json" in raw_response:
-        raw_response = raw_response.split("```json")[1].split("```")[0].strip()
-      elif "```" in raw_response:
-        raw_response = raw_response.split("```")[1].strip()
+      # Nettoyage JSON du sous-agent (SÉCURISÉ)
+      match = re.search(r'(\{.*\})', raw_response, re.DOTALL)
+      if match:
+          raw_response = match.group(1)
+      else:
+          raw_response = raw_response.strip()
 
       res_json = json.loads(raw_response)
       moteur_final = res_json.get("moteur", "mermaid").lower()
       visual_payload = res_json.get("payload", "")
       explication = res_json.get("explication", "Visualisation générée.")
 
-      # --- PHASE 5 : VALIDATION (OPTION A) ---
-      moteurs_json = ["echarts", "vega", "timeline", "gantt", "leaflet", "cytoscape", "wavedrom"]
+      # --- PHASE 5 : VALIDATION ---
+      moteurs_json = ["echarts", "vega", "timeline", "gantt", "leaflet", "cytoscape", "wavedrom", "science", "astro"]
       if moteur_final in moteurs_json:
         try:
           if isinstance(visual_payload, str):
@@ -171,7 +175,14 @@ class Tools:
       b64_payload = base64.b64encode(visual_payload.encode('utf-8')).decode('utf-8')
 
       await events.status(f"🎨 Interface {moteur_final.upper()} prête ({niveau_cognitif}).", done=True)
-      html_resp = EchoRichUI.generate_rich_view(moteur=moteur_final, payload=b64_payload, title=f"Rendu Visuel : {intention}")
+      
+      # /!\ Transmission de la Valve au moteur frontend
+      html_resp = EchoRichUI.generate_rich_view(
+          moteur=moteur_final, 
+          payload=b64_payload, 
+          title=f"Rendu Visuel : {intention}",
+          cdn_timeout_ms=self.valves.CDN_TIMEOUT_MS
+      )
       
       return html_resp, wrap_tool_output(
           text=f"Le système Rendu Visuel a déployé une interface '{moteur_final}' ({niveau_cognitif}) : {explication}",
@@ -180,6 +191,3 @@ class Tools:
 
     except Exception as e:
       return wrap_tool_output(text=f"❌ Erreur Rendu Visuel: Le niveau {niveau_cognitif} a rencontré une erreur : {str(e)}", status={"status": "error"})
-
-text=f"❌ Erreur Rendu Visuel: Le niveau {niveau_cognitif} a rencontré une erreur : {str(e)}", status={"status": "error"})
-

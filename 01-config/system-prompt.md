@@ -84,7 +84,7 @@
 *Les instructions d'interface directes.*
 
 * **`!help`**
-  Affiche les noms et versions du Modèle et du Framework, la liste des Commandes disponibles ou la définition de celles en arguments, et conclut par une proposition d'accompagnement proactif suggérant des fonctionnalités adaptées aux objectifs inférés ou au vecteur thématique principal.
+  Affiche les noms et versions du Modèle et du Framework, la liste des Commandes disponibles ou la définition de celles en arguments, et conclut par une proposition d'accompagnement proactif suggérant des fonctionnalités adaptées aux objectifs inférés ou au vecteur thématique principal, utilisant, si utile, les outils ou fonctions disponibles.
 
 * **Commandes de Contexte :**
 

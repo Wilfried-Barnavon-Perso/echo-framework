@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 181.0
-description: 181.0: Uniformisation de la résilience (Threshold 2, Retries 5) via l'Arsenal de Constantes 1.23.
+version: 186.1
+description: 186.1: Résilience du HUD lors d'échecs API.
 """
 
 # ==============================================================================
@@ -420,7 +420,7 @@ class Pipe:
         events = EchoEvents(__event_emitter__)
         if not __user__: yield "❌ Identité manquante."; return
         user_valves = __user__.get("valves") or self.UserValves()
-        chat_id = body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
+        chat_id = kwargs.get("__chat_id__") or body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
         auth = AuthService(user_id=__user__["id"])
         from echo_utils import EchoAuth
@@ -430,22 +430,25 @@ class Pipe:
         api_key_from_filter = body.get("_api_key")
 
         if api_key_from_filter:
-            await events.status("🔐 Validation de la clé API Google AI Studio...")
+            await events.status("🔐 Validation de l'authentification Google...")
             success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
             if success:
-                yield "✅ **Configuration ECHO Réussie**\n\nVotre clé API Google AI Studio a été validée et enregistrée de manière sécurisée dans votre coffre-fort ECHO.\n\nVous pouvez maintenant poser votre question."
+                yield (
+                    "✅ **Configuration de la Souveraineté ECHO Réussie**\n\n"
+                    f"{msg}\n\n"
+                    "Vos accès Google ont été validés et enregistrés de manière sécurisée dans votre coffre-fort ECHO.\n\n"
+                    "Vous pouvez maintenant poser votre question."
+                )
                 return
             else:
                 yield f"❌ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
                 return
 
-        # --- [NOUVEAU] VÉRIFICATION DE PRÉSENCE ---
-        api_keys = echo_auth.get_api_keys()
-        if not api_keys:
+        # --- [NOUVEAU] VÉRIFICATION DE PRÉSENCE & MESH ---
+        auth_mesh = await echo_auth.get_ordered_auth_mesh()
+        if not auth_mesh:
             yield auth.get_auth_prompt()
             return
-        # On prend la première clé pour le routage dynamique initial
-        api_key = api_keys[0]
 
         # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
         model_selection = user_valves.MODEL_SELECTION
@@ -565,14 +568,15 @@ class Pipe:
             try:
                 # Appel au client factorisé avec gestion du fallback
                 async for chunk in EchoGeminiClient.stream(
-                    keys=api_keys,
+                    auth_mesh=auth_mesh,
                     target_model=target_model,
                     payload=payload,
                     threshold=self.valves.KEY_SWITCH_THRESHOLD,
                     max_retries=self.valves.MAX_RETRIES,
                     events=events,
                     process_callback=proc.process,
-                    timeout=self.valves.HTTP_CLIENT_TIMEOUT
+                    timeout=self.valves.HTTP_CLIENT_TIMEOUT,
+                    chat_id=chat_id
                 ):
                     # On ne yield le texte que si aucune escalade n'est en cours (Gateway Pattern)
                     if isinstance(chunk, dict) or not proc.escalation_requested:
@@ -703,19 +707,30 @@ class Pipe:
             orch.user_data_manager.index_suture(new_cumul, chat_id, inv, body.get("_echo_last_cumul"))
 
         # --- HUD METRICS ---
-        if user_valves.SHOW_CONTEXT_METRICS and proc.usage_stats:
-            p_t = proc.usage_stats.get("promptTokenCount", 0)
-            c_t = proc.usage_stats.get("cachedContentTokenCount", 0)
-            g_t = proc.usage_stats.get("candidatesTokenCount", 0)
+        if user_valves.SHOW_CONTEXT_METRICS:
+            p_t = 0; c_t = 0; g_t = 0
+            if proc.usage_stats:
+                p_t = proc.usage_stats.get("promptTokenCount", 0)
+                c_t = proc.usage_stats.get("cachedContentTokenCount", 0)
+                g_t = proc.usage_stats.get("candidatesTokenCount", 0)
+            
             max_t = self.valves.MAX_CONTEXT_SIZE
             
-            plan_data = echo_auth.get_api_keys() # Fallback for now
-            plan_name = "ECHO Standard" if plan_data else ""
-            credits_val = "0"
-            q_rem_str = "?"
-            q_lim_str = "?"
-            quota_str = f"🎯 {q_rem_str}/{q_lim_str} req. | " if (q_rem_str != "?" and q_lim_str != "?") else ""
+            # Nom de la source active (via le mesh)
+            source_label = auth_mesh[0]['type'].replace('_', ' ').title() if auth_mesh else "ECHO"
+            plan_name = f"Authentification {source_label}"
+            credits_val = "∞"
+            quota_str = ""
             
+            # Métadonnées d'identité pour l'infobulle (INFO GEMINI CODE ASSIST)
+            from echo_constants import AUTH_DATA_USER_EMAIL, AUTH_DATA_USER_TIER, AUTH_DATA_PROJECT_ID
+            email = echo_auth.get_auth_data(AUTH_DATA_USER_EMAIL)
+            tier = echo_auth.get_auth_data(AUTH_DATA_USER_TIER)
+            proj = echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
+            
+            # Liste des sources (Mesh) simplifiée pour le HUD
+            sources = [s['type'].replace('google_', '').replace('_', ' ').upper() for s in auth_mesh] if auth_mesh else []
+
             active_p_t = max(0, p_t - c_t)
             cache_pct = min(100, (c_t / max_t) * 100)
             prompt_pct = min(100, (active_p_t / max_t) * 100)
@@ -724,5 +739,7 @@ class Pipe:
             await EchoUI.deploy_context_gauge(
                 events=events, plan_name=plan_name, credits_val=credits_val, quota_str=quota_str,
                 c_t=c_t, active_p_t=active_p_t, g_t=g_t, max_t=max_t,
-                cache_pct=cache_pct, prompt_pct=prompt_pct, gen_pct=gen_pct
+                cache_pct=cache_pct, prompt_pct=prompt_pct, gen_pct=gen_pct,
+                user_email=email, user_tier=tier, project_id=proj,
+                auth_sources=sources
             )

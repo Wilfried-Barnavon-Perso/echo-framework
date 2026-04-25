@@ -178,10 +178,10 @@ class Tools:
             try:
                 html_text = base64.b64decode(b64_html).decode('utf-8', errors='ignore')
                 auth = EchoAuth(user_id=uid)
-                api_keys = auth.get_api_keys(uid)
+                auth_mesh = await auth.get_ordered_auth_mesh(uid)
                 
-                if not api_keys:
-                    return wrap_tool_output(text="❌ Erreur: Aucune clé API Google Studio trouvée pour l'analyse.", status=res_action)
+                if not auth_mesh:
+                    return wrap_tool_output(text="❌ Erreur: Aucune authentification Google configurée pour l'analyse.", status=res_action)
 
                 # Résolution du modèle
                 model_map = {"MODEL_LITE": MODEL_LITE, "MODEL_FLASH": MODEL_FLASH, "MODEL_PRO": MODEL_PRO}
@@ -197,7 +197,7 @@ class Tools:
                 }
                 
                 data = await EchoGeminiClient.call(
-                    keys=api_keys, 
+                    auth_mesh=auth_mesh, 
                     target_model=target_model, 
                     payload=payload, 
                     threshold=self.valves.KEY_SWITCH_THRESHOLD,

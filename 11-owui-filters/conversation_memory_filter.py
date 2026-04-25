@@ -1,8 +1,8 @@
 """
 title: ECHO Organic Memory Filter V2
 author: Wilfried BARNAVON
-version: 2.5
-description: 2.5: Recouvrement dynamique R, fusion vectorielle pure et protection anti-atrophie (max importance).
+version: 2.6
+description: 2.6: Intégration du Unified Auth Mesh (OAuth2 Support).
 """
 
 from pydantic import BaseModel, Field
@@ -58,7 +58,6 @@ class Filter:
         
         # --- CONFIGURATION UI OPEN WEBUI ---
         self.toggle = True  # Affiche le switch dans le menu Intégrations (icône engrenage)
-        # Icône SVG : Cerveau avec circuit (Cognition)
         self.icon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNOSAxMmExIDEsMCwxLDAsMiwxLDEsMCwxLDAtMi0weiIvPjxwYXRoIGQ9Ik0xNSAxMmExIDEsMCwxLDAsMiwxLDEsMCwxLDAtMi0weiIvPjxwYXRoIGQ9Ik04IDE3YTUgNSAwIDAgMSAxMCAwIi8+PHBhdGggZD0iTTEyIDN2Mm0wIDE0djJtLTktOWgtMm0xNCAwaC0yIi8+PC9zdmc+"
 
     async def _ensure_collection(self):
@@ -76,7 +75,7 @@ class Filter:
         except Exception as e:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Qdrant: {e}")
 
-    async def _get_distilled_json(self, messages: List[Dict], api_keys: List[str]) -> Optional[Dict]:
+    async def _get_distilled_json(self, messages: List[Dict], auth_mesh: List[Dict]) -> Optional[Dict]:
         """Distillation multimodale via Gemini 2.5 Flash."""
         distill_prompt = (
             "Tu es l'unité de distillation de mémoire d'ECHO. Analyse cet extrait de conversation.\n"
@@ -108,20 +107,20 @@ class Filter:
         }
 
         try:
-            data = await EchoGeminiClient.call(keys=api_keys, target_model=MODEL_DISTILLATION, payload=payload)
+            data = await EchoGeminiClient.call(auth_mesh=auth_mesh, target_model=MODEL_DISTILLATION, payload=payload)
             content_text = data["candidates"][0]["content"]["parts"][0]["text"]
             return json.loads(content_text)
         except Exception as e:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Distillation: {e}")
             return None
 
-    async def _distill_and_store(self, chat_id: str, user_id: str, messages: List[Dict], api_keys: List[str]):
+    async def _distill_and_store(self, chat_id: str, user_id: str, messages: List[Dict], auth_mesh: List[Dict]):
         """Pipeline Asynchrone V2."""
         try:
             await self._ensure_collection()
             
             # 1. Distillation
-            distilled = await self._get_distilled_json(messages, api_keys)
+            distilled = await self._get_distilled_json(messages, auth_mesh)
             if not distilled or not distilled.get("summary"): return
             
             summary = distilled["summary"]
@@ -131,7 +130,7 @@ class Filter:
             
             # 2. Vectorisation V2
             embed_data = await EchoGeminiClient.embed(
-                keys=api_keys, 
+                auth_mesh=auth_mesh, 
                 model=MODEL_EMBEDDING, 
                 content={"parts": [{"text": f"title: {new_slug} | text: {summary}"}]}
             )
@@ -159,21 +158,16 @@ class Filter:
                     old_payload = hit.get("payload", {})
                     
                     if score > self.valves.SIMILARITY_THRESHOLD:
-                        # Collision sémantique avérée : on réutilise le point existant
                         point_id = hit.get("id")
-                        final_slug = old_payload.get("slug", new_slug) # Continuité du nommage
-                        
-                        # Règle du Max (Protection anti-atrophie)
+                        final_slug = old_payload.get("slug", new_slug)
                         old_importance = int(old_payload.get("importance", 1))
                         final_importance = max(old_importance, new_importance)
                         
                         if score > self.valves.EXACT_MATCH_THRESHOLD:
-                            if self.valves.DEBUG_MEMORY: logger.info(f"[ECHO-MEMORY-V2] 🔄 Rafraîchissement date pour '{final_slug}'.")
                             final_summary = old_payload.get("summary", summary)
                         else:
-                            if self.valves.DEBUG_MEMORY: logger.info(f"[ECHO-MEMORY-V2] 🧩 Fusion sémantique pour '{final_slug}'...")
                             fusion_prompt = f"Fusionne ces deux résumés techniques en un seul paragraphe cohérent et à jour :\n1. {old_payload.get('summary')}\n2. {summary}"
-                            fusion_data = await EchoGeminiClient.call(keys=api_keys, target_model=MODEL_DISTILLATION, payload={"contents": [{"role":"user", "parts":[{"text": fusion_prompt}]}]})
+                            fusion_data = await EchoGeminiClient.call(auth_mesh=auth_mesh, target_model=MODEL_DISTILLATION, payload={"contents": [{"role":"user", "parts":[{"text": fusion_prompt}]}]})
                             final_summary = fusion_data["candidates"][0]["content"]["parts"][0]["text"]
                 
                 # 4. Insertion/Update
@@ -195,7 +189,6 @@ class Filter:
 
     async def outlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
         """Phase Outlet : Déclenchement de la mémorisation après la réponse de l'IA."""
-        # On vérifie la UserValve de souveraineté
         if not self.user_valves.ENABLE_MEMORY or not __user__:
             return body
 
@@ -203,7 +196,6 @@ class Filter:
         chat_id = (__metadata__ or {}).get("chat_id") or body.get("chat_id")
         user_id = __user__.get("id")
         
-        # Hard Limit logic
         count = self.last_triggered_count.get(chat_id, 0) + 1
         self.last_triggered_count[chat_id] = count
 
@@ -211,25 +203,19 @@ class Filter:
         
         if triggered and len(messages) >= 4:
             self.last_triggered_count[chat_id] = 0
-            api_keys = self.auth.get_api_keys(user_id)
-            if api_keys:
-                # Fenêtre de recouvrement sémantique intelligente
-                # R = norme de l'écart à la certitude : sqrt(1 + (1-P)^2)
+            auth_mesh = await self.auth.get_ordered_auth_mesh(user_id)
+            if auth_mesh:
                 p = self.valves.TRIGGER_PROBABILITY
                 r = math.sqrt(1.0 + (1.0 - p)**2)
-                
                 window_size = int(r / p)
                 window_msgs = messages[-window_size:]
-                if self.valves.DEBUG_MEMORY:
-                    logger.info(f"[ECHO-MEMORY-V2] 🧠 Déclenchement (Fenêtre: {len(window_msgs)} msgs)")
                 
-                # Feedback visuel (Optionnel, masqué si hidden=True)
                 if __event_emitter__:
                     await __event_emitter__({
                         "type": "status",
                         "data": {"description": "🧠 Consolidation de la mémoire organique...", "done": False, "hidden": not self.valves.DEBUG_MEMORY}
                     })
                 
-                asyncio.create_task(self._distill_and_store(chat_id, user_id, window_msgs, api_keys))
+                asyncio.create_task(self._distill_and_store(chat_id, user_id, window_msgs, auth_mesh))
 
         return body

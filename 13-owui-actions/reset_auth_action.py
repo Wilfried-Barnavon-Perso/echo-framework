@@ -1,8 +1,8 @@
 """
 title: ECHO Auth Manager
 author: Wilfried BARNAVON
-version: 3.7
-description: 3.7: Mise à jour des messages pour le mode Clé API Google AI Studio.
+version: 4.2
+description: 4.2: Harmonisation UX (Terminologie unifiée Authentification).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgeD0iMyIgeT0iMTEiIHJ4PSIyIiByeT0iMiIvPjxwYXRoIGQ9Ik03IDExVjdhNSA1IDAgMCAxIDEwIDB2NCIvPjwvc3ZnPg==
 """
 
@@ -35,7 +35,7 @@ class Action:
         safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
         db_path = os.path.join(self.user_dbs_dir, safe_uid, "identity.db")
 
-        if not await events.confirm("🔴 Réinitialiser votre Clé API Google ?", "Cela supprimera votre clé Google AI Studio de la base ECHO. Vous devrez la fournir à nouveau."):
+        if not await events.confirm("🔴 Réinitialiser votre Authentification Google ?", "Cela supprimera vos clés et jetons d'accès Google de la base ECHO. Vous devrez vous identifier à nouveau."):
             return None
 
         if not os.path.exists(db_path):
@@ -45,10 +45,13 @@ class Action:
         try:
             with sqlite3.connect(db_path, timeout=10.0) as conn:
                 cursor = conn.cursor()
+                # Purge de toutes les données d'authentification Google (Clés, OAuth, Priorité, Identité, Tier)
                 cursor.execute("DELETE FROM auth_data WHERE key LIKE 'google_%'")
                 rows = cursor.rowcount
+                # Purge du contexte PKCE
+                cursor.execute("DELETE FROM auth_pkce_context WHERE user_id = ?", (user_id,))
                 conn.commit()
-            await events.toast(f"✅ Succès ! {rows} entrées supprimées. Vous pouvez fournir une nouvelle clé.", "success")
+            await events.toast("✅ Succès ! Votre configuration d'authentification a été effacée.", "success")
         except Exception as e:
             await events.toast(f"❌ Erreur SQLite : {str(e)}", "error")
 

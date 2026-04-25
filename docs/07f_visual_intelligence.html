@@ -18,7 +18,7 @@
     <div class="grid-container">
       <div class="card">
         <h3>🎨 Moteur de Rendu Visuel</h3>
-        <p><strong>Nature :</strong> Système d'Exploitation Visuel (13 moteurs intégrés).</p>
+        <p><strong>Nature :</strong> Système d'Exploitation Visuel (14 moteurs intégrés).</p>
         <p><strong>Composants :</strong> <code>universal_visual_generator.py</code> (Orchestrateur) & <code>echo_visuals.py</code> (Registre des moteurs).</p>
         <p><strong>Rôle :</strong> Traduire une intention sémantique en une interface interactive (Rich UI) couvrant 360° des besoins (3D, Droit, Finance, Science, etc.).</p>
         <p><strong>Sécurité :</strong> Tunnel <i>Base64</i> garantissant l'intégrité absolue des données entre l'IA et le navigateur.</p>
@@ -64,8 +64,8 @@
         </tr>
         <tr>
           <td><strong>Architecture & 3D</strong></td>
-          <td><code>aframe</code> / <code>svg</code></td>
-          <td>Modélisation spatiale 3D et plans 2D interactifs.</td>
+          <td><code>aframe</code> / <code>svg</code> / <code>sketch</code></td>
+          <td>Modélisation spatiale 3D, plans 2D et croquis "fait main" (tableau blanc).</td>
         </tr>
         <tr>
           <td><strong>Histoire & Temps</strong></td>
@@ -87,8 +87,8 @@
 
     <h2>Architecture de Suture Visuelle</h2>
     <div class="info-block">
-      <h4>Le Tunnel Base64 & Validation Option A</h4>
-      <p>Pour prévenir les corruptions de syntaxe (flèches Mermaid, quotes JSON, balises HTML), ECHO utilise un tunnel d'encodage Base64. Les données sont validées côté serveur (Python) avant l'affichage. En cas d'erreur de conformité, le système remonte une erreur explicite à l'IA pour une auto-correction immédiate (Option A).</p>
+      <h4>Le Tunnel Base64 & Validation Structurelle</h4>
+      <p>Pour prévenir les corruptions de syntaxe (flèches Mermaid, quotes JSON, balises HTML), ECHO utilise un tunnel d'encodage Base64. Les données sont validées par l'orchestrateur avant l'affichage. En cas d'erreur de conformité, le système remonte une erreur explicite à l'IA pour une auto-correction immédiate.</p>
     </div>
 
     <ul>
@@ -98,7 +98,7 @@
     </ul>
 
     <footer>
-      ECHO Framework v5.122.0 - "Suture Visuelle Bit-Perfect" - Copyright © 2026 Wilfried BARNAVON
+      ECHO Framework v5.125.0 - "Suture Visuelle Bit-Perfect" - Copyright © 2026 Wilfried BARNAVON
     </footer>
     <div class="transition-text"><em>Toutes les expressions visuelles sont cadrées par le Kernel. <a href="08_system_prompt.html">Voir le System Prompt ➔</a></em></div>
   </main>

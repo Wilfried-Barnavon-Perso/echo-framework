@@ -1,10 +1,11 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 3.2
-description: 3.2: Harmonisation de l'Exponential Backoff (Multiplier 2.0) et standardisation des retries (5) via les constantes globales.
+version: 4.0
+description: 4.0: Stratégie d'Authentification Exclusive et fiabilisation session_id (OAuth2).
 """
 
+import copy
 import os
 import sqlite3
 import orjson as json
@@ -29,7 +30,11 @@ from echo_constants import (
     GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_USERS_ROOT,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
     ECHO_RETRY_BASE_DELAY, ECHO_RETRY_MULTIPLIER,
-    ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX
+    ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX,
+    AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_OAUTH2, AUTH_METHOD_KEY_SECONDARY,
+    DEFAULT_AUTH_PRIORITY, ECHO_OAUTH_CLIENT_ID, ECHO_OAUTH_CLIENT_SECRET,
+    GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, CODE_ASSIST_BASE_URL,
+    GOOGLE_OAUTH_TOKEN_LIFETIME
 )
 
 # ==============================================================================
@@ -190,19 +195,80 @@ class EchoAuth:
         return path
 
     def get_api_keys(self, user_id: str = None) -> List[str]:
+        """Legacy : renvoie uniquement les clés d'API statiques."""
         db_path = self._get_db_path(user_id)
         if not os.path.exists(db_path): return []
         keys = []
         try:
             conn = sqlite3.connect(f"file://{db_path}?mode=ro", uri=True, timeout=5.0)
             cursor = conn.cursor()
-            for key_name in ['google_api_key', 'google_api_key_secondary']:
+            for key_name in [AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY]:
                 cursor.execute("SELECT value FROM auth_data WHERE key = ?", (key_name,))
                 row = cursor.fetchone()
                 if row and row[0]: keys.append(row[0])
             conn.close()
         except: pass
         return keys
+
+    def get_auth_data(self, key_name: str, user_id: str = None) -> Optional[str]:
+        db_path = self._get_db_path(user_id)
+        if not os.path.exists(db_path): return None
+        try:
+            with sqlite3.connect(f"file://{db_path}?mode=ro", uri=True, timeout=5.0) as conn:
+                row = conn.execute("SELECT value FROM auth_data WHERE key = ?", (key_name,)).fetchone()
+                return row[0] if row else None
+        except: return None
+
+    async def get_ordered_auth_mesh(self, user_id: str = None) -> List[Dict]:
+        """Génère la liste ordonnée et enrichie des fournisseurs d'authentification."""
+        uid = user_id or self.user_id
+        priority_str = self.get_auth_data("google_auth_priority", uid) or DEFAULT_AUTH_PRIORITY
+        priority_list = [p.strip() for p in priority_str.split(",")]
+        
+        mesh = []
+        for method in priority_list:
+            if method == AUTH_METHOD_OAUTH2:
+                refresh_token = self.get_auth_data("google_oauth2_refresh_token", uid)
+                project_id = self.get_auth_data(AUTH_DATA_PROJECT_ID, uid)
+                
+                # Validation de Session : OAuth2 exige un Project ID valide.
+                # Si absent, on ignore ce fournisseur pour éviter la 403.
+                if refresh_token and project_id:
+                    mesh.append({
+                        "type": AUTH_METHOD_OAUTH2,
+                        "refresh_token": refresh_token,
+                        "user_id": uid,
+                        "project_id": project_id,
+                        "tier_id": self.get_auth_data("google_user_tier", uid),
+                        "g1_credits": self.get_auth_data("google_g1_credits", uid)
+                    })
+            elif method in [AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY]:
+                key_val = self.get_auth_data(method, uid)
+                if key_val:
+                    mesh.append({"type": method, "key": key_val})
+        return mesh
+
+    async def refresh_google_oauth_token(self, refresh_token: str, user_id: str = None) -> Optional[str]:
+        """Rafraîchit silencieusement le jeton d'accès Google OAuth2."""
+        client = await _get_global_client()
+        payload = {
+            "client_id": ECHO_OAUTH_CLIENT_ID,
+            "client_secret": ECHO_OAUTH_CLIENT_SECRET,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token"
+        }
+        try:
+            resp = await client.post(GOOGLE_OAUTH_TOKEN_URL, data=payload, timeout=20)
+            if resp.status_code == 200:
+                data = resp.json()
+                new_access_token = data.get("access_token")
+                if new_access_token:
+                    self.save_api_key("google_oauth2_access_token", new_access_token, user_id)
+                    self.save_api_key("google_oauth2_last_refresh", str(time.time()), user_id)
+                    return new_access_token
+        except Exception as e:
+            print(f"[EchoAuth] Erreur Refresh OAuth2: {e}")
+        return None
 
     def save_api_key(self, key_name: str, value: str, user_id: str = None):
         db_path = self._get_db_path(user_id)
@@ -225,36 +291,162 @@ class EchoAuth:
             print(f"[EchoAuth] Erreur suppression clé {key_name}: {e}")
 
 class EchoGeminiClient:
-    """Moteur factorisé pour les appels API Gemini avec Fallback et Résilience."""
+    """Moteur factorisé pour les appels API Gemini avec Architecture Symétrique (AI Studio & Code Assist)."""
+
+    @staticmethod
+    async def _get_auth_headers(provider: Dict, is_code_assist: bool = False) -> Dict[str, str]:
+        """Génère les en-têtes d'authentification selon le type de fournisseur."""
+        # Identité Gemini-CLI v0.39.0 (Simule le client officiel)
+        if is_code_assist:
+            ua = "GeminiCLI/0.39.0 (win32; x64; terminal; proxy_client=geminicli)"
+        else:
+            ua = ECHO_USER_AGENT
+            
+        headers = {"Content-Type": "application/json", "User-Agent": ua}
+        p_type = provider.get("type")
+        
+        if p_type == AUTH_METHOD_OAUTH2:
+            uid = provider.get("user_id")
+            auth = EchoAuth(user_id=uid)
+            token = auth.get_auth_data("google_oauth2_access_token", uid)
+            last_refresh = float(auth.get_auth_data("google_oauth2_last_refresh", uid) or 0)
+            
+            # Rafraîchissement proactif si le jeton a plus de 50 minutes (3000s)
+            if not token or (time.time() - last_refresh) > GOOGLE_OAUTH_TOKEN_LIFETIME:
+                token = await auth.refresh_google_oauth_token(provider.get("refresh_token"), uid)
+            
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+                # Pour Code Assist, on n'envoie pas x-goog-user-project (conflit de quota possible)
+                if not is_code_assist:
+                    project_id = auth.get_auth_data(AUTH_DATA_PROJECT_ID, uid)
+                    if project_id:
+                        headers["x-goog-user-project"] = project_id
+            else:
+                raise Exception("Échec de récupération du jeton OAuth2.")
+        else:
+            headers["x-goog-api-key"] = provider.get("key")
+            
+        return headers
+
+    @staticmethod
+    async def _prepare_request_context(provider: Dict, target_model: str, payload: Dict, method: str = "generateContent", chat_id: str = None) -> Optional[Dict]:
+        """
+        Sélecteur de Protocole Symétrique : Prépare URL, Headers et Payload selon le backend.
+        Retourne un dictionnaire de configuration ou None si le fournisseur est invalide.
+        """
+        p_type = provider.get("type")
+        is_code_assist = (p_type == AUTH_METHOD_OAUTH2)
+        headers = await EchoGeminiClient._get_auth_headers(provider, is_code_assist=is_code_assist)
+        
+        # --- CAS 1 : PROTOCOLE CODE ASSIST (OAuth2) ---
+        if is_code_assist:
+            project_id = provider.get("project_id")
+            tier_id = provider.get("tier_id")
+            g1_credits = provider.get("g1_credits")
+            
+            if not project_id:
+                return None
+            
+            api_url = f"{CODE_ASSIST_BASE_URL}:{method}"
+            if method == "streamGenerateContent":
+                api_url += "?alt=sse"
+
+            prompt_id = "echo-session"
+            try:
+                first_msg = payload.get("contents", [{}])[0].get("parts", [{}])[0].get("text", "")
+                if first_msg:
+                    prompt_id = f"echo-{hashlib.sha256(first_msg.encode()).hexdigest()[:16]}"
+            except: pass
+
+            # LOGIQUE DES CRÉDITS AI : Activation automatique pour les tiers Pro ou solde positif
+            enabled_credits = None
+            if tier_id and ("g1-" in tier_id.lower() or "standard" in tier_id.lower()):
+                enabled_credits = ["GOOGLE_ONE_AI"]
+            elif g1_credits and int(g1_credits) > 50:
+                enabled_credits = ["GOOGLE_ONE_AI"]
+
+            # ENCAPSULATION (WRAPPING) DU PAYLOAD (Format Code Assist Strict)
+            request_body = {
+                "contents": payload.get("contents", []),
+                "systemInstruction": payload.get("systemInstruction"),
+                "generationConfig": payload.get("generationConfig", {}),
+                "tools": payload.get("tools"),
+                "toolConfig": payload.get("toolConfig"),
+                "session_id": chat_id
+            }
+            
+            wrapped_payload = {
+                "model": target_model, # SANS préfixe 'models/' à la racine pour Code Assist
+                "project": project_id,
+                "user_prompt_id": prompt_id,
+                "request": request_body
+            }
+            if enabled_credits:
+                wrapped_payload["enabled_credit_types"] = enabled_credits
+
+            return {"url": api_url, "headers": headers, "payload": wrapped_payload}
+
+        # --- CAS 2 : PROTOCOLE AI STUDIO (API Key) ---
+        else:
+            api_url = f"{GOOGLE_API_BASE_URL}/models/{target_model}:{method}"
+            if method == "streamGenerateContent":
+                api_url += "?alt=sse"
+            
+            return {"url": api_url, "headers": headers, "payload": payload}
 
     @staticmethod
     async def call(
-        keys: List[str],
+        auth_mesh: List[Dict],
         target_model: str,
         payload: dict,
         threshold: int = ECHO_API_KEY_THRESHOLD,
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
-        timeout: int = 120
+        timeout: int = 120,
+        chat_id: str = None
     ) -> dict:
-        if not keys: raise ValueError("Aucune clé API fournie.")
+        if not auth_mesh: raise ValueError("Aucun fournisseur d'authentification valide.")
         client = await _get_global_client()
-        active_key_idx = 0
+        active_idx = 0
         consecutive_errors = 0
         current_delay = ECHO_RETRY_BASE_DELAY
+        
         for attempt in range(max_retries + 1):
-            api_key = keys[active_key_idx]
-            api_url = f"{GOOGLE_API_BASE_URL}/models/{target_model}:generateContent?key={api_key}"
-            headers = {"Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
+            provider = auth_mesh[active_idx]
+            
+            # Préparation symétrique de la requête
             try:
-                resp = await client.post(api_url, json=payload, headers=headers, timeout=timeout)
+                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "generateContent", chat_id=chat_id)
+                if not req_ctx:
+                    # Fail-over immédiat si configuration incomplète (ex: Project ID manquant)
+                    if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
+                    if active_idx < len(auth_mesh) - 1:
+                        active_idx += 1; continue
+                    else: raise Exception(f"Configuration d'authentification {provider['type']} invalide (Project ID manquant).")
+
+                resp = await client.post(req_ctx["url"], json=req_ctx["payload"], headers=req_ctx["headers"], timeout=timeout)
+                
                 if resp.status_code == 200: return resp.json()
+
+                # --- NOUVEAU : FAIL-FAST SUR ERREUR SYNTAXE ---
+                if resp.status_code == 400:
+                    raise Exception(f"Erreur 400 (Bad Request) - Payload rejeté par l'API: {resp.text}")
+                
+                # --- NOUVEAU : BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
+                if resp.status_code in [403, 404]:
+                    if active_idx < len(auth_mesh) - 1:
+                        if events: await events.status(f"⚠️ Modèle non autorisé ou indisponible sur {provider['type']}. Bascule immédiate...", done=False)
+                        active_idx += 1
+                        consecutive_errors = 0
+                        continue
+
                 if resp.status_code in [429, 500, 503]:
                     consecutive_errors += 1
-                    if consecutive_errors >= threshold and active_key_idx < len(keys) - 1:
-                        active_key_idx += 1
+                    if consecutive_errors >= threshold and active_idx < len(auth_mesh) - 1:
+                        active_idx += 1
                         consecutive_errors = 0
-                        if events: await events.status(f"🔄 Surcharge API ({resp.status_code}). Bascule sur la clé de secours...", done=False)
+                        if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
                         continue
                     if attempt < max_retries:
                         wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
@@ -266,7 +458,7 @@ class EchoGeminiClient:
             except Exception as e:
                 if attempt < max_retries:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
-                    if events: await events.status(f"⚠️ Instabilité réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
+                    if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
                     continue
@@ -275,32 +467,53 @@ class EchoGeminiClient:
 
     @staticmethod
     async def stream(
-        keys: List[str],
+        auth_mesh: List[Dict],
         target_model: str,
         payload: dict,
         threshold: int = ECHO_API_KEY_THRESHOLD,
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
         process_callback: Optional[Any] = None,
-        timeout: int = 300
+        timeout: int = 300,
+        chat_id: str = None
     ) -> AsyncGenerator[Union[str, Dict], None]:
-        if not keys: yield "🚫 Aucune clé API configurée."; return
+        if not auth_mesh: yield "🚫 Aucune authentification configurée."; return
         client = await _get_global_client()
-        active_key_idx = 0
+        active_idx = 0
         consecutive_errors = 0
         current_delay = ECHO_RETRY_BASE_DELAY
+        
         for attempt in range(max_retries + 1):
-            api_key = keys[active_key_idx]
-            api_url = f"{GOOGLE_API_BASE_URL}/models/{target_model}:streamGenerateContent?key={api_key}&alt=sse"
-            headers = {"x-goog-api-key": api_key, "Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
+            provider = auth_mesh[active_idx]
+            
             try:
-                async with client.stream("POST", api_url, content=json.dumps(payload), headers=headers, timeout=timeout) as r:
+                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "streamGenerateContent", chat_id=chat_id)
+                if not req_ctx:
+                    if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
+                    if active_idx < len(auth_mesh) - 1:
+                        active_idx += 1; continue
+                    else: yield f"🚫 Erreur : Configuration d'authentification {provider['type']} invalide (Project ID manquant)."; return
+
+                async with client.stream("POST", req_ctx["url"], content=json.dumps(req_ctx["payload"]), headers=req_ctx["headers"], timeout=timeout) as r:
+                    # --- NOUVEAU : FAIL-FAST SUR ERREUR SYNTAXE ---
+                    if r.status_code == 400:
+                        body = await r.aread()
+                        raise Exception(f"Erreur 400 (Bad Request) - Payload rejeté par l'API: {body.decode('utf-8')}")
+
+                    # --- NOUVEAU : BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
+                    if r.status_code in [403, 404]:
+                        if active_idx < len(auth_mesh) - 1:
+                            if events: await events.status(f"⚠️ Modèle non autorisé ou indisponible sur {provider['type']}. Bascule immédiate...", done=False)
+                            active_idx += 1
+                            consecutive_errors = 0
+                            continue
+
                     if r.status_code in [429, 500, 503]:
                         consecutive_errors += 1
-                        if consecutive_errors >= threshold and active_key_idx < len(keys) - 1:
-                            active_key_idx += 1
+                        if consecutive_errors >= threshold and active_idx < len(auth_mesh) - 1:
+                            active_idx += 1
                             consecutive_errors = 0
-                            if events: await events.status(f"🔄 Surcharge API ({r.status_code}). Bascule sur la clé de secours...", done=False)
+                            if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
                             continue
                         if attempt < max_retries:
                             wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
@@ -308,16 +521,14 @@ class EchoGeminiClient:
                             await asyncio.sleep(wait_time)
                             current_delay *= ECHO_RETRY_MULTIPLIER
                             continue
-                        else: yield f"🚫 Erreur API Google ({r.status_code})."; return
                     r.raise_for_status()
-                    if r.http_version != "HTTP/2": yield "🚫 Erreur de protocole : HTTP/2 obligatoire pour Gemini AI Studio."; return
                     if process_callback:
                         async for chunk in process_callback(r): yield chunk
                 break
             except Exception as e:
                 if attempt < max_retries:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
-                    if events: await events.status(f"⚠️ Instabilité réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
+                    if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
                     continue
@@ -325,7 +536,7 @@ class EchoGeminiClient:
 
     @staticmethod
     async def embed(
-        keys: List[str],
+        auth_mesh: List[Dict],
         model: str,
         content: dict,
         threshold: int = ECHO_API_KEY_THRESHOLD,
@@ -333,25 +544,37 @@ class EchoGeminiClient:
         events: Optional[EchoEvents] = None,
         timeout: int = 30
     ) -> dict:
-        if not keys: raise ValueError("Aucune clé API fournie.")
+        if not auth_mesh: raise ValueError("Aucune authentification configurée.")
         client = await _get_global_client()
-        active_key_idx = 0
+        active_idx = 0
         consecutive_errors = 0
         current_delay = ECHO_RETRY_BASE_DELAY
         for attempt in range(max_retries + 1):
-            api_key = keys[active_key_idx]
-            api_url = f"{GOOGLE_API_BASE_URL}/models/{model}:embedContent?key={api_key}"
-            headers = {"Content-Type": "application/json", "User-Agent": ECHO_USER_AGENT}
-            payload = {"model": f"models/{model}", "content": content}
+            provider = auth_mesh[active_idx]
+            
             try:
+                # Note: Embed n'est pas encore encapsulé Code Assist car peu utilisé pour le moment via OAuth2 dans ECHO,
+                # mais le pattern reste disponible pour extension.
+                api_url = f"{GOOGLE_API_BASE_URL}/models/{model}:embedContent"
+                payload = {"model": f"models/{model}", "content": content}
+                headers = await EchoGeminiClient._get_auth_headers(provider)
+                
                 resp = await client.post(api_url, json=payload, headers=headers, timeout=timeout)
                 if resp.status_code == 200: return resp.json()
+
+                # --- NOUVEAU : BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
+                if resp.status_code in [403, 404]:
+                    if active_idx < len(auth_mesh) - 1:
+                        if events: await events.status(f"⚠️ Modèle non autorisé sur {provider['type']}. Bascule immédiate...", done=False)
+                        active_idx += 1
+                        consecutive_errors = 0
+                        continue
+
                 if resp.status_code in [429, 500, 503]:
                     consecutive_errors += 1
-                    if consecutive_errors >= threshold and active_key_idx < len(keys) - 1:
-                        active_key_idx += 1
+                    if consecutive_errors >= threshold and active_idx < len(auth_mesh) - 1:
+                        active_idx += 1
                         consecutive_errors = 0
-                        if events: await events.status(f"🔄 Surcharge API Embedding ({resp.status_code}). Bascule sur la clé de secours...", done=False)
                         continue
                     if attempt < max_retries:
                         wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
@@ -408,6 +631,7 @@ class EchoStateManager:
                 conn.execute("CREATE TABLE IF NOT EXISTS call_bridge (call_id TEXT PRIMARY KEY, signature TEXT NOT NULL, function_name TEXT NOT NULL, args_json TEXT, timestamp INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS context_stats (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+                conn.execute("CREATE TABLE IF NOT EXISTS auth_pkce_context (user_id TEXT PRIMARY KEY, verifier TEXT NOT NULL, state TEXT NOT NULL, timestamp INTEGER NOT NULL)")
                 conn.commit()
         except Exception as e: print(f"[EchoStateManager] Init DB Error: {e}")
 

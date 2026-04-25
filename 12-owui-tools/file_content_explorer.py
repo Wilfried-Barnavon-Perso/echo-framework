@@ -1,8 +1,8 @@
 """
-title: ECHO File Content Explorer
+title: ECHO Vault Explorer
 author: Wilfried BARNAVON
-version: 5.107.0
-description: 5.107.0: Harmonisation de la résilience (Threshold 2, Retries 5) pour le sondage sémantique.
+version: 5.108.0
+description: 5.108.0: Migration vers le Unified Auth Mesh.
 """
 
 import os
@@ -119,8 +119,8 @@ class Tools:
         fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
 
-        api_keys = self.auth.get_api_keys(uid)
-        if not api_keys: return wrap_tool_output(text="❌ Clé API manquante.", status={"status": "error"})
+        auth_mesh = await self.auth.get_ordered_auth_mesh(uid)
+        if not auth_mesh: return wrap_tool_output(text="❌ Authentification Google manquante.", status={"status": "error"})
 
         mime, supported = get_gemini_mime(fpath)
         if not supported: return wrap_tool_output(text=f"❌ Type {mime} non supporté.", status={"status": "error"})
@@ -133,7 +133,7 @@ class Tools:
                 "generationConfig": {"thinkingConfig": {"includeThoughts": True, "thinkingLevel": thinking_level.lower()}}
             }
             data = await EchoGeminiClient.call(
-                keys=api_keys, 
+                auth_mesh=auth_mesh, 
                 target_model=MODEL_FLASH, 
                 payload=payload, 
                 threshold=self.valves.KEY_SWITCH_THRESHOLD,

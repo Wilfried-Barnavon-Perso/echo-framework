@@ -1,8 +1,8 @@
 """
 title: ECHO Cognitive Core
 author: ECHO Framework
-version: 3.60
-description: 3.60: Uniformisation de la résilience LLM (KeySwitch 2, Retries 5) via echo_constants.py.
+version: 3.8
+description: 3.8: Correctif de stabilité (Fix auth_mesh et nettoyage syntaxique).
 """
 
 import sys
@@ -33,9 +33,11 @@ async def _call_gemini_direct(
 ) -> str:
     """Appel direct à l'API Gemini AI Studio via EchoGeminiClient pour délégation cognitive."""
     auth = EchoAuth(user_id=user_id)
-    api_keys = auth.get_api_keys(user_id)
-    if not api_keys: 
-        return "❌ Erreur: Non authentifié. Aucune clé API Google AI Studio trouvée pour cet utilisateur."
+    
+    # Récupération du mesh d'authentification (Nouveau système)
+    auth_mesh = await auth.get_ordered_auth_mesh(user_id)
+    if not auth_mesh: 
+        return "❌ Erreur: Non authentifié. Aucun moyen d'accès trouvé pour cet utilisateur."
 
     payload = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -51,13 +53,12 @@ async def _call_gemini_direct(
 
     if system_instruction:
         payload["systemInstruction"] = {
-            "role": "system",
             "parts": [{"text": system_instruction}]
         }
 
     try:
         data = await EchoGeminiClient.call(
-            keys=api_keys,
+            auth_mesh=auth_mesh,
             target_model=model_id,
             payload=payload,
             threshold=threshold,

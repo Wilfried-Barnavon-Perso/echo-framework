@@ -1,8 +1,8 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 1.23
-description: 1.23: Unification de la résilience (Threshold 2, Retries 5) pour l'API Gemini.
+version: 1.7
+description: 1.7: Support du cycle de vie proactif des jetons OAuth2 (50 min).
 """
 
 import os
@@ -31,16 +31,56 @@ ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 ECHO_USER_AGENT = "ECHO-Framework/5"
 
 # ==============================================================================
-# 1. PROTOCOLE GOOGLE AI STUDIO (GEMINI API)
+# 1. PROTOCOLE GOOGLE AI STUDIO (GEMINI API) & AUTH UNIFIÉE
 # ==============================================================================
 
 GOOGLE_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 GOOGLE_AI_STUDIO_WEB_URL = "https://aistudio.google.com/app/apikey"
 
+# --- IDENTIFIANTS TECHNIQUES DES MÉTHODES ---
+AUTH_METHOD_KEY_PRIMARY = "google_api_key"
+AUTH_METHOD_OAUTH2 = "google_oauth2"
+AUTH_METHOD_KEY_SECONDARY = "google_api_key_secondary"
+
+# Priorité par défaut : Clé 1 > OAuth2 > Clé 2 (Préserve les crédits personnels)
+DEFAULT_AUTH_PRIORITY = f"{AUTH_METHOD_KEY_PRIMARY}, {AUTH_METHOD_OAUTH2}, {AUTH_METHOD_KEY_SECONDARY}"
+
+# --- CONFIGURATION GOOGLE OAUTH2 (HÉRITAGE GEMINI-CLI) ---
+# Note: Ces identifiants sont publics pour les applications "Desktop" Google.
+ECHO_OAUTH_CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+ECHO_OAUTH_CLIENT_SECRET = "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"
+
+GOOGLE_OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
+
+# --- CONFIGURATION CODE ASSIST (PROVISIONING) ---
+CODE_ASSIST_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal"
+ECHO_CLIENT_METADATA = {
+    "ideType": "IDE_UNSPECIFIED",
+    "platform": "PLATFORM_UNSPECIFIED",
+    "pluginType": "GEMINI"
+}
+AUTH_DATA_PROJECT_ID = "google_project_id"
+AUTH_DATA_USER_EMAIL = "google_user_email"
+AUTH_DATA_USER_TIER = "google_user_tier"
+
+ECHO_OAUTH_SCOPES = [
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile"
+]
+
+# --- SÛRETÉ PKCE ---
+PKCE_REUSE_WINDOW = 300 # Fenêtre de 5 minutes pour réutiliser un challenge PKCE
+GOOGLE_OAUTH_TOKEN_LIFETIME = 3000 # Durée de validité proactive du jeton (50 min)
+
 # Regex de validation et extraction de clé API Google (AIza...)
-# Le tiret doit être à la fin de la classe de caractères pour éviter les erreurs de plage
 GOOGLE_API_KEY_REGEX = r"AIza[0-9A-Za-z_-]{35}"
 GOOGLE_API_KEY_PATTERN = GOOGLE_API_KEY_REGEX
+
+# Regex pour l'Authorization Code Google (commence généralement par 4/)
+GOOGLE_OAUTH_CODE_REGEX = r"4/[0-9A-Za-z_-]+"
 
 # ==============================================================================
 # 1.2 RÉSILIENCE ET RETRIES (API GEMINI)
@@ -58,7 +98,7 @@ ECHO_RETRY_JITTER_MAX = 1.3
 # ==============================================================================
 
 # 1. IDENTIFIANTS TECHNIQUES (STRICTS)
-MODEL_PRO = "gemini-3.1-pro-preview-customtools"
+MODEL_PRO = "gemini-3.1-pro-preview"
 MODEL_FLASH = "gemini-3-flash-preview"
 MODEL_LITE = "gemini-3.1-flash-lite-preview"
 

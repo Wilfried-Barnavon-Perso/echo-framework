@@ -1,18 +1,21 @@
 """
 title: ECHO Visuals Engine Configuration
 author: Wilfried BARNAVON
-version: 3.0
-description: 3.0: Implémentation du moteur 'sketch' (Mermaid + Rough.js) pour le rendu hand-drawn.
+version: 3.9
+description: 3.9: Ré-implémentation du moteur SMILES (chem) et ajout de science, bio, astro.
 """
 
 class VisualEngine:
     @staticmethod
-    def get_config(moteur: str, payload: str) -> dict:
+    def get_config(moteur: str, payload: str, cdn_timeout_ms: int = 5000) -> dict:
         """
         Registre universel des moteurs de rendu ECHO.
         Payload reçu en Base64 pour garantir l'intégrité des caractères spéciaux.
         """
         moteur = moteur.lower()
+        
+        # Calcul du nombre max de boucles de vérification (1 boucle = 100ms)
+        max_retries = max(1, cdn_timeout_ms // 100)
         
         configs = {
             # --- VAGUES 1 & 2 : FONDAMENTAUX ---
@@ -30,7 +33,7 @@ class VisualEngine:
                 ''',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     const { Transformer, Markmap, loadCSS, loadJS } = window.markmap;
                     const { root, features } = new Transformer().transform(rawData);
                     const { styles, scripts } = new Transformer().getUsedAssets(features);
@@ -45,7 +48,7 @@ class VisualEngine:
                 "init": """
                     mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     const target = document.getElementById('visual-target');
                     mermaid.render('mermaid-svg-' + Date.now(), rawData).then(({svg}) => { 
                         target.innerHTML = svg; 
@@ -76,7 +79,7 @@ class VisualEngine:
                 "init": """
                     mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose', fontFamily: 'Caveat' });
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     const hiddenTarget = document.getElementById('mermaid-hidden');
                     const roughTarget = document.getElementById('rough-target');
                     
@@ -168,7 +171,7 @@ class VisualEngine:
                 "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:500px;"></div>',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     const chart = echarts.init(document.getElementById('visual-target'), 'dark');
                     chart.setOption(JSON.parse(rawData));
                     window.addEventListener('resize', () => chart.resize());
@@ -179,7 +182,7 @@ class VisualEngine:
                 "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:auto; min-height:400px;"></div>',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     vegaEmbed('#visual-target', JSON.parse(rawData), { theme: 'dark', actions: false });
                 """
             },
@@ -188,7 +191,7 @@ class VisualEngine:
                 "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:600px;"></div>',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     new TL.Timeline('visual-target', JSON.parse(rawData), { theme: 'dark', height: 600 });
                 """
             },
@@ -207,7 +210,7 @@ class VisualEngine:
                 ''',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     const viewer = new BpmnJS({ container: '#visual-target' });
                     viewer.importXML(rawData).then(() => { viewer.get('canvas').zoom('fit-viewport'); });
                 """
@@ -230,11 +233,18 @@ class VisualEngine:
                 ''',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+                    let retries = 0;
+                    const maxRetries = """ + str(max_retries) + """;
                     const run = () => {
                         if (typeof Gantt !== 'undefined') {
                             new Gantt("#visual-target", JSON.parse(rawData), { view_mode: 'Day', language: 'fr' });
-                        } else { setTimeout(run, 100); }
+                        } else if (retries < maxRetries) { 
+                            retries++;
+                            setTimeout(run, 100); 
+                        } else {
+                            document.getElementById('visual-target').innerHTML = "<p style='color:#ef4444; padding:20px;'>Erreur : Timeout (" + (""" + str(cdn_timeout_ms) + """/1000) + "s). Impossible de charger la librairie Frappe Gantt depuis le CDN.</p>";
+                        }
                     };
                     run();
                 """
@@ -246,7 +256,7 @@ class VisualEngine:
                 "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:600px;"></div>',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     document.getElementById('visual-target').innerHTML = rawData;
                 """
             },
@@ -257,7 +267,7 @@ class VisualEngine:
                 "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:500px;"></div>',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     const data = JSON.parse(rawData);
                     const map = L.map('visual-target').setView([data.lat || 48.85, data.lon || 2.35], data.zoom || 13);
                     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -273,49 +283,12 @@ class VisualEngine:
                 "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:600px; background:#1a1a1b;"></div>',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     cytoscape({ container: document.getElementById('visual-target'), elements: JSON.parse(rawData), 
                         style: [{ selector: 'node', style: { 'background-color': '#0ea5e9', 'label': 'data(id)', 'color': '#fff' }}, 
                                 { selector: 'edge', style: { 'width': 3, 'line-color': '#334155', 'target-arrow-color': '#334155', 'target-arrow-shape': 'triangle' }}],
                         layout: { name: 'cose' } 
                     });
-                """
-            },
-
-            # --- VAGUE 6 : BIOLOGIE & CHIMIE ---
-            "smiles": {
-                "scripts": ["https://unpkg.com/smiles-drawer@2.0.1/dist/smiles-drawer.min.js"],
-                "container": f'''
-                    <div id="visual-payload" style="display:none;">{payload}</div>
-                    <div id="canvas-container" style="width:100%; height:500px; display:flex; align-items:center; justify-content:center; background:transparent;">
-                        <canvas id="visual-target" style="display:block;"></canvas>
-                    </div>
-                ''',
-                "init": """
-                    const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64))).trim();
-                    const run = () => {
-                        if (typeof SmiDrawer !== 'undefined') {
-                            const container = document.getElementById('canvas-container');
-                            const canvas = document.getElementById('visual-target');
-                            
-                            // On attend le prochain frame d'affichage pour avoir les dimensions réelles
-                            requestAnimationFrame(() => {
-                                canvas.width = container.clientWidth;
-                                canvas.height = container.clientHeight;
-                                
-                                const options = { 
-                                    theme: 'dark', 
-                                    width: canvas.width, 
-                                    height: canvas.height,
-                                    bondThickness: 1.5
-                                };
-                                const sd = new SmiDrawer(options);
-                                sd.draw(rawData, canvas, 'dark');
-                            });
-                        } else { setTimeout(run, 100); }
-                    };
-                    run();
                 """
             },
 
@@ -333,10 +306,136 @@ class VisualEngine:
                 ''',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     const scriptTag = document.querySelector('#visual-target script');
                     scriptTag.text = rawData;
                     WaveDrom.ProcessAll();
+                """
+            },
+
+            # --- VAGUE 8 : ECHO SCIENTIFIC SUITE ---
+            "chem": {
+                "scripts": ["https://unpkg.com/smiles-drawer@2.0.1/dist/smiles-drawer.min.js"],
+                "container": f'''
+                    <div id="visual-payload" style="display:none;">{payload}</div>
+                    <div style="width:100%; height:500px; display:flex; justify-content:center; align-items:center; background:#1a1a1b;">
+                        <canvas id="visual-target" style="max-width:100%; max-height:100%;"></canvas>
+                    </div>
+                ''',
+                "init": """
+                    const b64 = document.getElementById('visual-payload').textContent;
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+                    let retries = 0;
+                    const maxRetries = """ + str(max_retries) + """;
+                    const run = () => {
+                        if (typeof SmilesDrawer !== 'undefined') {
+                            const options = { width: 600, height: 600, theme: 'dark' };
+                            const drawer = new SmilesDrawer.Drawer(options);
+                            SmilesDrawer.parse(rawData, (tree) => {
+                                drawer.draw(tree, 'visual-target', 'dark', false);
+                            }, (err) => { console.error('SmilesDrawer Error:', err); });
+                        } else if (retries < maxRetries) { 
+                            retries++;
+                            setTimeout(run, 100); 
+                        }
+                    };
+                    run();
+                """
+            },
+            "science": {
+                "scripts": ["https://cdn.plot.ly/plotly-2.33.0.min.js"],
+                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:500px; background:#1a1a1b;"></div>',
+                "init": """
+                    const b64 = document.getElementById('visual-payload').textContent;
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+                    let retries = 0;
+                    const maxRetries = """ + str(max_retries) + """;
+                    const run = () => {
+                        if (typeof Plotly !== 'undefined') {
+                            const data = JSON.parse(rawData);
+                            const config = { responsive: true, displaylogo: false };
+                            const layout = data.layout || { template: 'plotly_dark', paper_bgcolor: '#1a1a1b', plot_bgcolor: '#1a1a1b' };
+                            Plotly.newPlot('visual-target', data.data || data, layout, config);
+                        } else if (retries < maxRetries) { 
+                            retries++;
+                            setTimeout(run, 100); 
+                        }
+                    };
+                    run();
+                """
+            },
+            "bio": {
+                "scripts": ["https://3Dmol.org/build/3Dmol-min.js"],
+                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:600px; position:relative; background:#1a1a1b;"></div>',
+                "init": """
+                    const b64 = document.getElementById('visual-payload').textContent;
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+                    let retries = 0;
+                    const maxRetries = """ + str(max_retries) + """;
+                    const run = () => {
+                        if (typeof $3Dmol !== 'undefined') {
+                            const viewer = $3Dmol.createViewer("visual-target", { backgroundColor: '#1a1a1b' });
+                            const input = rawData.trim();
+                            if (input.length === 4 && !input.includes('\\n')) {
+                                $3Dmol.download("pdb:" + input, viewer, {}, function() {
+                                    viewer.setStyle({}, { cartoon: { color: 'spectrum' } });
+                                    viewer.zoomTo();
+                                    viewer.render();
+                                });
+                            } else {
+                                viewer.addModel(input, "pdb");
+                                viewer.setStyle({}, { cartoon: { color: 'spectrum' } });
+                                viewer.zoomTo();
+                                viewer.render();
+                            }
+                        } else if (retries < maxRetries) { 
+                            retries++;
+                            setTimeout(run, 100); 
+                        }
+                    };
+                    run();
+                """
+            },
+            "astro": {
+                "scripts": [
+                    "https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.css",
+                    "https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.js"
+                ],
+                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:600px; background:#1a1a1b;"></div>',
+                "init": """
+                    const b64 = document.getElementById('visual-payload').textContent;
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+                    let retries = 0;
+                    const maxRetries = """ + str(max_retries) + """;
+                    const run = () => {
+                        if (typeof A !== 'undefined' && typeof A.aladin === 'function') {
+                            try {
+                                const rawTarget = (data.target || '').trim();
+                                // Nettoyage de la cible : autorise les noms composés (ex: Alpha Centauri A) jusqu'à 5 mots
+                                const cleanTarget = (rawTarget.length > 0 && rawTarget.length < 60 && rawTarget.split(/\s+/).length < 6) ? rawTarget : 'Orion';
+                                
+                                // Délai de sécurité pour l'initialisation du contexte WebGL
+                                setTimeout(() => {
+                                    try {
+                                        A.aladin('#visual-target', {
+                                            target: cleanTarget,
+                                            fov: data.fov || 2,
+                                            survey: data.survey || 'P/DSS2/color'
+                                        });
+                                    } catch (inner) {
+                                        console.error('ECHO Astro: Initialisation native échouée, repli Orion.', inner);
+                                        A.aladin('#visual-target', { target: 'Orion', fov: 5 });
+                                    }
+                                }, 300);
+                            } catch (e) {
+                                console.error('ECHO Astro: Init Error:', e);
+                            }
+                        } else if (retries < maxRetries) { 
+                            retries++;
+                            setTimeout(run, 100); 
+                        }
+                    };
+                    run();
                 """
             },
             "svg": {
@@ -344,7 +443,7 @@ class VisualEngine:
                 "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:600px; display:flex; align-items:center; justify-content:center; background:#1a1a1b;"></div>',
                 "init": """
                     const b64 = document.getElementById('visual-payload').textContent;
-                    const rawData = decodeURIComponent(escape(atob(b64)));
+                    const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                     const target = document.getElementById('visual-target');
                     target.innerHTML = rawData;
                     const svg = target.querySelector('svg');
@@ -358,4 +457,3 @@ class VisualEngine:
         }
         
         return configs.get(moteur, configs["mermaid"])
-
