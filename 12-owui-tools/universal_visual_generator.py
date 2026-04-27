@@ -1,8 +1,8 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 3.8
-description: 3.8: Intégration de la ECHO Scientific Suite (STEM).
+version: 3.9
+description: 3.9: Robustesse du parsing (Sécurisation Candidates) et support de la normalisation API.
 """
 
 import os
@@ -131,7 +131,14 @@ class Tools:
         events=events, timeout=self.valves.GENERATOR_TIMEOUT
       )
       
-      cand = data.get("candidates", [])[0]
+      candidates = data.get("candidates", [])
+      if not candidates:
+          return wrap_tool_output(
+              text="⚠️ Le moteur de rendu n'a reçu aucune réponse exploitable de l'API Gemini. Cela peut être dû à un filtrage de sécurité sur les données fournies ou à un quota épuisé.",
+              status={"status": "error"}
+          )
+
+      cand = candidates[0]
       raw_response = ""
       if "content" in cand:
         for p in cand["content"].get("parts", []):

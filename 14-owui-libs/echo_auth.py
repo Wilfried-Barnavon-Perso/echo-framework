@@ -1,8 +1,8 @@
 """
 title: ECHO Auth Service
 author: Wilfried BARNAVON
-version: 3.0
-description: 3.0: Stratégie d'Authentification Exclusive (Priorité OAuth2) pour stabilité cognitive.
+version: 3.3
+description: 3.3: Rafraîchissement Quotas & Crédits synchronisé (Mode HEALTH_CHECK) conforme à Gemini-CLI.
 """
 
 import time
@@ -126,6 +126,70 @@ class AuthService:
         except Exception as e:
             print(f"[AuthService] Erreur UserInfo: {e}")
         return None
+
+    async def fetch_user_quota(self, access_token: str, project_id: str):
+        """Récupère et persiste les quotas et crédits Code Assist (Truth Source)."""
+        client = await _get_global_client()
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "User-Agent": ECHO_USER_AGENT
+        }
+
+        # 1. RAFRAÎCHISSEMENT DES CRÉDITS (Mode HEALTH_CHECK)
+        health_url = f"{CODE_ASSIST_BASE_URL}:loadCodeAssist"
+        health_payload = {
+            "cloudaicompanionProject": project_id,
+            "metadata": {**ECHO_CLIENT_METADATA, "duetProject": project_id},
+            "mode": "HEALTH_CHECK"
+        }
+        
+        try:
+            h_resp = await client.post(health_url, json=health_payload, headers=headers, timeout=15)
+            if h_resp.status_code == 200:
+                data = h_resp.json()
+                t_obj = data.get("paidTier") or data.get("currentTier")
+                if isinstance(t_obj, dict):
+                    avail = t_obj.get("availableCredits") or []
+                    for c in avail:
+                        if c.get("creditType") == "GOOGLE_ONE_AI":
+                            self.echo_auth.save_api_key("google_g1_credits", str(c.get("creditAmount", "0")))
+                            break
+        except: pass
+
+        # 2. RAFRAÎCHISSEMENT DES QUOTAS (retrieveUserQuota)
+        quota_url = f"https://cloudaicompanion.googleapis.com/v1/projects/{project_id}/locations/-/codeAssist:retrieveUserQuota"
+        try:
+            q_resp = await client.post(quota_url, json={"project": project_id}, headers=headers, timeout=15)
+            if q_resp.status_code == 200:
+                data = q_resp.json()
+                buckets = data.get("buckets", [])
+                if buckets:
+                    b = buckets[0] 
+                    self.echo_auth.save_api_key("google_quota_amount", str(b.get("remainingAmount", "N/A")))
+                    self.echo_auth.save_api_key("google_quota_fraction", str(b.get("remainingFraction", "1.0")))
+                    self.echo_auth.save_api_key("google_quota_reset", str(b.get("resetTime", "N/A")))
+                    self.echo_auth.save_api_key("google_quota_type", str(b.get("tokenType", "UNKNOWN")))
+                    self.echo_auth.save_api_key("google_quota_last_fetch", str(time.time()))
+        except Exception as e:
+            print(f"[AuthService] Erreur récupération quota: {e}")
+
+    async def refresh_quota_if_needed(self):
+        """Rafraîchit les métriques si OAuth2 est actif (Treshold: 10 min)."""
+        priority = self.echo_auth.get_auth_data("google_auth_priority")
+        if priority != AUTH_METHOD_OAUTH2: return
+
+        try:
+            last_fetch = float(self.echo_auth.get_auth_data("google_quota_last_fetch") or 0)
+        except: last_fetch = 0
+
+        if time.time() - last_fetch < 600: return 
+
+        access_token = self.echo_auth.get_auth_data("google_oauth2_access_token")
+        project_id = self.echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
+
+        if access_token and project_id:
+            await self.fetch_user_quota(access_token, project_id)
 
     async def _provision_google_account(self, access_token: str) -> Tuple[Optional[str], Optional[str]]:
         """Séquence de Provisioning Protocolée : Découverte du Tier et Capture de l'ID Projet."""
@@ -259,6 +323,10 @@ class AuthService:
                         if project_id: self.echo_auth.save_api_key(AUTH_DATA_PROJECT_ID, project_id)
                         if tier_id: self.echo_auth.save_api_key(AUTH_DATA_USER_TIER, tier_id)
                         
+                        # --- QUOTA (NOUVEAU) ---
+                        if access_token and project_id:
+                            await self.fetch_user_quota(access_token, project_id)
+                        
                         msg = f"Authentification Google réussie pour {email or 'Compte Inconnu'}."
                         if tier_id: msg += f" Tier : {tier_id}."
                         if project_id: msg += f" Projet : {project_id}."
@@ -268,6 +336,76 @@ class AuthService:
                 return False, f"Échec Google OAuth (HTTP {resp.status_code}): {resp.text}"
         except Exception as e:
             return False, f"Erreur réseau lors de l'échange OAuth: {str(e)}"
+
+    async def validate_and_save_api_key(self, raw_input: str) -> Tuple[bool, str]:
+        """Traitement intelligent avec Stratégie d'Authentification Exclusive (Priorité OAuth2)."""
+        
+        tokens = raw_input.split()
+        found_keys = []
+        found_oauth_code = None
+        
+        for t in tokens:
+            if re.match(GOOGLE_API_KEY_PATTERN, t):
+                if len(found_keys) < 2:
+                    found_keys.append(t)
+            elif re.match(GOOGLE_OAUTH_CODE_REGEX, t):
+                if not found_oauth_code:
+                    found_oauth_code = t
+
+        if not found_keys and not found_oauth_code:
+            return False, "Aucun identifiant valide détecté (Clé AIza ou Code 4/)."
+
+        # --- PRIORITÉ 1 : OAuth2 ---
+        if found_oauth_code:
+            success, msg = await self._exchange_oauth_code(found_oauth_code)
+            if success:
+                # Enregistrement exclusif OAuth2
+                self.echo_auth.save_api_key("google_auth_priority", AUTH_METHOD_OAUTH2)
+                
+                # Suppression du contexte PKCE
+                db_path = self.echo_auth._get_db_path()
+                try:
+                    with sqlite3.connect(db_path) as conn:
+                        conn.execute("DELETE FROM auth_pkce_context WHERE user_id = ?", (self.user_id,))
+                except: pass
+                
+                return True, f"✅ OAuth2 activé. Vos clés API ont été ignorées pour garantir la stabilité de vos sessions. | {msg}"
+
+        # --- PRIORITÉ 2 : Clés d'API (AI Studio) ---
+        # Exécutée si pas de code OAuth2 ou si son échange a échoué
+        if found_keys:
+            success_msgs = []
+            error_msgs = []
+            valid_keys = []
+
+            async with httpx.AsyncClient() as client:
+                for i, k in enumerate(found_keys):
+                    test_url = f"{GOOGLE_API_BASE_URL}/models?key={k}"
+                    try:
+                        resp = await client.get(test_url, headers={"User-Agent": ECHO_USER_AGENT}, timeout=10)
+                        if resp.status_code == 200:
+                            valid_keys.append(k)
+                            label = "Primaire" if i == 0 else "Secondaire"
+                            success_msgs.append(f"Clé d'API {label} validée.")
+                        else:
+                            error_msgs.append(f"Clé {i+1} rejetée (HTTP {resp.status_code}).")
+                    except Exception as e:
+                        error_msgs.append(f"Erreur réseau Clé {i+1} ({str(e)}).")
+
+            if valid_keys:
+                # Sauvegarde des clés en préservant l'ordre de saisie
+                self.echo_auth.save_api_key(AUTH_METHOD_KEY_PRIMARY, valid_keys[0])
+                priority = [AUTH_METHOD_KEY_PRIMARY]
+                if len(valid_keys) > 1:
+                    self.echo_auth.save_api_key(AUTH_METHOD_KEY_SECONDARY, valid_keys[1])
+                    priority.append(AUTH_METHOD_KEY_SECONDARY)
+                
+                # Mise à jour de la priorité (monotype clés)
+                self.echo_auth.save_api_key("google_auth_priority", ",".join(priority))
+                
+                return True, f"✅ Clés d'API activées. (Note : Compte Google inopérant ou non fourni). | " + " | ".join(success_msgs)
+        
+        return False, "Échec de la validation."
 
     async def validate_and_save_api_key(self, raw_input: str) -> Tuple[bool, str]:
         """Traitement intelligent avec Stratégie d'Authentification Exclusive (Priorité OAuth2)."""

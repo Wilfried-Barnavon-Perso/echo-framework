@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 186.1
-description: 186.1: Résilience du HUD lors d'échecs API.
+version: 186.8
+description: 186.8: Double rafraîchissement Quotas & Crédits (G1) conforme à Gemini-CLI.
 """
 
 # ==============================================================================
@@ -708,6 +708,9 @@ class Pipe:
 
         # --- HUD METRICS ---
         if user_valves.SHOW_CONTEXT_METRICS:
+            # Rafraîchissement intelligent des quotas (OAuth2 uniquement)
+            await auth.refresh_quota_if_needed()
+
             p_t = 0; c_t = 0; g_t = 0
             if proc.usage_stats:
                 p_t = proc.usage_stats.get("promptTokenCount", 0)
@@ -728,6 +731,18 @@ class Pipe:
             tier = echo_auth.get_auth_data(AUTH_DATA_USER_TIER)
             proj = echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
             
+            # Données de Quota (Souveraineté)
+            q_amount = echo_auth.get_auth_data("google_quota_amount") or "N/A"
+            q_fraction = float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)
+            q_reset_raw = echo_auth.get_auth_data("google_quota_reset") or "N/A"
+            q_type = echo_auth.get_auth_data("google_quota_type") or "UNKNOWN"
+            
+            # Formatage de l'heure de reset (ISO -> HH:MM)
+            q_reset = q_reset_raw
+            if "T" in q_reset_raw:
+                try: q_reset = q_reset_raw.split("T")[1][:5]
+                except: pass
+
             # Liste des sources (Mesh) simplifiée pour le HUD
             sources = [s['type'].replace('google_', '').replace('_', ' ').upper() for s in auth_mesh] if auth_mesh else []
 
@@ -741,5 +756,7 @@ class Pipe:
                 c_t=c_t, active_p_t=active_p_t, g_t=g_t, max_t=max_t,
                 cache_pct=cache_pct, prompt_pct=prompt_pct, gen_pct=gen_pct,
                 user_email=email, user_tier=tier, project_id=proj,
-                auth_sources=sources
+                auth_sources=sources,
+                quota_amount=q_amount, quota_fraction=q_fraction, quota_reset=q_reset, quota_type=q_type
             )
+            yield "" # Maintien du canal pour exécution JS

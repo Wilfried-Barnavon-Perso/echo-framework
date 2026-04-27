@@ -1,23 +1,25 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 3.0
-description: 3.0: Refonte complète du HUD (Centrage Navbar, Tooltips Identité & Tokens).
+version: 3.9
+description: 3.9: Nettoyage syntaxique et optimisation de l'émission HUD.
 """
 
 from fastapi.responses import HTMLResponse
 import sys
 import os
-from typing import Optional, Any
+import hashlib
+from typing import Optional, Any, List, Dict
 
-# Importations ECHO
+# Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_visuals import VisualEngine
 
 class EchoRichUI:
+  """Usine de rendu de composants visuels riches pour ECHO."""
+  
   @staticmethod
-  def _get_boilerplate(content: str, title: str = "ECHO Visualizer") -> str:
-    """Encapsule le contenu avec Suture d'Auto-dimensionnement universelle."""
+  def _get_boilerplate(content: str, title: str = "ECHO Visual") -> str:
+    """Encapsulation HTML standard avec style ECHO."""
     return f"""
     <!DOCTYPE html>
     <html>
@@ -25,127 +27,66 @@ class EchoRichUI:
       <meta charset="UTF-8">
       <title>{title}</title>
       <style>
-        body {{
-          background: #1a1a1b;
-          color: #e2e8f0;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-          margin: 0;
-          padding: 0;
-          overflow: hidden;
-        }}
-        ::-webkit-scrollbar {{ width: 6px; height: 6px; }}
-        ::-webkit-scrollbar-track {{ background: #1a1a1b; }}
-        ::-webkit-scrollbar-thumb {{ background: #334155; border-radius: 10px; }}
-        ::-webkit-scrollbar-thumb:hover {{ background: #475569; }}
+        body {{ margin: 0; padding: 0; background: #1a1a1b; color: #e2e8f0; font-family: sans-serif; overflow: hidden; }}
+        .echo-container {{ width: 100vw; height: 100vh; display: flex; flex-direction: column; }}
+        #hud-bar {{ background: #0f172a; padding: 8px 16px; border-bottom: 1px solid #334155; display: flex; align-items: center; justify-content: space-between; z-index: 100; }}
+        .btn {{ background: #334155; border: none; color: white; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s; }}
+        .btn:hover {{ background: #475569; }}
       </style>
-      <script>
-        // --- POLYFILL STORAGE ECHO (Fix Sandbox OWUI) ---
-        (function() {{
-          function createMockStorage() {{
-            let storage = {{}};
-            return {{
-              getItem: (key) => key in storage ? storage[key] : null,
-              setItem: (key, value) => storage[key] = value || '',
-              removeItem: (key) => delete storage[key],
-              clear: () => storage = {{}},
-              key: (i) => Object.keys(storage)[i] || null,
-              get length() {{ return Object.keys(storage).length; }}
-            }};
-          }}
-          try {{
-            const test = window.localStorage;
-          }} catch (e) {{
-            console.warn("ECHO: LocalStorage inaccessible (Sandbox). Activation du Polyfill Mémoire.");
-            Object.defineProperty(window, 'localStorage', {{ value: createMockStorage() }});
-            Object.defineProperty(window, 'sessionStorage', {{ value: createMockStorage() }});
-          }}
-        }})();
-      </script>
     </head>
     <body>
-      {content}
-      <script>
-        // --- SUTURE VISUELLE ECHO (OWUI COMPAT) ---
-        let lastHeight = 0;
-        let resizeTimeout;
-
-        function reportHeight() {{
-          const h = document.documentElement.scrollHeight || document.body.scrollHeight;
-          if (Math.abs(h - lastHeight) > 2) {{
-            lastHeight = h;
-            parent.postMessage({{ type: 'iframe:height', height: h }}, '*');
-          }}
-        }}
-
-        window.addEventListener('load', () => {{
-          setTimeout(reportHeight, 100);
-        }});
-
-        const observer = new ResizeObserver(entries => {{
-          clearTimeout(resizeTimeout);
-          resizeTimeout = setTimeout(reportHeight, 250);
-        }});
-        observer.observe(document.body);
-      </script>
+      <div class="echo-container">
+        {content}
+      </div>
     </body>
     </html>
     """
 
   @classmethod
-  def player_ui(cls, session_id: str, total_steps: int) -> HTMLResponse:
-    """Rendu du WebPlayer pour le Replay de navigation."""
+  def image_viewer(cls, img_url: str, title: str = "Aperçu Image") -> HTMLResponse:
+    """Génère un HTMLResponse pour visualiser une image avec outils ECHO (Zoom/Pan/Crop)."""
     content = f"""
-    <div id="player-container" style="width:100%; height:600px; position:relative; background:#000;">
-      <div id="hud-bar" style="position:absolute; top:10px; left:10px; z-index:100; display:flex; gap:10px;">
-        <button onclick="prev()" style="background:#334155; color:white; border:none; padding:5px 15px; border-radius:4px; cursor:pointer;">◀️</button>
-        <span id="step-info" style="color:white; align-self:center; font-family:monospace; font-size:12px;">Step 1 / {total_steps}</span>
-        <button onclick="next()" style="background:#334155; color:white; border:none; padding:5px 15px; border-radius:4px; cursor:pointer;">▶️</button>
-        <button id="sel-btn" onclick="toggleSel()" style="background:#065f46; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">Mode Sélection (S)</button>
+    <div id="hud-bar">
+      <span style="font-weight:bold; font-size:13px; color:#00d4ff;">👁️ ECHO Vision Explorer</span>
+      <div style="display:flex; gap:8px;">
+        <button class="btn" onclick="resetView()">Réinitialiser</button>
+        <button class="btn" id="crop-btn" onclick="toggleCrop()">Outil Crop (Désactivé)</button>
+        <span id="coords" style="font-size:11px; opacity:0.7; align-self:center; display:none;"></span>
       </div>
-      <div id="img-wrapper" style="width:100%; height:100%; overflow:hidden; cursor:grab; display:flex; align-items:center; justify-content:center;">
-        <img id="screenshot" src="/api/v1/files/U_{session_id}_T_1.png" style="max-width:none; transition: transform 0.1s ease-out; transform-origin: center;">
-      </div>
-      <div id="crop-zone" style="position:absolute; border:2px dashed #10b981; background:rgba(16,185,129,0.1); pointer-events:none; display:none; z-index:50;"></div>
-      <div id="coords" style="position:absolute; bottom:10px; right:10px; background:rgba(0,0,0,0.7); color:#10b981; padding:2px 8px; border-radius:4px; font-family:monospace; font-size:11px; display:none; z-index:110;"></div>
+    </div>
+    <div id="canvas-area" style="flex:1; overflow:hidden; position:relative; cursor:grab; display:flex; justify-content:center; align-items:center;">
+      <img id="main-image" src="{img_url}" style="max-width:100%; max-height:100%; user-select:none; transition: transform 0.1s ease-out;" draggable="false">
+      <div id="crop-box" style="border: 2px dashed #00d4ff; background: rgba(0,212,255,0.1); position: absolute; display: none; pointer-events: none;"></div>
     </div>
     <script>
-      let current = 1;
-      const total = {total_steps};
-      const img = document.getElementById('screenshot');
-      const container = document.getElementById('img-wrapper');
-      const crop = document.getElementById('crop-zone');
+      const img = document.getElementById('main-image');
+      const container = document.getElementById('canvas-area');
+      const crop = document.getElementById('crop-box');
       const coords = document.getElementById('coords');
+      const cropBtn = document.getElementById('crop-btn');
       
-      let scale = 1;
-      let isPanning = false;
-      let isDragging = false;
-      let selOn = false;
-      let startX, startY, scrollLeft, scrollTop;
+      let scale = 1, startX, startY, scrollLeft, scrollTop, isPanning = false, isDragging = false, selOn = false;
 
-      function update() {{
-        img.src = `/api/v1/files/U_{session_id}_T_${{current}}.png`;
-        document.getElementById('step-info').textContent = `Step ${{current}} / ${{total}}`;
-      }}
-      function next() {{ if(current < total) {{ current++; update(); }} }}
-      function prev() {{ if(current > 1) {{ current--; update(); }} }}
-      
-      function toggleSel() {{
+      function toggleCrop() {{
         selOn = !selOn;
-        document.getElementById('sel-btn').style.background = selOn ? '#059669' : '#064e3b';
+        cropBtn.textContent = selOn ? 'Outil Crop (Activé)' : 'Outil Crop (Désactivé)';
+        cropBtn.style.background = selOn ? '#0369a1' : '#334155';
         container.style.cursor = selOn ? 'crosshair' : 'grab';
-        if(!selOn) {{ crop.style.display = 'none'; coords.style.display = 'none'; }}
+        if (!selOn) crop.style.display = 'none';
       }}
 
-      function resetAll() {{ scale = 1; img.style.transform = `scale(1)`; container.scrollLeft = 0; container.scrollTop = 0; }}
+      function resetView() {{
+        scale = 1; img.style.transform = `scale(${{scale}})`;
+        container.scrollLeft = 0; container.scrollTop = 0;
+      }}
 
-      window.addEventListener('wheel', (e) => {{
-        if (e.ctrlKey) {{
-          e.preventDefault();
-          const delta = e.deltaY > 0 ? 0.9 : 1.1;
-          scale = Math.min(Math.max(0.1, scale * delta), 10);
-          img.style.transform = `scale(${{scale}})`;
-        }}
-      }}, {{ passive: false }});
+      container.onwheel = (e) => {{
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;
+        scale *= delta;
+        scale = Math.min(Math.max(0.5, scale), 10);
+        img.style.transform = `scale(${{scale}})`;
+      }};
 
       container.onmousedown = (e) => {{
         if (e.target.closest('#hud-bar')) return;
@@ -229,6 +170,7 @@ class EchoRichUI:
   @classmethod
   def generate_rich_view(cls, moteur: str, payload: str, title: str = "ECHO Rendu Visuel", cdn_timeout_ms: int = 30000) -> HTMLResponse:
     """Usine de rendu universelle (Rendu Visuel)."""
+    from echo_visuals import VisualEngine
     cfg = VisualEngine.get_config(moteur, payload, cdn_timeout_ms=cdn_timeout_ms)
     
     # Gestion des styles CSS et JS
@@ -279,115 +221,111 @@ class EchoUI(EchoRichUI):
       user_email: Optional[str] = None,
       user_tier: Optional[str] = None,
       project_id: Optional[str] = None,
-      auth_sources: Optional[list] = None
+      auth_sources: Optional[list] = None,
+      quota_amount: str = "N/A",
+      quota_fraction: float = 1.0,
+      quota_reset: str = "N/A",
+      quota_type: str = "UNKNOWN"
   ):
-    """Déploie le HUD ECHO centré avec tooltips avancés (Identité API & Consommation)."""
+    """Déploie le HUD ECHO flottant avec tooltips en dessous (Front-display)."""
     
     auth_list = ", ".join(auth_sources) if auth_sources else "N/A"
     total_t = c_t + active_p_t + g_t
+    total_pct = (total_t / max_t) * 100 if max_t > 0 else 0
+    
+    q_color = "#10b981" 
+    if quota_fraction < 0.2: q_color = "#ef4444"
+    elif quota_fraction < 0.5: q_color = "#f59e0b"
+    
+    dash_array = 2 * 3.14159 * 8 
+    dash_offset = dash_array * (1 - quota_fraction)
     
     js_code = f"""
     (function() {{
-      var navbar = document.querySelector('nav div.flex.items-center.w-full.pl-1.5.pr-1');
-      if (!navbar) return;
+      var container = document.querySelector('nav div.flex.items-center.w-full.max-w-full') || 
+                      document.querySelector('nav div.flex.items-center.w-full.pl-1\\\\.5.pr-1');
+      if (!container) return;
       
-      var hud = document.getElementById('echo-nav-context-hud');
-      if (hud) hud.remove();
+      var hudWrapper = document.getElementById('echo-nav-context-hud-wrapper');
+      if (hudWrapper) hudWrapper.remove();
       
-      // --- STYLES TOOLTIP ECHO ---
       var styleId = 'echo-hud-styles';
       if (!document.getElementById(styleId)) {{
         var style = document.createElement('style');
         style.id = styleId;
         style.innerHTML = `
-          .echo-tooltip {{
-            position: relative;
-            display: flex;
-            align-items: center;
-          }}
+          .echo-tooltip {{ position: relative; display: flex; align-items: center; }}
           .echo-tooltip .tooltip-box {{
-            visibility: hidden;
-            width: 240px;
-            background: rgba(15, 23, 42, 0.95);
-            backdrop-filter: blur(8px);
-            color: #f8fafc;
-            text-align: left;
-            border-radius: 8px;
-            padding: 12px;
-            position: absolute;
-            z-index: 100;
-            top: 150%;
-            left: 50%;
-            transform: translateX(-50%);
-            opacity: 0;
-            transition: opacity 0.3s, transform 0.3s;
-            border: 1px solid rgba(0, 212, 255, 0.3);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 0 15px rgba(0, 212, 255, 0.1);
-            font-size: 11px;
-            line-height: 1.5;
-            pointer-events: none;
+            visibility: hidden; width: 260px; background: rgba(15, 23, 42, 0.98);
+            backdrop-filter: blur(12px); color: #f8fafc; text-align: left;
+            border-radius: 8px; padding: 12px; position: absolute; z-index: 9999;
+            top: 120%; left: 50%; transform: translateX(-50%); opacity: 0;
+            transition: opacity 0.3s, transform 0.3s; border: 1px solid rgba(0, 212, 255, 0.4);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); font-size: 11px; pointer-events: none;
           }}
-          .echo-tooltip:hover .tooltip-box {{
-            visibility: visible;
-            opacity: 1;
-            transform: translateX(-50%) translateY(-5px);
-          }}
-          .tooltip-title {{
-            color: #00d4ff;
-            font-weight: bold;
-            margin-bottom: 8px;
-            border-bottom: 1px solid rgba(0, 212, 255, 0.2);
-            padding-bottom: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-          }}
+          .echo-tooltip:hover .tooltip-box {{ visibility: visible; opacity: 1; transform: translateX(-50%) translateY(-5px); }}
+          .tooltip-title {{ color: #00d4ff; font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid rgba(0, 212, 255, 0.2); padding-bottom: 4px; text-transform: uppercase; }}
           .tooltip-row {{ display: flex; justify-content: space-between; margin-bottom: 4px; }}
           .dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }}
         `;
         document.head.appendChild(style);
       }}
 
-      hud = document.createElement('div');
+      hudWrapper = document.createElement('div');
+      hudWrapper.id = 'echo-nav-context-hud-wrapper';
+      hudWrapper.style.cssText = 'position:absolute;left:50%;top:22px;transform:translateX(-50%);width:auto;min-width:300px;display:flex;justify-content:center;align-items:center;z-index:60;pointer-events:none;';
+
+      var hud = document.createElement('div');
       hud.id = 'echo-nav-context-hud';
-      // Centrage Absolu entre Sélecteur et Menus
-      hud.style.cssText = 'position:absolute;left:50%;transform:translateX(-50%);display:flex;align-items:center;justify-content:center;width:auto;max-width:30%;z-index:40;gap:12px;';
+      hud.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:12px;pointer-events:auto;background:rgba(0,0,0,0.2);padding:4px 12px;border-radius:20px;backdrop-filter:blur(4px);';
       
       var iconHtml = `
         <div class="echo-tooltip">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="width:16px;height:16px;color:#00d4ff;cursor:help;opacity:0.8;">
-            <path fill-rule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clip-rule="evenodd" />
+          <svg width="20" height="20" viewBox="0 0 20 20" style="cursor:help;">
+            <circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" />
+            <circle cx="10" cy="10" r="8" fill="none" stroke="{q_color}" stroke-width="2" 
+                    stroke-dasharray="{dash_array}" stroke-dashoffset="{dash_offset}" 
+                    transform="rotate(-90 10 10)" stroke-linecap="round" style="transition: stroke-dashoffset 1s ease-in-out;" />
+            <path d="M10 6a2.5 2.5 0 00-2.5 2.5V10h5V8.5A2.5 2.5 0 0010 6zm3.5 4H6.5a1 1 0 00-1 1v4a1 1 0 001 1h7a1 1 0 001 1h7a1 1 0 001-1v-4a1 1 0 00-1-1z" fill="white" opacity="0.9" />
           </svg>
           <div class="tooltip-box">
-            <div class="tooltip-title">INFO GEMINI CODE ASSIST</div>
+            <div class="tooltip-title">AUTHENTIFICATION GEMINI</div>
             <div class="tooltip-row"><span>🔐 Sources:</span> <span>{auth_list}</span></div>
             <div class="tooltip-row"><span>👤 Compte:</span> <span>{user_email or 'N/A'}</span></div>
             <div class="tooltip-row"><span>🏗️ Projet:</span> <span>{project_id or 'N/A'}</span></div>
             <div class="tooltip-row"><span>🏆 Tier:</span> <span style="color:#10b981;font-weight:bold;">{user_tier or 'N/A'}</span></div>
+            <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.2);">
+                <div class="tooltip-row"><span>📊 Quota Restant:</span> <b>{quota_amount} ({quota_fraction*100:.1f}%)</b></div>
+                <div class="tooltip-row"><span>🕒 Reset:</span> <span>{quota_reset}</span></div>
+                <div class="tooltip-row"><span>🏷️ Ressource:</span> <span style="font-size:9px;opacity:0.8;">{quota_type}</span></div>
+            </div>
           </div>
         </div>
       `;
       
       var barHtml = `
-        <div class="echo-tooltip" style="flex-grow:1;min-width:150px;">
+        <div class="echo-tooltip" style="min-width:180px;">
           <div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);">
             <div style="width:{cache_pct}%;background:linear-gradient(90deg, #7c3aed, #8b5cf6);" title="Cache"></div>
             <div style="width:{prompt_pct}%;background:linear-gradient(90deg, #059669, #10b981);" title="Prompt"></div>
             <div style="width:{gen_pct}%;background:linear-gradient(90deg, #d97706, #f59e0b);" title="Gen"></div>
           </div>
-          <div class="tooltip-box" style="width:200px;">
+          <div class="tooltip-box" style="width:240px;">
             <div class="tooltip-title">CONSOMMATION CONTEXTUELLE</div>
-            <div class="tooltip-row"><span><span class="dot" style="background:#8b5cf6;"></span>Cache:</span> <span>{c_t}</span></div>
-            <div class="tooltip-row"><span><span class="dot" style="background:#10b981;"></span>Prompt:</span> <span>{active_p_t}</span></div>
-            <div class="tooltip-row"><span><span class="dot" style="background:#f59e0b;"></span>Génération:</span> <span>{g_t}</span></div>
+            <div class="tooltip-row"><span><span class="dot" style="background:#8b5cf6;"></span>Cache:</span> <span>{c_t} ({cache_pct:.3f}%)</span></div>
+            <div class="tooltip-row"><span><span class="dot" style="background:#10b981;"></span>Prompt:</span> <span>{active_p_t} ({prompt_pct:.3f}%)</span></div>
+            <div class="tooltip-row"><span><span class="dot" style="background:#f59e0b;"></span>Génération:</span> <span>{g_t} ({gen_pct:.3f}%)</span></div>
             <div class="tooltip-row" style="margin-top:6px;border-top:1px solid rgba(255,255,255,0.1);padding-top:4px;font-weight:bold;">
-              <span>Total:</span> <span>{total_t} / {max_t}</span>
+              <span>Total:</span> <span>{total_t} / {max_t} ({total_pct:.3f}%)</span>
             </div>
           </div>
         </div>
       `;
       
       hud.innerHTML = iconHtml + barHtml;
-      navbar.appendChild(hud);
+      hudWrapper.appendChild(hud);
+      var nav = container.closest('nav');
+      if (nav) nav.appendChild(hudWrapper);
     }})();
     """
     await events.emit("execute", {"code": js_code})

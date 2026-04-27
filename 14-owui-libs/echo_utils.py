@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 4.0
-description: 4.0: Stratégie d'Authentification Exclusive et fiabilisation session_id (OAuth2).
+version: 4.2
+description: 4.2: Normalisation du transport API (Unwrap OAuth2) et fiabilisation session_id.
 """
 
 import copy
@@ -427,7 +427,11 @@ class EchoGeminiClient:
 
                 resp = await client.post(req_ctx["url"], json=req_ctx["payload"], headers=req_ctx["headers"], timeout=timeout)
                 
-                if resp.status_code == 200: return resp.json()
+                if resp.status_code == 200:
+                    json_data = resp.json()
+                    # NORMALISATION : Déballage automatique de l'enveloppe Code Assist (OAuth2)
+                    # On renvoie le contenu interne pour que les outils voient directement 'candidates'
+                    return json_data.get("response", json_data)
 
                 # --- NOUVEAU : FAIL-FAST SUR ERREUR SYNTAXE ---
                 if resp.status_code == 400:

@@ -1,8 +1,8 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 12.8
-description: 12.8: Retouche de la Docstring.
+version: 12.10
+description: 12.10: Robustesse du parsing (Sécurisation Candidates) et support de la normalisation API.
 """
 
 import orjson as json
@@ -74,12 +74,19 @@ class Tools:
                 timeout=self.valves.MAPS_TIMEOUT
             )
             
-            cand = data.get("candidates", [])[0]
+            candidates = data.get("candidates", [])
+            if not candidates:
+                return wrap_tool_output(text="⚠️ Google Maps n'a renvoyé aucun résultat pour cette recherche ou cet itinéraire. Veuillez préciser votre demande.", status={"status": "no_results"})
+
+            cand = candidates[0]
             full_text = ""
             if "content" in cand:
                 for p in cand["content"].get("parts", []):
                     if "text" in p: full_text += p["text"]
             
+            if not full_text:
+                return wrap_tool_output(text="⚠️ Recherche Maps complétée mais aucune information textuelle n'a été fournie par l'API.", status={"status": "empty_response"})
+
             await events.status("Carte interactive prête.", done=True)
 
             # --- RÉUSSITE : RÉPONSE RICH UI (GOOGLE MAPS EMBED) ---
