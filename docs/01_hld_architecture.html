@@ -189,7 +189,7 @@ flowchart LR
     <h2>Glossaire de Précision Technique</h2>
     <div class="grid-container">
       <div class="card">
-        <h3>📡 AEC (Artéfacts Environnementaux)</h3>
+        <h3>📡 AEC (Artéfacts Environnementaux et Contextuels)</h3>
         <p><strong>Définition :</strong> Composante dynamique certifiée du Framework injectée en XML.</p>
         <p><strong>Précision :</strong> Regroupe <code>&lt;environnement_contexte&gt;</code> (proprioception infrastructurelle) et <code>&lt;smart_context&gt;</code> (distillation sémantique). Ces balises constituent la frontière cognitive entre le système et l'utilisateur.</p>
       </div>
@@ -201,12 +201,12 @@ flowchart LR
       <div class="card">
         <h3>👤 L'Ombre (Rich Shadow)</h3>
         <p><strong>Définition :</strong> Enregistrement <i>Bit-Perfect</i> d'un tour de parole dans SQLite.</p>
-        <p><strong>Précision :</strong> Contrairement au texte visible dans le chat, l'Ombre contient la structure JSON brute (Multiparts) envoyée à l'API. Elle conserve les binaires Base64, les appels d'outils (`tool_calls`) et les pensées internes (`thoughts`) que le Middleware Open WebUI ignore ou tronque.</p>
+        <p><strong>Précision :</strong> Contrairement au texte visible dans le chat, l'Ombre contient la structure JSON brute envoyée à l'API. Elle réside dans <code>/app/backend/data/users/{user_id}/chats/{chat_id}.db</code> et conserve les binaires, les appels d'outils et les pensées internes.</p>
       </div>
       <div class="card">
         <h3>⚓ La Suture (Cognitive Suture)</h3>
         <p><strong>Définition :</strong> Algorithme de restauration de la continuité sémantique.</p>
-        <p><strong>Précision :</strong> Processus par lequel le Pipe intercepte la liste de messages incomplète d'Open WebUI et la "recoud" en injectant les **Ombres** correspondantes. Cela garantit que chaque nouvelle inférence Gemini s'appuie sur une vérité historique absolue et non sur un résumé de dégradé.</p>
+        <p><strong>Précision :</strong> Processus par lequel le Pipe intercepte la liste de messages incomplète d'Open WebUI et la "recoud" en injectant les **Ombres** correspondantes. Cela garantit que chaque nouvelle inférence Gemini s'appuie sur une vérité historique absolue.</p>
       </div>
       <div class="card">
         <h3>📝 Le Draft (Brouillon Sémantique)</h3>
@@ -216,7 +216,7 @@ flowchart LR
       <div class="card">
         <h3>⚓ L'Ancre (Cognitive Anchor)</h3>
         <p><strong>Définition :</strong> Identifiant de session persistant (`thoughtSignature`).</p>
-        <p><strong>Précision :</strong> Jeton cryptographique fourni par l'API Google permettant de référencer un état de réflexion complexe mis en cache côté serveur. L'usage des Ancres réduit le poids du contexte de 30 à 70% lors de la Suture.</p>
+        <p><strong>Précision :</strong> Jeton cryptographique fourni par Google KV Cache permettant de référencer un état de réflexion complexe. L'usage des Ancres réduit le poids du contexte de 30 à 70% lors de la Suture.</p>
       </div>
       <div class="card">
         <h3>🧱 Le Moulage (Semantic Molding)</h3>
@@ -234,7 +234,7 @@ flowchart LR
         <h3>🌒 Le Filtre (Inlet)</h3>
         <p><strong>Nature :</strong> Middleware d'interception de type <i>Filter</i> (Open WebUI).</p>
         <p><strong>Source :</strong> <code>11-owui-filters/new_context_filter.py</code></p>
-        <p><strong>Rôle :</strong> Intercepte la requête. Gère le "Smart Context" (préanalyse des fichiers) pour décharger le modèle principal. Prépare l'état initial dans <code>echo_shadows.db</code>.</p>
+        <p><strong>Rôle :</strong> Intercepte la requête. Gère le "Smart Context" (préanalyse des fichiers) pour décharger le modèle principal. Prépare l'état initial dans les métadonnées.</p>
         <p><strong>Exécutant :</strong> Instance Python d'Open WebUI.</p>
         <p><strong>Connexions :</strong> Reçoit de l'Utilisateur ; Alimente le Pipe via les métadonnées.</p>
       </div>
@@ -252,8 +252,8 @@ flowchart LR
       <!-- Concept: Ombre Riche -->
       <div class="card">
         <h3>🗄️ Ombre Riche (Rich Shadow)</h3>
-        <p><strong>Nature :</strong> Base de données relationnelle persistante (SQLite).</p>
-        <p><strong>Source :</strong> <code>/app/backend/data/user_dbs/echo_shadows.db</code></p>
+        <p><strong>Nature :</strong> Registre SQLite par chat.</p>
+        <p><strong>Source :</strong> <code>/app/backend/data/users/{user_id}/chats/{chat_id}.db</code></p>
         <p><strong>Rôle :</strong> Registre immuable de la vérité cognitive (pensées CoT, logs outils, signatures). Permet la Suture bit-perfect.</p>
         <p><strong>Exécutant :</strong> Moteur SQLite3 invoqué via les librairies <code>14-owui-libs/echo_utils.py</code>.</p>
         <p><strong>Connexions :</strong> Consultée et mise à jour par le Filtre et le Pipe.</p>

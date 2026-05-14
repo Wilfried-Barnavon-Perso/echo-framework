@@ -19,13 +19,13 @@
             <div class="card">
                 <h3>📊 Admin Manager</h3>
                 <p><strong>Nature :</strong> Micro-service de régulation et monitoring (Flask API).</p>
-                <p><strong>Source :</strong> <code>20-docker-admin-manager/server.py</code></p>
+                <p><strong>Source :</strong> <code>20-docker-admin-manager/server.py</code> (v2.6)</p>
                 <p><strong>Rôle :</strong> Assurer la santé du cluster ECHO, gérer les sauvegardes à chaud, orchestrer l'oubli organique de la mémoire Qdrant et fournir une interface de sécurité (rotation des mots de passe).</p>
                 <p><strong>Exécutant :</strong> Conteneur Docker <code>echo-admin-manager</code> tournant sous Python 3.11.</p>
                 <p><strong>Interconnexions :</strong> 
                     <ul>
                         <li><strong>Docker :</strong> Commande le Docker Daemon via <code>/var/run/docker.sock</code>.</li>
-                        <li><strong>Stockage :</strong> Accès direct au volume <code>/app/backend/data</code> pour les backups.</li>
+                        <li><strong>Stockage :</strong> Accès direct au volume <code>/app/backend/data/users/</code> pour les backups.</li>
                         <li><strong>Mémoire :</strong> Requête l'API Qdrant pour la maintenance des vecteurs.</li>
                     </ul>
                 </p>

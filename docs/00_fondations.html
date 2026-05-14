@@ -34,8 +34,8 @@
             </li>
             <li><strong>Historique (V4 vs V5) :</strong> 
                 <ul>
-                    <li>La <strong>V4 (Legacy)</strong> était un concept d'agent autonome tournant dans un simple terminal (voir le dossier <code>_v4-legacy-concept</code>). Elle a posé les bases de la boucle de réflexion <abbr title="Chain of Thought : La capacité de l'IA à exprimer et conserver son raisonnement étape par étape.">CoT</abbr>.</li>
-                    <li>La <strong>V5 (Actuelle)</strong> transforme ce concept en une infrastructure robuste, conteneurisée et intégrée à une interface web moderne (Open WebUI), capable de gérer des sessions massives grâce à l'<abbr title="Base de données SQLite locale qui conserve une copie parfaite et non altérée de toute la conversation.">Ombre Riche</abbr>.</li>
+                    <li>La <strong>V4 (Legacy)</strong> est un prompt de préférence utilisateur avancé pour Gemini. Elle pose les bases de l'architecture cognitive ECHO (voir le dossier <code>_v4-legacy-concept</code>).</li>
+                    <li>La <strong>V5 (Actuelle)</strong> transforme ce concept en une infrastructure robuste, conteneurisée et intégrée à une interface web moderne (Open WebUI), capable de gérer des sessions massives grâce à l'<strong>Ombre Riche</strong>.</li>
                 </ul>
             </li>
         </ul>
@@ -51,22 +51,22 @@
             <tbody>
                 <tr>
                     <td><strong>Souveraineté</strong></td>
-                    <td>Isolation totale des données. Pas de télémétrie. Le Vault est local.</td>
+                    <td>Isolation locale. Pas de télémétrie. Le Vault est strictement privé.</td>
                 </tr>
                 <tr>
                     <td><strong>Véracité</strong></td>
-                    <td>Refus des hallucinations par l'audit systématique des sources et la <abbr title="Processus qui reconstruit l'historique complet de la conversation avant chaque envoi à l'IA pour éviter l'amnésie.">Suture</abbr>.</td>
+                    <td>Suture sémantique garantissant une reconstruction bit-perfect de l'historique.</td>
                 </tr>
                 <tr>
                     <td><strong>Autonomie</strong></td>
-                    <td>L'IA planifie et exécute ses tâches via l'Arsenal sans intervention humaine constante.</td>
+                    <td>Arsenal souverain d'outils sensoriels et exécutifs pilotés par le Kernel.</td>
                 </tr>
             </tbody>
         </table>
 
         <div class="tech-spec">
-            <h4>⚙️ Précision Mécanique : L'Abstraction du Modèle</h4>
-            <p>ECHO est conçu pour être <strong>agnostique au moteur</strong>. Bien qu'il soit optimisé pour la famille Gemini (Pro, Flash, Lite), son architecture de <abbr title="Processus qui reconstruit l'historique complet de la conversation avant chaque envoi à l'IA pour éviter l'amnésie.">Suture</abbr> permet théoriquement de basculer d'un fournisseur à l'autre sans perdre la structure de la conversation, car ECHO gère sa propre "conscience" (Shadows) indépendamment des APIs cloud.</p>
+            <h4>⚙️ Précision Mécanique : 📡 AEC (Artéfacts Environnementaux et Contextuels)</h4>
+            <p>Le Framework injecte systématiquement des <strong>AEC</strong> dans le flux de pensée. Ces balises XML (<code>&lt;environnement_contexte&gt;</code>) assurent la proprioception de l'IA : connaissance de son identité, de ses capacités et de son ancrage géo-temporel sans consommation excessive de jetons.</p>
         </div>
 
         <footer>

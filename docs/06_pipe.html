@@ -47,7 +47,7 @@
             <p>Si le Filtre est le système sensoriel, le Pipe est le cerveau conscient. Il ne se contente pas de transmettre un message : il "recoud" les lambeaux de la mémoire (Suture), planifie une stratégie, utilise ses mains (Arsenal) pour agir, et s'assure que sa pensée reste cohérente du début à la fin de la session.</p>
         </div>
 
-        <p>Le <code>pipe_engine.py</code> (v180.2) est l'unité centrale de traitement d'ECHO. Il n'est pas un simple connecteur API, mais un véritable <strong>Orchestrateur de Contexte</strong> capable de maintenir une cohérence absolue (Bit-Perfect) sur des sessions dépassant le million de tokens.</p>
+        <p>Le <code>pipe_engine.py</code> (v190.5) est l'unité centrale de traitement d'ECHO. Il n'est pas un simple connecteur API, mais un véritable <strong>Orchestrateur de Contexte</strong> capable de maintenir une cohérence absolue (Bit-Perfect) sur des sessions dépassant le million de tokens, tout en supportant les configurations de réflexion avancées (<code>thinkingConfig</code>).</p>
 
         <div class="note-box">
             <strong>Philosophie Directrice :</strong> Le Pipe considère chaque tour de parole comme une opération chirurgicale. Il refuse la volatilité d'Open WebUI et s'appuie exclusivement sur son propre registre d'ombres (Shadows) pour garantir que l'IA ne souffre jamais d'amnésie ou de dérive logique.
@@ -96,7 +96,7 @@
             <p>Le Pipe est capable de capturer les pensées internes de l'IA (Chain-of-Thought). Ces données sont <strong>isolées</strong> du flux principal pour être affichées proprement dans l'interface sans polluer la réponse finale. Ces pensées sont ensuite réinjectées dans le contexte lors du tour suivant via la <strong>Suture Cognitive</strong>, permettant à l'IA de se "souvenir" de son propre raisonnement interne.</p>
         </div>
 
-        <h3>L'Outil de Transfert : <code>changement_niveau_cognitif</code></h3>
+        <h3>L'Outil de Transfert : <code>new_cognitive_level</code></h3>
         <p>Injecté dynamiquement, il permet à un modèle de se déclarer incompétent ou d'anticiper une surcharge contextuelle.</p>
         <ul>
             <li><strong>Plan de Transfert</strong> : Le modèle sortant rédige un plan Markdown pour son successeur.</li>
@@ -104,9 +104,9 @@
         </ul>
 
         <h3>Gestion Chirurgicale des Pensées (CoT)</h3>
-        <p>ECHO ne conserve <strong>JAMAIS</strong> le texte brut de la pensée dans l'historique des tours suivants. À la place, il utilise la <code>thoughtSignature</code> :</p>
+        <p>ECHO ne conserve <strong>JAMAIS</strong> le texte brut de la pensée dans l'historique des tours suivants. À la place, il utilise la <code>ThoughtSignature</code> :</p>
         <ul>
-            <li><strong>L'Ancre Google</strong> : La <code>thoughtSignature</code> est une ancre logique (KV Cache) fournie par Google. En la réinjectant, ECHO permet au modèle de "retrouver ses esprits" sans avoir à relire ses propres pensées.</li>
+            <li><strong>L'Ancre Google</strong> : La <code>ThoughtSignature</code> est une ancre logique (KV Cache) fournie par Google. En la réinjectant, ECHO permet au modèle de "retrouver ses esprits" sans avoir à relire ses propres pensées.</li>
             <li><strong>Économie Massive</strong> : Ce protocole réduit la charge contextuelle de <strong>30% à 70%</strong>.</li>
         </ul>
 
@@ -119,14 +119,14 @@
         <h2>Phase de Scellement (Le Verrouillage)</h2>
         <ol>
             <li><strong>Shadow Sealing</strong> : Enregistrement dans <code>message_shadows</code>.</li>
-            <li><strong>Cognitive Sealing</strong> : Ancrage de la <code>thoughtSignature</code> et du <code>tool_journal</code>.</li>
+            <li><strong>Cognitive Sealing</strong> : Ancrage de la <code>ThoughtSignature</code> et du <code>tool_journal</code>.</li>
             <li><strong>File Registry Update</strong> : Les fichiers sont marqués comme <code>processed</code> et déplacés vers le <strong>Vault</strong>.</li>
             <li><strong>HUD Refresh</strong> : Mise à jour de la Context Gauge.</li>
         </ol>
 
         <div class="audit-note">
-            <h4>✅ Le point sur l'exactitude (v180.2)</h4>
-            <p>Le <code>StreamProcessor</code> de la version 180.2 a été optimisé pour le multiplexage HTTP/2. Il est capable de traiter en parallèle les balises de pensée et les appels d'outils, permettant une réactivité accrue lors des phases d'orchestration complexe.</p>
+            <h4>✅ Le point sur l'exactitude (v190.5)</h4>
+            <p>Le <code>StreamProcessor</code> de la version 190.5 a été optimisé pour le multiplexage HTTP/2 et la gestion native des <strong>ThoughtSignatures</strong>. Il est capable de traiter en parallèle les balises de pensée et les appels d'outils, permettant une réactivité accrue lors des phases d'orchestration complexe.</p>
         </div>
 
         <footer>

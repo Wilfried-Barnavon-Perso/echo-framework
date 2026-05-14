@@ -33,13 +33,13 @@
             </p>
         </div>
 
-        <h2>1. Le Filtre de Conscience (new_context_filter.py)</h2>
+        <h2>1. Le Filtre de Conscience (new_context_filter.py v7.0)</h2>
         <div class="grid-container">
             <div class="card">
                 <h3>🌐— Filtre New Context</h3>
-                <p><strong>Nature :</strong> Middleware d'interception Inlet/Outlet.</p>
+                <p><strong>Nature :</strong> Middleware d'interception Inlet/Outlet haute résilience.</p>
                 <p><strong>Source :</strong> <code>11-owui-filters/new_context_filter.py</code></p>
-                <p><strong>Rôle :</strong> Gateway Cognitive. En phase <strong>Inlet</strong>, il effectue le "Smart Context" : il résume les fichiers massifs via Gemini Flash pour que le Pipe reçoive un dictionnaire exploitable sans saturer son contexte.</p>
+                <p><strong>Rôle :</strong> Gateway Cognitive. En phase <strong>Inlet</strong>, il effectue le "Smart Context" : il résume les fichiers massifs via Gemini Flash pour que le Pipe reçoive un dictionnaire exploitable sans saturer son contexte, tout en assurant une résilience totale face aux erreurs de parsing.</p>
                 <p><strong>Exécutant :</strong> Processus Python d'Open WebUI.</p>
                 <p><strong>Connexions :</strong> Alimente le Pipe (via les métadonnées <code>environnement_contexte</code>).</p>
             </div>

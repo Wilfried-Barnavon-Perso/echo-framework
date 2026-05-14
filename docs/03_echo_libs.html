@@ -22,7 +22,7 @@
     <p>Le socle technique d'ECHO repose sur un triptyque de librairies situées dans <code>14-owui-libs/</code>. Ces modules assurent la cohérence, la résilience et l'interoperabilité de tout l'écosystème.</p>
 
     <section id="constants">
-      <h2>echo_constants.py : Constantes & Topologie (v1.22)</h2>
+      <h2>echo_constants.py : Constantes & Topologie (v2.7)</h2>
       <p>Le registre unique des vérités du système : IDs de modèles, chemins de répertoires, timeouts et limites de contextes.</p>
       <table>
         <thead>
@@ -31,7 +31,7 @@
         <tbody>
           <tr><td><code>ECHO_USERS_ROOT</code></td><td><code>/app/backend/data/users</code> (Stockage des BDD et Vaults)</td></tr>
           <tr><td><code>ECHO_UPLOADS_DIR</code></td><td><code>/app/backend/data/uploads</code> (Transit des fichiers OWUI)</td></tr>
-          <tr><td><code>ECHO_USER_AGENT</code></td><td><code>ECHO-Framework/5</code> (Identité réseau)</td></tr>
+          <tr><td><code>ECHO_USER_AGENT</code></td><td><code>gemini-cli/0.42.0</code> (Identité réseau)</td></tr>
         </tbody>
       </table>
 
@@ -59,7 +59,7 @@
 
       <div class="tech-spec">
         <h4>⚙️ EchoGeminiClient : Résilience & Mesh d'Authentification</h4>
-        <p>Moteur d'appel API avec support <strong>HTTP/2 Strict</strong> et architecture symétrique (AI Studio & Google Cloud Code Assist). Il orchestre un "Mesh" d'identifiants (Clés API, OAuth2) pour une autonomie maximale et permet la capture asynchrone des <strong>signatures de pensée</strong> via les flux SSE.</p>
+        <p>Moteur d'appel API avec support <strong>HTTP/2 Strict</strong> et architecture symétrique (AI Studio & Google Cloud Code Assist). Il orchestre un "Mesh" d'identifiants (Clés API, OAuth2) pour une autonomie maximale et permet la capture asynchrone des <strong>ThoughtSignatures</strong> via les flux SSE.</p>
         <ul>
           <li><strong>Failover Hybride</strong> : 
             <ul>
