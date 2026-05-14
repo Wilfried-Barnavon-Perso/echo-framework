@@ -1,8 +1,8 @@
 """
 title: ECHO Vault Explorer
 author: Wilfried BARNAVON
-version: 5.108.0
-description: 5.108.0: Migration vers le Unified Auth Mesh.
+version: 5.109.4
+description: 5.109.4: Centralisation des paramètres de génération via echo_constants.
 """
 
 import os
@@ -21,20 +21,20 @@ from fastapi.responses import HTMLResponse
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import (
-    EchoAuth, EchoEvents, wrap_tool_output, 
+    EchoEvents, wrap_tool_output, 
     resolve_upload_file_path, get_echo_version, split_thought_process,
     EchoGeminiClient, EchoStateManager, generate_echo_file_id,
     get_stealth_headers
 )
-from echo_ui import EchoRichUI
+from echo_ui import EchoUI
 from echo_constants import (
-    ECHO_UPLOADS_DIR, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, MODEL_FLASH,
+    ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, MODEL_FLASH, MODEL_ROUTING,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
 )
 
 class Tools:
     class Valves(BaseModel):
-        UPLOADS_DIR: str = Field(default=ECHO_UPLOADS_DIR)
+        UPLOADS_DIR: str = Field(default=ECHO_UPLOADS_TRANSIT_DIR)
         KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
         MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
         PROBE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour le sondage sémantique.")
@@ -43,7 +43,6 @@ class Tools:
 
     def __init__(self):
         self.valves = self.Valves()
-        self.auth = EchoAuth()
         self.uploads_dir = self.valves.UPLOADS_DIR
 
     async def read_raw_file_content(
@@ -115,12 +114,9 @@ class Tools:
     ) -> str:
         """Sonde sémantiquement un fichier volumineux ou complexe via Gemini Flash."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid = __user__.get("id", "anonymous")
-        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
+        user_id = __user__.get("id", "system")
+        fpath = resolve_upload_file_path(user_id, file_id, self.uploads_dir)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
-
-        auth_mesh = await self.auth.get_ordered_auth_mesh(uid)
-        if not auth_mesh: return wrap_tool_output(text="❌ Authentification Google manquante.", status={"status": "error"})
 
         mime, supported = get_gemini_mime(fpath)
         if not supported: return wrap_tool_output(text=f"❌ Type {mime} non supporté.", status={"status": "error"})
@@ -130,12 +126,16 @@ class Tools:
             with open(fpath, 'rb') as f: b64 = base64.b64encode(f.read()).decode('utf-8')
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": query}, {"inlineData": {"mimeType": mime, "data": b64}}]}],
-                "generationConfig": {"thinkingConfig": {"includeThoughts": True, "thinkingLevel": thinking_level.lower()}}
+                "generationConfig": {
+                    "temperature": TEMP_DEFAULT,
+                    "topP": TOP_P_DEFAULT,
+                    "thinkingConfig": {"includeThoughts": True, "thinkingLevel": thinking_level.lower()}
+                }
             }
             data = await EchoGeminiClient.call(
-                auth_mesh=auth_mesh, 
                 target_model=MODEL_FLASH, 
                 payload=payload, 
+                user_id=user_id,
                 threshold=self.valves.KEY_SWITCH_THRESHOLD,
                 max_retries=self.valves.MAX_RETRIES,
                 events=events,
@@ -207,14 +207,14 @@ class Tools:
                          r = await c.get(target, headers=h, timeout=10.0)
                          r.raise_for_status()
 
-                response = EchoRichUI.image_viewer(target_data=target, is_url=True, title=f"Remote : {target[:30]}...")
+                response = EchoUI.image_viewer(target, title=f"Remote : {target[:30]}...")
                 return response, wrap_tool_output(text=f"L'image distante est affichée. L'utilisateur peut utiliser la Loupe ou le Sélecteur.")
             else:
                 fpath = resolve_upload_file_path(uid, target, self.uploads_dir)
                 if not fpath: return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"})
                 mime, _ = mimetypes.guess_type(fpath)
                 with open(fpath, 'rb') as f: b64 = base64.b64encode(f.read()).decode('utf-8')
-                response = EchoRichUI.image_viewer(target_data=b64, is_url=False, mime=mime or "image/png", title=f"Vault : {os.path.basename(fpath)}")
+                response = EchoUI.image_viewer(f"data:{mime or 'image/png'};base64,{b64}", title=f"Vault : {os.path.basename(fpath)}")
                 return response, wrap_tool_output(text=f"L'image locale '{os.path.basename(fpath)}' est affichée dans le viewer Premium.")
         except Exception as e:
             return wrap_tool_output(text=f"❌ Échec affichage : {str(e)}", status={"status": "error"})

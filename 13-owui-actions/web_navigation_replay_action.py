@@ -1,8 +1,8 @@
 """
 title: Show Web Replay
 author: Wilfried BARNAVON
-version: 3.8
-description: 3.8: Restauration de l'icône SVG de l'Action.
+version: 4.3
+description: 4.3: Livraison finale - Cockpit de rejeu intégral v5.136 (Zoom, Crop Pro, Export, Reverse).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIyOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTEyIDN2MTgiLz48cGF0aCBkPSJNMTcgM3YxOCIvPjxwYXRoIGQ9Ik0zIDdoMTgiLz48cGF0aCBkPSJNMyAxMmgyMSIvPjxwYXRoIGQ9Ik0zIDE3aDE4Ii8+PC9zdmc+
 """
 
@@ -19,14 +19,14 @@ from pydantic import BaseModel, Field
 sys.path.append("/app/backend/echo_libs")
 from echo_constants import ECHO_USERS_ROOT
 from echo_utils import EchoEvents, EchoAuth, wrap_tool_output
-from echo_ui import EchoRichUI
+from echo_ui import EchoUI
 
 # --- CONFIGURATION LOGGING ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
-    """Génère le script JS Cockpit (Interface et Listeners)."""
+    """Génère le script JS Cockpit (Interface et Listeners) - Version INTEGRALE v5.136."""
     ts_json = json.dumps(timestamps).decode('utf-8')
     return f"""
     (function() {{
@@ -34,7 +34,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
             const data = {{ timestamps: {ts_json}, cid: "{chat_id}" }};
             const REPLAY_ID = 'echo-browser-replay';
             let replay = document.getElementById(REPLAY_ID);
-            
+
             if (replay && replay.getAttribute('data-chat-id') !== data.cid) {{
                 replay.remove();
                 replay = null;
@@ -45,7 +45,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                 replay.id = REPLAY_ID;
                 replay.setAttribute('data-chat-id', data.cid);
                 replay.style.cssText = 'position:fixed; inset:0; z-index:10001; background:rgba(0,0,0,0.92); backdrop-filter:blur(20px); display:flex; flex-direction:column; align-items:center; color:white; font-family:sans-serif; overflow:hidden;';
-                
+
                 replay.innerHTML = `
                     <div style="position:absolute; top:20px; right:20px; z-index:100; display:flex; gap:15px;">
                         <button id="${{REPLAY_ID}}-btn-crop" title="Sélection" style="background:rgba(255,255,255,0.1); border:none; color:white; font-size:18px; cursor:pointer; width:40px; height:40px; border-radius:50%;">⛶</button>
@@ -53,7 +53,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                         <button id="${{REPLAY_ID}}-btn-save" title="Télécharger" style="background:rgba(255,255,255,0.1); border:none; color:white; font-size:18px; cursor:pointer; width:40px; height:40px; border-radius:50%;">📥</button>
                         <button id="${{REPLAY_ID}}-close" style="background:rgba(255,255,255,0.1); border:none; color:white; font-size:24px; cursor:pointer; width:40px; height:40px; border-radius:50%;">×</button>
                     </div>
-                    
+
                     <div id="${{REPLAY_ID}}-viewport" style="flex:1; width:100%; display:flex; justify-content:center; overflow:auto; padding:40px 0; scrollbar-width: thin; scrollbar-color: #4ade80 transparent;">
                         <div id="${{REPLAY_ID}}-canvas" style="position:relative; width:600px; height:800px; background:#111; box-shadow:0 0 100px rgba(0,0,0,1); border:1px solid #333; border-radius:4px; cursor:crosshair; transition: width 0.3s, height 0.3s;">
                             <img id="${{REPLAY_ID}}-img" style="position:absolute; top:0; left:0; width:100%; height:100%; display:block; border-radius:4px; opacity:0; transition:opacity 0.2s; pointer-events:none; z-index:1;" />
@@ -72,18 +72,18 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
 
                     <div style="width:100%; background:rgba(0,0,0,0.5); border-top:1px solid #333; padding:20px; display:flex; flex-direction:column; align-items:center; gap:15px; backdrop-filter:blur(10px);">
                         <div id="${{REPLAY_ID}}-meta" style="font-size:11px; color:#4ade80; font-family:monospace; letter-spacing:1px; background:rgba(0,0,0,0.3); padding:4px 12px; border-radius:10px;">INITIALISATION...</div>
-                        
+
                         <div style="display:flex; gap:15px; align-items:center;">
-                            <button id="${{REPLAY_ID}}-first" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">|◀</button>
+                            <button id="${{REPLAY_ID}}-first" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">|◀</button>    
                             <button id="${{REPLAY_ID}}-prev" style="background:none; border:none; color:white; cursor:pointer; font-size:18px; margin-right:40px;">◀</button>
-                            
+
                             <div style="display:flex; gap:10px; align-items:center;">
                                 <button id="${{REPLAY_ID}}-play-rev" style="background:#f97316; border:none; color:white; padding:10px 25px; border-radius:20px 5px 5px 20px; font-weight:bold; cursor:pointer; min-width:110px;">◀ PLAY</button>
                                 <button id="${{REPLAY_ID}}-play" style="background:#4ade80; border:none; color:black; padding:10px 25px; border-radius:5px 20px 20px 5px; font-weight:bold; cursor:pointer; min-width:110px;">PLAY ▶</button>
                             </div>
 
                             <button id="${{REPLAY_ID}}-next" style="background:none; border:none; color:white; cursor:pointer; font-size:18px; margin-left:40px;">▶</button>
-                            <button id="${{REPLAY_ID}}-last" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">▶|</button>
+                            <button id="${{REPLAY_ID}}-last" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">▶|</button>     
                         </div>
 
                         <div style="display:flex; gap:15px; align-items:center; width:400px; opacity:0.8;">
@@ -133,7 +133,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                     const date = new Date(ts).toLocaleString('fr-FR');
 
                     img.onload = () => {{
-                        img.style.opacity = '1'; 
+                        img.style.opacity = '1';
                         const r = img.naturalHeight / img.naturalWidth;
                         const targetH = Math.min(window.innerHeight * 0.75, img.naturalHeight);
                         canvas.style.height = (targetH * currentZoom) + "px";
@@ -166,7 +166,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                         let sw = rect.width * scaleX, sh = rect.height * scaleY;
                         sx = Math.max(0, sx); sy = Math.max(0, sy);
                         sw = Math.min(sw, natW - sx); sh = Math.min(sh, natH - sy);
-                        
+
                         if (sw > 5 && sh > 5) {{
                             canvas.width = sw; canvas.height = sh;
                             ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, sw, sh);
@@ -201,7 +201,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                             try {{
                                 await navigator.clipboard.write([new ClipboardItem({{ 'image/png': blob }})]);
                                 const btn = document.getElementById(`${{REPLAY_ID}}-btn-copy`);
-                                if(btn) {{ 
+                                if(btn) {{
                                     const oldText = btn.innerText; btn.innerText = '✓'; btn.style.color = '#4ade80';
                                     setTimeout(() => {{ btn.innerText = oldText; btn.style.color = 'white'; }}, 1000);
                                 }}
@@ -226,17 +226,17 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                         e.preventDefault();
                         const delta = e.deltaY > 0 ? 0.9 : 1.1;
                         currentZoom = Math.min(Math.max(0.1, currentZoom * delta), 15);
-                        
+
                         const imgEl = document.getElementById(`${{REPLAY_ID}}-img`);
                         if (imgEl && imgEl.naturalHeight) {{
                             const r = imgEl.naturalHeight / imgEl.naturalWidth;
                             const targetH = Math.min(window.innerHeight * 0.75, imgEl.naturalHeight);
                             canvas.style.height = (targetH * currentZoom) + "px";
                             canvas.style.width = ((targetH / r) * currentZoom) + "px";
-                            
+
                             if (isCropping) {{
-                                cropBox.style.width = canvas.offsetWidth + 'px';
-                                cropBox.style.height = canvas.offsetHeight + 'px';
+                                cropBox.style.width = canvas.offsetWidth + "px";
+                                cropBox.style.height = canvas.offsetHeight + "px";
                                 cropBox.style.transform = 'translate3d(0, 0, 0)';
                             }}
                         }}
@@ -252,8 +252,8 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                         canvas.style.height = targetH + "px";
                         canvas.style.width = (targetH / r) + "px";
                         if (isCropping) {{
-                            cropBox.style.width = canvas.offsetWidth + 'px';
-                            cropBox.style.height = canvas.offsetHeight + 'px';
+                            cropBox.style.width = canvas.offsetWidth + "px";
+                            cropBox.style.height = canvas.offsetHeight + "px";
                             cropBox.style.transform = 'translate3d(0, 0, 0)';
                         }}
                     }}
@@ -264,8 +264,8 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                     cropBox.style.display = isCropping ? 'block' : 'none';
                     document.getElementById(`${{REPLAY_ID}}-btn-crop`).style.background = isCropping ? '#4ade80' : 'rgba(255,255,255,0.1)';
                     if (isCropping) {{
-                        cropBox.style.width = canvas.offsetWidth + 'px'; cropBox.style.height = canvas.offsetHeight + 'px';
-                        cropBox.style.transform = 'translate3d(0,0,0)';
+                        cropBox.style.width = canvas.offsetWidth + "px"; cropBox.style.height = canvas.offsetHeight + "px";
+                        cropBox.style.transform = "translate3d(0,0,0)";
                     }}
                 }};
 
@@ -300,7 +300,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                             if (isR) cropBox.style.width = (startW + (me.clientX - ox)) + "px";
                             else if (isL) {{
                                 const nw = startW - (me.clientX - ox);
-                                cropBox.style.width = nw + "px"; 
+                                cropBox.style.width = nw + "px";
                                 cropBox.style.transform = "translate3d(" + (startX + (startW - nw)) + "px, " + ty + "px, 0)";
                             }}
                             if (isB) cropBox.style.height = (startH + (me.clientY - oy)) + "px";
@@ -321,7 +321,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                 document.getElementById(`${{REPLAY_ID}}-last`).onclick = () => {{ stopPlayback(); requestFrame(timestamps.length - 1); }};
                 document.getElementById(`${{REPLAY_ID}}-prev`).onclick = () => {{ stopPlayback(); requestFrame(Math.max(0, currentIndex - 1)); }};
                 document.getElementById(`${{REPLAY_ID}}-next`).onclick = () => {{ stopPlayback(); requestFrame(Math.min(timestamps.length - 1, currentIndex + 1)); }};
-                
+
                 document.getElementById(`${{REPLAY_ID}}-play`).onclick = () => {{
                     if (isPlaying) stopPlayback();
                     else {{
@@ -368,7 +368,7 @@ class Action:
         # Redirection vers le Vault (v3.0)
         safe_uid = "".join(x for x in str(uid) if x.isalnum() or x in "-_")
         vault_path = os.path.join(ECHO_USERS_ROOT, safe_uid, "files")
-        
+
         prefix = f"U_{uid}_C_{cid}_T_"
         files = []
         try:
@@ -384,10 +384,10 @@ class Action:
                         ts_str = f_name.split("_T_")[-1].split("_")[0].split(".")[0]
                         files.append({"ts": int(ts_str), "name": f_name})
                     except: continue
-            
+
             # Tri CHRONOLOGIQUE STRICT
             files.sort(key=lambda x: x["ts"])
-            
+
         except Exception as e:
             await events.toast(f"Erreur scan Vault : {e}", "error")
             return None
@@ -409,15 +409,15 @@ class Action:
             try:
                 with open(path, "rb") as f:
                     b64 = base64.b64encode(f.read()).decode()
-                
-                update_code = f"if(window.echoReplayUpdate) window.echoReplayUpdate('{b64}', {files[current_idx]['ts']}, {current_idx+1}, {len(files)});"
+
+                update_code = f"if(window.echoReplayUpdate) window.echoReplayUpdate('{b64}', {files[current_idx]['ts']}, {current_idx+1}, {len(files)});"       
                 await __event_call__({"type": "execute", "data": {"code": update_code}})
             except: break
 
             # b. WAIT: Attente de la prochaine commande (Atomic Listen)
             wait_code = "return new Promise(r => window.echoReplayResolve = r);"
             response = await __event_call__({"type": "execute", "data": {"code": wait_code}})
-            
+
             if not response or not isinstance(response, dict): break
             action = response.get("action")
             if action == "close": break

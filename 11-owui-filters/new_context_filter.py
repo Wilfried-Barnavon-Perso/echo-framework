@@ -1,8 +1,8 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 6.91
-description: 6.91: Sécurisation du masquage Outlet (Clés API & Codes OAuth2).
+version: 7.0
+description: 7.0: Résilience Smart Context et stabilité séquentielle Gemini 3.1.
 """
 
 from pydantic import BaseModel, Field
@@ -21,9 +21,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, resolve_upload_file_path, EchoStateManager, EchoGeminiClient, EchoEvents
+from echo_utils import resolve_upload_file_path, EchoStateManager, EchoGeminiClient, EchoEvents, EchoAuth
 from echo_constants import (
-    ECHO_USER_AGENT, GOOGLE_API_BASE_URL, get_gemini_mime, ECHO_USERS_ROOT, 
+    get_gemini_mime, ECHO_USERS_ROOT, 
     GOOGLE_API_KEY_REGEX, MODEL_FLASH,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
     GOOGLE_OAUTH_CODE_REGEX
@@ -53,8 +53,6 @@ class Filter:
         # ==============================================================================
         # INFRASTRUCTURE ECHO : CONTRÔLE DU RAG NATIF
         # ==============================================================================
-        # file_handler = True informe Open WebUI que ce filtre gère les fichiers
-        # de manière exclusive. Cela désactive le Retrieval (RAG) natif d'OWUI.
         self.file_handler = True
         # ==============================================================================
 
@@ -108,54 +106,42 @@ class Filter:
                 print(f"[ECHO-FILTER] !! Erreur lecture: {e}", flush=True)
                 return {"status": "error", "fid": file_id, "name": filename, "mime": mime, "error": f"Erreur lecture : {str(e)}"}
 
-        # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (Smart Context via Gemini Flash) ---
+        # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (Smart Context Factorisé v6.95) ---
         if self.valves.ENABLE_SMART_CONTEXT and is_supported:
-            auth_mesh = await self.auth.get_ordered_auth_mesh(user_id)
-            if auth_mesh:
-                try:
-                    print(f"[ECHO-FILTER] --> Mode: SMART_CONTEXT (Gemini Flash)", flush=True)
-                    await events.status(f"Analyse intelligente de {filename}...", False)
-                    
-                    # On prépare le payload multimodal si besoin
-                    content_part = {}
-                    if "text/" in mime or "application/json" in mime:
-                        with open(path, "r", encoding="utf-8", errors="ignore") as f: raw_text = f.read()
-                        content_part = {"text": f"Analyse et résume ce fichier technique nommé '{filename}' :\n\n{raw_text}"}
-                    else:
-                        with open(path, "rb") as f: b64_data = base64.b64encode(f.read()).decode("utf-8")
-                        content_part = {"inline_data": {"mime_type": mime, "data": b64_data}}
+            try:
+                print(f"[ECHO-FILTER] --> Mode: SMART_CONTEXT (Gemini 2.5 Flash)", flush=True)
+                await events.status(f"Analyse intelligente de {filename}...", False)
+                
+                content_part = {}
+                if "text/" in mime or "application/json" in mime:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as f: raw_text = f.read()
+                    content_part = {"text": f"Analyse et résume ce fichier technique nommé '{filename}' :\n\n{raw_text[:200000]}"}
+                else:
+                    with open(path, "rb") as f: b64_data = base64.b64encode(f.read()).decode("utf-8")
+                    content_part = {"inline_data": {"mime_type": mime, "data": b64_data}}
 
-                    payload = {
-                        "contents": [{"role": "user", "parts": [content_part]}],
-                        "systemInstruction": {"parts": [{"text": "Tu es l'unité de prétraitement contextuel d'ECHO. Ta mission est de produire un résumé technique exhaustif et structuré du fichier fourni. Identifie les points clés, la structure et le but du document."}]},
-                        "generationConfig": {"temperature": 0.1}
-                    }
+                # Appel Factorisé via Cortex Central
+                u_ctx = {"id": user_id}
+                m_ctx = {"chat_id": chat_id}
+                summary = await EchoGeminiClient.call_distillation(
+                    "Tu es l'unité de prétraitement contextuel d'ECHO. Ta mission est de produire un résumé technique exhaustif et structuré du fichier fourni.",
+                    u_ctx, m_ctx, is_json=False, parts=[{"role": "user", "parts": [content_part]}]
+                )
+                
+                if summary:
+                    print(f"[ECHO-FILTER] ✅ Résumé Factorisé généré pour {filename}.", flush=True)
+                    res_text = f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\">\n{summary}\n</smart_context>"
+                    state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+                    state.mark_processed(chat_id, file_id, filename, mime, "summarized", res_text)
+                    return {"status": "success", "type": "summarized", "fid": file_id, "name": filename, "mime": mime, "content": res_text}
 
-                    data = await EchoGeminiClient.call(
-                        auth_mesh=auth_mesh,
-                        target_model=MODEL_FLASH,
-                        payload=payload,
-                        threshold=self.valves.KEY_SWITCH_THRESHOLD,
-                        max_retries=self.valves.MAX_RETRIES,
-                        events=events,
-                        timeout=self.valves.SMART_CONTEXT_TIMEOUT
-                    )
-                    
-                    target = data.get("response", {}) if "response" in data else data
-                    candidates = target.get("candidates", [])
-                    
-                    if candidates and candidates[0].get("content"):
-                        summary = candidates[0]["content"]["parts"][0].get("text", "")
-                        print(f"[ECHO-FILTER] ✅ Résumé Flash généré pour {filename}.", flush=True)
-                        return {"status": "success", "type": "summarized", "fid": file_id, "name": filename, "mime": mime, "content": f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\">\n{summary}\n</smart_context>"}
-                    else:
-                        print(f"[ECHO-FILTER] !! Format inattendu ou blocage Google pour {filename}: {data}", flush=True)
-
-                except Exception as e:
-                    print(f"[ECHO-FILTER] !! Exception Smart Context pour {filename}: {e}", flush=True)
+            except Exception as e:
+                print(f"[ECHO-FILTER] !! Exception Smart Context pour {filename}: {e}", flush=True)
 
         # --- CAS 4 : FALLBACK BINAIRE (Indexation) ---
         print(f"[ECHO-FILTER] --> Mode: INDEXATION (Fallback)", flush=True)
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        state.mark_processed(chat_id, file_id, filename, mime, "indexed")
         return {"status": "success", "type": "indexed", "fid": file_id, "name": filename, "mime": mime}
 
     def _dict_to_yaml(self, d: Any, indent: int = 0) -> str:
@@ -165,56 +151,49 @@ class Filter:
         if isinstance(d, dict):
             for k, v in d.items():
                 if isinstance(v, dict):
-                    if not v: # Dict vide
-                        lines.append(f"{space}{k}: {{}}")
+                    if not v: lines.append(f"{space}{k}: {{}}")
                     else:
                         lines.append(f"{space}{k}:")
                         lines.append(self._dict_to_yaml(v, indent + 1))
                 elif isinstance(v, list):
-                    if not v: # Liste vide
-                        lines.append(f"{space}{k}: []")
+                    if not v: lines.append(f"{space}{k}: []")
                     else:
                         lines.append(f"{space}{k}:")
                         for item in v:
                             if isinstance(item, dict):
-                                lines.append(f"{space}  -") # Note: simple dash for list of dicts
+                                lines.append(f"{space}  -")
                                 lines.append(self._dict_to_yaml(item, indent + 2))
                             else:
                                 lines.append(f"{space}  - {item}")
                 else:
-                    # Nettoyage des retours à la ligne pour le YAML
                     val = str(v).replace("\n", " ") if v is not None else ""
                     lines.append(f"{space}{k}: {val}")
         return "\n".join(lines)
 
     async def inlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[Dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
         try:
-            from echo_utils import EchoEvents
+            from echo_utils import EchoEvents, get_echo_version
             events = EchoEvents(__event_emitter__)
-            body.setdefault("metadata", {})
-            msgs = body.get("messages", [])
-            chat_id = (__metadata__ or {}).get("chat_id") or body.get("chat_id")
-            all_files = body.get("files", [])
+            
+            meta = __metadata__ or body.get("metadata", {})
+            chat_id = meta.get("chat_id")
             user_id = __user__.get("id", "system") if __user__ else "system"
             
+            all_files = body.get("files", [])
+            msgs = body.get("messages", [])
             if not msgs: return body
 
-            # --- AUTH API KEY & OAUTH CODE INTERCEPTION ---
             if len(msgs) >= 2:
                 prev_content = str(msgs[-2].get("content", ""))
                 if "(ECHO_SESSION_AUTH_PENDING)" in prev_content:
                     last_content = str(msgs[-1].get("content", "")).strip()
-                    # Capture des clés API ET des codes OAuth
                     keys = re.findall(GOOGLE_API_KEY_REGEX, last_content)
                     oauth_codes = re.findall(GOOGLE_OAUTH_CODE_REGEX, last_content)
-                    
                     if keys or oauth_codes:
-                        # Le filtre intercepte et passe les identifiants au Pipe via le body
                         body["_api_key"] = last_content 
                         msgs[-1]["content"] = "🔐 *Vérification de l'authentification Google en cours...*"
                         return body
 
-            # --- 3. TRAITEMENT DES FICHIERS (DRAFT) ---
             tokens = []
             if __user__ and "id" in __user__:
                 tokens = self.auth.get_api_keys(__user__["id"])
@@ -230,8 +209,6 @@ class Filter:
                         if path and not os.path.normpath(path).startswith(vault_dir):
                             files_to_process.append(f)
                 
-            print(f"[ECHO-FILTER DEBUG] Fichiers totaux: {len(all_files)} | À traiter: {len(files_to_process)}", flush=True)
-
             results = []
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
@@ -240,7 +217,6 @@ class Filter:
                     results.append(await task)
                     await asyncio.sleep(0.5)
 
-            # --- 4. ARCHITECTURE DU DRAFT (Bit-Perfect Ready) ---
             idx = -1
             native_parts = []
             for i in range(len(msgs)-1, -1, -1):
@@ -254,23 +230,15 @@ class Filter:
                     break
 
             if idx != -1:
-                # 1. Extraction des IDs de la branche historique active
                 active_msg_ids = [m.get("id") for m in msgs if m.get("id")]
-                
-                # 2. Récupération du registre depuis la BDD (Filtré par messages actifs)
                 state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
                 active_registry = state_manager.get_session_registry(chat_id, active_msg_ids) if chat_id else {}
                 
-                # 3. Ajout des nouveaux fichiers du tour courant
                 for r in results:
                     if r.get("status") == "success":
-                        active_registry[r.get("name")] = {
-                            "id": r.get("fid"),
-                            "mime": r.get("mime"),
-                            "statut": r.get("type")
-                        }
+                        active_registry[r.get("name")] = {"id": r.get("fid"), "mime": r.get("mime"), "statut": r.get("type")}
 
-                meta_vars = body["metadata"].get("variables", {})
+                meta_vars = meta.get("variables", {})
                 u_v = __user__.get("valves") if __user__ else self.user_valves
                 display_name = __user__.get("name", "Anonyme") if getattr(u_v, "ENABLE_USER_NAME", False) else "Anonyme"
                 
@@ -278,9 +246,8 @@ class Filter:
                 u_loc = getattr(u_v, "OVERRIDE_LOCATION", "")
                 final_loc = u_loc if u_loc else sys_loc
                 
-                # 5. Génération du bloc environnement_contexte complet (YAML)
                 env_snapshot = {
-                    "version_framework_echo": "##ECHO_VERSION##",
+                    "version_framework_echo": get_echo_version() or "##ECHO_VERSION##",
                     "modèle_actuel": "##MODEL_ID##",
                     "modèle_origine": "##MODEL_ORIGIN##",
                     "nom_utilisateur": display_name,
@@ -290,18 +257,16 @@ class Filter:
                     "registre_fichiers": active_registry
                 }
 
+                body.setdefault("metadata", {})
                 body["metadata"]["_echo_env_info"] = {
-                    "nom_utilisateur": display_name,
-                    "localisation": final_loc,
+                    "nom_utilisateur": display_name, "localisation": final_loc,
                     "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
                     "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                 }
                 
                 rich_parts = []
-                # 6. Injection de l'état en premier (Format YAML)
                 yaml_str = self._dict_to_yaml(env_snapshot)
                 rich_parts.append({"text": f"<environnement_contexte>\n{yaml_str}\n</environnement_contexte>\n\n"})
-                
                 if native_parts: rich_parts.extend(native_parts)
                 
                 for res in results:
@@ -313,13 +278,13 @@ class Filter:
                                 rich_parts.append({"text": res["content"]["anchor"]})
                                 rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
                 
-                # INJECTION DU DRAFT (Délégué au Pipe)
                 body["metadata"]["_echo_user_parts_draft"] = rich_parts
                 body["metadata"]["_echo_user_msg_id"] = msgs[idx].get("id")
                 body["metadata"]["_echo_user_msg_updated_at"] = msgs[idx].get("updated_at")
                 body["metadata"]["_echo_files_to_seal"] = results
 
             if all_files:
+                body.setdefault("metadata", {})
                 body["metadata"]["_echo_files"] = all_files
                 body["files"] = []
                 body["citations"] = False
@@ -333,13 +298,9 @@ class Filter:
         msgs = body.get("messages", [])
         for m in msgs:
             content = str(m.get("content", ""))
-            # Masquage chirurgical des clés API
             if re.search(GOOGLE_API_KEY_REGEX, content):
                 content = re.sub(GOOGLE_API_KEY_REGEX, "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]", content)
-            
-            # Masquage chirurgical des codes OAuth2
             if re.search(GOOGLE_OAUTH_CODE_REGEX, content):
                 content = re.sub(GOOGLE_OAUTH_CODE_REGEX, "[CODE OAUTH GOOGLE MASQUÉ PAR SÉCURITÉ]", content)
-                
             m["content"] = content
         return body

@@ -1,8 +1,8 @@
 """
 title: ECHO Cognitive Core
 author: ECHO Framework
-version: 3.8
-description: 3.8: Correctif de stabilité (Fix auth_mesh et nettoyage syntaxique).
+version: 4.1
+description: 4.1: Centralisation des paramètres de génération via echo_constants.
 """
 
 import sys
@@ -14,72 +14,11 @@ from typing import Optional, List, Dict, Any, Literal
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoAuth, EchoEvents, split_thought_process, EchoGeminiClient
+from echo_utils import wrap_tool_output, EchoEvents, EchoGeminiClient
 from echo_constants import (
-    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, MODEL_LITE, MODEL_FLASH, MODEL_PRO,
+    MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
 )
-
-async def _call_gemini_direct(
-    user_id: str, 
-    model_id: str, 
-    prompt: str, 
-    system_instruction: Optional[str] = None,
-    thinking_level: str = "HIGH", 
-    events: Optional[EchoEvents] = None, 
-    threshold: int = ECHO_API_KEY_THRESHOLD, 
-    max_retries: int = ECHO_API_MAX_RETRIES,
-    timeout: int = 120
-) -> str:
-    """Appel direct à l'API Gemini AI Studio via EchoGeminiClient pour délégation cognitive."""
-    auth = EchoAuth(user_id=user_id)
-    
-    # Récupération du mesh d'authentification (Nouveau système)
-    auth_mesh = await auth.get_ordered_auth_mesh(user_id)
-    if not auth_mesh: 
-        return "❌ Erreur: Non authentifié. Aucun moyen d'accès trouvé pour cet utilisateur."
-
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 16000,
-            "thinkingConfig": {
-                "includeThoughts": True, 
-                "thinkingLevel": thinking_level.lower()
-            }
-        }
-    }
-
-    if system_instruction:
-        payload["systemInstruction"] = {
-            "parts": [{"text": system_instruction}]
-        }
-
-    try:
-        data = await EchoGeminiClient.call(
-            auth_mesh=auth_mesh,
-            target_model=model_id,
-            payload=payload,
-            threshold=threshold,
-            max_retries=max_retries,
-            events=events,
-            timeout=timeout
-        )
-        
-        target = data.get("response", {}) if "response" in data else data
-        candidates = target.get("candidates", [])
-        if candidates and candidates[0].get("content"):
-            full_text = ""
-            for p in candidates[0]["content"].get("parts", []):
-                if "text" in p: 
-                    full_text += p["text"]
-            return full_text
-            
-    except Exception as e: 
-        return f"❌ Erreur système ou API : {str(e)}"
-    
-    return "❌ Erreur: Réponse Gemini vide ou invalide."
 
 class Tools:
     class Valves(BaseModel):
@@ -118,13 +57,8 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         
-        # Résolution du modèle
-        model_map = {
-            "MODEL_LITE": MODEL_LITE,
-            "MODEL_FLASH": MODEL_FLASH,
-            "MODEL_PRO": MODEL_PRO
-        }
-        actual_model = model_map.get(target_model, MODEL_PRO)
+        # Résolution du modèle via le Registre Souverain
+        actual_model = MODEL_ROUTING.get(target_model, MODEL_PRO)
         
         # Résolution du niveau de réflexion
         thinking_level = self.valves.PRO_THINKING
@@ -138,17 +72,31 @@ class Tools:
         # Construction du prompt sémantique
         combined_prompt = f"### CONTEXTE\n{context}\n\n### TÂCHE\n{prompt}"
 
-        res = await _call_gemini_direct(
+        # Appel au client agnostique (Purifié)
+        res_json = await EchoGeminiClient.call(
+            target_model=actual_model,
+            payload={
+                "contents": [{"role": "user", "parts": [{"text": combined_prompt}]}],
+                "generationConfig": {
+                    "temperature": TEMP_DEFAULT,
+                    "topP": TOP_P_DEFAULT,
+                    "maxOutputTokens": 16000,
+                    "thinkingConfig": {"includeThoughts": True, "thinkingLevel": thinking_level.lower()}
+                },
+                "systemInstruction": {"parts": [{"text": system_instruction}]} if system_instruction else None
+            },
             user_id=user_id,
-            model_id=actual_model,
-            prompt=combined_prompt,
-            system_instruction=system_instruction,
-            thinking_level=thinking_level,
             events=events,
             threshold=self.valves.KEY_SWITCH_THRESHOLD,
             max_retries=self.valves.MAX_RETRIES,
             timeout=self.valves.COGNITIVE_TIMEOUT
         )
         
-        await events.status(f"Délégation terminée ({target_model}).", done=True)
-        return wrap_tool_output(text=res)
+        # Extraction normalisée (le client déballe déjà les enveloppes Code Assist)
+        candidates = res_json.get("candidates", [])
+        if candidates and candidates[0].get("content"):
+            full_text = "".join([p.get("text", "") for p in candidates[0]["content"].get("parts", [])])
+            await events.status(f"Délégation terminée ({target_model}).", done=True)
+            return wrap_tool_output(text=full_text)
+        
+        return wrap_tool_output(text="❌ Erreur: Réponse Gemini vide.")

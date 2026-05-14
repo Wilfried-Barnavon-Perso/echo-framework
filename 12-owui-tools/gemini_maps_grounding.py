@@ -1,8 +1,8 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 12.10
-description: 12.10: Robustesse du parsing (Sécurisation Candidates) et support de la normalisation API.
+version: 12.14
+description: 12.14: Correction de syntaxe (IndentationError).
 """
 
 import orjson as json
@@ -14,12 +14,13 @@ from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, EchoEvents, wrap_tool_output, EchoGeminiClient
-from echo_ui import EchoRichUI
+from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
+from echo_ui import EchoUI
 from echo_constants import (
-    ECHO_USER_AGENT, GOOGLE_API_BASE_URL, MODEL_FLASH, MODEL_PRO, MODEL_LITE,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
+    MODEL_LITE, MODEL_ROUTING, ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
+    TEMP_DEFAULT, TOP_P_DEFAULT
 )
+
 
 class Tools:
     class Valves(BaseModel):
@@ -29,7 +30,6 @@ class Tools:
 
     def __init__(self):
         self.valves = self.Valves()
-        self.auth = EchoAuth()
 
     async def search_maps(
         self,
@@ -47,12 +47,9 @@ class Tools:
         NOTE : Cet outil utilise une délégation cognitive (MODEL_LITE). En cas d'erreur de quota (429) 
         ou d'indisponibilité, le Modèle doit signaler cette limitation technique à l'utilisateur.
         """
+        user_id = __user__.get("id", "system")
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"🗺️ Exploration Maps : {query}...")
-
-        auth_mesh = await self.auth.get_ordered_auth_mesh(__user__.get("id"))
-        if not auth_mesh: 
-            return wrap_tool_output(text="❌ Configuration ECHO Requise : Aucune authentification Google configurée.", status={"status": "error"})
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": query}]}],
@@ -65,9 +62,9 @@ class Tools:
 
         try:
             data = await EchoGeminiClient.call(
-                auth_mesh=auth_mesh, 
                 target_model=MODEL_LITE, 
                 payload=payload,
+                user_id=user_id,
                 threshold=self.valves.KEY_SWITCH_THRESHOLD, 
                 max_retries=self.valves.MAX_RETRIES,
                 events=events, 
@@ -83,14 +80,15 @@ class Tools:
             if "content" in cand:
                 for p in cand["content"].get("parts", []):
                     if "text" in p: full_text += p["text"]
-            
+
             if not full_text:
                 return wrap_tool_output(text="⚠️ Recherche Maps complétée mais aucune information textuelle n'a été fournie par l'API.", status={"status": "empty_response"})
+
 
             await events.status("Carte interactive prête.", done=True)
 
             # --- RÉUSSITE : RÉPONSE RICH UI (GOOGLE MAPS EMBED) ---
-            response = EchoRichUI.map_viewer(query=query, title=f"ECHO Maps : {query}")
+            response = EchoUI.map_viewer(query=query, title=f"ECHO Maps : {query}")
 
             # --- CONTEXTE POUR LE LLM (STRUCTURE) ---
             return response, wrap_tool_output(text=full_text)

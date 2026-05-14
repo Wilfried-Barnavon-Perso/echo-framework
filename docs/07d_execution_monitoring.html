@@ -1,71 +1,74 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 6d. Exécution & Pilotage</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
-
-    <main>
-        <h1>6d. Exécution Sandbox & Pilotage du Contexte</h1>
-
-        <div class="transition-text">Pour exécuter des calculs complexes sans risquer la sécurité du système hôte, l'Arsenal dispose d'un environnement d'exécution isolé (Sandbox) et de sondes de surveillance.</div>
-
-        <h2>Fiche d'Identité Technique</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>🐍 Exécution Sandbox & Pilotage</h3>
-                <p><strong>Nature :</strong> Environnement d'exécution de code isolé (Sandbox Docker) et Outil de diagnostic contextuel.</p>
-                <p><strong>Source :</strong> <code>12-owui-tools/python_code_executor.py</code> (Interface), <code>21-docker-python-worker/worker_api.py</code> (Exécution), <code>12-owui-tools/context_gauge.py</code> (Sonde).</p>
-                <p><strong>Rôle :</strong> Permettre à l'IA d'exécute du code Python généré dynamiquement en toute sécurité et de surveiller l'état de saturation de sa propre mémoire de travail (Contexte).</p>
-                <p><strong>Exécutant :</strong> Ordres émis par le Pipe (Python), code brut exécuté par le conteneur <code>python-worker</code> (isolé du réseau public).</p>
-                <p><strong>Interconnexions :</strong> 
-                    <ul>
-                        <li><strong>Input :</strong> Scripts Python bruts générés par le modèle.</li>
-                        <li><strong>Sandbox :</strong> Le Worker exécute le script avec un timeout strict (30s) et intercepte <code>stdout</code> et <code>stderr</code>.</li>
-                        <li><strong>Output :</strong> Résultats textes bruts renvoyés au Pipe.</li>
-                    </ul>
-                </p>
-            </div>
-        </div>
-
-        <p>Ce module regroupe les outils permettant à ECHO d'exécuter du code de manière sécurisée et de surveiller sa propre santé cognitive.</p>
-
-        <h2>Exécution Python Sandbox (<code>python_code_executor.py</code>)</h2>
-        <p>ECHO dispose d'un environnement d'exécution Python isolé (conteneur <code>python-worker</code>). Cet outil est indispensable pour l'analyse de données et les calculs mathématiques complexes.</p>
-        
-        <div class="info-block">
-            <h4>Architecture du Worker</h4>
-            <ul>
-                <li><strong>Isolation</strong> : Le code s'exécute dans un environnement éphémère sans accès au Vault direct (sécurité par design).</li>
-                <li><strong>Bibliothèques incluses</strong> : <code>pandas</code>, <code>numpy</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>networkx</code>, <code>requests</code>.</li>
-                <li><strong>Capacité Graphique</strong> : Désactivée (Environnement Headless). Toute tentative de génération visuelle échouera silencieusement.</li>
-            </ul>
-        </div>
-
-        <h2>Pilotage du Contexte (<code>context_gauge.py</code>)</h2>
-        <p>L'outil d'auto-diagnostic contextuel. Il permet au modèle de connaître sa charge cognitive exacte (en tokens et en pourcentage) par rapport à sa limite théorique (Context Window).</p>
-        
-        <ul>
-            <li><strong>Source de Vérité</strong> : Lit directement la table <code>context_stats</code> de la session SQLite utilisateur.</li>
-            <li><strong>États de Charge</strong> :
-                <ul>
-                    <li>✅ <strong>SAFE</strong> (< 25%) : Navigation fluide.</li>
-                    <li>âš ï¸ <strong>WARNING</strong> (> 25%) : Surveillance recommandée.</li>
-                    <li>🚨 <strong>CRITICAL</strong> (> 50%) : Risque de perte de mémoire à court terme.</li>
-                </ul>
-            </li>
-            <li><strong>Escalade Cognitive</strong> : Permet au modèle de décider s'il doit utiliser <code>semantic_probe</code> ou <code>lite_reasoning</code> pour compresser l'information avant la saturation.</li>
-        </ul>
-
-        <footer>
-            ECHO Framework - Version 5 - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-        <div class="transition-text"><em>Tous ces outils sont automatiques, mais l'utilisateur garde le contrôle manuel via des interfaces dédiées. <a href="07e_actions_ui.html">Découvrir les Actions UI (HUD) ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
-</body>
-</html>
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECHO v5 - 6d. Exécution & Pilotage</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+    <main>
+        <h1>6d. Exécution Sandbox & Pilotage du Contexte</h1>
+
+        <div class="transition-text">Pour exécuter des calculs complexes sans risquer la sécurité du système hôte, l'Arsenal dispose d'un environnement d'exécution isolé (Sandbox) et de sondes de surveillance.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>🐍 Exécution Sandbox & Pilotage</h3>
+                <p><strong>Nature :</strong> Environnement d'exécution de code isolé (Sandbox Docker) et Outil de diagnostic contextuel.</p>
+                <p><strong>Source :</strong> <code>12-owui-tools/python_code_executor.py</code> (Interface), <code>21-docker-python-worker/worker_api.py</code> (Exécution), <code>12-owui-tools/context_gauge.py</code> (Sonde).</p>
+                <p><strong>Rôle :</strong> Permettre à l'IA d'exécute du code Python généré dynamiquement en toute sécurité et de surveiller l'état de saturation de sa propre mémoire de travail (Contexte).</p>
+                <p><strong>Exécutant :</strong> Ordres émis par le Pipe (Python), code brut exécuté par le conteneur <code>python-worker</code> (isolé du réseau public).</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Scripts Python bruts générés par le modèle.</li>
+                        <li><strong>Sandbox :</strong> Le Worker exécute le script avec un timeout strict (30s) et intercepte <code>stdout</code> et <code>stderr</code>.</li>
+                        <li><strong>Output :</strong> Résultats textes bruts renvoyés au Pipe.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
+        <p>Ce module regroupe les outils permettant à ECHO d'exécuter du code de manière sécurisée et de surveiller sa propre santé cognitive.</p>
+
+        <h2>Exécution Python Sandbox (<code>python_code_executor.py</code>)</h2>
+        <p>ECHO dispose d'un environnement d'exécution Python isolé (conteneur <code>python-worker</code>). Cet outil est indispensable pour l'analyse de données et les calculs mathématiques complexes.</p>
+        
+        <div class="info-block">
+            <h4>Architecture du Worker</h4>
+            <ul>
+                <li><strong>Isolation</strong> : Le code s'exécute dans un environnement éphémère sans accès au Vault direct (sécurité par design).</li>
+                <li><strong>Bibliothèques incluses</strong> : <code>pandas</code>, <code>numpy</code>, <code>scipy</code>, <code>scikit-learn</code>, <code>networkx</code>, <code>requests</code>.</li>
+                <li><strong>Capacité Graphique</strong> : Désactivée (Environnement Headless). Toute tentative de génération visuelle échouera silencieusement.</li>
+            </ul>
+        </div>
+
+        <h2>Pilotage du Contexte (<code>context_gauge.py</code>)</h2>
+        <p>L'outil d'auto-diagnostic contextuel. Il permet au modèle de connaître sa charge cognitive exacte (en tokens et en pourcentage) par rapport à sa limite théorique (Context Window).</p>
+        
+        <ul>
+            <li><strong>Source de Vérité</strong> : Lit directement la table <code>context_stats</code> de la session SQLite utilisateur.</li>
+            <li><strong>États de Charge</strong> :
+                <ul>
+                    <li>✅ <strong>SAFE</strong> (< 25%) : Navigation fluide.</li>
+                    <li>âš ï¸ <strong>WARNING</strong> (> 25%) : Surveillance recommandée.</li>
+                    <li>🚨 <strong>CRITICAL</strong> (> 50%) : Risque de perte de mémoire à court terme.</li>
+                </ul>
+            </li>
+            <li><strong>Escalade Cognitive</strong> : Permet au modèle de décider s'il doit utiliser <code>semantic_probe</code> ou <code>lite_reasoning</code> pour compresser l'information avant la saturation.</li>
+        </ul>
+
+        <footer>
+            ECHO Framework - Version 5.140.29 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+        </footer>
+        <div class="transition-text"><em>Tous ces outils sont automatiques, mais l'utilisateur garde le contrôle manuel via des interfaces dédiées. <a href="07e_actions_ui.html">Découvrir les Actions UI (HUD) ➔</a></em></div>
+    </main>
+<script src="nav.js"></script>
+</body>
+</html>
+
+
+

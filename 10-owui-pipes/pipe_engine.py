@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 186.8
-description: 186.8: Double rafraîchissement Quotas & Crédits (G1) conforme à Gemini-CLI.
+version: 190.5
+description: 190.5: Centralisation des paramètres de génération via echo_constants.
 """
 
 # ==============================================================================
@@ -31,15 +31,14 @@ from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_tho
 from echo_ui import EchoUI
 from echo_constants import (
     MODEL_PRO, MODEL_FLASH, MODEL_LITE, MODEL_ROUTING, MODEL_IDENTITY,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, ECHO_RETRY_BASE_DELAY
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, ECHO_RETRY_BASE_DELAY,
+    TEMP_DEFAULT, TOP_P_DEFAULT
 )
 from echo_auth import AuthService
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
 try:
     import httpx
-    import orjson
-    import pybase64
     from pydantic import BaseModel, Field
     # Protocole HTTP/2 obligatoire (h2)
     import h2
@@ -88,7 +87,7 @@ class UserDataManager:
 
     def save_shadow(self, message_id: str, updated_at: int, parts: List[dict], chat_id: str, role: str):
         """Scellement définitif de l'ombre d'un message."""
-        self.state_manager.save_message_shadow(message_id, chat_id, role, parts)
+        self.state_manager.save_message_shadow(message_id, chat_id, role, parts, updated_at)
 
     def mark_processed(self, chat_id: str, fid: str, name: str, mime: str, status: str, content: Optional[str] = None, message_id: Optional[str] = None):
         """Scellement du registre des fichiers."""
@@ -191,7 +190,7 @@ class Orchestrator:
 
     def _unbox_tool_output(self, name: str, content: Any, model_id: str) -> List[Dict]:
         if isinstance(content, str):
-            try: content = orjson.loads(content)
+            try: content = std_json.loads(content)
             except: content = {"text": str(content), "status": {"status": "legacy_fallback"}}
         if not isinstance(content, dict): content = {"text": str(content), "status": {"status": "error_format"}}
         
@@ -231,7 +230,7 @@ class Orchestrator:
             if t.get("type") == "function":
                 f = t.get("function", {})
                 funcs.append({"name": f.get("name"), "description": f.get("description", ""), "parameters": f.get("parameters", {"type": "object", "properties": {}})})
-        return [{"functionDeclarations": funcs}] if funcs else None
+        return [{"function_declarations": funcs}] if funcs else None
 
     async def prepare_context(self, body: Dict, chat_id: str, target_model: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
         """RESTAURATION Bit-Perfect avec Contrôle Temporel Strict (Anti-Ghosting)."""
@@ -248,16 +247,27 @@ class Orchestrator:
 
             # --- PRIORITÉ 1 : SHADOW BIT-PERFECT (ID + TIMESTAMP) ---
             if msg_id and updated_at:
-                shadow_parts = self.user_data_manager.get_shadow(msg_id, updated_at)
-                if shadow_parts:
-                    role_gemini = "model" if role in ["assistant", "model"] else "user"
-                    final_contents.append({"role": role_gemini, "parts": shadow_parts})
-                    inv_hash = self.user_data_manager.calculate_invariant(role, shadow_parts)
-                    last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
-                    i += 1; continue
+                shadow_data = self.user_data_manager.get_shadow(msg_id, updated_at)
+                if shadow_data:
+                    # Support des Shadows Multi-Messages (Cascade Cognitive)
+                    if isinstance(shadow_data, list) and len(shadow_data) > 0 and "role" in shadow_data[0]:
+                        for msg in shadow_data:
+                            final_contents.append(msg)
+                            inv_hash = self.user_data_manager.calculate_invariant(msg["role"], msg["parts"])
+                            last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
+                        i += 1; continue
+                    else:
+                        # Shadow Classique (Parts uniquement)
+                        role_gemini = "model" if role in ["assistant", "model"] else "user"
+                        final_contents.append({"role": role_gemini, "parts": shadow_data})
+                        inv_hash = self.user_data_manager.calculate_invariant(role, shadow_data)
+                        last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
+                        i += 1; continue
 
             # --- PRIORITÉ 2 : RECONSTRUCTION NORMALE (Fallback ou Cache Miss Temporel) ---
             restored_parts = []
+            role_gemini = "model" if role in ["assistant", "model"] else "user"
+
             if role == "tool":
                 aggregated_tool_parts = []
                 while i < len(messages) and messages[i].get("role") == "tool":
@@ -266,11 +276,9 @@ class Orchestrator:
                     func_name = bridge["name"] if bridge else "unknown"
                     rich_tool_parts = self._unbox_tool_output(func_name, content_tool, model_id)
                     aggregated_tool_parts.extend(rich_tool_parts)
-                    inv_hash = self.user_data_manager.calculate_invariant("tool", content_tool)
-                    last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
                     i += 1
                 restored_parts = aggregated_tool_parts
-                final_contents.append({"role": "user", "parts": restored_parts})
+                role_gemini = "user" # Les réponses d'outils sont toujours 'user' pour Gemini
             
             else:
                 # USER / ASSISTANT
@@ -299,7 +307,7 @@ class Orchestrator:
                     restored_parts = self._ensure_gemini_parts(content, model_id)
                     tool_calls = m.get("tool_calls", [])
                     if tool_calls:
-                        restored_parts = [{"functionCall": {"name": tc["function"]["name"], "args": orjson.loads(tc["function"]["arguments"])}} for tc in tool_calls] + restored_parts
+                        restored_parts = [{"functionCall": {"name": tc["function"]["name"], "args": std_json.loads(tc["function"]["arguments"])}} for tc in tool_calls] + restored_parts
                     else:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
                         current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
@@ -317,11 +325,10 @@ class Orchestrator:
                             if "functionCall" in p: p["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION; break
 
                 restored_parts = self._ensure_gemini_parts(restored_parts, model_id)
-                role_gemini = "model" if role in ["assistant", "model"] else "user"
-                final_contents.append({"role": role_gemini, "parts": restored_parts})
                 i += 1
 
             # --- RÉPARATION DE LA SUTURE (Scellement immédiat pour le tour suivant) ---
+            final_contents.append({"role": role_gemini, "parts": restored_parts})
             if msg_id and updated_at and restored_parts:
                 self.user_data_manager.save_shadow(msg_id, updated_at, restored_parts, chat_id, role)
 
@@ -355,39 +362,45 @@ class StreamProcessor:
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False; buffer = ""; decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
+        buffered_lines = []
         async for chunk in response.aiter_bytes():
             buffer += decoder.decode(chunk, final=False)
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1); line = line.strip()
-                if not line.startswith("data:"): continue
-                try:
-                    data = orjson.loads(line[6:]); self.full_raw_accumulator.append(data)
-                    target = data.get("response", {}) if "response" in data else data
-                    if "usageMetadata" in target:
-                        if self.usage_stats is None: self.usage_stats = {}
-                        self.usage_stats.update(target["usageMetadata"])
-                        self.user_data_manager.save_context_stats(self.usage_stats)
-                    
-                    cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
-                    if cand and cand[0].get("content"):
-                        for part in cand[0]["content"]["parts"]:
-                            if "thoughtSignature" in part: self.captured_sig = part["thoughtSignature"]
-                            if part.get("thought"):
-                                if not in_think: yield "<think>\n"; in_think = True
-                                yield part.get("text", "")
-                            elif part.get("functionCall"):
-                                if in_think: yield "\n</think>\n"; in_think = False
-                                tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
-                                if tool_call:
-                                    yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
-                                else:
-                                    return # Escalade
-                            elif "text" in part:
-                                if in_think: yield "\n</think>\n"; in_think = False
-                                raw_t = part["text"]
-                                if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t: continue
-                                self.accumulated_text += raw_t; yield raw_t
-                except: pass
+                if line.startswith("data:"):
+                    buffered_lines.append(line[6:].strip())
+                elif line == "" and buffered_lines:
+                    # Fin d'un bloc SSE : accumulation et parsing du JSON complet
+                    full_json_str = "\n".join(buffered_lines)
+                    buffered_lines = []
+                    try:
+                        data = std_json.loads(full_json_str); self.full_raw_accumulator.append(data)
+                        target = data.get("response", {}) if "response" in data else data
+                        if "usageMetadata" in target:
+                            if self.usage_stats is None: self.usage_stats = {}
+                            self.usage_stats.update(target["usageMetadata"])
+                            self.user_data_manager.save_context_stats(self.usage_stats)
+                        
+                        cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
+                        if cand and cand[0].get("content"):
+                            for part in cand[0]["content"]["parts"]:
+                                if "thoughtSignature" in part: self.captured_sig = part["thoughtSignature"]
+                                if part.get("thought"):
+                                    if not in_think: yield "<think>\n"; in_think = True
+                                    yield part.get("text", "")
+                                elif part.get("functionCall"):
+                                    if in_think: yield "\n</think>\n"; in_think = False
+                                    tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
+                                    if tool_call:
+                                        yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
+                                    else:
+                                        return # Escalade
+                                elif "text" in part:
+                                    if in_think: yield "\n</think>\n"; in_think = False
+                                    raw_t = part["text"]
+                                    if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t: continue
+                                    self.accumulated_text += raw_t; yield raw_t
+                    except: pass
         if in_think: yield "\n</think>\n"
         if self.logger: self.logger.log("api_response", self.full_raw_accumulator)
         if self.usage_stats:
@@ -429,6 +442,9 @@ class Pipe:
         # --- [NOUVEAU] DETECTION ET INTERCEPTION DE CLÉ API ---
         api_key_from_filter = body.get("_api_key")
 
+        # Résolution du Mesh d'Authentification (Cache local pour ce tour de pipe)
+        auth_mesh = await echo_auth.get_ordered_auth_mesh(__user__["id"])
+
         if api_key_from_filter:
             await events.status("🔐 Validation de l'authentification Google...")
             success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
@@ -444,8 +460,7 @@ class Pipe:
                 yield f"❌ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
                 return
 
-        # --- [NOUVEAU] VÉRIFICATION DE PRÉSENCE & MESH ---
-        auth_mesh = await echo_auth.get_ordered_auth_mesh()
+        # --- [RESTAURÉ] VÉRIFICATION DE PRÉSENCE & MESH ---
         if not auth_mesh:
             yield auth.get_auth_prompt()
             return
@@ -483,7 +498,13 @@ class Pipe:
         
         max_cascade_attempts = user_valves.MAX_CASCADE_ATTEMPTS
         cascade_attempt = 0
+        cumulative_usage_stats = {"promptTokenCount": 0, "cachedContentTokenCount": 0, "candidatesTokenCount": 0, "totalTokenCount": 0}
         
+        # [NOUVEAU] HISTORIQUE DE CASCADE POUR SUTURE & SHADOW
+        cascade_history = [] 
+        current_cumul = body.get("_echo_last_cumul")
+        user_msg_id = (__metadata__ or {}).get("_echo_user_msg_id")
+
         while cascade_attempt < max_cascade_attempts:
             cascade_attempt += 1
             
@@ -492,7 +513,7 @@ class Pipe:
             resolved_sys = orch._resolve_placeholders(sys_instr_raw, target_model)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
-            # Sélection du niveau de réflexion selon le modèle
+            # Sélection du niveau de réflexion selon le modèle (Standard Gemini 3.x)
             if target_model == MODEL_PRO:
                 think = user_valves.PRO_THINKING_LEVEL
             elif target_model == MODEL_LITE:
@@ -508,7 +529,7 @@ class Pipe:
                     "maxOutputTokens": user_valves.MAX_TOKENS,
                     "thinkingConfig": {
                         "includeThoughts": True,
-                        "thinkingLevel": think.lower()
+                        "thinkingLevel": think.upper()
                     }
                 }
             }
@@ -554,23 +575,23 @@ class Pipe:
                             "required": ["niveau_requis", "plan_de_transfert"]
                         }
                     }
-                    if not tools: tools = [{"functionDeclarations": []}]
-                    tools[0]["functionDeclarations"].append(escalation_tool)
+                    if not tools: tools = [{"function_declarations": []}]
+                    tools[0]["function_declarations"].append(escalation_tool)
 
             if tools:
                 payload["tools"] = tools
-                payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
+                payload["tool_config"] = {"function_calling_config": {"mode": "AUTO"}}
 
             if orch.logger: orch.logger.log("google_request", payload, metadata={"cascade_attempt": cascade_attempt, "model": target_model})
             proc = StreamProcessor(orch.user_data_manager, chat_id, events, logger=orch.logger)
 
             # Tentative d'appel au moteur Gemini
             try:
-                # Appel au client factorisé avec gestion du fallback
+                # Appel au client factorisé (Agnostique)
                 async for chunk in EchoGeminiClient.stream(
-                    auth_mesh=auth_mesh,
                     target_model=target_model,
                     payload=payload,
+                    user_id=__user__["id"],
                     threshold=self.valves.KEY_SWITCH_THRESHOLD,
                     max_retries=self.valves.MAX_RETRIES,
                     events=events,
@@ -594,6 +615,11 @@ class Pipe:
                 else:
                     yield f"❌ Erreur critique lors de la communication API : {str(e)}"
                     break
+
+            # --- [NOUVEAU] ACCUMULATION DES TOKENS (SOUVERAINETÉ) ---
+            if proc.usage_stats:
+                for k in cumulative_usage_stats:
+                    cumulative_usage_stats[k] += proc.usage_stats.get(k, 0)
 
             # --- [NOUVEAU] GESTION DE LA CASCADE ---
             if is_auto and proc.escalation_requested:
@@ -653,33 +679,65 @@ class Pipe:
                 # Mise à jour de l'état de l'orchestrateur pour les placeholders système
                 orch.model_origin = target_model
                 
-                # 2. Suture Sémantique (Relais Protocolé)
-                context.append({
-                    "role": "model",
-                    "parts": [
-                        {"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}
-                    ]
-                })
-                context.append({
-                    "role": "user",
-                    "parts": [
-                        {"functionResponse": {"name": "new_cognitive_level", "response": {"status": "success", "message": f"Relais vers {new_target} activé. Exécutez le plan maintenant.", "plan": plan_md}}}
-                    ]
-                })
+                # 2. Suture Sémantique (Relais Protocolé avec réinjection signée du texte précédent)
+                sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
+                model_parts = []
+                if proc.accumulated_text:
+                    model_parts.append({"text": proc.accumulated_text, "thoughtSignature": sig_to_apply})
 
+                model_parts.append({"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": sig_to_apply})
+
+                # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
+                model_msg = {"role": "model", "parts": model_parts}
+                inv = orch.user_data_manager.calculate_invariant("model", model_parts)
+                new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
+                orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, user_msg_id)
+                orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, None, user_msg_id, target_model)
+                cascade_history.append(model_msg)
+                current_cumul = new_cumul
+
+                user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "success", "message": f"Relais vers {new_target} activé. Exécutez le plan maintenant.", "plan": plan_md}}}]
+                user_msg = {"role": "user", "parts": user_resp_parts}
+                inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
+                new_cumul_u = orch.user_data_manager.calculate_cumulative(inv_u, current_cumul)
+                orch.user_data_manager.index_suture(new_cumul_u, chat_id, inv_u, current_cumul, user_msg_id)
+                cascade_history.append(user_msg)
+                current_cumul = new_cumul_u
+
+                context.append(model_msg)
+                context.append(user_msg)
+                
                 target_model = new_target
                 continue
             else:
+                # [NOUVEAU] INDEXATION FINALE (SUTURE)
+                sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
+                tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
+                model_parts = []
+                if proc.accumulated_text:
+                    model_parts.append({"text": proc.accumulated_text, "thoughtSignature": sig_to_apply})
+                if proc.accumulated_calls:
+                    for c in proc.accumulated_calls:
+                        model_parts.append({"functionCall": {"name": c["name"], "args": c["args"]}, "thoughtSignature": sig_to_apply})
+                
+                if model_parts:
+                    model_msg = {"role": "model", "parts": model_parts}
+                    inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
+                    new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
+                    orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, user_msg_id)
+                    orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, user_msg_id, target_model)
+                    cascade_history.append(model_msg)
+                    current_cumul = new_cumul
+
                 # Pas d'escalade demandée, on sort de la boucle de cascade
                 break
 
         # --- SCELLEMENT FINAL (SUTURE DÉFINITIVE) ---
 
-        if chat_id and proc.usage_stats:
+        if chat_id:
             meta = __metadata__ or body.get("metadata", {})
             
             # 1. Scellement message Utilisateur (Le Draft complet)
-            user_msg_id = meta.get("_echo_user_msg_id")
             user_updated_at = meta.get("_echo_user_msg_updated_at")
             user_draft = meta.get("_echo_user_parts_draft")
             if user_msg_id and user_draft:
@@ -698,24 +756,31 @@ class Pipe:
                     orch.user_data_manager.state_manager.mark_processed(chat_id, f['fid'], f['name'], f['mime'], f['type'], content_to_save, user_msg_id)
                     orch.user_data_manager.state_manager.move_to_vault(f['fid'], f['name'])
 
-            # 3. Scellement Cognitif Assistant (Legacy Bridge & Tool Mapping)
-            tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
-            inv = orch.user_data_manager.calculate_invariant("assistant", proc.accumulated_text, tool_io=tool_io)
-            new_cumul = orch.user_data_manager.calculate_cumulative(inv, body.get("_echo_last_cumul"))
-            orch.user_data_manager.save_cognitive(new_cumul, proc.captured_sig, None, tool_io, user_msg_id, target_model)
-            for c in proc.accumulated_calls: orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig, c["name"], c["args"])
-            orch.user_data_manager.index_suture(new_cumul, chat_id, inv, body.get("_echo_last_cumul"))
+            # 3. Scellement Ombre de l'Assistant (Multi-Messages Cascade)
+            # On utilise le message_id de l'assistant (qui sera créé par Open WebUI au retour)
+            # Note: OWUI ne fournit pas l'ID de l'assistant à l'avance, on utilise une heuristique de suture
+            # Mais ECHO stocke l'historique de cascade dans l'ombre du message_id s'il est dispo,
+            # ou laisse prepare_context reconstruire via le cumulative_hash final.
+            # ACTION : Sauvegarder l'historique complet dans le Shadow du message assistant si on a un ID.
+            # En l'absence d'ID (courant pour la réponse en cours), la suture indexée via current_cumul suffit.
+            # Si on a un ID dans kwargs (ex: retry), on scelle.
+            asst_msg_id = kwargs.get("__message_id__")
+            if asst_msg_id and cascade_history:
+                orch.user_data_manager.save_shadow(asst_msg_id, int(time.time()), cascade_history, chat_id, "assistant")
+            
+            # Sauvegarde des ponts d'outils pour la navigation future
+            for c in proc.accumulated_calls: 
+                orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION, c["name"], c["args"])
+
 
         # --- HUD METRICS ---
         if user_valves.SHOW_CONTEXT_METRICS:
-            # Rafraîchissement intelligent des quotas (OAuth2 uniquement)
-            await auth.refresh_quota_if_needed()
+            # Rafraîchissement intelligent des quotas (OAuth2 uniquement) - ASYNCHRONE NON BLOQUANT
+            asyncio.create_task(auth.refresh_quota_if_needed())
 
-            p_t = 0; c_t = 0; g_t = 0
-            if proc.usage_stats:
-                p_t = proc.usage_stats.get("promptTokenCount", 0)
-                c_t = proc.usage_stats.get("cachedContentTokenCount", 0)
-                g_t = proc.usage_stats.get("candidatesTokenCount", 0)
+            p_t = cumulative_usage_stats.get("promptTokenCount", 0)
+            c_t = cumulative_usage_stats.get("cachedContentTokenCount", 0)
+            g_t = cumulative_usage_stats.get("candidatesTokenCount", 0)
             
             max_t = self.valves.MAX_CONTEXT_SIZE
             
@@ -743,7 +808,7 @@ class Pipe:
                 try: q_reset = q_reset_raw.split("T")[1][:5]
                 except: pass
 
-            # Liste des sources (Mesh) simplifiée pour le HUD
+            # Liste des sources (Mesh) résolue pour le HUD
             sources = [s['type'].replace('google_', '').replace('_', ' ').upper() for s in auth_mesh] if auth_mesh else []
 
             active_p_t = max(0, p_t - c_t)
@@ -759,4 +824,5 @@ class Pipe:
                 auth_sources=sources,
                 quota_amount=q_amount, quota_fraction=q_fraction, quota_reset=q_reset, quota_type=q_type
             )
-            yield "" # Maintien du canal pour exécution JS
+        
+        yield ""

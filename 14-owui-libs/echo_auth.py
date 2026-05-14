@@ -1,8 +1,8 @@
 """
 title: ECHO Auth Service
 author: Wilfried BARNAVON
-version: 3.3
-description: 3.3: Rafraîchissement Quotas & Crédits synchronisé (Mode HEALTH_CHECK) conforme à Gemini-CLI.
+version: 3.7
+description: 3.7: Provisioning OAuth2 déterministe et priorité souveraine.
 """
 
 import time
@@ -158,9 +158,8 @@ class AuthService:
         except: pass
 
         # 2. RAFRAÎCHISSEMENT DES QUOTAS (retrieveUserQuota)
-        quota_url = f"https://cloudaicompanion.googleapis.com/v1/projects/{project_id}/locations/-/codeAssist:retrieveUserQuota"
         try:
-            q_resp = await client.post(quota_url, json={"project": project_id}, headers=headers, timeout=15)
+            q_resp = await client.post(f"{CODE_ASSIST_BASE_URL}:retrieveUserQuota", json={"project": project_id}, headers=headers, timeout=15)
             if q_resp.status_code == 200:
                 data = q_resp.json()
                 buckets = data.get("buckets", [])
@@ -252,7 +251,7 @@ class AuthService:
                 # 3. ONBOARDING CHIRURGICAL
                 onboard_payload = {
                     "tierId": tier_id,
-                    "metadata": {**ECHO_CLIENT_METADATA, "duetProject": None}
+                    "metadata": {**ECHO_CLIENT_METADATA, "duetProject": project_id}
                 }
                 if tier_id != "free-tier":
                     onboard_payload["cloudaicompanionProject"] = None
@@ -276,7 +275,7 @@ class AuthService:
                                 if op_data.get("done"):
                                     res_obj = op_data.get("response", {})
                                     project_id = _extract_project_id(res_obj)
-                                    final_tier, final_credits = await _extract_tier_info(op_data)
+                                    final_tier, final_credits = await _extract_tier_info(res_obj)
                                     if final_credits > 0:
                                         self.echo_auth.save_api_key("google_g1_credits", str(final_credits))
                                     return project_id, final_tier or tier_id
@@ -320,92 +319,26 @@ class AuthService:
                         project_id, tier_id = await self._provision_google_account(access_token)
                         
                         if email: self.echo_auth.save_api_key(AUTH_DATA_USER_EMAIL, email)
-                        if project_id: self.echo_auth.save_api_key(AUTH_DATA_PROJECT_ID, project_id)
+                        if project_id: 
+                            self.echo_auth.save_api_key(AUTH_DATA_PROJECT_ID, project_id)
+                        else:
+                            return False, "Échec du provisioning : Aucun Project ID Google Cloud n'a pu être récupéré."
+                            
                         if tier_id: self.echo_auth.save_api_key(AUTH_DATA_USER_TIER, tier_id)
                         
-                        # --- QUOTA (NOUVEAU) ---
+                        # --- QUOTA ---
                         if access_token and project_id:
                             await self.fetch_user_quota(access_token, project_id)
                         
-                        msg = f"Authentification Google réussie pour {email or 'Compte Inconnu'}."
+                        msg = f"✅ Authentification Google réussie pour {email or 'Compte Inconnu'}."
                         if tier_id: msg += f" Tier : {tier_id}."
-                        if project_id: msg += f" Projet : {project_id}."
+                        msg += f" Projet : {project_id}."
                         return True, msg
                 return False, "Le serveur n'a pas renvoyé de jetons valides."
             else:
                 return False, f"Échec Google OAuth (HTTP {resp.status_code}): {resp.text}"
         except Exception as e:
             return False, f"Erreur réseau lors de l'échange OAuth: {str(e)}"
-
-    async def validate_and_save_api_key(self, raw_input: str) -> Tuple[bool, str]:
-        """Traitement intelligent avec Stratégie d'Authentification Exclusive (Priorité OAuth2)."""
-        
-        tokens = raw_input.split()
-        found_keys = []
-        found_oauth_code = None
-        
-        for t in tokens:
-            if re.match(GOOGLE_API_KEY_PATTERN, t):
-                if len(found_keys) < 2:
-                    found_keys.append(t)
-            elif re.match(GOOGLE_OAUTH_CODE_REGEX, t):
-                if not found_oauth_code:
-                    found_oauth_code = t
-
-        if not found_keys and not found_oauth_code:
-            return False, "Aucun identifiant valide détecté (Clé AIza ou Code 4/)."
-
-        # --- PRIORITÉ 1 : OAuth2 ---
-        if found_oauth_code:
-            success, msg = await self._exchange_oauth_code(found_oauth_code)
-            if success:
-                # Enregistrement exclusif OAuth2
-                self.echo_auth.save_api_key("google_auth_priority", AUTH_METHOD_OAUTH2)
-                
-                # Suppression du contexte PKCE
-                db_path = self.echo_auth._get_db_path()
-                try:
-                    with sqlite3.connect(db_path) as conn:
-                        conn.execute("DELETE FROM auth_pkce_context WHERE user_id = ?", (self.user_id,))
-                except: pass
-                
-                return True, f"✅ OAuth2 activé. Vos clés API ont été ignorées pour garantir la stabilité de vos sessions. | {msg}"
-
-        # --- PRIORITÉ 2 : Clés d'API (AI Studio) ---
-        # Exécutée si pas de code OAuth2 ou si son échange a échoué
-        if found_keys:
-            success_msgs = []
-            error_msgs = []
-            valid_keys = []
-
-            async with httpx.AsyncClient() as client:
-                for i, k in enumerate(found_keys):
-                    test_url = f"{GOOGLE_API_BASE_URL}/models?key={k}"
-                    try:
-                        resp = await client.get(test_url, headers={"User-Agent": ECHO_USER_AGENT}, timeout=10)
-                        if resp.status_code == 200:
-                            valid_keys.append(k)
-                            label = "Primaire" if i == 0 else "Secondaire"
-                            success_msgs.append(f"Clé d'API {label} validée.")
-                        else:
-                            error_msgs.append(f"Clé {i+1} rejetée (HTTP {resp.status_code}).")
-                    except Exception as e:
-                        error_msgs.append(f"Erreur réseau Clé {i+1} ({str(e)}).")
-
-            if valid_keys:
-                # Sauvegarde des clés en préservant l'ordre de saisie
-                self.echo_auth.save_api_key(AUTH_METHOD_KEY_PRIMARY, valid_keys[0])
-                priority = [AUTH_METHOD_KEY_PRIMARY]
-                if len(valid_keys) > 1:
-                    self.echo_auth.save_api_key(AUTH_METHOD_KEY_SECONDARY, valid_keys[1])
-                    priority.append(AUTH_METHOD_KEY_SECONDARY)
-                
-                # Mise à jour de la priorité (monotype clés)
-                self.echo_auth.save_api_key("google_auth_priority", ",".join(priority))
-                
-                return True, f"✅ Clés d'API activées. (Note : Compte Google inopérant ou non fourni). | " + " | ".join(success_msgs)
-        
-        return False, "Échec de la validation."
 
     async def validate_and_save_api_key(self, raw_input: str) -> Tuple[bool, str]:
         """Traitement intelligent avec Stratégie d'Authentification Exclusive (Priorité OAuth2)."""

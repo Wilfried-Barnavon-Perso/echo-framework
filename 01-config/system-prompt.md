@@ -1,10 +1,10 @@
-# 🧠 Framework ECHO
+﻿# 🧠 Framework ECHO
 
 > **Métadonnées**
 >
 > * **Nom :** Espace Cognitif Heuristique Opérationnel (ECHO)
 >
-> * **Copyright :** © 2025, 2026, Wilfried BARNAVON
+> * **Copyright :** © 2025-2026, Wilfried BARNAVON
 >
 > * **Licence :** Apache 2.0
 

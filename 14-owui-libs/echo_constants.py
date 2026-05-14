@@ -1,13 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 1.7
-description: 1.7: Support du cycle de vie proactif des jetons OAuth2 (50 min).
+version: 2.7
+description: 2.7: Alignement MODEL_LITE (preview) et User-Agent v0.42.0 (Audit Gemini-CLI).
 """
 
 import os
 import mimetypes
-import filetype
+try:
+    import filetype
+except ImportError:
+    filetype = None
 
 # ==============================================================================
 # 0. TOPOLOGIE SYSTÈME (ENVIRONNEMENT DOCKER)
@@ -16,19 +19,14 @@ import filetype
 # Racine unique de l'infrastructure de données
 ECHO_BASE_DATA_DIR = "/app/backend/data"
 
-# NOUVELLE HIÉRARCHIE ECHO (v5.99.1)
+# HIÉRARCHIE ECHO SOUVERAINE (Standardisé)
 ECHO_USERS_ROOT = f"{ECHO_BASE_DATA_DIR}/users"
 ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
-
-# ALIAS DE COMPATIBILITÉ CRITIQUE (ANTI-RÉGRESSION)
-ECHO_UPLOADS_DIR = ECHO_UPLOADS_TRANSIT_DIR
-ECHO_OLD_USER_DBS_DIR = f"{ECHO_BASE_DATA_DIR}/user_dbs"
-ECHO_USER_DBS_DIR = ECHO_OLD_USER_DBS_DIR
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
 # Identité Réseau
-ECHO_USER_AGENT = "ECHO-Framework/5"
+ECHO_USER_AGENT = "gemini-cli/0.42.0"
 
 # ==============================================================================
 # 1. PROTOCOLE GOOGLE AI STUDIO (GEMINI API) & AUTH UNIFIÉE
@@ -42,8 +40,8 @@ AUTH_METHOD_KEY_PRIMARY = "google_api_key"
 AUTH_METHOD_OAUTH2 = "google_oauth2"
 AUTH_METHOD_KEY_SECONDARY = "google_api_key_secondary"
 
-# Priorité par défaut : Clé 1 > OAuth2 > Clé 2 (Préserve les crédits personnels)
-DEFAULT_AUTH_PRIORITY = f"{AUTH_METHOD_KEY_PRIMARY}, {AUTH_METHOD_OAUTH2}, {AUTH_METHOD_KEY_SECONDARY}"
+# Priorité par défaut : OAuth2 > Clé 1 > Clé 2
+DEFAULT_AUTH_PRIORITY = f"{AUTH_METHOD_OAUTH2}, {AUTH_METHOD_KEY_PRIMARY}, {AUTH_METHOD_KEY_SECONDARY}"
 
 # --- CONFIGURATION GOOGLE OAUTH2 (HÉRITAGE GEMINI-CLI) ---
 # Note: Ces identifiants sont publics pour les applications "Desktop" Google.
@@ -104,9 +102,17 @@ MODEL_LITE = "gemini-3.1-flash-lite-preview"
 
 # --- MÉMOIRE ORGANIQUE V2 ---
 MODEL_DISTILLATION = "gemini-2.5-flash"
-MODEL_EMBEDDING = "gemini-embedding-2-preview"
+MODEL_EMBEDDING = "gemini-embedding-2"
 EMBEDDING_DIM_V2 = 3072
 COLLECTION_MEMORY = "echo_memory"
+# ----------------------------
+
+# --- PARAMÈTRES DE GÉNÉRATION ---
+TEMP_DEFAULT = 1.0
+TEMP_DISTILLATION = 0.0
+
+TOP_P_DEFAULT = 0.90
+TOP_P_DISTILLATION = 0.10
 # ----------------------------
 
 # 2. REGISTRE COGNITIF ECHO (UNIFIÉ & STATIQUE)
@@ -124,11 +130,6 @@ MODEL_IDENTITY = {
     MODEL_FLASH: "MODEL_FLASH",
     MODEL_PRO: "MODEL_PRO"
 }
-
-# Mapping de compatibilité ascendante (Dernière v5.99.0)
-CAT_TO_MODEL = MODEL_ROUTING
-ID_TO_COGNITION = MODEL_IDENTITY
-UI_TO_MODEL = MODEL_ROUTING
 
 # ==============================================================================
 # 2. MAPPING MIME TYPES
@@ -148,8 +149,10 @@ MIME_MAPPING_TXT = {
 MIME_MAPPING_BIN = {
     "application/pdf": [".pdf"],
     "image/png": [".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".bmp", ".gif", ".tiff"],
-    "audio/mp3": [".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".opus"],
-    "video/mp4": [".mp4", ".mov", ".mpeg", ".mpg", ".webm", ".wmv", ".flv", ".3gpp"]
+    "audio/mpeg": [".mp3"],
+    "audio/wav": [".wav"],
+    "audio/mp3": [".aac", ".flac", ".ogg", ".m4a", ".opus"],
+    "video/mp4": [".bit-perfect", ".mov", ".mpeg", ".mpg", ".webm", ".wmv", ".flv", ".3gpp"]
 }
 
 # ==============================================================================
@@ -182,9 +185,10 @@ def get_gemini_mime(file_path: str) -> tuple[str, bool]:
 
     # 3. Le Crible Binaire (Fichier sans extension ou type inconnu)
     if not raw_mime:
-        kind = filetype.guess(file_path)
-        if kind:
-            raw_mime = kind.mime
+        if filetype:
+            kind = filetype.guess(file_path)
+            if kind:
+                raw_mime = kind.mime
             
     if not raw_mime:
         raw_mime = "unknown/unknown"

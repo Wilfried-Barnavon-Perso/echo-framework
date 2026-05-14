@@ -1,139 +1,142 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 6. Le Pipe (Cortex Moteur & Suture Sémantique)</title>
-    <link rel="stylesheet" href="style.css">
-    <script type="module">
-      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-      mermaid.initialize({ 
-        startOnLoad: true, 
-        theme: 'dark',
-        securityLevel: 'loose',
-        flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
-      });
-    </script>
-</head>
-<body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
-
-    <main>
-        <h1>6. Le Pipe (Cortex Moteur & Suture Sémantique)</h1>
-
-        <div class="transition-text">Le Pipe agit comme le cortex cérébral d'ECHO. Il reçoit les requêtes clarifiées par le Filtre pour orchestrer la réflexion et planifier les actions.</div>
-
-        <h2>Fiche d'Identité Technique</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>⚙️ Le Pipe (Outlet)</h3>
-                <p><strong>Nature :</strong> Moteur d'orchestration et de routage de flux (Outlet Hook).</p>
-                <p><strong>Source :</strong> <code>10-owui-pipes/pipe_engine.py</code></p>
-                <p><strong>Rôle :</strong> Centre décisionnel d'ECHO. Responsable de la "Suture Sémantique" (reconstruction bit-perfect de l'historique), de la communication avec l'API Gemini et de la gestion de la boucle d'outils (Arsenal).</p>
-                <p><strong>Exécutant :</strong> L'instance Python d'Open WebUI (In-Process) lors de la génération de la réponse.</p>
-                <p><strong>Interconnexions :</strong> 
-                    <ul>
-                        <li><strong>Input :</strong> Reçoit le "Draft" du Filtre et l'historique brut du Middleware.</li>
-                        <li><strong>Inférence :</strong> Échange en HTTP/2 avec l'API Google Gemini.</li>
-                        <li><strong>Actions :</strong> Invoque les services de l'Arsenal (API REST).</li>
-                        <li><strong>Output :</strong> Produit un flux SSE (Server-Sent Events) vers l'interface utilisateur.</li>
-                    </ul>
-                </p>
-            </div>
-        </div>
-
-        <div class="didactic-box">
-            <h4>💡 Comprendre le "Cortex Moteur"</h4>
-            <p>Si le Filtre est le système sensoriel, le Pipe est le cerveau conscient. Il ne se contente pas de transmettre un message : il "recoud" les lambeaux de la mémoire (Suture), planifie une stratégie, utilise ses mains (Arsenal) pour agir, et s'assure que sa pensée reste cohérente du début à la fin de la session.</p>
-        </div>
-
-        <p>Le <code>pipe_engine.py</code> (v180.2) est l'unité centrale de traitement d'ECHO. Il n'est pas un simple connecteur API, mais un véritable <strong>Orchestrateur de Contexte</strong> capable de maintenir une cohérence absolue (Bit-Perfect) sur des sessions dépassant le million de tokens.</p>
-
-        <div class="note-box">
-            <strong>Philosophie Directrice :</strong> Le Pipe considère chaque tour de parole comme une opération chirurgicale. Il refuse la volatilité d'Open WebUI et s'appuie exclusivement sur son propre registre d'ombres (Shadows) pour garantir que l'IA ne souffre jamais d'amnésie ou de dérive logique.
-        </div>
-
-        <h2>L'Algorithme de Suture Sémantique</h2>
-        <p>La fonction <code>prepare_context</code> est le cœur battant du système. Elle reconstruit l'historique Gemini en suivant une hiérarchie de restauration stricte :</p>
-        
-        <div class="tech-spec">
-            <h4>⚙️ Restauration Bit-Perfect (Shadows)</h4>
-            <p>Pour chaque message de l'historique, le Pipe vérifie la présence d'une "Ombre" dans la table SQLite <code>message_shadows</code>. Cette ombre contient la structure <code>parts</code> exacte telle qu'elle a été envoyée au modèle lors du tour original.</p>
-            <ul>
-                <li><strong>Verrou de Version (Anti-Ghosting)</strong> : La restauration n'est validée que si le couple <code>(message_id, updated_at)</code> correspond exactement. Si un utilisateur modifie un message, l'empreinte temporelle change, invalidant l'ombre et forçant une suture fraîche.</li>
-                <li><strong>Intégrité Multimodale</strong> : ECHO scelle les <code>inlineData</code> (Base64) ou les ancres de fichiers, garantissant une persistance totale.</li>
-            </ul>
-        </div>
-
-        <h3>Intégration du Draft (Injection de Conscience)</h3>
-        <p>Pour le message utilisateur courant, le Pipe récupère le <strong>Draft sémantique</strong> préparé par le Filtre (<code>_echo_user_parts_draft</code>). Ce draft est fusionné dynamiquement avec le texte brut de l'utilisateur.</p>
-
-        <h2>Normalisation & Résolution de Placeholders</h2>
-        <p>L'unité <code>_ensure_gemini_parts</code> assure la conformité stricte avec l'API Google. C'est ici que s'opère la <strong>Résolution Dynamique des Identités</strong> :</p>
-        <ul>
-            <li><code>##ECHO_VERSION##</code> : Injecte la version exacte du framework.</li>
-            <li><code>##MODEL_ID##</code> : Résout l'identité du modèle actif (ex: <i>MODEL_PRO</i>).</li>
-            <li><code>##MODEL_ORIGIN##</code> : Identifie le modèle ayant initié le tour.</li>
-        </ul>
-
-        <h2>La Cascade Cognitive (Fluctuation Continue)</h2>
-        <p>ECHO introduit le concept de <strong>Routage Dynamique Inter-Modèle</strong>. En mode <code>AUTO</code>, le Pipe gère une boucle de récursion intelligente.</p>
-
-        <div class="diagram-container">
-            <div class="mermaid">
-        flowchart TD
-        A[Démarrage : MODEL_LITE] --> B{Analyse Contextuelle}
-        B -->|Tokens < 25%| C[Maintenir LITE/FLASH]
-        B -->|Tokens 25-50%| D[Escalade vers FLASH/PRO]
-        B -->|Tokens > 50%| E[Escalade PRO Impérative]
-        D & E --> F[Génération Plan de Transfert]
-        F --> G[Injection dans Nouveau Modèle]
-            </div>
-        </div>
-
-        <div class="tech-spec">
-            <h4>⚙️ Précision Mécanique : Gestion de la Chain-of-Thought</h4>
-            <p>Le Pipe est capable de capturer les pensées internes de l'IA (Chain-of-Thought). Ces données sont <strong>isolées</strong> du flux principal pour être affichées proprement dans l'interface sans polluer la réponse finale. Ces pensées sont ensuite réinjectées dans le contexte lors du tour suivant via la <strong>Suture Cognitive</strong>, permettant à l'IA de se "souvenir" de son propre raisonnement interne.</p>
-        </div>
-
-        <h3>L'Outil de Transfert : <code>changement_niveau_cognitif</code></h3>
-        <p>Injecté dynamiquement, il permet à un modèle de se déclarer incompétent ou d'anticiper une surcharge contextuelle.</p>
-        <ul>
-            <li><strong>Plan de Transfert</strong> : Le modèle sortant rédige un plan Markdown pour son successeur.</li>
-            <li><strong>Mutation Chirurgicale</strong> : Le Pipe intercepte cet appel, modifie l'identité du modèle et relance la requête.</li>
-        </ul>
-
-        <h3>Gestion Chirurgicale des Pensées (CoT)</h3>
-        <p>ECHO ne conserve <strong>JAMAIS</strong> le texte brut de la pensée dans l'historique des tours suivants. À la place, il utilise la <code>thoughtSignature</code> :</p>
-        <ul>
-            <li><strong>L'Ancre Google</strong> : La <code>thoughtSignature</code> est une ancre logique (KV Cache) fournie par Google. En la réinjectant, ECHO permet au modèle de "retrouver ses esprits" sans avoir à relire ses propres pensées.</li>
-            <li><strong>Économie Massive</strong> : Ce protocole réduit la charge contextuelle de <strong>30% à 70%</strong>.</li>
-        </ul>
-
-        <h2>Sécurité & Résilience API</h2>
-        <ul>
-            <li><strong>Multi-Clés & Rotation</strong> : Bascule automatique de clé après <code>KEY_SWITCH_THRESHOLD</code> échecs.</li>
-            <li><strong>HTTP/2 Strict</strong> : ECHO impose le protocole HTTP/2 pour réduire la latence.</li>
-        </ul>
-
-        <h2>Phase de Scellement (Le Verrouillage)</h2>
-        <ol>
-            <li><strong>Shadow Sealing</strong> : Enregistrement dans <code>message_shadows</code>.</li>
-            <li><strong>Cognitive Sealing</strong> : Ancrage de la <code>thoughtSignature</code> et du <code>tool_journal</code>.</li>
-            <li><strong>File Registry Update</strong> : Les fichiers sont marqués comme <code>processed</code> et déplacés vers le <strong>Vault</strong>.</li>
-            <li><strong>HUD Refresh</strong> : Mise à jour de la Context Gauge.</li>
-        </ol>
-
-        <div class="audit-note">
-            <h4>✅ Le point sur l'exactitude (v180.2)</h4>
-            <p>Le <code>StreamProcessor</code> de la version 180.2 a été optimisé pour le multiplexage HTTP/2. Il est capable de traiter en parallèle les balises de pensée et les appels d'outils, permettant une réactivité accrue lors des phases d'orchestration complexe.</p>
-        </div>
-
-        <footer>
-            ECHO Framework - Version 5 - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-    <div class="transition-text"><em>Pour accomplir ses missions et interagir avec le monde extérieur, le Pipe s'appuie sur un ensemble d'outils spécialisés. <a href="07_arsenal_outils.html">Découvrir l'Arsenal des Outils ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
-</body>
-</html>
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECHO v5 - 6. Le Pipe (Cortex Moteur & Suture Sémantique)</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="module">
+      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+      mermaid.initialize({ 
+        startOnLoad: true, 
+        theme: 'dark',
+        securityLevel: 'loose',
+        flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+      });
+    </script>
+</head>
+<body>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+    <main>
+        <h1>6. Le Pipe (Cortex Moteur & Suture Sémantique)</h1>
+
+        <div class="transition-text">Le Pipe agit comme le cortex cérébral d'ECHO. Il reçoit les requêtes clarifiées par le Filtre pour orchestrer la réflexion et planifier les actions.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>⚙️ Le Pipe (Outlet)</h3>
+                <p><strong>Nature :</strong> Moteur d'orchestration et de routage de flux (Outlet Hook).</p>
+                <p><strong>Source :</strong> <code>10-owui-pipes/pipe_engine.py</code></p>
+                <p><strong>Rôle :</strong> Centre décisionnel d'ECHO. Responsable de la "Suture Sémantique" (reconstruction bit-perfect de l'historique), de la communication avec l'API Gemini et de la gestion de la boucle d'outils (Arsenal).</p>
+                <p><strong>Exécutant :</strong> L'instance Python d'Open WebUI (In-Process) lors de la génération de la réponse.</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Reçoit le "Draft" du Filtre et l'historique brut du Middleware.</li>
+                        <li><strong>Inférence :</strong> Échange en HTTP/2 avec l'API Google Gemini.</li>
+                        <li><strong>Actions :</strong> Invoque les services de l'Arsenal (API REST).</li>
+                        <li><strong>Output :</strong> Produit un flux SSE (Server-Sent Events) vers l'interface utilisateur.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
+        <div class="didactic-box">
+            <h4>💡 Comprendre le "Cortex Moteur"</h4>
+            <p>Si le Filtre est le système sensoriel, le Pipe est le cerveau conscient. Il ne se contente pas de transmettre un message : il "recoud" les lambeaux de la mémoire (Suture), planifie une stratégie, utilise ses mains (Arsenal) pour agir, et s'assure que sa pensée reste cohérente du début à la fin de la session.</p>
+        </div>
+
+        <p>Le <code>pipe_engine.py</code> (v180.2) est l'unité centrale de traitement d'ECHO. Il n'est pas un simple connecteur API, mais un véritable <strong>Orchestrateur de Contexte</strong> capable de maintenir une cohérence absolue (Bit-Perfect) sur des sessions dépassant le million de tokens.</p>
+
+        <div class="note-box">
+            <strong>Philosophie Directrice :</strong> Le Pipe considère chaque tour de parole comme une opération chirurgicale. Il refuse la volatilité d'Open WebUI et s'appuie exclusivement sur son propre registre d'ombres (Shadows) pour garantir que l'IA ne souffre jamais d'amnésie ou de dérive logique.
+        </div>
+
+        <h2>L'Algorithme de Suture Sémantique</h2>
+        <p>La fonction <code>prepare_context</code> est le cœur battant du système. Elle reconstruit l'historique Gemini en suivant une hiérarchie de restauration stricte :</p>
+        
+        <div class="tech-spec">
+            <h4>⚙️ Restauration Bit-Perfect (Shadows)</h4>
+            <p>Pour chaque message de l'historique, le Pipe vérifie la présence d'une "Ombre" dans la table SQLite <code>message_shadows</code>. Cette ombre contient la structure <code>parts</code> exacte telle qu'elle a été envoyée au modèle lors du tour original.</p>
+            <ul>
+                <li><strong>Verrou de Version (Anti-Ghosting)</strong> : La restauration n'est validée que si le couple <code>(message_id, updated_at)</code> correspond exactement. Si un utilisateur modifie un message, l'empreinte temporelle change, invalidant l'ombre et forçant une suture fraîche.</li>
+                <li><strong>Intégrité Multimodale</strong> : ECHO scelle les <code>inlineData</code> (Base64) ou les ancres de fichiers, garantissant une persistance totale.</li>
+            </ul>
+        </div>
+
+        <h3>Intégration du Draft (Injection de Conscience)</h3>
+        <p>Pour le message utilisateur courant, le Pipe récupère le <strong>Draft sémantique</strong> préparé par le Filtre (<code>_echo_user_parts_draft</code>). Ce draft est fusionné dynamiquement avec le texte brut de l'utilisateur.</p>
+
+        <h2>Normalisation & Résolution de Placeholders</h2>
+        <p>L'unité <code>_ensure_gemini_parts</code> assure la conformité stricte avec l'API Google. C'est ici que s'opère la <strong>Résolution Dynamique des Identités</strong> :</p>
+        <ul>
+            <li><code>##ECHO_VERSION##</code> : Injecte la version exacte du framework.</li>
+            <li><code>##MODEL_ID##</code> : Résout l'identité du modèle actif (ex: <i>MODEL_PRO</i>).</li>
+            <li><code>##MODEL_ORIGIN##</code> : Identifie le modèle ayant initié le tour.</li>
+        </ul>
+
+        <h2>La Cascade Cognitive (Fluctuation Continue)</h2>
+        <p>ECHO introduit le concept de <strong>Routage Dynamique Inter-Modèle</strong>. En mode <code>AUTO</code>, le Pipe gère une boucle de récursion intelligente.</p>
+
+        <div class="diagram-container">
+            <div class="mermaid">
+        flowchart TD
+        A[Démarrage : MODEL_LITE] --> B{Analyse Contextuelle}
+        B -->|Tokens < 25%| C[Maintenir LITE/FLASH]
+        B -->|Tokens 25-50%| D[Escalade vers FLASH/PRO]
+        B -->|Tokens > 50%| E[Escalade PRO Impérative]
+        D & E --> F[Génération Plan de Transfert]
+        F --> G[Injection dans Nouveau Modèle]
+            </div>
+        </div>
+
+        <div class="tech-spec">
+            <h4>⚙️ Précision Mécanique : Gestion de la Chain-of-Thought</h4>
+            <p>Le Pipe est capable de capturer les pensées internes de l'IA (Chain-of-Thought). Ces données sont <strong>isolées</strong> du flux principal pour être affichées proprement dans l'interface sans polluer la réponse finale. Ces pensées sont ensuite réinjectées dans le contexte lors du tour suivant via la <strong>Suture Cognitive</strong>, permettant à l'IA de se "souvenir" de son propre raisonnement interne.</p>
+        </div>
+
+        <h3>L'Outil de Transfert : <code>changement_niveau_cognitif</code></h3>
+        <p>Injecté dynamiquement, il permet à un modèle de se déclarer incompétent ou d'anticiper une surcharge contextuelle.</p>
+        <ul>
+            <li><strong>Plan de Transfert</strong> : Le modèle sortant rédige un plan Markdown pour son successeur.</li>
+            <li><strong>Mutation Chirurgicale</strong> : Le Pipe intercepte cet appel, modifie l'identité du modèle et relance la requête.</li>
+        </ul>
+
+        <h3>Gestion Chirurgicale des Pensées (CoT)</h3>
+        <p>ECHO ne conserve <strong>JAMAIS</strong> le texte brut de la pensée dans l'historique des tours suivants. À la place, il utilise la <code>thoughtSignature</code> :</p>
+        <ul>
+            <li><strong>L'Ancre Google</strong> : La <code>thoughtSignature</code> est une ancre logique (KV Cache) fournie par Google. En la réinjectant, ECHO permet au modèle de "retrouver ses esprits" sans avoir à relire ses propres pensées.</li>
+            <li><strong>Économie Massive</strong> : Ce protocole réduit la charge contextuelle de <strong>30% à 70%</strong>.</li>
+        </ul>
+
+        <h2>Sécurité & Résilience API</h2>
+        <ul>
+            <li><strong>Multi-Clés & Rotation</strong> : Bascule automatique de clé après <code>KEY_SWITCH_THRESHOLD</code> échecs.</li>
+            <li><strong>HTTP/2 Strict</strong> : ECHO impose le protocole HTTP/2 pour réduire la latence.</li>
+        </ul>
+
+        <h2>Phase de Scellement (Le Verrouillage)</h2>
+        <ol>
+            <li><strong>Shadow Sealing</strong> : Enregistrement dans <code>message_shadows</code>.</li>
+            <li><strong>Cognitive Sealing</strong> : Ancrage de la <code>thoughtSignature</code> et du <code>tool_journal</code>.</li>
+            <li><strong>File Registry Update</strong> : Les fichiers sont marqués comme <code>processed</code> et déplacés vers le <strong>Vault</strong>.</li>
+            <li><strong>HUD Refresh</strong> : Mise à jour de la Context Gauge.</li>
+        </ol>
+
+        <div class="audit-note">
+            <h4>✅ Le point sur l'exactitude (v180.2)</h4>
+            <p>Le <code>StreamProcessor</code> de la version 180.2 a été optimisé pour le multiplexage HTTP/2. Il est capable de traiter en parallèle les balises de pensée et les appels d'outils, permettant une réactivité accrue lors des phases d'orchestration complexe.</p>
+        </div>
+
+        <footer>
+            ECHO Framework - Version 5.140.29 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+        </footer>
+    <div class="transition-text"><em>Pour accomplir ses missions et interagir avec le monde extérieur, le Pipe s'appuie sur un ensemble d'outils spécialisés. <a href="07_arsenal_outils.html">Découvrir l'Arsenal des Outils ➔</a></em></div>
+    </main>
+<script src="nav.js"></script>
+</body>
+</html>
+
+
+

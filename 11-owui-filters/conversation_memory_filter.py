@@ -1,8 +1,8 @@
 """
 title: ECHO Organic Memory Filter V2
 author: Wilfried BARNAVON
-version: 2.6
-description: 2.6: Intégration du Unified Auth Mesh (OAuth2 Support).
+version: 2.9
+description: 2.9: Migration vers EchoGeminiClient factorisé (Embedding v2 & Distillation 2.5).
 """
 
 from pydantic import BaseModel, Field
@@ -21,9 +21,8 @@ import math
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, EchoGeminiClient, EchoEvents
+from echo_utils import EchoGeminiClient, EchoEvents, EchoAuth
 from echo_constants import (
-    ECHO_USER_AGENT, GOOGLE_API_BASE_URL, 
     MODEL_DISTILLATION, MODEL_EMBEDDING, 
     EMBEDDING_DIM_V2, COLLECTION_MEMORY
 )
@@ -75,52 +74,28 @@ class Filter:
         except Exception as e:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Qdrant: {e}")
 
-    async def _get_distilled_json(self, messages: List[Dict], auth_mesh: List[Dict]) -> Optional[Dict]:
-        """Distillation multimodale via Gemini 2.5 Flash."""
-        distill_prompt = (
-            "Tu es l'unité de distillation de mémoire d'ECHO. Analyse cet extrait de conversation.\n"
-            "Ta mission est d'extraire les connaissances, décisions techniques ou préférences utilisateur.\n"
-            "Produis un JSON STRICT avec :\n"
-            "- 'summary': Résumé ultra-dense et technique (sans fioriture).\n"
-            "- 'importance': Score de 1 (Trivial) à 5 (Critique/Fondateur).\n"
-            "- 'slug': Identifiant sémantique court et unique (ex: 'pref_python_format', 'archi_db_cluster').\n"
-            "- 'tags': 3 à 5 tags techniques TRÈS SPÉCIFIQUES.\n"
-            "IMPORTANT : Interdiction d'utiliser des tags génériques (ex: 'IA', 'technique', 'informatique', 'user', 'preference').\n"
-            "Chaque tag doit être discriminant et lié au sujet réel (ex: 'astrophysique', 'react_hooks', 'docker_security')."
-        )
-
-        parts = [{"text": distill_prompt}]
-        for m in messages:
-            role = m.get('role', 'user').upper()
-            content = m.get('content', '')
-            if isinstance(content, list):
-                for p in content:
-                    if isinstance(p, dict):
-                        if 'text' in p: parts.append({"text": f"{role}: {p['text']}"})
-                        elif 'inline_data' in p: parts.append({"inline_data": p['inline_data']})
-            else:
-                parts.append({"text": f"{role}: {content}"})
-
-        payload = {
-            "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {"temperature": 0.1, "response_mime_type": "application/json"}
-        }
-
-        try:
-            data = await EchoGeminiClient.call(auth_mesh=auth_mesh, target_model=MODEL_DISTILLATION, payload=payload)
-            content_text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(content_text)
-        except Exception as e:
-            logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Distillation: {e}")
-            return None
-
-    async def _distill_and_store(self, chat_id: str, user_id: str, messages: List[Dict], auth_mesh: List[Dict]):
-        """Pipeline Asynchrone V2."""
+    async def _distill_and_store(self, chat_id: str, user_id: str, messages: List[Dict]):
+        """Pipeline Asynchrone V2 (Migration Factorisée v2.9)."""
         try:
             await self._ensure_collection()
             
-            # 1. Distillation
-            distilled = await self._get_distilled_json(messages, auth_mesh)
+            # --- 1. Distillation via Cortex Central Factorisé ---
+            distill_prompt = (
+                "Tu es l'unité de distillation de mémoire d'ECHO. Analyse cet extrait de conversation.\n"
+                "Ta mission est d'extraire les connaissances, décisions techniques ou préférences utilisateur.\n"
+                "Produis un JSON STRICT avec :\n"
+                "- 'summary': Résumé ultra-dense et technique (sans fioriture).\n"
+                "- 'importance': Score de 1 (Trivial) à 5 (Critique/Fondateur).\n"
+                "- 'slug': Identifiant sémantique court et unique (ex: 'pref_python_format', 'archi_db_cluster').\n"
+                "- 'tags': 3 à 5 tags techniques TRÈS SPÉCIFIQUES."
+            )
+            u_ctx = {"id": user_id}
+            m_ctx = {"chat_id": chat_id}
+            
+            distilled = await EchoGeminiClient.call_distillation(
+                distill_prompt + "\n\nCONVERSATION :\n" + str(messages),
+                u_ctx, m_ctx
+            )
             if not distilled or not distilled.get("summary"): return
             
             summary = distilled["summary"]
@@ -128,13 +103,9 @@ class Filter:
             new_slug = distilled.get("slug", "generic_note")
             tags = distilled.get("tags", [])
             
-            # 2. Vectorisation V2
-            embed_data = await EchoGeminiClient.embed(
-                auth_mesh=auth_mesh, 
-                model=MODEL_EMBEDDING, 
-                content={"parts": [{"text": f"title: {new_slug} | text: {summary}"}]}
-            )
-            vector = embed_data["embedding"]["values"]
+            # --- 2. Vectorisation V2 Factorisée (Gemini Embedding 2) ---
+            vector = await EchoGeminiClient.generate_embedding(summary, "document", u_ctx, m_ctx, title=new_slug)
+            if not vector: return
 
             # 3. Collision Sémantique (Recherche vectorielle pure)
             async with httpx.AsyncClient(timeout=30) as client:
@@ -145,13 +116,9 @@ class Filter:
                 resp_search = await client.post(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/search", json=search_payload)
                 results = resp_search.json().get("result", [])
                 
-                # Valeurs par défaut (Nouvelle création)
-                final_summary = summary
-                final_slug = new_slug
-                final_importance = new_importance
+                final_summary = summary; final_slug = new_slug; final_importance = new_importance
                 point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{new_slug}"))
                 
-                # Analyse de la collision
                 if results:
                     hit = results[0]
                     score = hit.get("score", 0)
@@ -166,11 +133,10 @@ class Filter:
                         if score > self.valves.EXACT_MATCH_THRESHOLD:
                             final_summary = old_payload.get("summary", summary)
                         else:
-                            fusion_prompt = f"Fusionne ces deux résumés techniques en un seul paragraphe cohérent et à jour :\n1. {old_payload.get('summary')}\n2. {summary}"
-                            fusion_data = await EchoGeminiClient.call(auth_mesh=auth_mesh, target_model=MODEL_DISTILLATION, payload={"contents": [{"role":"user", "parts":[{"text": fusion_prompt}]}]})
-                            final_summary = fusion_data["candidates"][0]["content"]["parts"][0]["text"]
+                            fusion_prompt = f"FUSION DE MÉMOIRE\nAncien : {old_payload.get('summary')}\nNouveau : {summary}\nProduis un résumé unique fusionnant les deux sans perte d'information critique."
+                            final_summary = await EchoGeminiClient.call_distillation(fusion_prompt, u_ctx, m_ctx, is_json=False)
                 
-                # 4. Insertion/Update
+                # 4. Scellement Vectoriel
                 point_payload = {
                     "points": [{
                         "id": point_id, "vector": vector,
@@ -185,16 +151,16 @@ class Filter:
             logger.info(f"[ECHO-MEMORY-V2] ✅ Souvenir '{final_slug}' (Lvl {final_importance}) mémorisé.")
 
         except Exception as e:
-            logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Pipeline: {e}")
+            logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur pipeline: {e}")
 
     async def outlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
-        """Phase Outlet : Déclenchement de la mémorisation après la réponse de l'IA."""
-        if not self.user_valves.ENABLE_MEMORY or not __user__:
-            return body
+        """Phase Outlet : Déclenchement de la mémorisation factorisée."""
+        if not self.user_valves.ENABLE_MEMORY or not __user__: return body
 
         messages = body.get("messages", [])
         chat_id = (__metadata__ or {}).get("chat_id") or body.get("chat_id")
         user_id = __user__.get("id")
+        if not chat_id or not user_id: return body
         
         count = self.last_triggered_count.get(chat_id, 0) + 1
         self.last_triggered_count[chat_id] = count
@@ -203,19 +169,17 @@ class Filter:
         
         if triggered and len(messages) >= 4:
             self.last_triggered_count[chat_id] = 0
-            auth_mesh = await self.auth.get_ordered_auth_mesh(user_id)
-            if auth_mesh:
-                p = self.valves.TRIGGER_PROBABILITY
-                r = math.sqrt(1.0 + (1.0 - p)**2)
-                window_size = int(r / p)
-                window_msgs = messages[-window_size:]
-                
-                if __event_emitter__:
-                    await __event_emitter__({
-                        "type": "status",
-                        "data": {"description": "🧠 Consolidation de la mémoire organique...", "done": False, "hidden": not self.valves.DEBUG_MEMORY}
-                    })
-                
-                asyncio.create_task(self._distill_and_store(chat_id, user_id, window_msgs, auth_mesh))
+            p = self.valves.TRIGGER_PROBABILITY
+            r = math.sqrt(1.0 + (1.0 - p)**2)
+            window_size = int(r / p)
+            window_msgs = messages[-window_size:]
+            
+            if __event_emitter__:
+                await __event_emitter__({
+                    "type": "status",
+                    "data": {"description": "🧠 Consolidation de la mémoire organique...", "done": False, "hidden": not self.valves.DEBUG_MEMORY}
+                })
+            
+            asyncio.create_task(self._distill_and_store(chat_id, user_id, window_msgs))
 
         return body

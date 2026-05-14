@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.121.0
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.140.29
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence souveraine de grade industriel, conçu comme un noyau de contrôle (Kernel) pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il implémente une architecture de "Citadelle" garantissant la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -60,4 +60,6 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Souveraineté :** Les données sensibles (clés API dans le Vault) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.121.0*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.140.29*
+
+

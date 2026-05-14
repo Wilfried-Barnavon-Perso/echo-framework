@@ -1,161 +1,163 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 7b. Vault & Data Explorer</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
-
-    <main>
-        <h1>7b. Vault & Data Explorer</h1>
-
-        <div class="transition-text">Parmi les outils de l'Arsenal, le Vault agit comme l'espace de stockage sécurisé. Il permet à l'IA d'interagir avec les fichiers locaux sans compromettre l'environnement.</div>
-
-        <h2>Fiche d'Identité Technique</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>📂 Vault Explorer</h3>
-                <p><strong>Nature :</strong> Outil de l'Arsenal (Gestionnaire de Fichiers Souverain).</p>
-                <p><strong>Source :</strong> <code>12-owui-tools/file_content_explorer.py</code></p>
-                <p><strong>Rôle :</strong> Permettre au modèle d'explorer, lire, télécharger, et analyser sémantiquement les fichiers persistants associés à la session utilisateur.</p>
-                <p><strong>Exécutant :</strong> Le Pipe (Open WebUI) déclenche la requête HTTP, exécutée dans le périmètre de sécurité du Backend.</p>
-                <p><strong>Interconnexions :</strong> 
-                    <ul>
-                        <li><strong>Input :</strong> Ordres Gemini (Lire un fichier spécifique, lancer un sondage sémantique).</li>
-                        <li><strong>Action locale :</strong> Lecture/Écriture dans le répertoire <code>/app/backend/echo_users/{user_id}/files/</code>.</li>
-                        <li><strong>Analyse :</strong> Invoque un modèle Gemini (FLASH) secondaire pour des résumés massifs.</li>
-                    </ul>
-                </p>
-            </div>
-        </div>
-
-        <p>Ce module constitue la porte d'entrée vers les "données froides" du Vault utilisateur. Il permet l'exploration, l'analyse structurelle et l'analyse sémantique de fichiers massifs sans saturer la fenêtre de contexte du modèle PRO (Cortex).</p>
-
-        <h2>Exploration Brute (<code>read_raw_file_content</code>)</h2>
-        <p>Contrairement aux lecteurs standards, ECHO implémente une lecture paginée "Tell-Safe" pour éviter les bugs d'itération sur les fichiers volumineux.</p>
-        
-        <h2>Injection Multimédia Native (<code>read_multimedia_file</code>)</h2>
-        <p>Cette fonction majeure permet au modèle d'accéder directement au contenu binaire d'un fichier (Image, Vidéo, Audio, PDF) sans passer par une analyse intermédiaire. Le fichier est injecté directement dans le cortex multimodal de Gemini.</p>
-        
-        <div class="note-box">
-            <h4>Spécifications Techniques (ECHO v5.99+)</h4>
-            <ul>
-                <li><strong>Capacité</strong> : Jusqu'à <strong>100 Mo</strong> (configurable via la valve <code>MAX_MULTIMODAL_SIZE_KB</code>).</li>
-                <li><strong>Protocole</strong> : Encodage Base64 injecté via le paramètre <code>echo_tool_multiparts</code>.</li>
-                <li><strong>Types Supportés</strong> : Tous les types MIME définis dans <code>MIME_MAPPING_BIN</code> (MP4, MP3, PNG, JPG, PDF, etc.).</li>
-                <li><strong>Rétroaction UI</strong> : Utilise <code>EchoEvents</code> pour afficher le statut du chargement binaire en temps réel à l'utilisateur.</li>
-            </ul>
-        </div>
-        
-        <div class="info-block">
-            <h4>Limitation de Sécurité Gemini</h4>
-            <p>Toute sortie brute est bridée à <strong>16 Ko</strong> pour garantir la conformité avec les APIs Gemini et prévenir les plantages de flux. Pour les fichiers plus gros, utilisez les <code>byte_offset</code>.</p>
-        </div>
-
-        <table>
-            <thead>
-                <tr>
-                    <th>Mode</th>
-                    <th>Spécification Technique</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><code>text</code></td>
-                    <td>Lecture ligne par ligne avec préfixe d'index (<code>120 | contenu</code>). Idéal pour le code source.</td>
-                </tr>
-                <tr>
-                    <td><code>base64</code></td>
-                    <td>Lecture binaire brute. Utilisé pour transférer des morceaux de fichiers vers d'autres outils (ex: conversion).</td>
-                </tr>
-                <tr>
-                    <td><code>hex</code></td>
-                    <td>Affichage hexadécimal indexé. Indispensable pour l\'analyse de fichiers binaires ou corrompus.</td>
-                </tr>
-            </tbody>
-        </table>
-
-        <h2>Sondage Sémantique (<code>semantic_probe</code>)</h2>
-        <p>L'une des fonctions les plus puissantes d'ECHO. Elle permet de déléguer l'analyse d'un document entier à une instance <strong>Gemini Flash</strong> dédiée (moins coûteuse en tokens pour le modèle principal).</p>
-        
-        <ul>
-            <li><strong>Délégation</strong> : Le modèle PRO demande une analyse (ex: "Quels sont les points clés de ce contrat ?").</li>
-            <li><strong>Analyse approfondie</strong> : Le modèle FLASH lit le document intégral et renvoie une synthèse structurée.</li>
-            <li><strong>Multipart</strong> : Les pensées internes du modèle FLASH sont encapsulées dans la section <code>thought</code> du multipart.</li>
-            <li><strong>Thinking Levels</strong> : Supporte les niveaux MINIMAL, LOW, MEDIUM et HIGH pour ajuster la précision de l'analyse.</li>
-        </ul>
-
-        <h2>Visualisation Premium Image Viewer (<code>show_image_to_user</code>)</h2>
-        <p>ECHO v5.104.0 introduit le <strong>Premium Image Viewer</strong>, une interface HUD interactive unifiée capable d'afficher des sources locales (Vault) et distantes (URL).</p>
-
-        <div class="info-block">
-            <h4>Fonctionnalités Avancées du Viewer</h4>
-            <ul>
-                <li><strong>Détection Agnostique</strong> : L'outil <code>show_image_to_user</code> détecte automatiquement si la cible est une URL ou un ID de fichier.</li>
-                <li><strong>Moteur Zoom & Pan Universel</strong> : Navigation haute fidélité via la matrice de transformation CSS (<code>transform: scale() translate3d()</code>). <strong>Ctrl + Molette</strong> gère le zoom, <strong>Clic + Glisse</strong> gère le Pan (déplacement matriciel au pixel près).</li>
-                <li><strong>Outil d'Extraction (Crop)</strong> : Tracé d'une zone de sélection mathématiquement liée au ratio de zoom, permettant d'extraire directement l'image ciblée (Canvas 2D) vers le presse-papier avec un Fallback CORS natif et copie visuelle.</li>
-                <li><strong>Pure Context Return (v5.105.1+)</strong> : Contrairement aux anciens modules, l'outil renvoie désormais une <code>string pure</code> au lieu d'un dictionnaire, évitant au LLM d'ingérer un wrapping JSON inutile et concentrant son attention contextuelle sur les faits bruts.</li>
-                <li><strong>Stealth Engine</strong> : Pour les images distantes, ECHO utilise un moteur de mimétisme humain (Chrome 123 sur Windows 11) pour contourner les protections anti-hotlinking et les redirections (302/403).</li>
-                <li><strong>Souveraineté</strong> : Les images du Vault restent injectées en Base64, garantissant qu'aucune donnée privée ne quitte l'enclave utilisateur vers des services de rendu tiers.</li>
-            </ul>
-        </div>
-
-        <h2>Moteur de Téléchargement Stealth (<code>download_from_url</code>)</h2>
-        <p>Le module de téléchargement a été intégralement refondu pour simuler un comportement humain parfait :</p>
-        <table>
-            <thead>
-                <tr>
-                    <th>Fonctionnalité</th>
-                    <th>Spécification Technique</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><code>Follow Redirects</code></td>
-                    <td>Suivi systématique des redirections HTTP (301/302). Indispensable pour des services comme Picsum ou Unsplash.</td>
-                </tr>
-                <tr>
-                    <td><code>Stealth Headers</code></td>
-                    <td>Injection d'en-têtes <code>sec-ch-ua</code>, <code>Referer</code> dynamique et <code>User-Agent</code> premium pour lever les blocages 403.</td>
-                </tr>
-                <tr>
-                    <td><code>Final URL Capture</code></td>
-                    <td>Extraction de l'URL réelle de destination après redirection pour une indexation précise dans le Vault.</td>
-                </tr>
-            </tbody>
-        </table>
-
-        <h2>Intégrité & Métadonnées</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Fonction</th>
-                    <th>Rôle Technique</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><code>get_file_metadata</code></td>
-                    <td>Extraction des attributs système (Taille, MimeType, Date de modification).</td>
-                </tr>
-                <tr>
-                    <td><code>calculate_file_hashes</code></td>
-                    <td>Calcul du hash <strong>SHA-256</strong>. Indispensable pour vérifier l'intégrité après un téléchargement ou une manipulation sandbox.</td>
-                </tr>
-            </tbody>
-        </table>
-
-        <h2>Gestion des Identifiants (IDs)</h2>
-        <p>Tout fichier dans ECHO est référencé par un <code>file_id</code> souverain généré par <code>echo_utils.generate_echo_file_id</code>. Ce format inclut l'ID utilisateur, l'ID du chat et un timestamp milliseconde, garantissant l'unicité absolue dans le Vault.</p>
-
-        <footer>
-            ECHO Framework - Version 5 - Copyright Â© 2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-        <div class="transition-text"><em>Au-delà des fichiers physiques, ECHO maintient également une mémoire de ses interactions et connaissances. <a href="07c_memory_cognition.html">Découvrir la Cognition Profonde & Mémoire Organique ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
-</body>
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECHO v5 - 7b. Vault & Data Explorer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+    <main>
+        <h1>7b. Vault & Data Explorer</h1>
+
+        <div class="transition-text">Parmi les outils de l'Arsenal, le Vault agit comme l'espace de stockage sécurisé. Il permet à l'IA d'interagir avec les fichiers locaux sans compromettre l'environnement.</div>
+
+        <h2>Fiche d'Identité Technique</h2>
+        <div class="grid-container">
+            <div class="card">
+                <h3>📂 Vault Explorer</h3>
+                <p><strong>Nature :</strong> Outil de l'Arsenal (Gestionnaire de Fichiers Souverain).</p>
+                <p><strong>Source :</strong> <code>12-owui-tools/file_content_explorer.py</code></p>
+                <p><strong>Rôle :</strong> Permettre au modèle d'explorer, lire, télécharger, et analyser sémantiquement les fichiers persistants associés à la session utilisateur.</p>
+                <p><strong>Exécutant :</strong> Le Pipe (Open WebUI) déclenche la requête HTTP, exécutée dans le périmètre de sécurité du Backend.</p>
+                <p><strong>Interconnexions :</strong> 
+                    <ul>
+                        <li><strong>Input :</strong> Ordres Gemini (Lire un fichier spécifique, lancer un sondage sémantique).</li>
+                        <li><strong>Action locale :</strong> Lecture/Écriture dans le répertoire <code>/app/backend/echo_users/{user_id}/files/</code>.</li>
+                        <li><strong>Analyse :</strong> Invoque un modèle Gemini (FLASH) secondaire pour des résumés massifs.</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
+        <p>Ce module constitue la porte d'entrée vers les "données froides" du Vault utilisateur. Il permet l'exploration, l'analyse structurelle et l'analyse sémantique de fichiers massifs sans saturer la fenêtre de contexte du modèle PRO (Cortex).</p>
+
+        <h2>Exploration Brute (<code>read_raw_file_content</code>)</h2>
+        <p>Contrairement aux lecteurs standards, ECHO implémente une lecture paginée "Tell-Safe" pour éviter les bugs d'itération sur les fichiers volumineux.</p>
+        
+        <h2>Injection Multimédia Native (<code>read_multimedia_file</code>)</h2>
+        <p>Cette fonction majeure permet au modèle d'accéder directement au contenu binaire d'un fichier (Image, Vidéo, Audio, PDF) sans passer par une analyse intermédiaire. Le fichier est injecté directement dans le cortex multimodal de Gemini.</p>
+        
+        <div class="note-box">
+            <h4>Spécifications Techniques (ECHO v5.140.29+)</h4>
+            <ul>
+                <li><strong>Capacité</strong> : Jusqu'à <strong>100 Mo</strong> (configurable via la valve <code>MAX_MULTIMODAL_SIZE_KB</code>).</li>
+                <li><strong>Protocole</strong> : Encodage Base64 injecté via le paramètre <code>echo_tool_multiparts</code>.</li>
+                <li><strong>Types Supportés</strong> : Tous les types MIME définis dans <code>MIME_MAPPING_BIN</code> (MP4, MP3, PNG, JPG, PDF, etc.).</li>
+                <li><strong>Rétroaction UI</strong> : Utilise <code>EchoEvents</code> pour afficher le statut du chargement binaire en temps réel à l'utilisateur.</li>
+            </ul>
+        </div>
+        
+        <div class="info-block">
+            <h4>Limitation de Sécurité Gemini</h4>
+            <p>Toute sortie brute est bridée à <strong>16 Ko</strong> pour garantir la conformité avec les APIs Gemini et prévenir les plantages de flux. Pour les fichiers plus gros, utilisez les <code>byte_offset</code>.</p>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Mode</th>
+                    <th>Spécification Technique</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>text</code></td>
+                    <td>Lecture ligne par ligne avec préfixe d'index (<code>120 | contenu</code>). Idéal pour le code source.</td>
+                </tr>
+                <tr>
+                    <td><code>base64</code></td>
+                    <td>Lecture binaire brute. Utilisé pour transférer des morceaux de fichiers vers d'autres outils (ex: conversion).</td>
+                </tr>
+                <tr>
+                    <td><code>hex</code></td>
+                    <td>Affichage hexadécimal indexé. Indispensable pour l\'analyse de fichiers binaires ou corrompus.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>Sondage Sémantique (<code>semantic_probe</code>)</h2>
+        <p>L'une des fonctions les plus puissantes d'ECHO. Elle permet de déléguer l'analyse d'un document entier à une instance <strong>Gemini Flash</strong> dédiée (moins coûteuse en tokens pour le modèle principal).</p>
+        
+        <ul>
+            <li><strong>Délégation</strong> : Le modèle PRO demande une analyse (ex: "Quels sont les points clés de ce contrat ?").</li>
+            <li><strong>Analyse approfondie</strong> : Le modèle FLASH lit le document intégral et renvoie une synthèse structurée.</li>
+            <li><strong>Multipart</strong> : Les pensées internes du modèle FLASH sont encapsulées dans la section <code>thought</code> du multipart.</li>
+            <li><strong>Thinking Levels</strong> : Supporte les niveaux MINIMAL, LOW, MEDIUM et HIGH pour ajuster la précision de l'analyse.</li>
+        </ul>
+
+        <h2>Visualisation Premium Image Viewer (<code>show_image_to_user</code>)</h2>
+        <p>ECHO v5.140.29 introduit le <strong>Premium Image Viewer</strong>, une interface HUD interactive unifiée capable d'afficher des sources locales (Vault) et distantes (URL).</p>
+
+        <div class="info-block">
+            <h4>Fonctionnalités Avancées du Viewer</h4>
+            <ul>
+                <li><strong>Détection Agnostique</strong> : L'outil <code>show_image_to_user</code> détecte automatiquement si la cible est une URL ou un ID de fichier.</li>
+                <li><strong>Moteur Zoom & Pan Universel</strong> : Navigation haute fidélité via la matrice de transformation CSS (<code>transform: scale() translate3d()</code>). <strong>Ctrl + Molette</strong> gère le zoom, <strong>Clic + Glisse</strong> gère le Pan (déplacement matriciel au pixel près).</li>
+                <li><strong>Outil d'Extraction (Crop)</strong> : Tracé d'une zone de sélection mathématiquement liée au ratio de zoom, permettant d'extraire directement l'image ciblée (Canvas 2D) vers le presse-papier avec un Fallback CORS natif et copie visuelle.</li>
+                <li><strong>Pure Context Return (v5.140.29+)</strong> : Contrairement aux anciens modules, l'outil renvoie désormais une <code>string pure</code> au lieu d'un dictionnaire, évitant au LLM d'ingérer un wrapping JSON inutile et concentrant son attention contextuelle sur les faits bruts.</li>
+                <li><strong>Stealth Engine</strong> : Pour les images distantes, ECHO utilise un moteur de mimétisme humain (Chrome 123 sur Windows 11) pour contourner les protections anti-hotlinking et les redirections (302/403).</li>
+                <li><strong>Souveraineté</strong> : Les images du Vault restent injectées en Base64, garantissant qu'aucune donnée privée ne quitte l'enclave utilisateur vers des services de rendu tiers.</li>
+            </ul>
+        </div>
+
+        <h2>Moteur de Téléchargement Stealth (<code>download_from_url</code>)</h2>
+        <p>Le module de téléchargement a été intégralement refondu pour simuler un comportement humain parfait :</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Fonctionnalité</th>
+                    <th>Spécification Technique</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>Follow Redirects</code></td>
+                    <td>Suivi systématique des redirections HTTP (301/302). Indispensable pour des services comme Picsum ou Unsplash.</td>
+                </tr>
+                <tr>
+                    <td><code>Stealth Headers</code></td>
+                    <td>Injection d'en-têtes <code>sec-ch-ua</code>, <code>Referer</code> dynamique et <code>User-Agent</code> premium pour lever les blocages 403.</td>
+                </tr>
+                <tr>
+                    <td><code>Final URL Capture</code></td>
+                    <td>Extraction de l'URL réelle de destination après redirection pour une indexation précise dans le Vault.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>Intégrité & Métadonnées</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Fonction</th>
+                    <th>Rôle Technique</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>get_file_metadata</code></td>
+                    <td>Extraction des attributs système (Taille, MimeType, Date de modification).</td>
+                </tr>
+                <tr>
+                    <td><code>calculate_file_hashes</code></td>
+                    <td>Calcul du hash <strong>SHA-256</strong>. Indispensable pour vérifier l'intégrité après un téléchargement ou une manipulation sandbox.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>Gestion des Identifiants (IDs)</h2>
+        <p>Tout fichier dans ECHO est référencé par un <code>file_id</code> souverain généré par <code>echo_utils.generate_echo_file_id</code>. Ce format inclut l'ID utilisateur, l'ID du chat et un timestamp milliseconde, garantissant l'unicité absolue dans le Vault.</p>
+
+        <footer>
+            ECHO Framework - Version 5.140.29 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+        </footer>
+        <div class="transition-text"><em>Au-delà des fichiers physiques, ECHO maintient également une mémoire de ses interactions et connaissances. <a href="07c_memory_cognition.html">Découvrir la Cognition Profonde & Mémoire Organique ➔</a></em></div>
+    </main>
+<script src="nav.js"></script>
+</body>
 </html>
+
+
