@@ -1,17 +1,27 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : enable-bunkerweb.sh
-# VERSION : 3.4
+# VERSION : 3.5
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Activation de la couche de sécurité BunkerWeb (Secure Edge).
 # ==============================================================================
 
+# --- INITIALISATION : CORE ECHO GLOBALS ---
+ECHO_ROOT="/opt/ECHO"
+GLOBALS_FILE="$ECHO_ROOT/echo-scripts/echo-globals.sh"
+if [ -f "$GLOBALS_FILE" ]; then
+    source "$GLOBALS_FILE"
+else
+    echo "❌ CRITIQUE : Fichier global introuvable ($GLOBALS_FILE)."
+    exit 1
+fi
+# ------------------------------------------
+
 export COMPOSE_PROJECT_NAME="echo"
 
-CONFIG_DIR="/opt/config"
-# Centralisation du .env à la racine de /opt pour survie aux updates
-ENV_FILE="/opt/.env"
+CONFIG_DIR="$ECHO_CONFIG"
+ENV_FILE="$ECHO_ENV_FILE"
 BW_STACK_FILE="$CONFIG_DIR/bunkerweb-stack.yml"
 ECHO_STACK_FILE="$CONFIG_DIR/stack-echo.yml"
 DOCKER_COMPOSE_CMD="docker-compose"
@@ -29,7 +39,7 @@ touch "$ENV_FILE" && chmod 600 "$ENV_FILE"
 
 clear
 echo "=================================================="
-echo "🛡️  ECHO SECURE EDGE (Standard Edition v3.4)"
+echo "🛡️  ECHO SECURE EDGE (Standard Edition v3.5)"
 echo "=================================================="
 echo "Ce script configure votre domaine pour l'accès HTTPS."
 echo ""
@@ -44,7 +54,6 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 if [ -z "$DOMAIN" ]; then
-    # Tentative de lecture de l'ancien domaine si .env existe
     DEFAULT_DOMAIN=""
     if [ -f "$ENV_FILE" ]; then
         DEFAULT_DOMAIN=$(grep "^ECHO_DOMAIN=" "$ENV_FILE" | cut -d '=' -f2)
@@ -124,11 +133,11 @@ $DOCKER_COMPOSE_CMD \
 
 # --- 5. RECONSTRUCTION ET RECONFIGURATION ---
 echo "🔧 Reconfiguration des paramètres internes d'Open WebUI (CORS, URLs)..."
-if [ -f "/opt/echo-scripts/config-owui.sh" ]; then
-    /bin/bash /opt/echo-scripts/config-owui.sh
+if [ -f "$ECHO_SCRIPTS/config-owui.sh" ]; then
+    /bin/bash "$ECHO_SCRIPTS/config-owui.sh"
     echo "   ✅ Reconfiguration terminée."
 else
-    echo "   ⚠️  Script 'config-owui.sh' non trouvé."
+    echo "   ⚠️  Script 'config-owui.sh' non trouvé ($ECHO_SCRIPTS/config-owui.sh)."
 fi
 
 echo ""

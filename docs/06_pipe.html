@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 6. Le Pipe (Cortex Moteur & Suture Sémantique)</title>
+    <title>ECHO v5 - 6. Le Pipe (Cortex Moteur & Reconstruction Bit-Perfect de l'Historique)</title>
     <link rel="stylesheet" href="style.css">
     <script type="module">
       import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -19,7 +19,7 @@
     <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
-        <h1>6. Le Pipe (Cortex Moteur & Suture Sémantique)</h1>
+        <h1>6. Le Pipe (Cortex Moteur & Reconstruction Bit-Perfect de l'Historique)</h1>
 
         <div class="transition-text">Le Pipe agit comme le cortex cérébral d'ECHO. Il reçoit les requêtes clarifiées par le Filtre pour orchestrer la réflexion et planifier les actions.</div>
 
@@ -29,7 +29,7 @@
                 <h3>⚙️ Le Pipe (Outlet)</h3>
                 <p><strong>Nature :</strong> Moteur d'orchestration et de routage de flux (Outlet Hook).</p>
                 <p><strong>Source :</strong> <code>10-owui-pipes/pipe_engine.py</code></p>
-                <p><strong>Rôle :</strong> Centre décisionnel d'ECHO. Responsable de la "Suture Sémantique" (reconstruction bit-perfect de l'historique), de la communication avec l'API Gemini et de la gestion de la boucle d'outils (Arsenal).</p>
+                <p><strong>Rôle :</strong> Centre décisionnel d'ECHO. Responsable de la "Reconstruction Bit-Perfect de l'Historique" (reconstruction bit-perfect de l'historique), de la communication avec l'API Gemini et de la gestion de la boucle d'outils (Arsenal).</p>
                 <p><strong>Exécutant :</strong> L'instance Python d'Open WebUI (In-Process) lors de la génération de la réponse.</p>
                 <p><strong>Interconnexions :</strong> 
                     <ul>
@@ -47,13 +47,13 @@
             <p>Si le Filtre est le système sensoriel, le Pipe est le cerveau conscient. Il ne se contente pas de transmettre un message : il "recoud" les lambeaux de la mémoire (Suture), planifie une stratégie, utilise ses mains (Arsenal) pour agir, et s'assure que sa pensée reste cohérente du début à la fin de la session.</p>
         </div>
 
-        <p>Le <code>pipe_engine.py</code> (v190.5) est l'unité centrale de traitement d'ECHO. Il n'est pas un simple connecteur API, mais un véritable <strong>Orchestrateur de Contexte</strong> capable de maintenir une cohérence absolue (Bit-Perfect) sur des sessions dépassant le million de tokens, tout en supportant les configurations de réflexion avancées (<code>thinkingConfig</code>).</p>
+        <p>Le <code>pipe_engine.py</code> (v190.7) est l'unité centrale de traitement d'ECHO. Il n'est pas un simple connecteur API, mais un véritable <strong>Orchestrateur de Contexte</strong> capable de maintenir une cohérence absolue (Bit-Perfect) sur des sessions dépassant le million de tokens, tout en supportant les configurations de réflexion avancées (<code>thinkingConfig</code>).</p>
 
         <div class="note-box">
             <strong>Philosophie Directrice :</strong> Le Pipe considère chaque tour de parole comme une opération chirurgicale. Il refuse la volatilité d'Open WebUI et s'appuie exclusivement sur son propre registre d'ombres (Shadows) pour garantir que l'IA ne souffre jamais d'amnésie ou de dérive logique.
         </div>
 
-        <h2>L'Algorithme de Suture Sémantique</h2>
+        <h2>L'Algorithme de Reconstruction Bit-Perfect de l'Historique</h2>
         <p>La fonction <code>prepare_context</code> est le cœur battant du système. Elle reconstruit l'historique Gemini en suivant une hiérarchie de restauration stricte :</p>
         
         <div class="tech-spec">
@@ -76,7 +76,7 @@
             <li><code>##MODEL_ORIGIN##</code> : Identifie le modèle ayant initié le tour.</li>
         </ul>
 
-        <h2>La Cascade Cognitive (Fluctuation Continue)</h2>
+        <h2>La Ajustement du niveau cognitif (Fluctuation Continue)</h2>
         <p>ECHO introduit le concept de <strong>Routage Dynamique Inter-Modèle</strong>. En mode <code>AUTO</code>, le Pipe gère une boucle de récursion intelligente.</p>
 
         <div class="diagram-container">
@@ -125,12 +125,12 @@
         </ol>
 
         <div class="audit-note">
-            <h4>✅ Le point sur l'exactitude (v190.5)</h4>
-            <p>Le <code>StreamProcessor</code> de la version 190.5 a été optimisé pour le multiplexage HTTP/2 et la gestion native des <strong>ThoughtSignatures</strong>. Il est capable de traiter en parallèle les balises de pensée et les appels d'outils, permettant une réactivité accrue lors des phases d'orchestration complexe.</p>
+            <h4>✅ Le point sur l'exactitude (v190.7)</h4>
+            <p>Le <code>StreamProcessor</code> de la version 190.7 a été optimisé pour le multiplexage HTTP/2 et la gestion native des <strong>ThoughtSignatures</strong>. Il est capable de traiter en parallèle les balises de pensée et les appels d'outils, permettant une réactivité accrue lors des phases d'orchestration complexe.</p>
         </div>
 
         <footer>
-            ECHO Framework - Version 5.140.29 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     <div class="transition-text"><em>Pour accomplir ses missions et interagir avec le monde extérieur, le Pipe s'appuie sur un ensemble d'outils spécialisés. <a href="07_arsenal_outils.html">Découvrir l'Arsenal des Outils ➔</a></em></div>
     </main>

@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
         text: "7. L'Arsenal des Outils",
         sub: [
           { href: '07a_web_intelligence.html', text: '7a. Web Intelligence' },
-          { href: '07b_vault_explorer.html', text: '7b. Vault & Data Explorer' },
+          { href: '07b_vault_explorer.html', text: "7b. Explorateur de l'Espace Personnel" },
           { href: '07c_memory_cognition.html', text: '7c. Mémoire & Cognition' },
           { href: '07d_execution_monitoring.html', text: '7d. Exécution & Pilotage' },
           { href: '07e_actions_ui.html', text: '7e. Actions UI (HUD)' },

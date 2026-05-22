@@ -1,31 +1,31 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 7c. Cognition Profonde & Mémoire Organique</title>
+    <title>ECHO v5 - 7c. Cognition Profonde & Base vectorielle des souvenirs</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
-        <h1>7c. Cognition Profonde & Mémoire Organique</h1>
+        <h1>7c. Cognition Profonde & Base vectorielle des souvenirs</h1>
 
         <div class="transition-text">Pour ne pas être qu'une simple calculatrice amnésique, ECHO s'appuie sur une mémoire vectorielle persistante et un moteur de routage cognitif dynamique.</div>
 
         <h2>Fiche d'Identité Technique</h2>
         <div class="grid-container">
             <div class="card">
-                <h3>🧠 Cognition & Mémoire Organique</h3>
+                <h3>🧠 Cognition & Base vectorielle des souvenirs</h3>
                 <p><strong>Nature :</strong> Pipeline de Mémorisation (RAG Vectoriel) et Orchestrateur de Sous-Modèles.</p>
-                <p><strong>Source :</strong> <code>11-owui-filters/conversation_memory_filter.py</code>, <code>12-owui-tools/memory_organic_tool.py</code>, <code>12-owui-tools/cognitive_core.py</code>.</p>
+                <p><strong>Source :</strong> <code>11-owui-filters/conversation_memory_filter.py</code>, <code>12-owui-tools/memory_tool.py</code>, <code>12-owui-tools/cognitive_agents.py</code>.</p>
                 <p><strong>Rôle :</strong> Assurer la persistance à long terme des connaissances utilisateur (Préférences, Faits) et orchestrer le routage dynamique (LITE/FLASH/PRO) selon la complexité de la tâche.</p>
                 <p><strong>Exécutant :</strong> Processus Python local (Backend) couplé à une base vectorielle Qdrant.</p>
                 <p><strong>Interconnexions :</strong> 
                     <ul>
                         <li><strong>Input :</strong> Historique de conversation (distillé par Gemini Flash).</li>
-                        <li><strong>Stockage :</strong> Vectors (Gemini Embedding-2) insérés dans la collection <code>echo_memory</code> de Qdrant.</li>
+                        <li><strong>Stockage :</strong> Vecteurs 1024d (BAAI/bge-m3, local) insérés dans la collection <code>echo_memory</code> de Qdrant.</li>
                         <li><strong>Output :</strong> Souvenirs réinjectés comme contexte textuel dans les outils de mémoire.</li>
                     </ul>
                 </p>
@@ -33,13 +33,13 @@
         </div>
 
         <div class="didactic-box">
-            <h4>💡 Comprendre la Mémoire Organique</h4>
-            <p>ECHO possède deux cerveaux. Le premier est **Réactif** (le Cortex) : il décide instantanément s'il a besoin d'être "très intelligent" (modèle Pro) ou "très rapide" (modèle Flash). Le second est son **Registre** (la Mémoire Organique) : c'est un carnet de notes numérique où il range vos préférences et les faits importants pour ne jamais les oublier, même dans une nouvelle discussion.</p>
+            <h4>💡 Comprendre la Base vectorielle des souvenirs</h4>
+            <p>ECHO possède deux cerveaux. Le premier est **Réactif** (le Cortex) : il décide instantanément s'il a besoin d'être "très intelligent" (modèle Pro) ou "très rapide" (modèle Flash). Le second est son **Registre** (la Base vectorielle des souvenirs) : c'est un carnet de notes numérique où il range vos préférences et les faits importants pour ne jamais les oublier, même dans une nouvelle discussion.</p>
         </div>
 
         <p>L'intelligence d'ECHO v5 repose sur une dualité fondamentale : le <strong>Cortex Réactif</strong> (Le Pipe) et le <strong>Registre Cognitif Persistant</strong> (La Mémoire). Cette architecture garantit une puissance de calcul maximale tout en préservant une cohérence historique absolue.</p>
 
-        <h2>1. Architecture de la Cascade Cognitive (Le Cortex)</h2>
+        <h2>1. Architecture de la Ajustement du niveau cognitif (Le Cortex)</h2>
         <p>Le <strong>Pipe Engine</strong> (<code>pipe_engine.py</code>) n'est pas un simple tunnel de données. C'est un moteur de routage dynamique bidirectionnel qui gère la puissance de calcul en temps réel.</p>
 
         <h3>A. Cascade Native & Outil Virtuel d'Ajustement</h3>
@@ -56,12 +56,12 @@
                         <li><strong>MODEL_PRO (Expertise)</strong> : Architecture, orchestration, refactoring complexe, philosophie profonde.</li>
                     </ul>
                 </li>
-                <li><strong>Loi de Corrélation Contextuelle (La Vallée de la Mort)</strong> : 
+                <li><strong>Loi de Corrélation Contextuelle (La Vallée de la Mort Contextuelle)</strong> : 
                     Plus le contexte (tokens) s'alourdit, plus le niveau cognitif doit augmenter pour maintenir la cohérence, indépendamment de la simplicité de la tâche. Si le contexte dépasse 50% de la fenêtre, le passage en <strong>MODEL_PRO</strong> est impératif.</li>
             </ol>
         </div>
 
-        <h3>B. Délégation Explicite (Cognitive Core)</h3>
+        <h3>B. Délégation Explicite (Expertise Conseil)</h3>
         <p>L'outil <code>delegate_reasoning</code> permet à l'orchestrateur de déléguer consciemment une portion de la tâche à un sous-système. Contrairement à la cascade native (qui change de modèle pour la réponse en cours), ici le résultat est réinjecté comme une <strong>donnée isolée</strong>, authentifiée par des <strong>ThoughtSignatures</strong> uniques présentes dans les logs système et les en-têtes de réponse.</p>
 
         <div class="note-box">
@@ -96,7 +96,7 @@
             </tbody>
         </table>
 
-        <h2>2. Mémoire Organique V2 : La Suture Sémantique & Liant PRAF/PRAC</h2>
+        <h2>2. Base vectorielle des souvenirs V2 : La Reconstruction Bit-Perfect de l'Historique & Liant PRAF/PRAC</h2>
         <p>La mémorisation dans ECHO n'est pas un simple stockage de logs. C'est un pipeline de <strong>distillation vectorielle</strong> géré par le filtre <code>conversation_memory_filter.py</code> et exploité par l'Arsenal pour satisfaire aux principes de Rigueur Analytique (PRAF) et d'Amélioration Continue (PRAC).</p>
 
         <h3>A. Le Cycle de Mémorisation (Non-bloquant)</h3>
@@ -110,7 +110,7 @@
         <div class="code-header">Pipeline Technique de Mémorisation</div>
         <pre><code>
 1. Distillation (Gemini 2.5 Flash) -> Génère un JSON (Summary, Importance 1-5, Slug, Tags)
-2. Vectorisation (Gemini Embedding 2) -> 3072 Dimensions, Distance: Cosine
+2. Vectorisation (BAAI/bge-m3 — Local) -> 1024 Dimensions, Distance: Cosine
 3. Recherche (Qdrant) -> Similarité Seuil 0.85
 4. Action :
    - Similitude < 0.85 : Création d'un nouveau point vectoriel.
@@ -128,8 +128,126 @@
             <li><strong>Niveau 5 (Axiome)</strong> : Règles de sécurité et Principes ECHO fondamentaux.</li>
         </ul>
 
+        <h3>C. Consolidation Automatique des Souvenirs (Centroïde Vectoriel)</h3>
+        <p>Après la purge TTL, l'Admin Manager exécute une consolidation des souvenirs <strong>Triviaux (Niveau 1)</strong>
+        quand leur nombre dépasse un seuil configurable (défaut : 10 par utilisateur).</p>
+
+        <div class="note-box">
+            <h4>💡 Pourquoi consolider les souvenirs Triviaux ?</h4>
+            <p>Les souvenirs lvl1 s'accumulent rapidement : chaque session peut en générer plusieurs.
+            Ils sont pénalisés au rappel (poids 0.55 vs 1.00 pour lvl3) et occupent de l'espace vectoriel
+            à faible valeur unitaire. La consolidation fusionne les faits sémantiquement proches
+            en connaissances de <strong>niveau 2 (Mineur, poids 0.75)</strong>, plus stables et mieux pondérées.</p>
+        </div>
+
+        <h4>Mécanisme : Clustering Greedy + Centroïde Vectoriel</h4>
+        <p>Exemple concret avec 3 souvenirs lvl1 d'un même utilisateur :</p>
+
+        <div class="code-header">Situation de départ dans Qdrant</div>
+        <pre><code>Point A (lvl1)  summary: "L'utilisateur préfère le thème sombre dans toutes les interfaces."
+                vector:  [0.12, -0.45, 0.78, ...] (1024 valeurs normalisées L2)
+
+Point B (lvl1)  summary: "L'utilisateur déteste les popups et notifications intrusives."
+                vector:  [0.15, -0.41, 0.80, ...]
+
+Point C (lvl1)  summary: "L'utilisateur préfère les interfaces épurées, sans éléments superflus."
+                vector:  [0.11, -0.43, 0.77, ...]</code></pre>
+
+        <div class="code-header">Pipeline de consolidation (Admin Manager)</div>
+        <pre><code>1. SCROLL lvl1 with_vectors=true
+   → Récupération des 3 points avec leurs vecteurs complets (aucun appel embedding)
+
+2. CLUSTERING GREEDY
+   cos(A,B) = 0.81 ≥ 0.75  → B rejoint le cluster d'A
+   cos(A,C) = 0.84 ≥ 0.75  → C rejoint le cluster d'A
+   Taille cluster = 3 ≥ min_cluster_size(3) ✓
+
+3. CALCUL DU CENTROÏDE (dimension par dimension, Python pur)
+   centroïde[0] = (0.12 + 0.15 + 0.11) / 3 = 0.127
+   centroïde[1] = (-0.45 + -0.41 + -0.43) / 3 = -0.430
+   centroïde[2] = (0.78 + 0.80 + 0.77) / 3 = 0.783
+   ...
+   Re-normalisation L2 → vecteur_final (sur la sphère cosinus, valide pour Qdrant)
+
+4. CRÉATION DU POINT FUSIONNÉ (lvl2)
+   vector:             vecteur_final (centroïde normalisé)
+   summary:            "L'utilisateur préfère le thème sombre [...] |
+                        L'utilisateur déteste les popups [...] |
+                        L'utilisateur préfère les interfaces épurées [...]"
+                        ↑ concaténation COMPLÈTE — aucune troncature
+   memory_importance:  2  (promotion lvl1 → lvl2)
+
+5. SUPPRESSION des 3 anciens points lvl1
+   POST /points/delete  {"points": [id_A, id_B, id_C]}
+
+   Résultat :  3 points lvl1  →  1 point lvl2
+               3 slots Qdrant →  1 slot Qdrant
+               pondération recall : ×0.55 → ×0.75</code></pre>
+
+        <div class="note-box">
+            <h4>🛡️ Propriétés garanties</h4>
+            <ul>
+                <li><strong>Aucune troncature</strong> : le summary stocké contient l'intégralité des textes originaux.</li>
+                <li><strong>Aucun appel réseau supplémentaire</strong> : les vecteurs sont déjà présents dans le scroll Qdrant. Le worker <code>bge-m3</code> n'est pas sollicité pendant la consolidation.</li>
+                <li><strong>Aucun appel Gemini</strong> : pas de dépendance aux clés API utilisateur. L'opération est 100% locale.</li>
+                <li><strong>Idempotence</strong> : une consolidation sur des points déjà consolidés (lvl2) ne produit aucun effet (le scroll filtre strictement <code>memory_importance=1</code>).</li>
+            </ul>
+        </div>
+
+        <h4>Décision Architecturale : Pourquoi seulement Lvl1 → Lvl2 ?</h4>
+
+        <div class="audit-note">
+            <h4>🏛️ Principe : Respecter le Jugement du LLM de Distillation</h4>
+            <p>La consolidation automatique est délibérément limitée aux souvenirs <strong>Triviaux (Niveau 1)</strong>.
+            Ce choix est une décision architecturale, pas une limitation technique.</p>
+            <table style="width:100%; border-collapse:collapse; font-size:0.85em; margin-top:8px;">
+                <thead>
+                    <tr style="border-bottom:1px solid #30363d;">
+                        <th style="text-align:left; padding:4px 8px;">Transition</th>
+                        <th style="text-align:left; padding:4px 8px;">Consolidation auto ?</th>
+                        <th style="text-align:left; padding:4px 8px;">Raison</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid #21262d;">
+                        <td style="padding:4px 8px;"><strong>Lvl1 → Lvl2</strong> (Trivial → Mineur)</td>
+                        <td style="padding:4px 8px; color:#3fb950;">✅ Oui</td>
+                        <td style="padding:4px 8px;">Accumulation rapide, faible valeur unitaire, gain de compression élevé.</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #21262d;">
+                        <td style="padding:4px 8px;">Lvl2 → Lvl3 (Mineur → Utile)</td>
+                        <td style="padding:4px 8px; color:#d29922;">⚠️ Discutable</td>
+                        <td style="padding:4px 8px;">Lvl2 est déjà une connaissance qualifiée par le LLM. Fusionner automatiquement risque de diluer des distinctions intentionnelles.</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #21262d;">
+                        <td style="padding:4px 8px;">Lvl3 → Lvl4 (Utile → Majeur)</td>
+                        <td style="padding:4px 8px; color:#f85149;">❌ Non</td>
+                        <td style="padding:4px 8px;">Le score a été assigné délibérément par le LLM de distillation. Une promotion automatique contourne ce jugement.</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 8px;">Lvl4 → Lvl5 (Majeur → Axiome)</td>
+                        <td style="padding:4px 8px; color:#f85149;">❌ Jamais</td>
+                        <td style="padding:4px 8px;">Les Axiomes sont des vérités fondamentales désignées explicitement. Toute promotion automatique serait une corruption de l'ontologie mémorielle.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p style="margin-top:8px; font-size:0.85em; color:#8b949e;">
+                <strong>Règle d'or :</strong> La consolidation automatique ne peut qu'élever des souvenirs de <em>faible certitude</em>
+                vers le niveau immédiatement supérieur. La promotion des niveaux Utile, Majeur et Axiome reste
+                une prérogative exclusive du LLM de distillation.
+            </p>
+        </div>
+
+        <p>Les trois paramètres de consolidation sont configurables dans le
+        <strong>Dashboard Admin Manager</strong>, panneau "Élagage &amp; Cycle de Vie" :</p>
+        <ul>
+            <li><strong>Seuil déclenchement</strong> : nb de lvl1 par user avant consolidation (défaut : 10).</li>
+            <li><strong>Taille cluster min</strong> : nb minimum de souvenirs similaires pour fusionner (défaut : 3).</li>
+            <li><strong>Seuil cosinus</strong> : similarité minimale pour appartenir au même cluster (défaut : 0.75).</li>
+        </ul>
+
         <h2>3. Interaction Cortex / Registre</h2>
-        <p>L'IA utilise l'outil <code>memory_organic_tool.py</code> pour interroger son registre. Cela permet de décider *quand* elle a besoin de contexte historique, évitant ainsi le "bruit" dans la fenêtre de contexte actuelle.</p>
+        <p>L'IA utilise l'outil <code>memory_tool.py</code> pour interroger son registre. Cela permet de décider *quand* elle a besoin de contexte historique, évitant ainsi le "bruit" dans la fenêtre de contexte actuelle.</p>
 
         <div class="card">
             <h4>Action UI : Purge Granulaire</h4>
@@ -152,7 +270,7 @@
         </div>
 
         <footer>
-            ECHO Framework v5.140.29 - "Sovereign Intelligence & Memory Governance" - Copyright © 2025-2026 Wilfried BARNAVON
+            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON
         </footer>
         <div class="transition-text"><em>Pour réfléchir et agir, l'IA a aussi besoin d'un espace d'exécution sécurisé pour son code. <a href="07d_execution_monitoring.html">Découvrir l'Exécution Sandbox & Pilotage ➔</a></em></div>
     </main>

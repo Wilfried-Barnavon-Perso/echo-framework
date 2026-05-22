@@ -1,4 +1,4 @@
-﻿# 🧠 Framework ECHO
+# 🧠 Framework ECHO
 
 > **Métadonnées**
 >

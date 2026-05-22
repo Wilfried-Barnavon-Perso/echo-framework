@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 9.0 (TURBO JSON)
+VERSION : 9.1 (TURBO JSON)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-04-10
+DATE MAJ : 2026-05-20
 
+CHANGELOG 9.1 :
+- FIX: Correction d'une erreur de syntaxe à l'import de random (random import -> import random).
 CHANGELOG 9.0 :
 - PERF: Allègement du payload JSON (suppression des coordonnées x/y dans le DOM Map).
 CHANGELOG 8.9 :

@@ -2,7 +2,7 @@ version: '3.8'
 
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.21
+# VERSION : 1.22
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
 # ==============================================================================
@@ -168,5 +168,5 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: /opt/bunkerweb
+      device: /opt/ECHO/bunkerweb
   bw-db-data:

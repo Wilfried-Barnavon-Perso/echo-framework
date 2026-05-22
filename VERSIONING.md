@@ -7,101 +7,74 @@ Ce document définit les règles de versioning pour l'infrastructure ECHO 5.
 La version globale d'ECHO suit le format **SemVer** (`X.Y.Z`). Elle représente un état stable et testé de l'ensemble des composants.
 
 * **Format** : `5.Y.Z`
+* **Incrément Mineur (Y)** : Nouvelles fonctionnalités majeures ou changements structurels de l'infrastructure.
+* **Incrément Patch (Z)** : Corrections de bugs, mises à jour de sécurité ou ajustements mineurs des scripts.
 
-* **Emplacement** : Fichier `VERSION` à la racine du dépôt.
+## 2. Versioning des Composants (Granulaire)
 
-| Type | Incrément | Description | Exemple | 
- | ----- | ----- | ----- | ----- | 
-| **Majeur** | `6.0.0` | Refonte architecturale complète (ex: changement d'orchestrateur, abandon de Docker). | 5 -> 6 | 
-| **Mineur** | `5.6.0` | Ajout d'un nouveau service (conteneur), changement d'OS de base, nouvelles fonctionnalités clés (**Turbo JSON**). | 5.5 -> 5.6 | 
-| **Patch** | `5.6.1` | Correctifs de scripts, mise à jour de configuration, update de dépendances mineures. | 5.6.0 -> 5.6.1 | 
+Chaque module ou outil possède sa propre version interne pour permettre un suivi précis des modifications.
 
-## 2. Versioning des Composants (Modules)
-
-Chaque composant possède son propre cycle de vie et sa propre numérotation, documentée dans son en-tête de fichier.
-
-### A. ECHO Engine (Le Pipe)
-
-* **Format** : `XXX.YY` (Entier.Décimale)
-
-* `XXX` : Version fonctionnelle majeure (ex: 136). Incrémenté lors d'ajouts de logique (nouveau fix, nouvelle gestion de mémoire).
-
-* `YY` : Correctif ou ajustement mineur (ex: 00).
-
-* **Fichier** : `10-owui-pipes/pipe_engine.py`
-
-* **Exemple** : `136.0` (No Upload / Base64 Mode + Turbo JSON).
+### A. Pipe Engine
+* **Format** : `XXX.YY`
+* **Exemple** : `190.05`
 
 ### B. Admin Manager
+* **Format** : `X.YY`
+* **Exemple** : `5.52`
 
+### C. Modules, Outils & Filtres
 * **Format** : `X.Y`
-
-* **Fichier** : `20-docker-admin-manager/server.py`
-
-* **Exemple** : `2.6` (Support UTF-8).
-
-### C. Workers & Tools
-
-* **Format** : `X.Y`
-
 * Suivent une numérotation simple.
 
-## 3. Le Manifeste de Déploiement
+## 3. Manifeste de Release (Illustrations)
 
-Pour garantir la cohérence, chaque Release de la Stack (`5.Y.Z`) est définie par un snapshot précis des versions de composants.
+> [!IMPORTANT]
+> Les exemples ci-dessous sont fournis à titre **purement illustratif** pour démontrer le format attendu. 
+> **L'agent IA ne doit en aucun cas ajouter de nouvelles entrées dans cette section lors des montées de version.** 
+> La version actuelle de la stack est uniquement pilotée par le fichier `VERSION` à la racine.
 
-**Exemple pour la 5.121.4 (Suture Visuelle Robustness Fix) :**
-
+**Exemple A (Correctif Technique) :**
 {
-  "stack_version": "5.121.4",
-  "release_date": "2026-04-18",
-  "description": "Fiabilisation de la proprioception visuelle : Implémentation d'une normalisation de type automatique pour le payload. Cette modification garantit que même si l'IA renvoie un objet JSON structuré (dictionnaire Python), celui-ci est converti en chaîne de caractères avant le rendu, éliminant l'erreur 'AttributeError: dict object has no attribute replace'.",
+  "stack_version": "5.141.7",
+  "release_date": "2026-05-16",
+  "description": "Fiabilisation du Cortex : Implémentation du lecteur Python robuste (ast.literal_eval) et résolution des conflits de noms d'outils.",
   "components": {
-    "universal_visual_generator.py": "2.7"
+    "pipe_engine.py": "190.6",
+    "cognitive_agents.py": "5.7"
   }
 }
 
-**Exemple pour la 5.121.3 (Native Rich UI Suture & Performance) :**
-
+**Exemple B (Optimisation) :**
 {
-  "stack_version": "5.121.3",
-  "release_date": "2026-04-18",
-  "description": "Alignement technologique sur le standard 'Rich UI Embedding' d'Open WebUI : Abandon du transport Base64 au profit d'un retour par Tuple (HTMLResponse, context). Cette modification améliore drastiquement les performances en évitant l'injection de payloads HTML massifs dans le contexte du modèle, tout en garantissant un rendu interactif natif dans le chat.",
+  "stack_version": "5.141.6",
+  "release_date": "2026-05-16",
+  "description": "Amélioration de la détection de la balise d'arrêt <FINAL_ANSWER>.",
   "components": {
-    "universal_visual_generator.py": "2.6"
+    "cognitive_agents.py": "5.6"
   }
 }
 
-**Exemple pour la 5.121.2 (Suture Visuelle & SVG Integration) :**
-
+**Exemple C (Nouvelle Fonctionnalité) :**
 {
-  "stack_version": "5.121.2",
-  "release_date": "2026-04-18",
-  "description": "Correction critique du système de rendu visuel : Intégration du moteur 'svg' manquant dans VisualEngine et fiabilisation de la transmission des payloads média via multiparts. Cette mise à jour résout les cas où le modèle choisissait le SVG sans pouvoir afficher le résultat, et consolide le pattern d'encapsulation Base64 pour les interfaces dynamiques.",
+  "stack_version": "5.141.4",
+  "release_date": "2026-05-16",
+  "description": "Ajout de l'outil list_skills et clarification de la profondeur généalogique.",
   "components": {
-    "universal_visual_generator.py": "2.5",
-    "echo_visuals.py": "1.7"
+    "cognitive_agents.py": "5.4"
   }
 }
 
 ## 4. Workflow de Mise à Jour
 
 1. **Développement (`dev`)** :
-
    * On travaille sur les composants (ex: Pipe 136.0).
-
    * On teste sur la VM de dev.
 
 2. **Validation (`tag`)** :
-
    * Une fois stable, on tague le composant (ex: commit "Pipe 136.0").
 
 3. **Release Stack (`main`)** :
-
-   * On met à jour le fichier `VERSION` (ex: 5.5.2 -> 5.6.0).
-
-   * On met à jour le `ECHO_MANIFEST.json`.
-
-   * On fusionne sur `main` et on crée un tag git `5.6.0`.
+   * On met à jour le fichier `VERSION` à la racine (ex: 5.141.7).
+   * On tague le dépôt avec la version globale.
 
 *Document de référence pour l'équipe ECHO Architecture.

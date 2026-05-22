@@ -33,7 +33,7 @@ class Action:
                 scroll_payload = {
                     "filter": {"must": [{"key": "user_id", "match": {"value": user_id}}]},
                     "limit": 200, # Large scan pour agrégation
-                    "with_payload": ["tags", "importance"]
+                    "with_payload": ["tags", "memory_importance"]
                 }
                 
                 resp = await client.post(
@@ -46,21 +46,21 @@ class Action:
                     for p in results:
                         payload = p.get("payload", {})
                         p_tags = payload.get("tags", [])
-                        imp = int(payload.get("importance", 1))
+                        imp = int(payload.get("memory_importance", payload.get("importance", 1))) # fallback compatibilité
                         
                         if isinstance(p_tags, list):
                             for t in p_tags:
                                 if t not in tag_data:
                                     tag_data[t] = {"name": t, "count": 0, "max_imp": 0}
                                 tag_data[t]["count"] += 1
-                                # On garde l'importance max pour ce tag
+                                # Gestion de l'importance des souvenirs : conservation du score maximal
                                 if imp > tag_data[t]["max_imp"]:
                                     tag_data[t]["max_imp"] = imp
                 
                 final_list = list(tag_data.values())
                 
                 # TRI HIERARCHIQUE :
-                # 1. Importance (ASC: la moindre en premier)
+                # 1. Importance/Criticité (ASC: la moindre en premier)
                 # 2. Fréquence (DESC: plus de liaisons en premier)
                 # 3. Alphabet (ASC)
                 final_list.sort(key=lambda x: (x["max_imp"], -x["count"], x["name"]))

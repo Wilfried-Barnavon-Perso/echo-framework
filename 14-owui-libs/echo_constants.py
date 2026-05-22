@@ -1,8 +1,8 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 2.7
-description: 2.7: Alignement MODEL_LITE (preview) et User-Agent v0.42.0 (Audit Gemini-CLI).
+version: 2.9
+description: 2.8: Migration vers Embedding local (SigLIP 2 + Infinity). 2.9: Ajout RAG Éphémère.
 """
 
 import os
@@ -27,6 +27,9 @@ ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
 # Identité Réseau
 ECHO_USER_AGENT = "gemini-cli/0.42.0"
+
+# Points d'accès Locaux (Souveraineté)
+ECHO_EMBEDDING_URL = "http://echo-embedding:7997/v1"
 
 # ==============================================================================
 # 1. PROTOCOLE GOOGLE AI STUDIO (GEMINI API) & AUTH UNIFIÉE
@@ -102,9 +105,30 @@ MODEL_LITE = "gemini-3.1-flash-lite-preview"
 
 # --- MÉMOIRE ORGANIQUE V2 ---
 MODEL_DISTILLATION = "gemini-2.5-flash"
-MODEL_EMBEDDING = "gemini-embedding-2"
-EMBEDDING_DIM_V2 = 3072
-COLLECTION_MEMORY = "echo_memory"
+MODEL_EMBEDDING    = "BAAI/bge-m3"      # Modèle texte-first, multilingue, 1024d, 8192 tokens
+EMBEDDING_DIM_V2   = 1024               # Dimension bge-m3 (remplace 768 SigLIP-2)
+COLLECTION_MEMORY    = "echo_memory"
+COLLECTION_EPHEMERAL = "echo_ephemeral"
+
+# Poids de reranking par niveau d'importance mémorielle.
+# Appliqués dans recall_memories : score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]
+# Un Axiome (5) à cos=0.60 bat un Trivial (1) à cos=0.85 : 0.60×1.70 > 0.85×0.55
+MEMORY_IMPORTANCE_WEIGHTS: dict[int, float] = {
+    1: 0.55,   # Trivial — pénalisé (bruit probable)
+    2: 0.75,   # Mineur
+    3: 1.00,   # Utile — référence neutre
+    4: 1.30,   # Majeur
+    5: 1.70,   # Axiome — fortement boosté (remonte toujours)
+}
+
+# Labels sémantiques des 5 niveaux — point de vérité unique pour UI, logs et LLM.
+MEMORY_IMPORTANCE_LABELS: dict[int, str] = {
+    1: "Trivial",
+    2: "Mineur",
+    3: "Utile",
+    4: "Majeur",
+    5: "Axiome",
+}
 # ----------------------------
 
 # --- PARAMÈTRES DE GÉNÉRATION ---

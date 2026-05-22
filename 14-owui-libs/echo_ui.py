@@ -1,8 +1,8 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.16
-description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro.
+version: 5.17
+description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro. 5.17: Ajout show_image_js (injection JS sans HTMLResponse).
 """
 
 from fastapi.responses import HTMLResponse
@@ -357,7 +357,7 @@ class EchoUI(EchoRichUI):
               <input id="${{HUD_ID}}-url" type="text" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:6px; color:#00d4ff; font-size:11px; padding:6px 12px; outline:none; font-family:monospace;" readonly />
               <div style="display:flex; gap:8px;">
                 <button id="${{HUD_ID}}-btn-zoom" title="Maximiser (Ajuster)" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;">⛶</button>
-                <button id="${{HUD_ID}}-btn-reset" title="Taille rÃ©elle (1:1)" style="background:none; border:none; color:#777; cursor:pointer; font-size:11px; font-weight:bold;">1:1</button>
+                <button id="${{HUD_ID}}-btn-reset" title="Taille réelle (1:1)" style="background:none; border:none; color:#777; cursor:pointer; font-size:11px; font-weight:bold;">1:1</button>
                 <button id="${{HUD_ID}}-btn-min" title="Minimiser" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;">—</button>
                 <button id="${{HUD_ID}}-btn-close" title="Fermer" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:18px;">×</button>
               </div>
@@ -489,8 +489,51 @@ class EchoUI(EchoRichUI):
     """
     await events.emit("execute", {"code": js_code})
 
+  @staticmethod
+  def show_image_js(img_url: str, title: str = "Aperçu Image") -> str:
+    """Génère le JS d'injection du viewer image dans le DOM d'Open WebUI.
+    Utiliser via events.call('execute', {'code': ...}).
+    N'utilise pas HTMLResponse — retour 100% propre, sans pollution du contexte Gemini."""
+    safe_url = img_url.replace('"', '&quot;').replace('`', '\\`')
+    safe_title = title.replace('"', '&quot;').replace('`', '\\`')
+    return f"""
+(function() {{
+  const old = document.getElementById('echo-img-viewer');
+  if (old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'echo-img-viewer';
+  overlay.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.95);z-index:10001;background:rgba(12,12,12,0.97);border:1px solid #333;border-radius:12px;box-shadow:0 25px 70px rgba(0,0,0,0.9);color:white;font-family:sans-serif;min-width:320px;max-width:90vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;animation:echoFadeIn 0.2s ease forwards;';
+  const style = document.createElement('style');
+  style.textContent = '@keyframes echoFadeIn{{from{{opacity:0;transform:translate(-50%,-50%) scale(0.95)}}to{{opacity:1;transform:translate(-50%,-50%) scale(1)}}}}';
+  document.head.appendChild(style);
+  overlay.innerHTML = `
+    <div style="padding:10px 15px;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #222;cursor:move;">
+      <span style="font-size:13px;color:#00d4ff;">👁️ {safe_title}</span>
+      <button onclick="document.getElementById('echo-img-viewer').remove()" style="background:none;border:none;color:#ef4444;font-size:18px;cursor:pointer;">×</button>
+    </div>
+    <div style="overflow:auto;padding:10px;background:#000;display:flex;align-items:center;justify-content:center;">
+      <img src="{safe_url}" style="max-width:80vw;max-height:75vh;border-radius:6px;display:block;" />
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  // Drag basique sur le header
+  const header = overlay.querySelector('div');
+  header.addEventListener('mousedown', function(e) {{
+    if(e.target.tagName==='BUTTON') return;
+    let ox=e.clientX, oy=e.clientY;
+    const rect=overlay.getBoundingClientRect();
+    let tx=rect.left, ty=rect.top;
+    overlay.style.transform='none'; overlay.style.left=tx+'px'; overlay.style.top=ty+'px';
+    const move=me=>{{ tx+=me.clientX-ox; ty+=me.clientY-oy; ox=me.clientX; oy=me.clientY; overlay.style.left=tx+'px'; overlay.style.top=ty+'px'; }};
+    const up=()=>{{ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); }};
+    document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
+  }});
+}})();
+"""
+
   @classmethod
   def image_viewer(cls, img_url: str, title: str = "Aperçu Image") -> HTMLResponse:
+    """Maintenu pour les Actions OWUI. Pour les Tools, utiliser show_image_js() + events.call."""
     content = f"""
     <div id="hud-bar"><span style="font-weight:bold;">👁️ ECHO Vision Explorer</span></div>
     <div id="canvas-area" style="width:100%; height:600px; overflow:hidden; position:relative; background:#f1f5f9; display:flex; align-items:center; justify-content:center;">

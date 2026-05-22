@@ -1,18 +1,28 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : disable-bunkerweb.sh
-# VERSION : 1.5
+# VERSION : 1.6
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Désactivation de la couche de sécurité BunkerWeb (Secure Edge)
 #        et retour au mode d'accès local direct (HTTP).
 # ==============================================================================
 
+# --- INITIALISATION : CORE ECHO GLOBALS ---
+ECHO_ROOT="/opt/ECHO"
+GLOBALS_FILE="$ECHO_ROOT/echo-scripts/echo-globals.sh"
+if [ -f "$GLOBALS_FILE" ]; then
+    source "$GLOBALS_FILE"
+else
+    echo "❌ CRITIQUE : Fichier global introuvable ($GLOBALS_FILE)."
+    exit 1
+fi
+# ------------------------------------------
+
 export COMPOSE_PROJECT_NAME="echo"
 
-CONFIG_DIR="/opt/config"
-# Utilisation du .env centralisé
-ENV_FILE="/opt/.env"
+CONFIG_DIR="$ECHO_CONFIG"
+ENV_FILE="$ECHO_ENV_FILE"
 BW_STACK_FILE="$CONFIG_DIR/bunkerweb-stack.yml"
 ECHO_STACK_FILE="$CONFIG_DIR/stack-echo.yml"
 DOCKER_COMPOSE_CMD="docker-compose"
@@ -24,7 +34,7 @@ if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
 fi
 
 echo "=================================================="
-echo "🔓 ECHO SECURITY DISABLE (v1.5)"
+echo "🔓 ECHO SECURITY DISABLE (v1.6)"
 echo "=================================================="
 echo "Ce script va désactiver le WAF et le HTTPS."
 echo "Vos applications seront accessibles uniquement en LOCAL (HTTP)."
@@ -45,9 +55,7 @@ done
 # --- 2. MISE À JOUR .ENV (Désactivation Domaine) ---
 if [ -f "$ENV_FILE" ]; then
     echo "📝 Désactivation du domaine dans le fichier d'environnement..."
-    # On vide ECHO_DOMAIN pour repasser en mode local, mais on garde le reste (secrets)
     sed -i "s|^ECHO_DOMAIN=.*|ECHO_DOMAIN=|" "$ENV_FILE"
-    # Mise à jour du CORS local
     if grep -q "^ECHO_DETECTED_ORIGINS=" "$ENV_FILE"; then
         sed -i "s|^ECHO_DETECTED_ORIGINS=.*|ECHO_DETECTED_ORIGINS=$ECHO_DETECTED_ORIGINS|" "$ENV_FILE"
     else
@@ -75,11 +83,11 @@ $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$ECHO_STACK_FILE" up -d --remove-
 
 # --- 5. RECONSTRUCTION ET RECONFIGURATION ---
 echo "🔧 Reconfiguration des paramètres internes d'Open WebUI (CORS, URLs)..."
-if [ -f "/opt/echo-scripts/config-owui.sh" ]; then
-    /bin/bash /opt/echo-scripts/config-owui.sh
+if [ -f "$ECHO_SCRIPTS/config-owui.sh" ]; then
+    /bin/bash "$ECHO_SCRIPTS/config-owui.sh"
     echo "   ✅ Reconfiguration terminée."
 else
-    echo "   ⚠️  Script 'config-owui.sh' non trouvé."
+    echo "   ⚠️  Script 'config-owui.sh' non trouvé ($ECHO_SCRIPTS/config-owui.sh)."
 fi
 
 echo ""

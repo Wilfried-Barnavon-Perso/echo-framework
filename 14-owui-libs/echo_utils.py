@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 6.6
-description: 6.6: Rollback de la modification d'endpoint Code Assist (tentative infructueuse pour fix 404).
+version: 7.5
+description: 7.5: Refactorisation terminologique (auth_mesh→auth_providers, Citadelle→Identités d'accès aux Modèles, commentaire message_shadows).
 """
 
 import copy
@@ -174,7 +174,7 @@ class EchoEvents:
         return bool(res)
 
 # ==============================================================================
-# SECTION 4 : SERVICE D'AUTHENTIFICATION (Citadelle)
+# SECTION 4 : IDENTITÉS D'ACCÈS AUX MODÈLES (Authentification)
 # ==============================================================================
 
 class EchoAuth:
@@ -212,15 +212,15 @@ class EchoAuth:
                 return row[0] if row else None
         except: return None
 
-    async def get_ordered_auth_mesh(self, user_id: str) -> List[Dict]:
-        """Résout le maillage d'authentification par priorité (Agnostique)."""
+    async def get_ordered_auth_providers(self, user_id: str) -> List[Dict]:
+        """Résout le registre des fournisseurs d'accès aux modèles par priorité (OAuth2 > Clé Primaire > Clé Secondaire)."""
         uid = user_id or self.user_id
-        mesh = []
+        providers = []
         
-        # 1. Vérification OAuth2 (Premium/Souverain)
+        # 1. Vérification OAuth2 (Prioritaire)
         refresh_token = self.get_auth_data("google_oauth2_refresh_token", uid)
         if refresh_token:
-            mesh.append({
+            providers.append({
                 "type": AUTH_METHOD_OAUTH2,
                 "refresh_token": refresh_token,
                 "user_id": uid,
@@ -233,9 +233,9 @@ class EchoAuth:
         for method in [AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY]:
             key_val = self.get_auth_data(method, uid)
             if key_val:
-                mesh.append({"type": method, "key": key_val})
+                providers.append({"type": method, "key": key_val})
 
-        return mesh
+        return providers
 
     async def refresh_google_oauth_token(self, refresh_token: str, user_id: str = None) -> Optional[str]:
         """Rafraîchit silencieusement le jeton d'accès Google OAuth2."""
@@ -421,28 +421,35 @@ class EchoGeminiClient:
         title: str = None
     ) -> List[float]:
         """
-        Génère un vecteur d'embedding via Gemini Embedding 2 (Stable).
-        Gère automatiquement les préfixes de tâche et l'authentification Citadelle.
+        Génère un vecteur d'embedding via SigLIP 2 (Local / Infinity).
+        Zéro donnée sortante (infrastructure auto-hébergée).
         """
-        from echo_constants import MODEL_EMBEDDING
-        user_id = __user__.get("id", "system")
-        chat_id = __metadata__.get("chat_id")
+        from echo_constants import MODEL_EMBEDDING, ECHO_EMBEDDING_URL
         
-        # 1. Formatage multimodal Gemini Embedding 2
-        if task_type == "query":
-            prompt = f"task: search result | query: {text}"
-        else:
-            prompt = f"title: {title or 'none'} | text: {text}"
-
-        # 2. Construction du Payload technique
-        payload = {"content": {"parts": [{"text": prompt}]}}
+        # 1. Formatage compatible OpenAI / Infinity
+        payload = {
+            "model": MODEL_EMBEDDING,
+            "input": text
+        }
         
-        # 3. Appel via le moteur central (Gère OAuth2 / Code Assist)
+        # 2. Appel au moteur local
         try:
-            res = await EchoGeminiClient.call_raw(MODEL_EMBEDDING, payload, user_id, method="embedContent", chat_id=chat_id)
-            # 4. Extraction du vecteur
-            return res.get("embedding", {}).get("values", [])
-        except: return []
+            client = await _get_global_client()
+            resp = await client.post(f"{ECHO_EMBEDDING_URL}/embeddings", json=payload, timeout=30)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                # Infinity renvoie le format OpenAI : {"data": [{"embedding": [...]}]}
+                embeddings = data.get("data", [])
+                if embeddings:
+                    return embeddings[0].get("embedding", [])
+                return []
+            else:
+                print(f"[EchoGemini] ⚠️ Échec Embedding Local : HTTP {resp.status_code} - {resp.text[:100]}")
+                return []
+        except Exception as e: 
+            print(f"[EchoGemini] ❌ Erreur critique Embedding Local : {str(e)}")
+            return []
 
     @staticmethod
     async def call_distillation(
@@ -458,7 +465,7 @@ class EchoGeminiClient:
         Exécute une tâche de distillation (extraction sémantique) via Gemini 2.5 Flash (par défaut).
         Gère automatiquement le nettoyage des thoughts et le parsing JSON.
         """
-        from echo_constants import MODEL_DISTILLATION, MODEL_ROUTING
+        from echo_constants import MODEL_DISTILLATION, MODEL_ROUTING, TEMP_DISTILLATION, TOP_P_DISTILLATION
         user_id = __user__.get("id", "system")
         chat_id = __metadata__.get("chat_id")
         
@@ -500,10 +507,10 @@ class EchoGeminiClient:
     async def call_raw(target_model: str, payload: dict, user_id: str, method: str = "generateContent", chat_id: str = None) -> dict:
         """Méthode bas niveau pour les appels non-content (Embed, CountTokens)."""
         auth = EchoAuth(user_id=user_id)
-        auth_mesh = await auth.get_ordered_auth_mesh(user_id=user_id)
+        auth_providers = await auth.get_ordered_auth_providers(user_id=user_id)
         client = await _get_global_client()
         
-        for provider in auth_mesh:
+        for provider in auth_providers:
             try:
                 req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, method, chat_id=chat_id)
                 if not req_ctx: continue
@@ -512,44 +519,49 @@ class EchoGeminiClient:
                 if resp.status_code == 200:
                     data = resp.json()
                     return data.get("response", data)
+                
+                print(f"[EchoGemini] ⚠️ Échec provider {provider.get('type')} : HTTP {resp.status_code} - {resp.text[:200]}")
                 if resp.status_code in [403, 404]: continue # Failover
                 resp.raise_for_status()
-            except: continue
-        raise Exception(f"Échec de l'appel raw ({method}) après épuisement de la Citadelle.")
+            except Exception as e: 
+                print(f"[EchoGemini] ⚠️ Exception sur provider {provider.get('type')} : {str(e)}")
+                continue
+        raise Exception(f"Aucune identité d'accès fonctionnelle après {max_retries} tentatives ({method}).")
 
     @staticmethod
     async def call(
         target_model: str,
         payload: dict,
         user_id: str,
-        auth_mesh: Optional[List[Dict]] = None,
+        auth_providers: Optional[List[Dict]] = None,
         threshold: int = ECHO_API_KEY_THRESHOLD,
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
         timeout: int = 120,
         chat_id: str = None
     ) -> dict:
-        # Résolution via le service d'authentification souverain
-        if not auth_mesh:
+        # Résolution des identités d'accès aux modèles pour cet utilisateur
+        if not auth_providers:
             auth = EchoAuth(user_id=user_id)
-            auth_mesh = await auth.get_ordered_auth_mesh(user_id=user_id)
+            auth_providers = await auth.get_ordered_auth_providers(user_id=user_id)
 
-        if not auth_mesh: raise ValueError(f"Aucune Citadelle d'accès configurée pour l'utilisateur {user_id}.")
+        if not auth_providers: raise ValueError(f"Aucune identité d'accès aux modèles configurée pour l'utilisateur {user_id}.")
         client = await _get_global_client()
         active_idx = 0
         consecutive_errors = 0
         current_delay = ECHO_RETRY_BASE_DELAY
 
         for attempt in range(max_retries + 1):
-            provider = auth_mesh[active_idx]
+            provider = auth_providers[active_idx]
 
             # Préparation symétrique de la requête
+            # MESSAGE_SHADOWS: Injection de contexte persistant (RAG-lite)
             try:
                 req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "generateContent", chat_id=chat_id)
                 if not req_ctx:
                     # Fail-over immédiat si configuration incomplète (ex: Project ID manquant)
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
-                    if active_idx < len(auth_mesh) - 1:
+                    if active_idx < len(auth_providers) - 1:
                         active_idx += 1; continue
                     else: raise Exception(f"Configuration d'authentification {provider['type']} invalide (Project ID manquant).")
 
@@ -566,7 +578,7 @@ class EchoGeminiClient:
 
                 # --- BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
                 if resp.status_code in [403, 404]:
-                    if active_idx < len(auth_mesh) - 1:
+                    if active_idx < len(auth_providers) - 1:
                         if events: await events.status(f"⚠️ Modèle non autorisé ou indisponible sur {provider['type']}. Bascule immédiate...", done=False)      
                         active_idx += 1
                         consecutive_errors = 0
@@ -574,7 +586,7 @@ class EchoGeminiClient:
 
                 if resp.status_code in [429, 500, 503]:
                     consecutive_errors += 1
-                    if consecutive_errors >= threshold and active_idx < len(auth_mesh) - 1:
+                    if consecutive_errors >= threshold and active_idx < len(auth_providers) - 1:
                         active_idx += 1
                         consecutive_errors = 0
                         if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
@@ -587,7 +599,7 @@ class EchoGeminiClient:
                             auth = EchoAuth(user_id=user_id)
                             reset_time = auth.get_auth_data("google_quota_reset", user_id)
                             if reset_time and reset_time != "N/A":
-                                wait_msg = f"⏳ Quota OAuth2 épuisé. Reset prévu à : {reset_time}."
+                                wait_msg = f"⏳ API Google : limite de débit atteinte. Reprise à : {reset_time}."
 
                         wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                         if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s....", done=False)
@@ -610,7 +622,7 @@ class EchoGeminiClient:
         target_model: str,
         payload: dict,
         user_id: str,
-        auth_mesh: Optional[List[Dict]] = None,
+        auth_providers: Optional[List[Dict]] = None,
         threshold: int = ECHO_API_KEY_THRESHOLD,
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
@@ -618,13 +630,13 @@ class EchoGeminiClient:
         timeout: int = 300,
         chat_id: str = None
     ) -> AsyncGenerator[Union[str, Dict], None]:
-        # Résolution via le service souverain (si non fourni par le pipe)
-        if not auth_mesh:
+        # Résolution des identités d'accès aux modèles (si non fourni par le pipe)
+        if not auth_providers:
             auth = EchoAuth(user_id=user_id)
-            auth_mesh = await auth.get_ordered_auth_mesh(user_id=user_id)
+            auth_providers = await auth.get_ordered_auth_providers(user_id=user_id)
 
-        if not auth_mesh:
-            raise ValueError(f"🚫 Citadelle verrouillée : Aucune méthode d'authentification disponible pour l'utilisateur {user_id}.")
+        if not auth_providers:
+            raise ValueError(f"🚫 Aucune identité d'accès aux modèles disponible pour l'utilisateur {user_id}.")
 
         client = await _get_global_client()
         active_idx = 0
@@ -632,13 +644,13 @@ class EchoGeminiClient:
         current_delay = ECHO_RETRY_BASE_DELAY
 
         for attempt in range(max_retries + 1):
-            provider = auth_mesh[active_idx]
+            provider = auth_providers[active_idx]
 
             try:
                 req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "streamGenerateContent", chat_id=chat_id)
                 if not req_ctx:
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
-                    if active_idx < len(auth_mesh) - 1:
+                    if active_idx < len(auth_providers) - 1:
                         active_idx += 1; continue
                     else: yield f"🚫 Erreur : Configuration d'authentification {provider['type']} invalide (Project ID manquant)."; return
 
@@ -650,7 +662,7 @@ class EchoGeminiClient:
 
                     # --- BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
                     if r.status_code in [403, 404]:
-                        if active_idx < len(auth_mesh) - 1:
+                        if active_idx < len(auth_providers) - 1:
                             if events: await events.status(f"⚠️ Modèle non autorisé ou indisponible sur {provider['type']}. Bascule immédiate...", done=False)  
                             active_idx += 1
                             consecutive_errors = 0
@@ -658,7 +670,7 @@ class EchoGeminiClient:
 
                     if r.status_code in [429, 500, 503]:
                         consecutive_errors += 1
-                        if consecutive_errors >= threshold and active_idx < len(auth_mesh) - 1:
+                        if consecutive_errors >= threshold and active_idx < len(auth_providers) - 1:
                             active_idx += 1
                             consecutive_errors = 0
                             if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
@@ -670,7 +682,7 @@ class EchoGeminiClient:
                                 auth = EchoAuth(user_id=user_id)
                                 reset_time = auth.get_auth_data("google_quota_reset", user_id)
                                 if reset_time and reset_time != "N/A":
-                                    wait_msg = f"⏳ Quota OAuth2 épuisé. Reset prévu à : {reset_time}."
+                                    wait_msg = f"⏳ API Google : limite de débit atteinte. Reprise à : {reset_time}."
 
                             wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                             if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s....", done=False)
@@ -718,7 +730,7 @@ class EchoGeminiClient:
         model: str,
         content: dict,
         user_id: str,
-        auth_mesh: Optional[List[Dict]] = None,
+        auth_providers: Optional[List[Dict]] = None,
         threshold: int = ECHO_API_KEY_THRESHOLD,
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
@@ -756,19 +768,28 @@ class EchoStateManager:
             with self._get_connection() as conn:
                 conn.execute("CREATE TABLE IF NOT EXISTS suture_index (cumulative_hash TEXT PRIMARY KEY, chat_id TEXT NOT NULL, invariant_hash TEXT NOT NULL, parent_hash TEXT, message_id TEXT, timestamp INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS rich_payloads (invariant_hash TEXT PRIMARY KEY, rich_parts_json TEXT NOT NULL, message_id TEXT, created_at INTEGER)")   
+                # Table 'message_shadows' : Métadonnées Spécifiques à Gemini
+                # Nom conservé pour compatibilité avec les bases de données en production.
+                # Stocke les métadonnées propres à l'API Gemini (thoughtSignature, usageMetadata,
+                # candidateIndex) nécessaires à la Suture Bit-Perfect des Métadonnées Gemini.
                 conn.execute("CREATE TABLE IF NOT EXISTS message_shadows (message_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, role TEXT NOT NULL, full_parts_json TEXT NOT NULL, updated_at INTEGER)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_chat_id ON message_shadows (chat_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_id ON suture_index (chat_id)")
                 conn.execute("CREATE TABLE IF NOT EXISTS cognitive_signatures (cumulative_hash TEXT PRIMARY KEY, thought_signature TEXT NOT NULL, message_id TEXT, model_id TEXT, updated_at INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS tool_journal (cumulative_hash TEXT PRIMARY KEY, io_json TEXT NOT NULL, updated_at INTEGER)")
-                conn.execute("CREATE TABLE IF NOT EXISTS thought_archive (cumulative_hash TEXT PRIMARY KEY, raw_thought TEXT NOT NULL, updated_at INTEGER)")    
+                conn.execute("CREATE TABLE IF NOT EXISTS thought_archive (cumulative_hash TEXT PRIMARY KEY, raw_thought TEXT NOT NULL, updated_at INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS processed_files (chat_id TEXT, file_id TEXT, filename TEXT, mime TEXT, mode TEXT, timestamp INTEGER, file_content TEXT, message_id TEXT, PRIMARY KEY (chat_id, file_id))")
                 conn.execute("CREATE TABLE IF NOT EXISTS call_bridge (call_id TEXT PRIMARY KEY, signature TEXT NOT NULL, function_name TEXT NOT NULL, args_json TEXT, timestamp INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS context_stats (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS session_state (id INTEGER PRIMARY KEY, last_model_id TEXT, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS auth_pkce_context (user_id TEXT PRIMARY KEY, verifier TEXT NOT NULL, state TEXT NOT NULL, timestamp INTEGER NOT NULL)")
-                
+
+                # Echos Skills & Cognitive Council (V9)
+                conn.execute("CREATE TABLE IF NOT EXISTS cognitive_threads (sub_sid TEXT, chat_id TEXT NOT NULL, role_id TEXT NOT NULL, step_index INTEGER, role TEXT NOT NULL, content_json TEXT NOT NULL, thought_signature TEXT, updated_at INTEGER, PRIMARY KEY (sub_sid, step_index))")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_thread_chat ON cognitive_threads (chat_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_thread_sid ON cognitive_threads (sub_sid)")
+
                 # MIGRATION : Ajout des colonnes manquantes si nécessaire
                 try: conn.execute("ALTER TABLE rich_payloads ADD COLUMN message_id TEXT")
                 except: pass
@@ -788,7 +809,7 @@ class EchoStateManager:
         try:
             with self._get_connection() as conn:
                 conn.execute("INSERT OR REPLACE INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at) VALUES (?, ?, ?, ?, ?)",
-                    (message_id, chat_id, role, std_json.dumps(parts).decode('utf-8'), ts)
+                    (message_id, chat_id, role, json.dumps(parts).decode('utf-8'), ts)
                 )
                 conn.commit()
         except: pass
@@ -951,4 +972,100 @@ class EchoStateManager:
             if not os.path.exists(new_path): shutil.move(old_path, new_path)
             return True
         except: return False
+
+    def save_thread_step(self, sub_sid: str, chat_id: str, role_id: str, step_index: int, role: str, content: List[dict], signature: Optional[str] = None):
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO cognitive_threads (sub_sid, chat_id, role_id, step_index, role, content_json, thought_signature, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (sub_sid, chat_id, role_id, step_index, role, json.dumps(content).decode('utf-8'), signature, int(time.time()))
+                )
+                conn.commit()
+        except: pass
+
+    def get_thread_history(self, sub_sid: str) -> List[dict]:
+        history = []
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT role, content_json, thought_signature FROM cognitive_threads WHERE sub_sid = ? ORDER BY step_index ASC",
+                    (sub_sid,)
+                ).fetchall()
+                for row in rows:
+                    parts = json.loads(row[1])
+                    item = {"role": row[0], "parts": parts}
+                    if row[2]: # Si on a une thoughtSignature, on l'injecte dans la première part
+                        if parts and isinstance(parts, list):
+                            if "functionCall" in parts[0] or "text" in parts[0]:
+                                parts[0]["thoughtSignature"] = row[2]
+                    history.append(item)
+        except: pass
+        return history
+
+    def list_threads(self, chat_id: str) -> List[dict]:
+        threads = []
+        try:
+            with self._get_connection() as conn:
+                # On récupère le dernier message de chaque thread pour avoir un résumé
+                rows = conn.execute(
+                    "SELECT sub_sid, role_id, MAX(step_index), content_json, updated_at FROM cognitive_threads WHERE chat_id = ? GROUP BY sub_sid ORDER BY updated_at DESC",
+                    (chat_id,)
+                ).fetchall()
+                for row in rows:
+                    content = json.loads(row[3])
+                    summary = content[0].get("text", "")[:100] if content and "text" in content[0] else "Appel de fonction..."
+                    threads.append({
+                        "sub_sid": row[0],
+                        "role_id": row[1],
+                        "last_step": row[2],
+                        "summary": summary,
+                        "updated_at": row[4]
+                    })
+        except: pass
+        return threads
+
+    def delete_thread(self, sub_sid: str):
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM cognitive_threads WHERE sub_sid = ?", (sub_sid,))
+                conn.commit()
+        except: pass
+
+    def get_active_branch_shadows(self, chat_id: str, limit: int = 20) -> List[dict]:
+        """Remonte la généalogie de la branche active via suture_index pour une distillation bit-perfect."""
+        shadows = []
+        try:
+            with self._get_connection() as conn:
+                # 1. On identifie le dernier message scellé dans la suture pour ce chat
+                row = conn.execute(
+                    "SELECT cumulative_hash, parent_hash, message_id FROM suture_index WHERE chat_id = ? ORDER BY timestamp DESC LIMIT 1",
+                    (chat_id,)
+                ).fetchone()
+                
+                if not row: return []
+                
+                chain = []
+                curr_cumul, curr_parent, curr_mid = row
+                
+                while curr_mid and len(chain) < limit:
+                    chain.append(curr_mid)
+                    if not curr_parent: break
+                    
+                    # Remontée vers le parent via son Cumulative Hash
+                    parent_row = conn.execute(
+                        "SELECT cumulative_hash, parent_hash, message_id FROM suture_index WHERE cumulative_hash = ?",
+                        (curr_parent,)
+                    ).fetchone()
+                    
+                    if not parent_row: break
+                    curr_cumul, curr_parent, curr_mid = parent_row
+                
+                # 2. Récupération des ombres (on inverse pour l'ordre chronologique)
+                for mid in reversed(chain):
+                    s_row = conn.execute("SELECT role, full_parts_json FROM message_shadows WHERE message_id = ?", (mid,)).fetchone()
+                    if s_row:
+                        shadows.append({"role": s_row[0], "parts": json.loads(s_row[1])})
+        except Exception as e:
+            print(f"[EchoStateManager] Error in genealogy: {e}")
+        return shadows
 

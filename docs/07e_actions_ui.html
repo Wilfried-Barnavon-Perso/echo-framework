@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
@@ -25,7 +25,7 @@
                 <p><strong>Interconnexions :</strong> 
                     <ul>
                         <li><strong>Input :</strong> Clic utilisateur, accompagné de paramètres éventuels (ex: IDs à purger).</li>
-                        <li><strong>Action locale :</strong> Modifie directement les bases de données (<code>echo_shadows.db</code>, <code>identity.db</code>) ou interroge le Vault.</li>
+                        <li><strong>Action locale :</strong> Modifie directement les bases de données (<code>echo_shadows.db</code>, <code>identity.db</code>) ou interroge l'Espace Personnel.</li>
                         <li><strong>Output :</strong> Retourne des flux d'événements (Event Streams) ou du code HTML/JS injecté dynamiquement dans le chat pour un affichage interactif.</li>
                     </ul>
                 </p>
@@ -41,7 +41,7 @@
 
         <section id="memory-purge">
             <h2>1. ECHO Memory Purge (Granulaire)</h2>
-            <p>Cet outil de gouvernance permet un élagage chirurgical de la mémoire organique (Qdrant) pour éviter les hallucinations dues à des souvenirs obsolètes ou contradictoires.</p>
+            <p>Cet outil de gouvernance permet un élagage chirurgical de la base vectorielle des souvenirs (Qdrant) pour éviter les hallucinations dues à des souvenirs obsolètes ou contradictoires.</p>
             
             <div class="info-block">
                 <h4>🧠 Pourquoi est-ce important ?</h4>
@@ -89,7 +89,7 @@
 
             <div class="tech-spec">
                 <h4>⚙️ Sous le capot (Le point sur le code)</h4>
-                <p>L'action cible exclusivement la base <code>identity.db</code> située dans l'enclave utilisateur du Vault. Elle exécute un <code>DELETE FROM auth_data WHERE key LIKE 'google_%'</code>. C'est propre, local et sécurisé.</p>
+                <p>L'action cible exclusivement la base <code>identity.db</code> située dans l'enclave utilisateur de l'Espace Personnel. Elle exécute un <code>DELETE FROM auth_data WHERE key LIKE 'google_%'</code>. C'est propre, local et sécurisé.</p>
             </div>
         </section>
 
@@ -116,8 +116,8 @@
                 <ul>
                     <li><strong>Ctrl + Molette</strong> : Zoomer/Dézoomer.</li>
                     <li><strong>Clic + Glisser</strong> : Se déplacer dans l'image.</li>
-                    <li><strong>Bouton â›¶</strong> : Tracer une zone pour l'extraire (Crop).</li>
-                    <li><strong>Bouton â</strong> : Copier l'image actuelle pour la partager ou l'analyser ailleurs.</li>
+                    <li><strong>Bouton ⛶</strong> : Tracer une zone pour l'extraire (Crop).</li>
+                    <li><strong>Bouton ❐</strong> : Copier l'image actuelle pour la partager ou l'analyser ailleurs.</li>
                 </ul>
             </div>
         </section>
@@ -128,7 +128,7 @@
         </div>
 
         <footer>
-            ECHO Framework - Version 5.140.29 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
         <div class="transition-text"><em>Maintenant que nous connaissons tous les outils, voyons comment l'IA est programmée pour s'en servir et se comporter. <a href="08_system_prompt.html">Passer au cœur des directives : le Kernel (System Prompt) ➔</a></em></div>
     </main>

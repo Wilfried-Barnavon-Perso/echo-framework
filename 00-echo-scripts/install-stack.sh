@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.17
+# VERSION : 6.22
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -9,11 +9,22 @@
 
 set -e # Arrêt en cas d'erreur critique
 
+# --- INITIALISATION : CORE ECHO GLOBALS ---
+ECHO_ROOT="/opt/ECHO"
+GLOBALS_FILE="$ECHO_ROOT/echo-scripts/echo-globals.sh"
+if [ -f "$GLOBALS_FILE" ]; then
+    source "$GLOBALS_FILE"
+else
+    echo "❌ CRITIQUE : Fichier global introuvable ($GLOBALS_FILE)."
+    exit 1
+fi
+# ------------------------------------------
+
 # --- ETAPE 0 : GESTION VERSION & ENV ---
 REPO_ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"
 SOURCE_VERSION_FILE="$REPO_ROOT/VERSION"
-SYSTEM_VERSION_FILE="/opt/ECHO_VERSION"
-COMPOSE_FILE="/opt/config/stack-echo.yml"
+SYSTEM_VERSION_FILE="$ECHO_VERSION_FILE"
+COMPOSE_FILE="$ECHO_CONFIG/stack-echo.yml"
 
 export COMPOSE_PROJECT_NAME="echo"
 
@@ -28,14 +39,17 @@ if [ -f "$SYSTEM_VERSION_FILE" ]; then
     ECHO_VERSION=$(cat "$SYSTEM_VERSION_FILE")
 fi
 
-BRANCH_FILE="/opt/ECHO_BRANCH"
+BRANCH_FILE="$ECHO_BRANCH_FILE"
 TARGET_BRANCH="main"
 if [ -f "$BRANCH_FILE" ]; then
     TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]')
 fi
 
-# FORCE LEGACY - Pas de détection auto pour votre environnement
+# Détection automatique du moteur Compose (V1 vs V2)
 DOCKER_COMPOSE_CMD="docker-compose"
+if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
+    DOCKER_COMPOSE_CMD="docker compose"
+fi
 
 echo "🚀 ECHO FRAMEWORK [COMPOSE LAUNCHER] v$ECHO_VERSION (Branche: $TARGET_BRANCH)"
 echo "   Moteur Compose : $DOCKER_COMPOSE_CMD"
@@ -53,11 +67,8 @@ wait_for_docker() {
 
 ensure_volume() {
     local vol_name=$1
-    # Nettoyage du nom (suppression espaces et deux-points éventuels)
     vol_name=$(echo "$vol_name" | tr -d ': ')
-    
     if [ -z "$vol_name" ]; then return; fi
-
     if docker volume inspect "$vol_name" >/dev/null 2>&1; then
         echo "   ✅ Volume '$vol_name' existe déjà."
     else
@@ -68,11 +79,8 @@ ensure_volume() {
 
 ensure_network() {
     local net_name=$1
-    # Nettoyage du nom
     net_name=$(echo "$net_name" | tr -d ': ')
-
     if [ -z "$net_name" ]; then return; fi
-
     if docker network inspect "$net_name" >/dev/null 2>&1; then
         echo "   ✅ Réseau '$net_name' détecté."
     else
@@ -83,15 +91,13 @@ ensure_network() {
 
 # --- 1. PRE-FLIGHT CHECKS ---
 wait_for_docker
-chmod +x /opt/echo-scripts/*.sh 2>/dev/null || true
+chmod +x "$ECHO_SCRIPTS"/*.sh 2>/dev/null || true
 
 if [ ! -f "$COMPOSE_FILE" ]; then
     echo "❌ CRITIQUE : Fichier $COMPOSE_FILE introuvable !"
     exit 1
 fi
 
-# FIX : Téléchargement explicite de l'image alpine pour les outils de maintenance
-# Cela évite l'erreur "Unable to find image" si elle n'est pas présente.
 echo "📦 Vérification de l'image utilitaire (alpine)..."
 docker pull alpine:latest >/dev/null 2>&1 || echo "⚠️  Impossible de télécharger alpine:latest (déjà présent ?)"
 
@@ -99,7 +105,7 @@ docker pull alpine:latest >/dev/null 2>&1 || echo "⚠️  Impossible de téléc
 echo "🏗️  Analyse du fichier Docker Compose pour les ressources externes..."
 
 # 2.0 Gestion des Secrets Centralisés
-ENV_FILE="/opt/.env"
+ENV_FILE="$ECHO_ENV_FILE"
 touch "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
@@ -116,7 +122,7 @@ generate_secret() {
 generate_secret "BW_DB_PASSWORD" 24
 generate_secret "SEARXNG_SECRET" 64
 
-# 2.1 Réseaux Externes (Détection Dynamique)
+# 2.1 Réseaux Externes
 echo "🔍 Recherche des réseaux externes définis dans $COMPOSE_FILE..."
 NETWORKS_BLOCK=$(awk '/^networks:/{flag=1; next} /^[a-z]/{flag=0} flag' "$COMPOSE_FILE")
 EXTERNAL_NETWORKS=$(echo "$NETWORKS_BLOCK" | grep -B 1 "external: true" | grep -v "external:" | grep -v "\-\-" | tr -d ': ')
@@ -129,7 +135,7 @@ else
     done
 fi
 
-# 2.2 Volumes Externes (Détection Dynamique)
+# 2.2 Volumes Externes
 echo "🔍 Recherche des volumes externes définis dans $COMPOSE_FILE..."
 VOLUMES_BLOCK=$(awk '/^volumes:/{flag=1; next} /^[a-z]/{flag=0} flag' "$COMPOSE_FILE")
 EXTERNAL_VOLUMES=$(echo "$VOLUMES_BLOCK" | grep -B 1 "external: true" | grep -v "external:" | grep -v "\-\-" | tr -d ': ')
@@ -142,27 +148,19 @@ else
     done
 fi
 
-# --- 2.3 Détection Dynamique des Origines CORS (IPs Locales) ---
+# --- 2.3 Détection Dynamique des Origines CORS ---
 echo "🌍 Calcul des origines CORS locales..."
-# Récupération du port hôte exposé par open-webui (ex: "3000:8080" -> "3000")
-# On utilise yq s'il est dispo, sinon grep (moins robuste mais fallback)
 if command -v yq >/dev/null 2>&1; then
     OWUI_PORT=$(yq '.services.open-webui.ports[0]' "$COMPOSE_FILE" | cut -d: -f1)
 else
-    # Fallback grep simple (suppose format standard "3000:8080")
     OWUI_PORT=$(grep -A 10 "open-webui:" "$COMPOSE_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
 fi
 
-# Nettoyage si vide (défaut 3000)
 if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi
-
-# Récupération des IPs locales (hostname -I renvoie toutes les IPs séparées par espace)
 HOST_IPS=$(hostname -I 2>/dev/null || ip addr show | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1)
 
 ECHO_DETECTED_ORIGINS=""
 for ip in $HOST_IPS; do
-    # On ajoute http://IP:PORT à la liste avec un séparateur ;
-    # Gestion du séparateur initial pour éviter ";http..."
     if [ -z "$ECHO_DETECTED_ORIGINS" ]; then
         ECHO_DETECTED_ORIGINS="http://$ip:$OWUI_PORT"
     else
@@ -170,7 +168,6 @@ for ip in $HOST_IPS; do
     fi
 done
 
-# Export pour docker-compose
 export ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS"
 echo "   ✅ Port détecté : $OWUI_PORT"
 echo "   ✅ Origines IP  : $ECHO_DETECTED_ORIGINS"
@@ -178,44 +175,15 @@ echo "   ✅ Origines IP  : $ECHO_DETECTED_ORIGINS"
 
 # --- 3. LANCEMENT DOCKER COMPOSE ---
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."
-# La commande 'pull' est maintenant implicite via l'option --build de la commande 'up'
 
-# --- SUPPRESSION PRÉVENTIVE (HARD CLEAN GLOBAL) ---
-# Nécessaire pour supprimer proprement les conteneurs BW obsolètes
-set +e 
-for d in $(docker ps -a --format '{{.Names}}') ; do 
-    echo "⚠️ Suppression préventive du conteneur $d..."
-    docker rm -f $d >/dev/null 2>&1
-done
+BW_STACK_FILE="$ECHO_CONFIG/bunkerweb-stack.yml"
+ENV_FILE="$ECHO_ENV_FILE"
 
-for ((d=0 ; d < 10 ; d++ )) ; do
-    echo "⌚ $((10-$d)) secondes avant construction..."
-    REMAINING=$(docker ps -a --format '{{.Names}}' || true)
-    [ -z "$REMAINING" ] && break
-    sleep 1 
-done
-echo "🏗️ Go !"
-set -e
-
-# --- DEMARRAGE UNIFIÉ (INTELLIGENT) ---
-# On détermine si on doit lancer la version sécurisée (BunkerWeb) ou standard
-BW_STACK_FILE="/opt/config/bunkerweb-stack.yml"
-# Le fichier .env est stocké à la racine de /opt pour survie aux updates
-ENV_FILE="/opt/.env"
-
-# Condition : Fichiers présents ET domaine configuré
 if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -q "^ECHO_DOMAIN=" "$ENV_FILE"; then
     echo "🔒 Mode SECURE EDGE détecté. Lancement de l'infrastructure complète (ECHO + BunkerWeb)..."
-    
-    $DOCKER_COMPOSE_CMD \
-        --env-file "$ENV_FILE" \
-        -f "$BW_STACK_FILE" \
-        -f "$COMPOSE_FILE" \
-        up -d --build --remove-orphans
-
+    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans
 else
     echo "🔓 Mode STANDARD (Local) détecté."
-    # Démarrage standard
     $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans
 fi
 
@@ -227,14 +195,26 @@ else
 fi
 
 
-echo "🔧 Configuration Auto (API Host-Driven)..."
-if [ -f "/opt/echo-scripts/config-owui.sh" ]; then
-    /bin/bash /opt/echo-scripts/config-owui.sh
+# --- HOT RELOAD ---
+# Rechargement des services dont le code est monté en bind mount (source de vérité : stack-echo.yml)
+echo "⚡ Hot Reload des services Python..."
+CONTAINERS_TO_RELOAD=$(docker ps \
+    --filter "label=echo.hot-reload=true" \
+    --format "{{.Names}}" | tr '\n' ' ')
+if [ -n "$CONTAINERS_TO_RELOAD" ]; then
+    docker restart $CONTAINERS_TO_RELOAD
+    echo "   ✅ Services rechargés : $CONTAINERS_TO_RELOAD"
 else
-    echo "⚠️ Script de configuration introuvable (/opt/echo-scripts/config-owui.sh)"
+    echo "   ⚠️  Aucun service marqué echo.hot-reload=true trouvé."
 fi
 
-# Nettoyage images orphelines
+echo "🔧 Configuration Auto (API Host-Driven)..."
+if [ -f "$ECHO_SCRIPTS/config-owui.sh" ]; then
+    /bin/bash "$ECHO_SCRIPTS/config-owui.sh"
+else
+    echo "⚠️ Script de configuration introuvable ($ECHO_SCRIPTS/config-owui.sh)"
+fi
+
 docker image prune -f >/dev/null 2>&1
 
 echo "✅ DEPLOIEMENT TERMINÉ."

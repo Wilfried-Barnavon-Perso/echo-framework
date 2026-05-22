@@ -1,8 +1,8 @@
 """
-title: ECHO Vault Explorer
+title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.4
-description: 5.109.4: Centralisation des paramètres de génération via echo_constants.
+version: 5.109.6
+description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events au lieu de HTMLResponse).
 """
 
 import os
@@ -12,23 +12,21 @@ import httpx
 import orjson as json
 import mimetypes
 import hashlib
-import zlib
 from urllib.parse import urlparse, quote
-from typing import Optional, List, Dict, Any, Union, Tuple, Literal
+from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field
-from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import (
     EchoEvents, wrap_tool_output, 
-    resolve_upload_file_path, get_echo_version, split_thought_process,
+    resolve_upload_file_path, split_thought_process,
     EchoGeminiClient, EchoStateManager, generate_echo_file_id,
     get_stealth_headers
 )
 from echo_ui import EchoUI
 from echo_constants import (
-    ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, MODEL_FLASH, MODEL_ROUTING,
+    ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, MODEL_FLASH,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
 )
 
@@ -156,7 +154,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Transmet un fichier multimédia au cortex Gemini."""
+        """Transmet un fichier multimédia au moteur Gemini."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
@@ -182,10 +180,11 @@ class Tools:
         __user__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> Union[dict, Tuple[HTMLResponse, str]]:
+    ) -> dict:
         """
-        Affiche une image (Locale ou Distante) dans le viewer Premium ECHO.
-        Supporte file_id ou URL. Outils : Loupe (L), Sélection (S), Copie Coordonnées.
+        Affiche une image (Locale ou Distante) dans un viewer flottant injecté dans le DOM.
+        Supporte file_id ou URL http(s).
+        Retourne un dict standard (wrap_tool_output) — jamais un Tuple ou HTMLResponse.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
@@ -197,25 +196,37 @@ class Tools:
 
         try:
             if is_url:
-                await events.status(f"🌐 Ouverture image distante...")
-                # On tente une requête HEAD pour valider l'existence et lever les 403 tôt
+                await events.status("🌐 Validation image distante...")
+                # Vérification HEAD préalable (lève les 403/404 tôt)
                 h = get_stealth_headers(target)
                 async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
                     r = await c.head(target, headers=h)
                     if r.status_code >= 400:
-                         # Si HEAD échoue, on tente GET partiel (certains serveurs bloquent HEAD)
-                         r = await c.get(target, headers=h, timeout=10.0)
-                         r.raise_for_status()
-
-                response = EchoUI.image_viewer(target, title=f"Remote : {target[:30]}...")
-                return response, wrap_tool_output(text=f"L'image distante est affichée. L'utilisateur peut utiliser la Loupe ou le Sélecteur.")
+                        # Certains serveurs bloquent HEAD, on tente un GET partiel
+                        r = await c.get(target, headers=h, timeout=10.0)
+                        r.raise_for_status()
+                
+                title = f"Distant : {target[:50]}..."
+                img_url = target
             else:
                 fpath = resolve_upload_file_path(uid, target, self.uploads_dir)
-                if not fpath: return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"})
+                if not fpath:
+                    return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"})
                 mime, _ = mimetypes.guess_type(fpath)
-                with open(fpath, 'rb') as f: b64 = base64.b64encode(f.read()).decode('utf-8')
-                response = EchoUI.image_viewer(f"data:{mime or 'image/png'};base64,{b64}", title=f"Vault : {os.path.basename(fpath)}")
-                return response, wrap_tool_output(text=f"L'image locale '{os.path.basename(fpath)}' est affichée dans le viewer Premium.")
+                with open(fpath, 'rb') as f:
+                    b64 = base64.b64encode(f.read()).decode('utf-8')
+                img_url = f"data:{mime or 'image/png'};base64,{b64}"
+                title = f"Espace Personnel : {os.path.basename(fpath)}"
+
+            # Injection JS pure dans le DOM Open WebUI — aucun retour HTMLResponse
+            # Pattern identique à EchoUI.monitor_ECHO (events.call "execute")
+            js_code = EchoUI.show_image_js(img_url, title)
+            if events and (events.caller or events.emitter):
+                await events.call("execute", {"code": js_code})
+            
+            await events.status("✅ Image affichée.", done=True)
+            return wrap_tool_output(text=f"✅ Image affichée dans le viewer ECHO.\n\n**Titre :** {title}", status={"status": "success"})
+
         except Exception as e:
             return wrap_tool_output(text=f"❌ Échec affichage : {str(e)}", status={"status": "error"})
 
@@ -253,7 +264,7 @@ class Tools:
                         async for chunk in resp.aiter_bytes(): f.write(chunk)
             
             EchoStateManager(user_id=uid, chat_id=cid).mark_processed(cid, file_id, orig_name, mime, "transmitted")
-            EchoStateManager(user_id=uid, chat_id=cid).move_to_vault(file_id, orig_name)
+            EchoStateManager(user_id=uid, chat_id=cid).move_to_vault(file_id, orig_name) # move_to_vault : déplace dans l'Espace Personnel
 
             return wrap_tool_output(
                 text=f"✅ Téléchargement réussi (ID: {file_id}).\nSource: {url}\nDestination finale: {furl}", 

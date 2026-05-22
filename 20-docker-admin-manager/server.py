@@ -2,7 +2,7 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.52 (Semantic TTL Labels)
+VERSION : 5.55 (Consolidation des Souvenirs Lvl1 → Lvl2)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-04-12
 
@@ -13,14 +13,14 @@ Architecture ECHO-Native avec distinction entre stockage et sessions.
 --- CHANGELOG 5.52 ---
 - UX : Ajout de labels sémantiques explicites (Trivial, Mineur, Utile, Majeur, Axiome) au-dessus des champs de rétention TTL pour une meilleure lisibilité administrative.
 --- CHANGELOG 5.51 ---
-- UX : Ajout de champs de configuration dans le Dashboard pour personnaliser les durées de rétention (TTL) des mémoires organiques (Niveaux 1 à 5).
+- UX : Ajout de champs de configuration dans le Dashboard pour personnaliser les durées de rétention (Purge Temporelle des Souvenirs) des souvenirs de la base vectorielle (Niveaux 1 à 5).
 --- CHANGELOG 5.50 ---
-- Optimisation : Centralisation du processus d'oubli naturel (TTL Decay) de la mémoire organique dans l'Admin Manager pour alléger le traitement temps-réel du filtre conversationnel.
+- Optimisation : Centralisation du processus de Purge Temporelle des Souvenirs de la base vectorielle dans l'Admin Manager pour alléger le traitement temps-réel du filtre conversationnel.
 --- CHANGELOG 5.41 ---
 - Correctif : Restauration des constantes QDRANT_URL et COLLECTION_MEMORY.
 - UX : Ajout du label "Logs" sur le bouton d'historique de maintenance.
 --- CHANGELOG 5.40 ---
-- Ajout : Synchronisation automatique de la mémoire organique (Qdrant) pour éliminer les souvenirs orphelins (utilisateurs ou chats supprimés).
+- Ajout : Synchronisation automatique de la base vectorielle des souvenirs (Qdrant) pour éliminer les souvenirs orphelins (utilisateurs ou chats supprimés).
 - Ajout : Historique d'audit persistant (1 an de rétention) affichable directement depuis l'interface UI.
 --- CHANGELOG 5.30 ---
 - Correction : Fallback robuste pour la copie du mot de passe Admin (support HTTP/Non-Secure).
@@ -33,7 +33,7 @@ Architecture ECHO-Native avec distinction entre stockage et sessions.
 --- CHANGELOG 5.24 ---
 - Vérité Sémantique : Le compteur "Sessions Actives" ne cible plus que les .db de chats.
 - Correction du décalage : Exclusion de identity.db et des fichiers docs du compteur de sessions.
-- Maintien du Volume Global : Le volume Vault reste inclusif (docs + bases).
+- Maintien du Volume Global : Le volume Espace Personnel reste inclusif (docs + bases).
 - Parité UX intégrale maintenue (Horloge, Tooltips, Monitoring).
 ================================================================================
 """
@@ -93,7 +93,7 @@ app = Flask(__name__, static_folder='/app/static')
 app.secret_key = secrets.token_hex(32)
 app.config['JSON_AS_ASCII'] = False
 
-TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'echo-webui-core')
+TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'echo-open-webui')
 BACKUP_DIR = "/backups"
 HOST_GATEWAY = "host.docker.internal"
 SETTINGS_FILE = os.path.join(BACKUP_DIR, "settings.json")
@@ -106,6 +106,7 @@ OWUI_ADMIN_SECRET_PATH = "/app/secrets/.owui-admin-secret"
 
 QDRANT_URL = "http://echo-qdrant:6333"
 COLLECTION_MEMORY = "echo_memory"
+COLLECTION_EPHEMERAL = "echo_ephemeral"
 
 DIRS = {
     "uploads": UPLOADS_DIR,
@@ -121,7 +122,13 @@ DEFAULT_BACKUP_CONFIG = {
 DEFAULT_MAINT_CONFIG = {
     "cleanup_hour": "03:00", "last_run": "Never",
     "retention": { "uploads_days": 1095, "vault_days": 1095 },
-    "memory_ttl": { "lvl1": 30, "lvl2": 60, "lvl3": 180, "lvl4": 365, "lvl5": 540 }
+    "memory_ttl": { "lvl1": 30, "lvl2": 60, "lvl3": 180, "lvl4": 365, "lvl5": 540 },
+    "consolidation": {
+        "enabled": True,
+        "trigger_threshold": 10,   # Nb de points lvl1 par user déclenchant la consolidation
+        "min_cluster_size": 3,     # Nb minimum de points similaires pour fusionner
+        "similarity_threshold": 0.75  # Score cosinus minimal pour appartenir à un cluster
+    }
 }
 
 # ==============================================================================
@@ -219,7 +226,7 @@ def save_maint_report(report_str):
     except: pass
 
 def run_semantic_pruning():
-    """Élagage organique (v5.51 + Qdrant Sync & TTL)."""
+    """Purge Temporelle des Souvenirs (v5.51 + Qdrant Sync & TTL)."""
     print("🧬 [ECHO-LIFECYCLE] Démarrage...")
     report = []
     config = load_maint_config()
@@ -233,13 +240,13 @@ def run_semantic_pruning():
             valid_ids = {row[0] for row in conn.execute("SELECT id FROM user").fetchall()}
             conn.close()
             
-            # --- A. Purge des dossiers du Vault ---
+            # --- A. Purge des dossiers de l'Espace Personnel ---
             for folder in os.listdir(ECHO_USERS_ROOT):
                 if folder not in valid_ids and len(folder) > 30:
                     shutil.rmtree(os.path.join(ECHO_USERS_ROOT, folder))
                     orphans += 1
             
-            # --- B. Garbage Collection & Oubli Organique (Qdrant) ---
+            # --- B. Purge Temporelle des Souvenirs & Garbage Collection (Qdrant) ---
             if HAS_HTTPX and valid_ids:
                 try:
                     # Test de disponibilité Qdrant
@@ -247,6 +254,9 @@ def run_semantic_pruning():
                     if r.status_code == 200:
                         # 1) Utilisateurs orphelins
                         httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", 
+                                   json={"filter": {"must_not": [{"key": "user_id", "match": {"any": list(valid_ids)}}]}}, 
+                                   timeout=30)
+                        httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_EPHEMERAL}/points/delete", 
                                    json={"filter": {"must_not": [{"key": "user_id", "match": {"any": list(valid_ids)}}]}}, 
                                    timeout=30)
                         
@@ -279,6 +289,7 @@ def run_semantic_pruning():
                                     }
                                 }
                             httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", json=payload, timeout=30)
+                            httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_EPHEMERAL}/points/delete", json=payload, timeout=30)
                             
                             # Decay TTL
                             for level, seconds in ttl_map.items():
@@ -286,7 +297,7 @@ def run_semantic_pruning():
                                     "filter": {
                                         "must": [
                                             {"key": "user_id", "match": {"value": str_uid}},
-                                            {"key": "importance", "match": {"value": level}},
+                                            {"key": "memory_importance", "match": {"value": level}},
                                             {"key": "timestamp", "range": {"lt": now - seconds}}
                                         ]
                                     }
@@ -297,11 +308,11 @@ def run_semantic_pruning():
                 except Exception as e:
                     print(f"[ECHO-LIFECYCLE] ❌ Erreur Qdrant : {e}")
         except Exception as e:
-            print(f"[ECHO-LIFECYCLE] ❌ Erreur DB/Vault : {e}")
+            print(f"[ECHO-LIFECYCLE] ❌ Erreur DB/Espace Personnel : {e}")
         
     report_str = f"Orphelins: {orphans}"
     if qdrant_synced:
-        report_str += " | Qdrant: Synchro (Chats/Users/TTL Decay)"
+        report_str += " | Qdrant: Synchro (Chats/Users/Purge Temporelle) | RAG Éphémère Purgé"
     report.append(report_str)
 
     # 2. Atrophie
@@ -326,6 +337,156 @@ def run_semantic_pruning():
     save_maint_config(config)
     save_maint_report(final_report)
     return final_report
+
+# ==============================================================================
+# SECTION 4b : CONSOLIDATION DES SOUVENIRS LVL1 → LVL2 (Centroïde Vectoriel)
+# ==============================================================================
+
+def _cosine_sim(v1: list, v2: list) -> float:
+    """Produit scalaire entre deux vecteurs normalisés L2 = similarité cosinus."""
+    return sum(a * b for a, b in zip(v1, v2))
+
+def _centroid(vectors: list) -> list:
+    """
+    Centroïde L2-normalisé d'une liste de vecteurs déjà normalisés.
+    Représente le centre de gravité sémantique du cluster.
+    Après re-normalisation, le vecteur est valide pour la recherche cosinus dans Qdrant.
+    """
+    import math
+    dim = len(vectors[0])
+    c = [sum(v[i] for v in vectors) / len(vectors) for i in range(dim)]
+    norm = math.sqrt(sum(x**2 for x in c))
+    return [x / norm for x in c] if norm > 0 else c
+
+def consolidate_memories_for_user(user_id: str, config: dict) -> dict:
+    """
+    Consolide les souvenirs lvl1 d'un utilisateur en souvenirs lvl2 par clustering sémantique.
+
+    Stratégie : clustering greedy sur les vecteurs récupérés via scroll (with_vectors=True),
+    puis fusion par centroïde L2-normalisé des vecteurs du cluster.
+    - Zéro appel au worker bge-m3 (vecteurs déjà disponibles).
+    - Zéro appel Gemini (pas de dépendance aux clés API utilisateur).
+    - Zéro troncature : le summary concatène l'intégralité des textes originaux.
+    - Idémpotente : cible uniquement memory_importance=1.
+
+    Retourne : {clusters_found, points_merged, points_promoted, points_deleted}
+    """
+    import uuid
+    if not HAS_HTTPX:
+        return {"error": "httpx non disponible"}
+
+    consol_cfg       = config.get("consolidation", DEFAULT_MAINT_CONFIG["consolidation"])
+    trigger_threshold = int(consol_cfg.get("trigger_threshold", 10))
+    min_cluster_size  = int(consol_cfg.get("min_cluster_size", 3))
+    sim_threshold     = float(consol_cfg.get("similarity_threshold", 0.75))
+    report = {"clusters_found": 0, "points_merged": 0, "points_promoted": 0, "points_deleted": 0}
+
+    try:
+        # 1. COUNT : guard — évite de charger les vecteurs si pas assez de lvl1
+        count_resp = httpx.post(
+            f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/count",
+            json={"filter": {"must": [
+                {"key": "user_id",          "match": {"value": user_id}},
+                {"key": "memory_importance", "match": {"value": 1}}
+            ]}}, timeout=10
+        )
+        if count_resp.status_code != 200:
+            return report
+        if count_resp.json().get("result", {}).get("count", 0) < trigger_threshold:
+            return report  # Pas assez de lvl1 pour consolider
+
+        # 2. SCROLL with_vectors=True — récupère les vecteurs pour le clustering local
+        scroll_resp = httpx.post(
+            f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
+            json={
+                "filter": {"must": [
+                    {"key": "user_id",          "match": {"value": user_id}},
+                    {"key": "memory_importance", "match": {"value": 1}}
+                ]},
+                "limit": 200,
+                "with_payload": True,
+                "with_vectors": True   # Clé : zéro appel embedding pour le clustering
+            }, timeout=30
+        )
+        if scroll_resp.status_code != 200:
+            return report
+        points = scroll_resp.json().get("result", {}).get("points", [])
+        if not points:
+            return report
+
+        # 3. CLUSTERING GREEDY
+        # Chaque point non assigné devient la graine d'un nouveau cluster.
+        # Tous ses voisins avec cos ≥ sim_threshold le rejoignent.
+        assigned, clusters = set(), []
+        for p in points:
+            if p["id"] in assigned or not p.get("vector"):
+                continue
+            cluster = [p]
+            assigned.add(p["id"])
+            for q in points:
+                if q["id"] in assigned or not q.get("vector"):
+                    continue
+                if _cosine_sim(p["vector"], q["vector"]) >= sim_threshold:
+                    cluster.append(q)
+                    assigned.add(q["id"])
+            if len(cluster) >= min_cluster_size:
+                clusters.append(cluster)
+
+        report["clusters_found"] = len(clusters)
+        if not clusters:
+            return report
+
+        # 4. FUSION PAR CENTROÏDE
+        for cluster in clusters:
+            # Vecteur fusionné = centroïde L2-normalisé des vecteurs du cluster
+            fused_vector = _centroid([pt["vector"] for pt in cluster])
+
+            # Summary = concaténation complète (zéro troncature)
+            summaries    = [pt["payload"].get("summary", "") for pt in cluster if pt.get("payload")]
+            fused_summary = " | ".join(s for s in summaries if s)
+            tags          = list({t for pt in cluster for t in pt.get("payload", {}).get("tags", [])})[:5]
+            new_slug      = f"consolidated_{uuid.uuid4().hex[:8]}"
+            new_id        = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{new_slug}"))
+
+            # Upsert du nouveau point lvl2
+            upsert_resp = httpx.put(
+                f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points",
+                json={"points": [{
+                    "id": new_id,
+                    "vector": fused_vector,
+                    "payload": {
+                        "user_id":           user_id,
+                        "chat_id":           "consolidated",
+                        "timestamp":         int(time.time()),
+                        "memory_importance": 2,      # Promotion lvl1 → lvl2
+                        "slug":              new_slug,
+                        "tags":              tags,
+                        "summary":           fused_summary
+                    }
+                }]}, timeout=30
+            )
+            if upsert_resp.status_code not in (200, 206):
+                print(f"[ECHO-CONSOLIDATION] \u274c Upsert échoué : {upsert_resp.text[:200]}")
+                continue
+
+            # Suppression des anciens points par liste d'IDs
+            # (API Qdrant : {"points": [id1, id2, ...]} et non pas {"filter": ...})
+            del_resp = httpx.post(
+                f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete",
+                json={"points": [pt["id"] for pt in cluster]},
+                timeout=30
+            )
+            if del_resp.status_code == 200:
+                report["points_deleted"]  += len(cluster)
+                report["points_promoted"] += 1
+                report["points_merged"]   += len(cluster)
+                print(f"[ECHO-CONSOLIDATION] \u2705 Cluster {new_slug} : "
+                      f"{len(cluster)} lvl1 → 1 lvl2 (user={user_id[:8]})")
+
+    except Exception as e:
+        print(f"[ECHO-CONSOLIDATION] \u274c Erreur user={user_id[:8]}: {e}")
+
+    return report
 
 def setup_lifecycle_scheduler():
     if not HAS_MAINT_SCHEDULER: return
@@ -513,6 +674,22 @@ def handle_action(action):
     if not session.get('logged_in'): return redirect(url_for('index'))
     if action == 'backup': threading.Thread(target=perform_backup_task).start(); flash('Sauvegarde complète lancée.', 'info')
     elif action == 'pruning': threading.Thread(target=run_semantic_pruning).start(); flash('Élagage sémantique lancé.', 'info')
+    elif action == 'consolidate':
+        def _run_consolidation():
+            cfg = load_maint_config()
+            total_promoted = 0
+            try:
+                conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True)
+                valid_ids = {str(row[0]) for row in conn.execute("SELECT id FROM user").fetchall()}
+                conn.close()
+            except Exception as e:
+                print(f"[ECHO-CONSOLIDATION] \u274c Lecture DB: {e}"); return
+            for uid in valid_ids:
+                result = consolidate_memories_for_user(uid, cfg)
+                total_promoted += result.get("points_promoted", 0)
+            print(f"[ECHO-CONSOLIDATION] \u2705 Terminé : {total_promoted} clusters promus en lvl2.")
+        threading.Thread(target=_run_consolidation, daemon=True).start()
+        flash('Consolidation des souvenirs Triviaux lancée.', 'info')
     elif action == 'restart':
         cid = request.form.get('container')
         if cid and DOCKER_AVAILABLE:
@@ -540,7 +717,7 @@ def handle_action(action):
             try:
                 with sqlite3.connect(p, timeout=5.0) as conn: conn.execute("DELETE FROM auth_data WHERE key LIKE 'google_%'")
             except: pass
-        flash('Tokens Google purgés du Vault.', 'success')
+        flash('Tokens Google purgés de l\'Espace Personnel.', 'success')
     return redirect(url_for('index'))
 
 @app.route('/settings', methods=['POST'])
@@ -569,6 +746,12 @@ def update_maint():
     c["memory_ttl"]["lvl3"] = int(request.form.get("ttl_lvl3", 180))
     c["memory_ttl"]["lvl4"] = int(request.form.get("ttl_lvl4", 365))
     c["memory_ttl"]["lvl5"] = int(request.form.get("ttl_lvl5", 540))
+
+    # Paramètres de consolidation (exposés dans l'UI)
+    c.setdefault("consolidation", DEFAULT_MAINT_CONFIG["consolidation"].copy())
+    c["consolidation"]["trigger_threshold"] = int(request.form.get("consol_threshold", 10))
+    c["consolidation"]["min_cluster_size"]   = int(request.form.get("consol_min_cluster", 3))
+    c["consolidation"]["similarity_threshold"] = float(request.form.get("consol_similarity", 0.75))
 
     save_maint_config(c); setup_lifecycle_scheduler(); flash('Cycle de vie et Mémoire mis à jour.', 'success')
     return redirect(url_for('index'))
@@ -602,7 +785,7 @@ HTML_DASHBOARD = """
             <div class="col-md-3"><div class="card h-100 p-3" data-bs-toggle="tooltip" title="Charge CPU du serveur hôte">CPU: <span id="cpu">--</span>%<br><small class="x-small" id="cpu-details">...</small><div class="progress mt-2" style="height:4px;"><div id="cpu-bar" class="progress-bar bg-primary"></div></div></div></div>
             <div class="col-md-3"><div class="card h-100 p-3" data-bs-toggle="tooltip" title="Utilisation de la mémoire vive">RAM: <span id="ram">--</span>%<br><small class="x-small" id="ram-text">--/--</small><div class="progress mt-2" style="height:4px;"><div id="ram-bar" class="progress-bar bg-info"></div></div></div></div>
             <div class="col-md-3"><div class="card h-100 p-3 text-center" data-bs-toggle="tooltip" title="Sessions de chat ECHO réelles (fichiers .db dans /chats/)">Sessions Actives<br><b class="text-primary fs-4">{{ storage_stats.real_sessions }}</b></div></div>
-            <div class="col-md-3"><div class="card h-100 p-3 text-center" data-bs-toggle="tooltip" title="Volume total occupé par le Vault (Docs + Bases + Identités)">Volume Vault<br><b class="text-success fs-4">{{ storage_stats.vault.size_fmt }}</b></div></div>
+            <div class="col-md-3"><div class="card h-100 p-3 text-center" data-bs-toggle="tooltip" title="Volume total occupé par l'Espace Personnel (Docs + Bases + Identités)">Volume Espace Personnel<br><b class="text-success fs-4">{{ storage_stats.vault.size_fmt }}</b></div></div>
         </div>
         <div class="row g-4">
             <div class="col-lg-7">
@@ -625,6 +808,21 @@ HTML_DASHBOARD = """
                             <div class="col text-center"><label class="x-small text-secondary mb-1">Axiome</label><input type="number" name="ttl_lvl5" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl5}}" title="Lv5 (Axiome/Critique)"></div>
                         </div>
                         <label class="x-small">Heure d'élagage automatique</label><input type="time" name="cleanup_hour" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}">
+                        <div class="row g-2 mb-2">
+                            <div class="col-12"><label class="x-small text-muted">Consolidation mémoire lvl1 → lvl2 :</label></div>
+                            <div class="col-6">
+                                <label class="x-small text-secondary mb-1">Seuil (nb lvl1)</label>
+                                <input type="number" name="consol_threshold" class="form-control form-control-sm text-center" value="{{maint.consolidation.trigger_threshold}}" title="Nb de souvenirs Triviaux par user avant consolidation" min="3" max="50">
+                            </div>
+                            <div class="col-6">
+                                <label class="x-small text-secondary mb-1">Cluster min</label>
+                                <input type="number" name="consol_min_cluster" class="form-control form-control-sm text-center" value="{{maint.consolidation.min_cluster_size}}" title="Nb minimum de souvenirs similaires pour fusionner" min="2" max="10">
+                            </div>
+                            <div class="col-12 mt-1">
+                                <label class="x-small text-secondary mb-1">Seuil cosinus (0.0-1.0)</label>
+                                <input type="number" name="consol_similarity" class="form-control form-control-sm text-center" value="{{maint.consolidation.similarity_threshold}}" title="Score cosinus minimal pour regrouper deux souvenirs dans un m\u00eame cluster (0.75 = tr\u00e8s similaires, 0.5 = assez proches)" min="0.4" max="0.99" step="0.05">
+                            </div>
+                        </div>
                         <button class="btn btn-sm btn-info w-100">Programmer le Cycle</button>
                     </form>
                     <hr><p>Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p>
@@ -632,6 +830,11 @@ HTML_DASHBOARD = """
                         <form action="/action/pruning" method="post" onsubmit="showLoader('Élagage profond...')" class="flex-grow-1"><button class="btn btn-outline-info btn-sm w-100">Lancer l'Élagage</button></form>
                         <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#historyLog"><i class="bi bi-journal-text"></i> Logs</button>
                     </div>
+                    <form action="/action/consolidate" method="post" onsubmit="showLoader('Consolidation lvl1 → lvl2...')" class="mt-2">
+                        <button class="btn btn-outline-warning btn-sm w-100" title="Fusionne les souvenirs Triviaux similaires en souvenirs Mineurs (centroïde vectoriel).">
+                            🧬 Consolider Mémoires Lvl1
+                        </button>
+                    </form>
                     <div class="collapse mt-3" id="historyLog">
                         <div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;">
                             <h6 class="x-small text-uppercase text-muted border-bottom border-secondary pb-1">Historique 1 an</h6>

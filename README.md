@@ -39,7 +39,7 @@ Chaque outil interagit directement avec le **Vault** (coffre-fort) utilisateur :
 *   🌐 **Navigation Engine** : Pilotage de Chromium via Playwright avec retour visuel HUD en temps réel.
 *   🐍 **Python Code Executor** : Sandbox isolée pour l'analyse de données et la génération de graphiques.
 *   🔍 **Sovereign Search** : Recherche web multi-sources via SearXNG préservant la confidentialité.
-*   🧠 **Cognitive Core** : Délégation récursive et sous-réflexions spécialisées.
+*   🧠 **Cognitive Agents** : Délégation récursive et sous-réflexions spécialisées (Conseil des Experts).
 *   📂 **Vault Explorer** : Exploration brute et sondage sémantique des documents.
 *   📊 **Context Gauge** : Monitoring visuel de la consommation de tokens et de l'état du cache.
 

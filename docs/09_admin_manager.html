@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
@@ -34,7 +34,7 @@
 
         <div class="didactic-box">
             <h4>💡 À quoi sert la Console Admin ?</h4>
-            <p>Si ECHO est un organisme vivant, l'Admin Manager est son <strong>système immunitaire et métabolique</strong>. Il surveille que tout fonctionne bien, fait le ménage dans les vieux souvenirs inutiles (Élagage), et crée des copies de sécurité pour que vous puissiez restaurer votre IA en cas de problème technique. C'est l'outil de l'administrateur système pour garantir la pérennité de la citadelle.</p>
+            <p>Si ECHO est un organisme vivant, l'Admin Manager est son <strong>système immunitaire et métabolique</strong>. Il surveille que tout fonctionne bien, fait le ménage dans les vieux souvenirs inutiles (Élagage), et crée des copies de sécurité pour que vous puissiez restaurer votre IA en cas de problème technique. C'est l'outil de l'administrateur système pour garantir la pérennité de la identités d'accès aux modèles.</p>
         </div>
 
         <p>Le module <code>server.py</code> agit comme le poste de pilotage infrastructure d'ECHO. Il assure l'interopérabilité entre les couches logicielles et l'orchestration Docker.</p>
@@ -43,7 +43,7 @@
             <h3>1. Monitoring Holistique</h3>
             <p>L'interface affiche en temps réel les constantes vitales de l'infrastructure :</p>
             <ul>
-                <li><strong>Sessions Actives</strong> : Compteur réel basé sur les fichiers <code>.db</code> présents dans les répertoires <code>/chats/</code> du Vault.</li>
+                <li><strong>Sessions Actives</strong> : Compteur réel basé sur les fichiers <code>.db</code> présents dans les répertoires <code>/chats/</code> de l'Espace Personnel.</li>
                 <li><strong>Volume Vault</strong> : Taille totale occupée par les documents, les bases SQLite et les identités.</li>
                 <li><strong>Santé Docker</strong> : État (Up/Down) de chaque conteneur de la stack ECHO, avec possibilité de redémarrage forcé.</li>
             </ul>
@@ -54,7 +54,7 @@
             <p>L'Admin Manager centralise la logique d'<strong>Atrophie Sémantique</strong> pour alléger le traitement en temps réel des filtres :</p>
             <ul>
                 <li><strong>Sync Qdrant</strong> : Élimination automatique des points vectoriels orphelins (liés à des utilisateurs ou chats supprimés dans OWUI).</li>
-                <li><strong>TTL Decay</strong> : Application des durées de rétention (30 à 540 jours) selon l'importance du souvenir. Les souvenirs périmés sont définitivement purgés de la base vectorielle.</li>
+                <li><strong>Purge Temporelle des Souvenirs</strong> : Application des durées de rétention (30 à 540 jours) selon l'importance du souvenir. Les souvenirs périmés sont définitivement purgés de la base vectorielle.</li>
                 <li><strong>Vacuum SQLite</strong> : Optimisation physique régulière des bases de données de session (commande <code>VACUUM</code>) pour maintenir les performances d'accès.</li>
             </ul>
         </section>
@@ -72,7 +72,7 @@
             <h3>4. Surface de Sécurité</h3>
             <p>La console offre des leviers de contrôle direct sur l'identité :</p>
             <ul>
-                <li><strong>Reset Auth</strong> : Purge instantanée de tous les tokens Google enregistrés dans les fichiers <code>identity.db</code> du Vault.</li>
+                <li><strong>Reset Auth</strong> : Purge instantanée de tous les tokens Google enregistrés dans les fichiers <code>identity.db</code> de l'Espace Personnel.</li>
                 <li><strong>Passwd Rotation</strong> : Modification du mot de passe de l'hôte système via un pont SSH sécurisé utilisant <code>paramiko</code>.</li>
                 <li><strong>Secret Maître</strong> : L'API <code>/api/admin/password</code> permet la récupération sécurisée du mot de passe administrateur généré lors du bootstrap.</li>
             </ul>
@@ -84,7 +84,7 @@
         </div>
 
         <footer>
-            ECHO Framework - Version 5.140.29 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
         <div class="transition-text"><em>Vous avez parcouru l'architecture complète d'ECHO. Pour des détails plus spécifiques ou du code, <a href="10_annexes.html">consultez les Annexes Techniques ➔</a></em></div>
     </main>

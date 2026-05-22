@@ -1,0 +1,16 @@
+flask
+flask-cors
+requests
+pandas
+numpy
+scipy
+scikit-learn
+yfinance
+beautifulsoup4
+openpyxl
+regex
+sympy
+mgzip
+orjson
+pybase64
+networkx

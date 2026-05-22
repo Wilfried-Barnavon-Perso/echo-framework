@@ -1,33 +1,22 @@
-version: '3.8'
-
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 7.7
+# Version : 8.7
 # ==============================================================================
-# ARCHITECTURE :
+# CHANGELOG 8.7 : Migration embedding worker SigLIP-2 → bge-m3 (1024d, text-first).
 # Ce fichier ne gère QUE la couche applicative "ECHO".
 # ==============================================================================
 
 services:
 
-  # ============================================================================
-  # SECTION 1 : APPLICATIONS PRINCIPALES
-  # ============================================================================
-
-  # 1. Open WebUI (Application IA)
+  # 1. Open WebUI (Le Cœur d'ECHO)
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
-    container_name: echo-webui-core
-    restart: unless-stopped
-    volumes:
-      - echo-webui-data:/app/backend/data
-      - /opt/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
-      - /opt/owui-libs:/app/backend/echo_libs:ro
-    # EXPOSITION : Port 3000 pour accès direct, Labels pour accès BunkerWeb
-    ports:
-      - "3000:8080"
+    container_name: echo-open-webui
+    restart: always
     networks:
       - echo-network
+    ports:
+      - "3000:8080"
     environment:
       - WEBUI_AUTH=True
       - WEBUI_NAME="ECHO AI"
@@ -40,44 +29,54 @@ services:
       - "WEBUI_URL="
       # ATTENTION : Séparateur point-virgule (;) obligatoire pour Open WebUI
       - "CORS_ALLOW_ORIGIN=https://ui.${ECHO_DOMAIN:-localhost};https://www.${ECHO_DOMAIN:-localhost};http://localhost:3000;http://127.0.0.1:3000;https://${ECHO_DOMAIN:-localhost};${ECHO_DETECTED_ORIGINS}"
-      
+
       # Sécurité Cookies (Recommandé Doc Officielle)
       - "WEBUI_SESSION_COOKIE_SECURE=false"
       - "WEBUI_AUTH_COOKIE_SECURE=false"
       - "WEBUI_SESSION_COOKIE_SAME_SITE=lax"
       - "WEBUI_AUTH_COOKIE_SAME_SITE=lax"
-    
-    # Intégration BunkerWeb
+
+      - DATA_DIR=/app/backend/data
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-echo-secret-key-12345}
+      - ECHO_VERSION_PATH=/app/backend/data/ECHO_VERSION
+    volumes:
+      - /opt/ECHO/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
+      - /opt/ECHO/owui-libs:/app/backend/echo_libs:ro
+      - echo-webui-data:/app/backend/data
     labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+      # 🛡️ TUNING SECURE EDGE (BunkerWeb)
       - "bunkerweb.SERVER_NAME=ui.${ECHO_DOMAIN:-localhost}"
       - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
-      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-webui-core:8080"
-      
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-open-webui:8080"
+      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
+
       # 1. OPTIMISATIONS STREAMING & UPLOAD
       - "bunkerweb.REVERSE_PROXY_BUFFERING=off"
       - "bunkerweb.REVERSE_PROXY_REQUEST_BUFFERING=no"
       - "bunkerweb.MAX_CLIENT_BODY_SIZE=200m"
       - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600"
       - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600"
-      
+
       # 2. WEBSOCKETS
       - "bunkerweb.REVERSE_PROXY_WS=yes"
-      
+
       # 3. RATE LIMITING (Stratégie SPA Robuste)
       - "bunkerweb.USE_LIMIT_REQ=yes"
-      
+
       # Règle 1 : Assets Statiques & Websockets (ILLIMITÉ)
       # Cible tous les dossiers statiques SvelteKit + WS
       - "bunkerweb.LIMIT_REQ_URL_1=^/(_app|static|assets|favicon|ws|socket.io).*"
       - "bunkerweb.LIMIT_REQ_RATE_1=1000r/s"
-      
+
       # Règle 2 : API Backend (Strict)
       - "bunkerweb.LIMIT_REQ_URL_2=^/(api|auth|ollama|openai).*"
       - "bunkerweb.LIMIT_REQ_RATE_2=20r/s"
       - "bunkerweb.LIMIT_REQ_BURST_2=50"
-      
+
       # Règle 3 : Navigation Frontend (Souple)
       - "bunkerweb.LIMIT_REQ_URL=/"
       - "bunkerweb.LIMIT_REQ_RATE=50r/s"
@@ -89,25 +88,27 @@ services:
       - "bunkerweb.USE_BAD_BEHAVIOR=yes"
       # EXCLUSION CRITIQUE : Ne pas bannir sur 404 (Assets manquants) ni 429 (Rate Limit)
       - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=400 401 403 405 444 500 502 503 504"
-      
+
       # Autoriser les verbes HTTP pour l'API (Suppression de chat, etc.)
       - "bunkerweb.ALLOWED_METHODS=GET|POST|HEAD|PUT|DELETE|OPTIONS"
-      
+
       # Tuning ModSecurity pour API (Prompts IA)
       # Désactivation totale du moteur de règles pour /api/ afin d'éviter les faux positifs sur le contenu des chats (code, urls, etc.)
-      - 'bunkerweb.CUSTOM_CONF_MODSEC_openwebui_tuning=SecRule REQUEST_URI "@beginsWith /api/" "id:10002,phase:1,pass,nolog,ctl:ruleEngine=Off"'
-      
+      - 'bunkerweb.CUSTOM_CONF_MODSEC_openwebui_tuning=SecRule REQUEST_URI "@beginsWith /api/" "id:10002,phase:1,pass,nolog,ctl:ruleEngine=Off"'   
+
       # 5. UX & PERFORMANCE
       - "bunkerweb.USE_BROTLI=yes"
-      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
-      # Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
+      
+      # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
     command: >
       /bin/bash -c "pip install mgzip && ./start.sh"
 
   # 2. Admin Manager (Dashboard Système ECHO)
   admin-manager:
-    image: python:3.14-slim
+    build:
+      context: /opt/ECHO/docker-admin-manager
+      dockerfile: Dockerfile
     container_name: echo-admin-manager
     restart: always
     networks:
@@ -116,12 +117,11 @@ services:
       - TZ=Europe/Paris
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: >
-      /bin/bash -c "pip install --no-cache-dir flask flask-cors docker psutil paramiko APScheduler schedule httpx mgzip orjson pybase64 && python /app/server.py"
     
     # Intégration BunkerWeb
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
       - "bunkerweb.SERVER_NAME=am.${ECHO_DOMAIN:-localhost}"
       - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
@@ -130,24 +130,24 @@ services:
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
       - "bunkerweb.MODSEC_CRS_PARANOIA_LEVEL=2"
       
-      # Assouplissement WAF pour l'Admin (Burst toléré)
+      # 🛡️ SECURITE ADMIN : Assouplissement WAF pour l'Admin (Burst toléré)
       - "bunkerweb.USE_BAD_BEHAVIOR=yes"
       - "bunkerweb.USE_LIMIT_REQ=yes"
       - "bunkerweb.LIMIT_REQ_RATE=20r/s"
       - "bunkerweb.LIMIT_REQ_BURST=100"
       
+      # 🚫 ANTI-BOTS & INDEXATION
       - "bunkerweb.HEADERS_RESPONSE_NAME_1=X-Robots-Tag"
       - "bunkerweb.HEADERS_RESPONSE_VALUE_1=noindex, nofollow"
     
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      # Montage du code en lecture seule pour mises à jour sans rebuild complet si besoin
-      - /opt/docker-admin-manager/server.py:/app/server.py:ro
-      - /opt/echo-images:/app/static:ro
+      - /opt/ECHO/docker-admin-manager/server.py:/app/server.py:ro
+      - /opt/ECHO/echo-images:/app/static:ro
       - echo-backups:/backups
       - echo-webui-data:/app/backend/data
-      - /opt/.owui-secrets:/app/secrets:ro
-      - /opt/ECHO_VERSION:/app/ECHO_VERSION:ro
+      - /opt/ECHO/.secrets:/app/secrets:ro
+      - /opt/ECHO/ECHO_VERSION:/app/ECHO_VERSION:ro
     
     # EXPOSITION : Port 3001 ouvert pour le Reverse Proxy distant
     ports:
@@ -158,7 +158,9 @@ services:
   # ============================================================================
   
   python-worker:
-    image: python:3.14-slim
+    build:
+      context: /opt/ECHO/docker-python-worker
+      dockerfile: Dockerfile
     container_name: echo-python-worker
     restart: always
     networks:
@@ -166,12 +168,11 @@ services:
     environment:
       - TZ=Europe/Paris
     volumes:
-      - /opt/docker-python-worker/worker_api.py:/app/app.py:ro
+      - /opt/ECHO/docker-python-worker/worker_api.py:/app/app.py:ro
       - echo-worker-data:/app/data
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
-    command: >
-      /bin/bash -c "pip install --no-cache-dir flask flask-cors requests pandas numpy scipy scikit-learn yfinance beautifulsoup4 openpyxl regex sympy mgzip orjson pybase64 networkx && python /app/app.py"
+      - "echo.hot-reload=true"
 
   browser-agent:
     image: python:3.14-slim
@@ -184,10 +185,11 @@ services:
       - PIP_ROOT_USER_ACTION=ignore
       - TZ=Europe/Paris
     volumes:
-      - /opt/docker-browser-agent/browser_api.py:/app/browser_api.py:ro
+      - /opt/ECHO/docker-browser-agent/browser_api.py:/app/browser_api.py:ro
       - echo-browser-data:/app/data
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
     command: >
       /bin/bash -c "pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002"
 
@@ -199,7 +201,7 @@ services:
     networks:
       - echo-network
     volumes:
-      - /opt/config/searxng-settings.yml:/etc/searxng/settings.yml:ro
+      - /opt/ECHO/config/searxng-settings.yml:/etc/searxng/settings.yml:ro
     environment:
       - TZ=Europe/Paris
       - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
@@ -250,6 +252,32 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
 
+  # 6. ECHO Embedding Worker (BAAI/bge-m3 — Text RAG, multilingue, 1024d)
+  embedding:
+    build:
+      context: /opt/ECHO/docker-embedding-worker
+      dockerfile: Dockerfile
+    container_name: echo-embedding
+    restart: always
+    networks:
+      - echo-network
+    environment:
+      - TZ=Europe/Paris
+      - MODEL_ID=BAAI/bge-m3
+      - MAX_LENGTH=512
+    ports:
+      - "7997:7997"
+    volumes:
+      - /opt/ECHO/docker-embedding-worker/app.py:/app/app.py:ro
+      - echo-embedding-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+
 # ==============================================================================
 # NETWORKS & VOLUMES
 # ==============================================================================
@@ -269,4 +297,6 @@ volumes:
   echo-backups:
     external: true
   echo-qdrant-data:
+    external: true
+  echo-embedding-cache:
     external: true

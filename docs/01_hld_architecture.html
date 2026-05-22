@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -135,7 +135,7 @@ flowchart LR
       t2["Python Sandbox<br/>API Client"]
     end
     subgraph T_COGN ["🧠 COGNITIFS"]
-      t3["Memory Qdrant<br/>Cognitive Core"]
+      t3["Memory Qdrant<br/>Expertise Conseil"]
     end
     subgraph T_VISU ["🎨 VISUELS (Rendu Visuel)"]
       t4["Universal Visual Generator<br/>(Rich UI Dispatcher)"]
@@ -164,7 +164,7 @@ flowchart LR
   
   %% Monitoring & Control
   ADMIN -.->|Watchdog| PIPE & FILTRE
-  m2 -.->|TTL Decay| T_COGN
+  m2 -.->|Purge Temporelle des Souvenirs| T_COGN
   m2 -.->|Vacuum| l1
 
   %% Styling
@@ -191,7 +191,7 @@ flowchart LR
       <div class="card">
         <h3>📡 AEC (Artéfacts Environnementaux et Contextuels)</h3>
         <p><strong>Définition :</strong> Composante dynamique certifiée du Framework injectée en XML.</p>
-        <p><strong>Précision :</strong> Regroupe <code>&lt;environnement_contexte&gt;</code> (proprioception infrastructurelle) et <code>&lt;smart_context&gt;</code> (distillation sémantique). Ces balises constituent la frontière cognitive entre le système et l'utilisateur.</p>
+        <p><strong>Précision :</strong> Regroupe <code>&lt;environnement_contexte&gt;</code> (contexte proprioceptif infrastructurelle) et <code>&lt;smart_context&gt;</code> (distillation sémantique). Ces balises constituent la frontière cognitive entre le système et l'utilisateur.</p>
       </div>
       <div class="card">
         <h3>🎨 Rendu Visuel (Arsenal Visuel)</h3>
@@ -337,7 +337,7 @@ sequenceDiagram
       </div>
     </div>
 
-    <h2>Topologie Système et Réseau (Plan de Masse v5.140.29)</h2>
+    <h2>Topologie Système et Réseau (Plan de Masse v5.147.6)</h2>
 
     <div class="didactic-box">
       <h4>💡 Lecture d'Architecte</h4>
@@ -501,7 +501,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.140.29 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   <div class="transition-text"><em>Cette architecture bien définie nécessite une infrastructure robuste pour s'exécuter de manière fiable. <a href="02_deploiement.html">Passer à la stratégie de déploiement ➔</a></em></div>
   </main>

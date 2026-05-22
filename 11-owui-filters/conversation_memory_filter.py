@@ -1,8 +1,8 @@
 """
-title: ECHO Organic Memory Filter V2
+title: ECHO Memory Filter V2 (Base Vectorielle des Souvenirs)
 author: Wilfried BARNAVON
-version: 2.9
-description: 2.9: Migration vers EchoGeminiClient factorisé (Embedding v2 & Distillation 2.5).
+version: 3.3
+description: 3.1: Refactorisation terminologique (memory_importance). 3.2: Correction commentaire bge-m3. 3.3: Prompt mémoire borné 200-500 mots (densité vectorielle).
 """
 
 from pydantic import BaseModel, Field
@@ -46,7 +46,7 @@ class Filter:
         DEBUG_MEMORY: bool = Field(default=False, description="Affiche les détails de fusion et de pruning dans les logs.")
 
     class UserValves(BaseModel):
-        ENABLE_MEMORY: bool = Field(default=True, description="🧠 Autoriser ECHO à mémoriser cette conversation pour enrichir ma mémoire organique.")
+        ENABLE_MEMORY: bool = Field(default=True, description="🧠 Autoriser ECHO à mémoriser cette conversation dans la base vectorielle des souvenirs.")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -66,11 +66,15 @@ class Filter:
                 resp = await client.get(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}")
                 if resp.status_code == 200:
                     self.collection_verified = True; return
-                
+
                 logger.info(f"[ECHO-MEMORY-V2] 🏗️ Création de la collection {COLLECTION_MEMORY} ({EMBEDDING_DIM_V2}d)...")
                 create_payload = {"vectors": {"size": EMBEDDING_DIM_V2, "distance": "Cosine"}}
-                await client.put(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}", json=create_payload)
+                cr = await client.put(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}", json=create_payload)
+                if cr.status_code not in (200, 201):
+                    logger.error(f"[ECHO-MEMORY-V2] ❌ Échec création collection ({cr.status_code}): {cr.text}")
+                    return  # Ne pas valider si la création a échoué
                 self.collection_verified = True
+                logger.info(f"[ECHO-MEMORY-V2] ✅ Collection {COLLECTION_MEMORY} créée.")
         except Exception as e:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Qdrant: {e}")
 
@@ -79,13 +83,16 @@ class Filter:
         try:
             await self._ensure_collection()
             
-            # --- 1. Distillation via Cortex Central Factorisé ---
+            # --- 1. Distillation Contextuelle via Cortex Central Factorisé ---
             distill_prompt = (
-                "Tu es l'unité de distillation de mémoire d'ECHO. Analyse cet extrait de conversation.\n"
+                "Tu es l'unité de distillation contextuelle de mémoire d'ECHO. Analyse cet extrait de conversation.\n"
                 "Ta mission est d'extraire les connaissances, décisions techniques ou préférences utilisateur.\n"
                 "Produis un JSON STRICT avec :\n"
-                "- 'summary': Résumé ultra-dense et technique (sans fioriture).\n"
-                "- 'importance': Score de 1 (Trivial) à 5 (Critique/Fondateur).\n"
+                "- 'summary': Résumé ultra-dense en 200 à 500 mots MAXIMUM.\n"
+                "             IMPORTANT : Ce résumé sera stocké comme un seul vecteur 1024d.\n"
+                "             La densité et la précision priment sur l'exhaustivité.\n"
+                "             Concentre-toi sur les faits techniques, décisions et préférences actionnables.\n"
+                "- 'memory_importance': Score de 1 (Trivial) à 5 (Critique/Fondateur).\n"
                 "- 'slug': Identifiant sémantique court et unique (ex: 'pref_python_format', 'archi_db_cluster').\n"
                 "- 'tags': 3 à 5 tags techniques TRÈS SPÉCIFIQUES."
             )
@@ -99,11 +106,11 @@ class Filter:
             if not distilled or not distilled.get("summary"): return
             
             summary = distilled["summary"]
-            new_importance = int(distilled.get("importance", 1))
+            new_memory_importance = int(distilled.get("memory_importance", distilled.get("importance", 1))) # fallback compatibilité
             new_slug = distilled.get("slug", "generic_note")
             tags = distilled.get("tags", [])
             
-            # --- 2. Vectorisation V2 Factorisée (Gemini Embedding 2) ---
+            # --- 2. Vectorisation Locale (BAAI/bge-m3 via echo-embedding worker) ---
             vector = await EchoGeminiClient.generate_embedding(summary, "document", u_ctx, m_ctx, title=new_slug)
             if not vector: return
 
@@ -116,7 +123,7 @@ class Filter:
                 resp_search = await client.post(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/search", json=search_payload)
                 results = resp_search.json().get("result", [])
                 
-                final_summary = summary; final_slug = new_slug; final_importance = new_importance
+                final_summary = summary; final_slug = new_slug; final_memory_importance = new_memory_importance
                 point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{new_slug}"))
                 
                 if results:
@@ -127,8 +134,9 @@ class Filter:
                     if score > self.valves.SIMILARITY_THRESHOLD:
                         point_id = hit.get("id")
                         final_slug = old_payload.get("slug", new_slug)
-                        old_importance = int(old_payload.get("importance", 1))
-                        final_importance = max(old_importance, new_importance)
+                        old_memory_importance = int(old_payload.get("memory_importance", old_payload.get("importance", 1))) # fallback compatibilité
+                        # Gestion de l'importance des souvenirs : on conserve le score maximal (fusion préservative)
+                        final_memory_importance = max(old_memory_importance, new_memory_importance)
                         
                         if score > self.valves.EXACT_MATCH_THRESHOLD:
                             final_summary = old_payload.get("summary", summary)
@@ -136,19 +144,19 @@ class Filter:
                             fusion_prompt = f"FUSION DE MÉMOIRE\nAncien : {old_payload.get('summary')}\nNouveau : {summary}\nProduis un résumé unique fusionnant les deux sans perte d'information critique."
                             final_summary = await EchoGeminiClient.call_distillation(fusion_prompt, u_ctx, m_ctx, is_json=False)
                 
-                # 4. Scellement Vectoriel
+                # 4. Enregistrement Vectoriel dans la Base des Souvenirs
                 point_payload = {
                     "points": [{
                         "id": point_id, "vector": vector,
                         "payload": {
                             "user_id": user_id, "chat_id": chat_id, "timestamp": int(time.time()),
-                            "importance": final_importance, "slug": final_slug, "tags": tags, "summary": final_summary
+                            "memory_importance": final_memory_importance, "slug": final_slug, "tags": tags, "summary": final_summary
                         }
                     }]
                 }
                 await client.put(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points", json=point_payload)
                 
-            logger.info(f"[ECHO-MEMORY-V2] ✅ Souvenir '{final_slug}' (Lvl {final_importance}) mémorisé.")
+            logger.info(f"[ECHO-MEMORY-V2] ✅ Enregistrement vectoriel '{final_slug}' (Lvl {final_memory_importance}) effectué.")
 
         except Exception as e:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur pipeline: {e}")
@@ -177,7 +185,7 @@ class Filter:
             if __event_emitter__:
                 await __event_emitter__({
                     "type": "status",
-                    "data": {"description": "🧠 Consolidation de la mémoire organique...", "done": False, "hidden": not self.valves.DEBUG_MEMORY}
+                    "data": {"description": "🧠 Distillation contextuelle et enregistrement dans la base vectorielle...", "done": False, "hidden": not self.valves.DEBUG_MEMORY}
                 })
             
             asyncio.create_task(self._distill_and_store(chat_id, user_id, window_msgs))

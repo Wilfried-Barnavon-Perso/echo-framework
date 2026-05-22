@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 190.5
-description: 190.5: Centralisation des paramètres de génération via echo_constants.
+version: 190.7
+description: 190.7: Fix import ast (unboxing) et résidu syntaxique HUD.
 """
 
 # ==============================================================================
@@ -22,6 +22,7 @@ import orjson as std_json
 import sqlite3
 import zlib
 import mgzip as gzip
+import ast
 from datetime import datetime
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
 
@@ -190,9 +191,15 @@ class Orchestrator:
 
     def _unbox_tool_output(self, name: str, content: Any, model_id: str) -> List[Dict]:
         if isinstance(content, str):
-            try: content = std_json.loads(content)
-            except: content = {"text": str(content), "status": {"status": "legacy_fallback"}}
-        if not isinstance(content, dict): content = {"text": str(content), "status": {"status": "error_format"}}
+            try:
+                # Utilisation du lecteur Python sécurisé (ast) pour gérer les guillemets simples du stockage SQL
+                content = ast.literal_eval(content)
+            except:
+                # Échec total de lecture : marquage comme donnée non structurée
+                content = {"text": str(content), "status": {"status": "unstructured_data"}}
+        
+        if not isinstance(content, dict):
+            content = {"text": str(content), "status": {"status": "error_format"}}
         
         text_body = content.get("text", "")
         status_meta = content.get("status", {"status": "success"})
@@ -442,17 +449,17 @@ class Pipe:
         # --- [NOUVEAU] DETECTION ET INTERCEPTION DE CLÉ API ---
         api_key_from_filter = body.get("_api_key")
 
-        # Résolution du Mesh d'Authentification (Cache local pour ce tour de pipe)
-        auth_mesh = await echo_auth.get_ordered_auth_mesh(__user__["id"])
+        # Résolution du Registre des Fournisseurs d'Accès (Cache local pour ce tour de pipe)
+        auth_providers = await echo_auth.get_ordered_auth_providers(__user__["id"])
 
         if api_key_from_filter:
             await events.status("🔐 Validation de l'authentification Google...")
             success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
             if success:
                 yield (
-                    "✅ **Configuration de la Souveraineté ECHO Réussie**\n\n"
+                    "✅ **Configuration d'accès ECHO Configurée avec Succès**\n\n"
                     f"{msg}\n\n"
-                    "Vos accès Google ont été validés et enregistrés de manière sécurisée dans votre coffre-fort ECHO.\n\n"
+                    "Vos accès Google ont été validés et enregistrés de manière sécurisée dans votre Espace Personnel ECHO.\n\n"
                     "Vous pouvez maintenant poser votre question."
                 )
                 return
@@ -460,8 +467,8 @@ class Pipe:
                 yield f"❌ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
                 return
 
-        # --- [RESTAURÉ] VÉRIFICATION DE PRÉSENCE & MESH ---
-        if not auth_mesh:
+        # --- [RESTAURÉ] VÉRIFICATION DE PRÉSENCE & IDENTITÉS D'ACCÈS ---
+        if not auth_providers:
             yield auth.get_auth_prompt()
             return
 
@@ -784,9 +791,9 @@ class Pipe:
             
             max_t = self.valves.MAX_CONTEXT_SIZE
             
-            # Nom de la source active (via le mesh)
-            source_label = auth_mesh[0]['type'].replace('_', ' ').title() if auth_mesh else "ECHO"
-            plan_name = f"Authentification {source_label}"
+            # Nom de la source active (via le registre des fournisseurs d'accès)
+            source_label = auth_providers[0]['type'].replace('_', ' ').title() if auth_providers else "ECHO"
+            plan_name = f"Accès {source_label}"
             credits_val = "∞"
             quota_str = ""
             
@@ -796,7 +803,7 @@ class Pipe:
             tier = echo_auth.get_auth_data(AUTH_DATA_USER_TIER)
             proj = echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
             
-            # Données de Quota (Souveraineté)
+            # Données de Quota (Info API)
             q_amount = echo_auth.get_auth_data("google_quota_amount") or "N/A"
             q_fraction = float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)
             q_reset_raw = echo_auth.get_auth_data("google_quota_reset") or "N/A"
@@ -808,8 +815,8 @@ class Pipe:
                 try: q_reset = q_reset_raw.split("T")[1][:5]
                 except: pass
 
-            # Liste des sources (Mesh) résolue pour le HUD
-            sources = [s['type'].replace('google_', '').replace('_', ' ').upper() for s in auth_mesh] if auth_mesh else []
+            # Liste des fournisseurs d'accès résolus pour le HUD
+            sources = [s['type'].replace('google_', '').replace('_', ' ').upper() for s in auth_providers] if auth_providers else []
 
             active_p_t = max(0, p_t - c_t)
             cache_pct = min(100, (c_t / max_t) * 100)

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 
 <html lang="fr">
 
@@ -52,7 +52,7 @@
 
             <li><strong>Input :</strong> Reçoit les arguments JSON générés par l'API Gemini (Tool Call).</li>
 
-            <li><strong>Action locale :</strong> Exécute des scripts, lit/écrit dans le Vault (système de fichiers local).</li>
+            <li><strong>Action locale :</strong> Exécute des scripts, lit/écrit dans l'Espace Personnel (système de fichiers local).</li>
 
             <li><strong>Action réseau :</strong> Navigue sur le WAN (Headless Browser) ou requête le proxy SearxNG.</li>
 
@@ -78,7 +78,7 @@
 
 
 
-    <p>L'Arsenal ECHO n'est pas une simple collection de fonctions, mais un écosystème d'outils souverains conçus pour l'autonomie cognitive. Chaque outil respecte un protocole de communication multimodal strict et interagit directement avec le Vault utilisateur.</p>
+    <p>L'Arsenal ECHO n'est pas une simple collection de fonctions, mais un écosystème d'outils souverains conçus pour l'autonomie cognitive. Chaque outil respecte un protocole de communication multimodal strict et interagit directement avec l'Espace Personnel utilisateur.</p>
 
 
 
@@ -173,10 +173,10 @@
 
 
     <h2>Le Système "Vault" (Coffre-Fort)</h2>
-    <p>Le Vault est l'espace de stockage persistant et isolé de chaque utilisateur (<code>/app/backend/data/users/{user_id}/files/</code>).</p>
+    <p>L'Espace Personnel est l'espace de stockage persistant et isolé de chaque utilisateur (<code>/app/backend/data/users/{user_id}/files/</code>).</p>
     <ul>
       <li><strong>Indexation</strong> : Chaque fichier possède un <code>file_id</code> unique au format <code>U_{uid}_C_{cid}_T_{ts}</code>.</li>
-      <li><strong>Persistance</strong> : Les outils scellent automatiquement les artefacts (captures d'écran, logs) dans le Vault.</li>
+      <li><strong>Persistance</strong> : Les outils scellent automatiquement les artefacts (captures d'écran, logs) dans l'Espace Personnel.</li>
     </ul>
 
     <h2>Architecture de l'Arsenal</h2>
@@ -193,7 +193,7 @@
       </div>
       <div class="card">
         <h3>🧠 Mémoire & Cognition</h3>
-        <p>RAG Organique, Base de Connaissances et Cascade Cognitive.</p>
+        <p>RAG Organique, Base de Connaissances et Ajustement du niveau cognitif.</p>
         <a href="07c_memory_cognition.html" class="btn">📁 Explorer</a>
       </div>
       <div class="card">
@@ -227,9 +227,7 @@
 
 
     <footer>
-
-      ECHO Framework - Version 5.140.29 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-
+      ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
 
   <div class="transition-text"><em>L'utilisation de ces outils est dictée par les directives fondamentales et l'identité de l'IA. <a href="08_system_prompt.html">Passer au cœur de ces directives : le System Prompt (Kernel) ➔</a></em></div>

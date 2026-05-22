@@ -1,11 +1,22 @@
 #!/bin/bash
 # ==============================================================================
 # AFFICHAGE SECURISE DES IDENTIFIANTS ADMIN
-# Version : 1.4
+# Version : 1.5
 # Auteur : Wilfried BARNAVON
 # ==============================================================================
 
-ADMIN_SECRET_FILE="/opt/.owui-secrets/.owui-admin-secret"
+# --- INITIALISATION : CORE ECHO GLOBALS ---
+ECHO_ROOT="/opt/ECHO"
+GLOBALS_FILE="$ECHO_ROOT/echo-scripts/echo-globals.sh"
+if [ -f "$GLOBALS_FILE" ]; then
+    source "$GLOBALS_FILE"
+else
+    echo "❌ CRITIQUE : Fichier global introuvable ($GLOBALS_FILE)."
+    exit 1
+fi
+# ------------------------------------------
+
+ADMIN_SECRET_FILE="$ECHO_SECRETS/.owui-admin-secret"
 HUMAN_EMAIL="admin@echo.local"
 
 if [ ! -f "$ADMIN_SECRET_FILE" ]; then

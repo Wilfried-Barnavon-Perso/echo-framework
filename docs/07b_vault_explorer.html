@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
@@ -12,12 +12,12 @@
     <main>
         <h1>7b. Vault & Data Explorer</h1>
 
-        <div class="transition-text">Parmi les outils de l'Arsenal, le Vault agit comme l'espace de stockage sécurisé. Il permet à l'IA d'interagir avec les fichiers locaux sans compromettre l'environnement.</div>
+        <div class="transition-text">Parmi les outils de l'Arsenal, l'Espace Personnel agit comme l'espace de stockage sécurisé. Il permet à l'IA d'interagir avec les fichiers locaux sans compromettre l'environnement.</div>
 
         <h2>Fiche d'Identité Technique</h2>
         <div class="grid-container">
             <div class="card">
-                <h3>📂 Vault Explorer</h3>
+                <h3>📂 Explorateur de l'Espace Personnel</h3>
                 <p><strong>Nature :</strong> Outil de l'Arsenal (Gestionnaire de Fichiers Souverain).</p>
                 <p><strong>Source :</strong> <code>12-owui-tools/file_content_explorer.py</code></p>
                 <p><strong>Rôle :</strong> Permettre au modèle d'explorer, lire, télécharger, et analyser sémantiquement les fichiers persistants associés à la session utilisateur.</p>
@@ -32,7 +32,7 @@
             </div>
         </div>
 
-        <p>Ce module constitue la porte d'entrée vers les "données froides" du Vault utilisateur. Il permet l'exploration, l'analyse structurelle et l'analyse sémantique de fichiers massifs sans saturer la fenêtre de contexte du modèle PRO (Cortex).</p>
+        <p>Ce module constitue la porte d'entrée vers les "données froides" de l'Espace Personnel utilisateur. Il permet l'exploration, l'analyse structurelle et l'analyse sémantique de fichiers massifs sans saturer la fenêtre de contexte du modèle PRO (Cortex).</p>
 
         <h2>Exploration Brute (<code>read_raw_file_content</code>)</h2>
         <p>Contrairement aux lecteurs standards, ECHO implémente une lecture paginée "Tell-Safe" pour éviter les bugs d'itération sur les fichiers volumineux.</p>
@@ -41,7 +41,7 @@
         <p>Cette fonction majeure permet au modèle d'accéder directement au contenu binaire d'un fichier (Image, Vidéo, Audio, PDF) sans passer par une analyse intermédiaire. Le fichier est injecté directement dans le cortex multimodal de Gemini.</p>
         
         <div class="note-box">
-            <h4>Spécifications Techniques (ECHO v5.140.29+)</h4>
+            <h4>Spécifications Techniques (ECHO v5.147.6+)</h4>
             <ul>
                 <li><strong>Capacité</strong> : Jusqu'à <strong>100 Mo</strong> (configurable via la valve <code>MAX_MULTIMODAL_SIZE_KB</code>).</li>
                 <li><strong>Protocole</strong> : Encodage Base64 injecté via le paramètre <code>echo_tool_multiparts</code>.</li>
@@ -73,7 +73,7 @@
                 </tr>
                 <tr>
                     <td><code>hex</code></td>
-                    <td>Affichage hexadécimal indexé. Indispensable pour l\'analyse de fichiers binaires ou corrompus.</td>
+                    <td>Affichage hexadécimal indexé. Indispensable pour l'analyse de fichiers binaires ou corrompus.</td>
                 </tr>
             </tbody>
         </table>
@@ -89,7 +89,7 @@
         </ul>
 
         <h2>Visualisation Premium Image Viewer (<code>show_image_to_user</code>)</h2>
-        <p>ECHO v5.140.29 introduit le <strong>Premium Image Viewer</strong>, une interface HUD interactive unifiée capable d'afficher des sources locales (Vault) et distantes (URL).</p>
+        <p>ECHO v5.147.6 introduit le <strong>Premium Image Viewer</strong>, une interface HUD interactive unifiée capable d'afficher des sources locales (Vault) et distantes (URL).</p>
 
         <div class="info-block">
             <h4>Fonctionnalités Avancées du Viewer</h4>
@@ -97,9 +97,9 @@
                 <li><strong>Détection Agnostique</strong> : L'outil <code>show_image_to_user</code> détecte automatiquement si la cible est une URL ou un ID de fichier.</li>
                 <li><strong>Moteur Zoom & Pan Universel</strong> : Navigation haute fidélité via la matrice de transformation CSS (<code>transform: scale() translate3d()</code>). <strong>Ctrl + Molette</strong> gère le zoom, <strong>Clic + Glisse</strong> gère le Pan (déplacement matriciel au pixel près).</li>
                 <li><strong>Outil d'Extraction (Crop)</strong> : Tracé d'une zone de sélection mathématiquement liée au ratio de zoom, permettant d'extraire directement l'image ciblée (Canvas 2D) vers le presse-papier avec un Fallback CORS natif et copie visuelle.</li>
-                <li><strong>Pure Context Return (v5.140.29+)</strong> : Contrairement aux anciens modules, l'outil renvoie désormais une <code>string pure</code> au lieu d'un dictionnaire, évitant au LLM d'ingérer un wrapping JSON inutile et concentrant son attention contextuelle sur les faits bruts.</li>
+                <li><strong>Pure Context Return (v5.147.6+)</strong> : Contrairement aux anciens modules, l'outil renvoie désormais une <code>string pure</code> au lieu d'un dictionnaire, évitant au LLM d'ingérer un wrapping JSON inutile et concentrant son attention contextuelle sur les faits bruts.</li>
                 <li><strong>Stealth Engine</strong> : Pour les images distantes, ECHO utilise un moteur de mimétisme humain (Chrome 123 sur Windows 11) pour contourner les protections anti-hotlinking et les redirections (302/403).</li>
-                <li><strong>Souveraineté</strong> : Les images du Vault restent injectées en Base64, garantissant qu'aucune donnée privée ne quitte l'enclave utilisateur vers des services de rendu tiers.</li>
+                <li><strong>Souveraineté</strong> : Les images de l'Espace Personnel restent injectées en Base64, garantissant qu'aucune donnée privée ne quitte l'enclave utilisateur vers des services de rendu tiers.</li>
             </ul>
         </div>
 
@@ -123,7 +123,7 @@
                 </tr>
                 <tr>
                     <td><code>Final URL Capture</code></td>
-                    <td>Extraction de l'URL réelle de destination après redirection pour une indexation précise dans le Vault.</td>
+                    <td>Extraction de l'URL réelle de destination après redirection pour une indexation précise dans l'Espace Personnel.</td>
                 </tr>
             </tbody>
         </table>
@@ -149,12 +149,12 @@
         </table>
 
         <h2>Gestion des Identifiants (IDs)</h2>
-        <p>Tout fichier dans ECHO est référencé par un <code>file_id</code> souverain généré par <code>echo_utils.generate_echo_file_id</code>. Ce format inclut l'ID utilisateur, l'ID du chat et un timestamp milliseconde, garantissant l'unicité absolue dans le Vault.</p>
+        <p>Tout fichier dans ECHO est référencé par un <code>file_id</code> souverain généré par <code>echo_utils.generate_echo_file_id</code>. Ce format inclut l'ID utilisateur, l'ID du chat et un timestamp milliseconde, garantissant l'unicité absolue dans l'Espace Personnel.</p>
 
         <footer>
-            ECHO Framework - Version 5.140.29 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
-        <div class="transition-text"><em>Au-delà des fichiers physiques, ECHO maintient également une mémoire de ses interactions et connaissances. <a href="07c_memory_cognition.html">Découvrir la Cognition Profonde & Mémoire Organique ➔</a></em></div>
+        <div class="transition-text"><em>Au-delà des fichiers physiques, ECHO maintient également une mémoire de ses interactions et connaissances. <a href="07c_memory_cognition.html">Découvrir la Cognition Profonde & Base vectorielle des souvenirs ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>

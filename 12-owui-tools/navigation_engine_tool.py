@@ -1,8 +1,8 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 8.4
-description: 8.4: Livraison finale - Synchronisation temps-réel de l'URL avec le HUD et archivage Vault.
+version: 9.1
+description: 8.5: RAG éphémère. 8.8: Suppression manual_control. 8.9: Fix Qdrant. 9.0: Fix SigLIP-2. 9.1: bge-m3 — chunking paragraphes sémantiques, max_tokens=8192, dim=1024.
 """
 
 import httpx
@@ -12,6 +12,8 @@ import pybase64 as base64
 import os
 import time
 import sys
+import uuid
+import urllib.parse
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, Dict, Any, List
 
@@ -129,7 +131,7 @@ class Tools:
         return wrap_tool_output(text=text_out, status=res_view)
 
     async def web_browse_interact(
-        self, action: Literal["click", "type", "hover", "press", "scroll", "read", "read_html", "analyse_html", "refresh_map", "tab_new", "tab_switch", "tab_close"], 
+        self, action: Literal["click", "type", "hover", "press", "scroll", "read", "distill_page", "refresh_map", "tab_new", "tab_switch", "tab_close"], 
         selector: Optional[str] = None,
         text: Optional[str] = None,
         key: Optional[str] = "Enter",
@@ -150,22 +152,135 @@ class Tools:
         if not await _verify_engine_status(self.valves, chat_id, uid, u_valves, events):
             return wrap_tool_output(text="❌ Session perdue.", status={"status": "error"})
 
-        if action == "analyse_html":
+        if action == "distill_page":
             res_action = await _req(self.valves, "/action", {"session_id": chat_id, "action": "read_html"}, uid)
             b64_html = res_action.get("content", "")
-            await events.status(f"🧠 Analyse sémantique HTML ({u_valves.ANALYSE_MODEL})...")
+            
+            res_view = await _req(self.valves, "/action", {"session_id": chat_id, "action": "highlight"}, uid)
+            current_url = res_view.get("url", "unknown")
+            domain = urllib.parse.urlparse(current_url).netloc.replace(".", "_") if current_url != "unknown" else "page"
+            slug = f"{domain}_{uuid.uuid4().hex[:4]}"
+            
+            await events.status(f"🧠 Distillation de la page ({u_valves.ANALYSE_MODEL})...")
             try:
                 html_text = base64.b64decode(b64_html).decode('utf-8', errors='ignore')
-                # Instruction enrichie (Restauration v5.136)
-                instruction = text if text else "Analyse ce code HTML et extrais de manière structurée les informations principales, le texte lisible et les liens importants."
+                instruction = text if text else "Analyse ce code HTML et génère un résumé structuré, sémantique et très détaillé de tout le contenu de la page. Extrais les concepts clés, le texte principal, et les données pertinentes."
                 prompt = f"SOURCE HTML :\n{html_text[:100000]}\n\nINSTRUCTION :\n{instruction}"
                 
-                analysis_res = await EchoGeminiClient.call_distillation(
-                    prompt, __user__, __metadata__, is_json=False, target_model=u_valves.ANALYSE_MODEL
+                distillate = await EchoGeminiClient.call_distillation(
+                    prompt, __user__, __metadata__, is_json=False,
+                    target_model=u_valves.ANALYSE_MODEL,
+                    max_tokens=8192  # Budget complet bge-m3 : distillat exhaustif, découpé ensuite en chunks
                 )
                 
-                await events.status("✅ Analyse HTML terminée.", done=True)
-                return wrap_tool_output(text=f"### Analyse Sémantique\n\n{analysis_res}", status=res_action)
+                # --- CHUNKING PAR PARAGRAPHES SÉMANTIQUES (bge-m3, sweet spot ~400 tokens = ~1600 chars) ---
+                # Le distillat est du markdown structuré (paragraphes séparés par \n\n, titres ###, listes).
+                # On exploite cette structure pour des chunks cohérents sémantiquement.
+                MAX_CHUNK = 1600   # ~400 tokens bge-m3 — bien sous la limite de 8192
+                raw_paragraphs = [p.strip() for p in distillate.split("\n\n") if p.strip()]
+                
+                merged = []
+                current = ""
+                for para in raw_paragraphs:
+                    if len(current) + len(para) + 2 <= MAX_CHUNK:
+                        current = (current + "\n\n" + para).strip() if current else para
+                    else:
+                        if current:
+                            merged.append(current)
+                        # Paragraphe trop long : découpe sur frontière de phrase
+                        if len(para) > MAX_CHUNK:
+                            for sentence in para.replace('. ', '.\n').replace('! ', '!\n').replace('? ', '?\n').split('\n'):
+                                sentence = sentence.strip()
+                                if len(current) + len(sentence) + 1 <= MAX_CHUNK:
+                                    current = (current + " " + sentence).strip() if current else sentence
+                                else:
+                                    if current:
+                                        merged.append(current)
+                                    current = sentence
+                        else:
+                            current = para
+                if current:
+                    merged.append(current)
+                
+                # Recouvrement : chaque chunk réintègre le dernier paragraphe du chunk précédent
+                # pour éviter la perte de contexte aux jointures.
+                if len(merged) > 1:
+                    overlapped = [merged[0]]
+                    for i in range(1, len(merged)):
+                        prev_last = merged[i-1].split("\n\n")[-1]
+                        overlapped.append(prev_last + "\n\n" + merged[i])
+                    chunks = overlapped
+                else:
+                    chunks = merged if merged else [distillate[:MAX_CHUNK]]
+                
+                await events.status(f"🧠 Vectorisation locale ({len(chunks)} chunks)...")
+                
+                from echo_constants import COLLECTION_EPHEMERAL, EMBEDDING_DIM_V2
+                qdrant_base = "http://echo-qdrant:6333"
+                points = []
+                
+                async with httpx.AsyncClient(timeout=120) as client:
+                    # --- CRÉATION CONDITIONNELLE DE LA COLLECTION ---
+                    # PUT /collections/{name} dans Qdrant recrée la collection si elle existe → bug de purge silencieux.
+                    coll_check = await client.get(f"{qdrant_base}/collections/{COLLECTION_EPHEMERAL}")
+                    if coll_check.status_code == 404:
+                        await client.put(
+                            f"{qdrant_base}/collections/{COLLECTION_EPHEMERAL}",
+                            json={"vectors": {"size": EMBEDDING_DIM_V2, "distance": "Cosine"}}
+                        )
+                    
+                    # --- GÉNÉRATION DES EMBEDDINGS ET CONSTRUCTION DES POINTS ---
+                    for i, chunk in enumerate(chunks):
+                        vector = await EchoGeminiClient.generate_embedding(chunk, "document", __user__, __metadata__, title=slug)
+                        if vector:
+                            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{uid}_{chat_id}_{slug}_{i}"))
+                            points.append({
+                                "id": point_id,
+                                "vector": vector,
+                                "payload": {
+                                    "user_id": uid,
+                                    "chat_id": chat_id,
+                                    "slug": slug,
+                                    "text": chunk,
+                                    "timestamp": int(time.time())
+                                }
+                            })
+                    
+                    if not points:
+                        # Tous les embeddings ont échoué — on ne prétend pas avoir indexé
+                        return wrap_tool_output(
+                            text=f"❌ Distillation réussie mais vectorisation échouée (0/{len(chunks)} chunks).\nLe worker d'embedding est peut-être indisponible.",
+                            status={"status": "error"}
+                        )
+                    
+                    # --- UPSERT DES POINTS (additive, pas destructif) ---
+                    upsert_resp = await client.put(
+                        f"{qdrant_base}/collections/{COLLECTION_EPHEMERAL}/points",
+                        json={"points": points}
+                    )
+                    if upsert_resp.status_code not in (200, 206):
+                        return wrap_tool_output(
+                            text=f"❌ Erreur Qdrant lors de l'indexation : {upsert_resp.text}",
+                            status={"status": "error"}
+                        )
+                
+                # Le status ✅ n'est émis que si l'indexation a réellement réussi
+                await events.status(f"✅ Page indexée dans le RAG éphémère ({len(points)} vecteurs).", done=True)
+                
+                # On utilise Flash pour faire le résumé ultra court du retour, pour plus de fiabilité
+                summary_prompt = f"Fais un résumé sémantique large des points clés de ce texte (maximum 1500 mots) :\n\n{distillate[:30000]}"
+                brief_summary = await EchoGeminiClient.call_distillation(summary_prompt, __user__, __metadata__, is_json=False, target_model="MODEL_FLASH", max_tokens=8000)
+                
+                out_msg = (
+                    f"✅ Page web traitée et indexée sous le slug `{slug}` ({len(points)} vecteurs).\n\n"
+                    f"### Résumé Sémantique\n{brief_summary}\n\n"
+                    f"> **Action requise :** Utilisez l'outil `query_distilled_data(slug=\"{slug}\", query=\"...\")` pour interroger la page en profondeur."
+                )
+                
+                # IMPORTANT: On ne retourne pas res_action dans status, car il contient 'content' (le HTML b64 complet)
+                clean_status = {k: v for k, v in res_action.items() if k != "content"}
+                return wrap_tool_output(text=out_msg, status=clean_status)
+
             except Exception as e:
                 return wrap_tool_output(text=f"❌ Erreur analyse: {str(e)}", status={})
 
@@ -184,25 +299,6 @@ class Tools:
             return wrap_tool_output(text=f"{report}\nAction {action} terminée avec succès.", status=res)
             
         return wrap_tool_output(text=f"❌ Échec action {action}: {res.get('message')}", status=res)
-
-    async def web_browse_manual_control(
-        self, __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None
-    ) -> dict:
-        """
-        Force l'ouverture ou le rafraîchissement du moniteur visuel (HUD).
-        Utile si l'IA semble 'perdue' ou si l'utilisateur souhaite reprendre le contrôle manuellement.
-        """
-        events = EchoEvents(__event_emitter__, __event_call__)
-        chat_id = __metadata__.get("chat_id", "default_session")
-        uid = __user__.get("id", "anonymous")
-        u_valves = __user__.get("valves", self.UserValves())
-
-        if not await _verify_engine_status(self.valves, chat_id, uid, u_valves, events):
-            return wrap_tool_output(text="❌ Session inactive.", status={"status": "error"})
-
-        res_view = await _req(self.valves, "/action", {"session_id": chat_id, "action": "highlight"}, uid)
-        report, _ = await _deploy_navigation_monitor(self.valves, res_view, chat_id, uid, u_valves, events)
-        return wrap_tool_output(text=f"{report}\nMoniteur manuel déployé.", status={"status": "success"})
 
     async def web_browse_reset(self, __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None) -> dict:
         """Réinitialise la session du navigateur (Fermeture et Nettoyage)."""

@@ -1,15 +1,30 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.5
+# VERSION : 6.8
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
 # ==============================================================================
 
+# --- INITIALISATION : CORE ECHO GLOBALS ---
+ECHO_ROOT="/opt/ECHO"
+GLOBALS_FILE="$ECHO_ROOT/echo-scripts/echo-globals.sh"
+if [ -f "$GLOBALS_FILE" ]; then
+    source "$GLOBALS_FILE"
+else
+    echo "❌ CRITIQUE : Fichier global introuvable ($GLOBALS_FILE)."
+    exit 1
+fi
+# ------------------------------------------
+
 DOCKER_COMPOSE_CMD="docker-compose"
-SYNC_SCRIPT="/opt/echo-scripts/sync-echo.sh"
-COMPOSE_FILE="/opt/config/stack-echo.yml"
+if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
+    DOCKER_COMPOSE_CMD="docker compose"
+fi
+
+SYNC_SCRIPT="$ECHO_SCRIPTS/sync-echo.sh"
+COMPOSE_FILE="$ECHO_CONFIG/stack-echo.yml"
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
@@ -31,19 +46,19 @@ if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
     docker rm $(docker ps -aq) > /dev/null 2>&1 && echo "Conteneurs supprimés"
     docker volume rm $(docker volume ls -q) > /dev/null 2>&1 && echo "Volumes actifs supprimés"
     docker system prune -a --volumes -f > /dev/null 2>&1 && echo "Volumes orphelins et images supprimé"
-    rm -rf /opt/.owui-secrets && echo "Fichiers secrets supprimés"
+    rm -rf "$ECHO_SECRETS" && echo "Fichiers secrets supprimés"
 fi
 
 # --- SELF RUN (Protection) ---
 CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${CURRENT_SCRIPT##*/}"
-MY_OWN_ORIGIN="/opt/echo-scripts/${CURRENT_SCRIPT##*/}"
+MY_OWN_ORIGIN="$ECHO_SCRIPTS/${CURRENT_SCRIPT##*/}"
 if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
     cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
     exec "$TMP_SCRIPT" "$@"; exit 0
 fi
 
 # --- CONFIRMATION ---
-BRANCH_FILE="/opt/ECHO_BRANCH"
+BRANCH_FILE="$ECHO_BRANCH_FILE"
 TARGET_BRANCH="main"
 if [ -f "$BRANCH_FILE" ]; then TARGET_BRANCH=$(cat "$BRANCH_FILE" | tr -d '[:space:]'); fi
 
@@ -72,11 +87,8 @@ if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then
 fi
 
 # --- 2. DELEGATION AU LAUNCHER ---
-# Le téléchargement (pull) et la construction (build) des images sont
-# maintenant gérés par install-stack.sh via la commande 'up --build'.
-
 # --- 3. REBUILD / RELAUNCH ---
 echo "🚀 [UPGRADE] Relance de la stack (via install-stack.sh)..."
-/bin/bash /opt/echo-scripts/install-stack.sh
+/bin/bash "$ECHO_SCRIPTS/install-stack.sh"
 
 echo "✨ UPGRADE TERMINÉ."
