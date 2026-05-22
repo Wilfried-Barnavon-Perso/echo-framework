@@ -168,7 +168,7 @@
             <p>Les Artéfacts Environnementaux Contextuels (AEC) sont des balises XML certifiées fournissant au modèle sa perception du présent (Contexte Proprioceptif).</p>
             <ul>
                 <li><strong><code>&lt;environnement_contexte&gt;</code></strong> : Vecteur d'état global (YAML). Contient l'identité, le fuseau horaire et le <i>registre souverain des fichiers</i>.</li>
-                <li><strong><code>&lt;smart_context&gt;</code></strong> : Distillation sémantique de ressources massives (résumés Flash).</li>
+                <li><strong><code>&lt;smart_context mode="rag_ephemeral"&gt;</code></strong> : Brief sémantique (&le; 300 mots) + <code>slug</code> Qdrant d'un fichier vectorisé dans le RAG éphémère (<code>echo_ephemeral</code>). Interrogez les détails précis via <code>query_distilled_data(slug, query)</code>.</li>
             </ul>
 
             <h2>Protocoles et Commandes</h2>

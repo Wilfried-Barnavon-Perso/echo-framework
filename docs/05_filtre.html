@@ -33,13 +33,13 @@
             </p>
         </div>
 
-        <h2>1. Le Filtre de Conscience (new_context_filter.py v7.0)</h2>
+        <h2>1. Le Filtre de Conscience (new_context_filter.py v7.1)</h2>
         <div class="grid-container">
             <div class="card">
                 <h3>🌐— Filtre New Context</h3>
                 <p><strong>Nature :</strong> Middleware d'interception Inlet/Outlet haute résilience.</p>
                 <p><strong>Source :</strong> <code>11-owui-filters/new_context_filter.py</code></p>
-                <p><strong>Rôle :</strong> Gateway Cognitive. En phase <strong>Inlet</strong>, il effectue le "Smart Context" : il résume les fichiers massifs via Gemini Flash pour que le Pipe reçoive un dictionnaire exploitable sans saturer son contexte, tout en assurant une résilience totale face aux erreurs de parsing.</p>
+                <p><strong>Rôle :</strong> Gateway Cognitive. En phase <strong>Inlet</strong>, il effectue le "Smart Context" : il distille les fichiers massifs (Gemini 2.5 Flash) et les vectorise dans le <strong>RAG éphémère</strong> (Qdrant <code>echo_ephemeral</code>). Le modèle reçoit uniquement un bref résumé (≤ 300 mots) avec le <code>slug</code> pour interroger les détails via <code>query_distilled_data</code>, sans saturer son contexte.</p>
                 <p><strong>Exécutant :</strong> Processus Python d'Open WebUI.</p>
                 <p><strong>Connexions :</strong> Alimente le Pipe (via les métadonnées <code>environnement_contexte</code>).</p>
             </div>
@@ -52,7 +52,7 @@ flowchart LR
     OWUI -->|hook.inlet| B[Filtre ECHO]
     B --> C{Analyse Multimodale}
     C -->|Images/Audio/PDF < 256 Ko| D[Encapsulation Base64]
-    C -->|Gros Fichiers > 256 Ko| E[Distillation Gemini Flash]
+    C -->|Gros Fichiers > 256 Ko| E["RAG Éphémère (Distillation → Qdrant)"]
     C -->|Texte/Code < 256 Ko| F[Injection Texte Brut]
     D & E & F --> G[Draft Sémantique]
     G -->|Injection| P[Pipe Outlet]
@@ -73,7 +73,7 @@ flowchart LR
 
         <div class="tech-spec">
             <h4>⚙️ Précision Mécanique : L'Aiguillage Inlet</h4>
-            <p>Le <code>new_context_filter</code> utilise la valve <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko par défaut). Si un fichier dépasse ce seuil, il est automatiquement routé vers l'unité de distillation (Gemini Flash). Cela garantit que le modèle principal (Gemini Pro) reçoit une synthèse structurée plutôt que des milliers de lignes de données brutes, préservant ainsi sa capacité de raisonnement critique.</p>
+            <p>Le <code>new_context_filter</code> utilise la valve <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko par défaut). Si un fichier dépasse ce seuil, il est automatiquement distillé (Gemini 2.5 Flash <code>MODEL_DISTILLATION</code>) puis vectorisé dans la collection <code>echo_ephemeral</code> (Qdrant). Le modèle principal reçoit un bref résumé (≤ 300 mots) + le <code>slug</code> pour interroger les détails précis via <code>query_distilled_data</code> — préservant ainsi sa fenêtre de contexte.</p>
         </div>
 
         <h3>Le Manifeste de Vérité : environnement_contexte</h3>
@@ -91,7 +91,8 @@ registre_fichiers:
   source.py:
     id: "F1"
     mime: "text/plain"
-    statut: "transmitted"</code></pre>
+    statut: "rag_ephemeral"
+    slug: "source_py_a3f2"</code></pre>
 
         <h2>Smart Memory : La Conscience Persistante</h2>
         <p>Le <code>conversation_memory_filter.py</code> (v3.1) gère la mémoire à long terme d'ECHO en phase <strong>Outlet</strong>.</p>

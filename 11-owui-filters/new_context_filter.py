@@ -1,9 +1,10 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 7.0
-description: 7.0: Résilience Smart Context et stabilité séquentielle Gemini 3.1.
+version: 7.5
+description: 7.4: Rétablissement slug dans instruction smart_context. 7.5: Fix génération slug (précédence opérateur, exclusion tirets → underscore).
 """
+
 
 from pydantic import BaseModel, Field
 from typing import Optional, List, Union, Dict, Any
@@ -15,6 +16,7 @@ import re
 import asyncio
 import logging
 import time
+import uuid as _uuid_module
 import hashlib
 import shutil
 from concurrent.futures import ThreadPoolExecutor
@@ -106,12 +108,15 @@ class Filter:
                 print(f"[ECHO-FILTER] !! Erreur lecture: {e}", flush=True)
                 return {"status": "error", "fid": file_id, "name": filename, "mime": mime, "error": f"Erreur lecture : {str(e)}"}
 
-        # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (Smart Context Factorisé v6.95) ---
+        # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (RAG Éphémère v7.1) ---
+        # Remplace l'injection directe <smart_context> par un pipeline vectoriel.
+        # Toutes les étapes sont des tâches de fond invisibles → MODEL_DISTILLATION.
         if self.valves.ENABLE_SMART_CONTEXT and is_supported:
             try:
-                print(f"[ECHO-FILTER] --> Mode: SMART_CONTEXT (Gemini 2.5 Flash)", flush=True)
-                await events.status(f"Analyse intelligente de {filename}...", False)
-                
+                print(f"[ECHO-FILTER] --> Mode: RAG_EPHEMERAL (distillation → Qdrant echo_ephemeral)", flush=True)
+                await events.status(f"Distillation de {filename}...", False)
+
+                # Construction du prompt selon MIME
                 content_part = {}
                 if "text/" in mime or "application/json" in mime:
                     with open(path, "r", encoding="utf-8", errors="ignore") as f: raw_text = f.read()
@@ -120,23 +125,61 @@ class Filter:
                     with open(path, "rb") as f: b64_data = base64.b64encode(f.read()).decode("utf-8")
                     content_part = {"inline_data": {"mime_type": mime, "data": b64_data}}
 
-                # Appel Factorisé via Cortex Central
+                # Distillat exhaustif → MODEL_DISTILLATION (call_distillation sans target_model)
                 u_ctx = {"id": user_id}
                 m_ctx = {"chat_id": chat_id}
-                summary = await EchoGeminiClient.call_distillation(
-                    "Tu es l'unité de prétraitement contextuel d'ECHO. Ta mission est de produire un résumé technique exhaustif et structuré du fichier fourni.",
-                    u_ctx, m_ctx, is_json=False, parts=[{"role": "user", "parts": [content_part]}]
+                distillate = await EchoGeminiClient.call_distillation(
+                    "Tu es l'unité de prétraitement contextuel d'ECHO. "
+                    "Ta mission est de produire un résumé technique exhaustif et structuré du fichier fourni.",
+                    u_ctx, m_ctx, is_json=False,
+                    parts=[{"role": "user", "parts": [content_part]}],
+                    max_tokens=8192
                 )
-                
-                if summary:
-                    print(f"[ECHO-FILTER] ✅ Résumé Factorisé généré pour {filename}.", flush=True)
-                    res_text = f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\">\n{summary}\n</smart_context>"
-                    state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-                    state.mark_processed(chat_id, file_id, filename, mime, "summarized", res_text)
-                    return {"status": "success", "type": "summarized", "fid": file_id, "name": filename, "mime": mime, "content": res_text}
+                if not distillate:
+                    raise ValueError("Distillation vide — modèle non disponible")
+
+                # Slug : ASCII uniquement, alphanumériques + underscores, tirets et espaces → underscore
+                import unicodedata as _ud
+                normalized_name = _ud.normalize("NFKD", filename.rsplit(".", 1)[0])
+                # Remplacer espaces et tirets par _ avant le filtrage
+                cleaned = normalized_name.replace("-", "_").replace(" ", "_")
+                safe_name = "".join(c for c in cleaned if (c.isascii() and c.isalnum()) or c == "_")[:24].strip("_")
+                slug = f"{safe_name}_{_uuid_module.uuid4().hex[:4]}"
+
+                # Vectorisation → méthode partagée (MODEL_DISTILLATION en interne)
+                await events.status(f"Vectorisation de {filename}...", False)
+                nb_points, err = await EchoGeminiClient.index_text_in_ephemeral_rag(
+                    distillate, slug, user_id, chat_id, u_ctx, m_ctx
+                )
+                if nb_points == 0:
+                    print(f"[ECHO-FILTER] !! Vectorisation échouée pour {filename} : {err}", flush=True)
+                    raise ValueError(f"Vectorisation échouée : {err}")
+
+                # Brief résumé pour le prompt (≤ 300 mots) → MODEL_DISTILLATION
+                brief_prompt = f"Résume en maximum 300 mots les points clés de ce texte :\n\n{distillate[:15000]}"
+                brief_summary = await EchoGeminiClient.call_distillation(
+                    brief_prompt, u_ctx, m_ctx, is_json=False, max_tokens=2048
+                )
+
+                # Le slug est aussi dans <environnement_contexte> YAML, mais on le rappelle
+                # explicitement ici pour MODEL_LITE qui ne lit pas toujours le YAML fiablement.
+                res_text = (
+                    f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\" mode=\"rag_ephemeral\"\n"
+                    f"                vectors=\"{nb_points}\">\n"
+                    f"{brief_summary}\n\n"
+                    f"> ⚠️ Ce fichier est vectorisé dans le RAG éphémère ({nb_points} vecteurs). "
+                    f"Pour l'interroger, utiliser `query_distilled_data(slug=\"{slug}\", query=\"...\")`.\n"
+                    f"</smart_context>"
+                )
+
+                state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+                state.mark_processed(chat_id, file_id, filename, mime, "rag_ephemeral", res_text)
+                print(f"[ECHO-FILTER] ✅ {filename} → RAG éphémère (slug={slug}, {nb_points} vecteurs).", flush=True)
+                return {"status": "success", "type": "rag_ephemeral", "slug": slug, "fid": file_id, "name": filename, "mime": mime, "content": res_text}
 
             except Exception as e:
-                print(f"[ECHO-FILTER] !! Exception Smart Context pour {filename}: {e}", flush=True)
+                print(f"[ECHO-FILTER] !! Exception RAG Éphémère pour {filename}: {e}", flush=True)
+                # Fallback → CAS 4 (indexation)
 
         # --- CAS 4 : FALLBACK BINAIRE (Indexation) ---
         print(f"[ECHO-FILTER] --> Mode: INDEXATION (Fallback)", flush=True)
@@ -236,7 +279,9 @@ class Filter:
                 
                 for r in results:
                     if r.get("status") == "success":
-                        active_registry[r.get("name")] = {"id": r.get("fid"), "mime": r.get("mime"), "statut": r.get("type")}
+                        entry = {"id": r.get("fid"), "mime": r.get("mime"), "statut": r.get("type")}
+                        if r.get("slug"): entry["slug"] = r["slug"]  # Expose le slug dans le YAML → modèle peut interroger le RAG directement
+                        active_registry[r.get("name")] = entry
 
                 meta_vars = meta.get("variables", {})
                 u_v = __user__.get("valves") if __user__ else self.user_valves
@@ -271,7 +316,7 @@ class Filter:
                 
                 for res in results:
                     if res.get("status") == "success":
-                        if res["type"] == "summarized": rich_parts.append({"text": res["content"]})
+                        if res["type"] == "rag_ephemeral": rich_parts.append({"text": res["content"]})
                         elif res["type"] == "transmitted":
                             if res["sub_type"] == "text": rich_parts.append({"text": res["content"]})
                             else:

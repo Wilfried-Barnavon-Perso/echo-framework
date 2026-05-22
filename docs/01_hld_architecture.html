@@ -191,7 +191,7 @@ flowchart LR
       <div class="card">
         <h3>📡 AEC (Artéfacts Environnementaux et Contextuels)</h3>
         <p><strong>Définition :</strong> Composante dynamique certifiée du Framework injectée en XML.</p>
-        <p><strong>Précision :</strong> Regroupe <code>&lt;environnement_contexte&gt;</code> (contexte proprioceptif infrastructurelle) et <code>&lt;smart_context&gt;</code> (distillation sémantique). Ces balises constituent la frontière cognitive entre le système et l'utilisateur.</p>
+        <p><strong>Précision :</strong> Regroupe <code>&lt;environnement_contexte&gt;</code> (contexte propioceptif infrastructurelle) et <code>&lt;smart_context&gt;</code> (RAG éphémère : brief + slug Qdrant — mode <code>rag_ephemeral</code>). Ces balises constituent la frontière cognitive entre le système et l'utilisateur.</p>
       </div>
       <div class="card">
         <h3>🎨 Rendu Visuel (Arsenal Visuel)</h3>
@@ -221,7 +221,7 @@ flowchart LR
       <div class="card">
         <h3>🧱 Le Moulage (Semantic Molding)</h3>
         <p><strong>Définition :</strong> Compression sémantique de fichiers massifs via Gemini Flash.</p>
-        <p><strong>Précision :</strong> Transformation d'un document brut (ex: PDF > 1 Mo) en un résumé technique structuré et indexé. Ce moulage permet au modèle principal (PRO) de manipuler des données massives sans saturer sa mémoire de travail immédiate.</p>
+        <p><strong>Précision :</strong> Transformation d'un document brut (ex : PDF &gt; 256 Ko) en un distillat vectorisé dans <code>echo_ephemeral</code> (Qdrant bge-m3). Le modèle principal ne reçoit qu'un brief (≤ 300 mots) + <code>slug</code> pour un contexte économique, et peut interroger les détails via <code>query_distilled_data</code>.</p>
       </div>
     </div>
 

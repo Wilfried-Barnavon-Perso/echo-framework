@@ -1,8 +1,8 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 7.5
-description: 7.5: Refactorisation terminologique (auth_mesh→auth_providers, Citadelle→Identités d'accès aux Modèles, commentaire message_shadows).
+version: 7.6
+description: 7.5: Refactorisation terminologique (auth_mesh→auth_providers, Citadelle→Identités d'accès aux Modèles, commentaire message_shadows). 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag (pipeline chunk→embed→upsert Qdrant factorisé).
 """
 
 import copy
@@ -502,6 +502,117 @@ class EchoGeminiClient:
             return clean_text
         except:
             return {} if is_json else "Analyse indisponible."
+
+    @staticmethod
+    async def index_text_in_ephemeral_rag(
+        distillate: str,
+        slug: str,
+        uid: str,
+        chat_id: str,
+        __user__: dict,
+        __metadata__: dict,
+        qdrant_base: str = "http://echo-qdrant:6333",
+        max_chunk: int = 1600,
+        timeout: int = 120
+    ) -> tuple:
+        """
+        Factorise le pipeline chunk → embed → upsert Qdrant pour le RAG éphémère.
+
+        Découpe `distillate` (markdown structuré) en chunks sémantiques (~400 tokens bge-m3)
+        basés sur les séparateurs de paragraphes \\n\\n, avec recouvrement entre chunks contigus
+        pour éviter la perte de contexte aux jointures.
+
+        Retourne (nb_points_indexés: int, message_erreur: str).
+        0 points indique un échec total (embedding worker indisponible ou Qdrant KO).
+        """
+        import uuid as _uuid
+        from echo_constants import COLLECTION_EPHEMERAL, EMBEDDING_DIM_V2
+
+        # --- 1. CHUNKING PAR PARAGRAPHES SÉMANTIQUES ---
+        raw_paragraphs = [p.strip() for p in distillate.split("\n\n") if p.strip()]
+
+        merged = []
+        current = ""
+        for para in raw_paragraphs:
+            if len(current) + len(para) + 2 <= max_chunk:
+                current = (current + "\n\n" + para).strip() if current else para
+            else:
+                if current:
+                    merged.append(current)
+                # Paragraphe supra-limite : découpe sur frontière de phrase
+                if len(para) > max_chunk:
+                    for sentence in para.replace(". ", ".\n").replace("! ", "!\n").replace("? ", "?\n").split("\n"):
+                        sentence = sentence.strip()
+                        if not sentence:
+                            continue
+                        if len(current) + len(sentence) + 1 <= max_chunk:
+                            current = (current + " " + sentence).strip() if current else sentence
+                        else:
+                            if current:
+                                merged.append(current)
+                            current = sentence
+                else:
+                    current = para
+        if current:
+            merged.append(current)
+
+        # --- 2. RECOUVREMENT (évite la perte de contexte aux jointures) ---
+        if len(merged) > 1:
+            overlapped = [merged[0]]
+            for i in range(1, len(merged)):
+                prev_last = merged[i - 1].split("\n\n")[-1]
+                overlapped.append(prev_last + "\n\n" + merged[i])
+            chunks = overlapped
+        else:
+            chunks = merged if merged else [distillate[:max_chunk]]
+
+        # --- 3. CRÉATION CONDITIONNELLE DE LA COLLECTION ---
+        points = []
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                coll_check = await client.get(f"{qdrant_base}/collections/{COLLECTION_EPHEMERAL}")
+                if coll_check.status_code == 404:
+                    cr = await client.put(
+                        f"{qdrant_base}/collections/{COLLECTION_EPHEMERAL}",
+                        json={"vectors": {"size": EMBEDDING_DIM_V2, "distance": "Cosine"}}
+                    )
+                    if cr.status_code not in (200, 201):
+                        return 0, f"Échec création collection Qdrant : HTTP {cr.status_code}"
+
+                # --- 4. GÉNÉRATION DES EMBEDDINGS ET CONSTRUCTION DES POINTS ---
+                for i, chunk in enumerate(chunks):
+                    vector = await EchoGeminiClient.generate_embedding(
+                        chunk, "document", __user__, __metadata__, title=slug
+                    )
+                    if vector:
+                        point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{uid}_{chat_id}_{slug}_{i}"))
+                        points.append({
+                            "id": point_id,
+                            "vector": vector,
+                            "payload": {
+                                "user_id": uid,
+                                "chat_id": chat_id,
+                                "slug": slug,
+                                "text": chunk,
+                                "timestamp": int(time.time())
+                            }
+                        })
+
+                if not points:
+                    return 0, "Aucun embedding généré (worker d'embedding indisponible ?)"
+
+                # --- 5. UPSERT ADDITIF (non destructif) ---
+                upsert_resp = await client.put(
+                    f"{qdrant_base}/collections/{COLLECTION_EPHEMERAL}/points",
+                    json={"points": points}
+                )
+                if upsert_resp.status_code not in (200, 206):
+                    return 0, f"Erreur Qdrant upsert : HTTP {upsert_resp.status_code} — {upsert_resp.text[:100]}"
+
+        except Exception as e:
+            return 0, str(e)
+
+        return len(points), ""
 
     @staticmethod
     async def call_raw(target_model: str, payload: dict, user_id: str, method: str = "generateContent", chat_id: str = None) -> dict:

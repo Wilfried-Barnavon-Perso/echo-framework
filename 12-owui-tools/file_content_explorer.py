@@ -1,8 +1,8 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.6
-description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events au lieu de HTMLResponse).
+version: 5.109.7
+description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable).
 """
 
 import os
@@ -27,7 +27,7 @@ from echo_utils import (
 from echo_ui import EchoUI
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, MODEL_FLASH,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
+    MODEL_ROUTING, ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
 )
 
 class Tools:
@@ -39,9 +39,16 @@ class Tools:
         MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW).")
         MAX_MULTIMODAL_SIZE_KB: int = Field(default=102400, description="Taille maximale (en Ko) pour l'injection multimédia.")
 
+    class UserValves(BaseModel):
+        ANALYSE_MODEL: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = Field(
+            default="MODEL_FLASH",
+            description="Niveau cognitif utilisé pour le sondage sémantique (semantic_probe). MODEL_PRO pour les fichiers très complexes."
+        )
+
     def __init__(self):
         self.valves = self.Valves()
         self.uploads_dir = self.valves.UPLOADS_DIR
+        self.user_valves = self.UserValves()
 
     async def read_raw_file_content(
         self, 
@@ -110,8 +117,10 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Sonde sémantiquement un fichier volumineux ou complexe via Gemini Flash."""
+        """Sonde sémantiquement un fichier volumineux ou complexe via le niveau cognitif configuré (ANALYSE_MODEL)."""
         events = EchoEvents(__event_emitter__, __event_call__)
+        u_valves = __user__.get("valves", self.user_valves) if __user__ else self.user_valves
+        resolved_model = MODEL_ROUTING.get(u_valves.ANALYSE_MODEL, MODEL_FLASH)
         user_id = __user__.get("id", "system")
         fpath = resolve_upload_file_path(user_id, file_id, self.uploads_dir)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
@@ -131,7 +140,7 @@ class Tools:
                 }
             }
             data = await EchoGeminiClient.call(
-                target_model=MODEL_FLASH, 
+                target_model=resolved_model,
                 payload=payload, 
                 user_id=user_id,
                 threshold=self.valves.KEY_SWITCH_THRESHOLD,

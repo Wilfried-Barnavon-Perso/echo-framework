@@ -1,8 +1,8 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 190.7
-description: 190.7: Fix import ast (unboxing) et résidu syntaxique HUD.
+version: 190.8
+description: 190.7: Fix import ast (unboxing) et résidu syntaxique HUD. 190.8: Migration type 'summarized' → 'rag_ephemeral' dans le scellement du registre de fichiers.
 """
 
 # ==============================================================================
@@ -758,7 +758,7 @@ class Pipe:
             for f in files_to_seal:
                 if f.get("status") == "success":
                     content_to_save = None
-                    if f.get("type") == "summarized": content_to_save = f.get("content")
+                    if f.get("type") == "rag_ephemeral": content_to_save = f.get("content")
                     elif f.get("type") == "transmitted" and f.get("sub_type") == "text": content_to_save = f.get("content")
                     orch.user_data_manager.state_manager.mark_processed(chat_id, f['fid'], f['name'], f['mime'], f['type'], content_to_save, user_msg_id)
                     orch.user_data_manager.state_manager.move_to_vault(f['fid'], f['name'])

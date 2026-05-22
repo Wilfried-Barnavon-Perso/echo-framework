@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 4.4
+# VERSION : 4.5
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -90,8 +90,11 @@ else
             if [ $? -ne 0 ]; then echo "❌ Erreur critique : Impossible de cloner."; exit 1; fi
             
             cd "$SRC_DIR" || exit
-            if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
-                git checkout "$TARGET_BRANCH"
+            git fetch origin
+            if git rev-parse --verify "origin/$TARGET_BRANCH" > /dev/null 2>&1; then
+                # reset --hard : ignore les fichiers modifiés localement lors du clone (ex: .gitignore)
+                git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+                git reset --hard "origin/$TARGET_BRANCH"
             else
                 echo "❌ ERREUR : La branche '$TARGET_BRANCH' n'existe pas."
                 exit 1
