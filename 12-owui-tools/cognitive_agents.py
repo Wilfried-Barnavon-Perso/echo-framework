@@ -1,8 +1,10 @@
 """
 title: ECHO Cognitive Agents
 author: ECHO Framework
-version: 5.7
+version: 5.8
 description: 5.7: Résolution du conflit de nom get_all_skills (shadowing).
+             5.8: Centralisation des niveaux de réflexion (THINKING_LEVEL_*) — suppression
+             valves FLASH_THINKING et PRO_THINKING. Remplacement par constantes echo_constants.
 """
 
 import sys
@@ -21,14 +23,14 @@ from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
     TEMP_DEFAULT, TOP_P_DEFAULT, TEMP_DISTILLATION, TOP_P_DISTILLATION,
-    MODEL_DISTILLATION
+    MODEL_DISTILLATION,
+    THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE
 )
 from echo_skills import get_all_skills, get_skill_content, save_skill
 
 class Tools:
     class Valves(BaseModel):
-        FLASH_THINKING: str = Field(default="HIGH", description="Niveau de réflexion pour le modèle FLASH (LOW, MEDIUM, HIGH)")
-        PRO_THINKING: str = Field(default="HIGH", description="Niveau de réflexion pour le modèle PRO (LOW, MEDIUM, HIGH)")
+        # Les niveaux de réflexion sont des constantes ECHO (echo_constants.py v4.8) — plus de valves.
         KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
         MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
         COGNITIVE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour la délégation cognitive.")
@@ -146,12 +148,12 @@ class Tools:
         # Résolution du modèle via le Registre Souverain
         actual_model = MODEL_ROUTING.get(target_model, MODEL_PRO)
         
-        # Résolution du niveau de réflexion
-        thinking_level = self.valves.PRO_THINKING
+        # Résolution du niveau de réflexion via constantes ECHO
+        thinking_level = THINKING_LEVEL_PRO
         if target_model == "MODEL_FLASH":
-            thinking_level = self.valves.FLASH_THINKING
+            thinking_level = THINKING_LEVEL_FLASH
         elif target_model == "MODEL_LITE":
-            thinking_level = "LOW" # Lite ne supporte généralement pas de hauts niveaux de pensée
+            thinking_level = THINKING_LEVEL_LITE
 
         await events.status(f"🧠 Délégation Cognitive ({target_model}) pour {user_id}...")
         
@@ -286,7 +288,8 @@ class Tools:
     async def _iterative_loop(self, state, sub_sid, chat_id, role_id, system_instruction, initial_prompt, context_distillate, target_model, user_id, events) -> str:
         """Moteur itératif avec gestion des thoughtSignatures (Gemini 3.1)."""
         actual_model = MODEL_ROUTING.get(target_model, MODEL_PRO)
-        thinking_level = self.valves.PRO_THINKING if target_model == "MODEL_PRO" else self.valves.FLASH_THINKING
+        # Niveaux de réflexion via constantes ECHO (echo_constants.py v4.8)
+        thinking_level = THINKING_LEVEL_PRO if target_model == "MODEL_PRO" else THINKING_LEVEL_FLASH
         
         # Injection de la contrainte technique d'arrêt
         stop_tag = "<FINAL_ANSWER>"

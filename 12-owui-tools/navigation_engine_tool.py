@@ -193,7 +193,7 @@ class Tools:
                 out_msg = (
                     f"✅ Page web traitée et indexée sous le slug `{slug}` ({nb_points} vecteurs).\n\n"
                     f"### Résumé Sémantique\n{brief_summary}\n\n"
-                    f"> **Action requise :** Utilisez l'outil `query_distilled_data(slug=\"{slug}\", query=\"...\")` pour interroger la page en profondeur."
+                    f"> **Action requise :** Utilisez l'outil `search_session_context(slug=\"{slug}\", query=\"...\")` pour interroger la page en profondeur."
                 )
                 
                 # IMPORTANT: On ne retourne pas res_action dans status, car il contient 'content' (le HTML b64 complet)

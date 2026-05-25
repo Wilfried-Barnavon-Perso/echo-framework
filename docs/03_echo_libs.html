@@ -22,7 +22,7 @@
     <p>Le socle technique d'ECHO repose sur un triptyque de librairies situées dans <code>14-owui-libs/</code>. Ces modules assurent la cohérence, la résilience et l'interoperabilité de tout l'écosystème.</p>
 
     <section id="constants">
-      <h2>echo_constants.py : Constantes & Topologie (v2.7)</h2>
+      <h2>echo_constants.py : Constantes & Topologie (v3.0)</h2>
       <p>Le registre unique des vérités du système : IDs de modèles, chemins de répertoires, timeouts et limites de contextes.</p>
       <table>
         <thead>
@@ -31,7 +31,8 @@
         <tbody>
           <tr><td><code>ECHO_USERS_ROOT</code></td><td><code>/app/backend/data/users</code> (Stockage des BDD et Vaults)</td></tr>
           <tr><td><code>ECHO_UPLOADS_DIR</code></td><td><code>/app/backend/data/uploads</code> (Transit des fichiers OWUI)</td></tr>
-          <tr><td><code>ECHO_USER_AGENT</code></td><td><code>gemini-cli/0.42.0</code> (Identité réseau)</td></tr>
+          <tr><td><code>ECHO_USER_AGENT</code></td><td><code>antigravity/2.1.0</code> (Identité réseau — Language Server headless)</td></tr>
+          <tr><td><code>ECHO_CODE_ASSIST_USER_AGENT</code></td><td><code>antigravity/2.1.0 (language_server; os_type=Windows; ...)</code> (Code Assist)</td></tr>
         </tbody>
       </table>
 
@@ -40,12 +41,20 @@
     </section>
 
     <section id="auth-service">
-      <h2>echo_auth.py : Validation d'Identité</h2>
-      <p>Gestionnaire d'identité souveraine. Le <code>AuthService</code> gère l'enrôlement des clés API. Il valide en parallèle (<code>asyncio.gather</code>) les clés auprès de Google avant de les sceller dans <code>identity.db</code>.</p>
+      <h2>echo_auth.py : Validation d'Identité &amp; Quotas CA (v7.2)</h2>
+      <p>Gestionnaire d'identité souveraine. Le <code>AuthService</code> implémente le <strong>Device Authorization Grant (RFC 8628)</strong> pour l'authentification headless (Docker). En l'absence d'authentification configurée, ECHO lance automatiquement le flux au premier message : génération d'un <code>user_code</code> + URL de validation cliquable, puis polling jusqu'à autorisation. Les clés API AI Studio (<code>AIza…</code>) restent acceptées comme fallback. OAuth2 est toujours prioritaire.</p>
+
+      <h3>Nouvelles méthodes v7.x : Quotas Code Assist</h3>
+      <ul>
+        <li><strong><code>fetch_available_models()</code></strong> : Appel <code>:fetchAvailableModels</code> (Code Assist API). Parse le dict <code>models</code> et pour chaque modèle extrait le <code>quotaInfo</code> (<code>remainingFraction</code>, <code>resetTime</code>). Stocke l'ensemble dans <code>google_quota_by_model</code> (JSON dict, clé = CA model ID).</li>
+        <li><strong><code>fetch_user_quota()</code></strong> : Appel <code>:loadCodeAssist</code> mode HEALTH_CHECK. Extrait les crédits depuis <code>paidTier.availableCredits</code> → stocke <code>google_credits_total</code> et <code>google_g1_credits</code>.</li>
+        <li><strong><code>refresh_quota_if_needed()</code></strong> : Déclenche <code>fetch_available_models</code> de manière asynchrone non-bloquante si les données ont plus de 10 minutes (cooldown <code>google_quota_last_fetch</code>). Ne bloque jamais la génération.</li>
+        <li><strong><code>get_auth_data(key)</code> / <code>save_api_key(key, value)</code></strong> : Interface SQLite vers <code>identity.db</code> (clé-valeur, table <code>auth_data</code>).</li>
+      </ul>
     </section>
 
     <section id="utils-core">
-      <h2>echo_utils.py : Le Cœur Réactif (v3.8)</h2>
+      <h2>echo_utils.py : Le C&#x0153;ur Réactif (v7.12)</h2>
       
       <div class="tech-spec">
         <h4>⚙️ EchoStateManager : L'Architecture Bit-Perfect</h4>
@@ -68,7 +77,7 @@
             </ul>
           </li>
           <li><strong>Transparence Totale</strong> : Notification en temps réel via <code>events.status</code> lors des périodes de réessai (Retries) et des basculements de mesh, éliminant l'impression de gel de l'interface en mode Streaming.</li>
-          <li><strong>Support OAuth2</strong> : Rafraîchissement proactif et silencieux des jetons Bearer (cycle de 50 min) pour les comptes Google Cloud.</li>
+          <li><strong>Support OAuth2 (Device Flow)</strong> : Rafraîchissement proactif et silencieux des jetons Bearer (cycle de 55 min, certifié logs natifs IDE) via <code>oauthaccountmanager.googleapis.com/v1/issuetoken</code>. Client ID Language Server Antigravity (<code>884354919052</code>).</li>
         </ul>
       </div>
 
@@ -83,6 +92,17 @@
       <ul>
         <li><code>split_thought_process</code> : Isolation des balises <code>&lt;think&gt;</code> pour l'archivage CoT.</li>
         <li><code>wrap_tool_output</code> : Contrat de sortie multipart (Text, Thoughts, Media, New Files).</li>
+        <li><strong><code>EchoAuth.get_model_quota(ca_model_id)</code></strong> : Lit <code>google_quota_by_model</code> (JSON dict) depuis <code>identity.db</code> et retourne le dict <code>quotaInfo</code> spécifique au modèle CA demandé. Fallback : <code>{}</code> si modèle inconnu. Utilisé par <code>pipe_engine.py</code> pour alimenter le HUD quota.</li>
+      </ul>
+    </section>
+
+    <section id="protocol">
+      <h2>echo_protocol.py : Protocole Code Assist</h2>
+      <p>Module de construction des requêtes vers l'API Google Code Assist. Centralise la logique de sélection de modèle CA et la génération de la configuration de génération.</p>
+      <ul>
+        <li><strong><code>get_ca_model_id(target_model)</code></strong> : Résout le CA model ID correspondant au modèle ECHO logique (MODEL_PRO, MODEL_FLASH, MODEL_LITE) via <code>MODEL_MAP_CA</code>. Retourne le CA ID pour le quota HUD et la requête API.</li>
+        <li><strong><code>MODEL_MAP_CA</code></strong> : Dictionnaire de correspondance ECHO model → CA model ID → CA model alias. Défini dans <code>echo_constants.py</code>, utilisé par le protocole et le HUD.</li>
+        <li><strong><code>build_ca_generation_config()</code></strong> : Construit le dict <code>generationConfig</code> pour l'API CA. Intègre <code>maxOutputTokens</code> (plafonné à <code>MAX_TOKENS_DEFAULT</code>), <code>temperature</code>, <code>thinkingConfig</code> (budget, level) selon le modèle cible.</li>
       </ul>
     </section>
 
@@ -92,7 +112,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.158.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   <div class="transition-text"><em>Ces moteurs logiciels nécessitent des interfaces pour être supervisés et pilotés par l'utilisateur. <a href="04_hud_ui.html">Découvrir l'écosystème HUD & UI ➔</a></em></div>
   </main>

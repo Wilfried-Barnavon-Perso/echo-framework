@@ -179,7 +179,48 @@
             </ul>
         </section>
 
-        <!-- SECTION 2 : DATA LAYER -->
+        <!-- SECTION 2b : QDRANT COLLECTIONS -->
+        <section class="tech-section" id="qdrant">
+            <h2>2b. Collections Qdrant &amp; Constantes Mémoire</h2>
+            <p>Deux collections distinctes sont gérées dans Qdrant. Toutes deux utilisent des vecteurs 1024 dimensions (bge-m3), Distance Cosinus.</p>
+
+            <table class="db-schema-table">
+                <thead>
+                    <tr><th>Collection</th><th>Constante</th><th>Scope de partitionnement</th><th>Durée de vie</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>echo_memory</code></td>
+                        <td><code>COLLECTION_MEMORY</code></td>
+                        <td><code>user_id</code></td>
+                        <td>Permanent — TTL configurable par niveau (Admin Manager)</td>
+                    </tr>
+                    <tr>
+                        <td><code>echo_ephemeral</code></td>
+                        <td><code>COLLECTION_EPHEMERAL</code></td>
+                        <td><code>user_id + chat_id + slug</code></td>
+                        <td>Session courante — purgé automatiquement</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>MEMORY_IMPORTANCE_WEIGHTS</h3>
+            <p>Poids de reranking appliqués dans <code>search_memory</code> : <code>score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code></p>
+            <table class="db-schema-table">
+                <thead>
+                    <tr><th>Niveau</th><th>Label (<code>MEMORY_IMPORTANCE_LABELS</code>)</th><th>Poids</th><th>Comportement au rappel</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>1</td><td>Trivial</td><td>0.55</td><td>Pénalisé — bruit probable, écarté si cos faible</td></tr>
+                    <tr><td>2</td><td>Mineur</td><td>0.75</td><td>En dessous du seuil neutre</td></tr>
+                    <tr><td>3</td><td>Utile</td><td>1.00</td><td>Référence neutre [défaut si non spécifié]</td></tr>
+                    <tr><td>4</td><td>Majeur</td><td>1.30</td><td>Priorité haute, remonte avec cos modéré</td></tr>
+                    <tr><td>5</td><td>Axiome</td><td>1.70</td><td>Fortement boosté — remonte quasiment toujours</td></tr>
+                </tbody>
+            </table>
+            <p style="font-size:0.85em; color:#8b949e; margin-top:8px;">Exemple : Axiome cos=0.60 → score 1.02 &gt; Trivial cos=0.85 → score 0.47. Seuil de filtre final : <code>SCORE_THRESHOLD</code> (valve, défaut 0.45).</p>
+        </section>
+
         <section class="tech-section" id="data-layer">
             <h2>2. Spécifications du Data Layer (SQLite / WAL)</h2>
             <p>ECHO utilise une architecture de stockage distribuée, isolée par identifiant utilisateur (<code>UUID/ID</code>) et par session (<code>ChatID</code>).</p>
@@ -195,7 +236,21 @@
                         <tr>
                             <td><code>auth_data</code></td>
                             <td><code>key (TEXT PK), value (TEXT), updated_at (INT)</code></td>
-                            <td>Stockage chiffré des secrets API (Google Gemini).</td>
+                            <td>Clé-valeur persistante. Clés utilisées :
+                                <ul style="font-size:0.8em; margin:4px 0;">
+                                    <li><code>google_oauth2_access_token</code> : Token Bearer OAuth2</li>
+                                    <li><code>google_oauth2_last_refresh</code> : Timestamp dernier refresh</li>
+                                    <li><code>google_user_email</code> : Email du compte Google</li>
+                                    <li><code>google_project_id</code> : ID projet CA actif</li>
+                                    <li><code>google_credits_total</code> : Crédits AI disponibles</li>
+                                    <li><code>google_g1_credits</code> : Crédits G1 (paidTier)</li>
+                                    <li><code>google_quota_by_model</code> : JSON dict {ca_model_id: quotaInfo}</li>
+                                    <li><code>google_quota_fraction</code> : Fraction restante (modèle principal)</li>
+                                    <li><code>google_quota_reset</code> : Heure de reset (ISO)</li>
+                                    <li><code>google_quota_type</code> : Type quota (ex: CODE_ASSIST)</li>
+                                    <li><code>google_quota_last_fetch</code> : Timestamp dernier fetch quota</li>
+                                </ul>
+                            </td>
                         </tr>
                         <tr>
                             <td><code>user_profile</code></td>
@@ -301,7 +356,7 @@
         </section>
 
         <footer>
-            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     </main>
 <script src="nav.js"></script>

@@ -168,7 +168,7 @@
             <p>Les Artéfacts Environnementaux Contextuels (AEC) sont des balises XML certifiées fournissant au modèle sa perception du présent (Contexte Proprioceptif).</p>
             <ul>
                 <li><strong><code>&lt;environnement_contexte&gt;</code></strong> : Vecteur d'état global (YAML). Contient l'identité, le fuseau horaire et le <i>registre souverain des fichiers</i>.</li>
-                <li><strong><code>&lt;smart_context mode="rag_ephemeral"&gt;</code></strong> : Brief sémantique (&le; 300 mots) + <code>slug</code> Qdrant d'un fichier vectorisé dans le RAG éphémère (<code>echo_ephemeral</code>). Interrogez les détails précis via <code>query_distilled_data(slug, query)</code>.</li>
+                <li><strong><code>&lt;smart_context mode="rag_ephemeral"&gt;</code></strong> : Brief sémantique (&le; 300 mots) + <code>slug</code> Qdrant d'un fichier vectorisé dans le RAG éphémère (<code>echo_ephemeral</code>). Interrogez les détails précis via <code>search_session_context(slug, query)</code>.</li>
             </ul>
 
             <h2>Protocoles et Commandes</h2>
@@ -197,7 +197,7 @@
         </div>
 
         <footer>
-            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     <div class="transition-text"><em>Enfin, pour superviser techniquement cette architecture et gérer les accès, un module de contrôle de haut niveau est nécessaire. <a href="09_admin_manager.html">Terminer par l'Admin Manager ➔</a></em></div>
     </main>

@@ -1,8 +1,19 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 7.6
-description: 7.5: Refactorisation terminologique (auth_mesh→auth_providers, Citadelle→Identités d'accès aux Modèles, commentaire message_shadows). 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag (pipeline chunk→embed→upsert Qdrant factorisé).
+version: 7.12
+description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
+             Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
+             Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
+             7.8: Fix mismatch client OAuth2 dans refresh_google_oauth_token().
+             7.9: CODE_ASSIST_MODEL_MAP dans _prepare_request_context (CAS 1).
+             7.10: Strip thinkingConfig sur route Code Assist — thinking encodé dans le nom du
+             modèle. L'API l'accepte (diag 200) mais le champ est redondant.
+             7.11: Délégation → echo_protocol.py (get_ca_model_id, build_ca_generation_config).
+             MAX_TOKENS_DEFAULT 65536→65535 (universel AI Studio+CA). call_distillation
+             default max_tokens 65000→MAX_TOKENS_DEFAULT.
+             7.12: EchoAuth.get_model_quota() — lecture quota par modèle CA depuis identity.db.
+             Correction commentaire _prepare_request_context (thinkingConfig non strippé depuis v1.1).
 """
 
 import copy
@@ -27,15 +38,18 @@ import orjson as std_json
 # Importation directe (Strict)
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, ECHO_VERSION_PATH,
-    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_USERS_ROOT,
+    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_CODE_ASSIST_USER_AGENT, ECHO_USERS_ROOT,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
     ECHO_RETRY_BASE_DELAY, ECHO_RETRY_MULTIPLIER,
     ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX,
     AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_OAUTH2, AUTH_METHOD_KEY_SECONDARY,
-    DEFAULT_AUTH_PRIORITY, ECHO_OAUTH_CLIENT_ID, ECHO_OAUTH_CLIENT_SECRET,
+    ANTIGRAVITY_OAUTH_CLIENT_ID, ANTIGRAVITY_OAUTH_CLIENT_SECRET,   # client LS (884354919052)
+    ANTIGRAVITY_DESKTOP_CLIENT_ID, ANTIGRAVITY_DESKTOP_CLIENT_SECRET, # client Desktop (1071006060591)
     GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, CODE_ASSIST_BASE_URL,
-    GOOGLE_OAUTH_TOKEN_LIFETIME, AUTH_DATA_USER_TIER
+    GOOGLE_OAUTH_TOKEN_LIFETIME, AUTH_DATA_USER_TIER,
+    MAX_TOKENS_DEFAULT,  # Utilisé comme valeur par défaut de call_distillation.max_tokens
 )
+from echo_protocol import get_ca_model_id, build_ca_generation_config
 
 # ==============================================================================
 # SECTION 0 : CLIENT HTTP GLOBAL (HTTP/2)
@@ -212,6 +226,17 @@ class EchoAuth:
                 return row[0] if row else None
         except: return None
 
+    def get_model_quota(self, ca_model_id: str) -> dict:
+        """
+        Retourne {remainingFraction, resetTime} pour un modèle CA donné.
+        Source : google_quota_by_model (JSON) persisté par AuthService.fetch_available_models.
+        """
+        import json as _j
+        raw = self.get_auth_data("google_quota_by_model")
+        if not raw:
+            return {}
+        return _j.loads(raw).get(ca_model_id, {})
+
     async def get_ordered_auth_providers(self, user_id: str) -> List[Dict]:
         """Résout le registre des fournisseurs d'accès aux modèles par priorité (OAuth2 > Clé Primaire > Clé Secondaire)."""
         uid = user_id or self.user_id
@@ -241,10 +266,10 @@ class EchoAuth:
         """Rafraîchit silencieusement le jeton d'accès Google OAuth2."""
         client = await _get_global_client()
         payload = {
-            "client_id": ECHO_OAUTH_CLIENT_ID,
-            "client_secret": ECHO_OAUTH_CLIENT_SECRET,
+            "client_id":     ANTIGRAVITY_DESKTOP_CLIENT_ID,   # PKCE emis par le client Desktop
+            "client_secret": ANTIGRAVITY_DESKTOP_CLIENT_SECRET,
             "refresh_token": refresh_token,
-            "grant_type": "refresh_token"
+            "grant_type":    "refresh_token"
         }
         try:
             resp = await client.post(GOOGLE_OAUTH_TOKEN_URL, data=payload, timeout=20)
@@ -286,15 +311,15 @@ class EchoGeminiClient:
     async def _get_auth_headers(provider: Dict, is_code_assist: bool = False, is_generation: bool = False) -> Dict[str, str]:
         """Génère les en-têtes d'authentification selon le type de fournisseur (Agnostique)."""
         if is_code_assist:
-            # Simulation parfaite de l'extension VS Code (Cloud Code) v0.41.0
-            ua = "CloudCodeVSCode/0.41.0 (aidev_client; os_type=Windows; os_version=10.0.22631; arch=x64; host_path=VSCode/1.94.2; proxy_client=geminicli)"
+            # User-Agent Antigravity 2.1 (Language Server)
+            ua = ECHO_CODE_ASSIST_USER_AGENT
         else:
             ua = ECHO_USER_AGENT
 
         headers = {
-            "Content-Type": "application/json", 
-            "User-Agent": ua,
-            "x-goog-api-client": "aidev_client/geminicli"
+            "Content-Type":       "application/json",
+            "User-Agent":         ua,
+            "x-goog-api-client": "antigravity/2.1.0"
         }
         p_type = provider.get("type")
 
@@ -342,6 +367,9 @@ class EchoGeminiClient:
 
         # --- CAS 1 : PROTOCOLE CODE ASSIST (OAuth2) ---
         if is_code_assist:
+            # Traduction nom AI Studio → ID interne Code Assist (les namespaces sont distincts)
+            target_model = get_ca_model_id(target_model)
+
             project_id = provider.get("project_id")
             tier_id = provider.get("tier_id")
             g1_credits = provider.get("g1_credits")
@@ -353,7 +381,7 @@ class EchoGeminiClient:
             if method == "streamGenerateContent":
                 api_url += "?alt=sse"
 
-            prompt_id = "echo-session"
+            prompt_id = "agy-echo"
             try:
                 # Extraction intelligente du texte pour l'ID de prompt
                 if "contents" in payload:
@@ -363,7 +391,7 @@ class EchoGeminiClient:
                 else: first_msg = ""
 
                 if first_msg:
-                    prompt_id = f"echo-{hashlib.sha256(first_msg.encode()).hexdigest()[:16]}"
+                    prompt_id = f"agy-{hashlib.sha256(first_msg.encode()).hexdigest()[:16]}"
             except: pass
 
             # ENCAPSULATION DU PAYLOAD (Code Assist Strict)
@@ -375,11 +403,16 @@ class EchoGeminiClient:
             else:
                 # Harmonisation tool_config (owui) -> toolConfig (API)
                 t_conf = payload.get("toolConfig") or payload.get("tool_config")
-                
+
+                # Adaptation generationConfig → protocole Code Assist (echo_protocol.py).
+                # Depuis echo_protocol v1.1 : thinkingConfig passe à travers (CA l'accepte).
+                # Cap maxOutputTokens à MAX_TOKENS_DEFAULT (65535 — corrige le 400 prod Gemini 3.1).
+                gen_conf = build_ca_generation_config(payload.get("generationConfig", {}))
+
                 request_body = {
                     "contents": payload.get("contents", []),
                     "systemInstruction": payload.get("systemInstruction"),
-                    "generationConfig": payload.get("generationConfig", {}),
+                    "generationConfig": gen_conf,
                     "tools": payload.get("tools"),
                     "toolConfig": t_conf,
                     "session_id": chat_id
@@ -458,7 +491,7 @@ class EchoGeminiClient:
         __metadata__: dict, 
         is_json: bool = True,
         parts: Optional[List[Dict]] = None,
-        max_tokens: int = 65000,
+        max_tokens: int = MAX_TOKENS_DEFAULT,  # 65535. Surchargeable : ex. 8192 (RAG), 2048 (brief).
         target_model: Optional[str] = None
     ) -> Union[Dict, str]:
         """
@@ -894,7 +927,6 @@ class EchoStateManager:
                 conn.execute("CREATE TABLE IF NOT EXISTS context_stats (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS session_state (id INTEGER PRIMARY KEY, last_model_id TEXT, updated_at INTEGER NOT NULL)")
-                conn.execute("CREATE TABLE IF NOT EXISTS auth_pkce_context (user_id TEXT PRIMARY KEY, verifier TEXT NOT NULL, state TEXT NOT NULL, timestamp INTEGER NOT NULL)")
 
                 # Echos Skills & Cognitive Council (V9)
                 conn.execute("CREATE TABLE IF NOT EXISTS cognitive_threads (sub_sid TEXT, chat_id TEXT NOT NULL, role_id TEXT NOT NULL, step_index INTEGER, role TEXT NOT NULL, content_json TEXT NOT NULL, thought_signature TEXT, updated_at INTEGER, PRIMARY KEY (sub_sid, step_index))")

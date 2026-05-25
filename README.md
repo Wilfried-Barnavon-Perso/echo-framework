@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework v5.117.1
+# 🧠 ECHO Framework v5.153.0
 
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
@@ -58,11 +58,33 @@ Chaque outil interagit directement avec le **Vault** (coffre-fort) utilisateur :
 
 ---
 
+## 🚀 Installation Rapide
+
+### Linux Natif (Ubuntu / Debian)
+```bash
+curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-linux.sh | sudo bash
+```
+
+### WSL2 (Windows Subsystem for Linux 2)
+```bash
+curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-wsl2.sh | sudo bash
+```
+
+> **Option `--branch`** : ajoutez `-- --branch dev` après `sudo bash` pour cibler une branche spécifique.  
+> **Idémpotence** : les scripts sont relancables. Si ECHO est déjà installé, ils effectuent une mise à jour vers la branche cible.
+
+---
+
 ## 🔧 Déploiement & Infrastructure
 
 ECHO est conçu pour un déploiement autonome sur infrastructure souveraine.
 
-*   **Maître de Déploiement** : `deploy-hyperv.ps1` (Automatisation complète de VM Hyper-V avec injection Cloud-Init).
+| Méthode | Script | Usage recommandé |
+| :--- | :--- | :--- |
+| **Windows / Hyper-V** | `deploy-hyperv.ps1` | Production souveraine (VM dédiée) |
+| **Linux Natif** | `install-linux.sh` | Serveur Ubuntu/Debian dédié |
+| **WSL2** | `install-wsl2.sh` | Développement & test sous Windows |
+
 *   **Provisioning Docker** : `00-echo-scripts/install-stack.sh` orchestre la stack complète (Open WebUI, Qdrant, Redis, Workers).
 *   **Sécurisation Edge** : Intégration native de **BunkerWeb** (WAF) pour une exposition sécurisée avec SSL automatique.
 
@@ -78,4 +100,4 @@ Pour approfondir, consultez le corpus documentaire dans le dossier `/docs` :
 - **[L'Arsenal](docs/07_arsenal_outils.html)** : Catalogue complet des protocoles d'outils.
 
 ---
-*Version actuelle : v5.117.1 "Sovereign Intelligence" | Copyright © 2026 Wilfried BARNAVON*
+*Version actuelle : v5.153.0 "Sovereign Intelligence" | Copyright © 2026 Wilfried BARNAVON*

@@ -3,46 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 4. Écosystème HUD & UI (EchoUI)</title>
+    <title>ECHO v5 - 4. Écosystème HUD &amp; UI (EchoUI)</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
     <main>
-        <h1>4. L'Écosystème HUD & UI (EchoUI)</h1>
+        <h1>4. L'Écosystème HUD &amp; UI (EchoUI)</h1>
 
-        <div class="transition-text">Pour interagir avec la complexité des librairies sous-jacentes, ECHO propose des interfaces visuelles claires, regroupées sous l'appellation HUD.</div>
+        <div class="transition-text">Pour interagir avec la complexité des librairies sous-jacentes, ECHO propose des interfaces visuelles claires, regroupées sous l'appellation HUD et pilotées par <code>echo_ui.py</code>.</div>
 
         <div class="didactic-box">
             <h4>💡 Qu'est-ce que le HUD ?</h4>
-            <p>Le <strong>HUD (Heads-Up Display)</strong> n'est pas une nouvelle interface graphique, mais une <strong>surcouche d'affichage standardisée</strong> injectée dynamiquement par-dessus le DOM d'Open WebUI. Il permet d'afficher en temps réel des informations techniques (jauge de contexte, rejeu web, moniteur de performance) directement dans le flux de votre conversation, sans polluer le texte de l'IA.</p>
+            <p>Le <strong>HUD (Heads-Up Display)</strong> n'est pas une nouvelle interface graphique, mais une <strong>surcouche d'affichage standardisée</strong> injectée dynamiquement par-dessus le DOM d'Open WebUI. Il permet d'afficher en temps réel des informations techniques (jauge de contexte, quota d'API, rejeu web, moniteur de performance) directement dans le flux de conversation, sans polluer le texte de l'IA.</p>
         </div>
 
-        <p>L'interface utilisateur d'ECHO, baptisée <strong>EchoUI</strong>, n'est pas une simple surcouche CSS, mais un moteur d'injection dynamique asynchrone. Elle permet de briser le "bac à sable" visuel d'Open WebUI pour offrir une expérience HUD digne d'une station de travail de renseignement.</p>
+        <p>L'interface utilisateur d'ECHO, baptisée <strong>EchoUI</strong> (<code>14-owui-libs/echo_ui.py</code> v5.19), est un moteur d'injection dynamique asynchrone. Elle permet de briser le bac à sable visuel d'Open WebUI pour offrir une expérience HUD digne d'une station de travail de renseignement.</p>
 
         <h2>Architecture de Communication</h2>
         <p>Le système repose sur une symbiose entre le Backend (Python) et le Frontend (JavaScript) :</p>
         <ol>
-            <li><strong>Backend (<code>echo_ui.EchoUI</code>)</strong> : Génère des payloads JavaScript polymorphes encapsulant les données (Images Base64, métadonnées, états).</li>
+            <li><strong>Backend (<code>echo_ui.EchoUI</code>)</strong> : Génère des payloads JavaScript polymorphes encapsulant les données (images Base64, métriques, états).</li>
             <li><strong>Canal d'Événements (<code>EchoEvents</code>)</strong> : Utilise les ponts <code>emit</code> et <code>call</code> d'Open WebUI pour injecter le code dans le DOM global.</li>
             <li><strong>Runtime Frontend (Engine)</strong> : Un objet singleton éphémère (ex: <code>window.echoEngine_HUD_ID</code>) prend le relais pour gérer les interactions locales.</li>
         </ol>
-
-        <div class="tech-spec">
-            <h4>⚙️ Précision Mécanique : Fluidité d'Affichage</h4>
-            <p>L'utilisation des propriétés CSS <code>translate3d</code> et <code>will-change</code> dans les templates JS de <code>echo_utils.py</code> garantit une fluidité d'affichage constante de <strong>60 FPS</strong> lors des zooms matriciels (jusqu'à 15x), même sur les captures d'écran haute résolution ou des fichiers PDF complexes.</p>
-        </div>
 
         <h2>1. Le Monitor ECHO (Visualiseur Intelligent)</h2>
         <p>Invoqué via <code>EchoUI.monitor_ECHO</code>, ce composant est le pivot de l'analyse visuelle.</p>
 
         <div class="tech-spec">
-            <h4>🔎 Détail Technique : Moteur de Rendu & Performance</h4>
+            <h4>⚙️ Précision Mécanique : Fluidité d'Affichage</h4>
             <ul>
                 <li><strong>Accélération GPU</strong> : Utilisation de <code>translate3d(x,y,0)</code> pour forcer la création de calques de composition matérielle.</li>
                 <li><strong>Calcul de Ratio Dynamique</strong> : La fonction <code>getBestSize</code> ajuste automatiquement la fenêtre pour respecter les proportions de l'image (Aspect Ratio).</li>
-                <li><strong>Moteur Zoom & Pan Universel</strong> : Navigation haute fidélité via la matrice de transformation CSS (<code>transform: scale()</code>). <strong>Ctrl + Molette</strong> gère le zoom (jusqu'à 15x), <strong>Clic + Glisse</strong> gère le Pan.</li>
+                <li><strong>Moteur Zoom &amp; Pan Universel</strong> : Navigation haute fidélité via la matrice de transformation CSS (<code>transform: scale()</code>). <strong>Ctrl + Molette</strong> gère le zoom (jusqu'à 15x), <strong>Clic + Glisse</strong> gère le Pan.</li>
                 <li><strong>Crop-Box Interactif</strong> : Permet de définir une zone d'intérêt via une boîte de sélection redimensionnable.</li>
             </ul>
         </div>
@@ -51,24 +46,75 @@
         <p>Le HUD implémente une mémoire de session. Chaque manipulation est enregistrée sous la clé <code>STATE_KEY</code> définie par le backend : <code>{ "x": 120, "y": 45, "s": 1.5, "ix": 0, "iy": 0, "m": false }</code>.</p>
 
         <h2>2. La Context Gauge (Cortex Monitoring)</h2>
-        <p>Injectée dans la barre de navigation via <code>EchoUI.deploy_context_gauge</code>, cette jauge est l'outil de pilotage du "Context Caching" de Gemini.</p>
+        <p>Injectée dans la barre de navigation via <code>EchoUI.deploy_context_gauge()</code> (v5.19), cette jauge est l'outil central de pilotage de l'état cognitif et des quotas d'API. Elle est mise à jour à chaque tour de conversation par <code>pipe_engine.py</code>.</p>
 
-        <h3>Compréhension des Segments de Jauge</h3>
+        <h3>A. Barre de Contexte (Tokens)</h3>
+        <p>Une barre colorée à trois segments représente l'utilisation de la fenêtre contextuelle :</p>
         <ul>
-            <li><span style="color:#8b5cf6; font-weight:bold;">🟪 Cache (Purple)</span> : Tokens déjà ingérés et mis en cache par Google (économie de coût de 90%).</li>
-            <li><span style="color:#10b981; font-weight:bold;">🟩 User/Prompt (Green)</span> : La charge active du message actuel.</li>
-            <li><span style="color:#f59e0b; font-weight:bold;">🟧 Generated (Orange)</span> : Les tokens produits par ECHO.</li>
+            <li><span style="color:#8b5cf6; font-weight:bold;">🟪 Cache (Violet)</span> : Tokens déjà ingérés et mis en cache par Google (économie de coût de 90%). Proportion = <code>cache_pct</code>.</li>
+            <li><span style="color:#10b981; font-weight:bold;">🟩 User/Prompt (Vert)</span> : La charge active du message actuel. Proportion = <code>prompt_pct</code>.</li>
+            <li><span style="color:#f59e0b; font-weight:bold;">🟧 Génération (Orange)</span> : Les tokens produits par ECHO. Proportion = <code>gen_pct</code>.</li>
             <li><span style="color:rgba(255,255,255,0.2); font-weight:bold;">⬜ Vide</span> : Espace de mémoire de travail restant avant saturation.</li>
         </ul>
+        <p>Le tooltip de la barre affiche le détail en tokens absolus : Cache, Prompt actif, Génération, Total / Max.</p>
+
+        <h3>B. Icône Quota (Jauge Circulaire SVG)</h3>
+        <p>Une icône cadenas à gauche de la barre de contexte représente l'état du quota du modèle CA actuellement utilisé. La jauge circulaire SVG est calculée via <code>stroke-dashoffset</code> à partir de <code>quota_fraction</code> (0.0 → épuisé, 1.0 → plein). La couleur varie selon les seuils :</p>
+        <ul>
+            <li><span style="color:#10b981; font-weight:bold;">Vert</span> : quota_fraction &gt; 0.50</li>
+            <li><span style="color:#f59e0b; font-weight:bold;">Orange</span> : 0.20 &lt; quota_fraction ≤ 0.50</li>
+            <li><span style="color:#f85149; font-weight:bold;">Rouge</span> : quota_fraction ≤ 0.20</li>
+        </ul>
+
+        <h3>C. Tooltip AUTHENTIFICATION / QUOTAS</h3>
+        <p>Au survol de l'icône, un tooltip affiche deux sections :</p>
+
+        <div class="code-header">Section AUTHENTIFICATION</div>
+        <pre><code>🔐 Source  : méthode d'auth (OAUTH2, API_KEY, etc.)
+👤 Compte  : google_user_email (depuis identity.db)
+🏗️ Projet  : google_project_id (depuis identity.db)</code></pre>
+
+        <div class="code-header">Section QUOTAS (données fraîches via fetch_available_models)</div>
+        <pre><code>💳 Crédits      : google_credits_total (crédits AI disponibles sur le compte)
+🤖 Modèle CA    : ca_model_id du modèle actuellement utilisé (ex: gemini-3-flash-agent)
+📊 Quota        : quota_fraction × 100% — coloré selon seuils (vert/orange/rouge)
+📅 Req/jour     : requestsPerDayRemaining / requestsPerDayLimit (N/A si non fourni par API)
+⚡ Req/min      : requestsPerMinuteRemaining / requestsPerMinuteLimit (N/A si non fourni par API)
+🔄 Reset        : heure de reset du quota — formatée HH:MM (Xmin restantes)
+🏷️ Type         : google_quota_type (ex: CODE_ASSIST)</code></pre>
+
+        <div class="note-box">
+            <h4>Source des données quota</h4>
+            <p>Le quota est issu de <code>fetchAvailableModels</code> (endpoint CA), stocké dans <code>google_quota_by_model</code> (JSON dict). La méthode <code>EchoAuth.get_model_quota(ca_model_id)</code> extrait le <code>quotaInfo</code> spécifique au modèle utilisé. Les champs <code>requestsPerDay/Min</code> peuvent être absents selon les réponses API — dans ce cas, "N/A" est affiché. Le rafraîchissement est déclenché de manière asynchrone non-bloquante via <code>refresh_quota_if_needed()</code> avec un cooldown de 10 minutes.</p>
+        </div>
+
+        <h3>D. Signature Complète de deploy_context_gauge()</h3>
+        <p>La fonction principale du HUD accepte les paramètres suivants (tous avec valeurs par défaut) :</p>
+
+        <div class="code-header">Signature deploy_context_gauge — echo_ui.py v5.19</div>
+        <pre><code>deploy_context_gauge(
+    events,                        # EchoEvents — canal d'injection JS
+    plan_name, credits_val, quota_str,  # Identité et quotas globaux
+    c_t, active_p_t, g_t, max_t,       # Tokens absolus (cache, prompt, gen, max)
+    cache_pct, prompt_pct, gen_pct,     # Pourcentages pour la barre (0-100)
+    user_email, user_tier, project_id,  # Identité utilisateur
+    auth_sources,                       # Liste des méthodes d'auth actives
+    quota_amount,      # Montant quota (N/A si non disponible — héritage)
+    quota_fraction,    # Fraction restante du quota modèle (0.0-1.0)
+    quota_reset,       # Heure de reset (HH:MM ou HH:MM (Xmin))
+    quota_type,        # Type de quota (ex: CODE_ASSIST)
+    quota_model,       # CA model ID utilisé pour ce quota
+    quota_rpd_rem,     # Requests per day remaining (ou "N/A")
+    quota_rpd_lim,     # Requests per day limit (ou "N/A")
+    quota_rpm_rem,     # Requests per minute remaining (ou "N/A")
+    quota_rpm_lim      # Requests per minute limit (ou "N/A")
+)</code></pre>
 
         <footer>
-            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.158.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     <div class="transition-text"><em>Mais avant qu'interaction utilisateur n'atteigne le cœur du traitement logique, elle doit franchir un premier rempart cognitif. <a href="05_filtre.html">Passer au Filtre (Conscience) ➔</a></em></div>
     </main>
 <script src="nav.js"></script>
 </body>
 </html>
-
-
-

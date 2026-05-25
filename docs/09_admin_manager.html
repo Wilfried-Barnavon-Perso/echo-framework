@@ -50,11 +50,12 @@
         </section>
 
         <section id="lifecycle">
-            <h3>2. Cycle de Vie & Oubli Organique</h3>
+            <h3>2. Cycle de Vie &amp; Oubli Organique</h3>
             <p>L'Admin Manager centralise la logique d'<strong>Atrophie Sémantique</strong> pour alléger le traitement en temps réel des filtres :</p>
             <ul>
                 <li><strong>Sync Qdrant</strong> : Élimination automatique des points vectoriels orphelins (liés à des utilisateurs ou chats supprimés dans OWUI).</li>
-                <li><strong>Purge Temporelle des Souvenirs</strong> : Application des durées de rétention (30 à 540 jours) selon l'importance du souvenir. Les souvenirs périmés sont définitivement purgés de la base vectorielle.</li>
+                <li><strong>Purge Temporelle — RAG Organique (<code>echo_memory</code>)</strong> : Application des durées de rétention (30 à 540 jours) selon l'importance du souvenir (<code>MEMORY_IMPORTANCE_LABELS</code>). Un Axiome (lvl 5) peut être conservé 540 jours, un Trivial (lvl 1) seulement 30 jours. Les souvenirs périmés sont définitivement purgés de la collection <code>echo_memory</code> dans Qdrant.</li>
+                <li><strong>Purge Post-Session — RAG Éphémère (<code>echo_ephemeral</code>)</strong> : Suppression de tous les vecteurs appartenant à un <code>chat_id</code> terminé. Cette purge garantit que les données intermédiaires (analyses web, distillations de fichiers) ne s'accumulent pas indéfiniment.</li>
                 <li><strong>Vacuum SQLite</strong> : Optimisation physique régulière des bases de données de session (commande <code>VACUUM</code>) pour maintenir les performances d'accès.</li>
             </ul>
         </section>
@@ -84,7 +85,7 @@
         </div>
 
         <footer>
-            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
         <div class="transition-text"><em>Vous avez parcouru l'architecture complète d'ECHO. Pour des détails plus spécifiques ou du code, <a href="10_annexes.html">consultez les Annexes Techniques ➔</a></em></div>
     </main>

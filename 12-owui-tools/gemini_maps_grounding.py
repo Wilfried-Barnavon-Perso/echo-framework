@@ -1,8 +1,9 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 12.14
+version: 12.15
 description: 12.14: Correction de syntaxe (IndentationError).
+             12.15: THINKING_LEVEL_TOOLS centralise la valeur MINIMAL (echo_constants v4.8).
 """
 
 import orjson as json
@@ -18,7 +19,7 @@ from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_ui import EchoUI
 from echo_constants import (
     MODEL_LITE, MODEL_ROUTING, ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    TEMP_DEFAULT, TOP_P_DEFAULT
+    TEMP_DEFAULT, TOP_P_DEFAULT, THINKING_LEVEL_TOOLS
 )
 
 
@@ -54,7 +55,7 @@ class Tools:
         payload = {
             "contents": [{"role": "user", "parts": [{"text": query}]}],
             "tools": [{"googleMaps": {"enableWidget": True}}],
-            "generationConfig": {"thinkingConfig": {"thinkingLevel": "MINIMAL"}}
+            "generationConfig": {"thinkingConfig": {"thinkingLevel": THINKING_LEVEL_TOOLS}}
         }
         
         if latitude is not None and longitude is not None:

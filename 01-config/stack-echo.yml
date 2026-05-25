@@ -1,9 +1,14 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 8.7
+# Version : 8.9
 # ==============================================================================
-# CHANGELOG 8.7 : Migration embedding worker SigLIP-2 → bge-m3 (1024d, text-first).
-# Ce fichier ne gère QUE la couche applicative "ECHO".
+# CHANGELOG 8.9 : Tunnel SSH ephemere PKCE (asyncssh).
+#                 Ports SSH 8020-8024 exposes par Docker (connexion client SSH).
+#                 Ports callback 8025-8034 internes uniquement (via tunnel SSH).
+#                 Remplacement port 8765 fixe. Multi-user natif (5 sessions max).
+# CHANGELOG 8.8 : Migration auth PKCE - Port 8765 expose sur open-webui.
+# CHANGELOG 8.7 : Migration embedding worker SigLIP-2 -> bge-m3 (1024d, text-first).
+# Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
 
 services:
@@ -17,6 +22,8 @@ services:
       - echo-network
     ports:
       - "3000:8080"
+      - "8020-8024:8020-8024"  # SSH tunnel ephemere PKCE - ports SSH uniquement (5 sessions max)
+      # Ports callback 8025-8034 : internes uniquement - accessibles via tunnel SSH, JAMAIS exposes
     environment:
       - WEBUI_AUTH=True
       - WEBUI_NAME="ECHO AI"

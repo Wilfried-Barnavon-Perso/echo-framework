@@ -1,8 +1,15 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 1.5
+version: 2.1
 description: 1.2: Ajout forget_memory. 1.3: RAG éphémère. 1.4: Mise à jour version. 1.5: Reranking par importance (MEMORY_IMPORTANCE_WEIGHTS) dans recall_memories.
+             1.6: Docstrings proactifs memorize_that + recall_memories. Fix double-docstring (bug Python L82-83).
+             1.7: Docstring proactif query_distilled_data + distinction claire RAG organique vs éphémère.
+             1.8: Renommage sémantique : memorize_that→save_memory, recall_memories→search_memory,
+             query_distilled_data→search_session_context.
+             1.9: Ajout save_session_context (outil d'écriture RAG éphémère, symétrique de search_session_context).
+             2.0: Réécriture complète des 6 docstrings — format orienté-modèle (résumé/Quand/Paramètres).
+             2.1: Mention Vallée de la Mort dans les 4 docstrings pertinents.
 """
 
 from typing import Optional, List, Any, Dict
@@ -71,7 +78,7 @@ class Tools:
     # ÉCRITURE : Mémoriser un fait explicitement
     # ==========================================================================
 
-    async def memorize_that(
+    async def save_memory(
         self,
         fact: str,
         importance: int = 1,
@@ -79,8 +86,28 @@ class Tools:
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
-        """Enregistre un fait explicite dans la base vectorielle des souvenirs via Distillation Contextuelle et Embedding factorisés."""
-        """Enregistre un fait explicitement dans la base vectorielle des souvenirs."""
+        """
+        Sauvegarde définitivement un fait en mémoire long terme — accessible dans toutes les sessions futures.
+
+        **Quand l'utiliser :**
+        - Préférences utilisateur ("préfère Python 3.12", "utilise dark mode")
+        - Décisions prises ("on a choisi PostgreSQL pour ce projet")
+        - Contraintes techniques découvertes (OS, versions, architecture, limites)
+        - Identifiants critiques (noms de projets, IDs, URLs importantes)
+        - Règles ou conventions établies par l'utilisateur
+
+        **Ne pas utiliser** si l'info n'a de sens que pour cette session → utiliser save_session_context.
+
+        **Vallée de la Mort :** Sauvegarder les faits importants proactivement dès qu'ils sont
+        identifiés, avant que la saturation contextuelle ne les rende difficiles à retrouver.
+
+        **Paramètre `importance`** (1→5) :
+        - 1 Trivial     : Préférences légères, anecdotes
+        - 2 Ordinaire   : Infos utiles mais non critiques
+        - 3 Significatif : Décisions, faits importants [défaut]
+        - 4 Clé         : Contraintes majeures, ressources critiques
+        - 5 Axiome      : Règles absolues, vérités fondamentales
+        """
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"})
@@ -127,7 +154,7 @@ class Tools:
     # LECTURE : Recherche sémantique
     # ==========================================================================
 
-    async def recall_memories(
+    async def search_memory(
         self,
         query: str,
         limit: int = 5,
@@ -136,12 +163,22 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
-        """Recherche sémantique dans la base vectorielle des souvenirs de l'utilisateur.
-        
-        Implémente un reranking par importance : score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl].
-        Un Axiome (lvl5, poids 1.70) remonte systématiquement même avec un score cosinus moyen.
-        Over-fetch ×3 pour donner au reranking suffisamment de candidats.
         """
+        Recherche dans la mémoire long terme — retrouve des faits mémorisés lors de sessions précédentes.
+
+        **Quand l'utiliser :**
+        - Avant de répondre à une question sur des préférences, habitudes ou décisions passées
+        - Quand l'utilisateur évoque quelque chose qui a pu être mentionné avant
+        - Pour vérifier si un fait a déjà été mémorisé avant de le sauvegarder à nouveau
+        - Toute question impliquant un historique au-delà de la session courante
+
+        **Vallée de la Mort :** À forte charge contextuelle, les informations des sessions
+        précédentes sont totalement absentes du contexte — ce RAG est le seul moyen de les récupérer.
+
+        Les souvenirs d'importance élevée (Clé, Axiome) remontent même avec une faible similarité.
+        Préférer des requêtes courtes et précises ("préférences Python", "décision architecture").
+        """
+
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"})
@@ -223,7 +260,14 @@ class Tools:
         __user__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
-        """Récupère l'index des sujets stockés dans la base vectorielle des souvenirs."""
+        """
+        Liste tous les sujets mémorisés en mémoire long terme (slugs, tags, niveau d'importance).
+
+        **Quand l'utiliser :**
+        - Avant un forget_memory, pour trouver le slug exact à supprimer
+        - Pour répondre à "qu'est-ce que tu sais sur moi ?" ou "qu'as-tu mémorisé ?"
+        - Pour vérifier si un sujet a déjà été indexé avant d'utiliser search_memory
+        """
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id"):
             return wrap_tool_output(text="❌ Erreur : Utilisateur non identifié.", status={"status": "error"})
@@ -269,10 +313,11 @@ class Tools:
         __event_emitter__: Optional[Any] = None
     ) -> dict:
         """
-        Supprime un souvenir spécifique de la base vectorielle via son identifiant court (slug).
-        RÈGLE CRITIQUE : Si vous ne connaissez pas le slug exact de l'information à supprimer,
-        vous DEVEZ d'abord utiliser l'outil 'recall_memories' avec une requête sémantique 
-        (ex: "j'aime les chats gris") pour retrouver le bon slug avant d'appeler cet outil.
+        Supprime définitivement un souvenir de la mémoire long terme.
+
+        **ATTENTION :** Irréversible. Ne supprime que la mémoire long terme (pas le RAG éphémère).
+        **Règle :** Le slug exact est requis.
+        Si inconnu → utiliser d'abord list_memory_topics ou search_memory pour le retrouver.
         """
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id"):
@@ -302,10 +347,70 @@ class Tools:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
 
     # ==========================================================================
-    # RAG ÉPHÉMÈRE : Requête documentaire sur la session
+    # RAG ÉPHÉMÈRE : Écriture + Lecture documentaire sur la session
     # ==========================================================================
 
-    async def query_distilled_data(
+    async def save_session_context(
+        self,
+        text: str,
+        slug: str,
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __event_emitter__: Optional[Any] = None
+    ) -> dict:
+        """
+        Indexe du texte dans le RAG éphémère — mémoire de travail valable uniquement pour cette session.
+
+        **Quand l'utiliser :**
+        - Conclusion d'une analyse longue à retrouver plus tard dans la session
+        - Résultats intermédiaires d'un calcul ou d'une recherche
+        - Contenu extrait d'un document utilisé plusieurs fois dans la session
+        - Toute information utile maintenant mais sans intérêt après la session
+
+        **Différence clé :**
+        - save_memory          → permanent, accessible dans toutes les sessions futures
+        - save_session_context → temporaire, session courante seulement
+
+        **Vallée de la Mort :** Dès que le contexte dépasse ~30% de saturation, indexer
+        proactivement les résultats intermédiaires importants pour ne pas les perdre.
+
+        Après indexation, retrouver via search_session_context(slug=..., query=...).
+        Paramètre `slug` : identifiant court unique (ex: "analyse-pr42", "résultat-tva").
+        Paramètre `text` : texte à indexer (découpé automatiquement en chunks sémantiques).
+        """
+        events = EchoEvents(__event_emitter__)
+        if not __user__ or not __user__.get("id") or not __metadata__:
+            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"})
+
+        user_id = __user__.get("id")
+        chat_id = __metadata__.get("chat_id")
+        await events.status(f"🧠 Indexation dans le RAG éphémère ({slug})...", done=False)
+
+        try:
+            nb_points, err = await EchoGeminiClient.index_text_in_ephemeral_rag(
+                distillate=text,
+                slug=slug,
+                uid=user_id,
+                chat_id=chat_id,
+                __user__=__user__,
+                __metadata__=__metadata__,
+                qdrant_base=self.valves.QDRANT_URL,
+            )
+            if nb_points == 0:
+                return wrap_tool_output(
+                    text=f"❌ Échec indexation RAG éphémère ({slug}) : {err}",
+                    status={"status": "error"}
+                )
+            await events.status("🧠 Indexation terminée.", done=True)
+            return wrap_tool_output(
+                text=f"✅ `{slug}` indexé dans le RAG éphémère ({nb_points} vecteurs). "
+                     f"Utilisez search_session_context(slug=\"{slug}\", ...) pour l'interroger.",
+                status={"status": "success", "slug": slug, "vectors": nb_points}
+            )
+        except Exception as e:
+            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
+
+    async def search_session_context(
         self,
         slug: str,
         query: str,
@@ -314,8 +419,20 @@ class Tools:
         __event_emitter__: Optional[Any] = None
     ) -> dict:
         """
-        Recherche sémantique dans la mémoire éphémère de la session courante (ex: page web distillée).
-        Ne trouve que les extraits liés au slug demandé pour le chat actuel.
+        Recherche dans le RAG éphémère — retrouve du contenu indexé plus tôt dans la session courante.
+
+        **Quand l'utiliser :**
+        - Après navigation web : le contenu de la page est indexé (slug = domaine ou nom court)
+        - Après analyse de fichier : le contenu est indexé (slug = nom du fichier)
+        - Après save_session_context : retrouver ce qui a été mis en mémoire de travail
+        - Quand le contenu source est sorti de la fenêtre de contexte visible
+
+        **Vallée de la Mort :** À forte charge contextuelle (>30%), préférer ce RAG plutôt
+        que de tenter de relire loin dans l'historique — la précision sémantique est bien supérieure.
+
+        Le contenu disparaît à la fin de la session (contrairement à search_memory).
+        Paramètre `slug` : identifiant du contenu (affiché lors de l'indexation).
+        Paramètre `query` : question sémantique posée sur ce contenu.
         """
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id") or not __metadata__:

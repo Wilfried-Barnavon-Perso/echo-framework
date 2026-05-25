@@ -84,12 +84,12 @@
             
             <div class="info-block">
                 <h4>🔑 Pourquoi est-ce important ?</h4>
-                <p>Si votre clé API Google est expirée ou si vous voulez changer de compte, vous n'avez pas besoin de fouiller dans les fichiers de configuration. Vous "nettoyez" votre accès ici, et ECHO vous redemandera proprement vos nouveaux accès au prochain besoin.</p>
+                <p>Si vous souhaitez changer de compte Google ou relancer le flux d'authentification, vous n'avez pas besoin d'intervenir sur les fichiers de configuration. L'action efface les données d'accès dans <code>identity.db</code>, et ECHO déclenche automatiquement un nouveau <strong>Device Flow</strong> (RFC 8628) au prochain message : nouveau <code>user_code</code> + lien de validation.</p>
             </div>
 
             <div class="tech-spec">
-                <h4>⚙️ Sous le capot (Le point sur le code)</h4>
-                <p>L'action cible exclusivement la base <code>identity.db</code> située dans l'enclave utilisateur de l'Espace Personnel. Elle exécute un <code>DELETE FROM auth_data WHERE key LIKE 'google_%'</code>. C'est propre, local et sécurisé.</p>
+                <h4>⚙️ Sous le capot — reset_auth_action.py (v4.3)</h4>
+                <p>L'action cible exclusivement la base <code>identity.db</code> située dans l'enclave utilisateur de l'Espace Personnel. Elle exécute un <code>DELETE FROM auth_data WHERE key LIKE 'google_%'</code>. La table <code>auth_pkce_context</code> (héritage Gemini-CLI / PKCE) a été supprimée dans la migration Antigravity 2.1 — le Device Flow (RFC 8628) ne nécessite pas de PKCE. C'est propre, local et sécurisé.</p>
             </div>
         </section>
 
@@ -128,7 +128,7 @@
         </div>
 
         <footer>
-            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.158.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
         <div class="transition-text"><em>Maintenant que nous connaissons tous les outils, voyons comment l'IA est programmée pour s'en servir et se comporter. <a href="08_system_prompt.html">Passer au cœur des directives : le Kernel (System Prompt) ➔</a></em></div>
     </main>

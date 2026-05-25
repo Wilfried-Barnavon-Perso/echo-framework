@@ -1,4 +1,4 @@
-﻿# --- Fichiers Système Windows ---
+# --- Fichiers Système Windows ---
 [Dd]esktop.ini
 Thumbs.db
 $RECYCLE.BIN/
@@ -41,7 +41,6 @@ venv/
 # Vérifiez si "i_internal_project.txt" n'est pas une typo de "gemini_internal_project.txt"
 i_internal_project.txtt
 
-# Audit technique (Externe)
+# Audit technique & Reverse Engineering (jamais synchronisé)
+# Contient des données sensibles (clés, secrets, plans d'implémentation).
 .tmp_audit/
-.tmp_audit/open-webui2
-.tmp_audit/open-webui

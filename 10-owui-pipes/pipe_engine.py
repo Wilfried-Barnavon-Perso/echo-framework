@@ -1,8 +1,19 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 190.8
-description: 190.7: Fix import ast (unboxing) et résidu syntaxique HUD. 190.8: Migration type 'summarized' → 'rag_ephemeral' dans le scellement du registre de fichiers.
+version: 192.1
+requirements: asyncssh
+description: 190.8: Migration type 'summarized' -> 'rag_ephemeral'.
+             191.0: Remplacement Device Flow par PKCE + Authorization Code.
+             191.1: Fix regression auth - callback PKCE background task.
+             192.0: Tunnel SSH ephemere asyncssh pour callback OAuth2 PKCE.
+             Ports dynamiques multi-user. __request__ injecte pour detection IP.
+             192.1: Centralisation des paramètres de génération — suppression valves
+             TEMPERATURE/TOP_P/THINKING_LEVEL. Remplacement par constantes echo_constants.
+             192.2: import get_ca_model_id, HUD quota par modèle CA courant, crédits réels, reset en minutes.
+             192.3: HUD : RPD, RPM et modèle CA ajoutés au tooltip quota. Extraction RPD, RPM et modèle CA depuis model_quota, passage à deploy_context_gauge.
+             192.4: Docstring new_cognitive_level : FLASH = moteur agentique, PRO = dernier recours.
+             Valence de la Mort atténuée par RAG éphémère (memorize_that).
 """
 
 # ==============================================================================
@@ -28,12 +39,14 @@ from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Un
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient, _get_global_client
+from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient, _get_global_client, get_ca_model_id
 from echo_ui import EchoUI
 from echo_constants import (
     MODEL_PRO, MODEL_FLASH, MODEL_LITE, MODEL_ROUTING, MODEL_IDENTITY,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, ECHO_RETRY_BASE_DELAY,
-    TEMP_DEFAULT, TOP_P_DEFAULT
+    TEMP_DEFAULT, TOP_P_DEFAULT,
+    THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
+    MAX_TOKENS_DEFAULT
 )
 from echo_auth import AuthService
 
@@ -248,8 +261,9 @@ class Orchestrator:
         while i < len(messages):
             m = messages[i]; role = m.get("role"); content = m.get("content", "")
             msg_id = m.get("id"); updated_at = m.get("updated_at")
-            
-            if role == "system" or any(x in str(content) for x in ["ECHO_SESSION_AUTH_PENDING", "Authentification ECHO"]) or str(content).startswith("4/"): 
+            # Exclusion des messages système et des tours d'authentification (ne pas injecter dans le contexte Gemini)
+            auth_markers = ["ECHO_SESSION_AUTH_PENDING", "Authentification ECHO", "Authentification requise", "Antigravity 2.1", "PKCE"]
+            if role == "system" or any(x in str(content) for x in auth_markers):
                 i += 1; continue
 
             # --- PRIORITÉ 1 : SHADOW BIT-PERFECT (ID + TIMESTAMP) ---
@@ -428,15 +442,13 @@ class Pipe:
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
         MODEL_SELECTION: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO", "AUTO", "AUTO_PRO"] = Field(default="AUTO")
-        PRO_THINKING_LEVEL: Literal["LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
-        FLASH_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
-        LITE_THINKING_LEVEL: Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"] = Field(default="HIGH")
-        TEMPERATURE: float = Field(default=1.0); MAX_TOKENS: int = Field(default=65536)
+        # Thinking, temperature, topP et max_tokens sont des constantes ECHO (echo_constants.py v4.8).
+        # Plus de valves pour ces paramètres.
         MAX_CASCADE_ATTEMPTS: int = Field(default=5, ge=3, le=10, description="Nombre max de transferts de modèles autorisés par tour.")
 
     def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
 
-    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
+    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         events = EchoEvents(__event_emitter__)
         if not __user__: yield "❌ Identité manquante."; return
         user_valves = __user__.get("valves") or self.UserValves()
@@ -467,9 +479,49 @@ class Pipe:
                 yield f"❌ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
                 return
 
-        # --- [RESTAURÉ] VÉRIFICATION DE PRÉSENCE & IDENTITÉS D'ACCÈS ---
+        # --- AUTHENTIFICATION PKCE (Authorization Code + PKCE RFC 7636) ---
+        # Tunnel SSH ephemere asyncssh - ports dynamiques - multi-user natif.
         if not auth_providers:
-            yield auth.get_auth_prompt()
+            from echo_utils import EchoAuth as _EchoAuth
+            _ea = _EchoAuth(user_id=__user__["id"])
+            pkce_pending = _ea.get_auth_data("pkce_status") == "pending"
+
+            try:
+                if pkce_pending:
+                    # Flow deja en cours - reafficher les instructions
+                    stored_url = _ea.get_auth_data("pkce_auth_url") or ""
+                    yield (
+                        f"\U0001f510 **Authentification en attente**\n\n"
+                        f"Le lien est toujours valide.\n\n"
+                        f"[\U0001f517 **Autoriser ECHO avec Google**]({stored_url})\n\n"
+                        f"---\n"
+                        f"*Ou collez directement une cl\u00e9 `AIza\u2026` pour utiliser AI Studio.*"
+                    )
+                    return
+
+                await events.status("\U0001f510 Lancement authentification PKCE...")
+                ok, auth_url, server_ip, ssh_port, cb_port, temp_pwd = \
+                    await auth.initiate_pkce_flow(request=__request__)
+                if not ok:
+                    yield f"\u274c Impossible de lancer le flow PKCE.\n\n" + auth.get_auth_prompt()
+                    return
+
+                # Persister l'URL pour les messages suivants
+                _ea.save_api_key("pkce_auth_url", auth_url)
+
+                # Lancer le serveur callback en background (non bloquant)
+                asyncio.create_task(auth.await_pkce_callback())
+
+                yield auth.get_auth_prompt(
+                    auth_url  = auth_url,
+                    server_ip = server_ip,
+                    ssh_port  = ssh_port,
+                    cb_port   = cb_port,
+                    temp_pwd  = temp_pwd,
+                )
+
+            except Exception as e:
+                yield f"\u274c Erreur PKCE : {str(e)}\n\n" + auth.get_auth_prompt()
             return
 
         # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
@@ -520,23 +572,24 @@ class Pipe:
             resolved_sys = orch._resolve_placeholders(sys_instr_raw, target_model)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
-            # Sélection du niveau de réflexion selon le modèle (Standard Gemini 3.x)
+            # Sélection du niveau de réflexion par constante ECHO (echo_constants.py v4.8)
             if target_model == MODEL_PRO:
-                think = user_valves.PRO_THINKING_LEVEL
+                think = THINKING_LEVEL_PRO
             elif target_model == MODEL_LITE:
-                think = user_valves.LITE_THINKING_LEVEL
+                think = THINKING_LEVEL_LITE
             else:
-                think = user_valves.FLASH_THINKING_LEVEL
+                think = THINKING_LEVEL_FLASH
 
             payload = {
                 "contents": context,
                 "systemInstruction": sys_instr,
                 "generationConfig": {
-                    "temperature": user_valves.TEMPERATURE,
-                    "maxOutputTokens": user_valves.MAX_TOKENS,
+                    "temperature": TEMP_DEFAULT,
+                    "topP": TOP_P_DEFAULT,
+                    "maxOutputTokens": MAX_TOKENS_DEFAULT,
                     "thinkingConfig": {
                         "includeThoughts": True,
-                        "thinkingLevel": think.upper()
+                        "thinkingLevel": think
                     }
                 }
             }
@@ -560,17 +613,22 @@ class Pipe:
                     escalation_tool = {
                         "name": "new_cognitive_level",
                         "description": (
-                            "Ajuste la puissance de calcul d'ECHO selon la nature de la tâche et la charge contextuelle.\n\n"
-                            "1. Lois de Sélection du Modèle :\n"
-                            "- MODEL_LITE (Réflexe) : Salutations, remerciements, extractions simples, traduction courte, questions de culture générale basiques.\n"
-                            "- MODEL_FLASH (Exécution) : Recherche web, écriture de scripts/fonctions isolés, analyse sémantique de fichiers unitaires, synthèse de documents, exécution d'outils simples.\n"
-                            "- MODEL_PRO (Expertise) : Architectures, orchestration de tâche, exécution d'outils complexes, refactoring multi-fichiers, logique mathématique complexe, philosophie profonde.\n\n"
-                            "2. Loi de Corrélation Contextuelle (Vallée de la Mort) :\n"
-                            "Plus le contexte (tokens) est chargé, plus le niveau cognitif doit être élevé, indépendamment de la simplicité apparente de la tâche.\n"
-                            "- [0-25%] (SAFE) : Le modèle actuel traite la tâche si elle correspond à sa catégorie.\n"
-                            "- [25-50%] (WARNING) : Si vous êtes en MODEL_LITE/MODEL_FLASH, privilégiez une montée d'un cran pour éviter la dérive sémantique.\n"
-                            "- [> 50%] (CRITICAL) : Délégation impérative au plus haut niveau (MODEL_PRO/MODEL_FLASH) pour tout traitement exigeant la lecture de l'historique lointain.\n\n"
-                            "Usage : Utilisez context_gauge pour situer votre position dans la Vallée de la Mort avant de décider."
+                            "Ajuste la puissance de calcul d'ECHO selon la nature de la tâche.\n\n"
+                            "## Règles de sélection\n"
+                            "- **MODEL_LITE** (Réflexe — défaut) : Salutations, remerciements, extractions simples, "
+                            "traduction courte, questions factuelles basiques.\n"
+                            "- **MODEL_FLASH** (Exécution — moteur agentique) : Toute tâche non-triviale. "
+                            "Recherche web, écriture de code, analyse sémantique, synthèse de documents, "
+                            "orchestration d'outils, réponses structurées, raisonnement multi-étapes ordinaire.\n"
+                            "  \u2192 Préférer FLASH dès que la tâche dépasse le simple réflexe.\n"
+                            "- **MODEL_PRO** (Expertise — dernier recours) : Uniquement si FLASH est "
+                            "manifestement insuffisant. Architectures systèmes complexes, refactoring multi-fichiers "
+                            "avec contraintes imbriquées, logique mathématique formelle, raisonnement philosophique profond.\n"
+                            "  \u2192 Ne pas escalader vers PRO par défaut ou par précaution. Justifier explicitement l'insuffisance de FLASH.\n\n"
+                            "## Corrélation contextuelle\n"
+                            "La saturation contextuelle est atténuée par le RAG éphémère (memorize_that stocke "
+                            "les éléments critiques en mémoire rapide). Vigilance utile à haute charge (> 50%) "
+                            "pour les tâches à lecture profonde de l'historique — préférer alors FLASH ou PRO."
                         ),
                         "parameters": {
                             "type": "object",
@@ -803,17 +861,39 @@ class Pipe:
             tier = echo_auth.get_auth_data(AUTH_DATA_USER_TIER)
             proj = echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
             
-            # Données de Quota (Info API)
-            q_amount = echo_auth.get_auth_data("google_quota_amount") or "N/A"
-            q_fraction = float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)
-            q_reset_raw = echo_auth.get_auth_data("google_quota_reset") or "N/A"
-            q_type = echo_auth.get_auth_data("google_quota_type") or "UNKNOWN"
-            
-            # Formatage de l'heure de reset (ISO -> HH:MM)
+            # Quota spécifique au modèle CA courant
+            ca_model_id = get_ca_model_id(target_model)
+            model_quota = echo_auth.get_model_quota(ca_model_id)
+
+            q_fraction = float(model_quota.get("remainingFraction",
+                               float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)))
+            q_reset_raw = str(model_quota.get("resetTime",
+                              echo_auth.get_auth_data("google_quota_reset") or "N/A"))
+            q_amount  = echo_auth.get_auth_data("google_quota_amount") or "N/A"
+            q_type    = echo_auth.get_auth_data("google_quota_type") or "CODE_ASSIST"
+
+            # Crédits AI (source : loadCodeAssist HEALTH_CHECK)
+            credits_raw = echo_auth.get_auth_data("google_credits_total") or echo_auth.get_auth_data("google_g1_credits")
+            credits_val = credits_raw if (credits_raw and credits_raw != "0") else "∞"
+
+            # Formatage du reset : ISO → HH:MM + minutes restantes
             q_reset = q_reset_raw
             if "T" in q_reset_raw:
-                try: q_reset = q_reset_raw.split("T")[1][:5]
+                try:
+                    q_reset = q_reset_raw.split("T")[1][:5]
+                    from datetime import datetime, timezone
+                    reset_dt = datetime.fromisoformat(q_reset_raw.replace("Z", "+00:00"))
+                    diff_min = int((reset_dt - datetime.now(timezone.utc)).total_seconds() / 60)
+                    if diff_min > 0:
+                        q_reset = f"{q_reset} ({diff_min}´)"
                 except: pass
+
+            # Champs détaillés du quota modèle (RPD / RPM)
+            q_rpd_rem = str(model_quota.get("requestsPerDayRemaining", "N/A"))
+            q_rpd_lim = str(model_quota.get("requestsPerDayLimit",      "N/A"))
+            q_rpm_rem = str(model_quota.get("requestsPerMinuteRemaining", "N/A"))
+            q_rpm_lim = str(model_quota.get("requestsPerMinuteLimit",     "N/A"))
+            q_model_label = ca_model_id or "—"
 
             # Liste des fournisseurs d'accès résolus pour le HUD
             sources = [s['type'].replace('google_', '').replace('_', ' ').upper() for s in auth_providers] if auth_providers else []
@@ -829,7 +909,10 @@ class Pipe:
                 cache_pct=cache_pct, prompt_pct=prompt_pct, gen_pct=gen_pct,
                 user_email=email, user_tier=tier, project_id=proj,
                 auth_sources=sources,
-                quota_amount=q_amount, quota_fraction=q_fraction, quota_reset=q_reset, quota_type=q_type
+                quota_amount=q_amount, quota_fraction=q_fraction, quota_reset=q_reset, quota_type=q_type,
+                quota_model=q_model_label,
+                quota_rpd_rem=q_rpd_rem, quota_rpd_lim=q_rpd_lim,
+                quota_rpm_rem=q_rpm_rem, quota_rpm_lim=q_rpm_lim,
             )
         
         yield ""

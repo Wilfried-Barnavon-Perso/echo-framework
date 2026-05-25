@@ -112,9 +112,9 @@ flowchart LR
     f2["<b>Multimodal Engine</b><br/>_process_file_task()"]
     f3["<b>Sniffer</b><br/>get_gemini_mime()"]
     f4["<b>Smart Context</b><br/>Invoque Flash API"]
-    f5["<b>Memory Filter</b><br/>conversation_memory_filter.py (Outlet)"]
+    f5["<b>Memory &amp; RAG Tools</b><br/>memory_and_rag_tool.py"]
     f1 --> f2 --> f3 --> f4
-    f4 -.-> f5
+    f4 -..-> f5
   end
 
   subgraph PIPE ["⚙️ 10-owui-pipes / pipe_engine.py"]
@@ -221,8 +221,31 @@ flowchart LR
       <div class="card">
         <h3>🧱 Le Moulage (Semantic Molding)</h3>
         <p><strong>Définition :</strong> Compression sémantique de fichiers massifs via Gemini Flash.</p>
-        <p><strong>Précision :</strong> Transformation d'un document brut (ex : PDF &gt; 256 Ko) en un distillat vectorisé dans <code>echo_ephemeral</code> (Qdrant bge-m3). Le modèle principal ne reçoit qu'un brief (≤ 300 mots) + <code>slug</code> pour un contexte économique, et peut interroger les détails via <code>query_distilled_data</code>.</p>
+        <p><strong>Précision :</strong> Transformation d'un document brut (ex : PDF &gt; 256 Ko) en un distillat vectorisé dans <code>echo_ephemeral</code> (Qdrant bge-m3). Le modèle principal ne reçoit qu'un brief (≤ 300 mots) + <code>slug</code> pour un contexte économique, et peut interroger les détails via <code>search_session_context</code>.</p>
       </div>
+    </div>
+
+    <h2>Architecture Mémorielle Duale (RAG Organique + Éphémère)</h2>
+    <p>ECHO opère deux systèmes RAG physiquement séparés dans Qdrant. Ils s'intègrent dans la Grande Boucle à deux niveaux distincts.</p>
+    <div class="grid-container">
+      <div class="card">
+        <h3>🧠 RAG Organique (<code>echo_memory</code>)</h3>
+        <p><strong>Outils :</strong> <code>save_memory</code>, <code>search_memory</code>, <code>list_memory_topics</code>, <code>forget_memory</code></p>
+        <p><strong>Scope :</strong> <code>user_id</code> — permanent, multi-sessions.</p>
+        <p><strong>Usage :</strong> Préférences, décisions, contraintes techniques, règles. Tout ce qui doit persister indéfiniment.</p>
+        <p><strong>Reranking :</strong> <code>score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code> — les Axiomes (lvl 5, poids 1.70) remontent toujours.</p>
+      </div>
+      <div class="card">
+        <h3>⏱️ RAG Éphémère (<code>echo_ephemeral</code>)</h3>
+        <p><strong>Outils :</strong> <code>save_session_context</code>, <code>search_session_context</code></p>
+        <p><strong>Scope :</strong> <code>user_id + chat_id + slug</code> — session courante uniquement.</p>
+        <p><strong>Usage :</strong> Résultats d'analyse, navigation web indexée, données intermédiaires. Tout ce qui est utile maintenant mais sans valeur après la session.</p>
+        <p><strong>Purge :</strong> Automatique par l'Admin Manager en fin de session.</p>
+      </div>
+    </div>
+    <div class="note-box">
+      <h4>🏔️ Vallée de la Mort &amp; Compensation RAG</h4>
+      <p>Quand le contexte dépasse ~30% de la fenêtre maximale, les informations des premiers tours deviennent effectivement inaccessibles. Les deux RAG constituent la réponse architecturale : <strong>save_session_context</strong> (indexation proactive avant saturation) et <strong>search_session_context</strong> (lecture sémantique précise indépendamment de la position dans l'historique). <strong>search_memory</strong> couvre les sessions antérieures, totalement absentes du contexte.</p>
     </div>
 
     <h2>Lexique Opérationnel & Définitions</h2>
@@ -337,7 +360,7 @@ sequenceDiagram
       </div>
     </div>
 
-    <h2>Topologie Système et Réseau (Plan de Masse v5.147.6)</h2>
+    <h2>Topologie Système et Réseau (Plan de Masse v5.158.1)</h2>
 
     <div class="didactic-box">
       <h4>💡 Lecture d'Architecte</h4>
@@ -501,7 +524,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.158.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   <div class="transition-text"><em>Cette architecture bien définie nécessite une infrastructure robuste pour s'exécuter de manière fiable. <a href="02_deploiement.html">Passer à la stratégie de déploiement ➔</a></em></div>
   </main>

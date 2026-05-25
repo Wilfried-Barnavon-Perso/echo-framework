@@ -1,8 +1,8 @@
 """
 title: ECHO Auth Manager
 author: Wilfried BARNAVON
-version: 4.2
-description: 4.2: Harmonisation UX (Terminologie unifiée Authentification).
+version: 4.3
+description: 4.2: Harmonisation UX (Terminologie unifiée Authentification). 4.3: Suppression purge auth_pkce_context (table inexistante depuis migration Antigravity 2.1).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgeD0iMyIgeT0iMTEiIHJ4PSIyIiByeT0iMiIvPjxwYXRoIGQ9Ik03IDExVjdhNSA1IDAgMCAxIDEwIDB2NCIvPjwvc3ZnPg==
 """
 
@@ -48,8 +48,7 @@ class Action:
                 # Purge de toutes les données d'authentification Google (Clés, OAuth, Priorité, Identité, Tier)
                 cursor.execute("DELETE FROM auth_data WHERE key LIKE 'google_%'")
                 rows = cursor.rowcount
-                # Purge du contexte PKCE
-                cursor.execute("DELETE FROM auth_pkce_context WHERE user_id = ?", (user_id,))
+                # Note : auth_pkce_context supprimée (migration Antigravity 2.1 — Device Flow)
                 conn.commit()
             await events.toast("✅ Succès ! Votre configuration d'authentification a été effacée.", "success")
         except Exception as e:

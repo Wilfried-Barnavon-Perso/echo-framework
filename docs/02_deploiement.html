@@ -110,13 +110,116 @@
 
         <section>
             <h3>Phase 6 : Déploiement Développeur (Local)</h3>
-            <div class="code-header">Quickstart Dev</div>
-            <pre><code># Depuis la racine du dépôt git ECHO sur une machine Linux :
-cd 00-echo-scripts
-sudo ./install-stack.sh
+            <p>Si vous avez déjà cloné le dépôt localement, vous pouvez lancer l'installation directement depuis les sources :</p>
+            <div class="code-header">Quickstart depuis sources locales</div>
+            <pre><code># Depuis la racine du dépôt git ECHO :
+sudo bash 00-echo-scripts/sync-echo.sh --local-only
+sudo bash 00-echo-scripts/install-stack.sh
 
 # L'interface sera ensuite accessible sur http://localhost:3000
             </code></pre>
+        </section>
+
+        <h2>Installation Directe depuis GitHub</h2>
+
+        <div class="didactic-box">
+            <h4>💡 Installation en une commande</h4>
+            <p>Pour les installations sur des machines fraîches (sans clone préalable), ECHO propose des scripts auto-suffisants invocables directement depuis GitHub. Ces scripts sont <strong>idempotents</strong> : si ECHO est déjà installé, ils effectuent une mise à jour propre vers la branche cible.</p>
+        </div>
+
+        <section>
+            <h3>Option A : Linux Natif (Ubuntu / Debian)</h3>
+            <p>Pour une installation sur un serveur ou une VM Ubuntu/Debian fraîche :</p>
+            <div class="code-header">Installation Linux natif</div>
+            <pre><code># Branche main (production)
+curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-linux.sh | sudo bash
+
+# Ou avec une branche spécifique
+sudo bash &lt;(curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-linux.sh) --branch dev
+            </code></pre>
+            <p>Le script :</p>
+            <ul>
+                <li>Installe automatiquement Docker, <code>docker-compose-v2</code>, <code>jq</code>, <code>yq</code>, <code>git</code>, <code>chrony</code></li>
+                <li>Clone le dépôt ECHO dans <code>/opt/ECHO/source</code></li>
+                <li>Distribue les fichiers via <code>sync-echo.sh --local-only</code></li>
+                <li>Lance la stack complète via <code>install-stack.sh</code></li>
+            </ul>
+        </section>
+
+        <section>
+            <h3>Option B : WSL2 (Windows Subsystem for Linux 2)</h3>
+            <p>Pour une installation dans un environnement WSL2, avec <strong>Docker Engine natif</strong> (sans Docker Desktop) :</p>
+            <div class="code-header">Installation WSL2</div>
+            <pre><code># Depuis un terminal WSL2 Ubuntu (en tant que root ou via sudo)
+curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-wsl2.sh | sudo bash
+
+# Ou avec une branche spécifique
+sudo bash &lt;(curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-wsl2.sh) --branch dev
+            </code></pre>
+            <p>Spécificités WSL2 gérées par le script :</p>
+            <ul>
+                <li><strong>Détection automatique de systemd</strong> : si systemd est actif (<code>/etc/wsl.conf</code> avec <code>systemd=true</code>), Docker est activé comme service permanent. Sinon, fallback sur <code>service docker start</code>.</li>
+                <li><strong>Accès double</strong> : l'interface est accessible à la fois depuis WSL2 (<code>http://&lt;IP-WSL&gt;:3000</code>) et depuis l'hôte Windows (<code>http://localhost:3000</code>) grâce au port forwarding automatique de WSL2.</li>
+                <li><code>chrony</code> n'est pas installé (la synchronisation temps est assurée par l'hôte Windows).</li>
+            </ul>
+            <div class="note">
+                <strong>Conseil :</strong> Pour que Docker redémarre automatiquement avec WSL2, activez systemd en ajoutant dans <code>/etc/wsl.conf</code> :
+                <pre><code>[boot]
+systemd=true</code></pre>
+                Puis exécutez <code>wsl --shutdown</code> depuis PowerShell et relancez votre distribution.
+            </div>
+        </section>
+
+        <section>
+            <h3>Comparatif des 3 méthodes d'installation</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Critère</th>
+                        <th>Hyper-V (PS1)</th>
+                        <th>Linux Natif</th>
+                        <th>WSL2</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Isolation</strong></td>
+                        <td>Maximale (VM dédiée)</td>
+                        <td>OS dédié</td>
+                        <td>Partiel (noyau partagé)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Prérequis</strong></td>
+                        <td>Windows 11 Pro + Hyper-V</td>
+                        <td>Ubuntu/Debian</td>
+                        <td>WSL2 activé sur Windows</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Complexité démarrage</strong></td>
+                        <td>Élevée (VM + cloud-init)</td>
+                        <td>Faible</td>
+                        <td>Faible</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Idempotent</strong></td>
+                        <td>Non (VM recréée)</td>
+                        <td>Oui</td>
+                        <td>Oui</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Accès Windows</strong></td>
+                        <td>Via IP statique VM</td>
+                        <td>Non direct</td>
+                        <td><code>localhost</code> natif</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Usage recommandé</strong></td>
+                        <td>Production souveraine</td>
+                        <td>Serveur dédié</td>
+                        <td>Développement / test</td>
+                    </tr>
+                </tbody>
+            </table>
         </section>
 
         <h2>Réseau & Sécurité : Le Bouclier BunkerWeb</h2>
@@ -127,7 +230,7 @@ sudo ./install-stack.sh
         </div>
 
         <footer>
-            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     <div class="transition-text"><em>Une fois le système déployé, les traitements s'appuient sur des fondations logicielles partagées. <a href="03_echo_libs.html">Explorer les librairies partagées (libs) ➔</a></em></div>
     </main>

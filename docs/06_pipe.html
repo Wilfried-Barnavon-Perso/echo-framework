@@ -47,7 +47,7 @@
             <p>Si le Filtre est le système sensoriel, le Pipe est le cerveau conscient. Il ne se contente pas de transmettre un message : il "recoud" les lambeaux de la mémoire (Suture), planifie une stratégie, utilise ses mains (Arsenal) pour agir, et s'assure que sa pensée reste cohérente du début à la fin de la session.</p>
         </div>
 
-        <p>Le <code>pipe_engine.py</code> (v190.7) est l'unité centrale de traitement d'ECHO. Il n'est pas un simple connecteur API, mais un véritable <strong>Orchestrateur de Contexte</strong> capable de maintenir une cohérence absolue (Bit-Perfect) sur des sessions dépassant le million de tokens, tout en supportant les configurations de réflexion avancées (<code>thinkingConfig</code>).</p>
+        <p>Le <code>pipe_engine.py</code> (v192.3) est l'unité centrale de traitement d'ECHO. Il n'est pas un simple connecteur API, mais un véritable <strong>Orchestrateur de Contexte</strong> capable de maintenir une cohérence absolue (Bit-Perfect) sur des sessions dépassant le million de tokens, tout en supportant les configurations de réflexion avancées (<code>thinkingConfig</code>).</p>
 
         <div class="note-box">
             <strong>Philosophie Directrice :</strong> Le Pipe considère chaque tour de parole comme une opération chirurgicale. Il refuse la volatilité d'Open WebUI et s'appuie exclusivement sur son propre registre d'ombres (Shadows) pour garantir que l'IA ne souffre jamais d'amnésie ou de dérive logique.
@@ -92,7 +92,18 @@
         </div>
 
         <div class="tech-spec">
-            <h4>⚙️ Précision Mécanique : Gestion de la Chain-of-Thought</h4>
+            <h4>⚙️ Stratégie de Routage Cognitif (v192.x)</h4>
+            <p>La philosophie a évolué : FLASH n'est plus un niveau intermédiaire mais le <strong>moteur agentique principal</strong>. LITE répond aux interactions triviales. PRO est le dernier recours, sollicité uniquement quand FLASH manifeste une incapacité avérée.</p>
+            <ul>
+                <li><strong>MODEL_LITE (Réflexe)</strong> : Point d'entrée par défaut. Salutations, extractions simples.</li>
+                <li><strong>MODEL_FLASH (Exécution agentique)</strong> : Moteur de travail principal — navigation web, scripting, orchestration d'outils, synthèse complexe.</li>
+                <li><strong>MODEL_PRO (Expertise — dernier recours)</strong> : Uniquement si Flash échoue manifestement — architecture multicouche, raisonnement philosophique profond.</li>
+            </ul>
+            <p>La Loi de Corrélation Contextuelle reste active : contexte &gt; 50% → PRO impératif, quelle que soit la simplicité de la tâche. Les RAGs organiques et éphémères atténuent ce besoin en déchargeant l'information hors du contexte.</p>
+        </div>
+
+        <div class="tech-spec">
+            <h4>⚙️  Précision Mécanique : Gestion de la Chain-of-Thought</h4>
             <p>Le Pipe est capable de capturer les pensées internes de l'IA (Chain-of-Thought). Ces données sont <strong>isolées</strong> du flux principal pour être affichées proprement dans l'interface sans polluer la réponse finale. Ces pensées sont ensuite réinjectées dans le contexte lors du tour suivant via la <strong>Suture Cognitive</strong>, permettant à l'IA de se "souvenir" de son propre raisonnement interne.</p>
         </div>
 
@@ -100,7 +111,7 @@
         <p>Injecté dynamiquement, il permet à un modèle de se déclarer incompétent ou d'anticiper une surcharge contextuelle.</p>
         <ul>
             <li><strong>Plan de Transfert</strong> : Le modèle sortant rédige un plan Markdown pour son successeur.</li>
-            <li><strong>Mutation Chirurgicale</strong> : Le Pipe intercepte cet appel, modifie l'identité du modèle et relance la requête.</li>
+            <li><strong>Mutation Chirurgicale</strong> : The Pipe intercepte cet appel, modifie l'identité du modèle et relance la requête.</li>
         </ul>
 
         <h3>Gestion Chirurgicale des Pensées (CoT)</h3>
@@ -116,21 +127,53 @@
             <li><strong>HTTP/2 Strict</strong> : ECHO impose le protocole HTTP/2 pour réduire la latence.</li>
         </ul>
 
+        <h2>Authentification Automatique (Device Flow)</h2>
+        <p>En l'absence de fournisseur d'accès configuré (<code>auth_providers == []</code>), le Pipe déclenche automatiquement le <strong>Device Authorization Grant (RFC 8628)</strong> au premier message, sans commande utilisateur. L'utilisateur reçoit un <code>user_code</code> et un lien cliquable (pré-rempli si <code>verification_url_complete</code> disponible). Le Pipe polle jusqu'à autorisation ou timeout (5 min), puis finalise le provisioning. Les messages d'authentification sont filtrés de <code>prepare_context</code> et ne polluent pas l'historique Gemini.</p>
+
         <h2>Phase de Scellement (Le Verrouillage)</h2>
         <ol>
             <li><strong>Shadow Sealing</strong> : Enregistrement dans <code>message_shadows</code>.</li>
             <li><strong>Cognitive Sealing</strong> : Ancrage de la <code>ThoughtSignature</code> et du <code>tool_journal</code>.</li>
             <li><strong>File Registry Update</strong> : Les fichiers sont marqués comme <code>processed</code> et déplacés vers le <strong>Vault</strong>.</li>
-            <li><strong>HUD Refresh</strong> : Mise à jour de la Context Gauge.</li>
+            <li><strong>HUD Refresh</strong> : Mise à jour de la Context Gauge — voir ci-dessous.</li>
         </ol>
 
+        <h2>HUD Quota — Intégration dans le Pipe</h2>
+        <p>À chaque fin de tour, <code>pipe_engine.py</code> collecte les métriques de quota et les transmet à <code>deploy_context_gauge()</code>. La chaîne complète :</p>
+
+        <div class="code-header">Pipeline HUD Quota (pipe_engine.py v192.3)</div>
+        <pre><code>1. get_ca_model_id(target_model)
+   → Résout le CA model ID correspondant au modèle ECHO courant
+     (ex: MODEL_FLASH → "gemini-3-flash-agent")
+
+2. EchoAuth.get_model_quota(ca_model_id)  [echo_utils.py v7.12]
+   → Lit google_quota_by_model (JSON dict dans identity.db)
+   → Retourne le quotaInfo spécifique au modèle CA
+   → Fallback: {} si modèle inconnu
+
+3. Extraction des champs
+   quota_fraction = model_quota.get("remainingFraction", 1.0)
+   quota_reset    = model_quota.get("resetTime", "N/A")  → formaté HH:MM (Xmin)
+   quota_rpd_rem  = model_quota.get("requestsPerDayRemaining", "N/A")
+   quota_rpd_lim  = model_quota.get("requestsPerDayLimit", "N/A")
+   quota_rpm_rem  = model_quota.get("requestsPerMinuteRemaining", "N/A")
+   quota_rpm_lim  = model_quota.get("requestsPerMinuteLimit", "N/A")
+
+4. async refresh_quota_if_needed()  [non-bloquant, cooldown 10 min]
+   → Relance fetch_available_models si les données sont périmées
+   → Ne bloque pas la génération de réponse
+
+5. deploy_context_gauge(..., quota_model, quota_rpd_rem, quota_rpd_lim,
+                         quota_rpm_rem, quota_rpm_lim, ...)
+   → Injection HUD dans la barre de navigation OWUI</code></pre>
+
         <div class="audit-note">
-            <h4>✅ Le point sur l'exactitude (v190.7)</h4>
-            <p>Le <code>StreamProcessor</code> de la version 190.7 a été optimisé pour le multiplexage HTTP/2 et la gestion native des <strong>ThoughtSignatures</strong>. Il est capable de traiter en parallèle les balises de pensée et les appels d'outils, permettant une réactivité accrue lors des phases d'orchestration complexe.</p>
+            <h4>✅ Le point sur l'exactitude (v192.3)</h4>
+            <p>Le <code>pipe_engine.py</code> v192.3 intègre l'authentification automatique par Device Flow (RFC 8628), la migration complète vers Antigravity 2.1 (User-Agent, client ID <code>884354919052</code>, scope <code>aicode</code>), et la nouvelle chaîne HUD quota par modèle CA (<code>get_model_quota</code>, extraction RPD/RPM, formatage reset en minutes). Le routage cognitif a été affiné : FLASH est le moteur agentique principal, PRO est réservé aux cas où FLASH est manifestement insuffisant.</p>
         </div>
 
         <footer>
-            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.158.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     <div class="transition-text"><em>Pour accomplir ses missions et interagir avec le monde extérieur, le Pipe s'appuie sur un ensemble d'outils spécialisés. <a href="07_arsenal_outils.html">Découvrir l'Arsenal des Outils ➔</a></em></div>
     </main>

@@ -69,8 +69,19 @@
             <p>Le Framework injecte systématiquement des <strong>AEC</strong> dans le flux de pensée. Ces balises XML (<code>&lt;environnement_contexte&gt;</code>) assurent la contexte proprioceptif de l'IA : connaissance de son identité, de ses capacités et de son ancrage géo-temporel sans consommation excessive de jetons.</p>
         </div>
 
+        <div class="tech-spec">
+            <h4>🏔️ Vallée de la Mort Contextuelle</h4>
+            <p>Phénomène central de la gestion mémorielle d'ECHO. Quand le contexte d'une session dépasse environ 30% de la fenêtre maximale du modèle, les informations des premiers tours deviennent effectivement inaccessibles — elles sont techniquement présentes mais leur poids d'attention est écrasé par les tokens récents. Au-delà de 50%, la dégradation est critique et le passage en MODEL_PRO devient impératif.</p>
+            <p>ECHO y répond avec une <strong>architecture mémorielle duale</strong> :</p>
+            <ul>
+                <li><strong>RAG Organique</strong> (<code>echo_memory</code>) : Mémoire long terme permanente — <code>save_memory</code> / <code>search_memory</code>. Survit aux sessions.</li>
+                <li><strong>RAG Éphémère</strong> (<code>echo_ephemeral</code>) : Mémoire de travail de la session — <code>save_session_context</code> / <code>search_session_context</code>. Disparaît en fin de session.</li>
+            </ul>
+        </div>
+
+
         <footer>
-            ECHO Framework - Version 5.147.23 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+            ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
         </footer>
     <div class="transition-text"><em>Maintenant que les fondations conceptuelles sont posées, découvrons comment ces principes s'articulent dans l'architecture globale du système. <a href="01_hld_architecture.html">Passer à l'architecture (HLD) ➔</a></em></div>
     </main>

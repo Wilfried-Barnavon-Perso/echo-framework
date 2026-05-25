@@ -1,8 +1,9 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 7.5
-description: 7.4: Rétablissement slug dans instruction smart_context. 7.5: Fix génération slug (précédence opérateur, exclusion tirets → underscore).
+version: 7.7
+description: 7.5: Fix génération slug. 7.6: Migration Antigravity 2.1 — suppression GOOGLE_OAUTH_CODE_REGEX (PKCE legacy).
+             7.7: Centralisation THINKING_LEVEL_FLASH (echo_constants v4.8) — suppression du "HIGH" hardcodé.
 """
 
 
@@ -28,7 +29,7 @@ from echo_constants import (
     get_gemini_mime, ECHO_USERS_ROOT, 
     GOOGLE_API_KEY_REGEX, MODEL_FLASH,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    GOOGLE_OAUTH_CODE_REGEX
+    THINKING_LEVEL_FLASH
 )
 
 # Configuration du Logger
@@ -228,14 +229,15 @@ class Filter:
 
             if len(msgs) >= 2:
                 prev_content = str(msgs[-2].get("content", ""))
-                if "(ECHO_SESSION_AUTH_PENDING)" in prev_content:
-                    last_content = str(msgs[-1].get("content", "")).strip()
-                    keys = re.findall(GOOGLE_API_KEY_REGEX, last_content)
-                    oauth_codes = re.findall(GOOGLE_OAUTH_CODE_REGEX, last_content)
-                    if keys or oauth_codes:
-                        body["_api_key"] = last_content 
-                        msgs[-1]["content"] = "🔐 *Vérification de l'authentification Google en cours...*"
-                        return body
+                # Interception clé API AI Studio (fallback OAuth2).
+                # L'ancien bloc de détection code 4/… (PKCE) est supprimé :
+                # le Device Flow (RFC 8628) ne génère pas de code dans le chat.
+                last_content = str(msgs[-1].get("content", "")).strip()
+                keys = re.findall(GOOGLE_API_KEY_REGEX, last_content)
+                if "(ECHO_SESSION_AUTH_PENDING)" in prev_content and keys:
+                    body["_api_key"] = last_content
+                    msgs[-1]["content"] = "🔐 *Vérification de la clé API Google en cours...*"
+                    return body
 
             tokens = []
             if __user__ and "id" in __user__:
@@ -255,7 +257,7 @@ class Filter:
             results = []
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
-                tasks = [self._process_file_task(user_id, f, tokens, None, "HIGH", chat_id, events) for f in files_to_process]
+                tasks = [self._process_file_task(user_id, f, tokens, None, THINKING_LEVEL_FLASH, chat_id, events) for f in files_to_process]
                 for task in tasks:
                     results.append(await task)
                     await asyncio.sleep(0.5)
@@ -343,9 +345,8 @@ class Filter:
         msgs = body.get("messages", [])
         for m in msgs:
             content = str(m.get("content", ""))
+            # Masquage des clés API AI Studio (AIza...) si elles apparaissent dans l'historique
             if re.search(GOOGLE_API_KEY_REGEX, content):
                 content = re.sub(GOOGLE_API_KEY_REGEX, "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]", content)
-            if re.search(GOOGLE_OAUTH_CODE_REGEX, content):
-                content = re.sub(GOOGLE_OAUTH_CODE_REGEX, "[CODE OAUTH GOOGLE MASQUÉ PAR SÉCURITÉ]", content)
             m["content"] = content
         return body
