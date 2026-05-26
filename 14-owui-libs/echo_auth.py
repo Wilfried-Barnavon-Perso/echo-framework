@@ -1,7 +1,7 @@
 """
 title: ECHO Auth Service
 author: Wilfried BARNAVON
-version: 7.2
+version: 7.3
 description: 5.x: PKCE flow avec serveur asyncio TCP sur port fixe 8765.
              6.0: Tentative FastAPI callback endpoint (annulée).
              7.0: Tunnel SSH éphémère via asyncssh (echo_ssh_tunnel.py).
@@ -13,6 +13,8 @@ description: 5.x: PKCE flow avec serveur asyncio TCP sur port fixe 8765.
              7.2: Fix fetchAvailableModels : l'API retourne models comme dict {id: data},
              non une liste. Capture quotaInfo par modèle → google_quota_by_model (JSON).
              fetch_user_quota : capture tous les types de crédits → google_credits_total.
+             7.3: Propagation renommage AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
+             AGY_BASE_URL→AGY_BASE_URL (echo_constants v5.0).
 """
 
 import time
@@ -41,7 +43,7 @@ from echo_utils import EchoAuth, _get_global_client
 from echo_constants import (
     GOOGLE_API_BASE_URL,
     ECHO_USER_AGENT,
-    ECHO_CODE_ASSIST_USER_AGENT,
+    ECHO_AGY_USER_AGENT,
     GOOGLE_API_KEY_PATTERN,
     GOOGLE_AI_STUDIO_WEB_URL,
     GOOGLE_OAUTH_TOKEN_URL,
@@ -53,7 +55,7 @@ from echo_constants import (
     AUTH_METHOD_KEY_PRIMARY,
     AUTH_METHOD_KEY_SECONDARY,
     AUTH_METHOD_OAUTH2,
-    CODE_ASSIST_BASE_URL,
+    AGY_BASE_URL,
     ECHO_CLIENT_METADATA,
     AUTH_DATA_PROJECT_ID,
     AUTH_DATA_USER_EMAIL,
@@ -336,12 +338,12 @@ class AuthService:
         return None
 
     async def fetch_user_quota(self, access_token: str, project_id: str):
-        """Récupère et persiste les quotas et crédits Code Assist (Truth Source)."""
+        """Récupère et persiste les quotas et crédits API Antigravity (Truth Source)."""
         client = await _get_global_client()
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type":  "application/json",
-            "User-Agent":    ECHO_CODE_ASSIST_USER_AGENT
+            "User-Agent":    ECHO_AGY_USER_AGENT
         }
 
         # 1. RAFRAÎCHISSEMENT DES CRÉDITS (Mode HEALTH_CHECK)
@@ -352,7 +354,7 @@ class AuthService:
         }
         try:
             h_resp = await client.post(
-                f"{CODE_ASSIST_BASE_URL}:loadCodeAssist",
+                f"{AGY_BASE_URL}:loadCodeAssist",
                 json=health_payload, headers=headers, timeout=15
             )
             if h_resp.status_code == 200:
@@ -374,7 +376,7 @@ class AuthService:
         # 2. RAFRAÎCHISSEMENT DES QUOTAS (retrieveUserQuota)
         try:
             q_resp = await client.post(
-                f"{CODE_ASSIST_BASE_URL}:retrieveUserQuota",
+                f"{AGY_BASE_URL}:retrieveUserQuota",
                 json={"project": project_id}, headers=headers, timeout=15
             )
             if q_resp.status_code == 200:
@@ -401,11 +403,11 @@ class AuthService:
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type":  "application/json",
-            "User-Agent":    ECHO_CODE_ASSIST_USER_AGENT,
+            "User-Agent":    ECHO_AGY_USER_AGENT,
         }
         try:
             resp = await client.post(
-                f"{CODE_ASSIST_BASE_URL}:fetchAvailableModels",
+                f"{AGY_BASE_URL}:fetchAvailableModels",
                 json={"project": project_id},
                 headers=headers, timeout=15
             )
@@ -480,7 +482,7 @@ class AuthService:
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type":  "application/json",
-            "User-Agent":    ECHO_CODE_ASSIST_USER_AGENT
+            "User-Agent":    ECHO_AGY_USER_AGENT
         }
 
         project_id = None
@@ -510,7 +512,7 @@ class AuthService:
             # 1. DÉCOUVERTE (loadCodeAssist)
             load_payload = {"metadata": {**ECHO_CLIENT_METADATA, "duetProject": None}}
             resp = await client.post(
-                f"{CODE_ASSIST_BASE_URL}:loadCodeAssist",
+                f"{AGY_BASE_URL}:loadCodeAssist",
                 json=load_payload, headers=headers, timeout=20
             )
 
@@ -544,7 +546,7 @@ class AuthService:
                     onboard_payload["cloudaicompanionProject"] = None
 
                 onboard_resp = await client.post(
-                    f"{CODE_ASSIST_BASE_URL}:onboardUser",
+                    f"{AGY_BASE_URL}:onboardUser",
                     json=onboard_payload, headers=headers, timeout=20
                 )
 
@@ -560,7 +562,7 @@ class AuthService:
                         for _ in range(12):
                             await asyncio.sleep(5)
                             op_resp = await client.get(
-                                f"{CODE_ASSIST_BASE_URL}/{op_name}",
+                                f"{AGY_BASE_URL}/{op_name}",
                                 headers=headers, timeout=10
                             )
                             if op_resp.status_code == 200:

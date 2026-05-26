@@ -1,13 +1,14 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-wsl2.sh
-# VERSION : 1.0
+# VERSION : 1.1
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE :
 #   Script d'installation ECHO pour WSL2 (Windows Subsystem for Linux 2).
 #   Installe Docker Engine natif dans WSL2 (pas Docker Desktop).
 #   Invocable directement depuis GitHub sans clonage préalable.
+#   Utilise le dépôt officiel Docker (docker-ce + docker-compose-plugin).
 #
 # USAGE :
 #   curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-wsl2.sh | sudo bash
@@ -23,6 +24,11 @@
 #       [boot]
 #       systemd=true
 #     puis relancer WSL2 : wsl --shutdown (depuis PowerShell)
+#
+# CHANGELOG :
+#   1.1 : Dépôt Docker officiel (docker-ce + docker-compose-plugin).
+#         Fix parsing --branch (while loop).
+#         Ajout ports SSH PKCE (8020-8024) dans le récap final.
 # ==============================================================================
 
 set -euo pipefail
@@ -51,10 +57,19 @@ log_section() { echo -e "\n${BLUE}━━━ $* ━━━━━━━━━━━
 # 0. PARSING DES ARGUMENTS
 # ==============================================================================
 TARGET_BRANCH="main"
-for arg in "$@"; do
-    case "$arg" in
-        --branch) shift; TARGET_BRANCH="${1:-main}" ;;
-        --branch=*) TARGET_BRANCH="${arg#*=}" ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --branch)
+            TARGET_BRANCH="${2:-main}"
+            shift 2
+            ;;
+        --branch=*)
+            TARGET_BRANCH="${1#*=}"
+            shift
+            ;;
+        *)
+            shift
+            ;;
     esac
 done
 
@@ -73,18 +88,12 @@ if ! grep -qi "microsoft" /proc/version 2>/dev/null; then
     log_error "Ce script est réservé à WSL2. Pour Linux natif, utilisez : install-linux.sh"
 fi
 
-# Vérification WSL version 2 (pas WSL 1)
-WSL_INTEROP=$(ls /run/WSL 2>/dev/null || true)
-WSL_VERSION_FILE="/proc/sys/fs/binfmt_misc/WSLInterop"
-if [ ! -e "$WSL_VERSION_FILE" ] && [ -z "$WSL_INTEROP" ]; then
-    log_warn "Impossible de confirmer WSL2 (vs WSL1). Vérifiez avec 'wsl -l -v' depuis PowerShell."
-fi
-
 # Détection distrib
 if [ -f /etc/os-release ]; then
     # shellcheck source=/dev/null
     source /etc/os-release
     DISTRIB_ID="${ID:-unknown}"
+    DISTRIB_NAME="${PRETTY_NAME:-$DISTRIB_ID}"
 else
     log_error "Impossible de détecter la distribution Linux (/etc/os-release manquant)."
 fi
@@ -93,9 +102,9 @@ if [[ "$DISTRIB_ID" != "ubuntu" && "$DISTRIB_ID" != "debian" ]]; then
     log_error "Distribution non supportée : '$DISTRIB_ID'. Ce script supporte Ubuntu et Debian uniquement."
 fi
 
-# Détection systemd
+# Détection systemd (Ubuntu 22.04+ avec [boot] systemd=true dans /etc/wsl.conf)
 SYSTEMD_ACTIVE=false
-if pidof systemd > /dev/null 2>&1 || [ "$(ps -p 1 -o comm=)" = "systemd" ]; then
+if [ "$(ps -p 1 -o comm= 2>/dev/null)" = "systemd" ]; then
     SYSTEMD_ACTIVE=true
 fi
 
@@ -103,7 +112,7 @@ echo ""
 echo -e "${BLUE}╔══════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║       ECHO FRAMEWORK — INSTALLATEUR WSL2             ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════════════════════╝${NC}"
-echo -e "   Distribution : ${GREEN}${PRETTY_NAME:-$DISTRIB_ID}${NC}"
+echo -e "   Distribution : ${GREEN}${DISTRIB_NAME}${NC}"
 echo -e "   Branche cible : ${GREEN}$TARGET_BRANCH${NC}"
 echo -e "   Destination   : ${GREEN}$ECHO_ROOT${NC}"
 echo -e "   Systemd actif : ${GREEN}$SYSTEMD_ACTIVE${NC}"
@@ -127,18 +136,45 @@ log_section "DÉPENDANCES SYSTÈME"
 log_info "Mise à jour des paquets..."
 apt-get update -qq
 
-log_info "Installation des paquets requis..."
+log_info "Installation des prérequis (transport HTTPS, GPG)..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
+    gnupg \
     git \
     unzip \
-    jq \
-    docker.io \
-    docker-compose-v2 \
-    docker-buildx-plugin
+    jq
+# Note : chrony non installé en WSL2 (synchro temps assurée par l'hôte Windows)
 
-# Note : chrony n'est pas installé en WSL2 (la synchro temps est gérée par l'hôte Windows)
-log_ok "Paquets système installés."
+# --- Ajout du dépôt officiel Docker ---
+log_info "Ajout du dépôt officiel Docker..."
+
+ARCH="$(dpkg --print-architecture)"
+DISTRIB_CODENAME="${VERSION_CODENAME:-$(lsb_release -cs 2>/dev/null || echo noble)}"
+
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL "https://download.docker.com/linux/${DISTRIB_ID}/gpg" \
+    -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+
+echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] \
+https://download.docker.com/linux/${DISTRIB_ID} ${DISTRIB_CODENAME} stable" \
+    > /etc/apt/sources.list.d/docker.list
+
+apt-get update -qq
+log_ok "Dépôt Docker ajouté."
+
+# --- Installation Docker Engine + Compose Plugin ---
+log_info "Installation de Docker CE + docker-compose-plugin..."
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    docker-ce \
+    docker-ce-cli \
+    containerd.io \
+    docker-buildx-plugin \
+    docker-compose-plugin
+
+log_ok "Docker installé : $(docker --version)"
+log_ok "Compose installé : $(docker compose version)"
 
 # Installation de yq (absent des dépôts apt standards)
 if ! command -v yq &>/dev/null; then
@@ -161,7 +197,7 @@ _start_docker_wsl2() {
         systemctl enable --now docker
         log_ok "Docker activé via systemd."
     else
-        # Fallback : démarrage manuel du démon Docker
+        # Fallback : démarrage manuel (WSL2 sans systemd)
         log_info "Démarrage du démon Docker (mode service)..."
         if service docker status > /dev/null 2>&1; then
             log_ok "Docker est déjà en cours d'exécution."
@@ -169,21 +205,19 @@ _start_docker_wsl2() {
             service docker start || {
                 log_warn "Démarrage via service échoué. Tentative nohup dockerd..."
                 nohup dockerd > /var/log/dockerd.log 2>&1 &
-                sleep 4 # laisser le démon s'initialiser
+                sleep 4
             }
         fi
 
-        # Vérification que Docker répond
+        # Attente que le démon réponde (max 20 secondes)
         local retries=10
         while ! docker info > /dev/null 2>&1; do
             retries=$((retries - 1))
             [ $retries -eq 0 ] && log_error "Le démon Docker ne répond pas. Consultez /var/log/dockerd.log"
             sleep 2
         done
-        log_ok "Docker actif."
 
-        # Rappel : sans systemd, Docker ne redémarrera pas automatiquement après reboot WSL2
-        log_warn "Docker devra être redémarré manuellement au prochain redémarrage WSL2 : sudo service docker start"
+        log_warn "Docker devra être redémarré au prochain démarrage WSL2 : sudo service docker start"
         log_warn "→ Conseil : Activez systemd dans /etc/wsl.conf pour éviter cela."
     fi
 
@@ -239,7 +273,6 @@ bash "$ECHO_ROOT/echo-scripts/install-stack.sh" 2>&1 | tee "$ECHO_ROOT/install.l
 # ==============================================================================
 # 6. FIN
 # ==============================================================================
-# Récupération des IPs : WSL a une IP interne + le host Windows est accessible via localhost
 WSL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 
 echo ""
@@ -247,10 +280,10 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║     ✅  ECHO FRAMEWORK DÉPLOYÉ AVEC SUCCÈS (WSL2)    ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "   🌐 Accès depuis WSL2     : ${CYAN}http://${WSL_IP}:3000${NC}"
-echo -e "   🖥️  Accès depuis Windows  : ${CYAN}http://localhost:3000${NC}"
-echo -e "   🔧 Admin Manager (WSL2)  : ${CYAN}http://${WSL_IP}:3001${NC}"
-echo -e "   🔧 Admin Manager (Win)   : ${CYAN}http://localhost:3001${NC}"
+echo -e "   🌐 Interface (WSL2)   : ${CYAN}http://${WSL_IP}:3000${NC}"
+echo -e "   🖥️  Interface (Windows) : ${CYAN}http://localhost:3000${NC}"
+echo -e "   🔧 Admin Manager       : ${CYAN}http://localhost:3001${NC}"
+echo -e "   🔑 Auth PKCE (SSH)     : ${CYAN}ports 8020–8024 exposés${NC}"
 echo ""
 echo -e "   📋 Commandes utiles :"
 echo -e "      ${YELLOW}update-echo${NC}      → Mise à jour rapide du code"
@@ -261,8 +294,8 @@ echo ""
 
 if [ "$SYSTEMD_ACTIVE" = "false" ]; then
     echo -e "   ${YELLOW}⚠️  Rappel WSL2 sans systemd :${NC}"
-    echo -e "      Au prochain démarrage WSL2, relancez Docker manuellement :"
-    echo -e "      ${YELLOW}sudo service docker start && sudo install-stack${NC}"
+    echo -e "      Au prochain démarrage WSL2, relancez Docker :"
+    echo -e "      ${YELLOW}sudo service docker start${NC}"
     echo ""
 fi
 

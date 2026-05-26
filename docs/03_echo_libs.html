@@ -3,122 +3,325 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ECHO v5 - 3. Librairies Partagées (libs)</title>
+  <meta name="description" content="Librairies partagées du Framework ECHO v5 : echo_utils, echo_auth, echo_protocol, echo_constants — EchoStateManager, EchoGeminiClient, authentification PKCE, protocole API Antigravity.">
+  <title>ECHO v5 — 3. Librairies Partagées (echo_libs)</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>3. Les Librairies Partagées (echo_libs)</h1>
+    <h1>3. Les Librairies Partagées (<code>echo_libs</code>)</h1>
 
-    <div class="transition-text">Au cœur du système déployé opèrent les librairies partagées, véritables moteurs des fonctionnalités techniques d'ECHO.</div>
+    <p>
+      Le répertoire <code>14-owui-libs/</code> regroupe les modules Python partagés par l'ensemble
+      du framework : Filtres, Pipe, Actions et Admin Manager les importent tous. Cette centralisation
+      garantit un point de vérité unique pour chaque mécanisme critique — authentification, persistance,
+      communication API, interface HUD — et prévient toute duplication de code.
+    </p>
 
     <div class="didactic-box">
-      <h4>💡 Que sont les ECHO Libs ?</h4>
-      <p>Les ECHO Libs sont un ensemble de <strong>fonctions de base consolidées</strong>, centralisées et réutilisables par tous les modules du framework (Filtres, Pipe, Actions, Admin). Elles évitent la duplication de code et garantissent que chaque composant parle la même langue technique.</p>
+      <h4>💡 Rôle des ECHO Libs</h4>
+      <p>
+        Ces modules constituent le <strong>système nerveux</strong> d'ECHO. Ils ne contiennent pas de
+        logique métier (c'est le rôle du Pipe et des Filtres), mais fournissent les primitives
+        fondamentales : comment stocker un message, comment appeler l'API Gemini, comment gérer
+        un token OAuth2, comment injecter une interface dans le DOM d'Open WebUI.
+      </p>
     </div>
 
-    <p>Le socle technique d'ECHO repose sur un triptyque de librairies situées dans <code>14-owui-libs/</code>. Ces modules assurent la cohérence, la résilience et l'interoperabilité de tout l'écosystème.</p>
+    <h2><code>echo_constants.py</code> — Constantes et Topologie (v4.9)</h2>
 
-    <section id="constants">
-      <h2>echo_constants.py : Constantes & Topologie (v3.0)</h2>
-      <p>Le registre unique des vérités du système : IDs de modèles, chemins de répertoires, timeouts et limites de contextes.</p>
-      <table>
-        <thead>
-          <tr><th>Constante</th><th>Valeur / Rôle</th></tr>
-        </thead>
-        <tbody>
-          <tr><td><code>ECHO_USERS_ROOT</code></td><td><code>/app/backend/data/users</code> (Stockage des BDD et Vaults)</td></tr>
-          <tr><td><code>ECHO_UPLOADS_DIR</code></td><td><code>/app/backend/data/uploads</code> (Transit des fichiers OWUI)</td></tr>
-          <tr><td><code>ECHO_USER_AGENT</code></td><td><code>antigravity/2.1.0</code> (Identité réseau — Language Server headless)</td></tr>
-          <tr><td><code>ECHO_CODE_ASSIST_USER_AGENT</code></td><td><code>antigravity/2.1.0 (language_server; os_type=Windows; ...)</code> (Code Assist)</td></tr>
-        </tbody>
-      </table>
+    <p>
+      Registre unique de toutes les vérités immuables du système. Tout composant qui a besoin
+      d'un identifiant de modèle, d'un chemin de répertoire, d'un timeout ou d'une limite de tokens
+      doit le lire depuis ce fichier — jamais le coder en dur localement.
+    </p>
 
-      <h3>Détection MIME Intelligente</h3>
-      <p>La fonction <code>get_gemini_mime</code> utilise une cascade de 6 niveaux : Mapping ECHO, Mimetypes Std, Magic Numbers, Whitelist Gemini, Null-Byte Sniffing (Text-Sniffing), et Fallback.</p>
-    </section>
+    <h3>Identifiants de modèles Gemini</h3>
+    <table>
+      <thead>
+        <tr><th>Constante ECHO</th><th>Nom AI Studio</th><th>Nom API Antigravity</th><th>Usage</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>MODEL_PRO</code></td>
+          <td><code>gemini-3.1-pro-preview</code></td>
+          <td><code>gemini-pro-agent</code></td>
+          <td>Expertise — dernier recours uniquement</td>
+        </tr>
+        <tr>
+          <td><code>MODEL_FLASH</code></td>
+          <td><code>gemini-3.5-flash</code></td>
+          <td><code>gemini-3-flash-agent</code></td>
+          <td>Moteur agentique principal</td>
+        </tr>
+        <tr>
+          <td><code>MODEL_LITE</code></td>
+          <td><code>gemini-3.1-flash-lite</code></td>
+          <td><code>gemini-3.1-flash-lite</code></td>
+          <td>Réflexe — point d'entrée par défaut</td>
+        </tr>
+        <tr>
+          <td><code>MODEL_DISTILLATION</code></td>
+          <td><code>gemini-2.5-flash</code></td>
+          <td><code>gemini-2.5-flash</code></td>
+          <td>Moulage et distillation de fichiers</td>
+        </tr>
+        <tr>
+          <td><code>MODEL_EMBEDDING</code></td>
+          <td><code>BAAI/bge-m3</code></td>
+          <td>—</td>
+          <td>Vectorisation locale (Embedding Worker)</td>
+        </tr>
+      </tbody>
+    </table>
 
-    <section id="auth-service">
-      <h2>echo_auth.py : Validation d'Identité &amp; Quotas CA (v7.2)</h2>
-      <p>Gestionnaire d'identité souveraine. Le <code>AuthService</code> implémente le <strong>Device Authorization Grant (RFC 8628)</strong> pour l'authentification headless (Docker). En l'absence d'authentification configurée, ECHO lance automatiquement le flux au premier message : génération d'un <code>user_code</code> + URL de validation cliquable, puis polling jusqu'à autorisation. Les clés API AI Studio (<code>AIza…</code>) restent acceptées comme fallback. OAuth2 est toujours prioritaire.</p>
+    <h3>Paramètres de génération</h3>
+    <table>
+      <thead>
+        <tr><th>Constante</th><th>Valeur</th><th>Rôle</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>MAX_TOKENS_DEFAULT</code></td><td>65 535</td><td>Limite universelle (AI Studio + API Antigravity). 65 536 provoque une erreur 400 sur certains modèles Antigravity.</td></tr>
+        <tr><td><code>THINKING_LEVEL_PRO</code></td><td><code>"HIGH"</code></td><td>Réflexion maximale pour MODEL_PRO.</td></tr>
+        <tr><td><code>THINKING_LEVEL_FLASH</code></td><td><code>"HIGH"</code></td><td>Réflexion standard pour MODEL_FLASH.</td></tr>
+        <tr><td><code>THINKING_LEVEL_LITE</code></td><td><code>"HIGH"</code></td><td>Confirmé fonctionnel avec HIGH sur l'API Antigravity.</td></tr>
+        <tr><td><code>TEMP_DEFAULT</code></td><td>1,0</td><td>Température de génération principale.</td></tr>
+        <tr><td><code>TOP_P_DEFAULT</code></td><td>0,90</td><td>Nucleus sampling.</td></tr>
+      </tbody>
+    </table>
 
-      <h3>Nouvelles méthodes v7.x : Quotas Code Assist</h3>
-      <ul>
-        <li><strong><code>fetch_available_models()</code></strong> : Appel <code>:fetchAvailableModels</code> (Code Assist API). Parse le dict <code>models</code> et pour chaque modèle extrait le <code>quotaInfo</code> (<code>remainingFraction</code>, <code>resetTime</code>). Stocke l'ensemble dans <code>google_quota_by_model</code> (JSON dict, clé = CA model ID).</li>
-        <li><strong><code>fetch_user_quota()</code></strong> : Appel <code>:loadCodeAssist</code> mode HEALTH_CHECK. Extrait les crédits depuis <code>paidTier.availableCredits</code> → stocke <code>google_credits_total</code> et <code>google_g1_credits</code>.</li>
-        <li><strong><code>refresh_quota_if_needed()</code></strong> : Déclenche <code>fetch_available_models</code> de manière asynchrone non-bloquante si les données ont plus de 10 minutes (cooldown <code>google_quota_last_fetch</code>). Ne bloque jamais la génération.</li>
-        <li><strong><code>get_auth_data(key)</code> / <code>save_api_key(key, value)</code></strong> : Interface SQLite vers <code>identity.db</code> (clé-valeur, table <code>auth_data</code>).</li>
-      </ul>
-    </section>
+    <h3>Détection MIME (<code>get_gemini_mime</code>)</h3>
+    <p>
+      La fonction <code>get_gemini_mime(file_path)</code> retourne le tuple <code>(mime_type, est_supporté_gemini)</code>
+      en suivant une cascade de six niveaux :
+    </p>
+    <ol>
+      <li>Mappings pré-définis ECHO (<code>MIME_MAPPING_TXT</code>, <code>MIME_MAPPING_BIN</code>) — priorité absolue.</li>
+      <li>Bibliothèque standard Python <code>mimetypes</code> (extension).</li>
+      <li>Détection binaire par Magic Numbers via <code>filetype</code>.</li>
+      <li>Liste blanche native Gemini (<code>image/*</code>, <code>video/*</code>, <code>audio/*</code>, <code>text/*</code>, <code>application/pdf</code>, <code>application/json</code>).</li>
+      <li>Épreuve textuelle (Null-Byte Sniffing) : si aucun <code>\x00</code> dans les 1024 premiers octets → <code>text/plain</code>.</li>
+      <li>Fallback sécuritaire : <code>application/octet-stream</code>, non supporté.</li>
+    </ol>
 
-    <section id="utils-core">
-      <h2>echo_utils.py : Le C&#x0153;ur Réactif (v7.12)</h2>
-      
-      <div class="tech-spec">
-        <h4>⚙️ EchoStateManager : L'Architecture Bit-Perfect</h4>
-        <p>Le <code>state_manager</code> est l'organe de mémoire persistante. Il utilise un double hachage SHA-256 pour garantir l'intégrité :</p>
-        <ul>
-          <li><strong>Invariant Hash</strong> : SHA-256 du triplet <code>(rôle, contenu, tool_io)</code>.</li>
-          <li><strong>Cumulative Hash</strong> : SHA-256 de <code>(invariant + parent_cumulative)</code>.</li>
-          <li><strong>Table <code>message_shadows</code></strong> : Stockage du JSON brut original (Shadowing) lié au timestamp <code>updated_at</code> physique.</li>
-        </ul>
-      </div>
+    <h2><code>echo_utils.py</code> — Cœur Réactif (v7.12)</h2>
 
-      <div class="tech-spec">
-        <h4>⚙️ EchoGeminiClient : Résilience & Mesh d'Authentification</h4>
-        <p>Moteur d'appel API avec support <strong>HTTP/2 Strict</strong> et architecture symétrique (AI Studio & Google Cloud Code Assist). Il orchestre un "Mesh" d'identifiants (Clés API, OAuth2) pour une autonomie maximale et permet la capture asynchrone des <strong>ThoughtSignatures</strong> via les flux SSE.</p>
-        <ul>
-          <li><strong>Failover Hybride</strong> : 
-            <ul>
-              <li><em>Erreurs de Flux (429, 500, 503)</em> : Bascule automatique après <code>KEY_SWITCH_THRESHOLD</code> échecs avec Backoff exponentiel.</li>
-              <li><em>Erreurs de Droits (403, 404)</em> : <strong>Bascule immédiate</strong> vers la source suivante si le modèle (ex: PRO) n'est pas autorisé sur l'identifiant actuel.</li>
-            </ul>
-          </li>
-          <li><strong>Transparence Totale</strong> : Notification en temps réel via <code>events.status</code> lors des périodes de réessai (Retries) et des basculements de mesh, éliminant l'impression de gel de l'interface en mode Streaming.</li>
-          <li><strong>Support OAuth2 (Device Flow)</strong> : Rafraîchissement proactif et silencieux des jetons Bearer (cycle de 55 min, certifié logs natifs IDE) via <code>oauthaccountmanager.googleapis.com/v1/issuetoken</code>. Client ID Language Server Antigravity (<code>884354919052</code>).</li>
-        </ul>
-      </div>
-
-      <h3>EchoEvents, EchoUI & VisualEngine</h3>
-      <ul>
-        <li><strong>EchoEvents</strong> : Bus d'événements asynchrone (<code>status</code>, <code>toast</code>, <code>call</code>). Permet de pousser des messages de statut de manière uniforme.</li>
-        <li><strong>EchoUI</strong> : Moteur HUD. Gère le <strong>Monitor</strong>, la <strong>Context Gauge</strong> et le <strong>Web Replay</strong>. (Déplacé dans <code>echo_ui.py</code>).</li>
-        <li><strong>VisualEngine</strong> : Registre universel des moteurs visuels (Markmap, Mermaid, ECharts, Vega, etc.). (Nouveau : <code>echo_visuals.py</code>).</li>
-      </ul>
-
-      <h4>Protocoles Sémantiques</h4>
-      <ul>
-        <li><code>split_thought_process</code> : Isolation des balises <code>&lt;think&gt;</code> pour l'archivage CoT.</li>
-        <li><code>wrap_tool_output</code> : Contrat de sortie multipart (Text, Thoughts, Media, New Files).</li>
-        <li><strong><code>EchoAuth.get_model_quota(ca_model_id)</code></strong> : Lit <code>google_quota_by_model</code> (JSON dict) depuis <code>identity.db</code> et retourne le dict <code>quotaInfo</code> spécifique au modèle CA demandé. Fallback : <code>{}</code> si modèle inconnu. Utilisé par <code>pipe_engine.py</code> pour alimenter le HUD quota.</li>
-      </ul>
-    </section>
-
-    <section id="protocol">
-      <h2>echo_protocol.py : Protocole Code Assist</h2>
-      <p>Module de construction des requêtes vers l'API Google Code Assist. Centralise la logique de sélection de modèle CA et la génération de la configuration de génération.</p>
-      <ul>
-        <li><strong><code>get_ca_model_id(target_model)</code></strong> : Résout le CA model ID correspondant au modèle ECHO logique (MODEL_PRO, MODEL_FLASH, MODEL_LITE) via <code>MODEL_MAP_CA</code>. Retourne le CA ID pour le quota HUD et la requête API.</li>
-        <li><strong><code>MODEL_MAP_CA</code></strong> : Dictionnaire de correspondance ECHO model → CA model ID → CA model alias. Défini dans <code>echo_constants.py</code>, utilisé par le protocole et le HUD.</li>
-        <li><strong><code>build_ca_generation_config()</code></strong> : Construit le dict <code>generationConfig</code> pour l'API CA. Intègre <code>maxOutputTokens</code> (plafonné à <code>MAX_TOKENS_DEFAULT</code>), <code>temperature</code>, <code>thinkingConfig</code> (budget, level) selon le modèle cible.</li>
-      </ul>
-    </section>
+    <h3>EchoStateManager — Persistance Bit-Perfect</h3>
+    <p>
+      La classe <code>EchoStateManager</code> est l'organe de mémoire persistante. Elle gère
+      les bases SQLite en mode WAL (Write-Ahead Logging) pour la résistance aux pannes.
+      Deux instances coexistent dans chaque tour de traitement :
+    </p>
+    <ul>
+      <li><strong><code>state_manager</code></strong> : lie à la base de chat <code>{chat_id}.db</code> — Ombres, Suture, Signatures, Journal.</li>
+      <li><strong><code>identity_manager</code></strong> : lie à <code>identity.db</code> — Authentification, Quotas, Configuration utilisateur.</li>
+    </ul>
 
     <div class="tech-spec">
-      <h4>⚙️ Précision Mécanique : Résilience des Données</h4>
-      <p>Le <code>EchoStateManager</code> garantit la persistance des ombres même en cas de crash brutal du conteneur grâce au mode <code>WAL</code> (Write-Ahead Logging) de SQLite. Cette configuration permet des écritures concurrentes rapides sans risque de corruption de la base de données.</p>
+      <h4>⚙️ Double hachage SHA-256 (Merkle Core)</h4>
+      <p>
+        <strong>Invariant Hash :</strong> <code>SHA-256(role + content_sorted + tool_io)</code>
+        — identité pure d'un tour, indépendante de sa position dans l'historique.
+      </p>
+      <p>
+        <strong>Cumulative Hash :</strong> <code>SHA-256(invariant_hash + parent_cumulative_hash)</code>
+        — ADN de la conversation. Toute modification dans l'historique invalide les hashes suivants.
+      </p>
+      <p>
+        Ce mécanisme permet de détecter les <em>Ghost Messages</em> (messages modifiés dans Open WebUI)
+        et de basculer en Cold Recovery sans corrompre les tours non modifiés.
+      </p>
+    </div>
+
+    <h3>EchoGeminiClient — Moteur d'Appel API</h3>
+    <p>
+      <code>EchoGeminiClient</code> est le <strong>sélecteur de protocole symétrique</strong> :
+      il gère de manière transparente les deux backends d'inférence selon la méthode d'authentification
+      disponible pour l'utilisateur.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Protocole</th><th>Authentification</th><th>URL de base</th><th>Modèles</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>AI Studio</strong></td>
+          <td>Clé API <code>AIza…</code></td>
+          <td><code>generativelanguage.googleapis.com/v1beta</code></td>
+          <td>Noms canoniques ECHO (<code>gemini-3.5-flash</code>, etc.)</td>
+        </tr>
+        <tr>
+          <td><strong>API Antigravity</strong></td>
+          <td>OAuth2 Bearer (token)</td>
+          <td><code>cloudcode-pa.googleapis.com/v1internal</code></td>
+          <td>IDs internes Antigravity (<code>gemini-3-flash-agent</code>, etc.)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="tech-spec">
+      <h4>⚙️ Stratégie de résilience — Failover Hybride</h4>
+      <ul>
+        <li>
+          <strong>Erreurs 429/500/503 (surcharge) :</strong> backoff exponentiel avec jitter aléatoire
+          (<code>ECHO_RETRY_BASE_DELAY × jitter × 2^attempt</code>). Après
+          <code>KEY_SWITCH_THRESHOLD</code> (2) erreurs consécutives sur la même source,
+          bascule sur la source suivante dans le registre des fournisseurs.
+        </li>
+        <li>
+          <strong>Erreurs 403/404 (droits / modèle indisponible) :</strong> bascule
+          <strong>immédiate</strong> vers la source suivante, sans délai.
+        </li>
+        <li>
+          <strong>Transparence :</strong> chaque tentative et chaque bascule est signalée
+          en temps réel via <code>EchoEvents.status()</code> dans l'interface Open WebUI.
+        </li>
+      </ul>
+    </div>
+
+    <h3>Fonctions utilitaires</h3>
+    <table>
+      <thead>
+        <tr><th>Fonction</th><th>Rôle</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>split_thought_process(text)</code></td><td>Isole le contenu des balises <code>&lt;think&gt;</code> / <code>&lt;thought&gt;</code> du texte final. Retourne <code>(texte_propre, pensées)</code>.</td></tr>
+        <tr><td><code>wrap_tool_output(text, status, multiparts, nouveaux_fichiers)</code></td><td>Construit le dictionnaire multipart standardisé retourné par chaque outil au Pipe.</td></tr>
+        <tr><td><code>get_echo_version()</code></td><td>Lit la version depuis <code>/app/backend/data/ECHO_VERSION</code> (copié depuis le fichier <code>VERSION</code> du dépôt).</td></tr>
+        <tr><td><code>index_text_in_ephemeral_rag()</code></td><td>Pipeline complet chunk → embed → upsert Qdrant pour le RAG éphémère. Recouvrement inter-chunks pour préserver le contexte aux jointures.</td></tr>
+      </tbody>
+    </table>
+
+    <h2><code>echo_auth.py</code> — Identités d'Accès aux Modèles (v7.2)</h2>
+
+    <p>
+      <code>AuthService</code> gère le cycle complet d'authentification OAuth2 headless via le flux
+      <strong>Authorization Code + PKCE (RFC 7636)</strong>. Ce choix permet à ECHO de s'authentifier
+      avec un compte Google depuis un conteneur Docker sans navigateur ni intervention humaine répétée.
+    </p>
+
+    <h3>Flux PKCE — séquence d'authentification</h3>
+    <ol>
+      <li><strong><code>initiate_pkce_flow()</code></strong> : génère le code verifier + challenge, ouvre un tunnel SSH éphémère (<code>asyncssh</code>) sur un port dynamique de la plage <code>8020–8024</code>, et renvoie l'URL d'autorisation Google à l'utilisateur.</li>
+      <li>L'utilisateur clique sur le lien, autorise ECHO sur son compte Google.</li>
+      <li><strong><code>await_pkce_callback()</code></strong> : tâche asyncio en arrière-plan qui attend le callback Google sur le port interne (<code>8025–8034</code>) via le tunnel SSH.</li>
+      <li>Le code d'autorisation est échangé contre un <code>access_token</code> et un <code>refresh_token</code>, stockés dans <code>identity.db</code>.</li>
+    </ol>
+
+    <div class="tech-spec">
+      <h4>⚙️ Rafraîchissement proactif des tokens</h4>
+      <p>
+        <code>EchoAuth.refresh_google_oauth_token()</code> vérifie proactivement si le token a plus
+        de 3 300 secondes (55 minutes).
+        Si c'est le cas, il demande silencieusement un nouveau token via <code>refresh_token</code>
+        et l'enregistre dans <code>identity.db</code>. Ce processus est complètement transparent
+        pour l'utilisateur.
+      </p>
+    </div>
+
+    <h3>Méthodes de quota API Antigravity (v7.x)</h3>
+    <table>
+      <thead>
+        <tr><th>Méthode</th><th>Rôle</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>fetch_available_models()</code></td><td>Appel <code>:fetchAvailableModels</code> (API Antigravity). Parse le <code>quotaInfo</code> de chaque modèle et stocke dans <code>google_quota_by_model</code> (JSON dict dans <code>identity.db</code>).</td></tr>
+        <tr><td><code>fetch_user_quota()</code></td><td>Appel <code>:loadCodeAssist</code> mode <code>HEALTH_CHECK</code>. Extrait les crédits disponibles depuis <code>paidTier.availableCredits</code>.</td></tr>
+        <tr><td><code>get_model_quota(ca_model_id)</code></td><td>Lecture du <code>quotaInfo</code> spécifique à un modèle CA depuis <code>identity.db</code>. Fallback <code>{}</code> si modèle inconnu. Utilisé par le HUD.</td></tr>
+        <tr><td><code>refresh_quota_if_needed()</code></td><td>Déclenche <code>fetch_available_models()</code> de manière asynchrone non-bloquante si les données ont plus de 10 minutes. Ne bloque jamais la génération.</td></tr>
+      </tbody>
+    </table>
+
+    <h2><code>echo_protocol.py</code> — Adaptateur API Antigravity (v1.1)</h2>
+
+    <p>
+      Module de <strong>fonctions pures</strong> (sans état, sans appel réseau) : point de modification
+      unique pour adapter les requêtes ECHO au format de l'API Antigravity interne.
+      Il centralise la traduction des identifiants de modèles et la normalisation de
+      <code>generationConfig</code>.
+    </p>
+
+    <h3><code>get_ca_model_id(echo_model)</code></h3>
+    <p>
+      Traduit un nom de modèle canonique ECHO (AI Studio) vers l'ID interne API Antigravity.
+      La correspondance est définie dans <code>MODEL_MAP_CA</code> (source de vérité dans
+      <code>echo_constants.py</code>).
+      <em>Note : le préfixe <code>_ca_</code> dans les noms de fonctions est l'abréviation interne
+      de « cloudcode-pa API » et est conservé tel quel dans le code source.</em>
+    </p>
+    <table>
+      <thead>
+        <tr><th>Nom ECHO (AI Studio)</th><th>ID API Antigravity</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>gemini-3.1-pro-preview</code></td><td><code>gemini-pro-agent</code></td></tr>
+        <tr><td><code>gemini-3.5-flash</code></td><td><code>gemini-3-flash-agent</code></td></tr>
+        <tr><td><code>gemini-3.1-flash-lite</code></td><td><code>gemini-3.1-flash-lite</code> (identique)</td></tr>
+        <tr><td><code>gemini-2.5-flash</code></td><td><code>gemini-2.5-flash</code> (identique)</td></tr>
+      </tbody>
+    </table>
+
+    <h3><code>build_ca_generation_config(raw_gen_conf)</code></h3>
+    <p>
+      Normalise le <code>generationConfig</code> pour le backend API Antigravity v1internal :
+    </p>
+    <ul>
+      <li>
+        <strong>Cap <code>maxOutputTokens</code> à 65 535</strong> — décision D1 : alignement sur
+        le modèle le plus restrictif (Gemini 3.1 Pro AGY).
+      </li>
+      <li>
+        <strong><code>thinkingConfig</code> passe intégralement</strong> — <code>includeThoughts: true</code>
+        est requis pour que l'API Antigravity retourne les parts <code>thought: true</code> lisibles
+        dans le stream (balises <code>&lt;think&gt;</code>). Sans ce champ, seule la
+        <code>thoughtSignature</code> opaque est retournée.
+      </li>
+      <li>
+        <strong><code>response_mime_type</code> accepté</strong> — confirmé fonctionnel sur tous les
+        modèles AGY.
+      </li>
+    </ul>
+
+    <div class="audit-note">
+      <h4>✅ Champ <code>CA_EXCLUDED_GEN_CONF_FIELDS</code></h4>
+      <p>
+        Actuellement un <code>frozenset</code> vide : tous les champs du <code>generationConfig</code>
+        passent intégralement vers l'API Antigravity. Ce point de contrôle centralisé permet d'exclure
+        rapidement un champ devenu incompatible sans modifier le code du Pipe.
+      </p>
+    </div>
+
+    <h2><code>echo_ui.py</code> / <code>echo_visuals.py</code> — Interface HUD</h2>
+
+    <p>
+      <code>echo_ui.py</code> (v5.19) et <code>echo_visuals.py</code> forment le moteur d'injection
+      dynamique de l'interface HUD dans Open WebUI. Ils sont détaillés dans la section
+      <a href="04_hud_ui.html">HUD &amp; UI</a>.
+    </p>
+
+    <div class="tech-spec">
+      <h4>⚙️ SQLite — Persistance par chat</h4>
+      <p>
+        Toutes les bases SQLite d'ECHO sont gérées par <code>EchoStateManager</code> avec
+        un timeout de connexion de 10 secondes pour éviter les blocages sur accès concurrent.
+        Deux bases coexistent par utilisateur : <code>identity.db</code> (auth, quotas) et
+        <code>{chat_id}.db</code> (ombres, sutures, signatures cognitives).
+      </p>
+    </div>
+
+    <div class="transition-text">
+      Ces moteurs logiciels nécessitent une interface de supervision pour être pilotés en temps réel.
+      <a href="04_hud_ui.html">Découvrir l'écosystème HUD &amp; UI ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.158.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework — Version 5.158.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
-  <div class="transition-text"><em>Ces moteurs logiciels nécessitent des interfaces pour être supervisés et pilotés par l'utilisateur. <a href="04_hud_ui.html">Découvrir l'écosystème HUD & UI ➔</a></em></div>
   </main>
-<script src="nav.js"></script>
+
+  <script src="nav.js"></script>
 </body>
 </html>
-
-
-

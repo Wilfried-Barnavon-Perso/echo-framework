@@ -1,7 +1,7 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 7.12
+version: 7.13
 description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
              Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
@@ -14,6 +14,8 @@ description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migra
              default max_tokens 65000→MAX_TOKENS_DEFAULT.
              7.12: EchoAuth.get_model_quota() — lecture quota par modèle CA depuis identity.db.
              Correction commentaire _prepare_request_context (thinkingConfig non strippé depuis v1.1).
+             7.13: Propagation renommage AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
+             CODE_ASSIST_BASE_URL→AGY_BASE_URL (echo_constants v5.0). Variables is_code_assist→is_agy.
 """
 
 import copy
@@ -38,14 +40,14 @@ import orjson as std_json
 # Importation directe (Strict)
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, ECHO_VERSION_PATH,
-    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_CODE_ASSIST_USER_AGENT, ECHO_USERS_ROOT,
+    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_AGY_USER_AGENT, ECHO_USERS_ROOT,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
     ECHO_RETRY_BASE_DELAY, ECHO_RETRY_MULTIPLIER,
     ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX,
     AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_OAUTH2, AUTH_METHOD_KEY_SECONDARY,
     ANTIGRAVITY_OAUTH_CLIENT_ID, ANTIGRAVITY_OAUTH_CLIENT_SECRET,   # client LS (884354919052)
     ANTIGRAVITY_DESKTOP_CLIENT_ID, ANTIGRAVITY_DESKTOP_CLIENT_SECRET, # client Desktop (1071006060591)
-    GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, CODE_ASSIST_BASE_URL,
+    GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, AGY_BASE_URL,
     GOOGLE_OAUTH_TOKEN_LIFETIME, AUTH_DATA_USER_TIER,
     MAX_TOKENS_DEFAULT,  # Utilisé comme valeur par défaut de call_distillation.max_tokens
 )
@@ -308,11 +310,11 @@ class EchoGeminiClient:
     """Moteur factorisé pour les appels API Gemini avec Architecture Symétrique (AI Studio & Code Assist)."""
 
     @staticmethod
-    async def _get_auth_headers(provider: Dict, is_code_assist: bool = False, is_generation: bool = False) -> Dict[str, str]:
+    async def _get_auth_headers(provider: Dict, is_agy: bool = False, is_generation: bool = False) -> Dict[str, str]:
         """Génère les en-têtes d'authentification selon le type de fournisseur (Agnostique)."""
-        if is_code_assist:
+        if is_agy:
             # User-Agent Antigravity 2.1 (Language Server)
-            ua = ECHO_CODE_ASSIST_USER_AGENT
+            ua = ECHO_AGY_USER_AGENT
         else:
             ua = ECHO_USER_AGENT
 
@@ -340,7 +342,7 @@ class EchoGeminiClient:
                 headers["Authorization"] = f"Bearer {token}"
                 # Pour Code Assist Generation, le project est dans le payload JSON.
                 # L'ajout du header x-goog-user-project peut provoquer une erreur 403 Forbidden.
-                if not is_code_assist or not is_generation:
+                if not is_agy or not is_generation:
                     project_id = provider.get("project_id")
                     if not project_id:
                          project_id = (EchoAuth(user_id=provider.get("user_id")).get_auth_data(AUTH_DATA_PROJECT_ID) if provider.get("user_id") else None)
@@ -361,12 +363,12 @@ class EchoGeminiClient:
         Retourne un dictionnaire de configuration ou None si le fournisseur est invalide.
         """
         p_type = provider.get("type")
-        is_code_assist = (p_type == AUTH_METHOD_OAUTH2)
+        is_agy = (p_type == AUTH_METHOD_OAUTH2)
         is_generation = method in ["generateContent", "streamGenerateContent", "embedContent"]
-        headers = await EchoGeminiClient._get_auth_headers(provider, is_code_assist=is_code_assist, is_generation=is_generation)
+        headers = await EchoGeminiClient._get_auth_headers(provider, is_agy=is_agy, is_generation=is_generation)
 
-        # --- CAS 1 : PROTOCOLE CODE ASSIST (OAuth2) ---
-        if is_code_assist:
+        # --- CAS 1 : PROTOCOLE API ANTIGRAVITY (OAuth2) ---
+        if is_agy:
             # Traduction nom AI Studio → ID interne Code Assist (les namespaces sont distincts)
             target_model = get_ca_model_id(target_model)
 
@@ -377,7 +379,7 @@ class EchoGeminiClient:
             if not project_id:
                 return None
 
-            api_url = f"{CODE_ASSIST_BASE_URL}:{method}"
+            api_url = f"{AGY_BASE_URL}:{method}"
             if method == "streamGenerateContent":
                 api_url += "?alt=sse"
 

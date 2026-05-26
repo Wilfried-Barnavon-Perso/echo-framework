@@ -1,367 +1,271 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 9. Annexes Techniques</title>
-    <link rel="stylesheet" href="style.css">
-    <style>
-        :root {
-            --tech-blue: #00d4ff;
-            --tech-orange: #ff9d00;
-            --tech-green: #00ff88;
-            --tech-red: #ff4d4d;
-            --bg-card: rgba(255, 255, 255, 0.05);
-        }
-        .tech-section {
-            margin-bottom: 4rem;
-            border-top: 2px solid #333;
-            padding-top: 2rem;
-        }
-        .tech-card {
-            background: var(--bg-card);
-            border-left: 4px solid var(--tech-blue);
-            padding: 1.5rem;
-            margin-bottom: 2rem;
-            border-radius: 0 8px 8px 0;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        }
-        .tech-card.orange { border-left-color: var(--tech-orange); }
-        .tech-card.green { border-left-color: var(--tech-green); }
-        .tech-card.red { border-left-color: var(--tech-red); }
-
-        .method-block {
-            margin-bottom: 2rem;
-            background: rgba(0,0,0,0.2);
-            padding: 1rem;
-            border-radius: 4px;
-        }
-        .method-signature {
-            font-family: 'Fira Code', monospace;
-            color: var(--tech-orange);
-            font-weight: bold;
-            font-size: 1.1rem;
-            display: block;
-            margin-bottom: 0.5rem;
-        }
-        .method-desc {
-            font-size: 0.95rem;
-            color: #eee;
-            margin-bottom: 0.5rem;
-        }
-        .param-list {
-            font-size: 0.85rem;
-            color: #aaa;
-            border-left: 2px solid #444;
-            padding-left: 1rem;
-        }
-
-        .db-schema-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.85rem;
-            margin-top: 1rem;
-            background: #111;
-        }
-        .db-schema-table th, .db-schema-table td {
-            border: 1px solid #333;
-            padding: 10px;
-            text-align: left;
-        }
-        .db-schema-table th {
-            background: #222;
-            color: var(--tech-blue);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-        .db-schema-table tr:hover {
-            background: #1a1a1a;
-        }
-
-        .script-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 1.5rem;
-        }
-        code {
-            background: rgba(0,0,0,0.3);
-            padding: 2px 5px;
-            border-radius: 3px;
-            color: var(--tech-green);
-        }
-        pre {
-            background: #050505;
-            padding: 1rem;
-            border-radius: 8px;
-            border: 1px solid #222;
-            overflow-x: auto;
-        }
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: bold;
-            text-transform: uppercase;
-            margin-right: 5px;
-        }
-        .badge-blue { background: #004466; color: var(--tech-blue); border: 1px solid var(--tech-blue); }
-        .badge-orange { background: #664400; color: var(--tech-orange); border: 1px solid var(--tech-orange); }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Annexes Techniques ECHO v5 : topologie réseau et ports, volumes Docker, schéma SQL complet identity.db et {chat_id}.db, collections Qdrant, valves de configuration, API de référence.">
+  <title>ECHO v5 — 10. Annexes Techniques</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
-    <main>
-        <h1>10. Annexes Techniques : Référence Deep-Dive</h1>
-        
-        <div class="transition-text">Cette section regroupe les spécifications brutes, la topologie réseau et les configurations de bas niveau indispensables à la maintenance du framework ECHO.</div>
+  <main>
+    <h1>10. Annexes Techniques</h1>
 
-        <!-- SECTION 0 : NETWORK & TOPOLOGY -->
-        <section class="tech-section" id="network">
-            <h2>0. Topologie Réseau & Ports</h2>
-            <p>ECHO orchestre un cluster de conteneurs sur un réseau Docker privé (<code>echo-network</code>). La passerelle BunkerWeb agit comme l'unique point d'entrée sécurisé.</p>
-            
-            <table class="db-schema-table">
-                <thead>
-                    <tr>
-                        <th>Service</th>
-                        <th>Port Interne</th>
-                        <th>Port Hôte (Exposé)</th>
-                        <th>Rôle</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td><strong>Open WebUI</strong></td>
-                        <td><code>8080</code></td>
-                        <td><code>3000</code></td>
-                        <td>Interface utilisateur et moteur de Pipe.</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Admin Manager</strong></td>
-                        <td><code>3001</code></td>
-                        <td><code>3001</code></td>
-                        <td>Dashboard de régulation et monitoring.</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Qdrant</strong></td>
-                        <td><code>6333</code></td>
-                        <td><code>6333</code></td>
-                        <td>Base vectorielle (Base vectorielle des souvenirs).</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Python Worker</strong></td>
-                        <td><code>5000</code></td>
-                        <td>-</td>
-                        <td>Sandbox Python (Arsenal).</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Browser Agent</strong></td>
-                        <td><code>5002</code></td>
-                        <td>-</td>
-                        <td>Moteur Playwright (Arsenal).</td>
-                    </tr>
-                </tbody>
-            </table>
-        </section>
+    <p>
+      Cette section constitue la référence de bas niveau du framework ECHO v5 :
+      spécifications réseau, schémas SQL complets, inventaire des volumes Docker,
+      collections Qdrant et dictionnaire des valves de configuration.
+    </p>
 
-        <!-- SECTION 1 : PERSISTENCE LAYER -->
-        <section class="tech-section" id="persistence">
-            <h2>1. Persistance & Volumes Critiques</h2>
-            <p>ECHO garantit la pérennité des données via des volumes Docker nommés. Le volume <code>echo-webui-data</code> est le pivot central de la "Vérité Sémantique".</p>
+    <h2>Topologie Réseau et Ports</h2>
 
-            <ul>
-                <li><code>echo-webui-data</code> (<i>Monté sur /app/backend/data</i>) : Contient <code>webui.db</code>, le registre <code>identity.db</code> et toutes les bases SQLite de sessions (Ombres).</li>
-                <li><code>echo-qdrant-data</code> : Stockage immuable des index vectoriels de Qdrant.</li>
-                <li><code>echo-backups</code> : Destination des archives tar.gz générées par l'Admin Manager.</li>
-                <li><code>echo-worker-data</code> / <code>echo-browser-data</code> : Espaces d'échange pour les artefacts d'outils.</li>
-            </ul>
-        </section>
+    <p>
+      ECHO orchestre un cluster de conteneurs sur un réseau Docker privé (<code>echo-network</code>).
+      La passerelle BunkerWeb est l'unique point d'entrée exposé sur le WAN lorsqu'elle est activée.
+      Les services de l'Arsenal (Browser Agent, Python Worker, SearxNG) ne sont jamais exposés
+      directement.
+    </p>
 
-        <!-- SECTION 2b : QDRANT COLLECTIONS -->
-        <section class="tech-section" id="qdrant">
-            <h2>2b. Collections Qdrant &amp; Constantes Mémoire</h2>
-            <p>Deux collections distinctes sont gérées dans Qdrant. Toutes deux utilisent des vecteurs 1024 dimensions (bge-m3), Distance Cosinus.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Service</th>
+          <th>Conteneur</th>
+          <th>Port interne</th>
+          <th>Port hôte</th>
+          <th>Exposé WAN ?</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Open WebUI</td><td><code>echo-webui</code></td><td>8080</td><td>3000</td><td>Via BunkerWeb</td></tr>
+        <tr><td>Admin Manager</td><td><code>echo-admin-manager</code></td><td>8080</td><td>3001</td><td>Via BunkerWeb</td></tr>
+        <tr><td>Qdrant</td><td><code>echo-qdrant</code></td><td>6333</td><td>6333</td><td>Non</td></tr>
+        <tr><td>Embedding Worker</td><td><code>echo-embedding</code></td><td>7997</td><td>Non</td><td>Non</td></tr>
+        <tr><td>Browser Agent</td><td><code>echo-browser-agent</code></td><td><strong>5002</strong></td><td>Non</td><td>Non</td></tr>
+        <tr><td>Python Worker</td><td><code>echo-python-worker</code></td><td><strong>5000</strong></td><td>Non</td><td>Non</td></tr>
+        <tr><td>SearxNG</td><td><code>echo-searxng</code></td><td>8080</td><td>Non</td><td>Non</td></tr>
+        <tr><td>SSH Tunnel Auth</td><td>In-process WebUI</td><td>8020–8024</td><td>8020–8024</td><td>Non — localhost uniquement</td></tr>
+        <tr><td>Callback OAuth2</td><td>In-process WebUI</td><td>8025–8034</td><td>Non</td><td>Non — via tunnel SSH uniquement</td></tr>
+        <tr><td>BunkerWeb (WAF)</td><td><code>echo-bunkerweb</code></td><td>80 / 443</td><td>80 / 443</td><td>Oui</td></tr>
+      </tbody>
+    </table>
 
-            <table class="db-schema-table">
-                <thead>
-                    <tr><th>Collection</th><th>Constante</th><th>Scope de partitionnement</th><th>Durée de vie</th></tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td><code>echo_memory</code></td>
-                        <td><code>COLLECTION_MEMORY</code></td>
-                        <td><code>user_id</code></td>
-                        <td>Permanent — TTL configurable par niveau (Admin Manager)</td>
-                    </tr>
-                    <tr>
-                        <td><code>echo_ephemeral</code></td>
-                        <td><code>COLLECTION_EPHEMERAL</code></td>
-                        <td><code>user_id + chat_id + slug</code></td>
-                        <td>Session courante — purgé automatiquement</td>
-                    </tr>
-                </tbody>
-            </table>
+    <h2>Volumes Docker</h2>
 
-            <h3>MEMORY_IMPORTANCE_WEIGHTS</h3>
-            <p>Poids de reranking appliqués dans <code>search_memory</code> : <code>score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code></p>
-            <table class="db-schema-table">
-                <thead>
-                    <tr><th>Niveau</th><th>Label (<code>MEMORY_IMPORTANCE_LABELS</code>)</th><th>Poids</th><th>Comportement au rappel</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td>1</td><td>Trivial</td><td>0.55</td><td>Pénalisé — bruit probable, écarté si cos faible</td></tr>
-                    <tr><td>2</td><td>Mineur</td><td>0.75</td><td>En dessous du seuil neutre</td></tr>
-                    <tr><td>3</td><td>Utile</td><td>1.00</td><td>Référence neutre [défaut si non spécifié]</td></tr>
-                    <tr><td>4</td><td>Majeur</td><td>1.30</td><td>Priorité haute, remonte avec cos modéré</td></tr>
-                    <tr><td>5</td><td>Axiome</td><td>1.70</td><td>Fortement boosté — remonte quasiment toujours</td></tr>
-                </tbody>
-            </table>
-            <p style="font-size:0.85em; color:#8b949e; margin-top:8px;">Exemple : Axiome cos=0.60 → score 1.02 &gt; Trivial cos=0.85 → score 0.47. Seuil de filtre final : <code>SCORE_THRESHOLD</code> (valve, défaut 0.45).</p>
-        </section>
+    <table>
+      <thead><tr><th>Volume</th><th>Point de montage</th><th>Contenu</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>echo-webui-data</code></td>
+          <td><code>/app/backend/data</code></td>
+          <td><code>webui.db</code>, <code>identity.db</code> par utilisateur, bases SQLite de session (<code>{chat_id}.db</code>), Vault fichiers.</td>
+        </tr>
+        <tr>
+          <td><code>echo-qdrant-data</code></td>
+          <td><code>/qdrant/storage</code></td>
+          <td>Index vectoriels Qdrant (<code>echo_memory</code>, <code>echo_ephemeral</code>).</td>
+        </tr>
+        <tr>
+          <td><code>echo-backups</code></td>
+          <td><code>/opt/ECHO/backups</code></td>
+          <td>Archives <code>tar.gz</code> générées par l'Admin Manager.</td>
+        </tr>
+        <tr>
+          <td><code>echo-worker-data</code></td>
+          <td><code>/data</code> (Python Worker)</td>
+          <td>Artefacts temporaires d'exécution Python.</td>
+        </tr>
+        <tr>
+          <td><code>echo-browser-data</code></td>
+          <td><code>/data</code> (Browser Agent)</td>
+          <td>Captures d'écran, exports de sessions de navigation.</td>
+        </tr>
+        <tr>
+          <td><code>echo-bunkerweb-data</code></td>
+          <td><code>/opt/ECHO/bunkerweb</code></td>
+          <td>Configuration WAF persistante (certificats, règles).</td>
+        </tr>
+      </tbody>
+    </table>
 
-        <section class="tech-section" id="data-layer">
-            <h2>2. Spécifications du Data Layer (SQLite / WAL)</h2>
-            <p>ECHO utilise une architecture de stockage distribuée, isolée par identifiant utilisateur (<code>UUID/ID</code>) et par session (<code>ChatID</code>).</p>
+    <h2>Schéma SQL — <code>identity.db</code></h2>
 
-            <div class="tech-card">
-                <h3>Global Registry : <code>identity.db</code></h3>
-                <p>Base centrale de l'utilisateur assurant la persistance de l'identité et de la sécurité.</p>
-                <table class="db-schema-table">
-                    <thead>
-                        <tr><th>Table</th><th>Schéma SQL</th><th>Description & Contraintes</th></tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><code>auth_data</code></td>
-                            <td><code>key (TEXT PK), value (TEXT), updated_at (INT)</code></td>
-                            <td>Clé-valeur persistante. Clés utilisées :
-                                <ul style="font-size:0.8em; margin:4px 0;">
-                                    <li><code>google_oauth2_access_token</code> : Token Bearer OAuth2</li>
-                                    <li><code>google_oauth2_last_refresh</code> : Timestamp dernier refresh</li>
-                                    <li><code>google_user_email</code> : Email du compte Google</li>
-                                    <li><code>google_project_id</code> : ID projet CA actif</li>
-                                    <li><code>google_credits_total</code> : Crédits AI disponibles</li>
-                                    <li><code>google_g1_credits</code> : Crédits G1 (paidTier)</li>
-                                    <li><code>google_quota_by_model</code> : JSON dict {ca_model_id: quotaInfo}</li>
-                                    <li><code>google_quota_fraction</code> : Fraction restante (modèle principal)</li>
-                                    <li><code>google_quota_reset</code> : Heure de reset (ISO)</li>
-                                    <li><code>google_quota_type</code> : Type quota (ex: CODE_ASSIST)</li>
-                                    <li><code>google_quota_last_fetch</code> : Timestamp dernier fetch quota</li>
-                                </ul>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>user_profile</code></td>
-                            <td><code>uid (TEXT PK), preferences_json (TEXT)</code></td>
-                            <td>Dictionnaire de préférences utilisateur (Alignement).</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
+    <p>
+      Base SQLite unique par utilisateur, stockée dans
+      <code>/app/backend/data/users/{uid}/identity.db</code>.
+      Gérée par <code>EchoStateManager</code> (instance <code>identity_manager</code>).
+    </p>
 
-            <div class="tech-card orange">
-                <h3>Session Cortex : <code>{chat_id}.db</code></h3>
-                <p>Base gérant la continuité cognitive (Suture). Située dans <code>/data/users/{uid}/chats/</code>.</p>
-                <table class="db-schema-table">
-                    <thead>
-                        <tr><th>Table</th><th>Colonnes Critiques</th><th>Rôle de la Suture</th></tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><code>message_shadows</code></td>
-                            <td><code>message_id (PK), full_parts_json, updated_at</code></td>
-                            <td><b>Shadowing</b> : Sauvegarde bit-perfect de l'état multimodal exact envoyé à Gemini.</td>
-                        </tr>
-                        <tr>
-                            <td><code>suture_index</code></td>
-                            <td><code>cumulative_hash (PK), invariant_hash, parent_hash</code></td>
-                            <td>Indexation SHA-256 garantissant l'intégrité de la chaîne de réflexion.</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
+    <h3>Table <code>auth_data</code></h3>
 
-        <!-- SECTION 3 : CORE API -->
-        <section class="tech-section" id="core-api">
-            <h2>3. Référence API des Classes Fondamentales</h2>
+    <table>
+      <thead><tr><th>Clé</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>google_oauth2_access_token</code></td><td>TEXT</td><td>Token Bearer OAuth2 courant. Durée de vie : 3 300 s (55 min).</td></tr>
+        <tr><td><code>google_oauth2_refresh_token</code></td><td>TEXT</td><td>Token de rafraîchissement à longue durée de vie.</td></tr>
+        <tr><td><code>google_oauth2_last_refresh</code></td><td>INT</td><td>Timestamp Unix du dernier rafraîchissement de token.</td></tr>
+        <tr><td><code>google_user_email</code></td><td>TEXT</td><td>Adresse e-mail du compte Google authentifié.</td></tr>
+        <tr><td><code>google_user_tier</code></td><td>TEXT</td><td>Niveau d'abonnement Google (ex. <code>FREE</code>, <code>STANDARD</code>).</td></tr>
+        <tr><td><code>google_project_id</code></td><td>TEXT</td><td>ID du projet API Antigravity actif.</td></tr>
+        <tr><td><code>google_credits_total</code></td><td>TEXT</td><td>Crédits AI disponibles (depuis <code>paidTier.availableCredits</code>).</td></tr>
+        <tr><td><code>google_quota_by_model</code></td><td>TEXT (JSON)</td><td>Dict <code>{ca_model_id: quotaInfo}</code>. Source du quota affiché dans le HUD.</td></tr>
+        <tr><td><code>google_quota_fraction</code></td><td>TEXT</td><td>Fraction quota restante du modèle principal (0,0–1,0).</td></tr>
+        <tr><td><code>google_quota_reset</code></td><td>TEXT</td><td>Heure de reset du quota (ISO 8601).</td></tr>
+        <tr><td><code>google_quota_type</code></td><td>TEXT</td><td>Type de quota (ex. <code>CODE_ASSIST</code>).</td></tr>
+        <tr><td><code>google_quota_last_fetch</code></td><td>INT</td><td>Timestamp Unix du dernier appel <code>fetch_available_models</code>. Cooldown 10 min.</td></tr>
+        <tr><td><code>google_api_key</code></td><td>TEXT</td><td>Clé API AI Studio primaire (fallback OAuth2).</td></tr>
+        <tr><td><code>google_api_key_secondary</code></td><td>TEXT</td><td>Clé API AI Studio de secours.</td></tr>
+      </tbody>
+    </table>
 
-            <div class="tech-card green">
-                <h3><code>EchoGeminiClient</code></h3>
-                <p><strong>Protocole HTTP/2 Strict & Failover Hybride</strong> : Utilisation de <code>httpx</code> avec multiplexage. Réduit la latence des flux SSE et permet la capture asynchrone des <strong>ThoughtSignatures</strong> (signatures de pensée de grade industriel). Chaque réflexion est scellée par un <strong>Thought-Verrou</strong> garantissant que le raisonnement n'a pas été altéré pendant le transit.</p>
-                <ul>
-                    <li><strong>Bascule (Surcharge)</strong> : Rotation automatique après 2 échecs (429/500/503) avec Jitter (0.7x-1.3x).</li>
-                    <li><strong>Bascule (Autorisation)</strong> : Bascule **immédiate** vers l'identifiant suivant du mesh en cas d'erreur 403 (Forbidden) ou 404 (Not Found).</li>
-                    <li><strong>Monitor Streaming</strong> : Emission systématique de <code>events.status</code> lors des réessais pour garantir la transparence UX.</li>
-                </ul>
-            </div>
+    <h2>Schéma SQL — <code>{chat_id}.db</code></h2>
 
-            <div class="tech-card orange">
-                <h3><code>ECHO Expertise Conseil</code></h3>
-                <p>Interface de sous-traitance cognitive asynchrone pour l'exécution de tâches isolées (Stateless).</p>
-                <div class="method-block">
-                    <span class="method-signature">delegate_reasoning(context, prompt, target_model, ...)</span>
-                    <p class="method-desc">Exécute une réflexion isolée sur un modèle cible avec injection sémantique obligatoire.</p>
-                    <ul class="param-list">
-                        <li><code>context</code> (str) : <b>Obligatoire.</b> Faits et mémoire de référence (Markdown).</li>
-                        <li><code>prompt</code> (str) : Tâche ou instruction spécifique à accomplir.</li>
-                        <li><code>target_model</code> (enum) : Choix du moteur (MODEL_LITE, FLASH, PRO).</li>
-                        <li><code>system_instruction</code> (str) : Instruction système optionnelle pour forcer un comportement.</li>
-                    </ul>
-                </div>
-            </div>
+    <p>
+      Base SQLite par session de chat, stockée dans
+      <code>/app/backend/data/users/{uid}/chats/{chat_id}.db</code>.
+      Gérée par l'instance <code>state_manager</code> de <code>EchoStateManager</code>.
+    </p>
 
-            <div class="tech-card">
-                <h3><code>EchoStateManager</code></h3>
-                <p><strong>Merkle-Tree Core</strong> : Algorithme de double hachage pour la Suture.</p>
-                <ul>
-                    <li><code>Invariant Hash = SHA-256(role + content_sorted + tool_io)</code></li>
-                    <li><code>Cumulative Hash = SHA-256(invariant + parent_hash)</code></li>
-                </ul>
-            </div>
-        </section>
+    <h3>Table <code>message_shadows</code></h3>
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>message_id</code></td><td>TEXT PK</td><td>UUID du message fourni par Open WebUI.</td></tr>
+        <tr><td><code>updated_at</code></td><td>INT</td><td>Verrou de Version — timestamp physique de la dernière modification du message.</td></tr>
+        <tr><td><code>parent_id</code></td><td>TEXT</td><td>UUID du message parent (chaîne de conversation).</td></tr>
+        <tr><td><code>cumulative_hash</code></td><td>TEXT FK</td><td>Référence vers <code>suture_index</code>.</td></tr>
+        <tr><td><code>parts</code></td><td>TEXT (JSON)</td><td>Structure Gemini complète des <code>parts</code> (texte, inlineData, thoughtSignature, etc.)</td></tr>
+        <tr><td><code>created_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
+      </tbody>
+    </table>
 
-        <!-- SECTION 4 : VALVES REGISTRY -->
-        <section class="tech-section" id="valves">
-            <h2>4. Dictionnaire des Valves Critiques (Tuning)</h2>
-            <table class="db-schema-table">
-                <thead>
-                    <tr><th>Variable (Valve)</th><th>Valeur</th><th>Impact sur le Système</th></tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td><code>MAX_DIRECT_TEXT_SIZE</code></td>
-                        <td>256 Ko</td>
-                        <td>Seuil de basculement en <b>Smart Context</b> (Résumé Flash).</td>
-                    </tr>
-                    <tr>
-                        <td><code>KEY_SWITCH_THRESHOLD</code></td>
-                        <td>2</td>
-                        <td>Nombre d'échecs API avant failover.</td>
-                    </tr>
-                    <tr>
-                        <td><code>MAX_CASCADE_ATTEMPTS</code></td>
-                        <td>5</td>
-                        <td>Nombre max de transferts cognitifs autorisés par tour.</td>
-                    </tr>
-                    <tr>
-                        <td><code>SMART_CONTEXT_TIMEOUT</code></td>
-                        <td>120s</td>
-                        <td>Timeout de distillation pour les fichiers massifs.</td>
-                    </tr>
-                </tbody>
-            </table>
-        </section>
+    <h3>Table <code>suture_index</code></h3>
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>cumulative_hash</code></td><td>TEXT PK</td><td>SHA-256 cumulatif — ADN de la conversation.</td></tr>
+        <tr><td><code>message_id</code></td><td>TEXT FK</td><td>Référence vers <code>message_shadows</code>.</td></tr>
+        <tr><td><code>invariant_hash</code></td><td>TEXT</td><td>SHA-256 du contenu seul, indépendant de la position dans l'historique.</td></tr>
+        <tr><td><code>parent_hash</code></td><td>TEXT</td><td>Hash cumulatif du tour précédent — forme la chaîne Merkle.</td></tr>
+        <tr><td><code>created_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
+      </tbody>
+    </table>
 
-        <footer>
-            ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-    </main>
-<script src="nav.js"></script>
+    <h3>Table <code>cognitive_signatures</code></h3>
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>message_id</code></td><td>TEXT PK</td><td>UUID du message.</td></tr>
+        <tr><td><code>thought_signature</code></td><td>TEXT</td><td>ThoughtSignature Gemini — jeton opaque cryptographique réinjecté au tour suivant.</td></tr>
+        <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Table <code>tool_journal</code></h3>
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>cumulative_hash</code></td><td>TEXT PK</td><td>Lié au tour courant.</td></tr>
+        <tr><td><code>io_json</code></td><td>TEXT (JSON)</td><td>Appels d'outils (arguments) et sorties (réponses multipart). Journalisation traçable.</td></tr>
+        <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Collections Qdrant</h2>
+
+    <table>
+      <thead><tr><th>Collection</th><th>Constante</th><th>Dimensions</th><th>Distance</th><th>Scope</th><th>Durée de vie</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>echo_memory</code></td>
+          <td><code>COLLECTION_MEMORY</code></td>
+          <td>1024 (bge-m3)</td>
+          <td>Cosinus</td>
+          <td><code>user_id</code></td>
+          <td>Permanent — TTL par niveau (Admin Manager)</td>
+        </tr>
+        <tr>
+          <td><code>echo_ephemeral</code></td>
+          <td><code>COLLECTION_EPHEMERAL</code></td>
+          <td>1024 (bge-m3)</td>
+          <td>Cosinus</td>
+          <td><code>user_id + chat_id + slug</code></td>
+          <td>Session — purgé automatiquement en fin de session</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Dictionnaire des Valves Critiques</h2>
+
+    <p>
+      Les valves sont des paramètres configurables exposés dans l'interface d'administration
+      Open WebUI pour chaque composant (Pipe, Filtres, Outils). Elles permettent d'ajuster
+      le comportement sans redéploiement.
+    </p>
+
+    <table>
+      <thead><tr><th>Valve</th><th>Défaut</th><th>Composant</th><th>Impact</th></tr></thead>
+      <tbody>
+        <tr><td><code>MAX_DIRECT_TEXT_SIZE</code></td><td>256 Ko</td><td>Filtre Inlet</td><td>Seuil de basculement en Moulage (Smart Context).</td></tr>
+        <tr><td><code>ECHO_API_KEY_THRESHOLD</code></td><td>2</td><td>Pipe</td><td>Nombre d'échecs avant failover vers la source d'auth suivante.</td></tr>
+        <tr><td><code>ECHO_API_MAX_RETRIES</code></td><td>5</td><td>Pipe</td><td>Nombre maximum de tentatives par source.</td></tr>
+        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td>2,0 s</td><td>Pipe</td><td>Délai de base du backoff exponentiel.</td></tr>
+        <tr><td><code>ECHO_RETRY_MULTIPLIER</code></td><td>2,0</td><td>Pipe</td><td>Multiplicateur du backoff.</td></tr>
+        <tr><td><code>ECHO_RETRY_JITTER_MIN/MAX</code></td><td>0,7 / 1,3</td><td>Pipe</td><td>Plage de jitter aléatoire pour éviter les tempêtes de retry.</td></tr>
+        <tr><td><code>PKCE_CALLBACK_TIMEOUT</code></td><td>300 s</td><td>Auth</td><td>Délai maximal pour l'utilisateur pour autoriser dans le navigateur.</td></tr>
+        <tr><td><code>GOOGLE_OAUTH_TOKEN_LIFETIME</code></td><td>3 300 s</td><td>Auth</td><td>Durée proactive de rafraîchissement du token (55 min).</td></tr>
+        <tr><td><code>SCORE_THRESHOLD</code></td><td>0,45</td><td>Mémoire</td><td>Score pondéré minimal pour inclure un résultat de <code>search_memory</code>.</td></tr>
+        <tr><td><code>PROBE_TIMEOUT</code></td><td>120 s</td><td>Vault Explorer</td><td>Timeout de l'analyse sémantique <code>semantic_probe</code> (appel LLM).</td></tr>
+      </tbody>
+    </table>
+
+    <div class="audit-note">
+      <h4>✅ Source de vérité — Valves</h4>
+      <p>
+        Les valeurs ci-dessus sont celles déclarées dans les constantes de
+        <code>echo_constants.py</code> (v4.9) et dans les constructeurs <code>Valves</code>
+        de chaque composant. En cas de divergence entre cette documentation et le code source,
+        le code source fait foi.
+      </p>
+    </div>
+
+    <h2>Référence API — Classes Fondamentales</h2>
+
+    <h3><code>EchoStateManager</code> — Méthodes principales</h3>
+
+    <table>
+      <thead><tr><th>Méthode</th><th>Signature</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>get_message_shadow</code></td><td><code>(message_id, updated_at) → dict | None</code></td><td>Lit l'Ombre du message. Retourne <code>None</code> si absente ou Verrou invalide.</td></tr>
+        <tr><td><code>save_message_shadow</code></td><td><code>(message_id, chat_id, role, parts, updated_at)</code></td><td>Scelle l'Ombre en base. Upsert idempotent. 5 paramètres.</td></tr>
+        <tr><td><code>get_signature_by_id</code></td><td><code>(message_id) → str | None</code></td><td>Lit l'Ancre ThoughtSignature depuis <code>cognitive_signatures</code> par <code>message_id</code>.</td></tr>
+        <tr><td><code>save_signature_by_id</code></td><td><code>(message_id, signature)</code></td><td>Scelle la ThoughtSignature.</td></tr>
+        <tr><td><code>index_suture</code></td><td><code>(cumul, chat_id, inv, parent, message_id)</code></td><td>Met à jour la chaîne Merkle dans <code>suture_index</code>. <code>chat_id</code> est le 2ème argument.</td></tr>
+        <tr><td><code>save_cognitive_data</code></td><td><code>(cumul, sig, thought, tool_io, message_id, model_id)</code></td><td>Journalise les données cognitives du tour (ThoughtSignature, pensées, appels d'outils, modèle).</td></tr>
+        <tr><td><code>get_auth_data</code></td><td><code>(key_name, user_id) → str | None</code></td><td>Lecture clé-valeur depuis <code>auth_data</code> (identity.db).</td></tr>
+        <tr><td><code>save_api_key</code></td><td><code>(key_name, value, user_id)</code></td><td>Écriture clé-valeur dans <code>auth_data</code>. Upsert.</td></tr>
+      </tbody>
+    </table>
+
+    <h3><code>EchoGeminiClient</code> — Méthodes principales</h3>
+
+    <table>
+      <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>call(model, payload, user_id, chat_id)</code></td><td>Appel non-streamant (utilisé pour la distillation). Gère automatiquement le choix du backend (AI Studio / API Antigravity) et le failover.</td></tr>
+        <tr><td><code>call_distillation(prompt, __user__, __metadata__, is_json, max_tokens)</code></td><td>Exécute une tâche de distillation via <code>MODEL_DISTILLATION</code> (gemini-2.5-flash). Gère le nettoyage des thoughts et le parsing JSON.</td></tr>
+        <tr><td><code>generate_embedding(text, task_type, __user__, __metadata__)</code></td><td>Vectorise un texte via le modèle local BAAI/bge-m3 (Embedding Worker). Retourne une liste de 1024 floats.</td></tr>
+        <tr><td><code>get_stealth_headers(url)</code></td><td>Construit les en-têtes HTTP/2 haute fidélité (User-Agent Chrome 123, Sec-Fetch-*) pour le téléchargement Stealth. Paramètre <code>url</code> optionnel.</td></tr>
+      </tbody>
+    </table>
+
+    <footer>
+      ECHO Framework — Version 5.158.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
 </body>
 </html>
-
-
-

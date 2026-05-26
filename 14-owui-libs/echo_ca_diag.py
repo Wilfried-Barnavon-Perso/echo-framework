@@ -1,7 +1,7 @@
 """
-title: ECHO Code Assist Diagnostic
+title: ECHO AGY Diagnostic
 author: Wilfried BARNAVON
-version: 2.1
+version: 2.2
 description: Outil de diagnostic API cloudcode-pa.googleapis.com.
              Lance depuis le repertoire utilisateur ECHO (contenant identity.db).
              Teste systematiquement : auth, provisioning, modeles, generate, stream.
@@ -31,7 +31,7 @@ SEP2 = "-" * 70
 # ---------------------------------------------------------------------------
 # CLI args  (doit etre avant toute logique qui lit des variables globales)
 # ---------------------------------------------------------------------------
-parser = argparse.ArgumentParser(description="ECHO Code Assist Diagnostic")
+parser = argparse.ArgumentParser(description="ECHO AGY Diagnostic")
 parser.add_argument("--aistudio-key", default=None,
                     help="Cle AI Studio pour tester generativelanguage.googleapis.com")
 parser.add_argument("--section10-models", default=None,
@@ -54,21 +54,21 @@ def raw(msg): print(f"  >> {msg}")
 hdr("1. Import echo_constants")
 try:
     from echo_constants import (
-        CODE_ASSIST_BASE_URL, GOOGLE_API_BASE_URL,
+        AGY_BASE_URL, GOOGLE_API_BASE_URL,
         ANTIGRAVITY_OAUTH_CLIENT_ID,
         ANTIGRAVITY_OAUTH_CLIENT_SECRET,
         ANTIGRAVITY_DESKTOP_CLIENT_ID,
         ANTIGRAVITY_DESKTOP_CLIENT_SECRET,
         GOOGLE_OAUTH_TOKEN_URL,
-        ECHO_CODE_ASSIST_USER_AGENT,
+        ECHO_AGY_USER_AGENT,
         ECHO_CLIENT_METADATA,
         MODEL_PRO, MODEL_FLASH, MODEL_LITE,
         AUTH_DATA_PROJECT_ID,
         AUTH_METHOD_KEY_PRIMARY,
     )
     ok("echo_constants importe")
-    inf(f"CODE_ASSIST_BASE_URL       = {CODE_ASSIST_BASE_URL}")
-    inf(f"ECHO_CODE_ASSIST_UA        = {ECHO_CODE_ASSIST_USER_AGENT}")
+    inf(f"AGY_BASE_URL               = {AGY_BASE_URL}")
+    inf(f"ECHO_AGY_UA                = {ECHO_AGY_USER_AGENT}")
     inf(f"ANTIGRAVITY_CLIENT_ID (LS) = {ANTIGRAVITY_OAUTH_CLIENT_ID[:30]}...")
     inf(f"ANTIGRAVITY_CLIENT_ID (DT) = {ANTIGRAVITY_DESKTOP_CLIENT_ID[:30]}...")
     inf(f"MODEL_PRO   = {MODEL_PRO}")
@@ -77,8 +77,8 @@ try:
 except Exception as e:
     ko(f"echo_constants indisponible : {e}")
     inf("Utilisation des valeurs de fallback (RE 2026-05-23)")
-    CODE_ASSIST_BASE_URL              = "https://cloudcode-pa.googleapis.com/v1internal"
-    ECHO_CODE_ASSIST_USER_AGENT       = (
+    AGY_BASE_URL              = "https://cloudcode-pa.googleapis.com/v1internal"
+    ECHO_AGY_USER_AGENT       = (
         "antigravity/2.1.0 (language_server; os_type=Windows; "
         "os_version=10.0.26100; arch=x64)"
     )
@@ -225,7 +225,7 @@ def make_headers(project: str = None) -> dict:
     h = {
         "Authorization":    f"Bearer {access_token}",
         "Content-Type":     "application/json",
-        "User-Agent":       ECHO_CODE_ASSIST_USER_AGENT,
+        "User-Agent":       ECHO_AGY_USER_AGENT,
         "x-goog-api-client": "antigravity/2.1.0",
     }
     # Ne pas ajouter x-goog-user-project pour la generation (cause 403)
@@ -238,9 +238,9 @@ def make_headers(project: str = None) -> dict:
 # ---------------------------------------------------------------------------
 hdr("5. Test loadCodeAssist (provisioning)")
 
-async def test_load_code_assist():
+async def test_load_agy():
     import httpx
-    url = f"{CODE_ASSIST_BASE_URL}:loadCodeAssist"
+    url = f"{AGY_BASE_URL}:loadCodeAssist"
     # Payload identique a la production echo_auth.py:_provision_google_account()
     # ECHO_CLIENT_METADATA = {ideType: IDE_UNSPECIFIED, platform: PLATFORM_UNSPECIFIED, pluginType: GEMINI}
     payload = {
@@ -269,7 +269,7 @@ async def test_load_code_assist():
             ko(f"loadCodeAssist FAILED : {resp.text[:400]}")
             return None
 
-asyncio.run(test_load_code_assist())
+asyncio.run(test_load_agy())
 
 # ---------------------------------------------------------------------------
 # 6. Test fetchAvailableModels
@@ -280,7 +280,7 @@ AVAILABLE_MODELS = []
 
 async def test_fetch_models():
     import httpx
-    url = f"{CODE_ASSIST_BASE_URL}:fetchAvailableModels"
+    url = f"{AGY_BASE_URL}:fetchAvailableModels"
     # metadata invalide pour fetchAvailableModels (400 sinon) — confirmé par diagnostic
     payload = {"project": project_id}
     inf(f"URL : {url}")
@@ -325,7 +325,7 @@ hdr("6b. Exploration v1internal:listExperiments")
 async def test_list_experiments():
     import httpx
     import json as _json
-    url = f"{CODE_ASSIST_BASE_URL}:listExperiments"
+    url = f"{AGY_BASE_URL}:listExperiments"
     inf(f"URL : {url}")
 
     # Variantes de payload a tester — on ne connait pas le schema, on explore
@@ -404,7 +404,7 @@ async def test_model_capabilities():
     import json as _json
     # Essayer plusieurs variantes de l'endpoint pour obtenir les details du modele
     # La reponse de fetchAvailableModels pourrait avoir un champ detail
-    url = f"{CODE_ASSIST_BASE_URL}:fetchAvailableModels"
+    url = f"{AGY_BASE_URL}:fetchAvailableModels"
     # Tester avec des params supplementaires pour obtenir les details
     variants = {
         "A - standard (avec details=true)": {
@@ -487,7 +487,7 @@ async def test_credit_overages():
             "creditOverageEnabled":      {**base_payload, "creditOverageEnabled": True},
             "useCreditFallback":         {**base_payload, "useCreditFallback": True},
         }
-        url_lca = f"{CODE_ASSIST_BASE_URL}:loadCodeAssist"
+        url_lca = f"{AGY_BASE_URL}:loadCodeAssist"
         for flag_name, payload in variants_lca.items():
             resp = await client.post(url_lca, json=payload, headers=make_headers())
             data = {}
@@ -507,7 +507,7 @@ async def test_credit_overages():
 
         # --- B. retrieveUserQuota : réponse complète brute ---
         inf("\nB. retrieveUserQuota — réponse JSON complète :")
-        url_q = f"{CODE_ASSIST_BASE_URL}:retrieveUserQuota"
+        url_q = f"{AGY_BASE_URL}:retrieveUserQuota"
         resp_q = await client.post(url_q, json={"project": project_id}, headers=make_headers())
         if resp_q.status_code == 200:
             print(_json.dumps(resp_q.json(), indent=4, ensure_ascii=False)[:3000])
@@ -517,12 +517,12 @@ async def test_credit_overages():
         # --- C. Endpoints settings potentiels ---
         inf("\nC. Endpoints settings (updateUserSettings, setUserPreferences...) :")
         settings_endpoints = [
-            f"{CODE_ASSIST_BASE_URL}:updateUserSettings",
-            f"{CODE_ASSIST_BASE_URL}:getUserSettings",
-            f"{CODE_ASSIST_BASE_URL}:updateSettings",
-            f"{CODE_ASSIST_BASE_URL}:getSettings",
-            f"{CODE_ASSIST_BASE_URL}:setUserPreferences",
-            f"{CODE_ASSIST_BASE_URL}:getUserPreferences",
+            f"{AGY_BASE_URL}:updateUserSettings",
+            f"{AGY_BASE_URL}:getUserSettings",
+            f"{AGY_BASE_URL}:updateSettings",
+            f"{AGY_BASE_URL}:getSettings",
+            f"{AGY_BASE_URL}:setUserPreferences",
+            f"{AGY_BASE_URL}:getUserPreferences",
         ]
         for ep in settings_endpoints:
             try:
@@ -552,7 +552,7 @@ RE_MODELS   = [
     "gemini-2.5-flash",
     # === CANDIDATS AI STUDIO : valides sur AI Studio, a valider sur Code Assist ===
     # Question : gemini-3.5-flash et gemini-3.1-pro-preview fonctionnent-ils directement
-    # sur cloudcode-pa (Code Assist) ? Si oui, CODE_ASSIST_MODEL_MAP est inutile.
+    # sur cloudcode-pa (Code Assist) ? Si oui, AGY_MODEL_MAP est inutile.
     "gemini-3.5-flash",           # AI Studio ✅ 200 — Code Assist : ???
     "gemini-3.1-pro-preview",     # AI Studio ⚠️ 429 — Code Assist : ???
 ]
@@ -574,7 +574,7 @@ GENERATE_RESULTS = {}  # model -> (status_code, ok/ko, snippet)
 
 async def test_generate_content(model: str):
     import httpx
-    url = f"{CODE_ASSIST_BASE_URL}:generateContent"
+    url = f"{AGY_BASE_URL}:generateContent"
     # session_id DANS request (comme echo_utils.py) — pas a la racine
     request_body = {
         "contents": [SIMPLE_PROMPT],
@@ -613,7 +613,7 @@ if not TEST_MODELS_SLIM:
 
 async def test_generate_slim(model: str):
     import httpx
-    url = f"{CODE_ASSIST_BASE_URL}:generateContent"
+    url = f"{AGY_BASE_URL}:generateContent"
     # Payload minimal - sans session_id ni user_prompt_id
     payload = {
         "model":   model,
@@ -644,7 +644,7 @@ if not STREAM_CANDIDATES:
 
 async def test_stream(model: str):
     import httpx
-    url = f"{CODE_ASSIST_BASE_URL}:streamGenerateContent?alt=sse"
+    url = f"{AGY_BASE_URL}:streamGenerateContent?alt=sse"
     payload = {
         "model":          model,
         "project":        project_id,
@@ -699,7 +699,7 @@ async def test_aistudio(model: str):
         "contents": [SIMPLE_PROMPT],
         "generationConfig": {"temperature": 0.0, "maxOutputTokens": 10},
     }
-    headers = {"Content-Type": "application/json", "User-Agent": ECHO_CODE_ASSIST_USER_AGENT}
+    headers = {"Content-Type": "application/json", "User-Agent": ECHO_AGY_USER_AGENT}
     async with httpx.AsyncClient(http2=True, timeout=30) as client:
         resp = await client.post(url, json=payload, headers=headers)
         return resp.status_code, resp.text[:200]
@@ -816,7 +816,7 @@ for m in all_tested:
     print(f"  {m:<45} {ca_s:^12} {as_s:^12}{echo_marker}")
 
 print(f"\n  project_id : {project_id}")
-print(f"  Base URL CA : {CODE_ASSIST_BASE_URL}")
+print(f"  Base URL AGY : {AGY_BASE_URL}")
 print(f"  Base URL AS : {GOOGLE_API_BASE_URL}")
 
 # ---------------------------------------------------------------------------
@@ -835,10 +835,10 @@ try:
         _first = _f.read(500)
     _vm = _re.search(r"version:\s*([\d\.]+)", _first)
     inf(f"  echo_utils version (fichier) = {_vm.group(1) if _vm else 'introuvable'}")
-    has_ca_map = hasattr(_eu, "CODE_ASSIST_MODEL_MAP") or "CODE_ASSIST_MODEL_MAP" in dir(_eu)
-    inf(f"  CODE_ASSIST_MODEL_MAP dans echo_utils : {has_ca_map}")
-    from echo_constants import CODE_ASSIST_MODEL_MAP
-    inf(f"  CODE_ASSIST_MODEL_MAP = {CODE_ASSIST_MODEL_MAP}")
+    has_ca_map = hasattr(_eu, "AGY_MODEL_MAP") or "AGY_MODEL_MAP" in dir(_eu)
+    inf(f"  AGY_MODEL_MAP dans echo_utils : {has_ca_map}")
+    from echo_constants import AGY_MODEL_MAP
+    inf(f"  AGY_MODEL_MAP = {AGY_MODEL_MAP}")
 except Exception as e:
     ko(f"Import echo_utils : {e}")
 
@@ -853,9 +853,9 @@ async def test_pipe_payloads():
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type":  "application/json",
-        "User-Agent":    ECHO_CODE_ASSIST_USER_AGENT,
+        "User-Agent":    ECHO_AGY_USER_AGENT,
     }
-    url = f"{CODE_ASSIST_BASE_URL}:streamGenerateContent?alt=sse"
+    url = f"{AGY_BASE_URL}:streamGenerateContent?alt=sse"
 
     # Modeles de base + gemini-pro-agent (MODEL_PRO mapped) + modeles CLI
     base_models = [
@@ -1039,11 +1039,11 @@ SECTION11_MODELS = ["gemini-3.1-flash-lite", "gemini-3-flash-agent", "gemini-pro
 async def test_response_mime_type():
     import httpx
     import json as _json
-    url = f"{CODE_ASSIST_BASE_URL}:streamGenerateContent?alt=sse"
+    url = f"{AGY_BASE_URL}:streamGenerateContent?alt=sse"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type":  "application/json",
-        "User-Agent":    ECHO_CODE_ASSIST_USER_AGENT,
+        "User-Agent":    ECHO_AGY_USER_AGENT,
     }
     if not access_token or not project_id:
         ko("Pas de token/project — section ignoree")
@@ -1130,11 +1130,11 @@ SECTION12_MODELS = ["gemini-3-flash-agent", "gemini-pro-agent"]
 async def test_include_thoughts():
     import httpx
     import json as _json
-    url = f"{CODE_ASSIST_BASE_URL}:streamGenerateContent?alt=sse"
+    url = f"{AGY_BASE_URL}:streamGenerateContent?alt=sse"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type":  "application/json",
-        "User-Agent":    ECHO_CODE_ASSIST_USER_AGENT,
+        "User-Agent":    ECHO_AGY_USER_AGENT,
     }
     if not access_token or not project_id:
         ko("Pas de token/project — section ignoree")

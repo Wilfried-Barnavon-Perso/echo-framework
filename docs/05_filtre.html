@@ -1,123 +1,229 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 5. Les Filtres (Conscience & Mémoire)</title>
-    <link rel="stylesheet" href="style.css">
-    <script type="module">
-      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-      mermaid.initialize({ 
-        startOnLoad: true, 
-        theme: 'dark',
-        securityLevel: 'loose',
-        flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
-      });
-    </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Les Filtres ECHO v5 : new_context_filter (Smart Context, Moulage, AEC) et conversation_memory_filter (distillation, vectorisation Qdrant, masquage clés API).">
+  <title>ECHO v5 — 5. Les Filtres (Conscience)</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', padding: 16 } });
+  </script>
 </head>
 <body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
-    <main>
-        <h1>5. Les Filtres (Conscience & Mémoire)</h1>
+  <main>
+    <h1>5. Les Filtres (Conscience &amp; Mémoire)</h1>
 
-        <div class="transition-text">En provenance de l'interface utilisateur, chaque requête transite par une couche de filtrage double qui prépare le contexte et gère la base vectorielle des souvenirs.</div>
+    <p>
+      En termes Open WebUI, un <em>Filter</em> est un middleware Python qui intercepte les messages
+      <strong>avant</strong> (hook <code>inlet</code>) ou <strong>après</strong> (hook <code>outlet</code>)
+      qu'ils atteignent le Pipe. ECHO en déploie deux, aux rôles complémentaires :
+      <code>new_context_filter.py</code> prépare le contexte en amont, et
+      <code>conversation_memory_filter.py</code> consolide la mémoire en aval.
+    </p>
 
-        <div class="didactic-box">
-            <h4>💡 Pourquoi deux filtres ?</h4>
-            <p>ECHO utilise deux filtres spécialisés pour gérer son flux :
-                <ul>
-                    <li><strong>Le Filtre de Conscience (Inlet/Outlet)</strong> : Il préanalyse les données entrantes pour éviter de surcharger le cerveau central.</li>
-                    <li><strong>Le Filtre de Mémoire (Outlet)</strong> : Il s'occupe de ranger les informations importantes dans le registre vectoriel (Qdrant) après chaque réponse.</li>
-                </ul>
-            </p>
-        </div>
+    <div class="didactic-box">
+      <h4>💡 Pourquoi deux filtres ?</h4>
+      <p>
+        La séparation des responsabilités est délibérée. Le filtre de contexte opère
+        <strong>avant</strong> la génération : il analyse les fichiers, construit le Draft et injecte
+        l'AEC. Le filtre mémoire opère <strong>après</strong> la génération : il distille la réponse,
+        la vectorise et l'archive dans Qdrant. Cette architecture garantit que chaque opération
+        coûteuse (vectorisation, distillation) n'est jamais sur le chemin critique de la génération.
+      </p>
+    </div>
 
-        <h2>1. Le Filtre de Conscience (new_context_filter.py v7.1)</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>🌐— Filtre New Context</h3>
-                <p><strong>Nature :</strong> Middleware d'interception Inlet/Outlet haute résilience.</p>
-                <p><strong>Source :</strong> <code>11-owui-filters/new_context_filter.py</code></p>
-                <p><strong>Rôle :</strong> Gateway Cognitive. En phase <strong>Inlet</strong>, il effectue le "Smart Context" : il distille les fichiers massifs (Gemini 2.5 Flash) et les vectorise dans le <strong>RAG éphémère</strong> (Qdrant <code>echo_ephemeral</code>). Le modèle reçoit uniquement un bref résumé (≤ 300 mots) avec le <code>slug</code> pour interroger les détails via <code>search_session_context</code>, sans saturer son contexte.</p>
-                <p><strong>Exécutant :</strong> Processus Python d'Open WebUI.</p>
-                <p><strong>Connexions :</strong> Alimente le Pipe (via les métadonnées <code>environnement_contexte</code>).</p>
-            </div>
-        </div>
+    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.1)</h2>
 
-        <div class="diagram-container">
-            <div class="mermaid">
+    <p>
+      Ce filtre est la porte d'entrée cognitive d'ECHO. Il opère en deux phases :
+      en <strong>Inlet</strong> (avant le Pipe) pour préparer le Draft, et en <strong>Outlet</strong>
+      (après génération) pour masquer les secrets.
+    </p>
+
+    <h3>Phase Inlet — Pipeline d'aiguillage multimodal</h3>
+    <p>
+      Pour chaque fichier joint par l'utilisateur, le filtre détermine la stratégie de traitement
+      en fonction du type MIME (via <code>get_gemini_mime</code>) et de la taille
+      (seuil <code>MAX_DIRECT_TEXT_SIZE</code> = 256 Ko) :
+    </p>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>Aiguillage Multimodal — new_context_filter.py</span>
+        <span>[HOOK INLET]</span>
+      </div>
+      <div class="mermaid">
 flowchart LR
-    U([Utilisateur]) -->|Upload Fichiers| OWUI[Open WebUI]
-    OWUI -->|hook.inlet| B[Filtre ECHO]
-    B --> C{Analyse Multimodale}
-    C -->|Images/Audio/PDF < 256 Ko| D[Encapsulation Base64]
-    C -->|Gros Fichiers > 256 Ko| E["RAG Éphémère (Distillation → Qdrant)"]
-    C -->|Texte/Code < 256 Ko| F[Injection Texte Brut]
-    D & E & F --> G[Draft Sémantique]
-    G -->|Injection| P[Pipe Outlet]
-            </div>
-        </div>
+  U([Utilisateur]) -->|Upload + Texte| OWUI[Open WebUI]
+  OWUI -->|hook.inlet| F["🌒 new_context_filter.py"]
 
-        <h2>2. Le Filtre de Mémoire (conversation_memory_filter.py)</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>🧠 Filtre Memory</h3>
-                <p><strong>Nature :</strong> Middleware d'interception Outlet (Post-génération).</p>
-                <p><strong>Source :</strong> <code>11-owui-filters/conversation_memory_filter.py</code></p>
-                <p><strong>Rôle :</strong> Gestionnaire de la Base vectorielle des souvenirs. Il distille les échanges, génère des vecteurs et les stocke dans Qdrant avec un système de TTL (Time To Live).</p>
-                <p><strong>Exécutant :</strong> Processus Python d'Open WebUI.</p>
-                <p><strong>Connexions :</strong> Envoie les souvenirs vers Qdrant.</p>
-            </div>
-        </div>
+  F --> AN{Analyse<br/>MIME + Taille}
 
-        <div class="tech-spec">
-            <h4>⚙️ Précision Mécanique : L'Aiguillage Inlet</h4>
-            <p>Le <code>new_context_filter</code> utilise la valve <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko par défaut). Si un fichier dépasse ce seuil, il est automatiquement distillé (Gemini 2.5 Flash <code>MODEL_DISTILLATION</code>) puis vectorisé dans la collection <code>echo_ephemeral</code> (Qdrant). Le modèle principal reçoit un bref résumé (≤ 300 mots) + le <code>slug</code> pour interroger les détails précis via <code>search_session_context</code> — préservant ainsi sa fenêtre de contexte.</p>
-        </div>
+  AN -->|"Image/Audio/PDF<br/>≤ 256 Ko"| B64["📎 Encapsulation Base64<br/>(inlineData natif Gemini)"]
+  AN -->|"Texte/Code<br/>≤ 256 Ko"| TXT["📝 Injection Texte Brut<br/>(part text)"]
+  AN -->|"Tout fichier<br/>> 256 Ko"| MOL["🧱 Moulage (Distillation)<br/>gemini-2.5-flash<br/>→ Qdrant echo_ephemeral"]
+  AN -->|"Déjà dans le Vault<br/>(file_id détecté)"| VAULT["📂 Référence Vault<br/>(déduplication — pas de ré-upload)"]
 
-        <h3>Le Manifeste de Vérité : environnement_contexte</h3>
-        <p>Le bloc YAML injecté au sommet du Draft est le pivot de la coordination cognitive. Il contient les placeholders <code>##MODEL_ID##</code> et <code>##MODEL_ORIGIN##</code>, qui seront résolus dynamiquement par le Pipe.</p>
-        
-        <div class="code-header">Structure du bloc environnement_contexte (Injecté par le Filtre)</div>
-        <pre><code>version_framework_echo: "##ECHO_VERSION##"
-modèle_actuel: "##MODEL_ID##"
-modèle_origine: "##MODEL_ORIGIN##"
-nom_utilisateur: "..."
-date_et_heure: "2026-04-03 12:00"
-localisation: "Paris, France"
-timezone: "Europe/Paris"
+  B64 & TXT & MOL & VAULT --> DRAFT["📦 Draft Sémantique<br/>(_echo_user_parts_draft)"]
+  DRAFT -->|"Métadonnées<br/>+ AEC YAML"| PIPE["⚙️ Pipe Engine"]
+
+  classDef neutral fill:#1e293b,stroke:#475569,color:#f8fafc
+  classDef rag fill:#064e3b,stroke:#10b981,color:#f8fafc
+  classDef core fill:#172554,stroke:#4338ca,color:#f8fafc
+  class U,OWUI,F,AN neutral
+  class MOL,VAULT rag
+  class DRAFT,PIPE core
+      </div>
+    </div>
+
+    <h3>Le Moulage (Semantic Molding)</h3>
+    <p>
+      Lorsqu'un fichier dépasse <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko), le filtre déclenche
+      <code>_process_file_task()</code> — une tâche asynchrone en arrière-plan. Le modèle
+      <code>MODEL_DISTILLATION</code> (<code>gemini-2.5-flash</code>) produit un distillat structuré
+      du fichier, qui est découpé en chunks (<code>CHUNK_SIZE</code>) avec recouvrement
+      (<code>CHUNK_OVERLAP</code>) pour préserver le contexte aux jointures,
+      vectorisé par bge-m3 (1024d) et stocké dans <code>echo_ephemeral</code> (Qdrant).
+    </p>
+    <p>
+      Le modèle principal reçoit uniquement un résumé de distillation (≤ 300 mots) et le
+      <code>slug</code> Qdrant de la session, lui permettant d'interroger les détails précis via
+      <code>search_session_context(slug, query)</code> sans saturer sa fenêtre contextuelle.
+    </p>
+
+    <h3>Le bloc AEC (<code>environnement_contexte</code>)</h3>
+    <p>
+      À la fin de la phase Inlet, le filtre génère et injecte un bloc YAML dans les métadonnées
+      du message. Ce bloc, délimité par <code>&lt;environnement_contexte&gt;</code>, constitue la
+      <em>proprioception</em> du modèle pour le tour courant.
+    </p>
+
+    <div class="code-header">Structure du bloc <code>environnement_contexte</code></div>
+    <pre><code>&lt;environnement_contexte&gt;
+version_framework_echo: "##ECHO_VERSION##"   # Résolu par le Pipe
+modèle_actuel:   "##MODEL_ID##"              # Résolu par le Pipe (ex: MODEL_FLASH)
+modèle_origine:  "##MODEL_ORIGIN##"          # Modèle ayant initié le tour
+nom_utilisateur: "Wilfried"
+date_et_heure:   "2026-05-26 09:00"
+localisation:    "Paris, France"
+timezone:        "Europe/Paris"
 registre_fichiers:
-  source.py:
-    id: "F1"
-    mime: "text/plain"
+  rapport.pdf:
+    id:     "U_abc123_C_xyz789_T_1748246400"
+    mime:   "application/pdf"
     statut: "rag_ephemeral"
-    slug: "source_py_a3f2"</code></pre>
+    slug:   "rapport_pdf_a3f2c1"
+&lt;/environnement_contexte&gt;
 
-        <h2>Smart Memory : La Conscience Persistante</h2>
-        <p>Le <code>conversation_memory_filter.py</code> (v3.1) gère la mémoire à long terme d'ECHO en phase <strong>Outlet</strong>.</p>
-        <ul>
-            <li><strong>Distillation</strong> : Si le seuil minimal de messages est atteint, une tâche asynchrone est lancée pour résumer la conversation.</li>
-            <li><strong>Vectorisation</strong> : Le résumé est transformé en vecteurs par <strong>Gemini Embedding-2</strong>.</li>
-            <li><strong>Stockage Qdrant</strong> : Le "souvenir sémantique" est ancré dans la collection <code>echo_memory</code>.</li>
-        </ul>
+&lt;smart_context slug="rapport_pdf_a3f2c1"&gt;
+[Résumé ≤ 300 mots du contenu de rapport.pdf, produit par Gemini 2.5 Flash]
+[Utiliser search_session_context("rapport_pdf_a3f2c1", query) pour les détails]
+&lt;/smart_context&gt;</code></pre>
 
-        <h2>Sécurité Outlet : Masquage Chirurgical</h2>
-        <p>En phase Outlet (post-génération), le filtre applique un balayage final via Regex pour s'assurer qu'aucune clé API ne "fuit" dans l'interface visuelle. Toute clé détectée est remplacée par : <code>[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]</code>.</p>
+    <div class="note-box">
+      <h4>Règle d'Or — Registre des Fichiers</h4>
+      <p>
+        Le modèle <strong>doit</strong> consulter le <code>registre_fichiers</code> avant toute
+        manipulation d'une ressource. Le champ <code>statut</code> indique où se trouve le fichier :
+        <code>inline</code> (dans le contexte actif), <code>rag_ephemeral</code> (indexé dans
+        Qdrant — utiliser <code>search_session_context</code>), ou <code>vault</code> (dans
+        l'Espace Personnel — utiliser les outils Vault).
+      </p>
+    </div>
 
-        <div class="audit-note">
-            <h4>✅ Le point sur l'exactitude (v7.0)</h4>
-            <p>Le Filtre implémente un système de <strong>Dédoublonnage d'Accès</strong> : avant d'envoyer un fichier volumineux au Pipe, il vérifie s'il provient déjà du dossier local de l'utilisateur (Vault). Si le fichier est déjà présent dans l'Espace Personnel, il ne transmet que la référence, économisant ainsi de la bande passante et des ressources de stockage temporaires.</p>
-        </div>
+    <h3>Phase Outlet — Masquage chirurgical des secrets</h3>
+    <p>
+      Après la génération, le filtre balaie le texte de la réponse via une expression régulière
+      correspondant au format des clés API Google (<code>AIza[0-9A-Za-z_-]{35}</code>).
+      Toute clé détectée est remplacée par la chaîne
+      <code>[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]</code>. Ce mécanisme garantit qu'aucun
+      secret ne « fuit » vers l'interface visuelle quelle que soit la réponse du modèle.
+    </p>
 
-        <footer>
-            ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-    <div class="transition-text"><em>Une fois la requête analysée et mise en contexte, elle est transmise au centre de traitement principal. <a href="06_pipe.html">Explorer le Pipe (Cortex) ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
+    <h2>Filtre 2 — <code>conversation_memory_filter.py</code></h2>
+
+    <p>
+      Ce filtre ne traite que la phase <strong>Outlet</strong> (post-génération). Il orchestre la
+      consolidation de la mémoire organique à long terme dans Qdrant.
+    </p>
+
+    <h3>Pipeline de distillation et vectorisation</h3>
+    <ol>
+      <li>
+        <strong>Seuil de déclenchement :</strong> le filtre vérifie si le nombre de messages de la
+        session atteint le seuil minimal configuré (valve <code>MIN_MESSAGES_FOR_MEMORY</code>).
+        En dessous du seuil, aucune action.
+      </li>
+      <li>
+        <strong>Distillation asynchrone :</strong> <code>MODEL_DISTILLATION</code> (Gemini 2.5 Flash)
+        génère un résumé structuré de l'échange utilisateur/assistant.
+      </li>
+      <li>
+        <strong>Vectorisation locale :</strong> le résumé est envoyé à l'Embedding Worker
+        (<code>BAAI/bge-m3</code>, 1024d, <code>http://echo-embedding:7997</code>).
+        Aucune donnée ne quitte l'infrastructure.
+      </li>
+      <li>
+        <strong>Stockage Qdrant :</strong> le vecteur est upserted dans la collection
+        <code>echo_memory</code>, avec les métadonnées
+        <code>user_id</code>, <code>importance</code> (1–5), <code>created_at</code>.
+      </li>
+      <li>
+        <strong>Fusion sémantique :</strong> si un souvenir très similaire existe déjà
+        (cosinus &gt; seuil de déduplication), le filtre fusionne les deux en conservant le score
+        d'importance maximal (<code>MEMORY_IMPORTANCE_WEIGHTS</code>).
+      </li>
+    </ol>
+
+    <div class="tech-spec">
+      <h4>⚙️ Système de pondération mémorielle</h4>
+      <p>
+        Lors du rappel (<code>search_memory</code>), le score de reranking est calculé ainsi :
+        <code>score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[niveau]</code>.
+      </p>
+      <table>
+        <thead><tr><th>Niveau</th><th>Label</th><th>Poids</th><th>Durée TTL</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Trivial</td><td>0,55</td><td>30 jours</td></tr>
+          <tr><td>2</td><td>Mineur</td><td>0,75</td><td>90 jours</td></tr>
+          <tr><td>3</td><td>Utile</td><td>1,00</td><td>180 jours</td></tr>
+          <tr><td>4</td><td>Majeur</td><td>1,30</td><td>360 jours</td></tr>
+          <tr><td>5</td><td>Axiome</td><td>1,70</td><td>540 jours</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Un Axiome (niveau 5) à similarité cosinus 0,60 obtient un score de 1,02, surclassant
+        un Trivial (niveau 1) à similarité 0,85 (score 0,47). Les informations cruciales
+        remontent toujours dans les résultats.
+      </p>
+    </div>
+
+    <div class="audit-note">
+      <h4>✅ Déduplication d'accès (Dédoublonnage Vault)</h4>
+      <p>
+        Avant d'envoyer un fichier au Pipe, le filtre vérifie si le fichier provient déjà du Vault
+        local de l'utilisateur (champ <code>vault_path</code> dans <code>processed_files</code>).
+        Si c'est le cas, seule la référence est transmise — pas le contenu binaire.
+        Cette optimisation évite des ré-uploads inutiles pour des fichiers déjà indexés.
+      </p>
+    </div>
+
+    <div class="transition-text">
+      Les données préparées par le Filtre sont transmises au Pipe, qui opère la reconstruction
+      bit-perfect de l'historique.
+      <a href="06_pipe.html">Découvrir le Pipe (Cortex) ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework — Version 5.158.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
 </body>
 </html>
-
-
-

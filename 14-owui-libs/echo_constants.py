@@ -1,22 +1,24 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 4.9
+version: 5.0
 description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
              echo_ssh_tunnel.py. Ajout constantes SSH Tunnel éphémère PKCE
              (plage ports, user, timeout). Multi-user natif par allocation dynamique.
              4.6: Correction noms modèles certifiés par diagnostic live API.
-             4.7: Mapping modèles Code Assist ↔ AI Studio (CODE_ASSIST_MODEL_MAP).
+             4.7: Mapping modèles AGY ↔ AI Studio (AGY_MODEL_MAP).
              Fix MODEL_ROUTING (ajout clé MODEL_DISTILLATION). Fix noms canoniques
              AI Studio : MODEL_FLASH=gemini-3.5-flash, MODEL_PRO=gemini-3.1-pro-preview.
              4.8: Centralisation des paramètres de génération (THINKING_LEVEL_*, MAX_TOKENS_DEFAULT).
              Suppression des valves TEMPERATURE/TOP_P/THINKING_LEVEL dans pipe_engine et
              cognitive_agents — point de vérité unique pour tout le framework ECHO.
-             4.9: Ajout MODEL_MAP_CA (capacités CA certifiées, diag v2.1 2026-05-25).
-             CODE_ASSIST_MODEL_MAP devient alias auto-généré depuis MODEL_MAP_CA.
-             MAX_TOKENS_DEFAULT 65536→65535 (limite universelle AI Studio + CA).
+             4.9: Ajout MODEL_MAP_CA (capacités AGY certifiées, diag v2.1 2026-05-25).
+             AGY_MODEL_MAP devient alias auto-généré depuis MODEL_MAP_CA.
+             MAX_TOKENS_DEFAULT 65536→65535 (limite universelle AI Studio + AGY).
+             5.0: Renommage des identifiants Code Assist → AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
+             CODE_ASSIST_BASE_URL→AGY_BASE_URL, CODE_ASSIST_MODEL_MAP→AGY_MODEL_MAP (alias rétrocompat conservé).
 """
 
 import os
@@ -42,7 +44,7 @@ ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
 # Identité Réseau (Antigravity 2.1)
 ECHO_USER_AGENT             = "antigravity/2.1.0"
-ECHO_CODE_ASSIST_USER_AGENT = "antigravity/2.1.0 (language_server; os_type=Windows; os_version=10.0.26100; arch=x64)"
+ECHO_AGY_USER_AGENT = "antigravity/2.1.0 (language_server; os_type=Windows; os_version=10.0.26100; arch=x64)"
 
 # Points d'accès Locaux (Souveraineté)
 ECHO_EMBEDDING_URL = "http://echo-embedding:7997/v1"
@@ -111,9 +113,9 @@ ECHO_OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/cclog",    # Télémétrie completion log
 ]
 
-# --- CONFIGURATION CODE ASSIST (PROVISIONING) ---
+# --- CONFIGURATION API ANTIGRAVITY (PROVISIONING) ---
 # Standalone Antigravity → cloudcode-pa (sans "daily-")
-CODE_ASSIST_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal"
+AGY_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal"
 
 # Metadata client envoyée dans loadCodeAssist — pluginType "GEMINI" confirmé stable (RE §10)
 ECHO_CLIENT_METADATA = {
@@ -155,7 +157,7 @@ ECHO_RETRY_JITTER_MAX    = 1.3
 # ==============================================================================
 
 # 1. IDENTIFIANTS TECHNIQUES — référence AI Studio (canonique).
-#    La traduction vers les ID Code Assist est gérée par MODEL_MAP_CA ci-dessous.
+#    La traduction vers les ID AGY est gérée par MODEL_MAP_CA ci-dessous.
 #    Certifiés par diagnostic live 2026-05-24.
 MODEL_PRO   = "gemini-3.1-pro-preview"  # PRO   — AI Studio ⚠️ 429 free | CA → gemini-pro-agent
 MODEL_FLASH = "gemini-3.5-flash"        # FLASH — AI Studio ✅ 200      | CA → gemini-3-flash-agent
@@ -196,9 +198,11 @@ MODEL_MAP_CA: dict = {
 
 # Alias rétrocompatible — conservé pour ne pas casser les imports existants dans les scripts.
 # Déprécié : remplacé par MODEL_MAP_CA dans echo_protocol.py.
-CODE_ASSIST_MODEL_MAP: dict[str, str] = {
+AGY_MODEL_MAP: dict[str, str] = {
     k: v["model_id"] for k, v in MODEL_MAP_CA.items()
 }
+# Alias de compatibilité ascendante
+CODE_ASSIST_MODEL_MAP = AGY_MODEL_MAP
 EMBEDDING_DIM_V2   = 1024               # Dimension bge-m3 (remplace 768 SigLIP-2)
 COLLECTION_MEMORY    = "echo_memory"
 COLLECTION_EPHEMERAL = "echo_ephemeral"

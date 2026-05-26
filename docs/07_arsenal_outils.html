@@ -1,245 +1,194 @@
 <!DOCTYPE html>
-
 <html lang="fr">
-
 <head>
-
   <meta charset="UTF-8">
-
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <title>ECHO v5 - 7. L'Arsenal des Outils</title>
-
+  <meta name="description" content="L'Arsenal des Outils ECHO v5 : écosystème de micro-services souverains, protocole Multipart wrap_tool_output, système Vault, six familles d'outils.">
+  <title>ECHO v5 — 7. L'Arsenal des Outils</title>
   <link rel="stylesheet" href="style.css">
-
 </head>
-
 <body>
-
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
-
-
   <main>
+    <h1>7. L'Arsenal des Outils</h1>
 
-    <h1>7. L'Arsenal des Outils (Sovereign Toolbox)</h1>
-
-
-
-    <div class="transition-text">L'intelligence du Pipe serait théorique sans moyens d'action. L'Arsenal des Outils fournit les capacités d'interaction et d'analyse requises.</div>
-
-
-
-    <h2>Fiche d'Identité Technique</h2>
-
-    <div class="grid-container">
-
-      <div class="card">
-
-        <h3>🛠️ L'Arsenal (Outils d'Action)</h3>
-
-        <p><strong>Nature :</strong> Écosystème de Micro-services conteneurisés et d'API REST (Tool Calling).</p>
-
-        <p><strong>Source :</strong> Dossiers <code>12-owui-tools/</code> (Définition API) et <code>20-docker-*/</code> (Moteurs d'exécution).</p>
-
-        <p><strong>Rôle :</strong> Fournir au Pipe les capacités exécutives pour interagir avec l'extérieur (Navigation Web, Exécution de code Python, Gestion de fichiers) tout en maintenant l'isolation sécuritaire.</p>
-
-        <p><strong>Exécutant :</strong> Le Pipe (Open WebUI) déclenche la requête HTTP, qui est ensuite exécutée par les conteneurs Docker spécialisés (Sandbox).</p>
-
-        <p><strong>Interconnexions :</strong> 
-
-          <ul>
-
-            <li><strong>Input :</strong> Reçoit les arguments JSON générés par l'API Gemini (Tool Call).</li>
-
-            <li><strong>Action locale :</strong> Exécute des scripts, lit/écrit dans l'Espace Personnel (système de fichiers local).</li>
-
-            <li><strong>Action réseau :</strong> Navigue sur le WAN (Headless Browser) ou requête le proxy SearxNG.</li>
-
-            <li><strong>Output :</strong> Retourne le résultat structuré (JSON multipart) au Pipe.</li>
-
-          </ul>
-
-        </p>
-
-      </div>
-
-    </div>
-
-
+    <p>
+      Un modèle de langage, sans accès au monde réel, est confiné à ses données d'entraînement.
+      L'Arsenal rompt cet enfermement : il fournit au Pipe les capacités exécutives nécessaires
+      pour naviguer sur le Web, exécuter du code Python de manière isolée, gérer des fichiers,
+      lire des documents, mémoriser des informations et produire des interfaces visuelles riches.
+    </p>
 
     <div class="didactic-box">
-
-      <h4>💡 Comprendre l'Arsenal</h4>
-
-      <p>Une IA standard est "enfermée" dans une boîte de texte. L'Arsenal agit comme les "mains" et les "outils" d'ECHO. Lorsque le cerveau (le Pipe) réalise qu'il ne sait pas quelque chose (ex: la météo du jour, ou comment trier un fichier Excel complexe), il rédige une consigne précise et la transmet à l'un des outils de l'Arsenal. Ce dernier exécute la tâche de manière sécurisée et renvoie le résultat au cerveau.</p>
-
+      <h4>💡 Comment fonctionne un outil ECHO ?</h4>
+      <p>
+        Lorsque Gemini décide d'utiliser un outil, il génère un <strong>Tool Call</strong> : un
+        objet JSON décrivant le nom de la fonction et ses arguments. Le Pipe intercepte ce
+        Tool Call, exécute la fonction Python correspondante (ou appelle le micro-service Docker
+        via son API REST interne), puis retourne la réponse à Gemini sous forme de
+        <strong>Tool Response</strong>. Gemini intègre ce résultat dans sa génération suivante.
+      </p>
     </div>
 
+    <h2>Principes directeurs</h2>
 
-
-    <p>L'Arsenal ECHO n'est pas une simple collection de fonctions, mais un écosystème d'outils souverains conçus pour l'autonomie cognitive. Chaque outil respecte un protocole de communication multimodal strict et interagit directement avec l'Espace Personnel utilisateur.</p>
-
-
-
-    <div class="audit-note">
-
-      <h4>Principes Directeurs</h4>
-
-      <ul>
-
-        <li><strong>Souveraineté</strong> : Les données ne quittent jamais l'infrastructure ECHO sauf pour les appels API chiffrés.</li>
-
-        <li><strong>Multimodalité native</strong> : Capacité à renvoyer du texte, des pensées, des médias et des artefacts dans un seul flux.</li>
-
-        <li><strong>Traçabilité</strong> : Chaque appel d'outil est journalisé dans la table <code>tool_journal</code>.</li>
-
-      </ul>
-
-    </div>
-
-
+    <ul>
+      <li>
+        <strong>Souveraineté des données :</strong> les données traitées par l'Arsenal ne quittent
+        jamais l'infrastructure ECHO, sauf pour les appels API chiffrés en HTTPS (Gemini, Web).
+      </li>
+      <li>
+        <strong>Multimodalité native :</strong> chaque outil peut retourner du texte, des images,
+        des PDFs et des métadonnées de fichiers dans un seul flux structuré.
+      </li>
+      <li>
+        <strong>Traçabilité :</strong> chaque appel d'outil est journalisé dans la table SQLite
+        <code>tool_journal</code>, lié au <code>cumulative_hash</code> du tour courant.
+      </li>
+      <li>
+        <strong>Isolation utilisateur :</strong> toutes les opérations sur l'Espace Personnel
+        sont filtrées par <code>user_id</code>. Un utilisateur ne peut jamais accéder aux fichiers
+        d'un autre.
+      </li>
+    </ul>
 
     <h2>Le Protocole Multipart (<code>wrap_tool_output</code>)</h2>
 
-    <p>Pour dépasser les limites des réponses textuelles, ECHO utilise un format JSON structuré encapsulant plusieurs types de données.</p>
-
-    
-
-    <h3>Composants du Multipart</h3>
+    <p>
+      La fonction <code>wrap_tool_output()</code> (<code>echo_utils.py</code>) est le point
+      d'entrée unique pour toute réponse d'outil. Elle construit un dictionnaire standardisé
+      que le Pipe sait déconstruire pour alimenter le contexte Gemini.
+    </p>
 
     <table>
-
       <thead>
-
-        <tr>
-
-          <th>Type</th>
-
-          <th>Description</th>
-
-          <th>Traitement par le Pipe</th>
-
-        </tr>
-
+        <tr><th>Paramètre</th><th>Type</th><th>Comportement</th></tr>
       </thead>
-
       <tbody>
-
         <tr>
-
           <td><code>text</code></td>
-
-          <td>La réponse textuelle principale de l'outil.</td>
-
-          <td>Injecté comme <code>functionResponse</code>.</td>
-
+          <td>Chaîne Markdown (obligatoire)</td>
+          <td>Injecte la réponse principale sous forme de <code>functionResponse</code> dans le contexte Gemini. Si <code>nouveaux_fichiers</code> est fourni, leurs métadonnées sont appendées à <code>text</code> sous forme d'un bloc <code>```json:nouveaux_artefacts</code>.</td>
         </tr>
-
         <tr>
-
-          <td><code>thought</code></td>
-
-          <td>Raisonnement interne de l'outil ou du sous-modèle.</td>
-
-          <td>Isolé pour afficher la Chain-of-Thought sans polluer la sortie finale. Ces données seront ensuite réinjectées dans le contexte à travers la Suture lors du tour suivant.</td>
-
+          <td><code>status</code></td>
+          <td>Dict optionnel</td>
+          <td>Défaut <code>{"status": "success"}</code>. Propagé tel quel dans le dictionnaire de sortie. Interprété par le Pipe pour le reporting HUD.</td>
         </tr>
-
         <tr>
-
-          <td><code>media</code></td>
-
-          <td>Binaire (Base64) avec MIME type (Image, PDF, HTML).</td>
-
-          <td>Converti en <code>inlineData</code> Gemini.</td>
-
+          <td><code>echo_tool_multiparts</code></td>
+          <td>Liste de dicts Gemini (optionnel)</td>
+          <td>Parts Gemini natives (éléments <code>inlineData</code> avec <code>mime_type</code> + <code>data</code> en base64, ou <code>text</code>). Transmis directement au Pipe pour être injectés dans le <code>functionResponse</code> multipart. Permet de retourner des images, des PDFs ou du HTML en plus du texte.</td>
         </tr>
-
         <tr>
-
           <td><code>nouveaux_fichiers</code></td>
-
-          <td>Métadonnées des fichiers créés ou téléchargés.</td>
-
-          <td>Injecté via le protocole "Suture" pour assurer la rémanence.</td>
-
+          <td>Liste de dicts métadonnées (optionnel)</td>
+          <td>Métadonnées des artefacts produits (ex : captures d'écran, fichiers générés). Elles sont sérialisées en JSON et appendées au champ <code>text</code> dans un bloc <code>```json:nouveaux_artefacts</code>. Le Pipe les extrait pour mettre à jour le Registre AEC.</td>
         </tr>
-
       </tbody>
-
     </table>
 
+    <h2>Le Système Vault (Espace Personnel)</h2>
 
-
-    <h2>Le Système "Vault" (Coffre-Fort)</h2>
-    <p>L'Espace Personnel est l'espace de stockage persistant et isolé de chaque utilisateur (<code>/app/backend/data/users/{user_id}/files/</code>).</p>
+    <p>
+      Chaque utilisateur dispose d'un espace de stockage persistant et isolé :
+      <code>/app/backend/data/users/{user_id}/files/</code>. Cet espace est le Vault.
+    </p>
     <ul>
-      <li><strong>Indexation</strong> : Chaque fichier possède un <code>file_id</code> unique au format <code>U_{uid}_C_{cid}_T_{ts}</code>.</li>
-      <li><strong>Persistance</strong> : Les outils scellent automatiquement les artefacts (captures d'écran, logs) dans l'Espace Personnel.</li>
+      <li>
+        <strong>Indexation :</strong> chaque fichier reçoit un <code>file_id</code> unique au
+        format <code>U_{uid}_C_{cid}_T_{timestamp}</code>, garantissant l'unicité par utilisateur,
+        par session et par instant.
+      </li>
+      <li>
+        <strong>Persistance :</strong> les artefacts produits par les outils (captures d'écran,
+        logs, fichiers générés) sont automatiquement scellés dans le Vault après chaque tour,
+        en tant qu'entrées dans <code>processed_files</code>.
+      </li>
+      <li>
+        <strong>Réutilisation :</strong> si un fichier est référencé dans une session ultérieure,
+        le Filtre le reconnaît via son <code>file_id</code> et transmet uniquement la référence,
+        sans ré-uploader le contenu binaire.
+      </li>
     </ul>
 
-    <h2>Architecture de l'Arsenal</h2>
+    <h2>Les six familles d'outils</h2>
+
     <div class="grid-container">
       <div class="card">
         <h3>🌐 Web Intelligence</h3>
-        <p>Pilotage de Chromium, cartographie du DOM, Replay visuel et Recherche Web Souveraine (SearxNG).</p>
-        <a href="07a_web_intelligence.html" class="btn">📁 Explorer</a>
+        <p>Navigation autonome Chromium (Playwright), cartographie du DOM, captures d'écran,
+        extraction de contenu et recherche via SearxNG souverain.</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/navigation_engine_tool.py</code></p>
+        <a href="07a_web_intelligence.html">Explorer ➔</a>
       </div>
       <div class="card">
-        <h3>📂 Vault & Data</h3>
-        <p>Exploration brute, sondage sémantique et gestion des métadonnées.</p>
-        <a href="07b_vault_explorer.html" class="btn">📁 Explorer</a>
+        <h3>📂 Explorateur de l'Espace Personnel</h3>
+        <p>Analyse de fichiers locaux, multimodalité (image, PDF, audio), indexation sémantique
+        et gestion des métadonnées du Vault.</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/file_content_explorer.py</code></p>
+        <a href="07b_vault_explorer.html">Explorer ➔</a>
       </div>
       <div class="card">
-        <h3>🧠 Mémoire & Cognition</h3>
-        <p>Architecture RAG duale : <strong>RAG Organique</strong> (<code>save_memory</code>, <code>search_memory</code>, <code>list_memory_topics</code>, <code>forget_memory</code>) et <strong>RAG Éphémère</strong> (<code>save_session_context</code>, <code>search_session_context</code>). Routage cognitif dynamique LITE/FLASH/PRO.</p>
-        <a href="07c_memory_cognition.html" class="btn">📁 Explorer</a>
+        <h3>🧠 Mémoire &amp; Cognition</h3>
+        <p>RAG organique (<code>save_memory</code>, <code>search_memory</code>,
+        <code>list_memory_topics</code>, <code>forget_memory</code>) et RAG éphémère
+        (<code>save_session_context</code>, <code>search_session_context</code>).</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/memory_and_rag_tool.py</code></p>
+        <a href="07c_memory_cognition.html">Explorer →</a>
       </div>
       <div class="card">
-        <h3>🐍 Exécution & Pilotage</h3>
-        <p>Sandbox Python isolée et Monitoring avancé de la jauge de Contexte.</p>
-        <a href="07d_execution_monitoring.html" class="btn">📁 Explorer</a>
+        <h3>🐍 Exécution &amp; Pilotage</h3>
+        <p>Sandbox Python isolée (Docker Python Worker), exécution de code arbitraire avec
+        support des bibliothèques scientifiques, journalisation des résultats.</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/python_code_executor.py</code></p>
+        <a href="07d_execution_monitoring.html">Explorer ➔</a>
       </div>
       <div class="card">
         <h3>🎮 Actions UI (HUD)</h3>
-        <p>Boutons de contrôle manuel : Purge Mémoire, Auth Manager et Pilotage du Replay.</p>
-        <a href="07e_actions_ui.html" class="btn">📁 Explorer</a>
+        <p>Boutons de contrôle manuel injectés dans l'interface : purge mémoire, reset auth,
+        pilotage du Replay web depuis le HUD.</p>
+        <p><strong>Source :</strong> <code>13-owui-actions/</code></p>
+        <a href="07e_actions_ui.html">Explorer ➔</a>
       </div>
       <div class="card">
-        <h3>🎨 Visual Intelligence (Rendu Visuel)</h3>
-        <p>Système d'Exploitation Visuel (18 moteurs de rendu intégrés).</p>
-        <p>Déploiement dynamique d'interfaces multi-moteurs (Google Maps, Image Premium, Mermaid, ECharts).</p>
-        <a href="07f_visual_intelligence.html" class="btn">🖼️ Rich UI Universel</a>
+        <h3>🎨 Visual Intelligence</h3>
+        <p>Génération d'interfaces visuelles dynamiques riches : Mindmaps (Markmap), graphes
+        (Mermaid, ECharts), cartes géographiques (Google Maps), images premium.</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/universal_visual_generator.py</code></p>
+        <a href="07f_visual_intelligence.html">Explorer ➔</a>
+      </div>
+      <div class="card">
+        <h3>🧠 Agents Cognitifs (Conseil d'Experts)</h3>
+        <p>Délégation cognitive sans état (<code>delegate_reasoning</code>), consultation
+        d'experts persistants par rôle (<code>consult_expert_consultant</code>), forge et gestion
+        des Skills (<code>forge_skill</code>, <code>list_skills</code>).</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/cognitive_agents.py</code></p>
+        <a href="07c_memory_cognition.html#agents-cognitifs">Explorer →</a>
       </div>
     </div>
 
-
-
     <div class="audit-note">
-
-      <h4>✅ Le point sur l'exactitude</h4>
-
-      <p>Tous les outils de l'arsenal ont été vérifiés pour leur conformité au <strong>Protocole Multipart</strong>. Ils garantissent l'isolation des données entre les utilisateurs (User ID Isolation) et le scellement systématique des preuves dans la table <code>tool_journal</code>.</p>
-
+      <h4>✅ Conformité au Protocole Multipart</h4>
+      <p>
+        Tous les outils de l'Arsenal retournent leurs résultats via <code>wrap_tool_output()</code>
+        et garantissent l'isolation des données entre utilisateurs (filtrage systématique par
+        <code>user_id</code>). Les appels d'outils et leurs sorties sont journalisés dans
+        <code>tool_journal</code> (SQLite), lié au <code>cumulative_hash</code> du tour courant.
+      </p>
     </div>
 
-
+    <div class="transition-text">
+      L'utilisation de ces outils est guidée par les directives fondamentales du système.
+      <a href="08_system_prompt.html">Passer au Kernel (System Prompt) ➔</a>
+    </div>
 
     <footer>
-      ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework — Version 5.158.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
-
-  <div class="transition-text"><em>L'utilisation de ces outils est dictée par les directives fondamentales et l'identité de l'IA. <a href="08_system_prompt.html">Passer au cœur de ces directives : le System Prompt (Kernel) ➔</a></em></div>
-
   </main>
 
-<script src="nav.js"></script>
-
+  <script src="nav.js"></script>
 </body>
-
 </html>
-
-
-
-

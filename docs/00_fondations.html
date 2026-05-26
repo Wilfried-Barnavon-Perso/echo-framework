@@ -1,93 +1,180 @@
 <!DOCTYPE html>
 <html lang="fr">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 0. Fondations & Philosophie</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Fondations philosophiques et techniques du Framework ECHO v5 : origine, évolution depuis V4, les trois piliers de souveraineté et les phénomènes clés.">
+  <title>ECHO v5 — 0. Fondations &amp; Philosophie</title>
+  <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
-    <main>
-        <h1>0. Fondations & Philosophie</h1>
+  <main>
+    <h1>0. Fondations &amp; Philosophie</h1>
 
-        <div class="transition-text">Ce corpus documentaire vous guide pas à pas à travers l'architecture, les concepts et les modules d'ECHO. Suivez ce fil rouge pour comprendre comment chaque pièce s'intègre au système global.</div>
+    <p>
+      ECHO (<em>Espace Cognitif Heuristique Opérationnel</em>) est un cadre logiciel d'intelligence artificielle
+      auto-hébergée. Contrairement à un simple <em>wrapper</em> d'API, ECHO constitue une couche d'abstraction
+      souveraine qui prend en charge sa propre mémoire, son propre état et sa propre interface utilisateur
+      par-dessus <strong>Open WebUI</strong>. Le modèle de langage — Gemini — y joue le rôle de moteur
+      d'inférence, tandis qu'ECHO assure la cohérence, la persistance et la sécurité de l'ensemble.
+    </p>
 
-        <div class="didactic-box">
-            <h4>💡 ECHO : De l'IA "Diffuse" à l'IA "Identités d'accès aux Modèles"</h4>
-            <p>ECHO (Espace Cognitif Heuristique Opérationnel) est né d'une idée simple : l'Intelligence Artificielle ne doit pas devenir un outil de dépendance, mais un <strong>Outil Personnel</strong> véritablement utile. Sa philosophie repose sur la <strong>Souveraineté</strong> : vous possédez vos données, vous contrôlez votre IA, et rien de ce qui est privé ne sort de votre infrastructure. C'est le passage d'une IA "diffuse" (cloud public sans contrôle) à une IA de "identités d'accès aux modèles" (votre enclave privée).</p>
-        </div>
+    <div class="didactic-box">
+      <h4>💡 L'analogie du véhicule</h4>
+      <p>
+        Si Gemini est le moteur, ECHO est le véhicule complet : châssis (infrastructure Docker), capteurs
+        (filtres d'interception), mémoire à long terme (Qdrant), boîte noire inaltérable (SQLite Ombres) et
+        habitacle de pilotage (HUD). L'utilisateur conduit ; ECHO s'assure que le moteur dispose toujours
+        de l'information complète pour avancer.
+      </p>
+    </div>
 
-        <p>ECHO n'est pas un modèle d'intelligence artificielle (LLM) au sens strict, mais un <strong>Framework d'intelligence souveraine</strong>. Là où un LLM comme Gemini est le "moteur", ECHO est le "véhicule complet" (châssis, capteurs, mémoire et habitacle) qui permet à ce moteur d'interagir avec votre monde réel en toute sécurité.</p>
+    <h2>Origine et histoire</h2>
 
-        <h2>Origine et Évolution</h2>
-        <ul>
-            <li><strong>Le Nom :</strong> ECHO est l'acronyme d'<strong>Espace Cognitif Heuristique Opérationnel</strong>. 
-                <ul>
-                    <li><i>Espace Cognitif</i> : Un lieu où l'IA peut "penser" avec ses propres outils.</li>
-                    <li><i>Heuristique</i> : Sa capacité à découvrir par elle-même et à apprendre de ses erreurs.</li>
-                    <li><i>Opérationnel</i> : Son aptitude à agir concrètement (naviguer, coder, trier).</li>
-                </ul>
-            </li>
-            <li><strong>Historique (V4 vs V5) :</strong> 
-                <ul>
-                    <li>La <strong>V4 (Legacy)</strong> est un prompt de préférence utilisateur avancé pour Gemini. Elle pose les bases de l'architecture cognitive ECHO (voir le dossier <code>_v4-legacy-concept</code>).</li>
-                    <li>La <strong>V5 (Actuelle)</strong> transforme ce concept en une infrastructure robuste, conteneurisée et intégrée à une interface web moderne (Open WebUI), capable de gérer des sessions massives grâce à l'<strong>Ombre Riche</strong>.</li>
-                </ul>
-            </li>
-        </ul>
+    <h3>Le nom ECHO</h3>
+    <p>
+      L'acronyme décompose la philosophie du projet en quatre dimensions :
+    </p>
+    <ul>
+      <li><strong>Espace</strong> : un domaine opérationnel délimité, isolé du cloud public.</li>
+      <li><strong>Cognitif</strong> : un lieu où le modèle peut raisonner avec ses propres outils et sa propre mémoire.</li>
+      <li><strong>Heuristique</strong> : la capacité du système à s'adapter, à apprendre de ses sessions passées et à découvrir par lui-même.</li>
+      <li><strong>Opérationnel</strong> : l'aptitude concrète à agir — naviguer sur le web, exécuter du code, indexer des fichiers.</li>
+    </ul>
 
-        <h2>Les 3 Piliers Fondamentaux</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Pilier</th>
-                    <th>Engagement Technique</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><strong>Souveraineté</strong></td>
-                    <td>Isolation locale. Pas de télémétrie. L'Espace Personnel est strictement privé.</td>
-                </tr>
-                <tr>
-                    <td><strong>Véracité</strong></td>
-                    <td>Suture sémantique garantissant une reconstruction bit-perfect de l'historique.</td>
-                </tr>
-                <tr>
-                    <td><strong>Autonomie</strong></td>
-                    <td>Arsenal souverain d'outils sensoriels et exécutifs pilotés par le Kernel.</td>
-                </tr>
-            </tbody>
-        </table>
+    <h3>Évolution V4 → V5</h3>
+    <p>
+      La <strong>V4 (Legacy)</strong>, conservée dans le répertoire <code>_v4-legacy-concept/</code>, est un prompt
+      de personnalisation avancé pour Gemini. Elle établit les fondements conceptuels d'ECHO — la Mémoire,
+      la Suture, la Souveraineté — mais s'exécute entièrement dans le contexte de la conversation, sans
+      infrastructure dédiée.
+    </p>
+    <p>
+      La <strong>V5 (actuelle)</strong> matérialise ces concepts en une infrastructure conteneurisée.
+      Elle introduit l'<em>Ombre Riche</em> (persistance SQLite bit-perfect), le double RAG vectoriel
+      (Qdrant), les filtres Python d'interception, et le Pipe comme orchestrateur central. La V5 est capable
+      de maintenir une cohérence sémantique absolue sur des sessions dépassant un million de tokens.
+    </p>
 
-        <div class="tech-spec">
-            <h4>⚙️ Précision Mécanique : 📡 AEC (Artéfacts Environnementaux et Contextuels)</h4>
-            <p>Le Framework injecte systématiquement des <strong>AEC</strong> dans le flux de pensée. Ces balises XML (<code>&lt;environnement_contexte&gt;</code>) assurent la contexte proprioceptif de l'IA : connaissance de son identité, de ses capacités et de son ancrage géo-temporel sans consommation excessive de jetons.</p>
-        </div>
+    <h2>Les trois piliers fondamentaux</h2>
 
-        <div class="tech-spec">
-            <h4>🏔️ Vallée de la Mort Contextuelle</h4>
-            <p>Phénomène central de la gestion mémorielle d'ECHO. Quand le contexte d'une session dépasse environ 30% de la fenêtre maximale du modèle, les informations des premiers tours deviennent effectivement inaccessibles — elles sont techniquement présentes mais leur poids d'attention est écrasé par les tokens récents. Au-delà de 50%, la dégradation est critique et le passage en MODEL_PRO devient impératif.</p>
-            <p>ECHO y répond avec une <strong>architecture mémorielle duale</strong> :</p>
-            <ul>
-                <li><strong>RAG Organique</strong> (<code>echo_memory</code>) : Mémoire long terme permanente — <code>save_memory</code> / <code>search_memory</code>. Survit aux sessions.</li>
-                <li><strong>RAG Éphémère</strong> (<code>echo_ephemeral</code>) : Mémoire de travail de la session — <code>save_session_context</code> / <code>search_session_context</code>. Disparaît en fin de session.</li>
-            </ul>
-        </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Pilier</th>
+          <th>Engagement technique</th>
+          <th>Mise en œuvre</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Souveraineté</strong></td>
+          <td>Isolation locale. Pas de télémétrie. L'Espace Personnel ne quitte jamais l'infrastructure.</td>
+          <td>Docker sur Hyper-V, volumes locaux, BunkerWeb WAF, clés API stockées dans <code>identity.db</code>.</td>
+        </tr>
+        <tr>
+          <td><strong>Véracité</strong></td>
+          <td>Reconstruction bit-perfect de l'historique conversationnel à chaque tour d'inférence.</td>
+          <td>Table SQLite <code>message_shadows</code>, double hachage SHA-256 (Invariant + Cumulatif), Verrou de Version.</td>
+        </tr>
+        <tr>
+          <td><strong>Autonomie</strong></td>
+          <td>Arsenal d'outils sensoriels et exécutifs pilotés par le Kernel sans intervention humaine.</td>
+          <td>Browser Agent (Playwright), Python Worker (sandbox), SearxNG, Qdrant RAG.</td>
+        </tr>
+      </tbody>
+    </table>
 
+    <h2>Phénomènes architecturaux clés</h2>
 
-        <footer>
-            ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-    <div class="transition-text"><em>Maintenant que les fondations conceptuelles sont posées, découvrons comment ces principes s'articulent dans l'architecture globale du système. <a href="01_hld_architecture.html">Passer à l'architecture (HLD) ➔</a></em></div>
-    </main>
-    <script src="nav.js"></script>
+    <h3>La Vallée de la Mort Contextuelle</h3>
+    <p>
+      Les modèles de langage à grande fenêtre contextuelle souffrent d'un phénomène documenté : au-delà
+      d'environ <strong>30 % de remplissage</strong> de la fenêtre, le mécanisme d'attention accorde un poids
+      décroissant aux tours les plus anciens. Les informations restent techniquement présentes dans le
+      contexte, mais leur influence sur la génération devient négligeable. Au-delà de <strong>50 %</strong>,
+      la dégradation est critique.
+    </p>
+    <p>ECHO y répond par une architecture mémorielle à deux niveaux :</p>
+    <ul>
+      <li>
+        <strong>RAG Organique</strong> (<code>echo_memory</code>) : mémoire long terme permanente,
+        survit aux sessions. Outils : <code>save_memory</code> / <code>search_memory</code>.
+      </li>
+      <li>
+        <strong>RAG Éphémère</strong> (<code>echo_ephemeral</code>) : mémoire de travail de la session courante,
+        purgée automatiquement en fin de session. Outils : <code>save_session_context</code> / <code>search_session_context</code>.
+      </li>
+    </ul>
+    <div class="note-box">
+      <h4>Corrélation contextuelle et routage cognitif</h4>
+      <p>
+        Au-delà de 50 % de remplissage de la fenêtre contextuelle, le Pipe considère qu'une
+        escalade vers <strong>MODEL_PRO</strong> est justifiée, quelle que soit la complexité
+        apparente de la tâche. En pratique, ce basculement s'effectue via l'outil
+        <code>new_cognitive_level</code> — c'est le modèle actif qui déclare lui-même son
+        insuffisance et déclenche le transfert. Ce n'est pas un switch automatique du Pipe.
+        Le RAG éphémère (<code>save_session_context</code>) est la réponse préventive :
+        décharger l'information hors du contexte avant saturation.
+      </p>
+    </div>
+
+    <h3>L'AEC (Artéfacts Environnementaux et Contextuels)</h3>
+    <p>
+      À chaque tour de conversation, le Filtre injecte un bloc YAML structurel dans le message utilisateur.
+      Ce bloc, délimité par la balise <code>&lt;environnement_contexte&gt;</code>, fournit au modèle sa
+      <em>proprioception</em> : identité du modèle actif, date et heure, localisation, et surtout le
+      <strong>Registre des Fichiers</strong> de la session. Le modèle doit consulter ce registre avant
+      toute manipulation de ressource.
+    </p>
+    <p>
+      L'AEC regroupe également la balise <code>&lt;smart_context&gt;</code>, qui contient le résumé distillé
+      (≤ 300 mots) des fichiers volumineux traités par le Moulage, accompagné du <code>slug</code> Qdrant
+      permettant d'interroger les détails précis via <code>search_session_context</code>.
+    </p>
+
+    <h3>Le protocole d'authentification PKCE</h3>
+    <p>
+      ECHO utilise le flux <strong>Authorization Code + PKCE (RFC 7636)</strong> pour l'authentification
+      OAuth2 headless dans Docker. PKCE (<em>Proof Key for Code Exchange</em>) est une extension du flux
+      OAuth2 standard qui empêche l'interception du code d'autorisation par un tiers, même si la
+      communication n'est pas parfaitement sécurisée. Il génère une paire de secrets éphémères
+      (<em>code_verifier</em> et <em>code_challenge</em>) à usage unique pour chaque session d'authentification.
+    </p>
+    <p>
+      En pratique : lorsqu'aucun fournisseur d'accès n'est configuré, le Pipe déclenche ce flux
+      automatiquement au premier message. Un tunnel SSH éphémère (<code>asyncssh</code>) est ouvert sur un
+      port dynamique de la plage <code>8020–8024</code>, et le callback OAuth2 est reçu sur un port interne
+      (<code>8025–8034</code>). L'utilisateur reçoit un lien cliquable dans l'interface et n'a qu'à
+      autoriser ECHO sur son compte Google. Les clés API AI Studio (<code>AIza…</code>) restent acceptées
+      comme méthode de secours.
+    </p>
+
+    <div class="tech-spec">
+      <h4>⚙️ Priorité des identités d'accès</h4>
+      <p>
+        Le registre des fournisseurs d'accès aux modèles est résolu dans cet ordre par
+        <code>EchoAuth.get_ordered_auth_providers()</code> :
+      </p>
+      <ol>
+        <li><strong>OAuth2 (API Antigravity)</strong> — prioritaire, accès aux modèles <code>gemini-pro-agent</code> et <code>gemini-3-flash-agent</code>.</li>
+        <li><strong>Clé API primaire</strong> — AI Studio (<code>google_api_key</code>).</li>
+        <li><strong>Clé API secondaire</strong> — fallback de secours (<code>google_api_key_secondary</code>).</li>
+      </ol>
+    </div>
+
+    <div class="transition-text">
+      Ces fondements philosophiques et techniques se concrétisent dans une architecture modulaire précise.
+      <a href="01_hld_architecture.html">Passer au High-Level Design (HLD) ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework — Version 5.158.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
 </body>
-
 </html>
-
-

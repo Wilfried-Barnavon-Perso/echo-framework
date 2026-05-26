@@ -1,115 +1,130 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO Framework - Documentation Officielle</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Documentation officielle du Framework ECHO v5 — Espace Cognitif Heuristique Opérationnel, infrastructure d'IA souveraine construite sur Open WebUI et Gemini.">
+  <title>ECHO Framework v5 — Documentation Officielle</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
-    <main>
-        <h1>ECHO Framework v5</h1>
+  <main>
+    <h1>ECHO Framework v5</h1>
 
-        <div class="transition-text">Ce corpus documentaire vous guide pas à pas à travers l'architecture, les concepts et les modules d'ECHO. Suivez ce fil rouge pour comprendre comment chaque pièce s'intègre au système global.</div>
+    <p>
+      ECHO (<em>Espace Cognitif Heuristique Opérationnel</em>) est une infrastructure d'intelligence artificielle
+      souveraine construite par-dessus <strong>Open WebUI</strong> et les modèles <strong>Gemini</strong> de Google.
+      Ce corpus documentaire décrit son architecture, ses composants et ses mécanismes internes à l'intention
+      des architectes et développeurs souhaitant comprendre, analyser ou étendre le système.
+    </p>
 
-        <div class="didactic-box">
-            <h4>💡 ECHO, c'est quoi exactement ?</h4>
-            <p>Imaginez un système d'exploitation pour l'Intelligence Artificielle. ECHO est le "cerveau" qui s'installe entre vous et les modèles comme Gemini. Il s'occupe de tout ce que les IA classiques font mal : il gère vos fichiers en toute sécurité (l'Espace Personnel), il se souvient de vos préférences sur le long terme (la Mémoire), et il peut même piloter un navigateur web pour vous aider concrètement.</p>
-        </div>
+    <div class="didactic-box">
+      <h4>💡 ECHO en une phrase</h4>
+      <p>
+        ECHO n'est pas un modèle de langage. C'est le <strong>cadre opérationnel</strong> qui enveloppe un modèle
+        (Gemini) pour lui conférer mémoire persistante, continuité sémantique, accès à des outils réels et
+        souveraineté totale sur les données — sans aucune dépendance à un cloud tiers pour le stockage.
+      </p>
+    </div>
 
-        <p>Bienvenue dans le corpus documentaire officiel du Framework ECHO (Espace Cognitif Heuristique Opérationnel). Cette documentation est conçue pour les architectes et développeurs souhaitant comprendre, analyser ou étendre l'infrastructure agentique ECHO.</p>
-        
-        <div class="audit-note">
-            <h4>Le point sur la situation</h4>
-            <p>ECHO n'est pas un simple wrapper d'API. C'est une couche d'abstraction souveraine qui gère son propre état, sa propre mémoire et sa propre interface utilisateur par-dessus Open WebUI.</p>
-        </div>
+    <h2>Architecture en bref</h2>
+    <p>
+      ECHO repose sur le triptyque <strong>Filtre → Pipe → Arsenal</strong>, enrichi d'un moteur de persistance
+      SQLite (les <em>Ombres Riches</em>) et d'un double système RAG vectoriel (Qdrant). Chaque requête
+      de l'utilisateur traverse quatre zones de souveraineté avant de produire une réponse.
+    </p>
 
-        <h2>Structure du Manifeste</h2>
-                        <table>
-            <thead>
-                <tr>
-                    <th>Section</th>
-                    <th>Description</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><a href="00_fondations.html">Fondations</a></td>
-                    <td>La genèse du projet, l'héritage V4 et les principes de souveraineté.</td>
-                </tr>
-                <tr>
-                    <td><a href="01_hld_architecture.html">HLD Architecture</a></td>
-                    <td>High-Level Design, l'architecture "Ombre Riche" et Middlewares (OWUI).</td>
-                </tr>
-                <tr>
-                    <td><a href="02_deploiement.html">Déploiement</a></td>
-                    <td>Analyse des scripts de provisioning Hyper-V et Docker.</td>
-                </tr>
-                <tr>
-                    <td><a href="03_echo_libs.html">Echo Libs</a></td>
-                    <td>Cœur technique factorisé : Utils, Auth et Constantes.</td>
-                </tr>
-                <tr>
-                    <td><a href="04_hud_ui.html">HUD & UI</a></td>
-                    <td>L'interface immersive injectée (Monitors, Gauges, HUD).</td>
-                </tr>
-                <tr>
-                    <td><a href="05_filtre.html">Le Filtre</a></td>
-                    <td>Pré-traitement, Smart Context et gestion d'identité.</td>
-                </tr>
-                <tr>
-                    <td><a href="06_pipe.html">Le Pipe</a></td>
-                    <td>Reconstruction Bit-Perfect et cascade cognitive.</td>
-                </tr>
-                <tr>
-                    <td><a href="07_arsenal_outils.html">L'Arsenal</a></td>
-                    <td>Catalogue exhaustif des outils (Fichiers, Browser, Search).</td>
-                </tr>
-                <tr>
-                    <td><a href="07a_web_intelligence.html">7a. Web Intelligence</a></td>
-                    <td>Navigation web souveraine, Playwright, et SearxNG.</td>
-                </tr>
-                <tr>
-                    <td><a href="07b_vault_explorer.html">7b. Vault & Data</a></td>
-                    <td>Exploration des fichiers locaux, analyse multimodale et sémantique.</td>
-                </tr>
-                <tr>
-                    <td><a href="07c_memory_cognition.html">7c. Base vectorielle des souvenirs</a></td>
-                    <td>Persistance Qdrant, cascade cognitive et routage dynamique.</td>
-                </tr>
-                <tr>
-                    <td><a href="07d_execution_monitoring.html">7d. Exécution Sandbox</a></td>
-                    <td>Environnement Python isolé et pilotage du contexte.</td>
-                </tr>
-                <tr>
-                    <td><a href="07e_actions_ui.html">7e. Actions UI</a></td>
-                    <td>Boutons interactifs HUD pour la purge, l'authentification et le replay.</td>
-                </tr>
-                <tr>
-                    <td><a href="08_system_prompt.html">Le Kernel</a></td>
-                    <td>System Prompt, hiérarchie des normes et persona de l'IA.</td>
-                </tr>
-                <tr>
-                    <td><a href="09_admin_manager.html">Admin Manager</a></td>
-                    <td>Console de supervision, backups et gestion du cycle de vie.</td>
-                </tr>
-                <tr>
-                    <td><a href="10_annexes.html">Annexes</a></td>
-                    <td>Topologie réseau, volumes, bases SQLite et configuration (valves).</td>
-                </tr>
-            </tbody>
-        </table>
+    <h2>Structure du manifeste</h2>
 
-        <footer>
-            ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-    <div class="transition-text"><em>Prêt à découvrir les principes directeurs de cette architecture ? <a href="00_fondations.html">Commencer par les Fondations ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
+    <table>
+      <thead>
+        <tr>
+          <th>Section</th>
+          <th>Contenu</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><a href="00_fondations.html">0. Fondations &amp; Philosophie</a></td>
+          <td>Genèse du projet, héritage V4, les trois piliers de souveraineté.</td>
+        </tr>
+        <tr>
+          <td><a href="01_hld_architecture.html">1. High-Level Design (HLD)</a></td>
+          <td>Architecture globale, schémas de flux, lexique technique et schéma SQL.</td>
+        </tr>
+        <tr>
+          <td><a href="02_deploiement.html">2. Déploiement &amp; Infrastructure</a></td>
+          <td>Scripts de provisioning Hyper-V, Docker Compose et installation Linux.</td>
+        </tr>
+        <tr>
+          <td><a href="03_echo_libs.html">3. Librairies Partagées</a></td>
+          <td>Cœur technique : <code>echo_utils</code>, <code>echo_auth</code>, <code>echo_protocol</code>, <code>echo_constants</code>.</td>
+        </tr>
+        <tr>
+          <td><a href="04_hud_ui.html">4. Écosystème HUD &amp; UI</a></td>
+          <td>Interface immersive injectée : Monitor, Context Gauge, Web Replay.</td>
+        </tr>
+        <tr>
+          <td><a href="05_filtre.html">5. Les Filtres</a></td>
+          <td>Pré-traitement multimodal, Smart Context et mémoire long terme.</td>
+        </tr>
+        <tr>
+          <td><a href="06_pipe.html">6. Le Pipe (Cortex)</a></td>
+          <td>Moteur d'orchestration : Suture Bit-Perfect, routage cognitif, scellement.</td>
+        </tr>
+        <tr>
+          <td><a href="07_arsenal_outils.html">7. L'Arsenal des Outils</a></td>
+          <td>Catalogue des outils sensoriels, exécutifs, cognitifs et visuels.</td>
+        </tr>
+        <tr>
+          <td><a href="07a_web_intelligence.html">↳ 7a. Web Intelligence</a></td>
+          <td>Navigation autonome Playwright et recherche SearxNG.</td>
+        </tr>
+        <tr>
+          <td><a href="07b_vault_explorer.html">↳ 7b. Explorateur de l'Espace Personnel</a></td>
+          <td>Analyse de fichiers locaux, multimodalité et indexation sémantique.</td>
+        </tr>
+        <tr>
+          <td><a href="07c_memory_cognition.html">↳ 7c. Mémoire &amp; Cognition</a></td>
+          <td>Persistance Qdrant, niveaux d'importance, cascade cognitive.</td>
+        </tr>
+        <tr>
+          <td><a href="07d_execution_monitoring.html">↳ 7d. Exécution &amp; Pilotage</a></td>
+          <td>Sandbox Python isolée, exécution de code sécurisée.</td>
+        </tr>
+        <tr>
+          <td><a href="07e_actions_ui.html">↳ 7e. Actions UI (HUD)</a></td>
+          <td>Boutons interactifs : purge mémoire, reset auth, replay web.</td>
+        </tr>
+        <tr>
+          <td><a href="07f_visual_intelligence.html">↳ 7f. Visual Intelligence</a></td>
+          <td>Génération d'interfaces visuelles riches (Markmap, Mermaid, ECharts).</td>
+        </tr>
+        <tr>
+          <td><a href="08_system_prompt.html">8. Le Kernel (System Prompt)</a></td>
+          <td>Hiérarchie des normes, persona de l'IA, directives opérationnelles.</td>
+        </tr>
+        <tr>
+          <td><a href="09_admin_manager.html">9. Admin Manager</a></td>
+          <td>Console de supervision, purge mémorielle TTL, sauvegardes.</td>
+        </tr>
+        <tr>
+          <td><a href="10_annexes.html">10. Annexes Techniques</a></td>
+          <td>Topologie réseau, volumes Docker, schéma SQL complet, valves de configuration.</td>
+        </tr>
+      </tbody>
+    </table>
+
+
+
+
+    <footer>
+      ECHO Framework — Version 5.158.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
 </body>
 </html>
-
-
-

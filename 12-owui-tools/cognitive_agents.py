@@ -1,10 +1,13 @@
 """
 title: ECHO Cognitive Agents
 author: ECHO Framework
-version: 5.8
+version: 5.10
 description: 5.7: Résolution du conflit de nom get_all_skills (shadowing).
              5.8: Centralisation des niveaux de réflexion (THINKING_LEVEL_*) — suppression
              valves FLASH_THINKING et PRO_THINKING. Remplacement par constantes echo_constants.
+             5.9: Renommage consult_council → consult_expert_consultant.
+             5.10: Fix _iterative_loop : MODEL_LITE reçoit désormais THINKING_LEVEL_LITE
+             (au lieu de THINKING_LEVEL_FLASH). Docstrings enrichies : note fallback modèle.
 """
 
 import sys
@@ -136,6 +139,8 @@ class Tools:
         Utilisez MODEL_LITE pour la distillation rapide et l'extraction de données.
         Utilisez MODEL_FLASH pour les tâches intermédiaires, le formatage ou la logique standard.
         Utilisez MODEL_PRO pour l'architecture complexe, le debug profond ou la planification stratégique.
+        Si le modèle choisi est indisponible (quota épuisé, erreur persistante), essayez un
+        niveau inférieur : MODEL_PRO → MODEL_FLASH → MODEL_LITE.
         
         :param context: Contexte sémantique (Markdown) de référence pour la tâche.
         :param prompt: L'instruction ou la tâche spécifique à exécuter.
@@ -189,7 +194,7 @@ class Tools:
         
         return wrap_tool_output(text="❌ Erreur: Réponse Gemini vide.")
 
-    async def consult_council(
+    async def consult_expert_consultant(
         self,
         role_name: str,
         prompt: str,
@@ -203,14 +208,19 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Consultez un expert spécifique (Skill) du Conseil. Gère la continuité via sub_sid.
-        Si sub_sid est fourni, reprend la discussion là où elle s'était arrêtée pour ce rôle.
-        Sinon, crée un nouveau fil de réflexion.
-        
-        :param role_name: Identifiant du Skill/Rôle à consulter (ex: 'ceo', 'lead_dev').
+        Consultez un expert spécifique identifié par son Skill. À chaque appel, c'est un
+        expert singulier qui est instancié — pas un groupe. Gère la continuité du fil
+        de réflexion via sub_sid : si fourni, l'expert reprend là où il s'était arrêté.
+        Sinon, un nouveau fil est créé automatiquement.
+
+        :param role_name: Identifiant du Skill définissant l'expert (ex: 'lead_dev', 'expert_secu').
         :param prompt: Votre question ou instruction pour cet expert.
-        :param sub_sid: (Optionnel) ID du sous-chat à reprendre.
-        :param target_model: Modèle cible pour cet expert (MODEL_PRO recommandé).
+        :param sub_sid: (Optionnel) ID du fil de réflexion à reprendre.
+        :param target_model: Modèle Gemini utilisé pour l'expert (MODEL_PRO recommandé).
+                             Si le modèle choisi est indisponible (quota épuisé, erreur persistante),
+                             essayez un niveau inférieur : MODEL_PRO → MODEL_FLASH → MODEL_LITE.
+        :param history_depth: (Optionnel) Nombre de messages de la branche active à fournir à l'expert.
+        :param distillation_focus: (Optionnel) Point d'attention prioritaire lors de la distillation du contexte.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -227,7 +237,7 @@ class Tools:
             await events.status(f"⚠️ Skill '{role_name}' non trouvé. Tentative de création par défaut...")
             return wrap_tool_output(text=f"❌ Erreur: Le rôle '{role_name}' n'existe pas. Utilisez forge_skill d'abord.")
 
-        await events.status(f"🧠 Consultation du {role_name} (SID: {sid})...")
+        await events.status(f"🧠 Consultation de l'expert '{role_name}' (SID: {sid})...")
 
         # 3. Distillation du contexte (branche active uniquement)
         depth = history_depth if history_depth is not None else self.user_valves.DISTILLATION_DEPTH
@@ -289,7 +299,12 @@ class Tools:
         """Moteur itératif avec gestion des thoughtSignatures (Gemini 3.1)."""
         actual_model = MODEL_ROUTING.get(target_model, MODEL_PRO)
         # Niveaux de réflexion via constantes ECHO (echo_constants.py v4.8)
-        thinking_level = THINKING_LEVEL_PRO if target_model == "MODEL_PRO" else THINKING_LEVEL_FLASH
+        if target_model == "MODEL_PRO":
+            thinking_level = THINKING_LEVEL_PRO
+        elif target_model == "MODEL_FLASH":
+            thinking_level = THINKING_LEVEL_FLASH
+        else:  # MODEL_LITE
+            thinking_level = THINKING_LEVEL_LITE
         
         # Injection de la contrainte technique d'arrêt
         stop_tag = "<FINAL_ANSWER>"

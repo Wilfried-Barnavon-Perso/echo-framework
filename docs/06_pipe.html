@@ -1,185 +1,333 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 6. Le Pipe (Cortex Moteur & Reconstruction Bit-Perfect de l'Historique)</title>
-    <link rel="stylesheet" href="style.css">
-    <script type="module">
-      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-      mermaid.initialize({ 
-        startOnLoad: true, 
-        theme: 'dark',
-        securityLevel: 'loose',
-        flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
-      });
-    </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py v192.1) : Suture Bit-Perfect, routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite.">
+  <title>ECHO v5 — 6. Le Pipe (Cortex)</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', padding: 16 } });
+  </script>
 </head>
 <body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
-    <main>
-        <h1>6. Le Pipe (Cortex Moteur & Reconstruction Bit-Perfect de l'Historique)</h1>
+  <main>
+    <h1>6. Le Pipe (Cortex Moteur)</h1>
 
-        <div class="transition-text">Le Pipe agit comme le cortex cérébral d'ECHO. Il reçoit les requêtes clarifiées par le Filtre pour orchestrer la réflexion et planifier les actions.</div>
 
-        <h2>Fiche d'Identité Technique</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>⚙️ Le Pipe (Outlet)</h3>
-                <p><strong>Nature :</strong> Moteur d'orchestration et de routage de flux (Outlet Hook).</p>
-                <p><strong>Source :</strong> <code>10-owui-pipes/pipe_engine.py</code></p>
-                <p><strong>Rôle :</strong> Centre décisionnel d'ECHO. Responsable de la "Reconstruction Bit-Perfect de l'Historique" (reconstruction bit-perfect de l'historique), de la communication avec l'API Gemini et de la gestion de la boucle d'outils (Arsenal).</p>
-                <p><strong>Exécutant :</strong> L'instance Python d'Open WebUI (In-Process) lors de la génération de la réponse.</p>
-                <p><strong>Interconnexions :</strong> 
-                    <ul>
-                        <li><strong>Input :</strong> Reçoit le "Draft" du Filtre et l'historique brut du Middleware.</li>
-                        <li><strong>Inférence :</strong> Échange en HTTP/2 avec l'API Google Gemini.</li>
-                        <li><strong>Actions :</strong> Invoque les services de l'Arsenal (API REST).</li>
-                        <li><strong>Output :</strong> Produit un flux SSE (Server-Sent Events) vers l'interface utilisateur.</li>
-                    </ul>
-                </p>
-            </div>
-        </div>
+    <p>
+      Le <code>pipe_engine.py</code> (v192.1) est l'unité centrale de traitement d'ECHO.
+      Open WebUI le voit comme un modèle GenAI standard, mais il agit en réalité comme un
+      <strong>orchestrateur de contexte</strong> : il reconstruit l'historique bit-perfect depuis
+      SQLite, pilote la boucle d'outils de l'Arsenal, gère l'authentification et l'inférence via
+      deux backends (AI Studio et API Antigravity), puis scelle chaque tour dans les Ombres Riches.
+    </p>
 
-        <div class="didactic-box">
-            <h4>💡 Comprendre le "Cortex Moteur"</h4>
-            <p>Si le Filtre est le système sensoriel, le Pipe est le cerveau conscient. Il ne se contente pas de transmettre un message : il "recoud" les lambeaux de la mémoire (Suture), planifie une stratégie, utilise ses mains (Arsenal) pour agir, et s'assure que sa pensée reste cohérente du début à la fin de la session.</p>
-        </div>
 
-        <p>Le <code>pipe_engine.py</code> (v192.3) est l'unité centrale de traitement d'ECHO. Il n'est pas un simple connecteur API, mais un véritable <strong>Orchestrateur de Contexte</strong> capable de maintenir une cohérence absolue (Bit-Perfect) sur des sessions dépassant le million de tokens, tout en supportant les configurations de réflexion avancées (<code>thinkingConfig</code>).</p>
+    <div class="didactic-box">
+      <h4>💡 Le Pipe vu par un architecte</h4>
+      <p>
+        Le Pipe est le seul composant qui connaît l'état global du système à un instant donné :
+        quelle est la version exacte de l'historique ? Quel modèle est actif ? Quel est le quota
+        restant ? Il centralise ces informations, prend les décisions de routage, et garantit que
+        l'IA reçoit toujours la représentation la plus fidèle possible de la conversation passée,
+        indépendamment de ce qu'Open WebUI peut avoir modifié ou perdu.
+      </p>
+    </div>
 
-        <div class="note-box">
-            <strong>Philosophie Directrice :</strong> Le Pipe considère chaque tour de parole comme une opération chirurgicale. Il refuse la volatilité d'Open WebUI et s'appuie exclusivement sur son propre registre d'ombres (Shadows) pour garantir que l'IA ne souffre jamais d'amnésie ou de dérive logique.
-        </div>
+    <h2>Fiche d'identité technique</h2>
 
-        <h2>L'Algorithme de Reconstruction Bit-Perfect de l'Historique</h2>
-        <p>La fonction <code>prepare_context</code> est le cœur battant du système. Elle reconstruit l'historique Gemini en suivant une hiérarchie de restauration stricte :</p>
-        
-        <div class="tech-spec">
-            <h4>⚙️ Restauration Bit-Perfect (Shadows)</h4>
-            <p>Pour chaque message de l'historique, le Pipe vérifie la présence d'une "Ombre" dans la table SQLite <code>message_shadows</code>. Cette ombre contient la structure <code>parts</code> exacte telle qu'elle a été envoyée au modèle lors du tour original.</p>
-            <ul>
-                <li><strong>Verrou de Version (Anti-Ghosting)</strong> : La restauration n'est validée que si le couple <code>(message_id, updated_at)</code> correspond exactement. Si un utilisateur modifie un message, l'empreinte temporelle change, invalidant l'ombre et forçant une suture fraîche.</li>
-                <li><strong>Intégrité Multimodale</strong> : ECHO scelle les <code>inlineData</code> (Base64) ou les ancres de fichiers, garantissant une persistance totale.</li>
-            </ul>
-        </div>
+    <table>
+      <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Fichier source</strong></td><td><code>10-owui-pipes/pipe_engine.py</code></td></tr>
+        <tr><td><strong>Version</strong></td><td>192.4 (déclarée dans le docstring du fichier)</td></tr>
+        <tr><td><strong>Type Open WebUI</strong></td><td><code>Pipe</code> — se présente comme un modèle GenAI</td></tr>
+        <tr><td><strong>Point d'entrée</strong></td><td><code>Pipe.pipe(body, __event_emitter__)</code></td></tr>
+        <tr><td><strong>Exécution</strong></td><td>In-process dans Python d'Open WebUI, asynchrone (<code>asyncio</code>)</td></tr>
+        <tr><td><strong>Transport API</strong></td><td>HTTP/2 strict (<code>httpx</code> avec <code>http2=True</code>), SSE streaming</td></tr>
+        <tr><td><strong>Dépendances internes</strong></td><td><code>echo_utils</code>, <code>echo_auth</code>, <code>echo_protocol</code>, <code>echo_constants</code>, <code>echo_ui</code></td></tr>
+      </tbody>
+    </table>
 
-        <h3>Intégration du Draft (Injection de Conscience)</h3>
-        <p>Pour le message utilisateur courant, le Pipe récupère le <strong>Draft sémantique</strong> préparé par le Filtre (<code>_echo_user_parts_draft</code>). Ce draft est fusionné dynamiquement avec le texte brut de l'utilisateur.</p>
+    <h2>La Suture Bit-Perfect — <code>prepare_context()</code></h2>
 
-        <h2>Normalisation & Résolution de Placeholders</h2>
-        <p>L'unité <code>_ensure_gemini_parts</code> assure la conformité stricte avec l'API Google. C'est ici que s'opère la <strong>Résolution Dynamique des Identités</strong> :</p>
-        <ul>
-            <li><code>##ECHO_VERSION##</code> : Injecte la version exacte du framework.</li>
-            <li><code>##MODEL_ID##</code> : Résout l'identité du modèle actif (ex: <i>MODEL_PRO</i>).</li>
-            <li><code>##MODEL_ORIGIN##</code> : Identifie le modèle ayant initié le tour.</li>
-        </ul>
+    <p>
+      La Suture est l'algorithme central du Pipe. Elle reconstruit le tableau de <code>contents</code>
+      (historique au format Gemini) à partir des Ombres SQLite, garantissant une fidélité absolue
+      quelle que soit la manipulation effectuée par Open WebUI sur l'historique affiché.
+    </p>
 
-        <h2>La Ajustement du niveau cognitif (Fluctuation Continue)</h2>
-        <p>ECHO introduit le concept de <strong>Routage Dynamique Inter-Modèle</strong>. En mode <code>AUTO</code>, le Pipe gère une boucle de récursion intelligente.</p>
+    <h3>Hiérarchie de restauration</h3>
+    <p>Pour chaque message de l'historique, le Pipe applique cette cascade :</p>
+    <ol>
+      <li>
+        <strong>Lecture de l'Ombre SQLite :</strong> <code>get_message_shadow(message_id, updated_at)</code>.
+        Le Verrou de Version compare <code>updated_at</code> stocké vs. <code>updated_at</code>
+        fourni par le middleware. Si les timestamps concordent, l'Ombre est validée.
+      </li>
+      <li>
+        <strong>Restauration ThoughtSignature :</strong> <code>get_signature_by_id(message_id)</code>
+        récupère l'Ancre Gemini 3+ scellée au tour précédent. Elle est réinjectée dans le
+        <em>part</em> correspondant (<code>p["thoughtSignature"] = sig</code>) pour que
+        le modèle retrouve son état de réflexion sans relire ses pensées en texte brut.
+      </li>
+      <li>
+        <strong>Cold Recovery (fallback) :</strong> si l'Ombre est absente ou invalidée par le
+        Verrou de Version (Ghost Message), le Pipe reconstruit le message depuis le texte brut
+        fourni par le middleware. Les pièces jointes binaires du tour concerné sont perdues,
+        mais la continuité conversationnelle est préservée.
+      </li>
+    </ol>
 
-        <div class="diagram-container">
-            <div class="mermaid">
-        flowchart TD
-        A[Démarrage : MODEL_LITE] --> B{Analyse Contextuelle}
-        B -->|Tokens < 25%| C[Maintenir LITE/FLASH]
-        B -->|Tokens 25-50%| D[Escalade vers FLASH/PRO]
-        B -->|Tokens > 50%| E[Escalade PRO Impérative]
-        D & E --> F[Génération Plan de Transfert]
-        F --> G[Injection dans Nouveau Modèle]
-            </div>
-        </div>
+    <h3>Intégration du Draft (message courant)</h3>
+    <p>
+      Pour le message utilisateur <em>courant</em> (jamais encore scellé), le Pipe récupère
+      le Draft sémantique préparé par le Filtre (<code>metadata._echo_user_parts_draft</code>)
+      et le fusionne avec le texte brut pour construire les <code>parts</code> envoyées à Gemini.
+      C'est ici que les placeholders <code>##MODEL_ID##</code>, <code>##MODEL_ORIGIN##</code>
+      et <code>##ECHO_VERSION##</code> sont résolus par <code>_resolve_placeholders()</code>.
+    </p>
 
-        <div class="tech-spec">
-            <h4>⚙️ Stratégie de Routage Cognitif (v192.x)</h4>
-            <p>La philosophie a évolué : FLASH n'est plus un niveau intermédiaire mais le <strong>moteur agentique principal</strong>. LITE répond aux interactions triviales. PRO est le dernier recours, sollicité uniquement quand FLASH manifeste une incapacité avérée.</p>
-            <ul>
-                <li><strong>MODEL_LITE (Réflexe)</strong> : Point d'entrée par défaut. Salutations, extractions simples.</li>
-                <li><strong>MODEL_FLASH (Exécution agentique)</strong> : Moteur de travail principal — navigation web, scripting, orchestration d'outils, synthèse complexe.</li>
-                <li><strong>MODEL_PRO (Expertise — dernier recours)</strong> : Uniquement si Flash échoue manifestement — architecture multicouche, raisonnement philosophique profond.</li>
-            </ul>
-            <p>La Loi de Corrélation Contextuelle reste active : contexte &gt; 50% → PRO impératif, quelle que soit la simplicité de la tâche. Les RAGs organiques et éphémères atténuent ce besoin en déchargeant l'information hors du contexte.</p>
-        </div>
+    <div class="tech-spec">
+      <h4>⚙️ Stérilisation des médias (Double Ancrage)</h4>
+      <p>
+        Les <code>inlineData</code> (binaires Base64) présents dans les Ombres sont ré-injectés
+        tels quels dans le contexte Gemini. Le contenu binaire n'est jamais retranscodé — garantie
+        d'une fidélité à l'octet près (<em>bit-perfect</em>). Les pièces jointes qui dépassent
+        la limite de taille de l'API sont automatiquement remplacées par leur slug Qdrant.
+      </p>
+    </div>
 
-        <div class="tech-spec">
-            <h4>⚙️  Précision Mécanique : Gestion de la Chain-of-Thought</h4>
-            <p>Le Pipe est capable de capturer les pensées internes de l'IA (Chain-of-Thought). Ces données sont <strong>isolées</strong> du flux principal pour être affichées proprement dans l'interface sans polluer la réponse finale. Ces pensées sont ensuite réinjectées dans le contexte lors du tour suivant via la <strong>Suture Cognitive</strong>, permettant à l'IA de se "souvenir" de son propre raisonnement interne.</p>
-        </div>
+    <h2>Routage Cognitif Dynamique</h2>
 
-        <h3>L'Outil de Transfert : <code>new_cognitive_level</code></h3>
-        <p>Injecté dynamiquement, il permet à un modèle de se déclarer incompétent ou d'anticiper une surcharge contextuelle.</p>
-        <ul>
-            <li><strong>Plan de Transfert</strong> : Le modèle sortant rédige un plan Markdown pour son successeur.</li>
-            <li><strong>Mutation Chirurgicale</strong> : The Pipe intercepte cet appel, modifie l'identité du modèle et relance la requête.</li>
-        </ul>
+    <p>
+      En mode <code>AUTO</code>, le Pipe adapte le modèle d'inférence à la complexité estimée
+      de la tâche et à l'état du contexte. Ce routage s'appuie sur deux variables :
+      le <strong>taux de remplissage</strong> de la fenêtre contextuelle et la
+      <strong>nature de la requête</strong> (évaluée au premier appel à <code>MODEL_LITE</code>).
+    </p>
 
-        <h3>Gestion Chirurgicale des Pensées (CoT)</h3>
-        <p>ECHO ne conserve <strong>JAMAIS</strong> le texte brut de la pensée dans l'historique des tours suivants. À la place, il utilise la <code>ThoughtSignature</code> :</p>
-        <ul>
-            <li><strong>L'Ancre Google</strong> : La <code>ThoughtSignature</code> est une ancre logique (KV Cache) fournie par Google. En la réinjectant, ECHO permet au modèle de "retrouver ses esprits" sans avoir à relire ses propres pensées.</li>
-            <li><strong>Économie Massive</strong> : Ce protocole réduit la charge contextuelle de <strong>30% à 70%</strong>.</li>
-        </ul>
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>Routage Cognitif Dynamique — pipe_engine.py</span>
+        <span>[MODE AUTO]</span>
+      </div>
+      <div class="mermaid">
+flowchart TD
+  START([Nouvelle requête]) --> LITE[Évaluation initiale\nMODEL_LITE]
 
-        <h2>Sécurité & Résilience API</h2>
-        <ul>
-            <li><strong>Multi-Clés & Rotation</strong> : Bascule automatique de clé après <code>KEY_SWITCH_THRESHOLD</code> échecs.</li>
-            <li><strong>HTTP/2 Strict</strong> : ECHO impose le protocole HTTP/2 pour réduire la latence.</li>
-        </ul>
+  LITE --> NCV{new_cognitive_level\nrequested?}
 
-        <h2>Authentification Automatique (Device Flow)</h2>
-        <p>En l'absence de fournisseur d'accès configuré (<code>auth_providers == []</code>), le Pipe déclenche automatiquement le <strong>Device Authorization Grant (RFC 8628)</strong> au premier message, sans commande utilisateur. L'utilisateur reçoit un <code>user_code</code> et un lien cliquable (pré-rempli si <code>verification_url_complete</code> disponible). Le Pipe polle jusqu'à autorisation ou timeout (5 min), puis finalise le provisioning. Les messages d'authentification sont filtrés de <code>prepare_context</code> et ne polluent pas l'historique Gemini.</p>
+  NCV -->|"Oui — LITE est dépassé"| TRANS["Plan de Transfert\n(Markdown structuré)"]
+  TRANS --> MUTATION["Mutation Modèle\n(inject into new model)"]
+  MUTATION --> FLASH[Exécution — MODEL_FLASH]
 
-        <h2>Phase de Scellement (Le Verrouillage)</h2>
-        <ol>
-            <li><strong>Shadow Sealing</strong> : Enregistrement dans <code>message_shadows</code>.</li>
-            <li><strong>Cognitive Sealing</strong> : Ancrage de la <code>ThoughtSignature</code> et du <code>tool_journal</code>.</li>
-            <li><strong>File Registry Update</strong> : Les fichiers sont marqués comme <code>processed</code> et déplacés vers le <strong>Vault</strong>.</li>
-            <li><strong>HUD Refresh</strong> : Mise à jour de la Context Gauge — voir ci-dessous.</li>
-        </ol>
+  NCV -->|"Non — LITE suffit"| CTX{Taux de\nRemplissage}
 
-        <h2>HUD Quota — Intégration dans le Pipe</h2>
-        <p>À chaque fin de tour, <code>pipe_engine.py</code> collecte les métriques de quota et les transmet à <code>deploy_context_gauge()</code>. La chaîne complète :</p>
+  CTX -->|"< 30% — Zone verte"| LITE_OK["✅ Continuer en LITE\n(interactions simples)"]
+  CTX -->|"30–50% — Zone orange"| FLASH["⚡ Escalade vers MODEL_FLASH\n(moteur agentique principal)"]
+  CTX -->|"> 50% — Zone rouge"| PRO["🔴 Escalade PRO impérative\nquelle que soit la tâche"]
 
-        <div class="code-header">Pipeline HUD Quota (pipe_engine.py v192.3)</div>
-        <pre><code>1. get_ca_model_id(target_model)
-   → Résout le CA model ID correspondant au modèle ECHO courant
-     (ex: MODEL_FLASH → "gemini-3-flash-agent")
+  FLASH --> NCV2{new_cognitive_level ?}
+  NCV2 -->|"FLASH est dépassé"| PRO
+  NCV2 -->|"Non"| OUTPUT
 
-2. EchoAuth.get_model_quota(ca_model_id)  [echo_utils.py v7.12]
-   → Lit google_quota_by_model (JSON dict dans identity.db)
-   → Retourne le quotaInfo spécifique au modèle CA
-   → Fallback: {} si modèle inconnu
+  PRO --> OUTPUT([Génération finale])
+  LITE_OK --> OUTPUT
 
-3. Extraction des champs
-   quota_fraction = model_quota.get("remainingFraction", 1.0)
-   quota_reset    = model_quota.get("resetTime", "N/A")  → formaté HH:MM (Xmin)
-   quota_rpd_rem  = model_quota.get("requestsPerDayRemaining", "N/A")
-   quota_rpd_lim  = model_quota.get("requestsPerDayLimit", "N/A")
-   quota_rpm_rem  = model_quota.get("requestsPerMinuteRemaining", "N/A")
-   quota_rpm_lim  = model_quota.get("requestsPerMinuteLimit", "N/A")
+  classDef zone_vert fill:#064e3b,stroke:#10b981,color:#fff
+  classDef zone_orange fill:#78350f,stroke:#f59e0b,color:#fff
+  classDef zone_rouge fill:#7f1d1d,stroke:#ef4444,color:#fff
+  class LITE_OK zone_vert
+  class FLASH zone_orange
+  class PRO zone_rouge
+      </div>
+    </div>
 
-4. async refresh_quota_if_needed()  [non-bloquant, cooldown 10 min]
-   → Relance fetch_available_models si les données sont périmées
-   → Ne bloque pas la génération de réponse
+    <table>
+      <thead><tr><th>Modèle</th><th>Rôle dans le routage</th><th>Déclencheur</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong><code>MODEL_LITE</code></strong> (<code>gemini-3.1-flash-lite</code>)</td>
+          <td>Réflexe — point d'entrée par défaut.</td>
+          <td>Toute requête en mode AUTO. Salutations, extractions triviales.</td>
+        </tr>
+        <tr>
+          <td><strong><code>MODEL_FLASH</code></strong> (<code>gemini-3.5-flash</code>)</td>
+          <td>Moteur agentique principal.</td>
+          <td>LITE demande une escalade (<code>new_cognitive_level</code>). Le seuil de 30 % de contexte est un signal de vigilance pour activer préventivement le RAG éphémère — pas un basculement automatique.</td>
+        </tr>
+        <tr>
+          <td><strong><code>MODEL_PRO</code></strong> (<code>gemini-3.1-pro-preview</code>)</td>
+          <td>Expertise — dernier recours uniquement.</td>
+          <td>FLASH est manifestement insuffisant, ou contexte ≥ 50 % (<em>Loi de Corrélation Contextuelle</em>).</td>
+        </tr>
+      </tbody>
+    </table>
 
-5. deploy_context_gauge(..., quota_model, quota_rpd_rem, quota_rpd_lim,
-                         quota_rpm_rem, quota_rpm_lim, ...)
-   → Injection HUD dans la barre de navigation OWUI</code></pre>
+    <h3>L'outil <code>new_cognitive_level</code></h3>
+    <p>
+      Injecté dynamiquement dans les outils disponibles de chaque modèle, cet outil permet au
+      modèle actif de déclarer qu'il ne peut pas traiter la tâche correctement. Le Pipe intercepte
+      cet appel, récupère le <strong>Plan de Transfert</strong> rédigé par le modèle sortant
+      (document Markdown structurant le contexte et les objectifs pour son successeur),
+      puis re-route la requête vers le modèle cible sans redémarrer la boucle complète.
+    </p>
 
-        <div class="audit-note">
-            <h4>✅ Le point sur l'exactitude (v192.3)</h4>
-            <p>Le <code>pipe_engine.py</code> v192.3 intègre l'authentification automatique par Device Flow (RFC 8628), la migration complète vers Antigravity 2.1 (User-Agent, client ID <code>884354919052</code>, scope <code>aicode</code>), et la nouvelle chaîne HUD quota par modèle CA (<code>get_model_quota</code>, extraction RPD/RPM, formatage reset en minutes). Le routage cognitif a été affiné : FLASH est le moteur agentique principal, PRO est réservé aux cas où FLASH est manifestement insuffisant.</p>
-        </div>
+    <h2>Gestion des Pensées (Chain-of-Thought)</h2>
 
-        <footer>
-            ECHO Framework - Version 5.158.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-    <div class="transition-text"><em>Pour accomplir ses missions et interagir avec le monde extérieur, le Pipe s'appuie sur un ensemble d'outils spécialisés. <a href="07_arsenal_outils.html">Découvrir l'Arsenal des Outils ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
+    <p>
+      Lorsque <code>includeThoughts: true</code> est envoyé dans le <code>thinkingConfig</code>
+      (via <code>echo_protocol.build_ca_generation_config()</code>), l'API Gemini retourne des
+      parts avec <code>thought: true</code>. <code>StreamProcessor.process()</code> les intercepte
+      et les isole du flux principal.
+    </p>
+
+    <h3>Isolation et affichage</h3>
+    <p>
+      Les pensées sont extraites par <code>split_thought_process(text)</code>
+      (<code>echo_utils.py</code>), encapsulées dans les balises <code>&lt;think&gt;…&lt;/think&gt;</code>
+      et envoyées en amont du texte final dans le flux SSE. Open WebUI les affiche dans une
+      section repliable. Elles <strong>ne polluent jamais</strong> le texte de la réponse.
+    </p>
+
+    <h3>L'Ancre (ThoughtSignature)</h3>
+    <p>
+      ECHO ne réinjecte <strong>jamais</strong> le texte brut des pensées dans l'historique des
+      tours suivants. À la place, la <code>thoughtSignature</code> est scellée dans
+      <code>cognitive_signatures</code> (SQLite) et réinjectée au tour suivant
+      (<code>p["thoughtSignature"] = sig</code>).
+    </p>
+    <p>
+      La <strong>ThoughtSignature</strong> est un <strong>impératif de l'API Gemini 3+</strong> :
+      à la fin de chaque génération, l'API retourne systématiquement ce blob opaque dont la
+      structure est entièrement interne à Google. Sa fonction : permettre au modèle de retrouver
+      la continuité de sa réflexion entre les tours sans retranscrire ses raisonnements en
+      texte brut.
+    </p>
+
+    <div class="note-box">
+      <h4>⚠ ThoughtSignature ≠ KV Cache</h4>
+      <p>
+        Le <strong>KV Cache</strong> est une technique Google d'économie de tokens : les
+        activations clé/valeur du prefill sont mises en cache implicite côté serveur Google
+        pour éviter de les recalculer lors des tours suivants. C'est une optimisation
+        d'inférence transparente, opaque pour l'appelant.
+      </p>
+      <p>
+        La <strong>ThoughtSignature</strong> est un artefact applicatif exposé explicitement
+        dans la réponse API : l'appelant la reçoit, la persiste (SQLite) et la réinjecte
+        manuellement au tour suivant. Les deux mécanismes sont entièrement distincts.
+      </p>
+    </div>
+
+    <div class="note-box">
+      <h4>Réduction de la charge contextuelle</h4>
+      <p>
+        Ce protocole réduit la charge contextuelle de <strong>30 % à 70 %</strong> selon la
+        complexité des pensées, car les milliers de tokens de Chain-of-Thought ne sont jamais
+        retranscrits dans le contexte. Seul le jeton opaque (quelques dizaines d'octets) les représente.
+      </p>
+    </div>
+
+    <h2>Transport HTTP/2 et Headers Stealth</h2>
+
+    <p>
+      <code>EchoGeminiClient</code> utilise <code>httpx</code> avec l'option <code>http2=True</code>
+      (dépendance <code>h2</code> obligatoire). Pour les requêtes vers l'API Antigravity, les en-têtes
+      de requête reproduisent ceux d'un IDE réel grâce à <code>get_stealth_headers()</code> :
+    </p>
+
+    <div class="code-header">En-têtes Stealth — ECHO API Antigravity</div>
+    <pre><code>User-Agent: antigravity/2.1.0 (language_server; os_type=Windows; os_version=10.0.26100; arch=x64)
+X-Goog-Api-Client: gl-node/20.0.0
+Authorization: Bearer {oauth_token}
+Content-Type: application/json</code></pre>
+
+    <h2>Phase de Scellement</h2>
+
+    <p>
+      Une fois la génération terminée et le stream SSE clos, le Pipe scelle le tour en quatre
+      opérations atomiques :
+    </p>
+    <ol>
+      <li>
+        <strong>Shadow Sealing :</strong> <code>save_message_shadow(parts_finale, updated_at)</code>
+        — enregistre la structure complète des <code>parts</code> envoyées et reçues dans
+        <code>message_shadows</code>.
+      </li>
+      <li>
+        <strong>Cognitive Sealing :</strong> <code>save_signature_by_id(message_id, thoughtSignature)</code>
+        — ancre la signature dans <code>cognitive_signatures</code>.
+      </li>
+      <li>
+        <strong>Tool Journal :</strong> <code>save_cognitive_data(cumulative_hash, tool_io)</code>
+        — journalise les appels et sorties d'outils dans <code>tool_journal</code>.
+      </li>
+      <li>
+        <strong>Suture Index :</strong> <code>index_suture(cumulative_hash, parent_hash)</code>
+        — met à jour la chaîne Merkle de la conversation.
+      </li>
+    </ol>
+
+    <h2>HUD Quota — intégration dans le Pipe</h2>
+
+    <p>
+      À chaque fin de tour, le Pipe collecte les métriques de quota et les injecte dans la Context
+      Gauge. Le pipeline précis, extrait du code source :
+    </p>
+
+    <div class="code-header">Pipeline HUD Quota — pipe_engine.py v192.1</div>
+    <pre><code># 1. Résolution de l'ID modèle AGY (cloudcode-pa interne)
+ca_id = get_ca_model_id(target_model)
+# ex : MODEL_FLASH → "gemini-3-flash-agent"
+
+# 2. Lecture du quota depuis identity.db (EchoAuth.get_model_quota)
+model_quota = await echo_auth.get_model_quota(ca_id)
+# Retourne le quotaInfo spécifique ou {} si modèle inconnu
+
+# 3. Extraction des champs
+quota_fraction = model_quota.get("remainingFraction", 1.0)
+quota_reset    = model_quota.get("resetTime", "N/A")   # → formaté "HH:MM (Xmin)"
+quota_rpd_rem  = model_quota.get("requestsPerDayRemaining", "N/A")
+quota_rpd_lim  = model_quota.get("requestsPerDayLimit", "N/A")
+quota_rpm_rem  = model_quota.get("requestsPerMinuteRemaining", "N/A")
+quota_rpm_lim  = model_quota.get("requestsPerMinuteLimit", "N/A")
+
+# 4. Rafraîchissement asynchrone non-bloquant (cooldown 10 min)
+asyncio.ensure_future(refresh_quota_if_needed())
+
+# 5. Injection HUD
+await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
+    quota_rpd_rem=quota_rpd_rem, quota_rpd_lim=quota_rpd_lim, ...)</code></pre>
+
+    <div class="audit-note">
+      <h4>✅ Exactitude — Version 192.4</h4>
+      <p>
+        La version 192.4 intègre la migration complète vers le protocole Antigravity 2.1
+        (User-Agent, identifiants OAuth2 encodés), la gestion des deux backends
+        (AI Studio / API Antigravity) via <code>echo_protocol.py</code>,
+        la chaîne HUD quota par modèle CA (<code>get_model_quota</code>, extraction RPD/RPM),
+        et l'outil <code>new_cognitive_level</code> pour le routage inter-modèle dynamique.
+        Toutes les valeurs (noms de constantes, seuils, chemins) sont vérifiées contre le code source.
+      </p>
+    </div>
+
+    <div class="transition-text">
+      Pour accomplir ses missions, le Pipe s'appuie sur un Arsenal d'outils spécialisés.
+      <a href="07_arsenal_outils.html">Découvrir l'Arsenal des Outils ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework — Version 5.158.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
 </body>
 </html>
-
-
-

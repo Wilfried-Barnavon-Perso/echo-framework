@@ -1,148 +1,166 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECHO v5 - 6a. Web Intelligence</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO Web Intelligence v5 : navigation autonome Chromium (Playwright), Browser Agent FastAPI v9.1, port 5002, 14 actions disponibles, SearxNG souverain, Cockpit Replay.">
+  <title>ECHO v5 — 7a. Web Intelligence</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <main>
+    <h1>7a. Web Intelligence</h1>
 
-    <main>
-        <h1>7a. Web Intelligence : Navigation & Recherche Souveraine</h1>
+    <p>
+      Les outils de Web Intelligence confèrent à ECHO la capacité de naviguer sur le Web de manière
+      autonome, de lire et d'interagir avec des pages dynamiques, d'en extraire le contenu sémantique,
+      et d'effectuer des recherches via un moteur souverain. Ces capacités reposent sur deux
+      composants complémentaires : le <strong>Browser Agent</strong> (micro-service Docker FastAPI +
+      Playwright) et le <strong>SearxNG Proxy</strong> (moteur de recherche méta souverain, outil
+      séparé <code>sovereign_web_search.py</code>).
+    </p>
 
-        <div class="transition-text">Pour comprendre le monde extérieur, l'Arsenal met à disposition de l'IA un navigateur et un moteur de recherche souverains.</div>
+    <h2>Architecture — Browser Agent (Playwright)</h2>
 
-        <h2>Fiche d'Identité Technique</h2>
-        <div class="grid-container">
-            <div class="card">
-                <h3>🌐 Web Intelligence</h3>
-                <p><strong>Nature :</strong> Cluster de Micro-services (Browser Headless + Proxy de recherche).</p>
-                <p><strong>Source :</strong> <code>12-owui-tools/navigation_engine_tool.py</code> & <code>sovereign_web_search.py</code>. Conteneur : <code>22-docker-browser-agent/</code>.</p>
-                <p><strong>Rôle :</strong> Fournir à l'IA la capacité de naviguer sur le web public (cliquer, scroller, lire) et de rechercher des informations sans exposer l'utilisateur aux traqueurs (SearxNG).</p>
-                <p><strong>Exécutant :</strong> Ordres émis par le Pipe (Python), exécutés par les conteneurs isolés <code>browser-agent</code> (Node.js/Playwright) et <code>searxng</code>.</p>
-                <p><strong>Interconnexions :</strong> 
-                    <ul>
-                        <li><strong>Input :</strong> Requêtes structurées de l'IA (URLs, requêtes de recherche, index de clics).</li>
-                        <li><strong>Action réseau :</strong> Trafic HTTPS sortant vers le World Wide Web via la zone sécurisée.</li>
-                        <li><strong>Output :</strong> Cartographie DOM (JSON), images Base64 (screenshots), et résultats de recherche parsés au Pipe.</li>
-                    </ul>
-                </p>
-            </div>
-        </div>
+    <p>
+      Le Browser Agent est un micro-service Docker dédié (<code>browser_api.py</code> v9.1, FastAPI
+      + Playwright asyncio). Il pilote une instance <strong>Chromium headless</strong> via Playwright.
+      Il gère plusieurs sessions navigateur simultanées (jusqu'à 20), chacune liée à un
+      <code>chat_id</code> ECHO et nettoyée automatiquement après 1 heure d'inactivité.
+    </p>
 
-        <div class="didactic-box">
-            <h4>💡 Comprendre la Web Intelligence</h4>
-            <p>ECHO ne se contente pas de "lire" internet. Il possède un <strong>Navigateur Fantôme</strong> (Chromium) qu'il pilote comme un humain. Il peut cliquer, scroller, et même "voir" la page grâce à des captures d'écran. La <strong>Recherche Souveraine</strong> signifie qu'il interroge des moteurs de recherche (SearxNG) qui protègent votre anonymat : personne ne sait ce que vous cherchez, pas même Google.</p>
-        </div>
+    <table>
+      <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Conteneur</strong></td><td><code>echo-browser-agent</code></td></tr>
+        <tr><td><strong>Port interne</strong></td><td><strong>5002</strong> (exposé via <code>uvicorn host="0.0.0.0" port=5002</code>)</td></tr>
+        <tr><td><strong>Source</strong></td><td><code>22-docker-browser-agent/browser_api.py</code></td></tr>
+        <tr><td><strong>Version</strong></td><td>9.1 (TURBO JSON)</td></tr>
+        <tr><td><strong>Moteur</strong></td><td>Playwright Chromium headless, mode Mobile (iPad) ou Desktop configurable</td></tr>
+        <tr><td><strong>Bibliothèques</strong></td><td><code>fastapi</code>, <code>playwright</code>, <code>orjson</code>, <code>pybase64</code>, <code>html2text</code></td></tr>
+        <tr><td><strong>Max sessions simultanées</strong></td><td>20 (<code>MAX_SESSIONS</code>)</td></tr>
+        <tr><td><strong>Timeout inactivité</strong></td><td>3 600 s = 1 heure (<code>IDLE_TIMEOUT_DEFAULT</code>)</td></tr>
+      </tbody>
+    </table>
 
-        <p>Le module Web Intelligence permet à ECHO d'interagir avec le Web de manière humaine, via une instance Chromium pilotée, un retour visuel en temps réel (HUD), et d'effectuer des recherches sémantiques profondes sans traceur (tracker).</p>
+    <h2>Actions disponibles (API <code>/action</code>)</h2>
 
-        <h2>Architecture du Moteur (<code>navigation_engine_tool.py</code>)</h2>
-        <p>Le moteur repose sur une séparation stricte entre le client ECHO et le <code>browser-agent</code> (container Docker isolé). Les communications se font via des requêtes HTTP internes.</p>
+    <p>
+      Toutes les actions transitent par le endpoint <code>POST /action</code> avec un champ
+      <code>action</code> identifiant l'opération. Le tool ECHO <code>navigation_engine_tool.py</code>
+      encapsule ces appels HTTP REST.
+    </p>
 
-        <h3>Fonctions de Pilotage</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Fonction</th>
-                    <th>Description Technique</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><code>web_browse_navigate</code></td>
-                    <td>Charge une URL, génère une capture d'écran et renvoie la <strong>Map du DOM</strong> (éléments interactifs indexés).</td>
-                </tr>
-                <tr>
-                    <td><code>web_browse_interact</code></td>
-                    <td>Exécute des actions : <code>click</code>, <code>type</code>, <code>scroll</code>, <code>hover</code>, <code>press</code>. Supporte le ciblage par <strong>index numérique</strong> (recommandé) ou sélecteur CSS.</td>
-                </tr>
-                <tr>
-                    <td><code>get_web_object_url</code></td>
-                    <td>Résout les URLs absolues (src/href) à partir des index du DOM détectés. Essentiel pour extraire des images ou des liens profonds.</td>
-                </tr>
-                <tr>
-                    <td><code>web_browse_reset</code></td>
-                    <td>Réinitialisation matérielle (Hard Reset) de l'instance Playwright. Supprime cookies et sessions en cas de blocage.</td>
-                </tr>
-            </tbody>
-        </table>
+    <table>
+      <thead>
+        <tr><th>Action</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>goto</code></td>
+          <td>Navigue vers une URL. Attend <code>networkidle</code> (timeout 60 s). Retourne <code>title</code> et <code>url</code>.</td>
+        </tr>
+        <tr>
+          <td><code>click</code></td>
+          <td>Clique sur un élément par <code>index</code> (<code>data-echo-index</code>) ou <code>selector</code> CSS/XPath. Mouse shake anti-bot.</td>
+        </tr>
+        <tr>
+          <td><code>type</code></td>
+          <td>Saisit du texte dans un champ via <code>page.fill()</code> (remplace le contenu). Cible par index ou selector.</td>
+        </tr>
+        <tr>
+          <td><code>press</code></td>
+          <td>Presse une touche clavier (ex. <code>Enter</code>, <code>Tab</code>). Attend <code>networkidle</code> après.</td>
+        </tr>
+        <tr>
+          <td><code>hover</code></td>
+          <td>Survole un élément (déclenche les menus déroulants, tooltips).</td>
+        </tr>
+        <tr>
+          <td><code>scroll</code></td>
+          <td>Fait défiler la page : <code>down</code>, <code>up</code>, <code>top</code>, <code>bottom</code>.</td>
+        </tr>
+        <tr>
+          <td><code>read</code></td>
+          <td>Extrait le contenu textuel de la page en Markdown via <code>html2text</code>. Limité à 30 000 caractères.</td>
+        </tr>
+        <tr>
+          <td><code>read_html</code></td>
+          <td>Retourne le code HTML source complet, encodé en Base64 pour protéger le JSON.</td>
+        </tr>
+        <tr>
+          <td><code>get_attribute</code></td>
+          <td>Récupère un attribut HTML (ex. <code>href</code>, <code>src</code>) d'un élément ciblé par index.</td>
+        </tr>
+        <tr>
+          <td><code>highlight</code></td>
+          <td>Cartographie tous les éléments interactifs de la page avec numérotation visuelle (<em>ECHO markers</em>), prend un screenshot. Retourne <code>screenshot_b64</code>, liste des éléments (<code>metadata</code>) et <code>count</code>.</td>
+        </tr>
+        <tr>
+          <td><code>tab_new</code></td>
+          <td>Ouvre un nouvel onglet (jusqu'à N onglets simultanés par session). Retourne l'index du nouvel onglet.</td>
+        </tr>
+        <tr>
+          <td><code>tab_switch</code></td>
+          <td>Bascule sur l'onglet d'index donné.</td>
+        </tr>
+        <tr>
+          <td><code>tab_close</code></td>
+          <td>Ferme l'onglet actif (refuse si dernier onglet restant).</td>
+        </tr>
+        <tr>
+          <td><code>reset</code></td>
+          <td>Réinitialisation complète de la session : ferme le contexte Playwright et purge l'entrée dans <code>SESSIONS</code>.</td>
+        </tr>
+      </tbody>
+    </table>
 
-        <h3>Mémoire Visuelle & Proof Protocol</h3>
-        <p>À chaque interaction réussie, le moteur capture une frame (PNG) et la scelle dans l'Espace Personnel. La fonction <code>get_browser_frames_history</code> permet au modèle de consulter les IDs des étapes passées pour reconstruire une chronologie visuelle.</p>
+    <div class="tech-spec">
+      <h4>⚙️ ECHO DOM Markers — cartographie visuelle</h4>
+      <p>
+        L'action <code>highlight</code> injecte un script JS (<code>HIGHLIGHT_JS</code>) qui scanne tous
+        les éléments interactifs (liens, boutons, inputs, éléments <code>cursor:pointer</code>) et leur
+        attache une étiquette numérotée rouge (<code>.echo-marker</code>). Le modèle peut alors cibler
+        un élément précis par son <code>index</code> — plus fiable qu'un sélecteur CSS fragile sur des
+        pages dynamiques.
+      </p>
+    </div>
 
-        <h2>Le Replay Visuel (HUD Cockpit)</h2>
-        <p>ECHO permet de "rejouer" intégralement une session de navigation via une interface HUD dédiée. Cette action permet d'analyser les décisions visuelles de l'IA, d'extraire des preuves ou de corriger un parcours.</p>
-        
-        <div class="card">
-            <h4>Accès au Cockpit de Navigation</h4>
-            <p>Le Replay offre des outils avancés : Chronologie atomique, Zoom haute fidélité (v3.6), Crop dynamique et Export sécurisé (Fallback CORS).</p>
-            <a href="07e_actions_ui.html#web-replay" class="btn">👁️ Ouvrir la Documentation du Replay</a>
-        </div>
+    <h2>Session Navigateur et Profils</h2>
+    <p>
+      Chaque session est initialisée via <code>POST /start_session</code> avec un <code>session_id</code>
+      (= <code>chat_id</code> ECHO). Deux profils de navigateur sont disponibles :
+    </p>
+    <ul>
+      <li><strong>mobile</strong> (défaut) : iPad 820×1180, User-Agent Safari iOS 16 — contourne une majorité de protections anti-bot.</li>
+      <li><strong>desktop</strong> : Chrome 120, 1280×800 — pour les sites nécessitant un viewport large.</li>
+    </ul>
 
-        <h2>Spécifications du DOM Map</h2>
-        <p>ECHO ne lit pas le HTML brut par défaut. Il utilise une fonction de "Highlight" qui transforme le DOM complexe en une liste d'objets simplifiés :</p>
-        <pre><code>{
-  "index": 42,
-  "tagName": "BUTTON",
-  "text": "Valider le Panier",
-  "coordinates": { "x": 120, "y": 450, "w": 80, "h": 30 }
-}</code></pre>
-        <p>Cette abstraction réduit drastiquement la consommation de tokens et améliore la précision du clic.</p>
+    <h2>Recherche Web Souveraine</h2>
+    <p>
+      La recherche Web est fournie par l'outil séparé <code>sovereign_web_search.py</code>, qui requête
+      directement l'instance SearxNG interne (<code>http://echo-searxng:8080</code>). Aucune donnée de
+      recherche ne transite par un moteur tiers tracé.
+    </p>
 
-        <h2>Recherche Web Souveraine (<code>sovereign_web_search.py</code>)</h2>
-        <p>ECHO n'utilise pas de moteurs de recherche commerciaux traçants. Il s'appuie sur une instance locale de <strong>SearxNG</strong> et l'API DuckDuckGo.</p>
-        
-        <table>
-            <thead>
-                <tr>
-                    <th>Outil</th>
-                    <th>Moteur</th>
-                    <th>Usage Optimal</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><code>search_instant_answer</code></td>
-                    <td>DuckDuckGo</td>
-                    <td>Faits, définitions, Wikipédia. Réponse ultra-rapide (millisecondes).</td>
-                </tr>
-                <tr>
-                    <td><code>search_deep_web</code></td>
-                    <td>SearxNG</td>
-                    <td>Actualités, tutoriels, recherches multicritères. Agrège Google, Bing, Brave, etc., sans pistage. Supporte les filtres temporels (<code>day</code>, <code>week</code>, <code>month</code>, <code>year</code>).</td>
-                </tr>
-            </tbody>
-        </table>
+    <h2>Cockpit de Replay Web</h2>
+    <p>
+      Après une session de navigation, l'action <code>web_navigation_replay_action.py</code> génère
+      une interface HUD listant toutes les actions effectuées avec leurs captures d'écran. L'utilisateur
+      peut rejouer ou exporter la session.
+    </p>
 
-        <div class="audit-note">
-            <h4>Sécurité & Anonymat</h4>
-            <p>Toutes les requêtes web sortantes utilisent le <code>ECHO_USER_AGENT</code> personnalisé. Le proxy <strong>SearxNG</strong> est sécurisé par un jeton cryptographique généré aléatoirement lors du déploiement (<code>SEARXNG_SECRET</code>), empêchant les moteurs tiers d'identifier l'utilisateur final tout en garantissant l'étanchéité des communications internes.</p>
-        </div>
+    <div class="transition-text">
+      <a href="07_arsenal_outils.html">← Retour à l'Arsenal</a>
+      &nbsp;&nbsp;
+      <a href="07b_vault_explorer.html">Explorateur de l'Espace Personnel ➔</a>
+    </div>
 
-        <h2>Visualisation Cartographique Souveraine (<code>gemini_maps_grounding.py</code>)</h2>
-        <p>ECHO v5.147.6 introduit le rendu cartographique interactif basé sur le <strong>Rich UI Embedding</strong>. Contrairement aux solutions propriétaires, ECHO utilise des technologies open-source pour garantir la confidentialité des recherches géographiques.</p>
-        
-        <div class="info-block">
-            <h4>Intégration Leaflet & OpenStreetMap</h4>
-            <ul>
-                <li><strong>Moteur de Rendu</strong> : <strong>Leaflet.js</strong> (v1.9.4) injecté dynamiquement dans l'iframe de discussion.</li>
-                <li><strong>Source de Données</strong> : Tuiles <strong>OpenStreetMap</strong> (OSM) sans clé API et sans pistage publicitaire.</li>
-                <li><strong>Interaction</strong> : Cartes entièrement manipulables (Zoom, Pan, Popups) avec marqueurs de position précis.</li>
-                <li><strong>Confidentialité</strong> : Les coordonnées sont extraites du <code>groundingMetadata</code> de Google Maps Grounding, mais le rendu final s'effectue dans une enclave HTML isolée.</li>
-            </ul>
-        </div>
-
-        <footer>
-            ECHO Framework - Version 5.158.1 - Copyright © 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-        </footer>
-        <div class="transition-text"><em>Après avoir exploré le monde extérieur, ECHO doit également pouvoir manipuler vos fichiers internes. <a href="07b_vault_explorer.html">Découvrir l'Espace Personnel & Data Explorer ➔</a></em></div>
-    </main>
-<script src="nav.js"></script>
+    <footer>
+      ECHO Framework — Version 5.158.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+    </footer>
+  </main>
+  <script src="nav.js"></script>
 </body>
 </html>
-
-
-
