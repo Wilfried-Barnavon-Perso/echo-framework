@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
         href: '07_arsenal_outils.html',
         text: "7. L'Arsenal des Outils",
         sub: [
+          { href: '07g_strategic_planner.html', text: '7g. Planification Stratégique' },
           { href: '07a_web_intelligence.html',  text: '7a. Web Intelligence' },
           { href: '07b_vault_explorer.html',    text: "7b. Explorateur de l'Espace Personnel" },
           { href: '07c_memory_cognition.html',  text: '7c. Mémoire & Cognition' },
