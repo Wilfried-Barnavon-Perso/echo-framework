@@ -1,8 +1,8 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.0
-description: 5.0: Restauration de la validation JSON stricte et support hybride Markdown/Technique.
+version: 5.1
+description: 5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux).
 """
 
 import os
@@ -63,7 +63,19 @@ class Tools:
     - 'science' : Physique & Mathématiques (Plotly.js JSON).
     - 'bio' : Biologie structurelle (ID PDB, ex: 1A8M).
     - 'astro' : Exploration céleste (D3-CELESTIAL JSON).
-    
+
+    CONTRAINTE SYNTAXIQUE MERMAID v11 — IDENTIFIANTS DE NŒUDS (CRITIQUE) :
+    La syntaxe Mermaid v11 est particulièrement stricte concernant les identifiants de nœuds.
+    Un identifiant est la partie nue du nœud (ex: `A` dans `A["Mon libellé"]`).
+    RÈGLES ABSOLUES :
+      - Les identifiants NE DOIVENT PAS contenir : accents (é, è, à, ç...), tirets (-),
+        espaces, apostrophes, parenthèses ni aucun autre caractère spécial.
+      - Seuls les caractères ASCII alphanumériques et le underscore (_) sont sûrs.
+      - Tous les caractères spéciaux ou texte lisible doivent figurer UNIQUEMENT dans
+        le libellé entre guillemets ou crochets : `A["Libellé avec accents et tirets"]`.
+      CORRECT  : `EtatInitial["État initial"] --> VerifAcces["Vérif. d'accès"]`
+      INCORRECT: `État-initial --> Vérif-d-accès`  (provoque une erreur de parsing)
+
     :param intention: Description du besoin visuel (ex: "Plan 3D d'un bureau", "Structure de la hiérarchie").
     :param donnees_contextuelles: Faits, chiffres et relations à modéliser.
     :param moteur: Optionnel. Force un moteur spécifique parmi la liste ci-dessus.
@@ -86,6 +98,9 @@ class Tools:
       "MANUEL DE RÉFÉRENCE TECHNIQUE (Thème Clair) :\n"
       "1. 'markmap' : Markdown hiérarchique pur. Pas de code block.\n"
       "2. 'mermaid' : Syntaxe v11 stricte. Pas de backticks. 'flowchart TD' ou 'sequenceDiagram'.\n"
+      "   IDENTIFIANTS DE NŒUDS : utiliser exclusivement des caractères ASCII alphanumériques ou underscore.\n"
+      "   Les accents, tirets (-), espaces et caractères spéciaux sont INTERDITS dans les identifiants.\n"
+      "   Placer tout texte lisible dans le libellé entre guillemets : EtatOk[\"État OK\"] et non Etat-Ok.\n"
       "3. 'echarts' : JSON ECharts 5+. Inclure 'tooltip', 'legend', 'xAxis', 'yAxis', 'series'. Thème clair.\n"
       "4. 'vega' : JSON Vega-Lite strict. Spécifier '$schema', 'data', 'mark', 'encoding'.\n"
       "5. 'timeline' : JSON TimelineJS. Structure : {'events': [{'start_date':..., 'text':{'headline':..., 'text':...}}]}.\n"

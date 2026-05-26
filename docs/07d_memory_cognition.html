@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Mémoire et Cognition ECHO v5 : RAG organique echo_memory, RAG éphémère echo_ephemeral, système d'importance mémorielle, routage cognitif new_cognitive_level, Agents Cognitifs (Conseil d'Experts) cognitive_agents.py.">
-  <title>ECHO v5 — 7c. Mémoire &amp; Cognition</title>
+  <meta name="description" content="Mémoire et Cognition ECHO v5 : RAG organique echo_memory, RAG éphémère echo_ephemeral, système d'importance mémorielle, routage cognitif new_cognitive_level, Agents Cognitifs (Conseil d'Experts) cognitive_agents.py.">
+  <title>ECHO v5 — 7d. Mémoire &amp; Cognition</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7c. Mémoire &amp; Cognition</h1>
+    <h1>7d. Mémoire &amp; Cognition</h1>
 
     <p>
       Cette famille d'outils est le cœur cognitif de l'Arsenal. Elle permet à ECHO de maintenir
@@ -32,11 +32,11 @@
       <tbody>
         <tr>
           <td><code>save_memory(fact, importance)</code></td>
-          <td>Vectorise et stocke un souvenir dans <code>echo_memory</code>. Utilise un UUID déterministe (UUIDv5) basé sur le slug distillé — un appel avec le même slug <em>remplace</em> le souvenir existant (upsert). Paramètre <code>importance</code> de 1 (Trivial) à 5 (Axiome), défaut 1.</td>
+          <td>Vectorise et stocke un souvenir dans <code>echo_memory</code>. Utilise un UUID déterministe (UUIDv5) basé sur le slug distillé — un appel avec le même slug <em>remplace</em> le souvenir existant (upsert). Paramètre <code>importance</code> de 1 (Trivial) à 5 (Axiome), défaut 1.</td>
         </tr>
         <tr>
           <td><code>search_memory(query, limit)</code></td>
-          <td>Recherche sémantique dans <code>echo_memory</code>. <em>Over-fetch</em> ×3 puis reranking par <code>cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code>. Paramètre <code>limit</code> (défaut 5).</td>
+          <td>Recherche sémantique dans <code>echo_memory</code>. <em>Over-fetch</em> ×3 puis reranking par <code>cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code>. Paramètre <code>limit</code> (défaut 5).</td>
         </tr>
         <tr>
           <td><code>list_memory_topics(scope)</code></td>
@@ -125,12 +125,12 @@
 
     <p>
       Le Conseil d'Experts est un système d'orchestration cognitive dédié permettant de déléguer
-      des tâches à des instances Gemini spécialisées, soit de façon <strong>stateless</strong>
-      (délégation simple) soit via une <strong>boucle itérative avec mémoire de thread</strong>
-      (Conseil). Les threads (sous-chats) sont persistés dans <code>EchoStateManager</code> et
-      identifiés par un <code>sub_sid</code> unique. Les <code>thoughtSignature</code> Gemini
-      sont capturées et réinjectées à chaque tour pour maintenir la cohérence du raisonnement
-      sans inclure les pensées en texte brut (<code>includeThoughts: false</code>).
+      des tâches à des instances Gemini spécialisées selon trois modes : <strong>stateless</strong>
+      (délégation simple), <strong>boucle itérative 1:1</strong> avec mémoire de thread
+      (consultation d'expert), ou <strong>table ronde N:N</strong> multi-tours (conseil).
+      Les <code>thoughtSignature</code> Gemini sont capturées et réinjectées à chaque tour
+      pour maintenir la cohérence du raisonnement sans inclure les pensées en texte brut
+      (<code>includeThoughts: false</code>).
     </p>
 
     <table>
@@ -145,12 +145,16 @@
           <td>Consultation d'un expert Skill avec <strong>mémoire de thread persistante</strong>. Si <code>sub_sid</code> est fourni, reprend le fil de discussion existant. Le contexte est distillé depuis la branche active du chat principal avant chaque appel. Boucle itérative jusqu'à la balise <code>&lt;FINAL_ANSWER&gt;</code>.</td>
         </tr>
         <tr>
+          <td><code>consult_council(question, participants, target_model, synthesis_model)</code></td>
+          <td>Table Ronde Multi-Experts (<strong>protocole Delphi</strong>). Convoque N experts (2–5, CSV de skill_ids) pour une délibération en tours parallélisés. Chaque participant reçoit un nom factice (« Participant 1 ») et voit le roster (rôles) mais <em>pas</em> les instructions des autres. Après les tours de parole, un modèle synthétiseur (défaut <code>MODEL_FLASH</code>) produit une distillation structurée. Paramètres optionnels : <code>rounds</code> (défaut 3, max 5), <code>history_depth</code>, <code>distillation_focus</code>.</td>
+        </tr>
+        <tr>
           <td><code>forge_skill(skill_id, name, description, instructions)</code></td>
           <td>Crée ou met à jour un profil d'expert (SKILL) au format <code>SKILL.md</code>. Les instructions définissent le ton, la méthodologie et les contraintes de sortie de l'expert. Persisté dans le Vault de l'utilisateur via <code>echo_skills.save_skill()</code>.</td>
         </tr>
         <tr>
           <td><code>list_skills()</code></td>
-          <td>Liste les expertises (Skills) disponibles pour le Conseil courant, avec leurs identifiants et descriptions. Utile pour découvrir les rôles déjà forgés avant un <code>consult_expert_consultant</code>.</td>
+          <td>Liste les expertises (Skills) disponibles pour le Conseil courant, avec leurs identifiants et descriptions. Utile pour découvrir les rôles déjà forgés avant un <code>consult_expert_consultant</code> ou un <code>consult_council</code>.</td>
         </tr>
         <tr>
           <td><code>list_sub_chats()</code></td>
@@ -160,7 +164,7 @@
     </table>
 
     <div class="tech-spec">
-      <h4>⚙️ Boucle itérative du Conseil</h4>
+      <h4>⚙️ Boucle itérative du Conseil (1:1)</h4>
       <p>
         <code>consult_expert_consultant</code> distille d'abord la branche active du chat via <code>MODEL_DISTILLATION</code>,
         puis entre dans une boucle (<code>ITERATION_DEFAULT</code> tours, max <code>ITERATION_MAX</code>).
@@ -171,14 +175,51 @@
       </p>
     </div>
 
+    <div class="tech-spec">
+      <h4>⚙️ Table Ronde Multi-Experts — Protocole Delphi (N:N)</h4>
+      <p>
+        <code>consult_council</code> orchestre une délibération en quatre phases :
+      </p>
+      <ul>
+        <li><strong>Phase 0 — Validation</strong> : parsing du CSV <code>participants</code>,
+          chargement des Skills via <code>echo_skills.get_skill_content()</code> et
+          <code>parse_skill_metadata()</code>, attribution de noms factices
+          (« Participant 1 », « Participant 2 », etc.).
+          Limites : 2 à <code>COUNCIL_MAX_PARTICIPANTS</code> (défaut 5) participants.</li>
+        <li><strong>Phase 1 — Distillation</strong> : réutilise <code>_distill_context()</code>
+          (identique à <code>consult_expert_consultant</code>) pour résumer la branche active
+          du chat via <code>MODEL_DISTILLATION</code>.</li>
+        <li><strong>Phase 2 — Tours de parole</strong> :
+          <code>COUNCIL_ROUNDS_DEFAULT</code> tours (défaut 3, max <code>COUNCIL_ROUNDS_MAX</code> = 5).
+          Au Tour 1, chaque expert reçoit la question et le contexte distillé.
+          Aux tours suivants, chaque expert reçoit les contributions des <em>autres</em>
+          participants du tour précédent (il ne se relit pas lui-même).
+          Tous les appels d'un même tour sont exécutés en parallèle via <code>asyncio.gather()</code>.
+          Les <code>parts</code> brutes de l'API (incluant les <code>thoughtSignature</code>)
+          sont conservées dans un dictionnaire in-memory par participant, assurant la continuité
+          cognitive entre les tours sans persistance DB.</li>
+        <li><strong>Phase 3 — Synthèse</strong> : la transcription complète (question + tous
+          les tours de tous les participants avec leur rôle) est envoyée à un modèle synthétiseur
+          (défaut <code>MODEL_FLASH</code>, configurable via <code>synthesis_model</code>)
+          avec un prompt générique de rapporteur neutre. La synthèse identifie consensus,
+          divergences et recommandations.</li>
+      </ul>
+      <p>
+        Un participant qui échoue (429, timeout) ne bloque pas le conseil — son absence est notée
+        dans le transcript et les participants restants poursuivent la délibération.
+        Le dictionnaire des historiques est libéré à la fin de l'appel (pas de persistance
+        inter-appels).
+      </p>
+    </div>
+
     <div class="transition-text">
-      <a href="07b_vault_explorer.html">← Vault Explorer</a>
+      <a href="07c_vault_explorer.html">← Vault Explorer</a>
       &nbsp;&nbsp;
-      <a href="07d_execution_monitoring.html">Exécution &amp; Pilotage →</a>
+      <a href="07e_execution_monitoring.html">Exécution &amp; Pilotage →</a>
     </div>
 
     <footer>
-      ECHO Framework — Version 5.158.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.160.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

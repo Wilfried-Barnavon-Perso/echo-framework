@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.159.1
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.160.4
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -19,7 +19,7 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 - **Suture Bit-Perfect des Métadonnées Gemini :** Reconstruction de l'historique via SQLite (`message_shadows`, table conservée pour compatibilité production) pour une continuité absolue. Garantit une reprise de session identique au bit près via l'ID de message et le timestamp (Verrou de Version). Le suivi de la branche active et de l'état de la session est garanti par un calcul de hash cumulatif (Cumulative Hash) via `EchoStateManager`.
 - **Ajustement du niveau cognitif :** Routage dynamique intelligent (LITE -> FLASH -> PRO).
 - **Délégation Cognitive :** Utilisation de l'outil `new_cognitive_level` pour déléguer les tâches complexes au modèle PRO lors de la traversée de la "Vallée de la Mort Contextuelle" (saturation contextuelle > 50%).
-- **Expertise Conseil (`/opt/ECHO/owui-tools/cognitive_agents.py`) :** Orchestration d'agents spécialisés via une délégation cognitive récursive sans état. Utilise Gemini 3.1 avec `includeThoughts: False` (conservation uniquement des `thoughtSignatures`) pour une boucle itérative efficiente.
+- **Expertise Conseil (`/opt/ECHO/owui-tools/cognitive_agents.py`) :** Orchestration d'agents spécialisés via une délégation cognitive récursive sans état. Utilise Gemini 3.1 avec `includeThoughts: False` (conservation uniquement des `thoughtSignatures`) pour une boucle itérative efficiente. Inclut `consult_council` : Table Ronde Multi-Experts (protocole Delphi) avec N participants en tours parallélisés et synthèse finale par modèle dédié.
 - **HTTP/2 Stealth Headers :** Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité (`get_stealth_headers`) pour simuler un navigateur réel.
 
 ### 2. La Conscience (`/opt/ECHO/owui-filters/`)
@@ -29,10 +29,11 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 
 ### 3. Contexte Proprioceptif : `environnement_contexte`
 Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté systématiquement par le filtre `new_context_filter.py`.
-- **Contenu :** Identité (`modèle_actuel`, `modèle_origine`), grounding géo-temporel, et le **Registre Conversationnel des Fichiers** (`registre_fichiers`).
-- **Règle d'Or :** Le modèle **DOIT** consulter ce registre pour valider l'existence et l'état d'une ressource avant toute manipulation.
+- **Contenu :** Identité (`modèle_actuel`, `modèle_origine`), grounding géo-temporel, le **Registre Conversationnel des Fichiers** (`registre_fichiers`) et le **Registre des Plans** (`registre_plan`).
+- **Règle d'Or :** Le modèle **DOIT** consulter ces registres pour valider l'existence et l'état d'une ressource ou d'un plan avant toute manipulation.
 
 ### 4. L'Arsenal (`/opt/ECHO/owui-tools/`)
+- **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Cascade cognitive PRO→FLASH→LITE, persistance Markdown dans le Vault, registre SQLite par chat, injection proprioceptive dans `registre_plan`.
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes) via `universal_visual_generator.py` et `echo_visuals.py` (Pattern 'Data Island' pour isoler le JS).
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) avec replay interactif.
 - **Explorateur de l'Espace Personnel :** Analyse sécurisée et indexation des documents locaux de l'utilisateur.
@@ -74,6 +75,6 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.159.1*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.160.4*
 
 

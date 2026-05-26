@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Actions UI ECHO v5 : mécanique des Actions Open WebUI, pattern __event_call__ + Promise, purge mémoire Qdrant, reset OAuth2 PKCE, cockpit de replay web, export PDF avec détection Same-Origin.">
+  <title>ECHO v5 — 7f. Actions UI (HUD)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <main>
+    <h1>7f. Actions UI (HUD)</h1>
+
+    <p>
+      En termes Open WebUI, une <em>Action</em> est un bouton interactif injecté dans l'interface
+      de chat, déclenché explicitement par l'utilisateur. ECHO déploie quatre actions couvrant la
+      maintenance cognitive, l'archivage visuel et l'export documentaire. Elles sont définies dans
+      le répertoire <code>13-owui-actions/</code> du dépôt.
+    </p>
+
+    <div class="didactic-box">
+      <h4>💡 Actions vs Outils — Distinction fondamentale</h4>
+      <p>
+        Les <strong>Outils</strong> (<code>12-owui-tools/</code>) sont déclenchés par le modèle
+        (Tool Call) au cours de la génération d'une réponse. Les <strong>Actions</strong>
+        (<code>13-owui-actions/</code>) sont déclenchées par l'utilisateur via un bouton visible
+        sous chaque message. Elles exécutent du code Python côté serveur (dans le conteneur
+        <code>echo-open-webui</code>) sans interagir avec le flux de génération Gemini.
+      </p>
+    </div>
+
+    <h2>Mécanique interne — <code>__event_call__</code> et le Pattern Promise</h2>
+
+    <p>
+      Les Actions ECHO n'utilisent pas de <code>HTMLResponse</code> (iframe). Elles injectent
+      du JavaScript directement dans le DOM d'Open WebUI via le mécanisme
+      <code>__event_call__({ "type": "execute", "data": { "code": js } })</code>.
+      Ce JS s'exécute dans le contexte de la page principale, avec un accès complet au DOM
+      et aux APIs du navigateur.
+    </p>
+
+    <p>
+      La communication bidirectionnelle Python ↔ JS repose sur le <strong>Pattern Promise</strong> :
+      le code JS retourné à <code>__event_call__</code> peut être une <code>Promise</code>
+      dont la valeur résolue est renvoyée comme résultat de l'appel Python. Cela permet une
+      boucle de dialogue asynchrone :
+    </p>
+
+    <pre><code># Côté Python (action)
+result = await __event_call__({
+    "type": "execute",
+    "data": { "code": "return new Promise(r => window.myResolve = r);" }
+})
+# result contient la valeur passée à window.myResolve(...) depuis le JS
+
+# Côté JS (injecté dans le DOM)
+document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'ok' });</code></pre>
+
+    <p>
+      Ce pattern est utilisé pour les HUD interactifs (confirmation, sélection, choix) et
+      pour la boucle de streaming frame-par-frame du Cockpit de Replay Web.
+    </p>
+
+    <h2>Priorité d'affichage et ordre des boutons</h2>
+
+    <p>
+      Chaque action déclare un entier <code>priority</code> dans sa classe <code>Valves</code>.
+      Open WebUI trie les boutons d'action par valeur croissante : la priorité <code>1</code>
+      s'affiche en premier à gauche, la priorité la plus haute à droite.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Fichier</th>
+          <th>Titre OWUI</th>
+          <th>Priorité</th>
+          <th>Rôle résumé</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><code>reset_auth_action.py</code></td>
+          <td>Reset Auth</td>
+          <td><code>1</code></td>
+          <td>Invalide les tokens OAuth2 / clés PKCE</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td><code>purge_memory_action.py</code></td>
+          <td>Purge Mémoire</td>
+          <td><code>2</code></td>
+          <td>Suppression granulaire de la collection Qdrant utilisateur</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td><code>web_navigation_replay_action.py</code></td>
+          <td>Show Web Replay</td>
+          <td><code>3</code></td>
+          <td>Cockpit de rejeu des sessions de navigation Playwright</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td><code>export_pdf_action.py</code></td>
+          <td>Export PDF Conversation</td>
+          <td><code>4</code></td>
+          <td>Capture conversation → PDF (texte + Rich Embeds)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Action 1 — Reset Authentification (<code>reset_auth_action.py</code>)</h2>
+
+    <p>
+      Invalide l'ensemble des tokens OAuth2 et clés API enregistrés dans
+      <code>identity.db</code> pour l'utilisateur courant. Au prochain message, le Cortex
+      (<code>pipe_engine.py</code>) détecte l'absence de token valide et déclenche
+      automatiquement un nouveau flux d'authentification PKCE via
+      <code>echo_auth.py</code>.
+    </p>
+    <p>
+      Cette action est utile dans les cas suivants :
+    </p>
+    <ul>
+      <li>Révocation de droits Google (compte suspendu, changement d'organisation)</li>
+      <li>Changement de compte Google AI Studio</li>
+      <li>Suspicion de compromission d'un refresh token</li>
+      <li>Expiration anormale d'une session (erreur 401 persistante)</li>
+    </ul>
+
+    <div class="warning-box">
+      <h4>⚠️ Effet immédiat</h4>
+      <p>
+        L'invalidation est immédiate et ne nécessite pas de redémarrage du conteneur.
+        L'utilisateur sera invité à se ré-authentifier dès l'envoi du prochain message.
+        Aucune donnée de mémoire ou de conversation n'est supprimée.
+      </p>
+    </div>
+
+    <h2>Action 2 — Purge Mémoire Qdrant (<code>purge_memory_action.py</code>)</h2>
+
+    <p>
+      Supprime des souvenirs ciblés depuis la collection <code>echo_memory</code> dans Qdrant,
+      filtrés par <code>user_id</code>. L'action guide l'utilisateur via un flux de dialogue
+      en plusieurs étapes :
+    </p>
+    <ol>
+      <li>
+        <strong>Analyse multidimensionnelle</strong> : récupération et agrégation de tous les
+        tags de l'utilisateur avec leurs métadonnées (<code>memory_importance</code>,
+        fréquence d'apparition). Tri hiérarchique : importance croissante → fréquence
+        décroissante → ordre alphabétique.
+      </li>
+      <li>
+        <strong>Sélection des catégories</strong> : l'utilisateur saisit les numéros des tags
+        à purger, avec support des plages (ex : <code>1-4, 7, 10-12</code>).
+      </li>
+      <li>
+        <strong>Choix du périmètre</strong> : purge limitée à la conversation courante
+        (filtre sur <code>chat_id</code>) ou globale sur l'ensemble de la mémoire.
+      </li>
+      <li>
+        <strong>Dry Run</strong> : prévisualisation des <em>slugs</em> des souvenirs qui
+        seront supprimés (jusqu'à 50 affichés) avant confirmation finale.
+      </li>
+      <li>
+        <strong>Suppression</strong> : appel <code>POST /collections/echo_memory/points/delete</code>
+        sur l'API Qdrant interne (<code>http://echo-qdrant:6333</code>).
+      </li>
+    </ol>
+
+    <div class="warning-box">
+      <h4>⚠️ Opération irréversible</h4>
+      <p>
+        La suppression des vecteurs Qdrant est définitive. Les souvenirs purgés ne peuvent
+        être restaurés qu'à partir d'une sauvegarde de volume Qdrant effectuée par l'Admin
+        Manager (<code>echo-backups</code>). L'action présente systématiquement une
+        confirmation finale avant toute suppression effective.
+      </p>
+    </div>
+
+    <h2>Action 3 — Cockpit de Replay Web (<code>web_navigation_replay_action.py</code>)</h2>
+
+    <p>
+      Ouvre un cockpit visuel plein écran permettant de consulter et de rejouer les captures
+      d'écran des sessions de navigation web effectuées pendant la conversation courante par
+      l'outil <code>navigation_engine_tool.py</code>.
+    </p>
+
+    <h3>Source de données — Le Vault utilisateur</h3>
+    <p>
+      Les captures sont stockées sous forme de fichiers PNG horodatés dans le Vault de
+      l'utilisateur : <code>/opt/ECHO/users/&lt;user_id&gt;/files/U_&lt;uid&gt;_C_&lt;cid&gt;_T_&lt;ts&gt;.png</code>.
+      L'action scanne ce répertoire, filtre par préfixe de conversation (<code>chat_id</code>)
+      et trie chronologiquement.
+    </p>
+
+    <h3>Architecture de streaming frame-par-frame</h3>
+    <p>
+      L'action utilise le Pattern Promise en boucle bloquante pour un dialogue
+      temps-réel entre Python et JS :
+    </p>
+    <ol>
+      <li>
+        <strong>Injection du Shell</strong> : le cockpit HTML/JS est injecté dans le DOM
+        via <code>__event_call__({ type: "execute" })</code>.
+      </li>
+      <li>
+        <strong>Boucle <code>while True</code></strong> : Python encode la frame courante
+        en base64 et appelle <code>execute</code> pour mettre à jour l'image dans le cockpit
+        (<code>window.echoReplayUpdate(b64, ts, idx, total)</code>).
+      </li>
+      <li>
+        <strong>Attente de commande</strong> : Python se bloque sur une Promise JS
+        (<code>window.echoReplayResolve</code>) jusqu'à ce que l'utilisateur clique sur
+        un bouton (Précédent, Suivant, Play, Fermer).
+      </li>
+      <li>
+        <strong>Résolution</strong> : le bouton résout la Promise avec
+        <code>{ action: "goto", index: N }</code> ou <code>{ action: "close" }</code>.
+        Python met à jour l'index et reboucle, ou sort de la boucle.
+      </li>
+    </ol>
+
+    <h3>Fonctionnalités du Cockpit</h3>
+    <table>
+      <thead>
+        <tr><th>Fonction</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Navigation</td><td>Première, Précédente, Suivante, Dernière frame</td></tr>
+        <tr><td>Lecture automatique</td><td>Play avant / arrière avec vitesse réglable (1–30s)</td></tr>
+        <tr><td>Zoom</td><td>Ctrl+Molette dans la viewport</td></tr>
+        <tr><td>Sélection Crop</td><td>Zone de recadrage redimensionnable par poignées</td></tr>
+        <tr><td>Export</td><td>Téléchargement PNG (plein ou recadré) / Copie presse-papier</td></tr>
+        <tr><td>Métadonnées</td><td>Horodatage ISO de chaque capture, index / total</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Action 4 — Export PDF Conversation (<code>export_pdf_action.py</code>)</h2>
+
+    <p>
+      Capture l'intégralité de la conversation courante et génère un fichier PDF
+      téléchargeable directement dans le navigateur. L'action est entièrement
+      <strong>côté client</strong> (aucun appel backend, aucun stockage serveur) et
+      s'adapte automatiquement à la configuration de sandboxing des iframes.
+    </p>
+
+    <h3>Bibliothèques utilisées</h3>
+    <table>
+      <thead>
+        <tr><th>Bibliothèque</th><th>Version</th><th>Rôle</th><th>Source</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>html2canvas</strong></td>
+          <td><code>1.4.1</code></td>
+          <td>Rasterisation du DOM en canvas PNG</td>
+          <td>CDN Cloudflare (chargement dynamique)</td>
+        </tr>
+        <tr>
+          <td><strong>jsPDF</strong></td>
+          <td><code>2.5.1</code></td>
+          <td>Composition et export du fichier PDF</td>
+          <td>CDN Cloudflare (chargement dynamique)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="didactic-box">
+      <h4>💡 Pourquoi les iframes disparaissent dans le PDF natif Open WebUI</h4>
+      <p>
+        Le pipeline « Download as PDF » d'Open WebUI utilise Playwright/Chromium en mode
+        headless (<code>page.pdf()</code>). Les <code>&lt;iframe&gt;</code> sandboxées
+        ne sont pas sérialisées dans ce snapshot — leur contenu reste vide. C'est une
+        limite structurelle de Chromium : les iframes sont des documents isolés, non
+        aplatis dans le flux d'impression du document parent.
+      </p>
+      <p>
+        L'action ECHO contourne ce problème en capturant le contenu de chaque iframe
+        directement via <code>iframe.contentDocument</code> (accès possible uniquement
+        si <strong>Iframe Same-Origin Access</strong> est activé), puis en substituant
+        chaque iframe par un snapshot image avant de rasteriser le conteneur parent.
+      </p>
+    </div>
+
+    <h3>Prérequis — Paramètres Interface Open WebUI</h3>
+
+    <div class="warning-box">
+      <h4>⚠️ Configuration requise pour le Mode complet</h4>
+      <p>
+        Pour capturer le contenu des Rich Embeds (mindmaps, graphes D3, cartes, tableaux
+        de bord), les deux paramètres suivants doivent être activés dans Open WebUI :
+      </p>
+      <p><strong>Settings → Interface</strong></p>
+      <ul>
+        <li><strong>Iframe Same-Origin Access</strong> — permet l'accès à
+          <code>iframe.contentDocument</code> depuis le JS de la page parente.</li>
+        <li><strong>Iframe Allow Forms</strong> — requis pour certains éléments
+          interactifs des Rich Embeds.</li>
+      </ul>
+      <p>
+        Ces paramètres sont stockés par utilisateur dans la table <code>user</code>
+        de <code>webui.db</code> (clés JSON : <code>ui.iframeSandboxAllowSameOrigin</code>
+        et <code>ui.iframeSandboxAllowForms</code>). Il n'existe pas de variable
+        d'environnement Docker pour les forcer globalement.
+      </p>
+    </div>
+
+    <h3>Détection automatique et deux modes d'exécution</h3>
+
+    <p>
+      Au lancement, l'action tente d'accéder à <code>iframe.contentDocument</code> sur
+      la première iframe trouvée dans la conversation. Ce test non-destructif détermine
+      le mode d'exécution :
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Condition détectée</th>
+          <th>Mode</th>
+          <th>Comportement</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Same-Origin activé <em>ou</em> aucune iframe dans la conversation</td>
+          <td><strong>Mode A — Complet</strong></td>
+          <td>Capture texte + iframes Rich Embeds → PDF haute résolution</td>
+        </tr>
+        <tr>
+          <td>Same-Origin absent <em>et</em> iframes présentes</td>
+          <td><strong>Mode B — HUD de choix</strong></td>
+          <td>
+            Affichage d'un overlay expliquant le prérequis.<br>
+            • <em>Continuer sans schémas</em> → Mode B1 : PDF texte uniquement,
+            iframes remplacées par un placeholder textuel.<br>
+            • <em>Annuler</em> → Fermeture sans génération.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Pipeline de capture (Mode A)</h3>
+    <ol>
+      <li>
+        <strong>Capture des iframes</strong> : pour chaque <code>&lt;iframe&gt;</code>
+        Rich Embed, <code>html2canvas(iframe.contentDocument.body)</code> produit un canvas.
+        L'iframe est temporairement remplacée dans le DOM par un élément image (<code>&lt;div&gt;</code>
+        contenant un <code>&lt;img&gt;</code>) pour que la capture parent la voit comme
+        un contenu plat.
+      </li>
+      <li>
+        <strong>Capture globale</strong> : <code>html2canvas(container)</code> rasterise
+        l'intégralité du conteneur de conversation (défilement complet, <code>scrollY: 0</code>
+        avant capture, restauration après).
+      </li>
+      <li>
+        <strong>Restauration du DOM</strong> : les iframes originales sont réaffichées,
+        les placeholders supprimés.
+      </li>
+      <li>
+        <strong>Composition PDF</strong> : jsPDF découpe le canvas en tranches A4, ajoute
+        un en-tête (titre + date) et un pied de page numéroté sur chaque page.
+      </li>
+      <li>
+        <strong>Téléchargement</strong> : <code>pdf.save('ECHO_Export_AAAAMMJJ_HHMM.pdf')</code>
+        déclenche le téléchargement natif du navigateur.
+      </li>
+    </ol>
+
+    <h3>Limites connues</h3>
+    <table>
+      <thead>
+        <tr><th>Limite</th><th>Cause</th><th>Impact</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Images externes dans les messages</td>
+          <td>Politique CORS des serveurs tiers</td>
+          <td>Images remplacées par un rectangle vide (<code>useCORS: true</code> atténue)</td>
+        </tr>
+        <tr>
+          <td>Webfonts dans les iframes</td>
+          <td>html2canvas ne charge pas les fonts cross-origin</td>
+          <td>Fallback system-font dans les Rich Embeds capturés</td>
+        </tr>
+        <tr>
+          <td>Très longue conversation</td>
+          <td>Canvas géant en mémoire</td>
+          <td>Latence de 2–5s sur conversations de +50 messages ; risque OOM navigateur</td>
+        </tr>
+        <tr>
+          <td>Rich Embeds A-Frame / 3D</td>
+          <td>WebGL non supporté par html2canvas</td>
+          <td>Capture noire ou vide pour les scènes 3D</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="audit-note">
+      <h4>✅ Paramètres configurables (Valves)</h4>
+      <p>
+        <code>image_scale</code> (défaut : <code>2.0</code>) contrôle la résolution de
+        rasterisation. Une valeur de <code>1.0</code> réduit la taille du fichier PDF au
+        détriment de la netteté. <code>pdf_orientation</code> accepte
+        <code>portrait</code> (défaut, A4 210×297mm) ou <code>landscape</code>.
+      </p>
+    </div>
+
+    <div class="transition-text">
+      <a href="07e_execution_monitoring.html">← Exécution &amp; Pilotage</a>
+      &nbsp;&nbsp;
+      <a href="07g_visual_intelligence.html">Visual Intelligence ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework — Version 5.160.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+    </footer>
+  </main>
+  <script src="nav.js"></script>
+</body>
+</html>

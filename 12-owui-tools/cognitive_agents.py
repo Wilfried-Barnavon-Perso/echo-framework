@@ -1,13 +1,16 @@
 """
 title: ECHO Cognitive Agents
 author: ECHO Framework
-version: 5.10
+version: 5.11
 description: 5.7: Résolution du conflit de nom get_all_skills (shadowing).
              5.8: Centralisation des niveaux de réflexion (THINKING_LEVEL_*) — suppression
              valves FLASH_THINKING et PRO_THINKING. Remplacement par constantes echo_constants.
              5.9: Renommage consult_council → consult_expert_consultant.
              5.10: Fix _iterative_loop : MODEL_LITE reçoit désormais THINKING_LEVEL_LITE
              (au lieu de THINKING_LEVEL_FLASH). Docstrings enrichies : note fallback modèle.
+             5.11: Ajout consult_council — Table Ronde Multi-Experts (protocole Delphi).
+             N experts débattent en tours parallélisés avec continuité cognitive
+             (thoughtSignatures in-memory). Synthèse finale par modèle dédié.
 """
 
 import sys
@@ -17,7 +20,7 @@ import re
 import uuid
 import time
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Literal
+from typing import Optional, List, Dict, Any, Literal, Tuple
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
@@ -29,7 +32,7 @@ from echo_constants import (
     MODEL_DISTILLATION,
     THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE
 )
-from echo_skills import get_all_skills, get_skill_content, save_skill
+from echo_skills import get_all_skills, get_skill_content, save_skill, parse_skill_metadata
 
 class Tools:
     class Valves(BaseModel):
@@ -43,6 +46,9 @@ class Tools:
         ITERATION_DEFAULT: int = Field(default=3, description="Nombre de tours par défaut pour une réflexion itérative.")
         ITERATION_MAX: int = Field(default=10, description="Limite haute du nombre de tours.")
         DISTILLATION_DEPTH: int = Field(default=20, description="Nombre de messages de l'historique à distiller par défaut.")
+        COUNCIL_ROUNDS_DEFAULT: int = Field(default=3, description="Nombre de tours de parole par défaut pour un conseil d'experts.")
+        COUNCIL_ROUNDS_MAX: int = Field(default=5, description="Limite haute du nombre de tours de parole.")
+        COUNCIL_MAX_PARTICIPANTS: int = Field(default=5, description="Nombre maximum de participants au conseil (hors synthétiseur).")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -294,6 +300,267 @@ class Tools:
         except Exception as e:
             print(f"Distillation error: {e}")
         return "Erreur lors de la distillation du contexte."
+
+    def _build_council_system_prompt(self, participant: dict, roster: list) -> str:
+        """Construit le prompt système d'un participant au conseil."""
+        members = "\n".join(
+            f"- {p['alias']} : {p['name']}"
+            for p in roster
+        )
+        return (
+            f"Tu es {participant['alias']}. "
+            f"Tu fais partie d'un conseil de {len(roster)} experts.\n\n"
+            f"### COMPOSITION DU CONSEIL\n{members}\n\n"
+            f"Les experts ne connaissent pas les instructions détaillées "
+            f"des autres participants. Tu ne connais que leur rôle déclaré ci-dessus.\n\n"
+            f"### TES INSTRUCTIONS\n{participant['instructions']}"
+        )
+
+    async def consult_council(
+        self,
+        question: str,
+        participants: str,
+        target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
+        synthesis_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
+        rounds: Optional[int] = None,
+        history_depth: Optional[int] = None,
+        distillation_focus: Optional[str] = None,
+        __user__: Optional[dict] = None,
+        __chat_id__: Optional[str] = None,
+        __event_emitter__: Any = None,
+        __event_call__: Any = None
+    ) -> str:
+        """
+        Convoquez un conseil d'experts pour une délibération multi-tours.
+        Chaque expert reçoit la question, puis réagit aux contributions des autres
+        participants lors des tours suivants. Un synthétiseur produit la conclusion finale.
+        Les experts maintiennent leur fil de pensée entre les tours (thoughtSignatures).
+
+        :param question: La problématique ou question soumise au conseil.
+        :param participants: Liste CSV des skill_ids (ex: "lead_dev,expert_secu,archi_cloud"). Max 5.
+        :param target_model: Modèle Gemini pour TOUS les experts (défaut: MODEL_PRO).
+        :param synthesis_model: Modèle pour la synthèse finale (défaut: MODEL_FLASH).
+        :param rounds: Nombre de tours de parole (défaut: 3, max: 5).
+        :param history_depth: Nombre de messages à distiller depuis la branche active.
+        :param distillation_focus: Point d'attention prioritaire pour la distillation du contexte.
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        if not __chat_id__:
+            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.")
+
+        # ── Phase 0 : Validation & Chargement ──
+        skill_ids = [s.strip() for s in participants.split(",") if s.strip()]
+
+        max_p = self.user_valves.COUNCIL_MAX_PARTICIPANTS
+        if len(skill_ids) > max_p:
+            return wrap_tool_output(text=f"❌ Maximum {max_p} participants (reçu: {len(skill_ids)}).")
+        if len(skill_ids) < 2:
+            return wrap_tool_output(text="❌ Un conseil nécessite au minimum 2 participants.")
+
+        effective_rounds = min(
+            rounds or self.user_valves.COUNCIL_ROUNDS_DEFAULT,
+            self.user_valves.COUNCIL_ROUNDS_MAX
+        )
+
+        # Chargement et validation de chaque skill
+        roster = []  # Liste ordonnée : {skill_id, name, instructions, alias}
+        for i, sid in enumerate(skill_ids):
+            content = get_skill_content(user_id, sid)
+            if not content:
+                return wrap_tool_output(
+                    text=f"❌ Skill '{sid}' introuvable. Utilisez forge_skill d'abord."
+                )
+            meta = parse_skill_metadata(content)
+            roster.append({
+                "skill_id": sid,
+                "name": meta.get("name", sid),
+                "instructions": content,
+                "alias": f"Participant {i + 1}"
+            })
+
+        await events.status(
+            f"🏛️ Conseil convoqué : {len(roster)} experts, {effective_rounds} tours..."
+        )
+
+        # ── Phase 1 : Distillation du contexte ──
+        state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
+        depth = history_depth or self.user_valves.DISTILLATION_DEPTH
+        distillate = await self._distill_context(
+            state, __chat_id__, "council", user_id, events, depth, distillation_focus
+        )
+
+        # ── Phase 2 : Boucle des tours (protocole Delphi) ──
+        actual_model = MODEL_ROUTING.get(target_model, MODEL_PRO)
+        if target_model == "MODEL_PRO":
+            thinking_level = THINKING_LEVEL_PRO
+        elif target_model == "MODEL_FLASH":
+            thinking_level = THINKING_LEVEL_FLASH
+        else:
+            thinking_level = THINKING_LEVEL_LITE
+
+        # Historiques in-memory par participant (conserve les thoughtSignatures dans les parts)
+        histories: Dict[str, List[dict]] = {p["skill_id"]: [] for p in roster}
+        # Réponses textuelles par tour
+        all_rounds: List[Dict[str, str]] = []
+
+        for round_num in range(1, effective_rounds + 1):
+            await events.status(
+                f"🏛️ Conseil — Tour {round_num}/{effective_rounds}..."
+            )
+
+            # Construction du prompt user par participant
+            if round_num == 1:
+                # Tour 1 : question brute + contexte distillé (identique pour tous)
+                base_prompt = (
+                    f"### CONTEXTE DISTILLÉ\n{distillate}\n\n"
+                    f"### QUESTION SOUMISE AU CONSEIL\n{question}"
+                )
+                round_prompts = {p["skill_id"]: base_prompt for p in roster}
+            else:
+                # Tours 2+ : contributions des AUTRES participants du tour précédent
+                prev = all_rounds[-1]
+                round_prompts = {}
+                for p in roster:
+                    sid = p["skill_id"]
+                    others = "\n\n".join(
+                        f"**{r['alias']}** :\n{prev[r['skill_id']]}"
+                        for r in roster
+                        if r["skill_id"] != sid and r["skill_id"] in prev
+                    )
+                    round_prompts[sid] = (
+                        f"### CONTRIBUTIONS DU TOUR {round_num - 1}\n{others}\n\n"
+                        f"### TA MISSION\n"
+                        f"Tu es {p['alias']}. Réagis aux contributions ci-dessus. "
+                        f"Exprime ton analyse, tes accords, tes désaccords et tes compléments."
+                    )
+
+            # Appels parallèles — chaque participant du même tour est indépendant
+            async def _call_participant(participant: dict, prompt: str) -> Tuple[str, str]:
+                """Appelle un participant et retourne (skill_id, texte)."""
+                sid = participant["skill_id"]
+                histories[sid].append({"role": "user", "parts": [{"text": prompt}]})
+
+                system_prompt = self._build_council_system_prompt(participant, roster)
+
+                res = await EchoGeminiClient.call(
+                    target_model=actual_model,
+                    payload={
+                        "contents": histories[sid],
+                        "systemInstruction": {"parts": [{"text": system_prompt}]},
+                        "generationConfig": {
+                            "temperature": TEMP_DEFAULT,
+                            "topP": TOP_P_DEFAULT,
+                            "thinkingConfig": {
+                                "includeThoughts": False,
+                                "thinkingLevel": thinking_level.lower()
+                            }
+                        }
+                    },
+                    user_id=user_id,
+                    events=events,
+                    timeout=self.valves.COGNITIVE_TIMEOUT
+                )
+
+                candidates = res.get("candidates", [])
+                if not candidates:
+                    return sid, "(Pas de réponse)"
+
+                # Parts brutes conservées — inclut les thoughtSignature Gemini 3.1
+                parts = candidates[0].get("content", {}).get("parts", [])
+                text = "".join(p.get("text", "") for p in parts if "text" in p)
+
+                # Ajout à l'historique avec parts COMPLÈTES (thoughtSignature incluse)
+                # → Gemini reprend son CoT au tour suivant grâce à la signature réinjectée
+                histories[sid].append({"role": "model", "parts": parts})
+
+                return sid, text
+
+            tasks = [
+                _call_participant(p, round_prompts[p["skill_id"]])
+                for p in roster
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Collecte — un participant qui échoue ne bloque pas le conseil
+            round_responses: Dict[str, str] = {}
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    sid = roster[i]["skill_id"]
+                    alias = roster[i]["alias"]
+                    round_responses[sid] = f"⚠️ {alias} n'a pas pu répondre."
+                    if self.valves.DEBUG_COUNCIL:
+                        print(f"[Council] {alias} error: {result}")
+                else:
+                    sid, text = result
+                    round_responses[sid] = text or "(Pas de réponse)"
+
+            all_rounds.append(round_responses)
+
+        # ── Phase 3 : Synthèse finale ──
+        await events.status("📝 Synthèse du conseil en cours...")
+
+        # Construction du transcript complet
+        transcript = f"### QUESTION\n{question}\n\n"
+        for rnd, responses in enumerate(all_rounds, 1):
+            transcript += f"---\n### TOUR {rnd}\n\n"
+            for p in roster:
+                sid = p["skill_id"]
+                if sid in responses:
+                    transcript += f"**{p['alias']}** ({p['name']}) :\n{responses[sid]}\n\n"
+
+        # Prompt générique du rapporteur (pas de skill, neutralité)
+        synthesis_system = (
+            "Tu es le rapporteur du conseil. Tu n'es pas un participant. "
+            "Tu produis une synthèse structurée, objective et actionnable "
+            "de la délibération. Identifie les consensus, les divergences et "
+            "les recommandations clés. Sois exhaustif mais concis."
+        )
+
+        # Résolution modèle + thinking level pour la synthèse
+        synthesis_model_actual = MODEL_ROUTING.get(synthesis_model, MODEL_FLASH)
+        if synthesis_model == "MODEL_PRO":
+            synthesis_thinking = THINKING_LEVEL_PRO
+        elif synthesis_model == "MODEL_FLASH":
+            synthesis_thinking = THINKING_LEVEL_FLASH
+        else:
+            synthesis_thinking = THINKING_LEVEL_LITE
+
+        res = await EchoGeminiClient.call(
+            target_model=synthesis_model_actual,
+            payload={
+                "contents": [{"role": "user", "parts": [{"text": transcript}]}],
+                "systemInstruction": {"parts": [{"text": synthesis_system}]},
+                "generationConfig": {
+                    "temperature": TEMP_DISTILLATION,
+                    "topP": TOP_P_DISTILLATION,
+                    "maxOutputTokens": 16000,
+                    "thinkingConfig": {
+                        "includeThoughts": False,
+                        "thinkingLevel": synthesis_thinking.lower()
+                    }
+                }
+            },
+            user_id=user_id,
+            events=events,
+            timeout=self.valves.COGNITIVE_TIMEOUT
+        )
+
+        candidates = res.get("candidates", [])
+        synthesis_text = "".join(
+            p.get("text", "") for p in candidates[0]["content"]["parts"]
+        ) if candidates else "❌ Erreur : synthèse vide."
+
+        # Retour formaté
+        roster_summary = ", ".join(f"{p['alias']} ({p['name']})" for p in roster)
+        await events.status("Conseil terminé.", done=True)
+        return wrap_tool_output(
+            text=(
+                f"### SYNTHÈSE DU CONSEIL ({len(roster)} experts, {effective_rounds} tours)\n"
+                f"**Participants** : {roster_summary}\n\n"
+                f"{synthesis_text}"
+            )
+        )
 
     async def _iterative_loop(self, state, sub_sid, chat_id, role_id, system_instruction, initial_prompt, context_distillate, target_model, user_id, events) -> str:
         """Moteur itératif avec gestion des thoughtSignatures (Gemini 3.1)."""

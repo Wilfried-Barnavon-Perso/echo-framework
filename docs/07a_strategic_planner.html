@@ -4,13 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="ECHO Strategic Planner v1.0 : outil de planification stratégique, cascade cognitive PRO-FLASH-LITE, persistance Markdown dans le Vault et registre SQLite par chat.">
-  <title>ECHO v5 — 7g. Planification Stratégique</title>
+  <title>ECHO v5 — 7a. Planification Stratégique</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7g. Planification Stratégique</h1>
+    <h1>7a. Planification Stratégique</h1>
 
     <p>
       L'outil de <strong>Planification Stratégique</strong> (<code>ECHO Strategic Planner</code>, version 1.0)
@@ -81,7 +81,9 @@
       <li><strong><code>ready</code></strong> : Le plan a été validé et est prêt pour l'exécution automatique ou assistée.</li>
       <li><strong><code>executing</code></strong> : Une ou plusieurs tâches du plan sont activement en cours d'exécution.</li>
       <li><strong><code>success</code></strong> : Toutes les tâches principales ont été complétées avec succès et les critères de réussite sont atteints.</li>
-      <li><strong><code>failed</code></strong> : L'exécution a échoué ou a été abandonnée à la suite d'un blocage majeur.</li>
+      <li><strong><code>failed</code></strong> : L'exécution a échoué à la suite d'un blocage majeur.</li>
+      <li><strong><code>partial</code></strong> : Réussi partiellement — certains objectifs atteints, d'autres non.</li>
+      <li><strong><code>abandoned</code></strong> : Plan abandonné volontairement par l'utilisateur.</li>
     </ul>
 
     <h2>Format de Persistance du Plan (Markdown structuré)</h2>
@@ -95,7 +97,7 @@ plan_id: 1716734567
 chat_id: 1b066fa6-e3dd-41ee-a7d8-726b0d9ad406
 created_at: 2026-05-26T15:00:00Z
 goal: "Nom de l'objectif stratégique"
-author_model: gemini-1.5-pro
+author_model: gemini-3.1-pro-preview
 status: draft
 ---
 
@@ -176,11 +178,11 @@ status: draft
     <div class="transition-text">
       <a href="07_arsenal_outils.html">← Retour à l'Arsenal</a>
       &nbsp;&nbsp;
-      <a href="07a_web_intelligence.html">Passer à la Web Intelligence ➔</a>
+      <a href="07b_web_intelligence.html">Passer à la Web Intelligence ➔</a>
     </div>
 
     <footer>
-      ECHO Framework — Version 5.159.1 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.159.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

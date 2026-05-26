@@ -24,13 +24,13 @@ document.addEventListener('DOMContentLoaded', () => {
         href: '07_arsenal_outils.html',
         text: "7. L'Arsenal des Outils",
         sub: [
-          { href: '07g_strategic_planner.html', text: '7g. Planification Stratégique' },
-          { href: '07a_web_intelligence.html',  text: '7a. Web Intelligence' },
-          { href: '07b_vault_explorer.html',    text: "7b. Explorateur de l'Espace Personnel" },
-          { href: '07c_memory_cognition.html',  text: '7c. Mémoire & Cognition' },
-          { href: '07d_execution_monitoring.html', text: '7d. Exécution & Pilotage' },
-          { href: '07e_actions_ui.html',        text: '7e. Actions UI (HUD)' },
-          { href: '07f_visual_intelligence.html', text: '7f. Visual Intelligence' }
+          { href: '07a_strategic_planner.html', text: '7a. Planification Stratégique' },
+          { href: '07b_web_intelligence.html',  text: '7b. Web Intelligence' },
+          { href: '07c_vault_explorer.html',    text: "7c. Explorateur de l'Espace Personnel" },
+          { href: '07d_memory_cognition.html',  text: '7d. Mémoire & Cognition' },
+          { href: '07e_execution_monitoring.html', text: '7e. Exécution & Pilotage' },
+          { href: '07f_actions_ui.html',        text: '7f. Actions UI (HUD)' },
+          { href: '07g_visual_intelligence.html', text: '7g. Visual Intelligence' }
         ]
       },
       { href: '08_system_prompt.html',   text: '8. Le Kernel (System Prompt)' },
