@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.0
+version: 5.1
 description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
@@ -17,8 +17,9 @@ description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.9: Ajout MODEL_MAP_CA (capacités AGY certifiées, diag v2.1 2026-05-25).
              AGY_MODEL_MAP devient alias auto-généré depuis MODEL_MAP_CA.
              MAX_TOKENS_DEFAULT 65536→65535 (limite universelle AI Studio + AGY).
-             5.0: Renommage des identifiants Code Assist → AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
+             5.0: Renommage des identifiants Code Assist → AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
              CODE_ASSIST_BASE_URL→AGY_BASE_URL, CODE_ASSIST_MODEL_MAP→AGY_MODEL_MAP (alias rétrocompat conservé).
+             5.1: Ajout constantes Strategic Planner (PLAN_STATUS, PLAN_TASK_STATUS, PLAN_EXECUTABLE_STATUSES).
 """
 
 import os
@@ -226,6 +227,35 @@ MEMORY_IMPORTANCE_LABELS: dict[int, str] = {
     4: "Majeur",
     5: "Axiome",
 }
+# ----------------------------
+
+# ==============================================================================
+# 1.3 PLAN STRATÉGIQUE — STATUTS & TÂCHES
+# ==============================================================================
+
+# Statuts globaux d'un plan (champ `status:` du frontmatter YAML)
+PLAN_STATUS = {
+    "draft":     "draft",       # Généré par l'agent, non validé par l'utilisateur
+    "ready":     "ready",       # Validé, prêt à l'exécution
+    "executing": "executing",   # En cours d'application
+    "success":   "success",     # Objectif atteint
+    "partial":   "partial",     # Réussi partiellement
+    "failed":    "failed",      # Échec constaté
+    "abandoned": "abandoned",   # Abandonné volontairement
+}
+
+# Notation Markdown des tâches individuelles dans le plan
+PLAN_TASK_STATUS = {
+    "pending":  "[ ]",   # En attente
+    "active":   "[/]",   # En cours
+    "done":     "[x]",   # Terminée
+    "failed":   "[!]",   # Échouée
+    "skipped":  "[-]",   # Ignorée/passée
+}
+
+# Statuts autorisant l'exécution des tâches d'un plan
+PLAN_EXECUTABLE_STATUSES = {"ready", "executing"}
+
 # ----------------------------
 
 # --- PARAMÈTRES DE GÉNÉRATION ---

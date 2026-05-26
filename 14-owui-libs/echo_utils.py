@@ -935,6 +935,17 @@ class EchoStateManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_thread_chat ON cognitive_threads (chat_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_thread_sid ON cognitive_threads (sub_sid)")
 
+                # Strategic Planner (v5.159)
+                conn.execute("""CREATE TABLE IF NOT EXISTS plans (
+                    plan_id      TEXT PRIMARY KEY,
+                    filename     TEXT NOT NULL,
+                    goal         TEXT NOT NULL,
+                    status       TEXT NOT NULL DEFAULT 'draft',
+                    author_model TEXT,
+                    created_at   INTEGER NOT NULL,
+                    updated_at   INTEGER NOT NULL
+                )""")
+
                 # MIGRATION : Ajout des colonnes manquantes si nécessaire
                 try: conn.execute("ALTER TABLE rich_payloads ADD COLUMN message_id TEXT")
                 except: pass
@@ -1175,6 +1186,61 @@ class EchoStateManager:
                 conn.execute("DELETE FROM cognitive_threads WHERE sub_sid = ?", (sub_sid,))
                 conn.commit()
         except: pass
+
+    # ==========================================================================
+    # STRATEGIC PLANNER — Registre des Plans
+    # ==========================================================================
+
+    def save_plan_record(self, plan_id: str, filename: str, goal: str,
+                         status: str, author_model: str = None):
+        """Enregistre un nouveau plan dans le registre de contrôle du chat."""
+        ts = int(time.time())
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO plans "
+                    "(plan_id, filename, goal, status, author_model, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (plan_id, filename, goal, status, author_model, ts, ts)
+                )
+                conn.commit()
+        except: pass
+
+    def update_plan_record_status(self, plan_id: str, status: str):
+        """Met à jour uniquement le statut d'un plan (préserve created_at)."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE plans SET status = ?, updated_at = ? WHERE plan_id = ?",
+                    (status, int(time.time()), plan_id)
+                )
+                conn.commit()
+        except: pass
+
+    def delete_plan_record(self, plan_id: str):
+        """Supprime un plan du registre de contrôle."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM plans WHERE plan_id = ?", (plan_id,))
+                conn.commit()
+        except: pass
+
+    def get_plans(self) -> List[dict]:
+        """Retourne tous les plans du chat (pour injection dans registre_plan)."""
+        plans = []
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT plan_id, filename, goal, status, author_model, created_at "
+                    "FROM plans ORDER BY created_at DESC"
+                ).fetchall()
+                for row in rows:
+                    plans.append({
+                        "plan_id": row[0], "filename": row[1], "goal": row[2],
+                        "status": row[3], "author_model": row[4], "created_at": row[5]
+                    })
+        except: pass
+        return plans
 
     def get_active_branch_shadows(self, chat_id: str, limit: int = 20) -> List[dict]:
         """Remonte la généalogie de la branche active via suture_index pour une distillation bit-perfect."""

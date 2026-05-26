@@ -1,9 +1,10 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 7.7
+version: 7.8
 description: 7.5: Fix génération slug. 7.6: Migration Antigravity 2.1 — suppression GOOGLE_OAUTH_CODE_REGEX (PKCE legacy).
              7.7: Centralisation THINKING_LEVEL_FLASH (echo_constants v4.8) — suppression du "HIGH" hardcodé.
+             7.8: Injection registre_plan dans environnement_contexte (Strategic Planner v1.0).
 """
 
 
@@ -301,7 +302,8 @@ class Filter:
                     "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
                     "localisation": final_loc,
                     "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC"),
-                    "registre_fichiers": active_registry
+                    "registre_fichiers": active_registry,
+                    "registre_plan": [{"id": p["plan_id"], "goal": p["goal"][:80], "status": p["status"], "modele": p.get("author_model", "?")} for p in (state_manager.get_plans() if chat_id else [])],
                 }
 
                 body.setdefault("metadata", {})
