@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework v5.153.0
+# 🧠 ECHO Framework v5.163.0
 
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
@@ -30,16 +30,17 @@ ECHO transforme l'accès aux modèles cloud en une infrastructure agentique priv
 
 ### 🧩 Les Composants Cœurs
 *   **Le Cortex (Pipe Engine - `10-owui-pipes`)** : L'unité centrale de traitement. Il gère la **Suture Sémantique** (reconstruction bit-perfect via Shadows SQLite), la **Cascade Cognitive** (routage dynamique inter-modèles) et la **Thought Hygiene** (gestion chirurgicale de la Chain-of-Thought via `thoughtSignature`).
-*   **La Conscience (Context Filter - `11-owui-filters`)** : Gateway cognitive incluant la **Mémoire Organique V2.5** (distillation probabiliste avec recouvrement adaptatif et fusion sémantique vectorielle) et le **Smart Context** (analyse multimodale > 256 Ko via Gemini Flash).
+*   **La Conscience (Context Filter - `11-owui-filters`)** : Gateway cognitive incluant la **Mémoire Organique V4** (fenêtre glissante déterministe avec distillation locale Gemma 4 E4B et fusion sémantique vectorielle) et le **Smart Context** (analyse multimodale > 256 Ko via distillation RAG éphémère).
 *   **L'Admin Manager (`20-docker-admin-manager`)** : Dashboard de monitoring, backup et gestion de la stack Docker.
 
 ### 🛠️ L'Arsenal des Outils (Sovereign Toolbox)
 Chaque outil interagit directement avec le **Vault** (coffre-fort) utilisateur :
-*   🧠 **Proactive Memory** : Commandes chirurgicales `memorize_that`, `prepare_forget_memory`, `execute_forget_memory` et `list_memory_topics` sous contrôle utilisateur.
-*   🌐 **Navigation Engine** : Pilotage de Chromium via Playwright avec retour visuel HUD en temps réel.
+*   🧠 **Memory & RAG** : Outils explicites de mémoire long terme (`save_memory`, `search_memory`, `forget_memory`, `list_memory_topics`) et RAG éphémère par session (`save_session_context`, `search_session_context`).
+*   🗓️ **Strategic Planner** : Plans d'action persistants en Markdown avec cascade PRO→FLASH→LITE (`build_plan`, `update_plan`, `read_plan`, `delete_plan`).
+*   🌐 **Navigation Engine** : Pilotage de Chromium via Playwright avec distillation de page et indexation RAG éphémère automatique.
 *   🐍 **Python Code Executor** : Sandbox isolée pour l'analyse de données et la génération de graphiques.
 *   🔍 **Sovereign Search** : Recherche web multi-sources via SearXNG préservant la confidentialité.
-*   🧠 **Cognitive Agents** : Délégation récursive et sous-réflexions spécialisées (Conseil des Experts).
+*   🧠 **Cognitive Agents** : Délégation cognitive sans état, consultation d'experts (Skills) et Table Ronde Multi-Experts (protocole Delphi).
 *   📂 **Vault Explorer** : Exploration brute et sondage sémantique des documents.
 *   📊 **Context Gauge** : Monitoring visuel de la consommation de tokens et de l'état du cache.
 
@@ -51,10 +52,11 @@ Chaque outil interagit directement avec le **Vault** (coffre-fort) utilisateur :
 | :--- | :--- |
 | **Suture Sémantique** | Restauration parfaite de l'historique Gemini incluant les médias binaires et les états de raisonnement. |
 | **Smart Context** | Distillation automatique des documents massifs pour maximiser l'efficience du contexte. |
-| **Mémoire Organique** | Système de mémorisation asynchrone avec fusion sémantique et fenêtre de recouvrement adaptative. |
-| **Arsenal Proactif** | Contrôle granulaire de la mémoire vectorielle par l'IA via function-calling avec confirmation humaine. |
-| **Shadow Shadows** | Registre d'ombres persistant garantissant l'immunité contre l'amnésie des interfaces volatiles. |
-| **Bypass PKCE** | Authentification Google AI Pro/One totalement intégrée et transparente. |
+| **Mémoire Organique V4** | Fenêtre glissante déterministe avec distillation locale (Gemma 4 E4B) et fusion sémantique vectorielle. |
+| **Double RAG** | Mémoire long terme (Qdrant, importance 1→5, reranking pondéré) + RAG éphémère par session. |
+| **Planification Stratégique** | Plans d'action Markdown persistants avec cascade cognitive et registre proprioceptif. |
+| **Table Ronde Delphi** | Conseil multi-experts parallélisés avec continuité cognitive (thoughtSignatures). |
+| **Antigravity 2.1** | Authentification OAuth2 PKCE via tunnel SSH éphémère avec fallback API Key. |
 
 ---
 
@@ -85,8 +87,8 @@ ECHO est conçu pour un déploiement autonome sur infrastructure souveraine.
 | **Linux Natif** | `install-linux.sh` | Serveur Ubuntu/Debian dédié |
 | **WSL2** | `install-wsl2.sh` | Développement & test sous Windows |
 
-*   **Provisioning Docker** : `00-echo-scripts/install-stack.sh` orchestre la stack complète (Open WebUI, Qdrant, Redis, Workers).
-*   **Sécurisation Edge** : Intégration native de **BunkerWeb** (WAF) pour une exposition sécurisée avec SSL automatique.
+*   **Provisioning Docker** : `00-echo-scripts/install-stack.sh` orchestre la stack complète (Open WebUI, Qdrant, Embedding Worker, Gemma Distiller, SearXNG, Browser Agent, Python Worker).
+*   **Distillation Locale** : Gemma 4 E4B (GGUF Q5_K_M) via `echo-gemma-distiller` avec auto-provisioning au premier démarrage.
 
 ---
 
@@ -100,4 +102,4 @@ Pour approfondir, consultez le corpus documentaire dans le dossier `/docs` :
 - **[L'Arsenal](docs/07_arsenal_outils.html)** : Catalogue complet des protocoles d'outils.
 
 ---
-*Version actuelle : v5.153.0 "Sovereign Intelligence" | Copyright © 2026 Wilfried BARNAVON*
+*Version actuelle : v5.163.0 "Sovereign Intelligence" | Copyright © 2026 Wilfried BARNAVON*

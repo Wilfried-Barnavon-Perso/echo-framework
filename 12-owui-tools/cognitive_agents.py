@@ -1,16 +1,18 @@
 """
 title: ECHO Cognitive Agents
 author: ECHO Framework
-version: 5.11
+version: 5.12
 description: 5.7: Résolution du conflit de nom get_all_skills (shadowing).
              5.8: Centralisation des niveaux de réflexion (THINKING_LEVEL_*) — suppression
              valves FLASH_THINKING et PRO_THINKING. Remplacement par constantes echo_constants.
              5.9: Renommage consult_council → consult_expert_consultant.
-             5.10: Fix _iterative_loop : MODEL_LITE reçoit désormais THINKING_LEVEL_LITE
-             (au lieu de THINKING_LEVEL_FLASH). Docstrings enrichies : note fallback modèle.
+             5.10: Fix _iterative_loop : MODEL_LITE reçoit désormais THINKING_LEVEL_LITE
+             (au lieu de THINKING_LEVEL_FLASH). Docstrings enrichies : note fallback modèle.
              5.11: Ajout consult_council — Table Ronde Multi-Experts (protocole Delphi).
              N experts débattent en tours parallélisés avec continuité cognitive
              (thoughtSignatures in-memory). Synthèse finale par modèle dédié.
+             5.12: consult_council — docstring prérequis 2 participants,
+             message d'erreur actionnable (liste skills + invite forge_skill).
 """
 
 import sys
@@ -332,6 +334,12 @@ class Tools:
     ) -> str:
         """
         Convoquez un conseil d'experts pour une délibération multi-tours.
+
+        PRÉREQUIS : Un conseil exige AU MINIMUM 2 participants distincts.
+        Avant d'appeler cet outil, vérifie via list_skills que tu disposes d'au
+        moins 2 skills pertinents. Si ce n'est pas le cas, forge les skills
+        manquants avec forge_skill AVANT de convoquer le conseil.
+
         Chaque expert reçoit la question, puis réagit aux contributions des autres
         participants lors des tours suivants. Un synthétiseur produit la conclusion finale.
         Les experts maintiennent leur fil de pensée entre les tours (thoughtSignatures).
@@ -356,7 +364,14 @@ class Tools:
         if len(skill_ids) > max_p:
             return wrap_tool_output(text=f"❌ Maximum {max_p} participants (reçu: {len(skill_ids)}).")
         if len(skill_ids) < 2:
-            return wrap_tool_output(text="❌ Un conseil nécessite au minimum 2 participants.")
+            available = get_all_skills(user_id)
+            skill_list = ", ".join(f"`{s}`" for s in available) if available else "aucun"
+            return wrap_tool_output(
+                text=f"❌ Un conseil nécessite au minimum 2 participants (reçu: {len(skill_ids)}).\n\n"
+                     f"**Skills disponibles :** {skill_list}\n\n"
+                     f"→ Utilise `forge_skill` pour créer les experts manquants, puis rappelle `consult_council`.",
+                status={"status": "error"}
+            )
 
         effective_rounds = min(
             rounds or self.user_valves.COUNCIL_ROUNDS_DEFAULT,

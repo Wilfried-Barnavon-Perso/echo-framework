@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Python Worker ECHO v5 (worker_api.py v1.3, Flask, port 5000) : exécution de code Python isolée par processus OS, bibliothèques réelles, timeout configurable, sorties stdout.">
+  <meta name="description" content="Python Worker ECHO v5 (worker_api.py v1.4, Flask, port 5000) : exécution de code Python isolée par processus OS, bibliothèques réelles, timeout configurable, sorties stdout.">
   <title>ECHO v5 — 7e. Exécution &amp; Pilotage</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -28,7 +28,7 @@
         <tr><td><strong>Conteneur</strong></td><td><code>echo-python-worker</code></td></tr>
         <tr><td><strong>Port interne</strong></td><td><strong>5000</strong> (Flask, <code>app.run(host='0.0.0.0', port=5000)</code>)</td></tr>
         <tr><td><strong>Source</strong></td><td><code>21-docker-python-worker/worker_api.py</code></td></tr>
-        <tr><td><strong>Version</strong></td><td>1.3 (orjson &amp; pybase64 migration)</td></tr>
+        <tr><td><strong>Version</strong></td><td>1.4 (HEALTHCHECK)</td></tr>
         <tr><td><strong>Framework</strong></td><td>Flask (mode <code>threaded=True</code>) — <em>pas</em> FastAPI</td></tr>
         <tr><td><strong>Image de base</strong></td><td><code>python:3.14-slim</code></td></tr>
         <tr>
@@ -96,7 +96,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.159.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

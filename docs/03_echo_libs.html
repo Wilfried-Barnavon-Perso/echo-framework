@@ -30,7 +30,7 @@
       </p>
     </div>
 
-    <h2><code>echo_constants.py</code> — Constantes et Topologie (v4.9)</h2>
+    <h2><code>echo_constants.py</code> — Constantes et Topologie (v5.2)</h2>
 
     <p>
       Registre unique de toutes les vérités immuables du système. Tout composant qui a besoin
@@ -74,6 +74,12 @@
           <td>—</td>
           <td>Vectorisation locale (Embedding Worker)</td>
         </tr>
+        <tr>
+          <td><code>MODEL_LOCAL_GEMMA</code></td>
+          <td><code>gemma-4-E4B-it</code></td>
+          <td>—</td>
+          <td>Distillation locale (Gemma Distiller, fallback API)</td>
+        </tr>
       </tbody>
     </table>
 
@@ -106,7 +112,7 @@
       <li>Fallback sécuritaire : <code>application/octet-stream</code>, non supporté.</li>
     </ol>
 
-    <h2><code>echo_utils.py</code> — Cœur Réactif (v7.12)</h2>
+    <h2><code>echo_utils.py</code> — Cœur Réactif (v7.15)</h2>
 
     <h3>EchoStateManager — Persistance Bit-Perfect</h3>
     <p>
@@ -182,6 +188,17 @@
       </ul>
     </div>
 
+    <div class="note-box">
+      <h4>v7.15 — Crédits OAuth2 opt-in</h4>
+      <p>
+        Le champ <code>enabled_credit_types</code> dans les requêtes API Antigravity est désormais
+        <strong>omis par défaut</strong> (alignement sur le comportement natif d'AGY-IDE).
+        Sans ce champ, le serveur utilise les quotas gratuits sans consommer de crédits payants Google One AI.
+        L'activation est possible via la UserValve <code>ENABLE_PAID_CREDITS</code> du Pipe,
+        persistée dans <code>identity.db</code> avec un pattern write-on-change.
+      </p>
+    </div>
+
     <h3>Fonctions utilitaires</h3>
     <table>
       <thead>
@@ -195,7 +212,7 @@
       </tbody>
     </table>
 
-    <h2><code>echo_auth.py</code> — Identités d'Accès aux Modèles (v7.2)</h2>
+    <h2><code>echo_auth.py</code> — Identités d'Accès aux Modèles (v7.3)</h2>
 
     <p>
       <code>AuthService</code> gère le cycle complet d'authentification OAuth2 headless via le flux
@@ -297,7 +314,7 @@
     <h2><code>echo_ui.py</code> / <code>echo_visuals.py</code> — Interface HUD</h2>
 
     <p>
-      <code>echo_ui.py</code> (v5.19) et <code>echo_visuals.py</code> forment le moteur d'injection
+      <code>echo_ui.py</code> (v5.20) et <code>echo_visuals.py</code> forment le moteur d'injection
       dynamique de l'interface HUD dans Open WebUI. Ils sont détaillés dans la section
       <a href="04_hud_ui.html">HUD &amp; UI</a>.
     </p>
@@ -318,7 +335,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.159.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

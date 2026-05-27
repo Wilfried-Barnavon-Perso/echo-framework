@@ -1,8 +1,8 @@
 """
 title: ECHO Memory Filter V2 (Base Vectorielle des Souvenirs)
 author: Wilfried BARNAVON
-version: 3.3
-description: 3.1: Refactorisation terminologique (memory_importance). 3.2: Correction commentaire bge-m3. 3.3: Prompt mémoire borné 200-500 mots (densité vectorielle).
+version: 4.0
+description: 4.0: Fenêtre glissante déterministe (WINDOW_SIZE + WINDOW_OVERLAP), nettoyage des messages (role+content+fichiers), prompt 100-1000 mots, suppression du déclenchement probabiliste.
 """
 
 from pydantic import BaseModel, Field
@@ -14,10 +14,8 @@ import asyncio
 import logging
 import time
 import httpx
-import random
 import hashlib
 import uuid
-import math
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
@@ -36,8 +34,10 @@ class Filter:
     priority: int = 100
 
     class Valves(BaseModel):
-        TRIGGER_PROBABILITY: float = Field(default=0.1, description="Probabilité (0.0 à 1.0) de déclenchement à chaque fin de message.")
-        FORCE_TRIGGER_THRESHOLD: int = Field(default=20, description="Force la mémorisation si aucun déclenchement après N messages.")
+        WINDOW_SIZE: int = Field(default=5, ge=2, le=10,
+            description="Nombre de nouveaux messages avant déclenchement de la distillation.")
+        WINDOW_OVERLAP: int = Field(default=2, ge=0, le=5,
+            description="Messages de la fenêtre précédente réinjectés pour continuité contextuelle.")
         
         SIMILARITY_THRESHOLD: float = Field(default=0.85, description="Seuil de similarité pour déclencher la fusion LLM (0.0 à 1.0).")
         EXACT_MATCH_THRESHOLD: float = Field(default=0.95, description="Seuil pour simple mise à jour de date (sans coût LLM).")
@@ -53,11 +53,28 @@ class Filter:
         self.user_valves = self.UserValves()
         self.auth = EchoAuth()
         self.collection_verified = False
-        self.last_triggered_count = {} 
+        self.message_count = {}  # {chat_id: nb de messages vus depuis dernière distillation}
         
         # --- CONFIGURATION UI OPEN WEBUI ---
         self.toggle = True  # Affiche le switch dans le menu Intégrations (icône engrenage)
         self.icon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNOSAxMmExIDEsMCwxLDAsMiwxLDEsMCwxLDAtMi0weiIvPjxwYXRoIGQ9Ik0xNSAxMmExIDEsMCwxLDAsMiwxLDEsMCwxLDAtMi0weiIvPjxwYXRoIGQ9Ik04IDE3YTUgNSAwIDAgMSAxMCAwIi8+PHBhdGggZD0iTTEyIDN2Mm0wIDE0djJtLTktOWgtMm0xNCAwaC0yIi8+PC9zdmc+"
+
+    def _clean_messages(self, messages: List[Dict]) -> str:
+        """
+        Nettoyage des messages pour la distillation : role + content + fichiers joints.
+        Supprime les UUIDs, metadata, timestamps et tout bruit technique.
+        Gain : ~8x moins de tokens vs str(messages).
+        """
+        cleaned = []
+        for m in messages:
+            header = m.get("role", "?")
+            files = m.get("files")
+            if files:
+                noms = ", ".join(f.get("name", "?") for f in files if isinstance(f, dict))
+                if noms:
+                    header += f" [📎 {noms}]"
+            cleaned.append(f"{header}:\n{m.get('content', '')}")
+        return "\n\n".join(cleaned)
 
     async def _ensure_collection(self):
         if self.collection_verified: return
@@ -79,16 +96,16 @@ class Filter:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur Qdrant: {e}")
 
     async def _distill_and_store(self, chat_id: str, user_id: str, messages: List[Dict]):
-        """Pipeline Asynchrone V2 (Migration Factorisée v2.9)."""
+        """Pipeline Asynchrone V4 — Fenêtre Glissante Déterministe."""
         try:
             await self._ensure_collection()
             
-            # --- 1. Distillation Contextuelle via Cortex Central Factorisé ---
+            # --- 1. Distillation Contextuelle (messages nettoyés) ---
             distill_prompt = (
                 "Tu es l'unité de distillation contextuelle de mémoire d'ECHO. Analyse cet extrait de conversation.\n"
                 "Ta mission est d'extraire les connaissances, décisions techniques ou préférences utilisateur.\n"
                 "Produis un JSON STRICT avec :\n"
-                "- 'summary': Résumé ultra-dense en 200 à 500 mots MAXIMUM.\n"
+                "- 'summary': Résumé ultra-dense en 100 à 1000 mots MAXIMUM.\n"
                 "             IMPORTANT : Ce résumé sera stocké comme un seul vecteur 1024d.\n"
                 "             La densité et la précision priment sur l'exhaustivité.\n"
                 "             Concentre-toi sur les faits techniques, décisions et préférences actionnables.\n"
@@ -99,8 +116,11 @@ class Filter:
             u_ctx = {"id": user_id}
             m_ctx = {"chat_id": chat_id}
             
+            # Nettoyage : role + content + fichiers joints uniquement
+            cleaned = self._clean_messages(messages)
+            
             distilled = await EchoGeminiClient.call_distillation(
-                distill_prompt + "\n\nCONVERSATION :\n" + str(messages),
+                distill_prompt + "\n\nCONVERSATION :\n" + cleaned,
                 u_ctx, m_ctx
             )
             if not distilled or not distilled.get("summary"): return
@@ -162,7 +182,7 @@ class Filter:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur pipeline: {e}")
 
     async def outlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
-        """Phase Outlet : Déclenchement de la mémorisation factorisée."""
+        """Phase Outlet : Déclenchement déterministe par fenêtre glissante."""
         if not self.user_valves.ENABLE_MEMORY or not __user__: return body
 
         messages = body.get("messages", [])
@@ -170,17 +190,18 @@ class Filter:
         user_id = __user__.get("id")
         if not chat_id or not user_id: return body
         
-        count = self.last_triggered_count.get(chat_id, 0) + 1
-        self.last_triggered_count[chat_id] = count
+        # Compteur de messages par chat
+        count = self.message_count.get(chat_id, 0) + 1
+        self.message_count[chat_id] = count
 
-        triggered = (random.random() < self.valves.TRIGGER_PROBABILITY) or (count >= self.valves.FORCE_TRIGGER_THRESHOLD)
+        window_size = self.valves.WINDOW_SIZE
+        overlap = min(self.valves.WINDOW_OVERLAP, window_size - 1)  # Clamp sécurité
         
-        if triggered and len(messages) >= 4:
-            self.last_triggered_count[chat_id] = 0
-            p = self.valves.TRIGGER_PROBABILITY
-            r = math.sqrt(1.0 + (1.0 - p)**2)
-            window_size = int(r / p)
-            window_msgs = messages[-window_size:]
+        # Déclenchement déterministe : tous les WINDOW_SIZE nouveaux messages
+        if count >= window_size and len(messages) >= window_size:
+            self.message_count[chat_id] = 0
+            total = window_size + overlap
+            window_msgs = messages[-total:]  # Prend window_size + overlap si disponible
             
             if __event_emitter__:
                 await __event_emitter__({

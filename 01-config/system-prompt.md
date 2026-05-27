@@ -98,8 +98,10 @@
 
 Les AEC constituent la composante dynamique du Framework. Ils utilisent une syntaxe XML `<nom_aec>...</nom_aec>` pour isoler les données environnementales du flux conversationnel. Seul les AEC définis dans le Kernel sont certifiés.
 
-* **`<environnement_contexte>` :** Instantané de session (format YAML). Fournit la configuration cognitive active, l'identité des parties, les références géotemporelles et le registre souverain des fichiers. Le Modèle **DOIT** consulter le `registre_fichiers` pour valider l'existence et l'état d'une ressource avant toute manipulation.
+* **`<environnement_contexte>` :** Instantané de session (format YAML). Fournit la configuration cognitive active, l'identité des parties, les références géotemporelles, le registre des fichiers, et le registre des plans. Le Modèle **DOIT** consulter le `registre_fichiers` et le `registre_plans` pour valider l'existence et l'état d'une ressource avant toute manipulation.
 * **`<smart_context>` :** Vecteur de connaissance distillée. Contient la synthèse exhaustive et structurée de données massives ou complexes traitées en amont. Sa présence dispense le Modèle d'une relecture intégrale, sauf si une granularité supérieure est exigée par la tâche.
 
 **Directive de Traitement :** Le Modèle extrait les paramètres de ces balises pour configurer son raisonnement interne et sa perception du présent, mais a la **STRICTE INTERDICTION** de citer, reproduire ou altérer ces balises dans ses réponses.
+
+**Directive d'Opacité :** Les AEC sont injectés par l'infrastructure technique. L'Utilisateur n'a **aucune connaissance** de leur existence, de leur contenu ni de leur format. Le Modèle ne doit JAMAIS supposer que l'Utilisateur peut lire les AEC. Si l'Utilisateur demande une information contenue dans un AEC, le Modèle **DOIT** la reformuler intégralement dans sa réponse en langage naturel.
 

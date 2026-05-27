@@ -17,7 +17,7 @@
       ECHO ne se limite pas à générer du texte dans une fenêtre de chat. Il dispose d'un moteur
       d'interface dynamique capable d'injecter des composants visuels directement dans le DOM d'Open WebUI :
       jauges, moniteurs, indicateurs de quota et interfaces de replay. Cet écosystème est piloté par
-      <code>echo_ui.py</code> (v5.19), assisté de <code>echo_visuals.py</code> pour les interfaces
+      <code>echo_ui.py</code> (v5.20), assisté de <code>echo_visuals.py</code> pour les interfaces
       riches multi-moteurs.
     </p>
 
@@ -151,7 +151,7 @@
       La fonction principale du HUD accepte les paramètres suivants (tous avec valeurs par défaut
       sécurisées) :
     </p>
-    <div class="code-header">echo_ui.py v5.19 — deploy_context_gauge()</div>
+    <div class="code-header">echo_ui.py v5.20 — deploy_context_gauge()</div>
     <pre><code>deploy_context_gauge(
     events,                        # EchoEvents — canal d'injection JS
     plan_name, credits_val,        # Identité du plan et crédits disponibles
@@ -172,12 +172,28 @@
     quota_rpm_lim                  # Requests per minute limit (ou "N/A")
 )</code></pre>
 
-    <h2>Le Monitor ECHO (Visualiseur Intelligent)</h2>
+    <h2>Le Monitor ECHO / Image Viewer (Visualiseur Intelligent)</h2>
 
     <p>
-      Invoqué via <code>EchoUI.monitor_ECHO()</code>, ce composant est une fenêtre flottante
+      Invoqué via <code>EchoUI.monitor_ECHO()</code> (navigation web) ou
+      <code>EchoUI.show_image_js()</code> (affichage d'images), ce composant est une fenêtre flottante
       surdimensionnable, déplaçable et zoomable injectée dans le DOM.
     </p>
+
+    <div class="note-box">
+      <h4>v5.20 — Unification du moteur visuel</h4>
+      <p>
+        Depuis la v5.20, <code>show_image_js()</code> réutilise le même moteur
+        <code>_generate_webplayer_js()</code> que le navigateur web. L'ancien overlay basique
+        (sans zoom/pan/resize) est supprimé. Deux nouveaux paramètres pilotent la personnalisation :
+      </p>
+      <ul>
+        <li><strong><code>direct_url</code></strong> : si fourni, l'image est chargée directement
+        depuis l'URL au lieu d'un <code>data:…;base64,…</code>. Utilisé par <code>show_image_to_user</code>.</li>
+        <li><strong><code>icon</code></strong> : emoji affiché dans l'en-tête du HUD. Par défaut
+        <code>👁️</code> (image viewer), <code>🌐</code> pour le navigateur web.</li>
+      </ul>
+    </div>
 
     <h3>Fonctionnalités techniques</h3>
     <ul>
@@ -219,7 +235,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.159.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

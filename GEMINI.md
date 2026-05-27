@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.160.4
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.163.3
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -23,7 +23,7 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 - **HTTP/2 Stealth Headers :** Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité (`get_stealth_headers`) pour simuler un navigateur réel.
 
 ### 2. La Conscience (`/opt/ECHO/owui-filters/`)
-- **Base vectorielle des souvenirs :** Système RAG vectoriel (Qdrant) avec Distillation Contextuelle automatique.
+- **Base vectorielle des souvenirs :** Système RAG vectoriel (Qdrant) avec Distillation Contextuelle automatique par **fenêtre glissante déterministe** (`WINDOW_SIZE`=5 + `WINDOW_OVERLAP`=2, configurable). Nettoyage des messages (role+content+fichiers) pour optimiser le budget tokens du Gemma 4 E4B local (fallback API Gemini 2.5 Flash).
 - **Gestion de l'importance des souvenirs :** Algorithme de fusion sémantique préservant le score `memory_importance` maximal des souvenirs.
 - **Smart Context :** Injection de faits via des balises XML structurelles (`<smart_context>`).
 
@@ -34,8 +34,9 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 
 ### 4. L'Arsenal (`/opt/ECHO/owui-tools/`)
 - **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Cascade cognitive PRO→FLASH→LITE, persistance Markdown dans le Vault, registre SQLite par chat, injection proprioceptive dans `registre_plan`.
+- **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites de gestion mémoire : `save_memory` (long terme, importance 1→5), `search_memory` (reranking pondéré), `save_session_context` / `search_session_context` (RAG éphémère par session), `forget_memory`, `list_memory_topics`.
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes) via `universal_visual_generator.py` et `echo_visuals.py` (Pattern 'Data Island' pour isoler le JS).
-- **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) avec replay interactif.
+- **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) avec distillation de page (`distill_page`) et indexation RAG éphémère automatique.
 - **Explorateur de l'Espace Personnel :** Analyse sécurisée et indexation des documents locaux de l'utilisateur.
 
 ### 5. Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
@@ -44,12 +45,24 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 
 ### 6. Actions Interactives (`/opt/ECHO/owui-actions/`)
 - **Cockpit de Rejeu :** Interface de contrôle pour la navigation web (`web_navigation_replay_action.py`).
-- **Maintenance :** Outils de purge de mémoire et de réinitialisation d'authentification.
+- **Export PDF :** Export de conversations en PDF via `export_pdf_action.py`.
+- **Purge Mémoire :** Interface scrollable de suppression sélective de la base vectorielle (`purge_memory_action.py`) avec filtrage par tags, sélection par plage et confirmation.
+- **Réinitialisation Auth :** Purge des tokens Google OAuth2 de l'Espace Personnel (`reset_auth_action.py`).
 
 ### 7. Infrastructure d'Exécution
 - **Python Worker (`/opt/ECHO/docker-python-worker/`) :** Exécution isolée de code Python avec support `orjson`/`pybase64`.
 - **Browser Agent (`/opt/ECHO/docker-browser-agent/`) :** Instance Playwright pilotée par API pour la navigation autonome.
-- **Embedding Worker (`/opt/ECHO/docker-embedding-worker/`) :** Inférence SigLIP-2 locale.
+- **Embedding Worker (`/opt/ECHO/docker-embedding-worker/`) :** Inférence BAAI/bge-m3 locale (1024d, multilingue). PyTorch CPU-only. Détection GPU dynamique.
+- **Gemma Distiller (`/opt/ECHO/docker-gemma-distiller/`) :** Inférence locale Gemma 4 E4B (GGUF Q5_K_M, ~5.1 Go). Auto-provisioning au premier démarrage (aria2c ×16). Fallback API `gemini-2.5-flash`.
+
+### 8. Orchestration Séquentielle (Docker Compose)
+Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy` :
+- **Tier 1 (Fondations)** : Qdrant, SearXNG, Watchtower — démarrent en parallèle.
+- **Tier 2 (Workers)** : Embedding (après Qdrant), Gemma (après Qdrant, 40 retries/120s start), Python Worker, Browser Agent.
+- **Tier 3** : Open WebUI — attend Qdrant + Embedding + Gemma + SearXNG.
+- **Tier 4** : Admin Manager — attend Open WebUI (dernier).
+- **Ports internes** : Qdrant (6333), Embedding (7997), Gemma (7998) ne sont **pas** exposés sur la VM. Accès uniquement via le réseau Docker `echo-network`.
+- **Ports exposés** : Open WebUI (3000), Admin Manager (3001), SSH Tunnel (8020-8024).
 ## 🔢 Stratégie de Versioning (`VERSIONING.md`)
 
 ### A. Version de la Stack (Globale)
@@ -62,12 +75,19 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Admin Manager :** Format `X.Y` (ex: `5.52`).
 - **Modules & Tools :** Numérotation simple `X.Y`.
 
+## 🔐 Authentification Antigravity 2.1
+
+- **Multi-Provider :** Résolution par priorité OAuth2 > Clé Primaire > Clé Secondaire via `EchoAuth.get_ordered_auth_providers()`.
+- **OAuth2 PKCE :** Flow Authorization Code + PKCE (RFC 7636) via tunnel SSH éphémère (`echo_ssh_tunnel.py` + `echo_pkce_server.py`). Ports 8020-8024. Refresh token automatique (TTL 55min).
+- **Protocole Symétrique :** `echo_protocol.py` traduit les modèles AI Studio ↔ Code Assist. Le payload est encapsulé selon le backend (AI Studio : API Key / Antigravity : Bearer + project).
+- **Diagnostic :** `echo_ca_diag.py` fournit un diagnostic complet de l'état d'authentification et des quotas.
+
 ## 🛠️ Standards de Développement
 
 - **Async-First :** Utilisation impérative d'`asyncio` et `httpx`.
 - **Persistence :** `EchoStateManager` (SQLite) pour la persistance par utilisateur (`identity.db`) et par chat (`{chat_id}.db`).
 - **UI HUD :** Toutes les interactions visuelles (Jauges de contexte, Status) passent par `echo_ui.py`.
-- **API Resilience :** `EchoGeminiClient` gère le multi-key, le basculement sur erreur 429/500 et le backoff exponentiel.
+- **API Resilience :** `EchoGeminiClient` gère le multi-provider, le basculement sur erreur 429/500 et le backoff exponentiel.
 
 ## ⚠️ Zones d'Exclusion & Sécurité
 
@@ -75,6 +95,6 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.160.4*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.163.3*
 
 

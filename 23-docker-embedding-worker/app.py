@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO EMBEDDING WORKER (bge-m3)
-VERSION : 1.3
+VERSION : 1.4
 AUTEUR : Wilfried BARNAVON
 DATE : 2026-05-22
 
@@ -40,7 +40,8 @@ app = FastAPI(
 
 # Configuration via variables d'environnement
 MODEL_ID = os.getenv("MODEL_ID", "BAAI/bge-m3")
-DEVICE = "cpu"
+# Détection GPU dynamique (WSL2 expose CUDA nativement, VM Hyper-V = CPU only)
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Sweet spot qualité/vitesse sur CPU pour bge-m3.
 # Le modèle supporte 8192 tokens, mais les chunks ECHO font ~300-500 tokens.

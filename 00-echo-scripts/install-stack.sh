@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.22
+# VERSION : 6.23
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -172,6 +172,9 @@ export ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS"
 echo "   ✅ Port détecté : $OWUI_PORT"
 echo "   ✅ Origines IP  : $ECHO_DETECTED_ORIGINS"
 
+
+# --- 2.4 Point de montage modèle Gemma (provisionné automatiquement par le conteneur) ---
+mkdir -p "$ECHO_ROOT/models"
 
 # --- 3. LANCEMENT DOCKER COMPOSE ---
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."

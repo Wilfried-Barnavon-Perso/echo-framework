@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 9.1 (TURBO JSON)
+VERSION : 9.2 (HEALTHCHECK)
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-05-20
 
+CHANGELOG 9.2 :
+- Ajout de GET /health pour l'orchestration séquentielle Docker Compose.
 CHANGELOG 9.1 :
 - FIX: Correction d'une erreur de syntaxe à l'import de random (random import -> import random).
 CHANGELOG 9.0 :
@@ -373,6 +375,11 @@ async def browser_action(request: Request):
     except Exception as e:
         logger.error(f"[{sid}] 💥 Action Error: {str(e)}")
         return {"status": "error", "message": f"ERREUR_CRITIQUE : {str(e)}"}
+
+@app.get("/health")
+async def health():
+    """Healthcheck pour Docker Compose (orchestration séquentielle)."""
+    return {"status": "ready", "browser": state.browser is not None}
 
 if __name__ == '__main__':
     import uvicorn

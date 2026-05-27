@@ -39,10 +39,11 @@
         </tr>
       </thead>
       <tbody>
-        <tr><td>Open WebUI</td><td><code>echo-webui</code></td><td>8080</td><td>3000</td><td>Via BunkerWeb</td></tr>
-        <tr><td>Admin Manager</td><td><code>echo-admin-manager</code></td><td>8080</td><td>3001</td><td>Via BunkerWeb</td></tr>
-        <tr><td>Qdrant</td><td><code>echo-qdrant</code></td><td>6333</td><td>6333</td><td>Non</td></tr>
+        <tr><td>Open WebUI</td><td><code>echo-open-webui</code></td><td>8080</td><td>3000</td><td>Via BunkerWeb</td></tr>
+        <tr><td>Admin Manager</td><td><code>echo-admin-manager</code></td><td><strong>3001</strong></td><td>3001</td><td>Via BunkerWeb</td></tr>
+        <tr><td>Qdrant</td><td><code>echo-qdrant</code></td><td>6333</td><td>Non</td><td>Non</td></tr>
         <tr><td>Embedding Worker</td><td><code>echo-embedding</code></td><td>7997</td><td>Non</td><td>Non</td></tr>
+        <tr><td>Gemma Distiller</td><td><code>echo-gemma-distiller</code></td><td>7998</td><td>Non</td><td>Non</td></tr>
         <tr><td>Browser Agent</td><td><code>echo-browser-agent</code></td><td><strong>5002</strong></td><td>Non</td><td>Non</td></tr>
         <tr><td>Python Worker</td><td><code>echo-python-worker</code></td><td><strong>5000</strong></td><td>Non</td><td>Non</td></tr>
         <tr><td>SearxNG</td><td><code>echo-searxng</code></td><td>8080</td><td>Non</td><td>Non</td></tr>
@@ -157,8 +158,10 @@
     <table>
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>message_id</code></td><td>TEXT PK</td><td>UUID du message.</td></tr>
+        <tr><td><code>cumulative_hash</code></td><td>TEXT PK</td><td>Lié au tour courant (chaîne Merkle).</td></tr>
         <tr><td><code>thought_signature</code></td><td>TEXT</td><td>ThoughtSignature Gemini — jeton opaque cryptographique réinjecté au tour suivant.</td></tr>
+        <tr><td><code>message_id</code></td><td>TEXT</td><td>UUID du message (colonne de migration, nullable).</td></tr>
+        <tr><td><code>model_id</code></td><td>TEXT</td><td>Identifiant du modèle ayant généré la pensée.</td></tr>
         <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
       </tbody>
     </table>
@@ -173,7 +176,88 @@
       </tbody>
     </table>
 
+    <h3>Table <code>thought_archive</code></h3>
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>cumulative_hash</code></td><td>TEXT PK</td><td>Lié au tour courant.</td></tr>
+        <tr><td><code>raw_thought</code></td><td>TEXT</td><td>Texte intégral de la pensée (thinking block) du modèle, archivé pour traçabilité.</td></tr>
+        <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Table <code>processed_files</code></h3>
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>chat_id</code></td><td>TEXT PK</td><td>Session de rattachement.</td></tr>
+        <tr><td><code>file_id</code></td><td>TEXT PK</td><td>UUID du fichier (clé composite avec chat_id).</td></tr>
+        <tr><td><code>filename</code></td><td>TEXT</td><td>Nom original du fichier uploadé.</td></tr>
+        <tr><td><code>mime</code></td><td>TEXT</td><td>Type MIME détecté.</td></tr>
+        <tr><td><code>mode</code></td><td>TEXT</td><td>Mode de traitement (<code>direct</code>, <code>rag_ephemeral</code>, <code>rag_organic</code>).</td></tr>
+        <tr><td><code>message_id</code></td><td>TEXT</td><td>Message dans lequel le fichier a été soumis.</td></tr>
+        <tr><td><code>timestamp</code></td><td>INT</td><td>Timestamp de traitement.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Table <code>call_bridge</code></h3>
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>call_id</code></td><td>TEXT PK</td><td>UUID de l'appel de fonction.</td></tr>
+        <tr><td><code>signature</code></td><td>TEXT</td><td>Signature de la fonction (nom + hash des arguments).</td></tr>
+        <tr><td><code>function_name</code></td><td>TEXT</td><td>Nom de l'outil appelé.</td></tr>
+        <tr><td><code>args_json</code></td><td>TEXT (JSON)</td><td>Arguments sérialisés de l'appel.</td></tr>
+        <tr><td><code>timestamp</code></td><td>INT</td><td>Timestamp de l'appel.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Table <code>rich_payloads</code></h3>
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>invariant_hash</code></td><td>TEXT PK</td><td>Hash invariant du message porteur.</td></tr>
+        <tr><td><code>rich_parts_json</code></td><td>TEXT (JSON)</td><td>Parts Gemini enrichies (inlineData, fichiers binaires encodés).</td></tr>
+        <tr><td><code>message_id</code></td><td>TEXT</td><td>UUID du message.</td></tr>
+        <tr><td><code>created_at</code></td><td>INT</td><td>Timestamp de création.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Table <code>plans</code></h3>
+    <p>
+      Table utilisée par le <a href="07a_strategic_planner.html">Planificateur Stratégique</a>
+      pour persister les plans d'action de chaque chat. Gérée par l'outil <code>strategic_planner.py</code>.
+    </p>
+
+    <h3>Table <code>context_stats</code></h3>
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code></td><td>INT PK (=1)</td><td>Ligne unique — singleton.</td></tr>
+        <tr><td><code>data</code></td><td>TEXT (JSON)</td><td>Statistiques de contexte sérialisées (tokens, cache, etc.).</td></tr>
+        <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp de la dernière mise à jour.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Table <code>session_state</code></h3>
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code></td><td>INT PK</td><td>Ligne unique — singleton.</td></tr>
+        <tr><td><code>last_model_id</code></td><td>TEXT</td><td>Dernier modèle utilisé dans cette session (pour reprise).</td></tr>
+        <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Table <code>cognitive_threads</code></h3>
+    <p>
+      Table de support pour les délégations cognitives récursives
+      (<a href="07d_memory_cognition.html">Conseil d'Experts</a>). Stocke les échanges
+      par sous-session (<code>sub_sid</code>) et rôle (<code>role_id</code>).
+    </p>
+
     <h2>Collections Qdrant</h2>
+
 
     <table>
       <thead><tr><th>Collection</th><th>Constante</th><th>Dimensions</th><th>Distance</th><th>Scope</th><th>Durée de vie</th></tr></thead>
@@ -225,7 +309,7 @@
       <h4>✅ Source de vérité — Valves</h4>
       <p>
         Les valeurs ci-dessus sont celles déclarées dans les constantes de
-        <code>echo_constants.py</code> (v4.9) et dans les constructeurs <code>Valves</code>
+        <code>echo_constants.py</code> (v5.2) et dans les constructeurs <code>Valves</code>
         de chaque composant. En cas de divergence entre cette documentation et le code source,
         le code source fait foi.
       </p>
@@ -255,14 +339,14 @@
       <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><code>call(model, payload, user_id, chat_id)</code></td><td>Appel non-streamant (utilisé pour la distillation). Gère automatiquement le choix du backend (AI Studio / API Antigravity) et le failover.</td></tr>
-        <tr><td><code>call_distillation(prompt, __user__, __metadata__, is_json, max_tokens)</code></td><td>Exécute une tâche de distillation via <code>MODEL_DISTILLATION</code> (gemini-2.5-flash). Gère le nettoyage des thoughts et le parsing JSON.</td></tr>
+        <tr><td><code>call_distillation(prompt, __user__, __metadata__, is_json, max_tokens)</code></td><td>Exécute une tâche de distillation. Route par défaut vers le <strong>Gemma Distiller local</strong> (<code>echo-gemma-distiller:7998</code>). Fallback transparent sur <code>gemini-2.5-flash</code> (API) si le service local est indisponible. Gère le nettoyage des thoughts et le parsing JSON.</td></tr>
         <tr><td><code>generate_embedding(text, task_type, __user__, __metadata__)</code></td><td>Vectorise un texte via le modèle local BAAI/bge-m3 (Embedding Worker). Retourne une liste de 1024 floats.</td></tr>
         <tr><td><code>get_stealth_headers(url)</code></td><td>Construit les en-têtes HTTP/2 haute fidélité (User-Agent Chrome 123, Sec-Fetch-*) pour le téléchargement Stealth. Paramètre <code>url</code> optionnel.</td></tr>
       </tbody>
     </table>
 
     <footer>
-      ECHO Framework — Version 5.159.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

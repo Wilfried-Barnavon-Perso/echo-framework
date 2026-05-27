@@ -84,35 +84,35 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
         <tr>
           <td>1</td>
           <td><code>reset_auth_action.py</code></td>
-          <td>Reset Auth</td>
+          <td>Réinitialiser Authentification Gemini /!\</td>
           <td><code>1</code></td>
           <td>Invalide les tokens OAuth2 / clés PKCE</td>
         </tr>
         <tr>
           <td>2</td>
           <td><code>purge_memory_action.py</code></td>
-          <td>Purge Mémoire</td>
+          <td>Purge Mémoire Long Terme /!\</td>
           <td><code>2</code></td>
           <td>Suppression granulaire de la collection Qdrant utilisateur</td>
         </tr>
         <tr>
           <td>3</td>
           <td><code>web_navigation_replay_action.py</code></td>
-          <td>Show Web Replay</td>
+          <td>Revue Navigation Web</td>
           <td><code>3</code></td>
           <td>Cockpit de rejeu des sessions de navigation Playwright</td>
         </tr>
         <tr>
           <td>4</td>
           <td><code>export_pdf_action.py</code></td>
-          <td>Export PDF Conversation</td>
+          <td>Export PDF</td>
           <td><code>4</code></td>
           <td>Capture conversation → PDF (texte + Rich Embeds)</td>
         </tr>
       </tbody>
     </table>
 
-    <h2>Action 1 — Reset Authentification (<code>reset_auth_action.py</code>)</h2>
+    <h2>Action 1 — Réinitialiser Authentification Gemini (<code>reset_auth_action.py</code>)</h2>
 
     <p>
       Invalide l'ensemble des tokens OAuth2 et clés API enregistrés dans
@@ -140,35 +140,48 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 2 — Purge Mémoire Qdrant (<code>purge_memory_action.py</code>)</h2>
+    <h2>Action 2 — Purge Mémoire Long Terme (<code>purge_memory_action.py</code>, v3.2)</h2>
 
     <p>
       Supprime des souvenirs ciblés depuis la collection <code>echo_memory</code> dans Qdrant,
-      filtrés par <code>user_id</code>. L'action guide l'utilisateur via un flux de dialogue
-      en plusieurs étapes :
+      filtrés obligatoirement par <code>user_id</code> (clause <code>must</code>). L'action
+      concerne exclusivement la <strong>mémoire long terme</strong> (organique) ; la mémoire
+      de travail de la session en cours n'est pas affectée. L'utilisateur est guidé via
+      un flux de dialogue en 5 étapes :
     </p>
     <ol>
       <li>
         <strong>Analyse multidimensionnelle</strong> : récupération et agrégation de tous les
-        tags de l'utilisateur avec leurs métadonnées (<code>memory_importance</code>,
+        tags de l'utilisateur avec métadonnées (<code>memory_importance</code>,
         fréquence d'apparition). Tri hiérarchique : importance croissante → fréquence
-        décroissante → ordre alphabétique.
+        décroissante → ordre alphabétique. Affichage dans un <strong>HUD déroulant</strong>
+        (div scrollable, <code>max-height: 200px</code>) avec indicateurs colorés par niveau
+        d'importance (🟢 1, 🔵 2, 🟡 3, 🟠 4, 🔴 5).
       </li>
       <li>
         <strong>Sélection des catégories</strong> : l'utilisateur saisit les numéros des tags
         à purger, avec support des plages (ex : <code>1-4, 7, 10-12</code>).
+        <strong>Si le champ est laissé vide</strong>, toutes les catégories sont sélectionnées
+        et une confirmation supplémentaire (<code>events.confirm</code>) est requise avant de
+        continuer. OWUI retournant <code>False</code> (booléen) pour un input vide confirmé,
+        le code utilise <code>isinstance(selection_raw, str)</code> pour distinguer les types.
       </li>
       <li>
-        <strong>Choix du périmètre</strong> : purge limitée à la conversation courante
-        (filtre sur <code>chat_id</code>) ou globale sur l'ensemble de la mémoire.
+        <strong>Choix du périmètre</strong> : un encart explicatif (voix ECHO, 1<sup>re</sup> personne)
+        précise que seule la mémoire long terme est concernée. Deux options :
+        <em>« Uniquement ce que j'ai retenu de cette discussion »</em> (filtre <code>chat_id</code>)
+        ou <em>« TOUT ce que je sais sur ces sujets, toutes discussions confondues »</em> (global).
       </li>
       <li>
-        <strong>Dry Run</strong> : prévisualisation des <em>slugs</em> des souvenirs qui
-        seront supprimés (jusqu'à 50 affichés) avant confirmation finale.
+        <strong>Dry Run</strong> : prévisualisation des <em>slugs</em> des souvenirs ciblés,
+        triés par ordre alphabétique et affichés dans un conteneur scrollable
+        (<code>max-height: 150px</code>). Tous les slugs sont listés (pas de limite à 10).
       </li>
       <li>
         <strong>Suppression</strong> : appel <code>POST /collections/echo_memory/points/delete</code>
-        sur l'API Qdrant interne (<code>http://echo-qdrant:6333</code>).
+        sur l'API Qdrant interne (<code>http://echo-qdrant:6333</code>), avec le filtre
+        <code>must</code> incluant systématiquement <code>user_id</code> + <code>tags</code>
+        (et optionnellement <code>chat_id</code>).
       </li>
     </ol>
 
@@ -182,7 +195,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 3 — Cockpit de Replay Web (<code>web_navigation_replay_action.py</code>)</h2>
+    <h2>Action 3 — Revue Navigation Web (<code>web_navigation_replay_action.py</code>)</h2>
 
     <p>
       Ouvre un cockpit visuel plein écran permettant de consulter et de rejouer les captures
@@ -240,7 +253,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </tbody>
     </table>
 
-    <h2>Action 4 — Export PDF Conversation (<code>export_pdf_action.py</code>)</h2>
+    <h2>Action 4 — Export PDF (<code>export_pdf_action.py</code>)</h2>
 
     <p>
       Capture l'intégralité de la conversation courante et génère un fichier PDF
@@ -419,7 +432,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
     </div>
 
     <footer>
-      ECHO Framework — Version 5.160.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

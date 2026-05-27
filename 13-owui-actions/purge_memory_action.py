@@ -1,8 +1,8 @@
 """
-title: ECHO Memory Purge (Granulaire)
+title: Purge Mémoire Long Terme /!\
 author: Wilfried BARNAVON
-version: 2.7
-description: 2.7: Tri multi-critères des tags (Importance, Fréquence, Alpha) et support des plages.
+version: 3.2
+description: 3.2: Confirmation finale scrollable + tri alpha slugs. Dialog périmètre avec explication mémoire long terme (voix ECHO). 3.1: HUD déroulant, sélection vide = TOUT.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5Z29uIHBvaW50cz0iMjIgMyAyIDMgMTAgMTIuNDYgMTAgMTkgMTQgMjEgMTQgMTIuNDYgMjIgMyIvPjwvc3ZnPg==
 """
 
@@ -116,44 +116,69 @@ class Action:
 
         await events.status("🧠 Prêt pour la purge.", True)
 
-        # Construction de la liste visuelle avec labels sémantiques
+        # Construction de la liste visuelle avec labels sémantiques (HUD déroulant)
         imp_labels = {1: "🟢", 2: "🔵", 3: "🟡", 4: "🟠", 5: "🔴"}
         rows = []
         for i, t in enumerate(enriched_tags):
             label = imp_labels.get(t["max_imp"], "⚪")
-            rows.append(f"<b>{i+1}.</b> {label} {t['name']} <i>({t['count']} souvenirs)</i>")
+            rows.append(f"<div style='padding:2px 0'><b>{i+1}.</b> {label} {t['name']} <i>({t['count']} souvenirs)</i></div>")
         
-        tags_display = "<br>".join(rows)
+        tags_html = "".join(rows)
+        # HUD déroulant : div scrollable avec hauteur max
+        scrollable_list = (
+            f"<div style='max-height:200px; overflow-y:auto; border:1px solid #444; "
+            f"border-radius:6px; padding:8px; margin:8px 0; background:rgba(0,0,0,0.2); "
+            f"font-size:13px; scrollbar-width:thin;'>{tags_html}</div>"
+        )
         available_tag_names = [t["name"] for t in enriched_tags]
 
         # 2. Demande de sélection des tags par numéros (Support des plages type 1-5)
         selection_raw = await events.call("input", {
             "title": "🏷️ Purge sélective (Importance croissante)",
-            "message": f"Catégories triées par importance :<br>{tags_display}<br><br>Saisissez les numéros (ex: 1, 3-5, 8) :",
+            "message": (
+                f"Catégories triées par importance :{scrollable_list}"
+                f"Saisissez les numéros (ex: 1, 3-5, 8).<br>"
+                f"<b>Vide = TOUT sélectionner.</b>"
+            ),
             "type": "text",
-            "placeholder": "Ex: 1-4, 7, 10-12"
+            "placeholder": "Ex: 1-4, 7, 10-12 (vide = tout)"
         })
 
-        if not selection_raw:
+        # OWUI retourne None (annulation) ou False (input vide confirmé)
+        if selection_raw is None:
             return None
 
         # Conversion intelligente des numéros (Gestion des plages)
+        select_all = False
         selected_tags = []
-        try:
-            parts = [p.strip() for p in selection_raw.split(",")]
-            indices = set()
-            for p in parts:
-                if "-" in p:
-                    start, end = map(int, p.split("-"))
-                    for i in range(start, end + 1): indices.add(i - 1)
-                elif p.isdigit():
-                    indices.add(int(p) - 1)
-            
-            for idx in sorted(list(indices)):
-                if 0 <= idx < len(available_tag_names):
-                    selected_tags.append(available_tag_names[idx])
-        except Exception as e:
-            print(f"[ECHO-PURGE] Erreur parsing selection: {e}")
+        # False (bool) = input vide confirmé, str vide = idem
+        selection_stripped = selection_raw.strip() if isinstance(selection_raw, str) else ""
+
+        if not selection_stripped:
+            # Sélection vide = TOUT — confirmation supplémentaire obligatoire
+            select_all = True
+            if not await events.confirm(
+                "🔴 Sélection TOTALE",
+                f"Vous n'avez rien saisi. <b>Les {len(available_tag_names)} catégories</b> seront sélectionnées pour la purge.<br><br>Confirmer la sélection totale ?"
+            ):
+                return None
+            selected_tags = list(available_tag_names)
+        else:
+            try:
+                parts = [p.strip() for p in selection_stripped.split(",")]
+                indices = set()
+                for p in parts:
+                    if "-" in p:
+                        start, end = map(int, p.split("-"))
+                        for i in range(start, end + 1): indices.add(i - 1)
+                    elif p.isdigit():
+                        indices.add(int(p) - 1)
+                
+                for idx in sorted(list(indices)):
+                    if 0 <= idx < len(available_tag_names):
+                        selected_tags.append(available_tag_names[idx])
+            except Exception as e:
+                print(f"[ECHO-PURGE] Erreur parsing selection: {e}")
         
         if not selected_tags:
             await events.toast("❌ Sélection invalide ou vide.", "error")
@@ -162,7 +187,18 @@ class Action:
         # 3. Demande du périmètre (Scope) sécurisée
         scope_raw = await events.call("input", {
             "title": "🎯 Périmètre de la purge",
-            "message": f"Vous avez sélectionné les catégories : {', '.join(selected_tags)}<br><br><b>Choisissez l'étendue de l'oubli :</b><br>1. Dans cette conversation uniquement<br>2. Dans TOUTE ma mémoire globale<br><br>Tapez 1 ou 2 :",
+            "message": (
+                f"<div style='background:rgba(0,0,0,0.2); border-radius:6px; padding:8px; margin-bottom:10px; font-size:12px; color:#aaa;'>"
+                f"🧠 Cette action concerne uniquement ma <b>mémoire long terme</b> "
+                f"(les souvenirs que je conserve entre les sessions).<br>"
+                f"La mémoire de travail de cette conversation n'est pas affectée."
+                f"</div>"
+                f"Catégories sélectionnées : <b>{', '.join(selected_tags)}</b><br><br>"
+                f"<b>Jusqu'où voulez-vous que j'oublie ?</b><br>"
+                f"1. 🔹 Uniquement ce que j'ai retenu de cette discussion<br>"
+                f"2. 🔸 TOUT ce que je sais sur ces sujets, toutes discussions confondues<br><br>"
+                f"Tapez 1 ou 2 :"
+            ),
             "type": "text",
             "placeholder": "1 ou 2"
         })
@@ -170,8 +206,8 @@ class Action:
         if not scope_raw:
             return None
             
-        scope_choice = (scope_raw.strip() == "1")
-        scope_text = "cette conversation" if scope_choice else "toute votre mémoire globale"
+        scope_choice = (str(scope_raw).strip() == "1")
+        scope_text = "cette discussion" if scope_choice else "toute ma mémoire long terme"
         
         # 4. DRY RUN (Prévisualisation des cibles exactes)
         must_filters = [
@@ -188,14 +224,24 @@ class Action:
             await events.toast("Aucun souvenir trouvé pour ces tags dans ce périmètre.", "info")
             return None
             
-        slug_preview = "<br>".join([f"• <i>{s}</i>" for s in impacted_slugs[:10]])
-        if len(impacted_slugs) > 10:
-            slug_preview += f"<br>... et {len(impacted_slugs) - 10} autres."
+        # Tri alphabétique des sujets impactés
+        impacted_slugs.sort()
+        slug_items = "".join([f"<div style='padding:1px 0'>• <i>{s}</i></div>" for s in impacted_slugs])
+        slug_preview = (
+            f"<div style='max-height:150px; overflow-y:auto; border:1px solid #444; "
+            f"border-radius:6px; padding:6px 8px; margin:6px 0; background:rgba(0,0,0,0.2); "
+            f"font-size:12px; scrollbar-width:thin;'>{slug_items}</div>"
+        )
 
         # 5. Confirmation finale Sécurisée
         final_conf = await events.confirm(
             "⚠️ Confirmation finale de suppression",
-            f"ECHO va oublier <b>{len(impacted_slugs)} souvenir(s)</b> associé(s) aux tags [{', '.join(selected_tags)}] dans {scope_text}.<br><br><b>Sujets impactés :</b><br>{slug_preview}<br><br>Cette action est irréversible. Continuer ?"
+            (
+                f"ECHO va oublier <b>{len(impacted_slugs)} souvenir(s)</b> associé(s) aux tags "
+                f"[{', '.join(selected_tags)}] dans {scope_text}.<br><br>"
+                f"<b>Sujets impactés :</b>{slug_preview}"
+                f"Cette action est irréversible. Continuer ?"
+            )
         )
 
         if not final_conf:

@@ -12,8 +12,11 @@ description: 190.8: Migration type 'summarized' -> 'rag_ephemeral'.
              TEMPERATURE/TOP_P/THINKING_LEVEL. Remplacement par constantes echo_constants.
              192.2: import get_ca_model_id, HUD quota par modèle CA courant, crédits réels, reset en minutes.
              192.3: HUD : RPD, RPM et modèle CA ajoutés au tooltip quota. Extraction RPD, RPM et modèle CA depuis model_quota, passage à deploy_context_gauge.
-             192.4: Docstring new_cognitive_level : FLASH = moteur agentique, PRO = dernier recours.
-             Valence de la Mort atténuée par RAG éphémère (memorize_that).
+             192.5: Fix docstring new_cognitive_level : escalade FLASH systématique pour tâches
+             agentiques, reference save_memory/save_session_context, PRO assoupli.
+             Valence de la Mort atténuée par RAG éphémère (save_session_context).
+             192.6: UserValve ENABLE_PAID_CREDITS (défaut False) — crédits Google One AI
+             désactivés par défaut. Persistance write-on-change dans identity.db.
 """
 
 # ==============================================================================
@@ -444,6 +447,7 @@ class Pipe:
         MODEL_SELECTION: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO", "AUTO", "AUTO_PRO"] = Field(default="AUTO")
         # Thinking, temperature, topP et max_tokens sont des constantes ECHO (echo_constants.py v4.8).
         # Plus de valves pour ces paramètres.
+        ENABLE_PAID_CREDITS: bool = Field(default=False, description="Activer l'utilisation des crédits Google One AI pour les requêtes OAuth2. Désactivé par défaut.")
         MAX_CASCADE_ATTEMPTS: int = Field(default=5, ge=3, le=10, description="Nombre max de transferts de modèles autorisés par tour.")
 
     def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
@@ -457,6 +461,12 @@ class Pipe:
         auth = AuthService(user_id=__user__["id"])
         from echo_utils import EchoAuth
         echo_auth = EchoAuth(user_id=__user__["id"])
+
+        # Synchronisation write-on-change : préférence crédits → identity.db
+        stored_credits = echo_auth.get_auth_data("echo_enable_paid_credits", __user__["id"])
+        valve_credits = str(user_valves.ENABLE_PAID_CREDITS)
+        if stored_credits != valve_credits:
+            echo_auth.save_api_key("echo_enable_paid_credits", valve_credits, __user__["id"])
 
         # --- [NOUVEAU] DETECTION ET INTERCEPTION DE CLÉ API ---
         api_key_from_filter = body.get("_api_key")
@@ -613,22 +623,26 @@ class Pipe:
                     escalation_tool = {
                         "name": "new_cognitive_level",
                         "description": (
-                            "Ajuste la puissance de calcul d'ECHO selon la nature de la tâche.\n\n"
+                            "Ajuste le niveau cognitif d'ECHO. Tu DOIS appeler cet outil AVANT "
+                            "toute tâche non-triviale pour garantir la qualité de la réponse.\n\n"
                             "## Règles de sélection\n"
                             "- **MODEL_LITE** (Réflexe — défaut) : Salutations, remerciements, extractions simples, "
                             "traduction courte, questions factuelles basiques.\n"
-                            "- **MODEL_FLASH** (Exécution — moteur agentique) : Toute tâche non-triviale. "
-                            "Recherche web, écriture de code, analyse sémantique, synthèse de documents, "
-                            "orchestration d'outils, réponses structurées, raisonnement multi-étapes ordinaire.\n"
-                            "  \u2192 Préférer FLASH dès que la tâche dépasse le simple réflexe.\n"
-                            "- **MODEL_PRO** (Expertise — dernier recours) : Uniquement si FLASH est "
-                            "manifestement insuffisant. Architectures systèmes complexes, refactoring multi-fichiers "
-                            "avec contraintes imbriquées, logique mathématique formelle, raisonnement philosophique profond.\n"
-                            "  \u2192 Ne pas escalader vers PRO par défaut ou par précaution. Justifier explicitement l'insuffisance de FLASH.\n\n"
+                            "- **MODEL_FLASH** (Exécution — moteur agentique) : OBLIGATOIRE pour toute "
+                            "tâche non-triviale. Recherche web, écriture de code, analyse sémantique, "
+                            "synthèse de documents, orchestration d'outils, planification, réponses "
+                            "structurées, raisonnement multi-étapes.\n"
+                            "  \u2192 Escalader vers FLASH SYSTÉMATIQUEMENT dès que la tâche "
+                            "dépasse le simple réflexe. Ne pas rester en LITE par inertie.\n"
+                            "- **MODEL_PRO** (Expertise) : Pour les tâches de haute complexité où "
+                            "FLASH a échoué ou serait insuffisant. Architectures systèmes complexes, "
+                            "refactoring multi-fichiers avec contraintes imbriquées, logique formelle.\n"
+                            "  \u2192 Justifier le besoin de PRO. Redescendre vers FLASH ou LITE "
+                            "une fois la tâche complexe accomplie.\n\n"
                             "## Corrélation contextuelle\n"
-                            "La saturation contextuelle est atténuée par le RAG éphémère (memorize_that stocke "
-                            "les éléments critiques en mémoire rapide). Vigilance utile à haute charge (> 50%) "
-                            "pour les tâches à lecture profonde de l'historique — préférer alors FLASH ou PRO."
+                            "La saturation contextuelle est atténuée par le RAG éphémère (save_memory "
+                            "et save_session_context stockent les éléments critiques). Vigilance "
+                            "accrue à haute charge (> 50%) — préférer alors FLASH ou PRO."
                         ),
                         "parameters": {
                             "type": "object",

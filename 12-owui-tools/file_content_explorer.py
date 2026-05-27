@@ -1,8 +1,8 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.8
-description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe).
+version: 5.109.10
+description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia).
 """
 
 import os
@@ -112,8 +112,7 @@ class Tools:
     async def semantic_probe(
         self, 
         file_id: str, 
-        query: str, 
-        thinking_level: str = "HIGH",
+        query: str,
         __user__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
@@ -137,7 +136,7 @@ class Tools:
                 "generationConfig": {
                     "temperature": TEMP_DEFAULT,
                     "topP": TOP_P_DEFAULT,
-                    "thinkingConfig": {"includeThoughts": True, "thinkingLevel": thinking_level.lower()}
+                    "thinkingConfig": {"includeThoughts": True, "thinkingLevel": "high"}
                 }
             }
             data = await EchoGeminiClient.call(
@@ -207,16 +206,22 @@ class Tools:
         try:
             if is_url:
                 await events.status("🌐 Validation image distante...")
-                # Vérification HEAD préalable (lève les 403/404 tôt)
                 h = get_stealth_headers(target)
-                async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
-                    r = await c.head(target, headers=h)
-                    if r.status_code >= 400:
-                        # Certains serveurs bloquent HEAD, on tente un GET partiel
-                        r = await c.get(target, headers=h, timeout=10.0)
-                        r.raise_for_status()
-                
-                title = f"Distant : {target[:50]}..."
+                server_ok = True
+                try:
+                    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+                        r = await c.head(target, headers=h)
+                        if r.status_code >= 400:
+                            # Certains serveurs bloquent HEAD, on tente un GET partiel
+                            r = await c.get(target, headers={**h, "Range": "bytes=0-0"}, timeout=10.0)
+                            r.raise_for_status()
+                except Exception:
+                    # Le serveur backend ne peut pas y accéder, mais le
+                    # navigateur client pourra peut-être. On tente quand même.
+                    server_ok = False
+
+                suffix = "" if server_ok else " ⚠️ (non vérifié côté serveur)"
+                title = f"Distant : {target[:50]}...{suffix}"
                 img_url = target
             else:
                 fpath = resolve_upload_file_path(uid, target, self.uploads_dir)

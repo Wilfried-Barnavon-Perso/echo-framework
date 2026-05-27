@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 8.9
+# Version : 9.1
 # ==============================================================================
 # CHANGELOG 8.9 : Tunnel SSH ephemere PKCE (asyncssh).
 #                 Ports SSH 8020-8024 exposes par Docker (connexion client SSH).
@@ -110,6 +110,15 @@ services:
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
     command: >
       /bin/bash -c "pip install mgzip && ./start.sh"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+      gemma-distiller:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
 
   # 2. Admin Manager (Dashboard Système ECHO)
   admin-manager:
@@ -159,6 +168,15 @@ services:
     # EXPOSITION : Port 3001 ouvert pour le Reverse Proxy distant
     ports:
       - "3001:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:3001/\")' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      open-webui:
+        condition: service_healthy
 
   # ============================================================================
   # SECTION 2 : WORKERS INTERNES (BACKEND)
@@ -180,6 +198,12 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5000/health\")' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   browser-agent:
     image: python:3.14-slim
@@ -199,6 +223,12 @@ services:
       - "echo.hot-reload=true"
     command: >
       /bin/bash -c "pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5002/health\")' 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
 
   # 3. SearxNG (Métamoteur de recherche souverain)
   searxng:
@@ -224,6 +254,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   # 5. Watchtower (Auto-Update)
   watchtower:
@@ -250,14 +286,18 @@ services:
     restart: always
     networks:
       - echo-network
-    ports:
-      - "6333:6333"
     volumes:
       - echo-qdrant-data:/qdrant/storage
     environment:
       - TZ=Europe/Paris
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ':18BD' /proc/net/tcp || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # 6. ECHO Embedding Worker (BAAI/bge-m3 — Text RAG, multilingue, 1024d)
   embedding:
@@ -272,8 +312,6 @@ services:
       - TZ=Europe/Paris
       - MODEL_ID=BAAI/bge-m3
       - MAX_LENGTH=512
-    ports:
-      - "7997:7997"
     volumes:
       - /opt/ECHO/docker-embedding-worker/app.py:/app/app.py:ro
       - echo-embedding-cache:/root/.cache/huggingface
@@ -284,6 +322,49 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:7997/health\")' 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    depends_on:
+      qdrant:
+        condition: service_healthy
+
+  # 7. ECHO Gemma Distiller (Gemma 4 E4B — Distillation locale, GGUF Q5_K_M)
+  gemma-distiller:
+    build:
+      context: /opt/ECHO/docker-gemma-distiller
+      dockerfile: Dockerfile
+    container_name: echo-gemma-distiller
+    restart: always
+    networks:
+      - echo-network
+    environment:
+      - TZ=Europe/Paris
+      - MODEL_PATH=/models/distiller.gguf
+      - N_CTX=4096
+      - MAX_TOKENS=2048
+    volumes:
+      - /opt/ECHO/docker-gemma-distiller/app.py:/app/app.py:ro
+      - /opt/ECHO/models:/models
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:7998/health\")' 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    depends_on:
+      qdrant:
+        condition: service_healthy
 
 # ==============================================================================
 # NETWORKS & VOLUMES

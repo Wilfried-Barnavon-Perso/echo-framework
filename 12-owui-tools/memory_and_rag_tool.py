@@ -1,7 +1,7 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.1
+version: 2.2
 description: 1.2: Ajout forget_memory. 1.3: RAG éphémère. 1.4: Mise à jour version. 1.5: Reranking par importance (MEMORY_IMPORTANCE_WEIGHTS) dans recall_memories.
              1.6: Docstrings proactifs memorize_that + recall_memories. Fix double-docstring (bug Python L82-83).
              1.7: Docstring proactif query_distilled_data + distinction claire RAG organique vs éphémère.
@@ -10,6 +10,8 @@ description: 1.2: Ajout forget_memory. 1.3: RAG éphémère. 1.4: Mise à jour v
              1.9: Ajout save_session_context (outil d'écriture RAG éphémère, symétrique de search_session_context).
              2.0: Réécriture complète des 6 docstrings — format orienté-modèle (résumé/Quand/Paramètres).
              2.1: Mention Vallée de la Mort dans les 4 docstrings pertinents.
+             2.2: Directives de reformulation search_memory et list_memory_topics (contenu
+             invisible pour l'utilisateur dans l'UI OWUI).
 """
 
 from typing import Optional, List, Any, Dict
@@ -177,6 +179,10 @@ class Tools:
 
         Les souvenirs d'importance élevée (Clé, Axiome) remontent même avec une faible similarité.
         Préférer des requêtes courtes et précises ("préférences Python", "décision architecture").
+
+        IMPORTANT : Les résultats de cette recherche sont encapsulés dans un bloc
+        technique invisible pour l'utilisateur. Reformule les souvenirs retrouvés
+        dans ta réponse de manière naturelle et synthétique.
         """
 
         events = EchoEvents(__event_emitter__, __event_call__)
@@ -267,6 +273,9 @@ class Tools:
         - Avant un forget_memory, pour trouver le slug exact à supprimer
         - Pour répondre à "qu'est-ce que tu sais sur moi ?" ou "qu'as-tu mémorisé ?"
         - Pour vérifier si un sujet a déjà été indexé avant d'utiliser search_memory
+
+        IMPORTANT : Le contenu retourné est invisible pour l'utilisateur. Présente
+        la liste des topics dans ta réponse en langage naturel.
         """
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id"):

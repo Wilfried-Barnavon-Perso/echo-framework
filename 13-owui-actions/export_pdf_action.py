@@ -1,7 +1,7 @@
 """
-title: Export PDF Conversation
+title: Export PDF
 author: Wilfried BARNAVON
-version: 1.9
+version: 2.2
 description: 1.9: Fix CSS corrompu — les commentaires JS dans un tableau join() produisaient
              des valeurs 'undefined' dans le CSS final, cassant les sélecteurs @media print.
              Ajout de **kwargs dans la signature action() pour compatibilité OWUI.

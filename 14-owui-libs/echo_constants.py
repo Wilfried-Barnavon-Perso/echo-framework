@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.1
+version: 5.2
 description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
@@ -20,6 +20,8 @@ description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              5.0: Renommage des identifiants Code Assist → AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
              CODE_ASSIST_BASE_URL→AGY_BASE_URL, CODE_ASSIST_MODEL_MAP→AGY_MODEL_MAP (alias rétrocompat conservé).
              5.1: Ajout constantes Strategic Planner (PLAN_STATUS, PLAN_TASK_STATUS, PLAN_EXECUTABLE_STATUSES).
+             5.2: Ajout ECHO_GEMMA_URL, MODEL_LOCAL_GEMMA (distillation locale Gemma 4 E4B).
+                  Ajout entrée LOCAL_GEMMA dans MODEL_ROUTING.
 """
 
 import os
@@ -49,6 +51,7 @@ ECHO_AGY_USER_AGENT = "antigravity/2.1.0 (language_server; os_type=Windows; os_v
 
 # Points d'accès Locaux (Souveraineté)
 ECHO_EMBEDDING_URL = "http://echo-embedding:7997/v1"
+ECHO_GEMMA_URL     = "http://echo-gemma-distiller:7998"  # Distillation locale (Gemma 4 E4B)
 
 # ==============================================================================
 # 1. PROTOCOLE ANTIGRAVITY 2.1 — AUTH UNIFIÉE
@@ -167,6 +170,7 @@ MODEL_LITE  = "gemini-3.1-flash-lite"   # LITE  — identique sur les deux APIs 
 # --- MÉMOIRE ORGANIQUE V2 ---
 MODEL_DISTILLATION = "gemini-2.5-flash"  # identique sur les deux APIs ✅ 200
 MODEL_EMBEDDING    = "BAAI/bge-m3"      # Modèle texte-first, multilingue, 1024d, 8192 tokens
+MODEL_LOCAL_GEMMA  = "LOCAL_GEMMA"      # Distillation locale (Gemma 4 E4B, GGUF Q5_K_M)
 
 # Table de capacités Code Assist — source de vérité documentaire.
 # max_output_tokens : limites réelles certifiées par diagnostic live v2.1 (2026-05-25).
@@ -289,6 +293,7 @@ MODEL_ROUTING = {
     "MODEL_FLASH":        MODEL_FLASH,
     "MODEL_PRO":          MODEL_PRO,
     "MODEL_DISTILLATION": MODEL_DISTILLATION,  # Fix : résout la clé string dans call_distillation
+    "LOCAL_GEMMA":        MODEL_LOCAL_GEMMA,    # Résout vers le service de distillation local
 }
 
 # IDENTITÉ : ID Technique -> Label de Catégorie (Pour le badge ##MODEL_ID##)

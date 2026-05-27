@@ -1,10 +1,12 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.19
+version: 5.20
 description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro. 5.17: Ajout show_image_js (injection JS sans HTMLResponse).
              5.18: Tooltip AUTHENTIFICATION refondu : section QUOTAS détaillée (Crédits, Quota modèle, Reset, Type).
              5.19: Nouveaux paramètres quota (quota_model, RPD, RPM) dans la signature et le tooltip.
+             5.20: Refonte show_image_js — réutilise le moteur WebPlayer (HUD navigateur) avec
+             paramètres direct_url et icon. Icône par défaut 👁️ (image), 🌐 pour le navigateur.
 """
 
 from fastapi.responses import HTMLResponse
@@ -169,12 +171,13 @@ class EchoUI(EchoRichUI):
           return False
 
   @staticmethod
-  def _generate_webplayer_js(b64: str, mime: str, metadata: list, current_url: str, hud_id: str, state_key: str) -> str:
-    """Génère le moteur de pilotage ECHO WEBPLAYER (v5.15 Équilibre Souverain Pro)."""
+  def _generate_webplayer_js(b64: str, mime: str, metadata: list, current_url: str, hud_id: str, state_key: str, direct_url: str = None, icon: str = "👁️") -> str:
+    """Génère le moteur de pilotage ECHO WEBPLAYER (v5.20 Équilibre Souverain Pro)."""
     meta_j = std_json.dumps(metadata).decode('utf-8')
     b64_j = std_json.dumps(b64).decode('utf-8')
     url_j = std_json.dumps(current_url).decode('utf-8')
     mime_j = std_json.dumps(mime).decode('utf-8')
+    direct_url_j = std_json.dumps(direct_url or "").decode('utf-8')
 
     return f"""
   (function() {{
@@ -184,7 +187,8 @@ class EchoUI(EchoRichUI):
 
     const payload = {{
       b64: {b64_j}, mime: {mime_j}, metadata: {meta_j},
-      url: {url_j}
+      url: {url_j},
+      directUrl: {direct_url_j}
     }};
 
     if (!window[ENGINE_KEY]) {{
@@ -355,7 +359,7 @@ class EchoUI(EchoRichUI):
           
           this.hud.innerHTML = `
             <div id="${{HUD_ID}}-header" style="height:${{this.headerH}}px; padding:0 15px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:12px; border-bottom:1px solid #222; cursor:move; user-select:none; box-sizing:border-box;">
-              <span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">🌐</span>
+              <span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">{icon}</span>
               <input id="${{HUD_ID}}-url" type="text" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:6px; color:#00d4ff; font-size:11px; padding:6px 12px; outline:none; font-family:monospace;" readonly />
               <div style="display:flex; gap:8px;">
                 <button id="${{HUD_ID}}-btn-zoom" title="Maximiser (Ajuster)" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;">⛶</button>
@@ -412,7 +416,7 @@ class EchoUI(EchoRichUI):
             }});
             this.syncLayout();
           }};
-          img.src = "data:" + data.mime + ";base64," + data.b64;
+          img.src = data.directUrl || ("data:" + data.mime + ";base64," + data.b64);
         }}
       }};
     }}
@@ -423,7 +427,7 @@ class EchoUI(EchoRichUI):
   @staticmethod
   async def monitor_ECHO(events: Any, b64: str, metadata: List[Dict] = None, hud_id: str = "echo-webplayer", state_key: str = "echo_webplayer_state", current_url: str = ""):
     """Déploie le moniteur visuel interactif (HUD) haute performance."""
-    js_code = EchoUI._generate_webplayer_js(b64, "image/png", metadata or [], current_url, hud_id, state_key)
+    js_code = EchoUI._generate_webplayer_js(b64, "image/png", metadata or [], current_url, hud_id, state_key, icon="🌐")
     await events.call("execute", {"code": js_code})
 
   @staticmethod
@@ -495,45 +499,16 @@ class EchoUI(EchoRichUI):
 
   @staticmethod
   def show_image_js(img_url: str, title: str = "Aperçu Image") -> str:
-    """Génère le JS d'injection du viewer image dans le DOM d'Open WebUI.
+    """Réutilise le moteur WebPlayer (HUD navigateur) pour afficher une image.
     Utiliser via events.call('execute', {'code': ...}).
     N'utilise pas HTMLResponse — retour 100% propre, sans pollution du contexte Gemini."""
-    safe_url = img_url.replace('"', '&quot;').replace('`', '\\`')
-    safe_title = title.replace('"', '&quot;').replace('`', '\\`')
-    return f"""
-(function() {{
-  const old = document.getElementById('echo-img-viewer');
-  if (old) old.remove();
-  const overlay = document.createElement('div');
-  overlay.id = 'echo-img-viewer';
-  overlay.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.95);z-index:10001;background:rgba(12,12,12,0.97);border:1px solid #333;border-radius:12px;box-shadow:0 25px 70px rgba(0,0,0,0.9);color:white;font-family:sans-serif;min-width:320px;max-width:90vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;animation:echoFadeIn 0.2s ease forwards;';
-  const style = document.createElement('style');
-  style.textContent = '@keyframes echoFadeIn{{from{{opacity:0;transform:translate(-50%,-50%) scale(0.95)}}to{{opacity:1;transform:translate(-50%,-50%) scale(1)}}}}';
-  document.head.appendChild(style);
-  overlay.innerHTML = `
-    <div style="padding:10px 15px;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #222;cursor:move;">
-      <span style="font-size:13px;color:#00d4ff;">👁️ {safe_title}</span>
-      <button onclick="document.getElementById('echo-img-viewer').remove()" style="background:none;border:none;color:#ef4444;font-size:18px;cursor:pointer;">×</button>
-    </div>
-    <div style="overflow:auto;padding:10px;background:#000;display:flex;align-items:center;justify-content:center;">
-      <img src="{safe_url}" style="max-width:80vw;max-height:75vh;border-radius:6px;display:block;" />
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  // Drag basique sur le header
-  const header = overlay.querySelector('div');
-  header.addEventListener('mousedown', function(e) {{
-    if(e.target.tagName==='BUTTON') return;
-    let ox=e.clientX, oy=e.clientY;
-    const rect=overlay.getBoundingClientRect();
-    let tx=rect.left, ty=rect.top;
-    overlay.style.transform='none'; overlay.style.left=tx+'px'; overlay.style.top=ty+'px';
-    const move=me=>{{ tx+=me.clientX-ox; ty+=me.clientY-oy; ox=me.clientX; oy=me.clientY; overlay.style.left=tx+'px'; overlay.style.top=ty+'px'; }};
-    const up=()=>{{ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); }};
-    document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
-  }});
-}})();
-"""
+    return EchoUI._generate_webplayer_js(
+        b64="", mime="", metadata=[],
+        current_url=title,
+        hud_id="echo-img-viewer",
+        state_key="echo_img_viewer_state",
+        direct_url=img_url
+    )
 
   @classmethod
   def image_viewer(cls, img_url: str, title: str = "Aperçu Image") -> HTMLResponse:

@@ -1,7 +1,7 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 7.13
+version: 7.15
 description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
              Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
@@ -14,8 +14,13 @@ description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migra
              default max_tokens 65000→MAX_TOKENS_DEFAULT.
              7.12: EchoAuth.get_model_quota() — lecture quota par modèle CA depuis identity.db.
              Correction commentaire _prepare_request_context (thinkingConfig non strippé depuis v1.1).
-             7.13: Propagation renommage AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
+             7.13: Propagation renommage AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
              CODE_ASSIST_BASE_URL→AGY_BASE_URL (echo_constants v5.0). Variables is_code_assist→is_agy.
+             7.14: Routage LOCAL_GEMMA dans call_distillation — distillation locale par défaut
+             (Gemma 4 E4B via echo-gemma-distiller). Fallback API transparent si service indisponible.
+             Ajout méthode _call_local_distiller (pattern generate_embedding).
+             7.15: Crédits OAuth2 opt-in via UserValve pipe (persistance identity.db).
+             enabled_credit_types omis par défaut (alignement AGY-IDE).
 """
 
 import copy
@@ -50,6 +55,7 @@ from echo_constants import (
     GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, AGY_BASE_URL,
     GOOGLE_OAUTH_TOKEN_LIFETIME, AUTH_DATA_USER_TIER,
     MAX_TOKENS_DEFAULT,  # Utilisé comme valeur par défaut de call_distillation.max_tokens
+    ECHO_GEMMA_URL,      # URL du service de distillation local (Gemma 4 E4B)
 )
 from echo_protocol import get_ca_model_id, build_ca_generation_config
 
@@ -428,14 +434,20 @@ class EchoGeminiClient:
                 "user_prompt_id": prompt_id, # Correction : snake_case requis ici
                 "request": request_body
             }
-            # LOGIQUE DES CRÉDITS AI
-            enabled_credits = None
-            if tier_id and ("g1-" in tier_id.lower() or "standard" in tier_id.lower()):
-                enabled_credits = ["GOOGLE_ONE_AI"]
-            elif g1_credits and int(g1_credits) > 50:
-                enabled_credits = ["GOOGLE_ONE_AI"]
-            if enabled_credits:
-                wrapped_payload["enabled_credit_types"] = enabled_credits
+            # CRÉDITS AI — opt-in via UserValve pipe (persisté identity.db)
+            # Par défaut : champ omis (alignement AGY-IDE, pas de crédits consommés)
+            user_id_for_credits = provider.get("user_id")
+            if user_id_for_credits:
+                _auth = EchoAuth(user_id=user_id_for_credits)
+                credits_enabled = _auth.get_auth_data("echo_enable_paid_credits", user_id_for_credits)
+                if credits_enabled == "True":
+                    enabled_credits = None
+                    if tier_id and ("g1-" in tier_id.lower() or "standard" in tier_id.lower()):
+                        enabled_credits = ["GOOGLE_ONE_AI"]
+                    elif g1_credits and int(g1_credits) > 50:
+                        enabled_credits = ["GOOGLE_ONE_AI"]
+                    if enabled_credits:
+                        wrapped_payload["enabled_credit_types"] = enabled_credits
 
             return {"url": api_url, "headers": headers, "payload": wrapped_payload}
 
@@ -497,18 +509,39 @@ class EchoGeminiClient:
         target_model: Optional[str] = None
     ) -> Union[Dict, str]:
         """
-        Exécute une tâche de distillation (extraction sémantique) via Gemini 2.5 Flash (par défaut).
-        Gère automatiquement le nettoyage des thoughts et le parsing JSON.
+        Exécute une tâche de distillation (extraction sémantique).
+        LOCAL_GEMMA par défaut (Gemma 4 E4B via echo-gemma-distiller).
+        Fallback API (Gemini 2.5 Flash) si le service local est indisponible.
+        Les appels avec target_model explicite (FLASH, PRO) restent routés vers l'API Gemini.
         """
         from echo_constants import MODEL_DISTILLATION, MODEL_ROUTING, TEMP_DISTILLATION, TOP_P_DISTILLATION
         user_id = __user__.get("id", "system")
         chat_id = __metadata__.get("chat_id")
         
-        # Résolution du modèle (Priorité: target_model -> MODEL_DISTILLATION)
-        actual_model = MODEL_ROUTING.get(target_model, target_model) if target_model else MODEL_DISTILLATION
+        # Résolution du modèle :
+        # - target_model explicite (FLASH, PRO) → API Gemini
+        # - target_model=None ou "MODEL_DISTILLATION" → LOCAL_GEMMA (service local)
+        use_local = False
+        if target_model and target_model != "MODEL_DISTILLATION":
+            actual_model = MODEL_ROUTING.get(target_model, target_model)
+        else:
+            use_local = True
+            actual_model = MODEL_DISTILLATION  # Fallback si le local échoue
 
-        # 1. Préparation du Payload
+        # 1. Préparation du contenu
         contents = parts if parts else [{"role": "user", "parts": [{"text": prompt}]}]
+
+        # --- ROUTAGE LOCAL (Gemma 4 E4B via echo-gemma-distiller) ---
+        if use_local:
+            try:
+                return await EchoGeminiClient._call_local_distiller(
+                    prompt, contents, is_json, max_tokens
+                )
+            except Exception as e:
+                print(f"[EchoGemini] ⚠️ Service Gemma local indisponible ({e}). Fallback API Gemini...")
+                # Fallback transparent → API Gemini 2.5 Flash
+
+        # --- ROUTAGE API (Gemini 2.5 Flash ou modèle explicite) ---
         payload = {
             "contents": contents,
             "generationConfig": {
@@ -520,11 +553,10 @@ class EchoGeminiClient:
         if is_json:
             payload["generationConfig"]["response_mime_type"] = "application/json"
 
-        # 2. Appel au Cortex
         try:
             data = await EchoGeminiClient.call(actual_model, payload, user_id, chat_id=chat_id)
 
-            # 3. Extraction et Nettoyage
+            # Extraction et Nettoyage
             target = data.get("response", {}) if "response" in data else data
             candidates = target.get("candidates", [])
             if not candidates: return {} if is_json else ""
@@ -537,6 +569,53 @@ class EchoGeminiClient:
             return clean_text
         except:
             return {} if is_json else "Analyse indisponible."
+
+    @staticmethod
+    async def _call_local_distiller(
+        prompt: str,
+        contents: List[Dict],
+        is_json: bool,
+        max_tokens: int
+    ) -> Union[Dict, str]:
+        """
+        Appel direct au service Gemma local (bypass complet du maillage d'authentification Gemini).
+        Même pattern que generate_embedding : POST HTTP direct via httpx.
+        Lève une exception si le service est indisponible (le caller gère le fallback).
+        """
+        from echo_constants import TEMP_DISTILLATION
+        client = await _get_global_client()
+
+        # Construction des messages au format OpenAI depuis le format Gemini contents[]
+        messages = []
+        for c in contents:
+            role = c.get("role", "user")
+            text_parts = [p.get("text", "") for p in c.get("parts", []) if "text" in p]
+            if text_parts:
+                messages.append({"role": role, "content": "".join(text_parts)})
+
+        # Si prompt explicite et pas de messages construits, utiliser le prompt directement
+        if not messages and prompt:
+            messages = [{"role": "user", "content": prompt}]
+
+        payload = {
+            "messages": messages,
+            "temperature": TEMP_DISTILLATION,
+            "max_tokens": min(max_tokens, 2048),  # Le service local est capé à 2048 par défaut
+        }
+        if is_json:
+            payload["response_format"] = {"type": "json_object"}
+
+        resp = await client.post(
+            f"{ECHO_GEMMA_URL}/v1/chat/completions",
+            json=payload,
+            timeout=60
+        )
+        resp.raise_for_status()
+        text = resp.json()["choices"][0]["message"]["content"].strip()
+
+        if is_json:
+            return std_json.loads(text)
+        return text
 
     @staticmethod
     async def index_text_in_ephemeral_rag(

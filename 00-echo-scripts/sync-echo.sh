@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 4.5
+# VERSION : 4.6
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -167,6 +167,7 @@ sync_resource "$SRC_DIR/20-docker-admin-manager"    "$ECHO_ROOT/docker-admin-man
 sync_resource "$SRC_DIR/21-docker-python-worker"    "$ECHO_ROOT/docker-python-worker"
 sync_resource "$SRC_DIR/22-docker-browser-agent/browser_api.py" "$ECHO_ROOT/docker-browser-agent/browser_api.py"
 sync_resource "$SRC_DIR/23-docker-embedding-worker" "$ECHO_ROOT/docker-embedding-worker"
+sync_resource "$SRC_DIR/24-docker-gemma-distiller"  "$ECHO_ROOT/docker-gemma-distiller"
 
 # Lien symboliques
 echo "   🔗 Création des liens symboliques globaux..."
@@ -187,7 +188,7 @@ fi
 # Nettoyage et Permissions
 echo "   🧹 Nettoyage des caractères Windows et permissions..."
 # Liste des dossiers à nettoyer (tous les dossiers de prod sous ECHO_ROOT)
-PROD_DIRS="$ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/docker-admin-manager $ECHO_ROOT/docker-python-worker $ECHO_ROOT/docker-browser-agent $ECHO_ROOT/docker-embedding-worker"
+PROD_DIRS="$ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/docker-admin-manager $ECHO_ROOT/docker-python-worker $ECHO_ROOT/docker-browser-agent $ECHO_ROOT/docker-embedding-worker $ECHO_ROOT/docker-gemma-distiller"
 
 find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
 find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec sed -i 's/\r$//' {} +

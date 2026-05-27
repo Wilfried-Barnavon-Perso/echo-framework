@@ -146,7 +146,7 @@
         </tr>
         <tr>
           <td><code>consult_council(question, participants, target_model, synthesis_model)</code></td>
-          <td>Table Ronde Multi-Experts (<strong>protocole Delphi</strong>). Convoque N experts (2–5, CSV de skill_ids) pour une délibération en tours parallélisés. Chaque participant reçoit un nom factice (« Participant 1 ») et voit le roster (rôles) mais <em>pas</em> les instructions des autres. Après les tours de parole, un modèle synthétiseur (défaut <code>MODEL_FLASH</code>) produit une distillation structurée. Paramètres optionnels : <code>rounds</code> (défaut 3, max 5), <code>history_depth</code>, <code>distillation_focus</code>.</td>
+          <td>Table Ronde Multi-Experts (<strong>protocole Delphi</strong>). Convoque N experts (2–5, CSV de skill_ids) pour une délibération en tours parallélisés. <strong>Prérequis :</strong> au minimum 2 participants distincts — si moins de 2 skills sont fournis, l'outil retourne une erreur actionnable incluant la liste des skills disponibles et une invite à utiliser <code>forge_skill</code>. Chaque participant reçoit un nom factice (« Participant 1 ») et voit le roster (rôles) mais <em>pas</em> les instructions des autres. Après les tours de parole, un modèle synthétiseur (défaut <code>MODEL_FLASH</code>) produit une distillation structurée. Paramètres optionnels : <code>rounds</code> (défaut 3, max 5), <code>history_depth</code>, <code>distillation_focus</code>.</td>
         </tr>
         <tr>
           <td><code>forge_skill(skill_id, name, description, instructions)</code></td>
@@ -219,7 +219,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.160.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

@@ -37,7 +37,7 @@
       </p>
     </div>
 
-    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.1)</h2>
+    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.8)</h2>
 
     <p>
       Ce filtre est la porte d'entrée cognitive d'ECHO. Il opère en deux phases :
@@ -66,7 +66,7 @@ flowchart LR
 
   AN -->|"Image/Audio/PDF<br/>≤ 256 Ko"| B64["📎 Encapsulation Base64<br/>(inlineData natif Gemini)"]
   AN -->|"Texte/Code<br/>≤ 256 Ko"| TXT["📝 Injection Texte Brut<br/>(part text)"]
-  AN -->|"Tout fichier<br/>> 256 Ko"| MOL["🧱 Moulage (Distillation)<br/>gemini-2.5-flash<br/>→ Qdrant echo_ephemeral"]
+  AN -->|"Tout fichier<br/>> 256 Ko"| MOL["🧱 Moulage (Distillation)<br/>Gemma 4 E4B local<br/>→ Qdrant echo_ephemeral"]
   AN -->|"Déjà dans le Vault<br/>(file_id détecté)"| VAULT["📂 Référence Vault<br/>(déduplication — pas de ré-upload)"]
 
   B64 & TXT & MOL & VAULT --> DRAFT["📦 Draft Sémantique<br/>(_echo_user_parts_draft)"]
@@ -85,7 +85,7 @@ flowchart LR
     <p>
       Lorsqu'un fichier dépasse <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko), le filtre déclenche
       <code>_process_file_task()</code> — une tâche asynchrone en arrière-plan. Le modèle
-      <code>MODEL_DISTILLATION</code> (<code>gemini-2.5-flash</code>) produit un distillat structuré
+      <code>MODEL_DISTILLATION</code> (Gemma 4 E4B local, fallback <code>gemini-2.5-flash</code>) produit un distillat structuré
       du fichier, qui est découpé en chunks (<code>CHUNK_SIZE</code>) avec recouvrement
       (<code>CHUNK_OVERLAP</code>) pour préserver le contexte aux jointures,
       vectorisé par bge-m3 (1024d) et stocké dans <code>echo_ephemeral</code> (Qdrant).
@@ -145,23 +145,51 @@ registre_fichiers:
       secret ne « fuit » vers l'interface visuelle quelle que soit la réponse du modèle.
     </p>
 
-    <h2>Filtre 2 — <code>conversation_memory_filter.py</code></h2>
+    <h2>Filtre 2 — <code>conversation_memory_filter.py</code> (v4.0)</h2>
 
     <p>
       Ce filtre ne traite que la phase <strong>Outlet</strong> (post-génération). Il orchestre la
-      consolidation de la mémoire organique à long terme dans Qdrant.
+      consolidation de la mémoire organique à long terme dans Qdrant via une
+      <strong>fenêtre glissante déterministe</strong> à stride fixe.
+    </p>
+
+    <h3>Fenêtre glissante déterministe</h3>
+    <p>
+      Le déclenchement de la distillation repose sur deux paramètres configurables (Valves) :
+    </p>
+    <table>
+      <thead><tr><th>Valve</th><th>Défaut</th><th>Min</th><th>Max</th><th>Rôle</th></tr></thead>
+      <tbody>
+        <tr><td><code>WINDOW_SIZE</code></td><td>5</td><td>2</td><td>10</td><td>Nombre de <strong>nouveaux</strong> messages avant déclenchement</td></tr>
+        <tr><td><code>WINDOW_OVERLAP</code></td><td>2</td><td>0</td><td>5</td><td>Messages de la fenêtre précédente réinjectés pour continuité contextuelle</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Tous les <code>WINDOW_SIZE</code> nouveaux messages, le filtre extrait une fenêtre de
+      <code>WINDOW_SIZE + WINDOW_OVERLAP</code> messages (défaut : 7) et lance la distillation
+      en arrière-plan via <code>asyncio.create_task</code>. Le recouvrement de 2 messages
+      assure la continuité sémantique entre les fenêtres successives, sans perte d'information
+      aux jointures.
+    </p>
+
+    <h3>Nettoyage des messages</h3>
+    <p>
+      Avant distillation, la méthode <code>_clean_messages()</code> produit un texte épuré
+      ne conservant que <code>role</code>, <code>content</code> et les <strong>noms de fichiers joints</strong>.
+      Les UUIDs, timestamps, metadata OWUI et identifiants de branches sont éliminés.
+      Ce nettoyage réduit le budget tokens d'environ 8× par rapport à la sérialisation
+      brute <code>str(messages)</code>, garantissant que chaque token transmis au Gemma Distiller
+      porte de l'information sémantique utile.
     </p>
 
     <h3>Pipeline de distillation et vectorisation</h3>
     <ol>
       <li>
-        <strong>Seuil de déclenchement :</strong> le filtre vérifie si le nombre de messages de la
-        session atteint le seuil minimal configuré (valve <code>MIN_MESSAGES_FOR_MEMORY</code>).
-        En dessous du seuil, aucune action.
-      </li>
-      <li>
-        <strong>Distillation asynchrone :</strong> <code>MODEL_DISTILLATION</code> (Gemini 2.5 Flash)
-        génère un résumé structuré de l'échange utilisateur/assistant.
+        <strong>Distillation asynchrone :</strong> <code>call_distillation</code> route vers le
+        <strong>Gemma Distiller local</strong> (<code>echo-gemma-distiller:7998</code>). En cas d'indisponibilité,
+        fallback transparent vers <code>gemini-2.5-flash</code> (API).
+        Génère un JSON structuré : <code>summary</code> (100–1000 mots), <code>memory_importance</code> (1–5),
+        <code>slug</code> sémantique, et 3–5 <code>tags</code> techniques.
       </li>
       <li>
         <strong>Vectorisation locale :</strong> le résumé est envoyé à l'Embedding Worker
@@ -169,14 +197,21 @@ registre_fichiers:
         Aucune donnée ne quitte l'infrastructure.
       </li>
       <li>
-        <strong>Stockage Qdrant :</strong> le vecteur est upserted dans la collection
-        <code>echo_memory</code>, avec les métadonnées
-        <code>user_id</code>, <code>importance</code> (1–5), <code>created_at</code>.
+        <strong>Collision sémantique :</strong> recherche vectorielle dans <code>echo_memory</code>
+        filtrée par <code>user_id</code>. Si la similarité cosinus dépasse
+        <code>SIMILARITY_THRESHOLD</code> (0.85), fusion LLM des résumés. Si elle dépasse
+        <code>EXACT_MATCH_THRESHOLD</code> (0.95), simple mise à jour de date sans coût LLM.
       </li>
       <li>
-        <strong>Fusion sémantique :</strong> si un souvenir très similaire existe déjà
-        (cosinus &gt; seuil de déduplication), le filtre fusionne les deux en conservant le score
-        d'importance maximal (<code>MEMORY_IMPORTANCE_WEIGHTS</code>).
+        <strong>Fusion préservative :</strong> lors d'une collision, le score
+        <code>memory_importance</code> conservé est le <em>maximum</em> de l'ancien et du nouveau
+        (pas de dégradation d'un souvenir critique).
+      </li>
+      <li>
+        <strong>Stockage Qdrant :</strong> le vecteur est upserted dans la collection
+        <code>echo_memory</code>, avec les métadonnées
+        <code>user_id</code>, <code>chat_id</code>, <code>timestamp</code>,
+        <code>memory_importance</code> (1–5), <code>slug</code>, <code>tags</code>.
       </li>
     </ol>
 
@@ -190,9 +225,9 @@ registre_fichiers:
         <thead><tr><th>Niveau</th><th>Label</th><th>Poids</th><th>Durée TTL</th></tr></thead>
         <tbody>
           <tr><td>1</td><td>Trivial</td><td>0,55</td><td>30 jours</td></tr>
-          <tr><td>2</td><td>Mineur</td><td>0,75</td><td>90 jours</td></tr>
+          <tr><td>2</td><td>Mineur</td><td>0,75</td><td>60 jours</td></tr>
           <tr><td>3</td><td>Utile</td><td>1,00</td><td>180 jours</td></tr>
-          <tr><td>4</td><td>Majeur</td><td>1,30</td><td>360 jours</td></tr>
+          <tr><td>4</td><td>Majeur</td><td>1,30</td><td>365 jours</td></tr>
           <tr><td>5</td><td>Axiome</td><td>1,70</td><td>540 jours</td></tr>
         </tbody>
       </table>
@@ -220,7 +255,7 @@ registre_fichiers:
     </div>
 
     <footer>
-      ECHO Framework — Version 5.159.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

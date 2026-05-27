@@ -100,7 +100,7 @@ flowchart TD
     <p>
       Ce schéma vectoriel représente l'imbrication réelle des modules Python d'ECHO et leurs dépendances.
       Les connexions reproduisent fidèlement les imports déclarés dans le code source
-      (<code>pipe_engine.py v192.4</code>, <code>echo_utils.py v7.12</code>).
+      (<code>pipe_engine.py v192.1</code>, <code>echo_utils.py v7.14</code>).
       Cliquer sur le diagramme pour le zoomer.
     </p>
 
@@ -131,7 +131,7 @@ flowchart TD
         <text x="51" y="74" fill="#94a3b8" font-size="10" font-family="monospace" font-weight="bold">new_context_filter.py</text>
         <text x="51" y="89" fill="#64748b" font-size="9" font-family="monospace">inlet() → Smart Context</text>
         <text x="51" y="102" fill="#64748b" font-size="9" font-family="monospace">_process_file_task() → Moulage</text>
-        <text x="236" y="74" fill="#4ade80" font-size="8">v7.1</text>
+        <text x="236" y="74" fill="#4ade80" font-size="8">v7.8</text>
 
         <!-- Filtre: conversation_memory_filter.py -->
         <rect x="36" y="128" width="230" height="64" rx="6" fill="#1e293b" stroke="#64748b" stroke-width="1"/>
@@ -146,7 +146,7 @@ flowchart TD
         <!-- pipe_engine.py -->
         <rect x="334" y="52" width="222" height="140" rx="6" fill="#172554" stroke="#4338ca" stroke-width="1.5"/>
         <text x="350" y="74" fill="#818cf8" font-size="10" font-family="monospace" font-weight="bold">pipe_engine.py</text>
-        <text x="520" y="74" fill="#4ade80" font-size="8">v192.4</text>
+        <text x="520" y="74" fill="#4ade80" font-size="8">v192.1</text>
         <text x="350" y="92" fill="#64748b" font-size="9" font-family="monospace">pipe() → Orchestrateur principal</text>
         <text x="350" y="106" fill="#64748b" font-size="9" font-family="monospace">prepare_context() → Suture BP</text>
         <text x="350" y="120" fill="#64748b" font-size="9" font-family="monospace">StreamProcessor.process() → SSE</text>
@@ -162,7 +162,7 @@ flowchart TD
         <!-- echo_utils.py -->
         <rect x="36" y="258" width="160" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
         <text x="52" y="278" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_utils.py</text>
-        <text x="186" y="278" fill="#4ade80" font-size="8">v7.12</text>
+        <text x="186" y="278" fill="#4ade80" font-size="8">v7.14</text>
         <text x="52" y="295" fill="#64748b" font-size="9" font-family="monospace">EchoStateManager</text>
         <text x="52" y="309" fill="#64748b" font-size="9" font-family="monospace">EchoGeminiClient</text>
         <text x="52" y="323" fill="#64748b" font-size="9" font-family="monospace">EchoAuth</text>
@@ -174,7 +174,7 @@ flowchart TD
         <!-- echo_auth.py -->
         <rect x="208" y="258" width="140" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
         <text x="224" y="278" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_auth.py</text>
-        <text x="334" y="278" fill="#4ade80" font-size="8">v7.2</text>
+        <text x="334" y="278" fill="#4ade80" font-size="8">v7.3</text>
         <text x="224" y="295" fill="#64748b" font-size="9" font-family="monospace">AuthService</text>
         <text x="224" y="309" fill="#64748b" font-size="9" font-family="monospace">initiate_pkce_flow()</text>
         <text x="224" y="323" fill="#64748b" font-size="9" font-family="monospace">await_pkce_callback()</text>
@@ -198,7 +198,7 @@ flowchart TD
         <!-- echo_constants.py -->
         <rect x="512" y="258" width="60" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
         <text x="542" y="278" text-anchor="middle" fill="#60a5fa" font-size="9" font-family="monospace" font-weight="bold">constants</text>
-        <text x="542" y="294" text-anchor="middle" fill="#4ade80" font-size="7">v4.9</text>
+        <text x="542" y="294" text-anchor="middle" fill="#4ade80" font-size="7">v5.2</text>
         <text x="522" y="312" fill="#64748b" font-size="8" font-family="monospace">MODEL_*</text>
         <text x="522" y="326" fill="#64748b" font-size="8" font-family="monospace">MODEL_MAP_CA</text>
         <text x="522" y="340" fill="#64748b" font-size="8" font-family="monospace">THINKING_*</text>
@@ -326,7 +326,7 @@ flowchart TD
       <div class="card">
         <h3>🌒 Le Filtre (Inlet)</h3>
         <p><strong>Nature :</strong> Middleware d'interception Open WebUI, type <em>Filter</em>.</p>
-        <p><strong>Source :</strong> <code>11-owui-filters/new_context_filter.py</code> (v7.1)</p>
+        <p><strong>Source :</strong> <code>11-owui-filters/new_context_filter.py</code> (v7.8)</p>
         <p>
           Intercepte chaque requête avant le Pipe. Effectue le Smart Context (préanalyse des fichiers
           par Gemini 2.5 Flash), construit le <em>Draft YAML</em> et l'injecte dans les métadonnées
@@ -336,7 +336,7 @@ flowchart TD
       <div class="card">
         <h3>⚙️ Le Pipe (Cortex)</h3>
         <p><strong>Nature :</strong> Moteur d'orchestration Open WebUI, type <em>Pipe</em>.</p>
-        <p><strong>Source :</strong> <code>10-owui-pipes/pipe_engine.py</code> (v192.4)</p>
+        <p><strong>Source :</strong> <code>10-owui-pipes/pipe_engine.py</code> (v192.1)</p>
         <p>
           Se présente comme un modèle GenAI auprès d'Open WebUI. Opère la Suture Bit-Perfect, gère
           la boucle d'outils de l'Arsenal, pilote l'API Gemini en HTTP/2 SSE et scelle chaque tour
@@ -373,7 +373,7 @@ flowchart TD
         <p><strong>Nature :</strong> Pipeline de distillation asynchrone de fichiers volumineux.</p>
         <p>
           Déclenché par le Filtre pour tout fichier dépassant <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko).
-          Gemini 2.5 Flash (<code>MODEL_DISTILLATION</code>) produit un distillat structuré, vectorisé
+          Le Gemma Distiller local (<code>call_distillation</code>, fallback <code>gemini-2.5-flash</code>) produit un distillat structuré, vectorisé
           dans <code>echo_ephemeral</code> (Qdrant, bge-m3). Le modèle principal reçoit un résumé
           (≤ 300 mots) et le <code>slug</code> pour interroger les détails.
         </p>
@@ -566,6 +566,7 @@ flowchart TB
     QD[("🧠 Qdrant Engine<br/>[:6333]")]
     FS[("📂 Vault<br/>(Système de fichiers)")]
     EMB[("🔢 Embedding Worker<br/>[:7997]")]
+    GEM[("🧠 Gemma Distiller<br/>[:7998]")]
   end
 
   subgraph SANDBOX ["🛠️ ZONE 4 : ARSENAL ISOLÉ (Sans accès entrant)"]
@@ -601,6 +602,7 @@ flowchart TB
   AM -. "Health/Prune" .-> Kernel & SQL & QD
 
   QD <--> EMB
+  F -. "Distillation" .-> GEM
 
   classDef node fill:#1e293b,stroke:#475569,stroke-width:2px,color:#f8fafc
   classDef db fill:#0f172a,stroke:#f59e0b,stroke-width:2px,color:#f8fafc
@@ -608,7 +610,7 @@ flowchart TB
   classDef tool fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#f8fafc
 
   class U,BW,OWUI,AM,DOCKER node
-  class SQL,QD,FS,EMB db
+  class SQL,QD,FS,EMB,GEM db
   class F,P core
   class BA,PW,SNG tool
       </div>
@@ -617,7 +619,7 @@ flowchart TB
     <h2>Schéma SQL — Ombres Riches</h2>
 
     <p>
-      La persistance repose sur la classe <code>EchoStateManager</code> (<code>echo_utils.py v7.12</code>).
+      La persistance repose sur la classe <code>EchoStateManager</code> (<code>echo_utils.py v7.14</code>).
       Chaque chat dispose d'une base SQLite dédiée, en mode <strong>WAL</strong> (Write-Ahead Logging)
       pour la résistance aux pannes.
     </p>
@@ -707,7 +709,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework — Version 5.159.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

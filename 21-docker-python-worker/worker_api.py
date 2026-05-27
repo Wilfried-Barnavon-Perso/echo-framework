@@ -7,10 +7,14 @@ import pybase64 as base64
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : 1.3 (ORJSON & PYBASE64 Migration)
+VERSION : 1.5 (CLEAN ERROR)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-03-27
+DATE MAJ : 2026-05-27
 
+CHANGELOG 1.5 :
+- Omission du champ 'error' quand stderr est vide (alignement standard ECHO).
+CHANGELOG 1.4 :
+- Ajout de GET /health pour l'orchestration séquentielle Docker Compose.
 CHANGELOG 1.3 :
 - Migrated to orjson and pybase64 for consistency across the framework.
 CHANGELOG 1.2 :
@@ -35,7 +39,7 @@ def run_isolated_process(code, result_queue):
             os.chdir(temp_dir)
             stdout_capture = io.StringIO()
             stderr_capture = io.StringIO()
-            result = {'status': 'success', 'output': '', 'error': ''}
+            result = {'status': 'success', 'output': ''}
             try:
                 # Contexte d'exécution vierge
                 execution_context = {'__name__': '__main__'}
@@ -43,8 +47,10 @@ def run_isolated_process(code, result_queue):
                     exec(code, execution_context)
                 
                 result['output'] = stdout_capture.getvalue()
-                result['error'] = stderr_capture.getvalue()
-                result['status'] = 'error' if result['error'] else 'success'
+                stderr_output = stderr_capture.getvalue()
+                if stderr_output:
+                    result['error'] = stderr_output
+                    result['status'] = 'error'
             except Exception:
                 result['status'] = 'critical_error'
                 result['error'] = traceback.format_exc()
@@ -85,6 +91,11 @@ def execute_code():
     else:
         logger.error(f"💥 Silent Crash | User: {user_id}")
         return jsonify({'status': 'error', 'error': 'Crash silencieux du processus.'})
+
+@app.route('/health')
+def health():
+    """Healthcheck pour Docker Compose (orchestration séquentielle)."""
+    return jsonify({"status": "ready"})
 
 if __name__ == '__main__':
     # threaded=True permet de traiter les requêtes HTTP en parallèle

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ECHO Web Intelligence v5 : navigation autonome Chromium (Playwright), Browser Agent FastAPI v9.1, port 5002, 14 actions disponibles, SearxNG souverain, Cockpit Replay.">
+  <meta name="description" content="ECHO Web Intelligence v5 : navigation autonome Chromium (Playwright), Browser Agent FastAPI v9.2, port 5002, 14 actions disponibles, SearxNG souverain, Cockpit Replay.">
   <title>ECHO v5 — 7b. Web Intelligence</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -24,7 +24,7 @@
     <h2>Architecture — Browser Agent (Playwright)</h2>
 
     <p>
-      Le Browser Agent est un micro-service Docker dédié (<code>browser_api.py</code> v9.1, FastAPI
+      Le Browser Agent est un micro-service Docker dédié (<code>browser_api.py</code> v9.2, FastAPI
       + Playwright asyncio). Il pilote une instance <strong>Chromium headless</strong> via Playwright.
       Il gère plusieurs sessions navigateur simultanées (jusqu'à 20), chacune liée à un
       <code>chat_id</code> ECHO et nettoyée automatiquement après 1 heure d'inactivité.
@@ -36,7 +36,7 @@
         <tr><td><strong>Conteneur</strong></td><td><code>echo-browser-agent</code></td></tr>
         <tr><td><strong>Port interne</strong></td><td><strong>5002</strong> (exposé via <code>uvicorn host="0.0.0.0" port=5002</code>)</td></tr>
         <tr><td><strong>Source</strong></td><td><code>22-docker-browser-agent/browser_api.py</code></td></tr>
-        <tr><td><strong>Version</strong></td><td>9.1 (TURBO JSON)</td></tr>
+        <tr><td><strong>Version</strong></td><td>9.2 (HEALTHCHECK)</td></tr>
         <tr><td><strong>Moteur</strong></td><td>Playwright Chromium headless, mode Mobile (iPad) ou Desktop configurable</td></tr>
         <tr><td><strong>Bibliothèques</strong></td><td><code>fastapi</code>, <code>playwright</code>, <code>orjson</code>, <code>pybase64</code>, <code>html2text</code></td></tr>
         <tr><td><strong>Max sessions simultanées</strong></td><td>20 (<code>MAX_SESSIONS</code>)</td></tr>
@@ -158,7 +158,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.159.4 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

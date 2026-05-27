@@ -1,7 +1,7 @@
 # ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.147.7
+# VERSION : 5.147.8
 # DATE    : 2026-05-20
 
 # AUTHOR         : Wilfried BARNAVON
@@ -59,7 +59,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.147.7"
+$SCRIPT_VERSION = "5.147.8"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
@@ -269,7 +269,7 @@ if (-not (Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
   New-VM -Name $VMName -MemoryStartupBytes $RAMStartup -Generation 2 -SwitchName $SwitchName -NoVHD
   
   # Le seuil minimal de RAM dynamique est relevé à 4 Go pour satisfaire le noyau d'Ubuntu 26.04
-  Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes 4096MB -MemoryMaximumBytes 8192MB -ProcessorCount 4
+  Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes 4096MB -MemoryMaximumBytes 10240MB -ProcessorCount 4
   Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
   
   Add-VMDvdDrive -VMName $VMName -Path $ISOPath

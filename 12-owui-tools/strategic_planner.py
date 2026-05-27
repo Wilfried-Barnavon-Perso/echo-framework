@@ -1,11 +1,14 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.0
+version: 1.1
 description: 1.0: Outil de planification stratégique — construction, modification et gestion
              de plans d'action via un agent planificateur LLM (cascade PRO→FLASH→LITE).
              Plans persistés en Markdown dans le vault, registre de contrôle SQLite par chat,
              injection automatique dans registre_plan (environnement_contexte).
+             1.1: Docstrings enrichies — instruction de reformulation read_plan, directive
+             tools_summary renforcée dans build_plan, contrainte auto-suppression delete_plan,
+             log diagnostic __tools__.
 """
 
 import sys
@@ -42,8 +45,10 @@ Rédiger un plan d'action structuré en Markdown pour atteindre l'objectif donn�
 
 ## Règles strictes
 1. Le plan est centré sur L'OBJECTIF, pas sur les outils.
-2. Quand un outil est pertinent pour une étape, indique-le avec la notation
-   → `nom_outil` en fin de ligne. C'est une RECOMMANDATION, pas une obligation.
+2. Tu as accès à la liste exhaustive des outils ECHO ci-dessous.
+   Quand un outil est pertinent pour une étape, utilise UNIQUEMENT un nom
+   de la liste ci-dessous avec la notation → `nom_exact_outil` en fin de ligne.
+   N'invente JAMAIS de noms d'outils. Si aucun outil ne correspond, n'en mentionne pas.
 3. Profondeur maximale des sous-tâches : {max_depth} niveaux.
 4. Chaque tâche commence par `- [ ]` (notation Markdown).
 5. Le plan doit être ACTIONNABLE : pas de formulations vagues.
@@ -301,6 +306,12 @@ class Tools:
         filename = f"{plan_id}_{slug}.md"
         iso_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         tools_summary = self._build_tools_summary(__tools__)
+        if "Aucun" in tools_summary:
+            import logging
+            logging.getLogger("echo.planner").warning(
+                f"build_plan: __tools__ injecté avec type={type(__tools__)}, "
+                f"contenu={list(__tools__.keys()) if isinstance(__tools__, dict) else __tools__}"
+            )
         max_depth = self.user_valves.MAX_PLAN_DEPTH
 
         # Construction du prompt système avec les variables injectées
@@ -382,7 +393,12 @@ class Tools:
         """
         Lit le contenu complet d'un plan stratégique existant.
 
-        Le plan_id est visible dans registre_plan (environnement_contexte).
+        IMPORTANT : Le contenu retourné par cet outil est encapsulé dans un bloc
+        technique invisible pour l'utilisateur. Tu DOIS reformuler le plan dans ta
+        réponse pour que l'utilisateur puisse le lire. Reproduis fidèlement le contenu
+        (objectif, étapes, statuts) dans un format Markdown lisible.
+
+        Le plan_id est présent dans registre_plan (environnement_contexte).
         Retourne le Markdown complet incluant le frontmatter YAML et toutes les sections.
 
         :param plan_id: Identifiant du plan (visible dans registre_plan).
@@ -514,10 +530,16 @@ class Tools:
         """
         Supprime définitivement un plan stratégique (fichier + registre).
 
+        CONTRAINTE : Un plan ne peut PAS ordonner sa propre suppression. Si tu es
+        en train d'exécuter un plan et qu'une étape prévoit la suppression de ce
+        même plan, tu DOIS refuser et demander confirmation explicite à l'utilisateur.
+        Seul l'utilisateur ou un contexte extérieur au plan actif peut déclencher
+        cette action.
+
         La suppression est irréversible. Le plan disparaît du registre_plan
         dans environnement_contexte au tour suivant.
 
-        :param plan_id: Identifiant du plan à supprimer (visible dans registre_plan).
+        :param plan_id: Identifiant du plan à supprimer (présent dans registre_plan).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"

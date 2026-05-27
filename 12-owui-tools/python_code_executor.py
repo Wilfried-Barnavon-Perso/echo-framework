@@ -1,8 +1,9 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 6.0
+version: 6.1
 description: 6.0: Validation analytique (PRAF) par calcul empirique. Capacité graphique retirée (Headless).
+             6.1: Alignement du status sur le standard wrap_tool_output ECHO.
 """
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
@@ -57,6 +58,11 @@ class Tools:
                 if worker_res.get("error"):
                     text_out += f"\n\n⚠️ Erreur d'exécution :\n{worker_res['error']}"
                 
+                # Status ECHO propre (sans polluer avec output/error du worker)
+                echo_status = {"status": worker_res.get("status", "success")}
+                if worker_res.get("error"):
+                    echo_status["error"] = worker_res["error"]
+
                 # PURGE & REDIRECTION: Extraire les graphiques éventuels pour l'IA
                 multiparts = []
                 plots = worker_res.pop("plots", [])
@@ -65,7 +71,7 @@ class Tools:
                         multiparts.append({"type": "media", "mime_type": "image/png", "data": plot_b64})
                 
                 await events.status("Exécution terminée.", done=True)
-                return wrap_tool_output(text=text_out, status=worker_res, echo_tool_multiparts=multiparts)
+                return wrap_tool_output(text=text_out, status=echo_status, echo_tool_multiparts=multiparts)
             else:
                 err_msg = f"Erreur Worker (HTTP {response.status_code})"
                 await events.status(f"❌ {err_msg}", done=True)

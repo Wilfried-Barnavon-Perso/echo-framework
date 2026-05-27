@@ -1,8 +1,8 @@
 """
-title: ECHO Auth Manager
+title: Réinitialiser Authentification Gemini /!\
 author: Wilfried BARNAVON
-version: 4.3
-description: 4.2: Harmonisation UX (Terminologie unifiée Authentification). 4.3: Suppression purge auth_pkce_context (table inexistante depuis migration Antigravity 2.1).
+version: 4.6
+description: 4.6: Renommage sémantique du titre UX (revert self.actions incompatible OWUI simple-action).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgeD0iMyIgeT0iMTEiIHJ4PSIyIiByeT0iMiIvPjxwYXRoIGQ9Ik03IDExVjdhNSA1IDAgMCAxIDEwIDB2NCIvPjwvc3ZnPg==
 """
 
