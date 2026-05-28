@@ -1,14 +1,20 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 12.15
+version: 13.2
 description: 12.14: Correction de syntaxe (IndentationError).
              12.15: THINKING_LEVEL_TOOLS centralise la valeur MINIMAL (echo_constants v4.8).
+             13.0: Migration OSM Nominatim (révoquée — voir 13.1).
+             13.1: Retour au grounding Google Maps natif Gemini (googleMaps tool). Adoption
+             de call_cascade() (echo_utils v7.17) à la place de EchoGeminiClient.call() direct.
+             Gestion du tuple de retour (data, model_key, reason). Ajout __metadata__ à
+             search_maps() pour la politique de clamping Pipe.
+             13.2: Fix commentaires : MODEL_LITE est le plancher de la cascade (pas de fallback
+             descendant possible). Aucune cascade automatique vers un modèle inférieur.
 """
 
 import orjson as json
 import sys
-import os
 from typing import Optional, Any, Tuple, Union
 from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
@@ -18,16 +24,25 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_ui import EchoUI
 from echo_constants import (
-    MODEL_LITE, MODEL_ROUTING, ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    TEMP_DEFAULT, TOP_P_DEFAULT, THINKING_LEVEL_TOOLS
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
+    THINKING_LEVEL_TOOLS
 )
 
 
 class Tools:
     class Valves(BaseModel):
-        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
-        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
-        MAPS_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour la recherche Maps.")
+        KEY_SWITCH_THRESHOLD: int = Field(
+            default=ECHO_API_KEY_THRESHOLD,
+            description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours."
+        )
+        MAX_RETRIES: int = Field(
+            default=ECHO_API_MAX_RETRIES,
+            description="Nombre de tentatives maximum."
+        )
+        MAPS_TIMEOUT: int = Field(
+            default=120,
+            description="Délai d'attente maximum (secondes) pour la recherche Maps."
+        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -38,61 +53,99 @@ class Tools:
         latitude: float = None,
         longitude: float = None,
         __user__: dict = {},
+        __metadata__: dict = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> Union[dict, Tuple[HTMLResponse, dict]]:
         """
         Recherche des lieux, commerces ou itinéraires, affiche une carte via Google Maps.
         Affiche une interface visuelle interactive à l'utilisateur et fournit les détails textuels au modèle.
-        
-        NOTE : Cet outil utilise une délégation cognitive (MODEL_LITE). En cas d'erreur de quota (429) 
-        ou d'indisponibilité, le Modèle doit signaler cette limitation technique à l'utilisateur.
+
+        NOTE : Cet outil utilise call_cascade avec MODEL_LITE (modèle plancher — aucun
+        fallback descendant possible). En cas de quota 429 ou d'indisponibilité, le modèle
+        doit signaler cette limitation technique à l'utilisateur.
         """
         user_id = __user__.get("id", "system")
+        chat_id = (__metadata__ or {}).get("chat_id")
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"🗺️ Exploration Maps : {query}...")
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": query}]}],
+            # Grounding natif Google Maps — active l'outil googleMaps du modèle Gemini
             "tools": [{"googleMaps": {"enableWidget": True}}],
-            "generationConfig": {"thinkingConfig": {"thinkingLevel": THINKING_LEVEL_TOOLS}}
+            "generationConfig": {
+                "thinkingConfig": {"thinkingLevel": THINKING_LEVEL_TOOLS}
+            }
         }
-        
+
+        # Contextualisation géographique si les coordonnées sont fournies
         if latitude is not None and longitude is not None:
-            payload["toolConfig"] = {"retrievalConfig": {"latLng": {"latitude": float(latitude), "longitude": float(longitude)}}}
+            payload["toolConfig"] = {
+                "retrievalConfig": {
+                    "latLng": {
+                        "latitude": float(latitude),
+                        "longitude": float(longitude)
+                    }
+                }
+            }
 
         try:
-            data = await EchoGeminiClient.call(
-                target_model=MODEL_LITE, 
+            # call_cascade gère : clamping politique Pipe, thinkingConfig auto.
+            # MODEL_LITE est le plancher de la cascade (PRO→FLASH→LITE) : aucun fallback
+            # descendant possible depuis ce niveau. Si LITE est indisponible, la cascade
+            # est épuisée immédiatement. Utiliser MODEL_FLASH si un repli vers LITE est souhaité.
+            data, model_key, reason = await EchoGeminiClient.call_cascade(
+                target_model_key="MODEL_LITE",
                 payload=payload,
                 user_id=user_id,
-                threshold=self.valves.KEY_SWITCH_THRESHOLD, 
+                metadata=__metadata__,
+                events=events,
+                threshold=self.valves.KEY_SWITCH_THRESHOLD,
                 max_retries=self.valves.MAX_RETRIES,
-                events=events, 
-                timeout=self.valves.MAPS_TIMEOUT
+                timeout=self.valves.MAPS_TIMEOUT,
+                chat_id=chat_id,
             )
-            
+
+            if data is None:
+                # Cascade épuisée — tous les modèles en erreur
+                return wrap_tool_output(
+                    text="❌ Google Maps : aucun modèle disponible (cascade épuisée). "
+                         "Vérifiez vos quotas API.",
+                    status={"status": "cascade_exhausted"}
+                )
+
             candidates = data.get("candidates", [])
             if not candidates:
-                return wrap_tool_output(text="⚠️ Google Maps n'a renvoyé aucun résultat pour cette recherche ou cet itinéraire. Veuillez préciser votre demande.", status={"status": "no_results"})
+                return wrap_tool_output(
+                    text="⚠️ Google Maps n'a renvoyé aucun résultat pour cette recherche "
+                         "ou cet itinéraire. Veuillez préciser votre demande.",
+                    status={"status": "no_results"}
+                )
 
+            # Extraction du texte enrichi retourné par le grounding Gemini
             cand = candidates[0]
             full_text = ""
             if "content" in cand:
                 for p in cand["content"].get("parts", []):
-                    if "text" in p: full_text += p["text"]
+                    if "text" in p:
+                        full_text += p["text"]
 
             if not full_text:
-                return wrap_tool_output(text="⚠️ Recherche Maps complétée mais aucune information textuelle n'a été fournie par l'API.", status={"status": "empty_response"})
-
+                return wrap_tool_output(
+                    text="⚠️ Recherche Maps complétée mais aucune information textuelle "
+                         "n'a été fournie par l'API.",
+                    status={"status": "empty_response"}
+                )
 
             await events.status("Carte interactive prête.", done=True)
 
-            # --- RÉUSSITE : RÉPONSE RICH UI (GOOGLE MAPS EMBED) ---
+            # Rendu UI : embed Google Maps + contexte textuel pour le LLM
             response = EchoUI.map_viewer(query=query, title=f"ECHO Maps : {query}")
-
-            # --- CONTEXTE POUR LE LLM (STRUCTURE) ---
             return response, wrap_tool_output(text=full_text)
 
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur Maps: {str(e)}", status={"status": "error"})
+            return wrap_tool_output(
+                text=f"❌ Erreur Maps: {str(e)}",
+                status={"status": "error"}
+            )

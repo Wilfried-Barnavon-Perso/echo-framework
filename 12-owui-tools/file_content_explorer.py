@@ -1,8 +1,8 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.10
-description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia).
+version: 5.109.11
+description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade().
 """
 
 import os
@@ -19,10 +19,10 @@ from pydantic import BaseModel, Field
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import (
-    EchoEvents, wrap_tool_output, 
+    EchoEvents, wrap_tool_output, wrap_cascade_output,
     resolve_upload_file_path, split_thought_process,
     EchoGeminiClient, EchoStateManager, generate_echo_file_id,
-    get_stealth_headers
+    get_stealth_headers, clamp_model
 )
 from echo_ui import EchoUI
 from echo_constants import (
@@ -41,10 +41,7 @@ class Tools:
         MAX_MULTIMODAL_SIZE_KB: int = Field(default=102400, description="Taille maximale (en Ko) pour l'injection multimédia.")
 
     class UserValves(BaseModel):
-        ANALYSE_MODEL: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = Field(
-            default="MODEL_FLASH",
-            description="Niveau cognitif utilisé pour le sondage sémantique (semantic_probe). MODEL_PRO pour les fichiers très complexes."
-        )
+        pass
 
     def __init__(self):
         self.valves = self.Valves()
@@ -114,13 +111,12 @@ class Tools:
         file_id: str, 
         query: str,
         __user__: dict = {},
+        __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Sonde sémantiquement un fichier volumineux ou complexe via le niveau cognitif configuré (ANALYSE_MODEL)."""
+        """Sonde sémantiquement un fichier volumineux ou complexe via call_cascade centralisé."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        u_valves = __user__.get("valves", self.user_valves) if __user__ else self.user_valves
-        resolved_model = MODEL_ROUTING.get(u_valves.ANALYSE_MODEL, MODEL_FLASH)
         user_id = __user__.get("id", "system")
         fpath = resolve_upload_file_path(user_id, file_id, self.uploads_dir)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
@@ -136,23 +132,31 @@ class Tools:
                 "generationConfig": {
                     "temperature": TEMP_DEFAULT,
                     "topP": TOP_P_DEFAULT,
-                    "thinkingConfig": {"includeThoughts": True, "thinkingLevel": "high"}
                 }
             }
-            data = await EchoGeminiClient.call(
-                target_model=resolved_model,
+            data, model_used, reason = await EchoGeminiClient.call_cascade(
+                target_model_key="MODEL_FLASH",
                 payload=payload, 
                 user_id=user_id,
+                metadata=__metadata__,
+                events=events,
                 threshold=self.valves.KEY_SWITCH_THRESHOLD,
                 max_retries=self.valves.MAX_RETRIES,
-                events=events,
-                timeout=self.valves.PROBE_TIMEOUT
+                timeout=self.valves.PROBE_TIMEOUT,
+                include_thoughts=True,
             )
+            if not data:
+                return wrap_tool_output(text="❌ Cascade épuisée : aucun modèle disponible pour le sondage sémantique.", status={"status": "error"})
             target = data.get("response", {}) if "response" in data else data
             cand = target.get("candidates", [])[0]
             full_text = "".join([p["text"] for p in cand["content"]["parts"] if "text" in p])
             clean, thought = split_thought_process(full_text)
-            return wrap_tool_output(text=clean, status={"status": "success"}, echo_tool_multiparts=[{"type": "thought", "content": thought}] if thought else [])
+            return wrap_cascade_output(
+                text=clean, model_requested="MODEL_FLASH", model_used=model_used,
+                status={"status": "success"},
+                echo_tool_multiparts=[{"type": "thought", "content": thought}] if thought else [],
+                reason=reason
+            )
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur Sonde : {str(e)}", status={"status": "error"})
 

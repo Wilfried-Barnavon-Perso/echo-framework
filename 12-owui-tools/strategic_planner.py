@@ -1,7 +1,7 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.1
+version: 1.2
 description: 1.0: Outil de planification stratégique — construction, modification et gestion
              de plans d'action via un agent planificateur LLM (cascade PRO→FLASH→LITE).
              Plans persistés en Markdown dans le vault, registre de contrôle SQLite par chat,
@@ -9,6 +9,8 @@ description: 1.0: Outil de planification stratégique — construction, modifica
              1.1: Docstrings enrichies — instruction de reformulation read_plan, directive
              tools_summary renforcée dans build_plan, contrainte auto-suppression delete_plan,
              log diagnostic __tools__.
+             1.2: Centralisation politique modèle Pipe. Suppression _cascade_call() et
+             _get_thinking_level() locaux → call_cascade() centralisé.
 """
 
 import sys
@@ -23,7 +25,7 @@ from typing import Optional, Any, Literal
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoEvents, EchoGeminiClient, EchoStateManager
+from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager, clamp_model
 from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING,
     ECHO_USERS_ROOT,
@@ -179,7 +181,7 @@ class Tools:
 
     @staticmethod
     def _get_thinking_level(model_key: str) -> str:
-        """Retourne le niveau de réflexion ECHO pour un modèle donné."""
+        """DEPRECATED — géré par call_cascade. Conservé pour compatibilité."""
         if model_key == "MODEL_PRO":
             return THINKING_LEVEL_PRO
         elif model_key == "MODEL_FLASH":
@@ -196,55 +198,6 @@ class Tools:
             text_parts = [p.get("text", "") for p in parts if not p.get("thought")]
             return "".join(text_parts)
         return None
-
-    async def _cascade_call(
-        self,
-        payload: dict,
-        user_id: str,
-        start_model: str,
-        events: EchoEvents,
-        chat_id: str = None
-    ) -> tuple:
-        """
-        Cascade descendante PRO→FLASH→LITE avec signalisation.
-        Retourne (response_data, model_key_used) ou (None, None) si tout échoue.
-        """
-        cascade_keys = ["MODEL_PRO", "MODEL_FLASH", "MODEL_LITE"]
-        start_idx = cascade_keys.index(start_model) if start_model in cascade_keys else 0
-
-        for model_key in cascade_keys[start_idx:]:
-            actual_model = MODEL_ROUTING[model_key]
-            thinking_level = self._get_thinking_level(model_key)
-
-            # Injecter le niveau de réflexion dans le payload
-            gen_config = payload.get("generationConfig", {})
-            gen_config["thinkingConfig"] = {
-                "includeThoughts": False,
-                "thinkingLevel": thinking_level.lower()
-            }
-            payload["generationConfig"] = gen_config
-
-            try:
-                await events.status(f"🗂️ Agent planificateur ({model_key})...")
-                data = await EchoGeminiClient.call(
-                    target_model=actual_model,
-                    payload=payload,
-                    user_id=user_id,
-                    threshold=self.valves.KEY_SWITCH_THRESHOLD,
-                    max_retries=self.valves.MAX_RETRIES,
-                    events=events,
-                    timeout=self.valves.PLANNER_TIMEOUT,
-                    chat_id=chat_id
-                )
-                return data, model_key
-            except Exception as e:
-                await events.status(
-                    f"⚠️ {model_key} indisponible ({str(e)[:60]}). Repli...",
-                    done=False
-                )
-                continue
-
-        return None, None
 
     # ==========================================================================
     # FUNCTION CALLS PUBLIQUES
@@ -284,12 +237,10 @@ class Tools:
         **Lecture :** Le plan est lisible via `read_plan(plan_id)`.
         Son existence et son état apparaissent dans registre_plan (environnement_contexte).
 
-        **Modèle :** Cascade PRO→FLASH→LITE. Le modèle le plus puissant disponible
-        rédige le plan. Le modèle utilisé est consigné dans le frontmatter (author_model).
+        **Modèle :** Le modèle effectif dépend de la politique du Pipe. Cascade descendante
+        automatique en cas d'indisponibilité. Le modèle utilisé est consigné dans le frontmatter.
 
-        :param goal: Objectif précis, résultat de la discussion de clarification.
-        :param context: Résumé des contraintes, hypothèses et décisions (OBLIGATOIRE).
-        :param planner_model: Modèle de départ pour la cascade (défaut: MODEL_PRO).
+        :param planner_model: Modèle préféré (MODEL_PRO recommandé). Ajusté automatiquement.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -339,11 +290,18 @@ class Tools:
         }
 
         # Appel cascade
-        res_json, model_key_used = await self._cascade_call(
-            payload, user_id, planner_model, events, chat_id=chat_id
+        res_json, model_key_used, reason = await EchoGeminiClient.call_cascade(
+            target_model_key=planner_model,
+            payload=payload,
+            user_id=user_id,
+            metadata=__metadata__,
+            events=events,
+            timeout=self.valves.PLANNER_TIMEOUT,
+            chat_id=chat_id,
+            include_thoughts=False,
         )
 
-        if not res_json or not model_key_used:
+        if not res_json:
             await events.status("❌ Échec — tous les modèles sont indisponibles.", done=True)
             return wrap_tool_output(text="❌ Échec : aucun modèle disponible pour la planification.")
 
@@ -375,11 +333,14 @@ class Tools:
 
         await events.status(f"✅ Plan `{plan_id}` créé (draft) par {model_key_used}.", done=True)
 
-        return wrap_tool_output(
+        return wrap_cascade_output(
             text=f"### Plan stratégique créé — `{plan_id}` (draft)\n\n"
                  f"**Modèle :** {model_key_used} ({actual_model})\n"
                  f"**Fichier :** `{filename}`\n\n"
-                 f"---\n\n{plan_content}"
+                 f"---\n\n{plan_content}",
+            model_requested=planner_model,
+            model_used=model_key_used,
+            reason=reason
         )
 
     async def read_plan(
@@ -484,11 +445,18 @@ class Tools:
         }
 
         # 3. Appel cascade
-        res_json, model_key_used = await self._cascade_call(
-            payload, user_id, planner_model, events, chat_id=chat_id
+        res_json, model_key_used, reason = await EchoGeminiClient.call_cascade(
+            target_model_key=planner_model,
+            payload=payload,
+            user_id=user_id,
+            metadata=__metadata__,
+            events=events,
+            timeout=self.valves.PLANNER_TIMEOUT,
+            chat_id=chat_id,
+            include_thoughts=False,
         )
 
-        if not res_json or not model_key_used:
+        if not res_json:
             await events.status("❌ Échec — tous les modèles sont indisponibles.", done=True)
             return wrap_tool_output(text="❌ Échec : aucun modèle disponible pour la modification.")
 
@@ -512,11 +480,14 @@ class Tools:
             done=True
         )
 
-        return wrap_tool_output(
+        return wrap_cascade_output(
             text=f"### Plan `{plan_id}` mis à jour\n\n"
                  f"**Modèle :** {model_key_used}\n"
                  f"**Statut :** {new_status or '(inchangé)'}\n\n"
-                 f"---\n\n{new_content}"
+                 f"---\n\n{new_content}",
+            model_requested=planner_model,
+            model_used=model_key_used,
+            reason=reason
         )
 
     async def delete_plan(

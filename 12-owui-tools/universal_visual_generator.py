@@ -1,8 +1,8 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.1
-description: 5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux).
+version: 5.2
+description: 5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux). 5.2: Renommage niveau_cognitif→target_model, migration stream→call_cascade() centralisé.
 """
 
 import os
@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
+from echo_utils import EchoEvents, wrap_tool_output, wrap_cascade_output, EchoGeminiClient, clamp_model
 from echo_ui import EchoUI
 from echo_constants import (
     MODEL_FLASH, MODEL_ROUTING,
@@ -79,7 +79,7 @@ class Tools:
     :param intention: Description du besoin visuel (ex: "Plan 3D d'un bureau", "Structure de la hiérarchie").
     :param donnees_contextuelles: Faits, chiffres et relations à modéliser.
     :param moteur: Optionnel. Force un moteur spécifique parmi la liste ci-dessus.
-    :param niveau_cognitif: Choisir selon la complexité : 
+    :param niveau_cognitif: Choisir selon la complexité (cascade auto si indisponible) :
         - 'MODEL_LITE' : Mindmaps simples, Flowcharts basiques.
         - 'MODEL_FLASH' : Standard (ECharts, BPMN, SVG).
         - 'MODEL_PRO' : Complexe (3D A-Frame, Réseaux Cytoscape, Signaux WaveDrom, Vega).
@@ -114,30 +114,32 @@ class Tools:
       "13. 'svg' : Code XML SVG complet et valide.\n"
       "14. 'chem' : Chaîne SMILES (ex: 'CC(=O)OC1=CC=CC=C1C(=O)O').\n"
       "15. 'science' : JSON Plotly.js (data: [], layout: {}).\n\n"
+
       "CONSIGNE CRITIQUE : Renvoie UNIQUEMENT le payload technique (JSON, XML ou Markdown) dans un bloc de code. "
       "N'ajoute aucun commentaire avant ou après."
     )
 
     # 3. Génération
     try:
-      response_text = ""
-      async for chunk in EchoGeminiClient.stream(
-          target_model=MODEL_ROUTING.get(niveau_cognitif, MODEL_FLASH),
+      # Génération via call_cascade (clamping + thinking auto + cascade)
+      data, model_used, _ = await EchoGeminiClient.call_cascade(
+          target_model_key=niveau_cognitif,
           payload={"contents": [{"role": "user", "parts": [{"text": f"INTENTION : {intention}\nDONNÉES : {donnees_contextuelles}"}]}],
                    "systemInstruction": {"parts": [{"text": system_prompt}]}},
           user_id=user_id,
-          threshold=self.valves.KEY_SWITCH_THRESHOLD,
-          max_retries=self.valves.MAX_RETRIES,
+          metadata=__metadata__,
           events=events,
-          timeout=self.valves.GENERATOR_TIMEOUT
-      ):
-          if isinstance(chunk, str): response_text += chunk
-          elif isinstance(chunk, dict):
-              target = chunk.get("response", {}) if "response" in chunk else chunk
-              candidates = target.get("candidates", [])
-              if candidates and candidates[0].get("content"):
-                  for p in candidates[0]["content"].get("parts", []):
-                      if "text" in p: response_text += p["text"]
+          timeout=self.valves.GENERATOR_TIMEOUT,
+          include_thoughts=False,
+      )
+      if not data:
+          return wrap_tool_output(text="❌ Cascade épuisée : aucun modèle disponible pour la génération visuelle.", status={"status": "error"})
+      # Extraction texte depuis la réponse
+      response_text = ""
+      candidates = data.get("candidates", [])
+      if candidates:
+          for p in candidates[0].get("content", {}).get("parts", []):
+              if "text" in p: response_text += p["text"]
 
       # Extraction du payload (Pattern Bloc de Code ou Texte Brut)
       payload = ""

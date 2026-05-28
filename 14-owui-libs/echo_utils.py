@@ -1,7 +1,7 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 7.16
+version: 7.20
 description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
              Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
@@ -24,6 +24,19 @@ description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migra
               7.16: generate_embedding() retry (1 retry, 2s backoff) + timeouts relaxés
               pour absorber les environnements contraints (Hyper-V sous charge) :
               embedding 30→60s, distiller 60→120s, index_rag 120→180s.
+               7.17: Centralisation politique modèle Pipe → outils. resolve_model_policy(),
+               clamp_model(), call_cascade(). Crédits via enable_paid_credits paramètre
+               (suppression lecture identity.db). call_distillation : suppression fallback
+               API Gemini 2.5 Flash (Gemma local uniquement).
+               7.18: wrap_cascade_output() — retour enrichi pour rendre le modèle effectif
+               visible au LLM orchestrateur. Status clamping (🔒) et cascade (⚡) dans
+               call_cascade().
+               7.19: Fallback SQLite echo_settings pour propagation politique Pipe → outils
+               (OWUI ne propage pas __metadata__ custom). Table echo_settings + get_setting/
+               save_setting. Retrait thought_archive (write-only, jamais lu).
+               7.20: Refactoring status tri-état (success/warning/error). wrap_cascade_output :
+               suppression clamped:true, ajout param reason. call_cascade : retour tuple à 3
+               (data, model_key, reason) avec reason contextuel (policy/API error/exhausted).
 """
 
 import copy
@@ -145,6 +158,22 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
         text += f"\n\n```json:nouveaux_artefacts\n{json_str}\n```"
     return {"text": text, "status": status or {"status": "success"}, "echo_tool_multiparts": echo_tool_multiparts or []}
 
+
+def wrap_cascade_output(text: str, model_requested: str, model_used: str, status: dict = None, echo_tool_multiparts: List[dict] = None, reason: str = None) -> dict:
+    """
+    Enrichit wrap_tool_output avec les métadonnées de cascade.
+    Le LLM orchestrateur voit model_used dans le status dict ET dans un préfixe texte si le modèle a changé.
+    reason : cause du changement de modèle (ex: "policy", "503/429").
+    """
+    s = status or {"status": "success"}
+    s["model_requested"] = model_requested
+    s["model_used"] = model_used
+    if model_requested != model_used:
+        s["status"] = "warning"
+        s["warning"] = reason or f"{model_requested} unavailable"
+        text = f"[Modèle effectif : {model_used} (demandé : {model_requested})]\n\n{text}"
+    return {"text": text, "status": s, "echo_tool_multiparts": echo_tool_multiparts or []}
+
 # ==============================================================================
 # SECTION 2 : RÉSOLUTION DE FICHIERS & VERSIONS
 # ==============================================================================
@@ -171,6 +200,58 @@ def get_echo_version() -> str:
             with open(ECHO_VERSION_PATH, "r") as f: return f.read().strip()
     except: pass
     return ""
+
+# ==============================================================================
+# SECTION 2b : POLITIQUE MODÈLE CENTRALISÉE (Pipe → outils via __metadata__)
+# ==============================================================================
+
+def resolve_model_policy(metadata: dict, user_id: str = None) -> tuple:
+    """
+    Résout la politique modèle depuis __metadata__ (injecté par le Pipe).
+    Fallback : lecture identity.db si absent de metadata (OWUI ne propage pas __metadata__ du pipe aux outils).
+    Retourne (mode, plafond_key).
+    - mode "fixed" + plafond = modèle forcé
+    - mode "auto"/"auto_pro" + plafond = choix libre jusqu'au plafond
+    """
+    from echo_constants import MODEL_HIERARCHY
+    selection = (metadata or {}).get("_echo_model_policy")
+
+    # Fallback SQLite (echo_settings) si absent de metadata
+    if not selection and user_id:
+        try:
+            state = EchoStateManager(user_id=user_id)
+            selection = state.get_setting("model_policy")
+        except Exception:
+            pass
+
+    if not selection:
+        selection = "AUTO"
+
+    if selection == "AUTO":
+        return ("auto", "MODEL_FLASH")
+    elif selection == "AUTO_PRO":
+        return ("auto_pro", "MODEL_PRO")
+    elif selection in MODEL_HIERARCHY:
+        return ("fixed", selection)
+    return ("auto", "MODEL_FLASH")
+
+
+def clamp_model(requested: str, metadata: dict, user_id: str = None) -> str:
+    """
+    Applique la politique du Pipe sur un modèle demandé par un outil.
+    Mode fixé → retourne le modèle fixé (ignore la demande).
+    Mode auto → min(demandé, plafond).
+    Fallback SQLite si la politique est absente de metadata.
+    """
+    from echo_constants import MODEL_HIERARCHY
+    # user_id depuis metadata si non fourni
+    uid = user_id or (metadata or {}).get("user_id")
+    mode, ceiling = resolve_model_policy(metadata, user_id=uid)
+    if mode == "fixed":
+        return ceiling
+    req_level = MODEL_HIERARCHY.get(requested, 1)
+    ceil_level = MODEL_HIERARCHY.get(ceiling, 1)
+    return ceiling if req_level > ceil_level else requested
 
 # ==============================================================================
 # SECTION 3 : GESTION DES ÉVÉNEMENTS (OWUI COMPAT)
@@ -366,7 +447,7 @@ class EchoGeminiClient:
         return headers
 
     @staticmethod
-    async def _prepare_request_context(provider: Dict, target_model: str, payload: Dict, method: str = "generateContent", chat_id: str = None) -> Optional[Dict]:
+    async def _prepare_request_context(provider: Dict, target_model: str, payload: Dict, method: str = "generateContent", chat_id: str = None, enable_paid_credits: bool = False) -> Optional[Dict]:
         """
         Sélecteur de Protocole Symétrique : Prépare URL, Headers et Payload selon le backend.
         Retourne un dictionnaire de configuration ou None si le fournisseur est invalide.
@@ -437,20 +518,15 @@ class EchoGeminiClient:
                 "user_prompt_id": prompt_id, # Correction : snake_case requis ici
                 "request": request_body
             }
-            # CRÉDITS AI — opt-in via UserValve pipe (persisté identity.db)
-            # Par défaut : champ omis (alignement AGY-IDE, pas de crédits consommés)
-            user_id_for_credits = provider.get("user_id")
-            if user_id_for_credits:
-                _auth = EchoAuth(user_id=user_id_for_credits)
-                credits_enabled = _auth.get_auth_data("echo_enable_paid_credits", user_id_for_credits)
-                if credits_enabled == "True":
-                    enabled_credits = None
-                    if tier_id and ("g1-" in tier_id.lower() or "standard" in tier_id.lower()):
-                        enabled_credits = ["GOOGLE_ONE_AI"]
-                    elif g1_credits and int(g1_credits) > 50:
-                        enabled_credits = ["GOOGLE_ONE_AI"]
-                    if enabled_credits:
-                        wrapped_payload["enabled_credit_types"] = enabled_credits
+            # CRÉDITS AI — opt-in via UserValve pipe (propagé __metadata__ → enable_paid_credits)
+            if enable_paid_credits:
+                enabled_credits = None
+                if tier_id and ("g1-" in tier_id.lower() or "standard" in tier_id.lower()):
+                    enabled_credits = ["GOOGLE_ONE_AI"]
+                elif g1_credits and int(g1_credits) > 50:
+                    enabled_credits = ["GOOGLE_ONE_AI"]
+                if enabled_credits:
+                    wrapped_payload["enabled_credit_types"] = enabled_credits
 
             return {"url": api_url, "headers": headers, "payload": wrapped_payload}
 
@@ -523,7 +599,7 @@ class EchoGeminiClient:
         """
         Exécute une tâche de distillation (extraction sémantique).
         LOCAL_GEMMA par défaut (Gemma 4 E4B via echo-gemma-distiller).
-        Fallback API (Gemini 2.5 Flash) si le service local est indisponible.
+        Gemma local uniquement. Pas de fallback API distant.
         Les appels avec target_model explicite (FLASH, PRO) restent routés vers l'API Gemini.
         """
         from echo_constants import MODEL_DISTILLATION, MODEL_ROUTING, TEMP_DISTILLATION, TOP_P_DISTILLATION
@@ -538,20 +614,15 @@ class EchoGeminiClient:
             actual_model = MODEL_ROUTING.get(target_model, target_model)
         else:
             use_local = True
-            actual_model = MODEL_DISTILLATION  # Fallback si le local échoue
 
         # 1. Préparation du contenu
         contents = parts if parts else [{"role": "user", "parts": [{"text": prompt}]}]
 
         # --- ROUTAGE LOCAL (Gemma 4 E4B via echo-gemma-distiller) ---
         if use_local:
-            try:
-                return await EchoGeminiClient._call_local_distiller(
-                    prompt, contents, is_json, max_tokens
-                )
-            except Exception as e:
-                print(f"[EchoGemini] ⚠️ Service Gemma local indisponible ({e}). Fallback API Gemini...")
-                # Fallback transparent → API Gemini 2.5 Flash
+            return await EchoGeminiClient._call_local_distiller(
+                prompt, contents, is_json, max_tokens
+            )
 
         # --- ROUTAGE API (Gemini 2.5 Flash ou modèle explicite) ---
         payload = {
@@ -775,7 +846,8 @@ class EchoGeminiClient:
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
         timeout: int = 120,
-        chat_id: str = None
+        chat_id: str = None,
+        enable_paid_credits: bool = False,
     ) -> dict:
         # Résolution des identités d'accès aux modèles pour cet utilisateur
         if not auth_providers:
@@ -794,7 +866,7 @@ class EchoGeminiClient:
             # Préparation symétrique de la requête
             # MESSAGE_SHADOWS: Injection de contexte persistant (RAG-lite)
             try:
-                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "generateContent", chat_id=chat_id)
+                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "generateContent", chat_id=chat_id, enable_paid_credits=enable_paid_credits)
                 if not req_ctx:
                     # Fail-over immédiat si configuration incomplète (ex: Project ID manquant)
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
@@ -855,6 +927,109 @@ class EchoGeminiClient:
         raise Exception(f"Échec après {max_retries} tentatives.")
 
     @staticmethod
+    async def call_cascade(
+        target_model_key: str,
+        payload: dict,
+        user_id: str,
+        metadata: dict = None,
+        events: Optional[EchoEvents] = None,
+        threshold: int = ECHO_API_KEY_THRESHOLD,
+        max_retries: int = ECHO_API_MAX_RETRIES,
+        timeout: int = 120,
+        chat_id: str = None,
+        include_thoughts: bool = False,
+        enable_paid_credits: bool = False,
+    ) -> tuple:
+        """
+        Appel LLM avec cascade descendante centralisée.
+        Gère : clamping (politique Pipe), thinkingConfig auto, cascade sur 429/503, toast, crédits.
+        Retourne (response_data, model_key_used, reason).
+        reason est None si nominal, sinon chaîne expliquant la divergence modèle.
+        """
+        from echo_constants import (
+            MODEL_ROUTING,
+            THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
+        )
+        # 1. Clamping via politique Pipe (lecture __metadata__ → fallback identity.db)
+        clamped_key = clamp_model(target_model_key, metadata, user_id=user_id)
+        reason = None  # Tracker de raison pour le warning
+
+        # Notification si le modèle a été ajusté par la politique
+        if clamped_key != target_model_key:
+            reason = f"{target_model_key} unavailable (policy)"
+            if events:
+                await events.status(
+                    f"🔒 Politique Pipe : {target_model_key} → {clamped_key}", done=False
+                )
+
+        # 2. Construction cascade descendante depuis le modèle clampé
+        cascade_order = ["MODEL_PRO", "MODEL_FLASH", "MODEL_LITE"]
+        start_idx = cascade_order.index(clamped_key) if clamped_key in cascade_order else 1
+        cascade = cascade_order[start_idx:]
+
+        thinking_map = {
+            "MODEL_PRO": THINKING_LEVEL_PRO,
+            "MODEL_FLASH": THINKING_LEVEL_FLASH,
+            "MODEL_LITE": THINKING_LEVEL_LITE,
+        }
+
+        # 3. Tentatives en cascade
+        for model_key in cascade:
+            actual_model = MODEL_ROUTING[model_key]
+            thinking_level = thinking_map.get(model_key, THINKING_LEVEL_FLASH)
+
+            # Injection automatique thinkingConfig
+            gen_config = payload.get("generationConfig", {})
+            gen_config["thinkingConfig"] = {
+                "includeThoughts": include_thoughts,
+                "thinkingLevel": thinking_level.lower(),
+            }
+            payload["generationConfig"] = gen_config
+
+            try:
+                data = await EchoGeminiClient.call(
+                    target_model=actual_model,
+                    payload=payload,
+                    user_id=user_id,
+                    threshold=threshold,
+                    max_retries=max_retries,
+                    events=events,
+                    timeout=timeout,
+                    chat_id=chat_id,
+                    enable_paid_credits=enable_paid_credits,
+                )
+                # Confirmation du modèle effectif (visible dans le status)
+                if model_key != clamped_key:
+                    # Cascade descendante technique (429/503)
+                    reason = f"{clamped_key} unavailable (API error)"
+                    if events:
+                        await events.status(
+                            f"⚡ Cascade : {clamped_key} → {model_key} (fallback)", done=False
+                        )
+                return data, model_key, reason
+
+            except Exception as e:
+                # Toast warning sur erreur technique (tous modes)
+                if events:
+                    await events.toast(
+                        f"⚠️ {model_key} indisponible — repli automatique", "warning"
+                    )
+                    await events.status(
+                        f"⚠️ {model_key} ({str(e)[:60]}). Repli...", done=False
+                    )
+                continue
+
+        # Tous les modèles ont échoué — signal final
+        if events:
+            await events.toast(
+                "❌ Cascade épuisée — aucun modèle disponible", "error"
+            )
+            await events.status(
+                f"❌ Cascade épuisée : {clamped_key} → aucun modèle disponible.", done=True
+            )
+        return None, None, f"{clamped_key} unavailable (cascade exhausted)"
+
+    @staticmethod
     async def stream(
         target_model: str,
         payload: dict,
@@ -865,7 +1040,8 @@ class EchoGeminiClient:
         events: Optional[EchoEvents] = None,
         process_callback: Optional[Any] = None,
         timeout: int = 300,
-        chat_id: str = None
+        chat_id: str = None,
+        enable_paid_credits: bool = False,
     ) -> AsyncGenerator[Union[str, Dict], None]:
         # Résolution des identités d'accès aux modèles (si non fourni par le pipe)
         if not auth_providers:
@@ -884,7 +1060,7 @@ class EchoGeminiClient:
             provider = auth_providers[active_idx]
 
             try:
-                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "streamGenerateContent", chat_id=chat_id)
+                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "streamGenerateContent", chat_id=chat_id, enable_paid_credits=enable_paid_credits)
                 if not req_ctx:
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
                     if active_idx < len(auth_providers) - 1:
@@ -1014,12 +1190,14 @@ class EchoStateManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_id ON suture_index (chat_id)")
                 conn.execute("CREATE TABLE IF NOT EXISTS cognitive_signatures (cumulative_hash TEXT PRIMARY KEY, thought_signature TEXT NOT NULL, message_id TEXT, model_id TEXT, updated_at INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS tool_journal (cumulative_hash TEXT PRIMARY KEY, io_json TEXT NOT NULL, updated_at INTEGER)")
-                conn.execute("CREATE TABLE IF NOT EXISTS thought_archive (cumulative_hash TEXT PRIMARY KEY, raw_thought TEXT NOT NULL, updated_at INTEGER)")
+
                 conn.execute("CREATE TABLE IF NOT EXISTS processed_files (chat_id TEXT, file_id TEXT, filename TEXT, mime TEXT, mode TEXT, timestamp INTEGER, file_content TEXT, message_id TEXT, PRIMARY KEY (chat_id, file_id))")
                 conn.execute("CREATE TABLE IF NOT EXISTS call_bridge (call_id TEXT PRIMARY KEY, signature TEXT NOT NULL, function_name TEXT NOT NULL, args_json TEXT, timestamp INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS context_stats (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
                 conn.execute("CREATE TABLE IF NOT EXISTS session_state (id INTEGER PRIMARY KEY, last_model_id TEXT, updated_at INTEGER NOT NULL)")
+                # Préférences Pipe propagées aux outils (politique modèle, crédits)
+                conn.execute("CREATE TABLE IF NOT EXISTS echo_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
 
                 # Echos Skills & Cognitive Council (V9)
                 conn.execute("CREATE TABLE IF NOT EXISTS cognitive_threads (sub_sid TEXT, chat_id TEXT NOT NULL, role_id TEXT NOT NULL, step_index INTEGER, role TEXT NOT NULL, content_json TEXT NOT NULL, thought_signature TEXT, updated_at INTEGER, PRIMARY KEY (sub_sid, step_index))")
@@ -1141,7 +1319,7 @@ class EchoStateManager:
             with self._get_connection() as conn:
                 if sig:
                     conn.execute("INSERT OR REPLACE INTO cognitive_signatures (cumulative_hash, thought_signature, message_id, model_id, updated_at) VALUES (?, ?, ?, ?, ?)", (cumul, sig, message_id, model_id, int(time.time())))
-                if thought: conn.execute("INSERT OR REPLACE INTO thought_archive (cumulative_hash, raw_thought, updated_at) VALUES (?, ?, ?)", (cumul, thought, int(time.time())))
+                # thought_archive retiré (write-only, jamais lu — table purgée au prochain rebuild-echo)
                 if tool_io: conn.execute("INSERT OR REPLACE INTO tool_journal (cumulative_hash, io_json, updated_at) VALUES (?, ?, ?)", (cumul, json.dumps(tool_io).decode('utf-8'), int(time.time())))
                 if model_id:
                     conn.execute("INSERT OR REPLACE INTO session_state (id, last_model_id, updated_at) VALUES (1, ?, ?)", (model_id, int(time.time())))
@@ -1195,6 +1373,25 @@ class EchoStateManager:
                 conn.execute("INSERT OR REPLACE INTO auth_data (key, value, updated_at) VALUES (?, ?, ?)", (key, value, int(time.time())))
                 conn.commit()
         except: pass
+
+    def save_setting(self, key: str, value: str):
+        """Persiste une préférence Pipe dans echo_settings (identity.db)."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS echo_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+                conn.execute("INSERT OR REPLACE INTO echo_settings (key, value, updated_at) VALUES (?, ?, ?)", (key, value, int(time.time())))
+                conn.commit()
+        except: pass
+
+    def get_setting(self, key: str) -> Optional[str]:
+        """Lit une préférence Pipe depuis echo_settings (identity.db)."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS echo_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+                row = conn.execute("SELECT value FROM echo_settings WHERE key = ?", (key,)).fetchone()
+                return row[0] if row else None
+        except: pass
+        return None
 
     def save_context_stats(self, stats: dict):
         try:

@@ -1,13 +1,14 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 7.10
+version: 7.11
 description: 7.5: Fix génération slug. 7.6: Migration Antigravity 2.1 — suppression GOOGLE_OAUTH_CODE_REGEX (PKCE legacy).
              7.7: Centralisation THINKING_LEVEL_FLASH (echo_constants v4.8) — suppression du "HIGH" hardcodé.
              7.8: Injection registre_plan dans environnement_contexte (Strategic Planner v1.0).
              7.9: Fix multimodal — extraction ordonnée des text-parts du content OWUI
              dans le Draft. Correction perte texte utilisateur avec images inline.
              7.10: Revert dégradation gracieuse CAS 3 (le fallback INDEXATION suffit).
+             7.11: Cosmetic — Anonyme → anonyme (minuscule) dans nom_utilisateur.
 """
 
 
@@ -295,7 +296,7 @@ class Filter:
 
                 meta_vars = meta.get("variables", {})
                 u_v = __user__.get("valves") if __user__ else self.user_valves
-                display_name = __user__.get("name", "Anonyme") if getattr(u_v, "ENABLE_USER_NAME", False) else "Anonyme"
+                display_name = __user__.get("name", "anonyme") if getattr(u_v, "ENABLE_USER_NAME", False) else "anonyme"
                 
                 sys_loc = meta_vars.get("{{USER_LOCATION}}", "Inconnu")
                 u_loc = getattr(u_v, "OVERRIDE_LOCATION", "")

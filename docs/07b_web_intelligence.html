@@ -144,6 +144,17 @@
       recherche ne transite par un moteur tiers tracé.
     </p>
 
+    <div class="note-box">
+      <h4>v9.3-9.4 — Distillation via <code>call_cascade()</code> centralisé</h4>
+      <p>
+        L'action <code>distill_page</code> utilise désormais <code>EchoGeminiClient.call_cascade()</code>
+        (au lieu d'un appel direct) avec <code>MODEL_FLASH</code> clampé par la politique Pipe.
+        La propagation du <code>user_id</code> vers <code>clamp_model</code> garantit que le fallback
+        SQLite <code>echo_settings</code> est lu correctement même si OWUI ne propage pas les
+        métadonnées du Pipe.
+      </p>
+    </div>
+
     <h2>Cockpit de Replay Web</h2>
     <p>
       Après une session de navigation, l'action <code>web_navigation_replay_action.py</code> génère
@@ -158,7 +169,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.163.5 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

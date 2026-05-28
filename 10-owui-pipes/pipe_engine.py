@@ -1,7 +1,7 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.7
+version: 192.15
 requirements: asyncssh
 description: 190.8: Migration type 'summarized' -> 'rag_ephemeral'.
              191.0: Remplacement Device Flow par PKCE + Authorization Code.
@@ -18,6 +18,24 @@ description: 190.8: Migration type 'summarized' -> 'rag_ephemeral'.
              192.6: UserValve ENABLE_PAID_CREDITS (défaut False) — crédits Google One AI
              désactivés par défaut. Persistance write-on-change dans identity.db.
              192.7: Fix multimodal — guard isinstance sur content liste. Sécurisation scellement shadow.
+             192.8: Centralisation politique modèle Pipe → outils via __metadata__. Injection
+             _echo_model_policy et _echo_enable_paid_credits. convert_owui_tools : filtrage
+             dynamique enum modèle. Suppression write-on-change identity.db pour crédits.
+             192.9: Persistance echo_settings (fallback SQLite) — OWUI ne propage pas
+             __metadata__ custom du pipe aux outils. save_setting model_policy + enable_paid_credits.
+             192.10: Clamping du modèle orchestrateur sur reprise de contexte (last_model).
+             Empêche la réutilisation d'un modèle PRO en mode AUTO (plafond FLASH).
+             192.11: Cascade descendante du modèle orchestrateur (stream) en cas d'indisponibilité
+             (429/503). PRO→FLASH→LITE avec toast warning et HUD. Aligné sur call_cascade.
+             192.12: Mutation AEC (modèle_actuel/modèle_origine) dans le contexte lors de
+             la cascade descendante. Cohérence proprioceptive après fallback.
+             192.13: Factorisation _mutate_context_identity() — mutation AEC unifiée pour
+             escalade (new_cognitive_level) et cascade descendante (indisponibilité).
+             192.14: functionResponse de new_cognitive_level structurée avec status dict
+             (model_requested/model_used) aligné sur wrap_cascade_output.
+             Message factuel de repli. Suppression du ton défensif.
+             192.15: Refactoring status tri-état (success/warning/error). Suppression clamped:true.
+             Denied → error + struct. Cascade reason propagée via tuple à 3.
 """
 
 # ==============================================================================
@@ -165,6 +183,27 @@ class Orchestrator:
         cat = MODEL_IDENTITY.get(m_id, "UNKNOWN")
         return f"{cat} ({m_id})"
 
+    def _mutate_context_identity(self, context: list, new_model: str, old_model: str):
+        """
+        Mutation chirurgicale de l'AEC dans le contexte.
+        Patche modèle_actuel et modèle_origine via regex (support JSON/YAML hybride).
+        Met à jour model_origin pour les prochains _resolve_placeholders.
+        """
+        new_identity = self._build_identity(new_model)
+        old_identity = self._build_identity(old_model)
+        for msg in context:
+            for part in msg.get("parts", []):
+                if "text" in part and "modèle_actuel" in part["text"]:
+                    part["text"] = re.sub(
+                        r'("?modèle_actuel"?\s*:\s*"?)([^"\n]+)("?)',
+                        rf'\g<1>{new_identity}\g<3>', part["text"]
+                    )
+                    part["text"] = re.sub(
+                        r'("?modèle_origine"?\s*:\s*"?)([^"\n]+)("?)',
+                        rf'\g<1>{old_identity}\g<3>', part["text"]
+                    )
+        self.model_origin = old_model
+
     def _resolve_placeholders(self, text: str, model_id: str) -> str:
         if not isinstance(text, str): return text
         version = get_echo_version() or "##VERSION_ERR##"
@@ -247,13 +286,33 @@ class Orchestrator:
                 })
         return final_parts
 
-    def convert_owui_tools(self, tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
+    def convert_owui_tools(self, tools: Optional[List[Dict]], model_policy: str = "AUTO") -> Optional[List[Dict]]:
+        """
+        Convertit les specs OWUI → format Gemini.
+        Filtre dynamiquement les enum des paramètres modèle selon MODEL_SELECTION.
+        """
         if not tools: return None
+        from echo_constants import MODEL_ENUM_BY_POLICY, MODEL_ENUM_REFERENCE
+        allowed_models = MODEL_ENUM_BY_POLICY.get(model_policy, list(MODEL_ENUM_REFERENCE))
+
         funcs = []
         for t in tools:
             if t.get("type") == "function":
                 f = t.get("function", {})
-                funcs.append({"name": f.get("name"), "description": f.get("description", ""), "parameters": f.get("parameters", {"type": "object", "properties": {}})})
+                params = f.get("parameters", {"type": "object", "properties": {}})
+
+                # Filtrage dynamique : tout paramètre dont l'enum est un sous-ensemble de MODEL_ENUM_REFERENCE
+                for prop_name, prop_val in params.get("properties", {}).items():
+                    if "enum" in prop_val:
+                        enum_set = set(prop_val["enum"])
+                        if enum_set.issubset(MODEL_ENUM_REFERENCE):
+                            prop_val["enum"] = allowed_models
+
+                funcs.append({
+                    "name": f.get("name"),
+                    "description": f.get("description", ""),
+                    "parameters": params
+                })
         return [{"function_declarations": funcs}] if funcs else None
 
     async def prepare_context(self, body: Dict, chat_id: str, target_model: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
@@ -465,11 +524,17 @@ class Pipe:
         from echo_utils import EchoAuth
         echo_auth = EchoAuth(user_id=__user__["id"])
 
-        # Synchronisation write-on-change : préférence crédits → identity.db
-        stored_credits = echo_auth.get_auth_data("echo_enable_paid_credits", __user__["id"])
-        valve_credits = str(user_valves.ENABLE_PAID_CREDITS)
-        if stored_credits != valve_credits:
-            echo_auth.save_api_key("echo_enable_paid_credits", valve_credits, __user__["id"])
+        # Injection politiques Pipe → __metadata__ (non propagé aux outils par OWUI, conservé pour usage interne pipe)
+        if __metadata__ is None:
+            __metadata__ = {}
+        __metadata__["_echo_model_policy"] = user_valves.MODEL_SELECTION
+        __metadata__["_echo_enable_paid_credits"] = user_valves.ENABLE_PAID_CREDITS
+
+        # Persistance identity.db → lu par clamp_model() côté outils (fallback SQLite)
+        from echo_utils import EchoStateManager
+        _settings = EchoStateManager(user_id=__user__["id"])
+        _settings.save_setting("model_policy", user_valves.MODEL_SELECTION)
+        _settings.save_setting("enable_paid_credits", str(user_valves.ENABLE_PAID_CREDITS))
 
         # --- [NOUVEAU] DETECTION ET INTERCEPTION DE CLÉ API ---
         api_key_from_filter = body.get("_api_key")
@@ -542,8 +607,15 @@ class Pipe:
         last_model = orch.user_data_manager.get_last_active_model()
         
         if model_selection in ["AUTO", "AUTO_PRO"]:
+            # Plafond : AUTO → FLASH max, AUTO_PRO → PRO max
+            ceiling = MODEL_PRO if model_selection == "AUTO_PRO" else MODEL_FLASH
             if last_model and last_model in [MODEL_LITE, MODEL_FLASH, MODEL_PRO]:
-                target_model = last_model
+                # Clamping : le modèle repris ne doit pas dépasser le plafond de la politique
+                from echo_constants import MODEL_HIERARCHY
+                if MODEL_HIERARCHY.get(last_model, 1) > MODEL_HIERARCHY.get(ceiling, 1):
+                    target_model = ceiling
+                else:
+                    target_model = last_model
                 origine_model = last_model
                 await events.status(f"🧠 Reprise du contexte ({target_model})...")
             else:
@@ -607,7 +679,7 @@ class Pipe:
                 }
             }
 
-            tools = orch.convert_owui_tools(body.get("tools"))
+            tools = orch.convert_owui_tools(body.get("tools"), user_valves.MODEL_SELECTION)
             
             # --- [NOUVEAU] INJECTION OUTIL CHANGEMENT COGNITIF (BIDIRECTIONNEL) ---
             if is_auto:
@@ -679,21 +751,32 @@ class Pipe:
                     events=events,
                     process_callback=proc.process,
                     timeout=self.valves.HTTP_CLIENT_TIMEOUT,
-                    chat_id=chat_id
+                    chat_id=chat_id,
+                    enable_paid_credits=user_valves.ENABLE_PAID_CREDITS,
                 ):
                     # On ne yield le texte que si aucune escalade n'est en cours (Gateway Pattern)
                     if isinstance(chunk, dict) or not proc.escalation_requested:
                         yield chunk
             except Exception as e:
-                # GESTION DES ÉCHECS TECHNIQUES (API/RÉSEAU)
+                # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
                 if is_auto and cascade_attempt < max_cascade_attempts:
-                    await events.status(f"⚠️ Indisponibilité technique du modèle cible. Repli...")
-                    # Suture d'échec technique pour le modèle actuel
-                    context.append({
-                        "role": "user",
-                        "parts": [{"text": f"### ⚠️ ERREUR SYSTÈME\nL'appel au modèle expert a échoué ({str(e)}). Veuillez poursuivre le traitement avec vos ressources actuelles ou proposer une alternative."}]
-                    })
-                    continue # On reboucle avec le même modèle (target_model n'a pas encore changé)
+                    from echo_constants import MODEL_HIERARCHY
+                    # Cascade descendante : PRO → FLASH → LITE
+                    cascade_order = sorted(
+                        [k for k in MODEL_HIERARCHY if MODEL_HIERARCHY[k] < MODEL_HIERARCHY.get(target_model, 0)],
+                        key=lambda k: MODEL_HIERARCHY[k], reverse=True
+                    )
+                    if cascade_order:
+                        prev_model = target_model
+                        target_model = cascade_order[0]
+                        await events.status(f"⚡ {prev_model} indisponible → cascade vers {target_model}")
+                        await events.toast(f"⚡ Cascade : {prev_model} → {target_model} (erreur: {str(e)[:80]})", "warning")
+                        orch._mutate_context_identity(context, target_model, prev_model)
+                    else:
+                        # Plus de modèle inférieur → échec terminal
+                        yield f"❌ Cascade épuisée : tous les modèles sont indisponibles ({str(e)})"
+                        break
+                    continue
                 else:
                     yield f"❌ Erreur critique lors de la communication API : {str(e)}"
                     break
@@ -733,7 +816,7 @@ class Pipe:
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "denied", "message": "ÉCHEC : Le transfert vers MODEL_PRO est refusé par la configuration utilisateur (Valve AUTO). Veuillez traiter la demande immédiatement avec vos capacités actuelles."}}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": f"{target_req} unavailable (policy)", "message": f"Transfert vers {target_req} refusé. Traitez avec {target_model}."}}}]
                     })
                     continue # On reboucle avec le MÊME target_model
                 
@@ -747,19 +830,8 @@ class Pipe:
                 
                 plan_md = req.get("plan_de_transfert", "Exécution du relais.")
                 
-                # 1. Mutation Chirurgicale de l'identité dans le contexte via Regex
-                identity_format = orch._build_identity(new_target)
-                origin_format = orch._build_identity(target_model)
-
-                for part in context[-1]["parts"]:
-                    if "text" in part and "modèle_actuel" in part["text"]:
-                        # Remplacement de l'identité actuelle (Support hybride JSON/YAML)
-                        part["text"] = re.sub(r'("?modèle_actuel"?\s*:\s*"?)([^"\n]+)("?)', rf'\g<1>{identity_format}\g<3>', part["text"])
-                        # Mise à jour de l'origine pour le modèle suivant (Support hybride JSON/YAML)
-                        part["text"] = re.sub(r'("?modèle_origine"?\s*:\s*"?)([^"\n]+)("?)', rf'\g<1>{origin_format}\g<3>', part["text"])
-                
-                # Mise à jour de l'état de l'orchestrateur pour les placeholders système
-                orch.model_origin = target_model
+                # 1. Mutation Chirurgicale de l'identité dans le contexte
+                orch._mutate_context_identity(context, new_target, target_model)
                 
                 # 2. Suture Sémantique (Relais Protocolé avec réinjection signée du texte précédent)
                 sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
@@ -778,7 +850,14 @@ class Pipe:
                 cascade_history.append(model_msg)
                 current_cumul = new_cumul
 
-                user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "success", "message": f"Relais vers {new_target} activé. Exécutez le plan maintenant.", "plan": plan_md}}}]
+                # Structure status alignée sur wrap_cascade_output (KEYs uniquement)
+                escalation_status = {
+                    "status": "success",
+                    "model_requested": target_req,
+                    "model_used": target_req,  # À ce stade l'escalade est approuvée (clamping fait en amont)
+                }
+                msg = f"Transfert effectué vers {target_req}."
+                user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {**escalation_status, "message": msg, "plan": plan_md}}}]
                 user_msg = {"role": "user", "parts": user_resp_parts}
                 inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
                 new_cumul_u = orch.user_data_manager.calculate_cumulative(inv_u, current_cumul)

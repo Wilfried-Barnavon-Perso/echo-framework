@@ -30,7 +30,7 @@
       </p>
     </div>
 
-    <h2><code>echo_constants.py</code> — Constantes et Topologie (v5.2)</h2>
+    <h2><code>echo_constants.py</code> — Constantes et Topologie (v5.3)</h2>
 
     <p>
       Registre unique de toutes les vérités immuables du système. Tout composant qui a besoin
@@ -76,9 +76,9 @@
         </tr>
         <tr>
           <td><code>MODEL_LOCAL_GEMMA</code></td>
-          <td><code>gemma-4-E4B-it</code></td>
+          <td><code>LOCAL_GEMMA</code> (sentinelle)</td>
           <td>—</td>
-          <td>Distillation locale (Gemma Distiller, fallback API)</td>
+          <td>Distillation locale exclusive (Gemma 4 E4B via <code>echo-gemma-distiller</code>). Pas de fallback API distant.</td>
         </tr>
       </tbody>
     </table>
@@ -89,10 +89,11 @@
         <tr><th>Constante</th><th>Valeur</th><th>Rôle</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>MAX_TOKENS_DEFAULT</code></td><td>65 535</td><td>Limite universelle (AI Studio + API Antigravity). 65 536 provoque une erreur 400 sur certains modèles Antigravity.</td></tr>
+        <tr><td><code>MAX_TOKENS_DEFAULT</code></td><td>65 535</td><td>Limite universelle (AI Studio + API Antigravity). 65 536 provoque une erreur 400 sur Gemini 3.1 Pro et Lite API Antigravity.</td></tr>
         <tr><td><code>THINKING_LEVEL_PRO</code></td><td><code>"HIGH"</code></td><td>Réflexion maximale pour MODEL_PRO.</td></tr>
         <tr><td><code>THINKING_LEVEL_FLASH</code></td><td><code>"HIGH"</code></td><td>Réflexion standard pour MODEL_FLASH.</td></tr>
         <tr><td><code>THINKING_LEVEL_LITE</code></td><td><code>"HIGH"</code></td><td>Confirmé fonctionnel avec HIGH sur l'API Antigravity.</td></tr>
+        <tr><td><code>THINKING_LEVEL_TOOLS</code></td><td><code>"MINIMAL"</code></td><td>Outils stateless (maps, grounding, distillation rapide).</td></tr>
         <tr><td><code>TEMP_DEFAULT</code></td><td>1,0</td><td>Température de génération principale.</td></tr>
         <tr><td><code>TOP_P_DEFAULT</code></td><td>0,90</td><td>Nucleus sampling.</td></tr>
       </tbody>
@@ -112,7 +113,7 @@
       <li>Fallback sécuritaire : <code>application/octet-stream</code>, non supporté.</li>
     </ol>
 
-    <h2><code>echo_utils.py</code> — Cœur Réactif (v7.15)</h2>
+    <h2><code>echo_utils.py</code> — Cœur Réactif (v7.20)</h2>
 
     <h3>EchoStateManager — Persistance Bit-Perfect</h3>
     <p>
@@ -195,20 +196,114 @@
         <strong>omis par défaut</strong> (alignement sur le comportement natif d'AGY-IDE).
         Sans ce champ, le serveur utilise les quotas gratuits sans consommer de crédits payants Google One AI.
         L'activation est possible via la UserValve <code>ENABLE_PAID_CREDITS</code> du Pipe,
-        persistée dans <code>identity.db</code> avec un pattern write-on-change.
+        propagée via <code>__metadata__</code> et persistée dans <code>echo_settings</code>.
       </p>
     </div>
 
-    <h3>Fonctions utilitaires</h3>
+    <div class="note-box">
+      <h4>v7.16-7.17 — Distillation Gemma local (sans fallback API)</h4>
+      <p>
+        Depuis la v7.17, <code>call_distillation()</code> route <strong>exclusivement</strong> vers
+        le service Gemma local (<code>echo-gemma-distiller:7998</code>) par défaut.
+        Le fallback API Gemini 2.5 Flash a été supprimé : si le service local est indisponible,
+        la méthode lève une exception (le caller gère le fallback).
+        Les appels avec <code>target_model</code> explicite (FLASH, PRO) continuent de router
+        vers l'API Gemini via le maillage d'authentification standard.
+      </p>
+    </div>
+
+    <div class="tech-spec">
+      <h4>⚙️ Status tri-état (v7.20)</h4>
+      <p>
+        Toutes les réponses d'outils utilisent désormais un status à trois états explicites :
+      </p>
+      <ul>
+        <li><code>"success"</code> — exécution nominale, modèle utilisé = modèle demandé.</li>
+        <li><code>"warning"</code> — exécution réussie mais avec divergence (clamping politique ou cascade). Le champ <code>reason</code> détaille la cause.</li>
+        <li><code>"error"</code> — échec de l'exécution (cascade épuisée, exception, config invalide).</li>
+      </ul>
+      <p>
+        Le champ <code>clamped:true</code> est supprimé : la divergence modèle est signalée
+        uniquement via <code>status=warning</code> + champ <code>reason</code>.
+      </p>
+    </div>
+
+    <h3>Fonctions utilitaires et protocole Multipart</h3>
     <table>
       <thead>
         <tr><th>Fonction</th><th>Rôle</th></tr>
       </thead>
       <tbody>
         <tr><td><code>split_thought_process(text)</code></td><td>Isole le contenu des balises <code>&lt;think&gt;</code> / <code>&lt;thought&gt;</code> du texte final. Retourne <code>(texte_propre, pensées)</code>.</td></tr>
-        <tr><td><code>wrap_tool_output(text, status, multiparts, nouveaux_fichiers)</code></td><td>Construit le dictionnaire multipart standardisé retourné par chaque outil au Pipe.</td></tr>
+        <tr><td><code>wrap_tool_output(text, status, multiparts, nouveaux_fichiers)</code></td><td>Construit le dictionnaire multipart standardisé retourné par chaque outil au Pipe. Status par défaut : <code>{"status": "success"}</code>.</td></tr>
+        <tr><td><code>wrap_cascade_output(text, model_requested, model_used, status, reason)</code></td><td>Enrichit <code>wrap_tool_output</code> avec les métadonnées de cascade. Si <code>model_used ≠ model_requested</code>, le status passe en <code>warning</code> et le champ <code>reason</code> explique la divergence. Le modèle effectif est également préfixé dans le texte.</td></tr>
         <tr><td><code>get_echo_version()</code></td><td>Lit la version depuis <code>/app/backend/data/ECHO_VERSION</code> (copié depuis le fichier <code>VERSION</code> du dépôt).</td></tr>
         <tr><td><code>index_text_in_ephemeral_rag()</code></td><td>Pipeline complet chunk → embed → upsert Qdrant pour le RAG éphémère. Recouvrement inter-chunks pour préserver le contexte aux jointures.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Politique Modèle Centralisée — <code>clamp_model()</code> et <code>resolve_model_policy()</code></h3>
+    <p>
+      Ces deux fonctions constituent le <strong>verrou de politique</strong> entre le Pipe et
+      les outils. Elles garantissent que tout outil respecte la <code>MODEL_SELECTION</code>
+      définie par l'utilisateur.
+    </p>
+    <table>
+      <thead><tr><th>Fonction</th><th>Rôle</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>resolve_model_policy(metadata, user_id)</code></td>
+          <td>Résout la politique active depuis <code>__metadata__</code> (canal Pipe). Fallback
+          SQLite via <code>EchoStateManager.get_setting("model_policy")</code> si absent.
+          Retourne <code>(mode, plafond_key)</code> : <code>("auto", "MODEL_FLASH")</code>,
+          <code>("auto_pro", "MODEL_PRO")</code> ou <code>("fixed", "MODEL_XXX")</code>.</td>
+        </tr>
+        <tr>
+          <td><code>clamp_model(requested, metadata, user_id)</code></td>
+          <td>Applique la politique sur un modèle demandé par un outil. En mode
+          <code>fixed</code>, retourne toujours le modèle fixé. En mode <code>auto</code>,
+          retourne <code>min(demanded, plafond)</code> via <code>MODEL_HIERARCHY</code>.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3><code>call_cascade()</code> — Appel LLM centralisé avec cascade</h3>
+    <p>
+      Méthode statique de <code>EchoGeminiClient</code>. Point d'entrée unique recommandé
+      pour tous les outils qui appellent un LLM. Elle gère de façon transparente :
+    </p>
+    <ul>
+      <li><strong>Clamping</strong> — applique <code>clamp_model()</code> avant l'appel.</li>
+      <li><strong>Injection <code>thinkingConfig</code></strong> — niveau adapté au modèle (PRO/FLASH/LITE).</li>
+      <li><strong>Cascade descendante</strong> — si le modèle est indisponible (429/503), repli automatique
+          PRO → FLASH → LITE avec toast et status émis.</li>
+      <li><strong>Crédits opt-in</strong> — <code>enable_paid_credits</code> propagé via <code>__metadata__</code>.</li>
+    </ul>
+    <div class="code-header">Signature — <code>call_cascade()</code></div>
+    <pre><code>data, model_key, reason = await EchoGeminiClient.call_cascade(
+    target_model_key="MODEL_FLASH",  # Clé logique (sera clampée par la politique Pipe)
+    payload=payload,
+    user_id=user_id,
+    metadata=__metadata__,
+    events=events,
+    include_thoughts=False,  # True pour agents (préserve thoughtSignatures)
+)
+# data   : dictionnaire de réponse API Gemini (None si cascade épuisée)
+# model_key : clé ECHO du modèle effectivement utilisé
+# reason  : None (nominal) ou chaîne expliquant la divergence ("policy", "API error", …)</code></pre>
+
+    <h3>Table <code>echo_settings</code> — Persistance inter-sessions</h3>
+    <p>
+      Table SQLite dans <code>identity.db</code> (gérée par <code>EchoStateManager</code>).
+      Elle stocke les préférences Pipe (<code>model_policy</code>,
+      <code>enable_paid_credits</code>) pour que les outils puissent les lire même quand
+      OWUI ne leur propage pas <code>__metadata__</code>.
+    </p>
+    <table>
+      <thead><tr><th>Méthode</th><th>Rôle</th></tr></thead>
+      <tbody>
+        <tr><td><code>save_setting(key, value)</code></td><td>Écrit une clé dans <code>echo_settings</code> (identity.db).</td></tr>
+        <tr><td><code>get_setting(key)</code></td><td>Lit une clé depuis <code>echo_settings</code>. Retourne <code>None</code> si absente.</td></tr>
       </tbody>
     </table>
 
@@ -335,7 +430,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.163.5 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

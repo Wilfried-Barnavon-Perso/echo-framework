@@ -37,7 +37,7 @@
       </p>
     </div>
 
-    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.9)</h2>
+    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.11)</h2>
 
     <p>
       Ce filtre est la porte d'entrée cognitive d'ECHO. Il opère en deux phases :
@@ -121,10 +121,11 @@ flowchart LR
     <h3>Le Moulage (Semantic Molding)</h3>
     <p>
       Lorsqu'un fichier dépasse <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko), le filtre déclenche
-      <code>_process_file_task()</code> — une tâche asynchrone en arrière-plan. Le modèle
-      <code>MODEL_DISTILLATION</code> (Gemma 4 E4B local, fallback <code>gemini-2.5-flash</code>) produit un distillat structuré
-      du fichier, qui est découpé en chunks (<code>CHUNK_SIZE</code>) avec recouvrement
-      (<code>CHUNK_OVERLAP</code>) pour préserver le contexte aux jointures,
+      <code>_process_file_task()</code> — une tâche asynchrone en arrière-plan. Le
+      <code>MODEL_DISTILLATION</code> (Gemma 4 E4B local, service <code>echo-gemma-distiller:7998</code>)
+      produit un distillat structuré du fichier. Si le service local est indisponible, la tâche
+      échoue (pas de fallback API). Le distillat est découpé en chunks (<code>CHUNK_SIZE</code>)
+      avec recouvrement (<code>CHUNK_OVERLAP</code>) pour préserver le contexte aux jointures,
       vectorisé par bge-m3 (1024d) et stocké dans <code>echo_ephemeral</code> (Qdrant).
     </p>
     <p>
@@ -142,11 +143,11 @@ flowchart LR
 
     <div class="code-header">Structure du bloc <code>environnement_contexte</code></div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "##ECHO_VERSION##"   # Résolu par le Pipe
+version_framework_echo: "5.164.7"
 modèle_actuel:   "##MODEL_ID##"              # Résolu par le Pipe (ex: MODEL_FLASH)
 modèle_origine:  "##MODEL_ORIGIN##"          # Modèle ayant initié le tour
-nom_utilisateur: "Wilfried"
-date_et_heure:   "2026-05-26 09:00"
+nom_utilisateur: "anonyme"
+date_et_heure:   "2026-05-28 09:00"
 localisation:    "Paris, France"
 timezone:        "Europe/Paris"
 registre_fichiers:
@@ -155,10 +156,15 @@ registre_fichiers:
     mime:   "application/pdf"
     statut: "rag_ephemeral"
     slug:   "rapport_pdf_a3f2c1"
+registre_plan:
+  - id: "plan_abc"
+    goal: "Refactorer le module d'auth"
+    status: "in_progress"
+    modele: "MODEL_PRO"
 &lt;/environnement_contexte&gt;
 
-&lt;smart_context slug="rapport_pdf_a3f2c1"&gt;
-[Résumé ≤ 300 mots du contenu de rapport.pdf, produit par Gemini 2.5 Flash]
+&lt;smart_context slug="rapport_pdf_a3f2c1" mime_type="application/pdf" mode="rag_ephemeral" vectors="42"&gt;
+[Résumé ≤ 300 mots du contenu de rapport.pdf, produit par Gemma 4 E4B local]
 [Utiliser search_session_context("rapport_pdf_a3f2c1", query) pour les détails]
 &lt;/smart_context&gt;</code></pre>
 
@@ -292,7 +298,7 @@ registre_fichiers:
     </div>
 
     <footer>
-      ECHO Framework — Version 5.163.5 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

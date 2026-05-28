@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.2
+version: 5.3
 description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
@@ -11,6 +11,8 @@ description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.7: Mapping modèles AGY ↔ AI Studio (AGY_MODEL_MAP).
              Fix MODEL_ROUTING (ajout clé MODEL_DISTILLATION). Fix noms canoniques
              AI Studio : MODEL_FLASH=gemini-3.5-flash, MODEL_PRO=gemini-3.1-pro-preview.
+             5.3: MODEL_HIERARCHY, MODEL_ENUM_BY_POLICY, MODEL_ENUM_REFERENCE pour centralisation
+             politique modèle Pipe → outils (clamp_model, convert_owui_tools enum dynamiques).
              4.8: Centralisation des paramètres de génération (THINKING_LEVEL_*, MAX_TOKENS_DEFAULT).
              Suppression des valves TEMPERATURE/TOP_P/THINKING_LEVEL dans pipe_engine et
              cognitive_agents — point de vérité unique pour tout le framework ECHO.
@@ -302,6 +304,25 @@ MODEL_IDENTITY = {
     MODEL_FLASH: "MODEL_FLASH",
     MODEL_PRO:   "MODEL_PRO"
 }
+
+# HIÉRARCHIE COGNITIVE — ordonnance pour clamp_model() (propagation modèle Pipe → outils)
+MODEL_HIERARCHY = {
+    "MODEL_LITE": 0,
+    "MODEL_FLASH": 1,
+    "MODEL_PRO": 2,
+}
+
+# ENUM MODÈLES PAR POLITIQUE — utilisé par convert_owui_tools() pour filtrage dynamique
+MODEL_ENUM_BY_POLICY = {
+    "MODEL_LITE":  ["MODEL_LITE"],
+    "MODEL_FLASH": ["MODEL_FLASH"],
+    "MODEL_PRO":   ["MODEL_PRO"],
+    "AUTO":        ["MODEL_LITE", "MODEL_FLASH"],
+    "AUTO_PRO":    ["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"],
+}
+
+# Set de référence pour détecter les enum modèle dans les specs d'outils
+MODEL_ENUM_REFERENCE = {"MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"}
 
 # ==============================================================================
 # 2. MAPPING MIME TYPES

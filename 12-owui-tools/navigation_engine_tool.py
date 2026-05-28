@@ -1,8 +1,8 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 9.2
-description: 8.5: RAG éphémère. 8.8: Suppression manual_control. 8.9: Fix Qdrant. 9.0: Fix SigLIP-2. 9.1: bge-m3 — chunking paragraphes sémantiques, max_tokens=8192, dim=1024. 9.2: Fix MODEL_FLASH→MODEL_DISTILLATION sur brief_summary, factorisation vectorisation via index_text_in_ephemeral_rag.
+version: 9.4
+description: 8.5: RAG éphémère. 8.8: Suppression manual_control. 8.9: Fix Qdrant. 9.0: Fix SigLIP-2. 9.1: bge-m3 — chunking paragraphes sémantiques, max_tokens=8192, dim=1024. 9.2: Fix MODEL_FLASH→MODEL_DISTILLATION sur brief_summary, factorisation vectorisation via index_text_in_ephemeral_rag. 9.3: Suppression ANALYSE_MODEL UserValve. Distillation page via call_cascade() centralisé. 9.4: Propagation user_id au clamp_model (fallback SQLite echo_settings).
 """
 
 import httpx
@@ -19,7 +19,7 @@ from typing import Optional, Literal, Dict, Any, List
 
 # Import Lib Partagée (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient
+from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, clamp_model
 from echo_ui import EchoUI
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, MODEL_ROUTING,
@@ -105,7 +105,6 @@ class Tools:
         BROWSER_MODE: Literal["mobile", "desktop"] = Field(default="mobile", description="Mode de navigation (Mobile = Tablette)")
         SHOW_BROWSER_HUD: bool = Field(default=True, description="Afficher le moniteur de navigation (HUD)")
         HUD_VISIBLE_SEC: int = Field(default=90, description="Durée de visibilité du moniteur (sec)")
-        ANALYSE_MODEL: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = Field(default="MODEL_FLASH", description="Modèle utilisé pour l'analyse sémantique")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -161,17 +160,31 @@ class Tools:
             domain = urllib.parse.urlparse(current_url).netloc.replace(".", "_") if current_url != "unknown" else "page"
             slug = f"{domain}_{uuid.uuid4().hex[:4]}"
             
-            await events.status(f"🧠 Distillation de la page ({u_valves.ANALYSE_MODEL}) → vectorisation locale...")
+            await events.status(f"🧠 Distillation de la page → vectorisation locale...")
             try:
                 html_text = base64.b64decode(b64_html).decode('utf-8', errors='ignore')
                 instruction = text if text else "Analyse ce code HTML et génère un résumé structuré, sémantique et très détaillé de tout le contenu de la page. Extrais les concepts clés, le texte principal, et les données pertinentes."
                 prompt = f"SOURCE HTML :\n{html_text[:100000]}\n\nINSTRUCTION :\n{instruction}"
                 
-                distillate = await EchoGeminiClient.call_distillation(
-                    prompt, __user__, __metadata__, is_json=False,
-                    target_model=u_valves.ANALYSE_MODEL,
-                    max_tokens=8192
+                # Distillation via call_cascade centralisé (plus de call_distillation avec target_model)
+                analyse_model = clamp_model("MODEL_FLASH", __metadata__, user_id=uid)
+                data, _, _ = await EchoGeminiClient.call_cascade(
+                    target_model_key=analyse_model,
+                    payload={
+                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                        "generationConfig": {"maxOutputTokens": 8192},
+                    },
+                    user_id=uid,
+                    metadata=__metadata__,
+                    events=events,
+                    timeout=120,
+                    include_thoughts=False,
                 )
+                if not data:
+                    return wrap_tool_output(text="❌ Cascade épuisée : aucun modèle disponible pour la distillation.", status={"status": "error"})
+                # Extraction texte
+                candidates = data.get("candidates", [])
+                distillate = "".join(p.get("text", "") for p in candidates[0]["content"].get("parts", []) if "text" in p) if candidates else ""
                 
                 # --- VECTORISATION DANS LE RAG ÉPHÉMÈRE (méthode partagée) ---
                 nb_points, err = await EchoGeminiClient.index_text_in_ephemeral_rag(

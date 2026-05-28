@@ -1,12 +1,17 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.20
+version: 5.22
 description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro. 5.17: Ajout show_image_js (injection JS sans HTMLResponse).
              5.18: Tooltip AUTHENTIFICATION refondu : section QUOTAS détaillée (Crédits, Quota modèle, Reset, Type).
              5.19: Nouveaux paramètres quota (quota_model, RPD, RPM) dans la signature et le tooltip.
              5.20: Refonte show_image_js — réutilise le moteur WebPlayer (HUD navigateur) avec
              paramètres direct_url et icon. Icône par défaut 👁️ (image), 🌐 pour le navigateur.
+             5.21: Migration map_viewer() — Remplacement embed Google Maps par carte interactive
+             Leaflet.js + tuiles OSM. Signature enrichie (lat, lon, zoom, lieux). Marqueur custom
+             ECHO, popup élégante multi-résultats, CTRL+molette, contrôles stylisés.
+             5.22: Retour embed Google Maps (googleMaps grounding natif Gemini) —
+             suppression Leaflet/OSM. Signature simplifiée (query, title uniquement).
 """
 
 from fastapi.responses import HTMLResponse
@@ -528,8 +533,11 @@ class EchoUI(EchoRichUI):
     html = cls._get_boilerplate(content, "ECHO Navigation Replay")
     return HTMLResponse(content=html, headers={"Content-Disposition": "inline"})
 
+
   @classmethod
   def map_viewer(cls, query: str, title: str = "Localisation") -> HTMLResponse:
+    """Affiche une carte Google Maps interactive via l'embed natif.
+    Utilise conjointement avec le grounding googleMaps de Gemini (gemini_maps_grounding.py)."""
     from urllib.parse import quote
     safe_query = quote(query.strip())
     content = f"""

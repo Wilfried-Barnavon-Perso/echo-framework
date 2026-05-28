@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py v192.7) : Suture Bit-Perfect, routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, fix multimodal inline.">
+  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py v192.15) : Suture Bit-Perfect, routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modèle centralisée Pipe → outils.">
   <title>ECHO v5 — 6. Le Pipe (Cortex)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -20,11 +20,14 @@
 
 
     <p>
-      Le <code>pipe_engine.py</code> (v192.7) est l'unité centrale de traitement d'ECHO.
+      Le <code>pipe_engine.py</code> (v192.15) est l'unité centrale de traitement d'ECHO.
       Open WebUI le voit comme un modèle GenAI standard, mais il agit en réalité comme un
       <strong>orchestrateur de contexte</strong> : il reconstruit l'historique bit-perfect depuis
       SQLite, pilote la boucle d'outils de l'Arsenal, gère l'authentification et l'inférence via
       deux backends (AI Studio et API Antigravity), puis scelle chaque tour dans les Ombres Riches.
+      Il orchestre également la <strong>politique modèle centralisée</strong> — propagée de ses
+      <code>UserValves</code> vers tous les outils via <code>__metadata__</code> et le fallback
+      SQLite <code>echo_settings</code>.
     </p>
 
 
@@ -45,7 +48,7 @@
       <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
       <tbody>
         <tr><td><strong>Fichier source</strong></td><td><code>10-owui-pipes/pipe_engine.py</code></td></tr>
-        <tr><td><strong>Version</strong></td><td>192.7 (déclarée dans le docstring du fichier)</td></tr>
+        <tr><td><strong>Version</strong></td><td>192.15 (déclarée dans le docstring du fichier)</td></tr>
         <tr><td><strong>Type Open WebUI</strong></td><td><code>Pipe</code> — se présente comme un modèle GenAI</td></tr>
         <tr><td><strong>Point d'entrée</strong></td><td><code>Pipe.pipe(body, __event_emitter__)</code></td></tr>
         <tr><td><strong>Exécution</strong></td><td>In-process dans Python d'Open WebUI, asynchrone (<code>asyncio</code>)</td></tr>
@@ -189,11 +192,88 @@ flowchart TD
     <h3>L'outil <code>new_cognitive_level</code></h3>
     <p>
       Injecté dynamiquement dans les outils disponibles de chaque modèle, cet outil permet au
-      modèle actif de déclarer qu'il ne peut pas traiter la tâche correctement. Le Pipe intercepte
-      cet appel, récupère le <strong>Plan de Transfert</strong> rédigé par le modèle sortant
-      (document Markdown structurant le contexte et les objectifs pour son successeur),
-      puis re-route la requête vers le modèle cible sans redémarrer la boucle complète.
+      modèle actif de déclarer qu'il ne peut pas traiter la tâche correctement à son niveau cognitif
+      courant. Le Pipe intercepte cet appel, récupère le <strong>Plan de Transfert</strong> rédigé
+      par le modèle sortant (document Markdown structurant le contexte et les objectifs pour son
+      successeur), puis re-route la requête vers le modèle cible sans redémarrer la boucle complète.
+      L'outil est <strong>bidirectionnel</strong> : il permet une escalade (LITE → FLASH → PRO)
+      comme une redescente (PRO → FLASH → LITE) selon la charge de la tâche courante.
     </p>
+
+    <div class="note-box">
+      <h4>Mutation AEC lors d'un changement de modèle</h4>
+      <p>
+        Chaque transfert inter-modèle (escalade ou cascade technique) déclenche
+        <code>_mutate_context_identity()</code> : les champs <code>modèle_actuel</code> et
+        <code>modèle_origine</code> du bloc AEC sont patchés <em>in-place</em> par regex dans
+        le contexte actif, garantissant une proprioception cohérente dans tous les tours suivants.
+      </p>
+    </div>
+
+    <h2>Cascade Descendante Technique (v192.11)</h2>
+
+    <p>
+      Indépendamment de l'escalade cognitive volontaire, le Pipe gère les <strong>erreurs
+      d'indisponibilité API</strong> (429, 503) par une cascade descendante automatique :
+      PRO → FLASH → LITE. Cette cascade est distincte du mécanisme
+      <code>new_cognitive_level</code> et s'active uniquement en mode <code>AUTO</code> ou
+      <code>AUTO_PRO</code>.
+    </p>
+
+    <div class="tech-spec">
+      <h4>⚙️ Séquence de cascade descendante</h4>
+      <ol>
+        <li>Un appel stream au modèle cible lève une exception (erreur réseau ou quota).</li>
+        <li>Le Pipe identifie les modèles inférieurs disponibles via <code>MODEL_HIERARCHY</code>.</li>
+        <li><code>_mutate_context_identity()</code> met à jour l'AEC avec le nouveau modèle.</li>
+        <li>Un toast <code>⚡ Cascade : PRO → FLASH</code> est émis vers l'interface.</li>
+        <li>La boucle reprend immédiatement sur le modèle de repli.</li>
+        <li>Si plus aucun modèle n'est disponible : message d'erreur terminal et sortie.</li>
+      </ol>
+    </div>
+
+    <h2>Politique Modèle Centralisée — Pipe → Outils</h2>
+
+    <p>
+      La <code>UserValve MODEL_SELECTION</code> du Pipe définit la politique d'utilisation des
+      modèles pour <em>tous</em> les outils de l'Arsenal. OWUI ne propageant pas les
+      <code>__metadata__</code> personnalisés du Pipe vers les outils, deux mécanismes
+      parallèles assurent la propagation :
+    </p>
+
+    <table>
+      <thead><tr><th>Mécanisme</th><th>Canal</th><th>Fonctionnement</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Injection <code>__metadata__</code></strong></td>
+          <td>Dans le même tour de Pipe</td>
+          <td>Les clés <code>_echo_model_policy</code> et <code>_echo_enable_paid_credits</code>
+          sont injectées dans <code>__metadata__</code> avant chaque appel d'outil.</td>
+        </tr>
+        <tr>
+          <td><strong>Fallback SQLite <code>echo_settings</code></strong></td>
+          <td>Persistance inter-sessions</td>
+          <td><code>EchoStateManager.save_setting()</code> écrit <code>model_policy</code> et
+          <code>enable_paid_credits</code> dans <code>identity.db</code>. Les outils lisent
+          cette valeur via <code>get_setting()</code> si <code>__metadata__</code> est absent.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="tech-spec">
+      <h4>⚙️ Filtrage dynamique de l'enum modèle dans les outils (<code>convert_owui_tools()</code>)</h4>
+      <p>
+        Lorsque le Pipe convertit les specs d'outils OWUI au format Gemini, il filtre
+        dynamiquement l'enum des paramètres de type modèle selon la politique active.
+        Un enum <code>["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"]</code> présent dans un outil
+        est restreint à <code>MODEL_ENUM_BY_POLICY[MODEL_SELECTION]</code> :
+      </p>
+      <ul>
+        <li><code>AUTO</code> → <code>["MODEL_LITE", "MODEL_FLASH"]</code></li>
+        <li><code>AUTO_PRO</code> → <code>["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"]</code></li>
+        <li>Modèle fixé → <code>["MODEL_FLASH"]</code> (ou LITE ou PRO selon la valve)</li>
+      </ul>
+    </div>
 
     <h2>Gestion des Pensées (Chain-of-Thought)</h2>
 
@@ -261,7 +341,7 @@ flowchart TD
 
     <div class="code-header">En-têtes Stealth — ECHO API Antigravity</div>
     <pre><code>User-Agent: antigravity/2.1.0 (language_server; os_type=Windows; os_version=10.0.26100; arch=x64)
-X-Goog-Api-Client: gl-node/20.0.0
+x-goog-api-client: antigravity/2.1.0
 Authorization: Bearer {oauth_token}
 Content-Type: application/json</code></pre>
 
@@ -323,16 +403,18 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     quota_rpd_rem=quota_rpd_rem, quota_rpd_lim=quota_rpd_lim, ...)</code></pre>
 
     <div class="audit-note">
-      <h4>✅ Exactitude — Version 192.7</h4>
+      <h4>✅ Exactitude — Version 192.15</h4>
       <p>
-        La version 192.7 corrige le traitement multimodal : les images inline (collées/glissées)
-        ne provoquent plus la perte du texte utilisateur. Le scellement final est sécurisé
-        par un guard <code>isinstance</code> empêchant la corruption du shadow SQLite.
-        Intègre également le protocole Antigravity 2.1, la gestion des deux backends
-        (AI Studio / API Antigravity), la chaîne HUD quota par modèle CA,
-        l'outil <code>new_cognitive_level</code> pour le routage inter-modèle dynamique,
-        et la UserValve <code>ENABLE_PAID_CREDITS</code> (défaut <code>False</code>).
-        Toutes les valeurs (noms de constantes, seuils, chemins) sont vérifiées contre le code source.
+        La version 192.15 finalise le refactoring du status tri-état
+        (<code>success</code> / <code>warning</code> / <code>error</code>) : suppression de
+        <code>clamped:true</code>, ajout du champ <code>reason</code> dans
+        <code>wrap_cascade_output()</code>. La <code>functionResponse</code> de
+        <code>new_cognitive_level</code> est désormais structurée avec un status dict
+        aligné sur ce format (<code>model_requested</code> / <code>model_used</code>).
+        La cascade descendante technique (192.11) gère PRO→FLASH→LITE en cas d'erreur API,
+        avec mutation AEC cohérente (192.13). La politique modèle Pipe → outils est
+        propagée via <code>__metadata__</code> et persistée dans <code>echo_settings</code>
+        (SQLite fallback, 192.9). Toutes les valeurs sont vérifiées contre le code source.
       </p>
     </div>
 
@@ -342,7 +424,7 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     </div>
 
     <footer>
-      ECHO Framework — Version 5.163.5 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

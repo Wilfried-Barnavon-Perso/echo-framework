@@ -1,7 +1,7 @@
 """
 title: ECHO Cognitive Agents
 author: ECHO Framework
-version: 5.12
+version: 5.13
 description: 5.7: Résolution du conflit de nom get_all_skills (shadowing).
              5.8: Centralisation des niveaux de réflexion (THINKING_LEVEL_*) — suppression
              valves FLASH_THINKING et PRO_THINKING. Remplacement par constantes echo_constants.
@@ -13,6 +13,8 @@ description: 5.7: Résolution du conflit de nom get_all_skills (shadowing).
              (thoughtSignatures in-memory). Synthèse finale par modèle dédié.
              5.12: consult_council — docstring prérequis 2 participants,
              message d'erreur actionnable (liste skills + invite forge_skill).
+             5.13: Centralisation politique modèle Pipe. Migration call() → call_cascade().
+             Suppression résolution manuelle modèle/thinking. Docstrings informent de la cascade auto.
 """
 
 import sys
@@ -26,7 +28,7 @@ from typing import Optional, List, Dict, Any, Literal, Tuple
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoEvents, EchoGeminiClient, EchoStateManager
+from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager, clamp_model
 from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
@@ -137,18 +139,18 @@ class Tools:
         target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"],
         system_instruction: Optional[str] = None,
         __user__: Optional[dict] = None,
+        __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
         """
         Délégation cognitive sans état (stateless). Chaque appel est indépendant et ne conserve aucune mémoire des échanges précédents.
-        Le paramètre 'context' est obligatoire pour injecter sémantiquement les faits, la mémoire ou les données nécessaires à la réflexion.
         
-        Utilisez MODEL_LITE pour la distillation rapide et l'extraction de données.
-        Utilisez MODEL_FLASH pour les tâches intermédiaires, le formatage ou la logique standard.
-        Utilisez MODEL_PRO pour l'architecture complexe, le debug profond ou la planification stratégique.
-        Si le modèle choisi est indisponible (quota épuisé, erreur persistante), essayez un
-        niveau inférieur : MODEL_PRO → MODEL_FLASH → MODEL_LITE.
+        Choisissez le modèle parmi ceux disponibles :
+        - MODEL_LITE : distillation rapide, extraction de données.
+        - MODEL_FLASH : tâches intermédiaires, formatage, logique standard.
+        - MODEL_PRO : architecture complexe, debug profond, planification stratégique.
+        La politique ECHO gère automatiquement la cascade (fallback) si le modèle est saturé.
         
         :param context: Contexte sémantique (Markdown) de référence pour la tâche.
         :param prompt: L'instruction ou la tâche spécifique à exécuter.
@@ -157,48 +159,38 @@ class Tools:
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
-        
-        # Résolution du modèle via le Registre Souverain
-        actual_model = MODEL_ROUTING.get(target_model, MODEL_PRO)
-        
-        # Résolution du niveau de réflexion via constantes ECHO
-        thinking_level = THINKING_LEVEL_PRO
-        if target_model == "MODEL_FLASH":
-            thinking_level = THINKING_LEVEL_FLASH
-        elif target_model == "MODEL_LITE":
-            thinking_level = THINKING_LEVEL_LITE
 
         await events.status(f"🧠 Délégation Cognitive ({target_model}) pour {user_id}...")
         
-        # Construction du prompt sémantique
         combined_prompt = f"### CONTEXTE\n{context}\n\n### TÂCHE\n{prompt}"
+        sys_instr = {"parts": [{"text": system_instruction}]} if system_instruction else None
+        
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": combined_prompt}]}],
+            "generationConfig": {"temperature": TEMP_DEFAULT, "topP": TOP_P_DEFAULT, "maxOutputTokens": 16000}
+        }
+        if sys_instr: payload["systemInstruction"] = sys_instr
 
-        # Appel au client agnostique (Purifié)
-        res_json = await EchoGeminiClient.call(
-            target_model=actual_model,
-            payload={
-                "contents": [{"role": "user", "parts": [{"text": combined_prompt}]}],
-                "generationConfig": {
-                    "temperature": TEMP_DEFAULT,
-                    "topP": TOP_P_DEFAULT,
-                    "maxOutputTokens": 16000,
-                    "thinkingConfig": {"includeThoughts": False, "thinkingLevel": thinking_level.lower()}
-                },
-                "systemInstruction": {"parts": [{"text": system_instruction}]} if system_instruction else None
-            },
+        data, model_used, reason = await EchoGeminiClient.call_cascade(
+            target_model_key=target_model,
+            payload=payload,
             user_id=user_id,
+            metadata=__metadata__,
             events=events,
             threshold=self.valves.KEY_SWITCH_THRESHOLD,
             max_retries=self.valves.MAX_RETRIES,
-            timeout=self.valves.COGNITIVE_TIMEOUT
+            timeout=self.valves.COGNITIVE_TIMEOUT,
+            include_thoughts=False,
         )
         
-        # Extraction normalisée (le client déballe déjà les enveloppes Code Assist)
-        candidates = res_json.get("candidates", [])
+        if not data:
+            return wrap_tool_output(text=f"❌ Cascade épuisée : aucun modèle disponible pour la délégation (demandé : {target_model}).")
+
+        candidates = data.get("candidates", [])
         if candidates and candidates[0].get("content"):
             full_text = "".join([p.get("text", "") for p in candidates[0]["content"].get("parts", [])])
-            await events.status(f"Délégation terminée ({target_model}).", done=True)
-            return wrap_tool_output(text=full_text)
+            await events.status(f"Délégation terminée ({model_used}).", done=True)
+            return wrap_cascade_output(text=full_text, model_requested=target_model, model_used=model_used, reason=reason)
         
         return wrap_tool_output(text="❌ Erreur: Réponse Gemini vide.")
 
@@ -212,6 +204,7 @@ class Tools:
         distillation_focus: Optional[str] = Field(default=None, description="Sujet, question ou point d'attention absolu sur lequel l'expert doit se concentrer lors de sa lecture."),
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
+        __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
@@ -224,9 +217,8 @@ class Tools:
         :param role_name: Identifiant du Skill définissant l'expert (ex: 'lead_dev', 'expert_secu').
         :param prompt: Votre question ou instruction pour cet expert.
         :param sub_sid: (Optionnel) ID du fil de réflexion à reprendre.
-        :param target_model: Modèle Gemini utilisé pour l'expert (MODEL_PRO recommandé).
-                             Si le modèle choisi est indisponible (quota épuisé, erreur persistante),
-                             essayez un niveau inférieur : MODEL_PRO → MODEL_FLASH → MODEL_LITE.
+        :param target_model: Modèle préféré (MODEL_PRO recommandé pour les experts).
+                             Cascade descendante automatique si indisponible.
         :param history_depth: (Optionnel) Nombre de messages de la branche active à fournir à l'expert.
         :param distillation_focus: (Optionnel) Point d'attention prioritaire lors de la distillation du contexte.
         """
@@ -252,7 +244,7 @@ class Tools:
         distillate = await self._distill_context(state, __chat_id__, role_name, user_id, events, depth, distillation_focus)
         
         # 4. Boucle de réflexion itérative
-        final_answer = await self._iterative_loop(
+        final_answer, model_used = await self._iterative_loop(
             state=state,
             sub_sid=sid,
             chat_id=__chat_id__,
@@ -262,10 +254,15 @@ class Tools:
             context_distillate=distillate,
             target_model=target_model,
             user_id=user_id,
-            events=events
+            events=events,
+            metadata=(__metadata__ or {})
         )
 
-        return wrap_tool_output(text=f"### RÉPONSE DU {role_name.upper()} (ID: `{sid}`)\n\n{final_answer}")
+        return wrap_cascade_output(
+            text=f"### RÉPONSE DU {role_name.upper()} (ID: `{sid}`)\n\n{final_answer}",
+            model_requested=target_model,
+            model_used=model_used
+        )
 
     async def _distill_context(self, state: EchoStateManager, chat_id: str, role: str, user_id: str, events: EchoEvents, depth: int, focus: Optional[str] = None) -> str:
         """Méthode interne pour préparer un résumé focalisé de la branche active du chat."""
@@ -329,6 +326,7 @@ class Tools:
         distillation_focus: Optional[str] = None,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
+        __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
@@ -405,14 +403,8 @@ class Tools:
             state, __chat_id__, "council", user_id, events, depth, distillation_focus
         )
 
-        # ── Phase 2 : Boucle des tours (protocole Delphi) ──
-        actual_model = MODEL_ROUTING.get(target_model, MODEL_PRO)
-        if target_model == "MODEL_PRO":
-            thinking_level = THINKING_LEVEL_PRO
-        elif target_model == "MODEL_FLASH":
-            thinking_level = THINKING_LEVEL_FLASH
-        else:
-            thinking_level = THINKING_LEVEL_LITE
+        # ── Phase 2 : Boucle des tours (protocole Delphi) — via call_cascade ──
+        # Le modèle et thinking sont gérés automatiquement par call_cascade
 
         # Historiques in-memory par participant (conserve les thoughtSignatures dans les parts)
         histories: Dict[str, List[dict]] = {p["skill_id"]: [] for p in roster}
@@ -458,24 +450,25 @@ class Tools:
 
                 system_prompt = self._build_council_system_prompt(participant, roster)
 
-                res = await EchoGeminiClient.call(
-                    target_model=actual_model,
+                res, _, _ = await EchoGeminiClient.call_cascade(
+                    target_model_key=target_model,
                     payload={
                         "contents": histories[sid],
                         "systemInstruction": {"parts": [{"text": system_prompt}]},
                         "generationConfig": {
                             "temperature": TEMP_DEFAULT,
                             "topP": TOP_P_DEFAULT,
-                            "thinkingConfig": {
-                                "includeThoughts": False,
-                                "thinkingLevel": thinking_level.lower()
-                            }
                         }
                     },
                     user_id=user_id,
+                    metadata=(__metadata__ or {}),
                     events=events,
-                    timeout=self.valves.COGNITIVE_TIMEOUT
+                    timeout=self.valves.COGNITIVE_TIMEOUT,
+                    include_thoughts=False,
                 )
+
+                if not res:
+                    return sid, f"(❌ Cascade épuisée — aucun modèle disponible)"
 
                 candidates = res.get("candidates", [])
                 if not candidates:
@@ -532,39 +525,34 @@ class Tools:
             "les recommandations clés. Sois exhaustif mais concis."
         )
 
-        # Résolution modèle + thinking level pour la synthèse
-        synthesis_model_actual = MODEL_ROUTING.get(synthesis_model, MODEL_FLASH)
-        if synthesis_model == "MODEL_PRO":
-            synthesis_thinking = THINKING_LEVEL_PRO
-        elif synthesis_model == "MODEL_FLASH":
-            synthesis_thinking = THINKING_LEVEL_FLASH
-        else:
-            synthesis_thinking = THINKING_LEVEL_LITE
+        # Synthèse via call_cascade (modèle + thinking automatiques)
+        synthesis_payload = {
+            "contents": [{"role": "user", "parts": [{"text": transcript}]}],
+            "systemInstruction": {"parts": [{"text": synthesis_system}]},
+            "generationConfig": {
+                "temperature": TEMP_DISTILLATION,
+                "topP": TOP_P_DISTILLATION,
+                "maxOutputTokens": 16000,
+            }
+        }
 
-        res = await EchoGeminiClient.call(
-            target_model=synthesis_model_actual,
-            payload={
-                "contents": [{"role": "user", "parts": [{"text": transcript}]}],
-                "systemInstruction": {"parts": [{"text": synthesis_system}]},
-                "generationConfig": {
-                    "temperature": TEMP_DISTILLATION,
-                    "topP": TOP_P_DISTILLATION,
-                    "maxOutputTokens": 16000,
-                    "thinkingConfig": {
-                        "includeThoughts": False,
-                        "thinkingLevel": synthesis_thinking.lower()
-                    }
-                }
-            },
+        res, _, _ = await EchoGeminiClient.call_cascade(
+            target_model_key=synthesis_model,
+            payload=synthesis_payload,
             user_id=user_id,
+            metadata=(__metadata__ or {}),
             events=events,
-            timeout=self.valves.COGNITIVE_TIMEOUT
+            timeout=self.valves.COGNITIVE_TIMEOUT,
+            include_thoughts=False,
         )
 
-        candidates = res.get("candidates", [])
-        synthesis_text = "".join(
-            p.get("text", "") for p in candidates[0]["content"]["parts"]
-        ) if candidates else "❌ Erreur : synthèse vide."
+        if not res:
+            synthesis_text = "❌ Cascade épuisée : aucun modèle disponible pour la synthèse."
+        else:
+            candidates = res.get("candidates", [])
+            synthesis_text = "".join(
+                p.get("text", "") for p in candidates[0]["content"]["parts"]
+            ) if candidates else "❌ Erreur : synthèse vide."
 
         # Retour formaté
         roster_summary = ", ".join(f"{p['alias']} ({p['name']})" for p in roster)
@@ -577,16 +565,9 @@ class Tools:
             )
         )
 
-    async def _iterative_loop(self, state, sub_sid, chat_id, role_id, system_instruction, initial_prompt, context_distillate, target_model, user_id, events) -> str:
-        """Moteur itératif avec gestion des thoughtSignatures (Gemini 3.1)."""
-        actual_model = MODEL_ROUTING.get(target_model, MODEL_PRO)
-        # Niveaux de réflexion via constantes ECHO (echo_constants.py v4.8)
-        if target_model == "MODEL_PRO":
-            thinking_level = THINKING_LEVEL_PRO
-        elif target_model == "MODEL_FLASH":
-            thinking_level = THINKING_LEVEL_FLASH
-        else:  # MODEL_LITE
-            thinking_level = THINKING_LEVEL_LITE
+    async def _iterative_loop(self, state, sub_sid, chat_id, role_id, system_instruction, initial_prompt, context_distillate, target_model, user_id, events, metadata=None) -> tuple:
+        """Moteur itératif. Retourne (text, model_used)."""
+        last_model_used = target_model  # Fallback si aucun appel ne réussit
         
         # Injection de la contrainte technique d'arrêt
         stop_tag = "<FINAL_ANSWER>"
@@ -616,23 +597,27 @@ class Tools:
             iteration += 1
             await events.status(f"🧠 Réflexion du {role_id} (Tour {iteration}/{max_iters})...")
             
-            # Appel Gemini avec includeThoughts: False (La signature suffit pour maintenir l'état CoT)
-            res = await EchoGeminiClient.call(
-                target_model=actual_model,
+            # Appel via call_cascade (clamping + thinking auto + cascade)
+            res, last_model_used, _ = await EchoGeminiClient.call_cascade(
+                target_model_key=target_model,
                 payload={
                     "contents": history,
                     "systemInstruction": {"parts": [{"text": full_system_instruction}]},
                     "generationConfig": {
                         "temperature": TEMP_DEFAULT,
                         "topP": TOP_P_DEFAULT,
-                        "thinkingConfig": {"includeThoughts": False, "thinkingLevel": thinking_level.lower()}
                     }
                 },
                 user_id=user_id,
+                metadata=metadata,
                 events=events,
-                timeout=self.valves.COGNITIVE_TIMEOUT
+                timeout=self.valves.COGNITIVE_TIMEOUT,
+                include_thoughts=False,
             )
             
+            if not res:
+                return f"❌ Cascade épuisée : aucun modèle disponible (demandé : {target_model}).", last_model_used
+
             candidate = res.get("candidates", [{}])[0]
             content = candidate.get("content", {})
             parts = content.get("parts", [])
@@ -656,11 +641,11 @@ class Tools:
             
             # Condition d'arrêt : Présence de la balise finale ou limite atteinte
             if stop_tag in full_text or iteration >= self.user_valves.ITERATION_DEFAULT:
-                return full_text.replace(stop_tag, "").strip()
+                return full_text.replace(stop_tag, "").strip(), last_model_used
             
             # Si pas de clôture, on relance (auto-poursuite)
             history.append({"role": "user", "parts": [{"text": "Continuez votre analyse pour arriver à la conclusion finale."}]})
             state.save_thread_step(sub_sid, chat_id, role_id, step_index, "user", history[-1]["parts"])
             step_index += 1
 
-        return "Erreur: Limite d'itérations atteinte sans réponse finale."
+        return "Erreur: Limite d'itérations atteinte sans réponse finale.", last_model_used

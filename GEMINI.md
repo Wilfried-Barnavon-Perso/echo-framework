@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.163.5
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.164.7
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -23,7 +23,7 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 - **HTTP/2 Stealth Headers :** Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité (`get_stealth_headers`) pour simuler un navigateur réel.
 
 ### 2. La Conscience (`/opt/ECHO/owui-filters/`)
-- **Base vectorielle des souvenirs :** Système RAG vectoriel (Qdrant) avec Distillation Contextuelle automatique par **fenêtre glissante déterministe** (`WINDOW_SIZE`=5 + `WINDOW_OVERLAP`=2, configurable). Nettoyage des messages (role+content+fichiers) pour optimiser le budget tokens du Gemma 4 E4B local (fallback API Gemini 2.5 Flash).
+- **Base vectorielle des souvenirs :** Système RAG vectoriel (Qdrant) avec Distillation Contextuelle automatique par **fenêtre glissante déterministe** (`WINDOW_SIZE`=5 + `WINDOW_OVERLAP`=2, configurable). Nettoyage des messages (role+content+fichiers) pour optimiser le budget tokens du Gemma 4 E4B local.
 - **Gestion de l'importance des souvenirs :** Algorithme de fusion sémantique préservant le score `memory_importance` maximal des souvenirs.
 - **Smart Context :** Injection de faits via des balises XML structurelles (`<smart_context>`).
 
@@ -33,7 +33,7 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Règle d'Or :** Le modèle **DOIT** consulter ces registres pour valider l'existence et l'état d'une ressource ou d'un plan avant toute manipulation.
 
 ### 4. L'Arsenal (`/opt/ECHO/owui-tools/`)
-- **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Cascade cognitive PRO→FLASH→LITE, persistance Markdown dans le Vault, registre SQLite par chat, injection proprioceptive dans `registre_plan`.
+- **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Cascade cognitive centralisée via `call_cascade()`, persistance Markdown dans le Vault, registre SQLite par chat, injection proprioceptive dans `registre_plan`.
 - **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites de gestion mémoire : `save_memory` (long terme, importance 1→5), `search_memory` (reranking pondéré), `save_session_context` / `search_session_context` (RAG éphémère par session), `forget_memory`, `list_memory_topics`.
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes) via `universal_visual_generator.py` et `echo_visuals.py` (Pattern 'Data Island' pour isoler le JS).
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) avec distillation de page (`distill_page`) et indexation RAG éphémère automatique.
@@ -53,7 +53,7 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Python Worker (`/opt/ECHO/docker-python-worker/`) :** Exécution isolée de code Python avec support `orjson`/`pybase64`.
 - **Browser Agent (`/opt/ECHO/docker-browser-agent/`) :** Instance Playwright pilotée par API pour la navigation autonome.
 - **Embedding Worker (`/opt/ECHO/docker-embedding-worker/`) :** Inférence BAAI/bge-m3 locale (1024d, multilingue). PyTorch CPU-only. Détection GPU dynamique.
-- **Gemma Distiller (`/opt/ECHO/docker-gemma-distiller/`) :** Inférence locale Gemma 4 E4B (GGUF Q5_K_M, ~5.1 Go). Auto-provisioning au premier démarrage (aria2c ×16). Fallback API `gemini-2.5-flash`.
+- **Gemma Distiller (`/opt/ECHO/docker-gemma-distiller/`) :** Inférence locale Gemma 4 E4B (GGUF Q5_K_M, ~5.1 Go). Auto-provisioning au premier démarrage (aria2c ×16). Distillation locale uniquement (pas de fallback API).
 
 ### 8. Orchestration Séquentielle (Docker Compose)
 Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy` :
@@ -88,6 +88,7 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Persistence :** `EchoStateManager` (SQLite) pour la persistance par utilisateur (`identity.db`) et par chat (`{chat_id}.db`).
 - **UI HUD :** Toutes les interactions visuelles (Jauges de contexte, Status) passent par `echo_ui.py`.
 - **API Resilience :** `EchoGeminiClient` gère le multi-provider, le basculement sur erreur 429/500 et le backoff exponentiel.
+- **Politique Modèle Centralisée :** `call_cascade()` dans `echo_utils.py` gère le clamping (politique Pipe via UserValve `MODEL_SELECTION`), l'injection `thinkingConfig` automatique, la cascade descendante PRO→FLASH→LITE et la signalisation (🔒 clamping, ⚡ cascade, ❌ épuisement). `wrap_cascade_output()` rend le modèle effectif visible au LLM orchestrateur.
 
 ## ⚠️ Zones d'Exclusion & Sécurité
 
@@ -95,6 +96,6 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.163.5*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.164.7*
 
 
