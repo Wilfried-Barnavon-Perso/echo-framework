@@ -1,7 +1,7 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 7.20
+version: 7.21
 description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
              Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
@@ -37,6 +37,8 @@ description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migra
                7.20: Refactoring status tri-état (success/warning/error). wrap_cascade_output :
                suppression clamped:true, ajout param reason. call_cascade : retour tuple à 3
                (data, model_key, reason) avec reason contextuel (policy/API error/exhausted).
+               7.21: Ajout table codex_docs et méthodes CRUD (save_codex_record, delete_codex_record,
+               get_codex_docs, clear_codex_records) pour le Codex ECHO.
 """
 
 import copy
@@ -1215,6 +1217,17 @@ class EchoStateManager:
                     updated_at   INTEGER NOT NULL
                 )""")
 
+                # ECHO Codex (v5.165)
+                conn.execute("""CREATE TABLE IF NOT EXISTS codex_docs (
+                    filename     TEXT PRIMARY KEY,
+                    language     TEXT NOT NULL DEFAULT 'plaintext',
+                    lines        INTEGER NOT NULL DEFAULT 0,
+                    last_commit  TEXT,
+                    commit_msg   TEXT,
+                    created_at   INTEGER NOT NULL,
+                    updated_at   INTEGER NOT NULL
+                )""")
+
                 # MIGRATION : Ajout des colonnes manquantes si nécessaire
                 try: conn.execute("ALTER TABLE rich_payloads ADD COLUMN message_id TEXT")
                 except: pass
@@ -1529,6 +1542,58 @@ class EchoStateManager:
                     })
         except: pass
         return plans
+
+    # --- ECHO CODEX ---
+
+    def save_codex_record(self, filename: str, language: str, lines: int,
+                          last_commit: str, commit_msg: str):
+        """Enregistre ou met à jour un document Codex dans le registre."""
+        ts = int(time.time())
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO codex_docs (filename, language, lines, last_commit, commit_msg, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(filename) DO UPDATE SET language=?, lines=?, last_commit=?, commit_msg=?, updated_at=?",
+                    (filename, language, lines, last_commit, commit_msg, ts, ts,
+                     language, lines, last_commit, commit_msg, ts)
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"[EchoStateManager] save_codex_record error: {e}")
+
+    def delete_codex_record(self, filename: str):
+        """Supprime un document du registre Codex."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM codex_docs WHERE filename = ?", (filename,))
+                conn.commit()
+        except: pass
+
+    def get_codex_docs(self) -> List[dict]:
+        """Retourne tous les documents Codex du chat (pour injection dans registre_codex)."""
+        docs = []
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT filename, language, lines, last_commit, commit_msg "
+                    "FROM codex_docs ORDER BY updated_at DESC"
+                ).fetchall()
+                for row in rows:
+                    docs.append({
+                        "filename": row[0], "language": row[1], "lines": row[2],
+                        "last_commit": row[3], "commit_msg": row[4]
+                    })
+        except: pass
+        return docs
+
+    def clear_codex_records(self):
+        """Purge tous les documents Codex du chat (appelé par reset_all)."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM codex_docs")
+                conn.commit()
+        except: pass
 
     def get_active_branch_shadows(self, chat_id: str, limit: int = 20) -> List[dict]:
         """Remonte la généalogie de la branche active via suture_index pour une distillation bit-perfect."""

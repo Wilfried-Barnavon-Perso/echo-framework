@@ -1,7 +1,9 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.1
+# Version : 9.2
 # ==============================================================================
+# CHANGELOG 9.2 : Ajout dulwich (Git pur Python) dans la commande de demarrage
+#                 open-webui pour le module ECHO Codex.
 # CHANGELOG 8.9 : Tunnel SSH ephemere PKCE (asyncssh).
 #                 Ports SSH 8020-8024 exposes par Docker (connexion client SSH).
 #                 Ports callback 8025-8034 internes uniquement (via tunnel SSH).
@@ -109,7 +111,7 @@ services:
       # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
     command: >
-      /bin/bash -c "pip install mgzip && ./start.sh"
+      /bin/bash -c "pip install mgzip dulwich && ./start.sh"
     depends_on:
       qdrant:
         condition: service_healthy

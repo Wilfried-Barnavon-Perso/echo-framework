@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.3
+version: 5.5
 description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
@@ -24,6 +24,8 @@ description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              5.1: Ajout constantes Strategic Planner (PLAN_STATUS, PLAN_TASK_STATUS, PLAN_EXECUTABLE_STATUSES).
              5.2: Ajout ECHO_GEMMA_URL, MODEL_LOCAL_GEMMA (distillation locale Gemma 4 E4B).
                   Ajout entrée LOCAL_GEMMA dans MODEL_ROUTING.
+             5.4: Ajout section ECHO Codex (CODEX_DIR_NAME, CODEX_LANG_MAP, CODEX_EDIT_SYSTEM_PROMPT,
+                  CODEX_SUMMARIZE_PROMPT, CODEX_QUICK_ACTIONS, CODEX_DEFAULT_LANG).
 """
 
 import os
@@ -261,6 +263,61 @@ PLAN_TASK_STATUS = {
 
 # Statuts autorisant l'exécution des tâches d'un plan
 PLAN_EXECUTABLE_STATUSES = {"ready", "executing"}
+
+# ==============================================================================
+# 1.4 ECHO CODEX — CONSTANTES
+# ==============================================================================
+
+# Nom du sous-dossier Codex dans le vault utilisateur
+CODEX_DIR_NAME = "codex"
+
+# Mapping extension → langage Monaco Editor
+CODEX_LANG_MAP = {
+    ".py": "python", ".js": "javascript", ".ts": "typescript",
+    ".c": "c", ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
+    ".java": "java", ".go": "go", ".rs": "rust", ".rb": "ruby",
+    ".php": "php", ".swift": "swift", ".kt": "kotlin",
+    ".cs": "csharp", ".vb": "vb",
+    ".sh": "shell", ".bash": "shell", ".ps1": "powershell", ".bat": "bat",
+    ".html": "html", ".htm": "html", ".css": "css",
+    ".json": "json", ".xml": "xml", ".yaml": "yaml", ".yml": "yaml",
+    ".toml": "toml", ".ini": "ini", ".conf": "plaintext",
+    ".md": "markdown", ".txt": "plaintext", ".log": "plaintext",
+    ".sql": "sql", ".r": "r", ".lua": "lua", ".pl": "perl",
+    ".dockerfile": "dockerfile",
+}
+CODEX_DEFAULT_LANG = "plaintext"
+
+# Prompt système sub-chat édition (HUD AI-assisted)
+CODEX_EDIT_SYSTEM_PROMPT = """Tu es l'éditeur de code ECHO Codex.
+RÈGLES ABSOLUES :
+1. Retourne UNIQUEMENT le fichier modifié complet. Aucune explication, aucun markdown de formatage.
+2. Si une sélection est fournie, ne modifie QUE cette partie dans le contexte du fichier complet.
+3. Préserve le style, l'indentation et les conventions du document original.
+4. Si l'instruction est ambiguë, fais le choix le plus conservateur.
+Fichier : {filename} | Langage : {language}"""
+
+# Prompt distillation/résumé de fichier
+CODEX_SUMMARIZE_PROMPT = """Analyse technique exhaustive du fichier '{filename}' ({language}).
+Structure ta réponse :
+1. Objectif et rôle du fichier
+2. Architecture : classes, fonctions, structures principales
+3. Dépendances et imports
+4. Patterns et conventions utilisés
+5. Points d'attention, complexité, dette technique éventuelle
+Sois technique, précis et complet."""
+
+# Actions rapides prédéfinies (boutons HUD)
+CODEX_QUICK_ACTIONS = {
+    "shorter":    "Raccourcis ce code/texte sans changer la logique ni le comportement.",
+    "longer":     "Développe avec plus de détails, commentaires et documentation.",
+    "comment":    "Ajoute des commentaires explicatifs clairs et concis.",
+    "uncomment":  "Supprime tous les commentaires du code. Ne conserve que le code exécutable.",
+    "refactor":   "Refactorise pour plus de lisibilité, maintenabilité et respect des conventions.",
+    "fix":        "Identifie et corrige les bugs potentiels. Explique chaque correction dans un commentaire.",
+    "tests":      "Génère les tests unitaires pertinents pour ce code.",
+    "optimize":   "Optimise les performances sans changer l'interface publique.",
+}
 
 # ----------------------------
 

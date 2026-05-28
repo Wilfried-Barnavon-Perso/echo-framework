@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.164.7
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.166.0
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -29,8 +29,8 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 
 ### 3. Contexte Proprioceptif : `environnement_contexte`
 Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté systématiquement par le filtre `new_context_filter.py`.
-- **Contenu :** Identité (`modèle_actuel`, `modèle_origine`), grounding géo-temporel, le **Registre Conversationnel des Fichiers** (`registre_fichiers`) et le **Registre des Plans** (`registre_plan`).
-- **Règle d'Or :** Le modèle **DOIT** consulter ces registres pour valider l'existence et l'état d'une ressource ou d'un plan avant toute manipulation.
+- **Contenu :** Identité (`modèle_actuel`, `modèle_origine`), grounding géo-temporel, le **Registre Conversationnel des Fichiers** (`registre_fichiers`), le **Registre des Plans** (`registre_plan`) et le **Registre Codex** (`registre_codex`).
+- **Règle d'Or :** Le modèle **DOIT** consulter ces registres pour valider l'existence et l'état d'une ressource, d'un plan ou d'un fichier Codex avant toute manipulation.
 
 ### 4. L'Arsenal (`/opt/ECHO/owui-tools/`)
 - **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Cascade cognitive centralisée via `call_cascade()`, persistance Markdown dans le Vault, registre SQLite par chat, injection proprioceptive dans `registre_plan`.
@@ -38,6 +38,7 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes) via `universal_visual_generator.py` et `echo_visuals.py` (Pattern 'Data Island' pour isoler le JS).
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) avec distillation de page (`distill_page`) et indexation RAG éphémère automatique.
 - **Explorateur de l'Espace Personnel :** Analyse sécurisée et indexation des documents locaux de l'utilisateur.
+- **ECHO Codex (`echo_codex_tool.py`) :** Éditeur multi-langage avec Git intégré (dulwich). 9 fonctions (create, edit, read, search, summarize, list, delete, history). Édition assistée par sub-chat `MODEL_FLASH` via `call_cascade`. Registre `codex_docs` dans SQLite par chat. Distillation locale Gemma pour résumé technique.
 
 ### 5. Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
 - **Régulation :** Monitoring du framework et gestion des sessions.
@@ -48,6 +49,7 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Export PDF :** Export de conversations en PDF via `export_pdf_action.py`.
 - **Purge Mémoire :** Interface scrollable de suppression sélective de la base vectorielle (`purge_memory_action.py`) avec filtrage par tags, sélection par plage et confirmation.
 - **Réinitialisation Auth :** Purge des tokens Google OAuth2 de l'Espace Personnel (`reset_auth_action.py`).
+- **ECHO Codex (`echo_codex_action.py`) :** HUD Monaco Editor draggable avec file tree, mini-chat AI (quick actions), diff view (accept/reject), import/export PC, navigation historique Git (◀ ▶ avec mode read-only), restauration de version.
 
 ### 7. Infrastructure d'Exécution
 - **Python Worker (`/opt/ECHO/docker-python-worker/`) :** Exécution isolée de code Python avec support `orjson`/`pybase64`.
@@ -96,6 +98,6 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.164.7*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.166.0*
 
 

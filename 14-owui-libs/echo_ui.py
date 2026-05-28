@@ -1,7 +1,7 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.22
+version: 5.27
 description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro. 5.17: Ajout show_image_js (injection JS sans HTMLResponse).
              5.18: Tooltip AUTHENTIFICATION refondu : section QUOTAS détaillée (Crédits, Quota modèle, Reset, Type).
              5.19: Nouveaux paramètres quota (quota_model, RPD, RPM) dans la signature et le tooltip.
@@ -12,6 +12,11 @@ description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-he
              ECHO, popup élégante multi-résultats, CTRL+molette, contrôles stylisés.
              5.22: Retour embed Google Maps (googleMaps grounding natif Gemini) —
              suppression Leaflet/OSM. Signature simplifiée (query, title uniquement).
+             5.23: Ajout _generate_codex_js() — Moteur HUD Monaco Codex.
+             File tree, mini-chat AI, quick actions, diff view, upload/download,
+             navigation historique ◀ ▶, détection thème dark/light.
+             5.24: Spinner AI, refresh post-diff via load_file, sélecteur modèle
+             (Flash/Pro/Lite), bouton × suppression par fichier.
 """
 
 from fastapi.responses import HTMLResponse
@@ -579,3 +584,596 @@ class EchoUI(EchoRichUI):
     html = cls._get_boilerplate(content, title)
     response = HTMLResponse(content=html, headers={"Content-Disposition": "inline"})
     return response, {"status": "success", "message": f"Visualisation {moteur} générée."}
+
+  # =====================================================================
+  # ECHO CODEX — HUD Monaco Editor
+  # =====================================================================
+
+  @staticmethod
+  def _generate_codex_js(files_json: str, quick_actions_json: str, chat_id: str) -> str:
+    """Génère le script JS complet du HUD Monaco Codex.
+    Injection via __event_call__({type: 'execute', data: {code: ...}})."""
+    return f"""
+    (function() {{
+      const CODEX_ID = 'echo-codex-hud';
+      const CID = '{chat_id}';
+      const STATE_KEY = 'echo_codex_' + CID;
+      const MONACO_CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min';
+
+      let existingHud = document.getElementById(CODEX_ID);
+      if (existingHud) {{ existingHud.remove(); }}
+
+      // --- State ---
+      let files = {files_json};
+      const quickActions = {quick_actions_json};
+      let currentFile = files.length > 0 ? files[0].filename : null;
+      let editor = null;
+      let diffEditor = null;
+      let isDiffMode = false;
+      let isHistoryMode = false;
+      let historyContent = null;
+      let lastInstruction = '';
+      let lastModel = 'MODEL_FLASH';
+      let modified = false;
+
+      // --- Restore position ---
+      let savedState = {{}};
+      try {{ savedState = JSON.parse(localStorage.getItem(STATE_KEY) || '{{}}'); }} catch(e) {{}}
+
+      // --- Theme Detection ---
+      const isDark = document.documentElement.classList.contains('dark') ||
+                     window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const theme = isDark ? 'vs-dark' : 'vs';
+      const bgColor = isDark ? '#1e1e2e' : '#ffffff';
+      const borderColor = isDark ? '#444' : '#ddd';
+      const textColor = isDark ? '#cdd6f4' : '#333';
+      const headerBg = isDark ? 'rgba(30,30,46,0.95)' : 'rgba(245,245,245,0.95)';
+      const sidebarBg = isDark ? '#181825' : '#f0f0f0';
+      const statusBg = isDark ? '#11111b' : '#e8e8e8';
+      const accentColor = '#89b4fa';
+      const hoverBg = isDark ? 'rgba(137,180,250,0.1)' : 'rgba(0,0,0,0.05)';
+      const historyBg = isDark ? 'rgba(250,179,135,0.15)' : 'rgba(255,200,100,0.2)';
+
+      // --- HUD Container ---
+      const hud = document.createElement('div');
+      hud.id = CODEX_ID;
+      hud.style.cssText = `position:fixed; z-index:10001; display:flex; flex-direction:column;
+        background:${{bgColor}}; border:1px solid ${{borderColor}}; border-radius:12px;
+        box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:'Segoe UI',system-ui,sans-serif;
+        color:${{textColor}}; overflow:hidden; resize:both; min-width:600px; min-height:400px;
+        width:${{savedState.w || '900px'}}; height:${{savedState.h || '600px'}};
+        top:${{savedState.y || '60px'}}; left:${{savedState.x || '50%'}};
+        ${{savedState.x ? '' : 'transform:translateX(-50%);'}}`;
+
+      // --- HEADER (draggable) ---
+      const header = document.createElement('div');
+      header.style.cssText = `display:flex; align-items:center; padding:8px 12px; gap:8px;
+        background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; cursor:move;
+        user-select:none; flex-shrink:0;`;
+      header.innerHTML = `
+        <span style="font-weight:600; font-size:14px;">📝 ECHO Codex</span>
+        <span style="flex:1;"></span>
+        <select id="${{CODEX_ID}}-lang" style="background:transparent; border:1px solid ${{borderColor}};
+          color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:12px;"></select>
+        <button id="${{CODEX_ID}}-import" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;">📂</button>
+        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;">💾</button>
+        <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
+        <button id="${{CODEX_ID}}-minimize" title="Minimiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;">—</button>
+        <button id="${{CODEX_ID}}-close" title="Fermer" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:18px;">×</button>`;
+      hud.appendChild(header);
+
+      // --- BODY (sidebar + editor) ---
+      const body = document.createElement('div');
+      body.style.cssText = 'display:flex; flex:1; overflow:hidden;';
+
+      // Sidebar (file tree)
+      const sidebar = document.createElement('div');
+      sidebar.id = CODEX_ID + '-sidebar';
+      sidebar.style.cssText = `width:150px; background:${{sidebarBg}}; border-right:1px solid ${{borderColor}};
+        overflow-y:auto; flex-shrink:0; display:flex; flex-direction:column; padding:6px 0;`;
+
+      // Editor container
+      const editorWrap = document.createElement('div');
+      editorWrap.id = CODEX_ID + '-editor';
+      editorWrap.style.cssText = 'flex:1; overflow:hidden; position:relative;';
+
+      body.appendChild(sidebar);
+      body.appendChild(editorWrap);
+      hud.appendChild(body);
+
+      // --- AI PANEL (mini-chat + quick actions + model selector) ---
+      const aiPanel = document.createElement('div');
+      aiPanel.style.cssText = `display:flex; flex-direction:column; gap:6px; padding:8px 12px;
+        border-top:1px solid ${{borderColor}}; flex-shrink:0;`;
+      aiPanel.innerHTML = `
+        <div style="display:flex; gap:6px;">
+          <input id="${{CODEX_ID}}-ai-input" type="text" placeholder="Instruction instantan\u00e9e pour l'IA..."
+            style="flex:1; background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}};
+            padding:6px 10px; border-radius:6px; font-size:13px; outline:none;"
+          />
+          <select id="${{CODEX_ID}}-model" title="Mod\u00e8le AI" style="background:transparent; border:1px solid ${{borderColor}};
+            color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:11px; max-width:90px;">
+            <option value="MODEL_FLASH" selected>Flash</option>
+            <option value="MODEL_PRO">Pro</option>
+            <option value="MODEL_LITE">Lite</option>
+          </select>
+          <button id="${{CODEX_ID}}-ai-send" style="background:${{accentColor}}; border:none; color:#1e1e2e;
+            padding:6px 14px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">Envoyer</button>
+        </div>
+        <div id="${{CODEX_ID}}-quick" style="display:flex; gap:4px; flex-wrap:wrap;"></div>`;
+      hud.appendChild(aiPanel);
+
+      // Tracker le choix utilisateur sur le dropdown modèle
+      const modelSelect = document.getElementById(CODEX_ID + '-model');
+      if (modelSelect) modelSelect.onchange = () => {{ lastModel = modelSelect.value; }};
+
+      // --- MICRO-SPINNER (sur le bouton cliqué) ---
+      let spinnerTarget = null;
+      let spinnerOriginal = '';
+      const spinStyle = document.createElement('style');
+      spinStyle.textContent = '@keyframes echoCodexSpin {{ from {{ transform:rotate(0deg); }} to {{ transform:rotate(360deg); }} }}';
+      document.head.appendChild(spinStyle);
+      function showButtonSpinner(btn) {{
+        if (!btn) return;
+        spinnerTarget = btn;
+        spinnerOriginal = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<span style="display:inline-block; width:14px; height:14px; border:2px solid ${{borderColor}};
+          border-top-color:${{accentColor}}; border-radius:50%; animation:echoCodexSpin 0.7s linear infinite;"></span>`;
+      }}
+      function hideButtonSpinner() {{
+        if (spinnerTarget) {{
+          spinnerTarget.innerHTML = spinnerOriginal;
+          spinnerTarget.disabled = false;
+          spinnerTarget = null;
+          spinnerOriginal = '';
+        }}
+      }}
+
+      // --- STATUS BAR (historique ◀ ▶) ---
+      const statusBar = document.createElement('div');
+      statusBar.id = CODEX_ID + '-status';
+      statusBar.style.cssText = `display:flex; align-items:center; padding:4px 12px; gap:8px;
+        background:${{statusBg}}; border-top:1px solid ${{borderColor}}; font-size:11px;
+        font-family:monospace; flex-shrink:0; min-height:28px;`;
+      statusBar.innerHTML = `
+        <button id="${{CODEX_ID}}-hist-prev" title="Version pr\u00e9c\u00e9dente" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;">◀</button>
+        <span id="${{CODEX_ID}}-status-text" style="flex:1; color:${{isDark ? '#a6adc8' : '#666'}};">Pr\u00eat</span>
+        <button id="${{CODEX_ID}}-hist-next" title="Version suivante" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;">▶</button>
+        <div id="${{CODEX_ID}}-hist-actions" style="display:none; gap:6px;">
+          <button id="${{CODEX_ID}}-hist-pin" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;">📌 Revenir au pr\u00e9sent</button>
+          <button id="${{CODEX_ID}}-hist-restore" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;">⤴️ Restaurer</button>
+        </div>`;
+      hud.appendChild(statusBar);
+
+      // --- DIFF ACTIONS (hidden by default) ---
+      const diffBar = document.createElement('div');
+      diffBar.id = CODEX_ID + '-diff-bar';
+      diffBar.style.cssText = `display:none; justify-content:center; gap:12px; padding:8px;
+        border-top:1px solid ${{borderColor}}; flex-shrink:0;`;
+      diffBar.innerHTML = `
+        <button id="${{CODEX_ID}}-diff-accept" style="background:#a6e3a1; border:none; color:#1e1e2e;
+          padding:6px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">✅ Accepter</button>
+        <button id="${{CODEX_ID}}-diff-reject" style="background:#f38ba8; border:none; color:#1e1e2e;
+          padding:6px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">❌ Rejeter</button>`;
+      hud.appendChild(diffBar);
+
+      document.body.appendChild(hud);
+
+      // ===== FILE TREE =====
+      function renderFileTree() {{
+        const sb = document.getElementById(CODEX_ID + '-sidebar');
+        sb.innerHTML = '';
+        files.forEach(f => {{
+          const item = document.createElement('div');
+          const isActive = f.filename === currentFile;
+          item.style.cssText = `padding:4px 10px; cursor:pointer; font-size:12px; white-space:nowrap;
+            overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center;
+            background:${{isActive ? hoverBg : 'transparent'}};
+            border-left:${{isActive ? '3px solid ' + accentColor : '3px solid transparent'}};`;
+          const nameSpan = document.createElement('span');
+          nameSpan.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
+          nameSpan.textContent = (modified && isActive ? '● ' : '') + f.filename;
+          nameSpan.title = f.filename + ' (' + f.lang + ', ' + f.lines + ' lines)';
+          nameSpan.onclick = () => switchFile(f.filename);
+          item.appendChild(nameSpan);
+          // Bouton supprimer
+          const delBtn = document.createElement('span');
+          delBtn.textContent = '×';
+          delBtn.title = 'Supprimer ' + f.filename;
+          delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px;
+            font-weight:bold; padding:0 4px; transition:opacity 0.15s;`;
+          item.onmouseenter = () => delBtn.style.opacity = '1';
+          item.onmouseleave = () => delBtn.style.opacity = '0';
+          delBtn.onclick = (e) => {{
+            e.stopPropagation();
+            if (confirm('Supprimer ' + f.filename + ' ?')) {{
+              window.echoCodexResolve({{action:'delete_file', filename:f.filename}});
+            }}
+          }};
+          item.appendChild(delBtn);
+          sb.appendChild(item);
+        }});
+        // + Créer
+        const newBtn = document.createElement('div');
+        newBtn.style.cssText = `padding:6px 10px; cursor:pointer; font-size:12px; color:${{accentColor}};`;
+        newBtn.textContent = '+ Cr\u00e9er';
+        newBtn.onclick = () => {{
+          const name = prompt('Nom du fichier (ex: main.py)');
+          if (name) window.echoCodexResolve({{action:'new_file', filename:name}});
+        }};
+        sb.appendChild(newBtn);
+        // Reset
+        const resetBtn = document.createElement('div');
+        resetBtn.style.cssText = `padding:6px 10px; cursor:pointer; font-size:12px; color:#f38ba8; margin-top:auto;`;
+        resetBtn.textContent = '🗑 Reset';
+        resetBtn.onclick = () => {{
+          if (confirm('⚠️ Supprimer tout le d\u00e9p\u00f4t Codex de cette conversation ? Irr\u00e9versible.')) {{
+            window.echoCodexResolve({{action:'reset'}});
+          }}
+        }};
+        sb.appendChild(resetBtn);
+      }}
+
+      function switchFile(filename) {{
+        if (modified && currentFile) {{
+          if (!confirm('Modifications non sauvegard\u00e9es. Continuer ?')) return;
+        }}
+        currentFile = filename;
+        modified = false;
+        renderFileTree();
+        updateStatus(filename + ' \u2022 chargement...');
+        // Demander le contenu au backend Python
+        window.echoCodexResolve({{action:'load_file', filename:filename}});
+      }}
+
+      // ===== QUICK ACTIONS =====
+      const quickDiv = document.getElementById(CODEX_ID + '-quick');
+      Object.entries(quickActions).forEach(([key, instruction]) => {{
+        const btn = document.createElement('button');
+        btn.textContent = key.charAt(0).toUpperCase() + key.slice(1);
+        btn.style.cssText = `background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}};
+          padding:2px 10px; border-radius:4px; font-size:11px; cursor:pointer;`;
+        btn.onmouseenter = () => btn.style.background = hoverBg;
+        btn.onmouseleave = () => btn.style.background = 'transparent';
+        btn.onclick = () => sendAiEdit(instruction, btn);
+        quickDiv.appendChild(btn);
+      }});
+
+      // ===== AI EDIT =====
+      function sendAiEdit(instruction, triggerBtn) {{
+        if (!currentFile || !editor) return;
+        const selection = editor.getModel().getValueInRange(editor.getSelection());
+        lastInstruction = instruction;
+        showButtonSpinner(triggerBtn || document.getElementById(CODEX_ID + '-ai-send'));
+        const modelSelect = document.getElementById(CODEX_ID + '-model');
+        window.echoCodexResolve({{
+          action: 'ai_edit',
+          instruction: instruction,
+          content: editor.getValue(),
+          selection: selection || null,
+          filename: currentFile,
+          language: files.find(f => f.filename === currentFile)?.lang || 'plaintext',
+          model: modelSelect ? modelSelect.value : 'MODEL_FLASH',
+        }});
+      }}
+
+      document.getElementById(CODEX_ID + '-ai-send').onclick = () => {{
+        const input = document.getElementById(CODEX_ID + '-ai-input');
+        const sendBtn = document.getElementById(CODEX_ID + '-ai-send');
+        if (input.value.trim()) {{ sendAiEdit(input.value.trim(), sendBtn); input.value = ''; }}
+      }};
+      document.getElementById(CODEX_ID + '-ai-input').onkeydown = (e) => {{
+        if (e.key === 'Enter') document.getElementById(CODEX_ID + '-ai-send').click();
+      }};
+
+      // ===== STATUS =====
+      function updateStatus(text) {{
+        const el = document.getElementById(CODEX_ID + '-status-text');
+        if (el) el.textContent = text;
+      }}
+
+      // ===== DRAG (clampé aux limites du viewport) =====
+      let isDragging = false, dragX, dragY;
+      header.onmousedown = (e) => {{
+        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
+        isDragging = true;
+        dragX = e.clientX - hud.offsetLeft;
+        dragY = e.clientY - hud.offsetTop;
+        hud.style.transform = 'none';
+      }};
+      document.onmousemove = (e) => {{
+        if (!isDragging) return;
+        const maxX = window.innerWidth - hud.offsetWidth;
+        const maxY = window.innerHeight - 44; // Header height (~44px) toujours visible
+        let newX = Math.max(0, Math.min(e.clientX - dragX, maxX));
+        let newY = Math.max(0, Math.min(e.clientY - dragY, maxY));
+        hud.style.left = newX + 'px';
+        hud.style.top = newY + 'px';
+      }};
+      document.onmouseup = () => {{
+        isDragging = false;
+        saveState();
+      }};
+
+      // ===== HEADER BUTTONS =====
+      document.getElementById(CODEX_ID + '-close').onclick = () => {{
+        saveState();
+        hud.remove();
+        window.echoCodexResolve({{action:'close'}});
+      }};
+      let isMinimized = false;
+      document.getElementById(CODEX_ID + '-minimize').onclick = () => {{
+        isMinimized = !isMinimized;
+        // Collapse : on masque tout sauf le header, et on fixe la taille
+        body.style.display = isMinimized ? 'none' : 'flex';
+        aiPanel.style.display = isMinimized ? 'none' : 'flex';
+        statusBar.style.display = isMinimized ? 'none' : 'flex';
+        if (!isMinimized && isDiffMode) diffBar.style.display = 'flex';
+        else diffBar.style.display = 'none';
+        hud.style.resize = isMinimized ? 'none' : 'both';
+        hud.style.height = isMinimized ? 'auto' : (savedState.h || '600px');
+        hud.style.minHeight = isMinimized ? '0' : '400px';
+      }};
+
+      // Import (PC → Codex)
+      document.getElementById(CODEX_ID + '-import').onclick = () => {{
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.multiple = true;
+        inp.onchange = async () => {{
+          for (const file of inp.files) {{
+            const text = await file.text();
+            window.echoCodexResolve({{action:'upload', filename:file.name, content:text}});
+          }}
+        }};
+        inp.click();
+      }};
+
+      // Export (Codex → PC)
+      document.getElementById(CODEX_ID + '-export').onclick = () => {{
+        if (currentFile) window.echoCodexResolve({{action:'download', filename:currentFile}});
+      }};
+
+      // Copier dans le presse-papier (fallback HTTP via execCommand)
+      document.getElementById(CODEX_ID + '-copy').onclick = () => {{
+        if (!editor) return;
+        const text = editor.getModel().getValueInRange(editor.getSelection()) || editor.getValue();
+        const showOk = () => {{
+          const btn = document.getElementById(CODEX_ID + '-copy');
+          const orig = btn.innerHTML;
+          btn.textContent = '\u2714';
+          setTimeout(() => btn.innerHTML = orig, 1200);
+        }};
+        if (navigator.clipboard && window.isSecureContext) {{
+          navigator.clipboard.writeText(text).then(showOk);
+        }} else {{
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.cssText = 'position:fixed;left:-9999px;';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          showOk();
+        }}
+      }};
+
+      // History ◀ ▶
+      document.getElementById(CODEX_ID + '-hist-prev').onclick = () => {{
+        if (currentFile) window.echoCodexResolve({{action:'history_prev', filename:currentFile}});
+      }};
+      document.getElementById(CODEX_ID + '-hist-next').onclick = () => {{
+        if (currentFile) window.echoCodexResolve({{action:'history_next', filename:currentFile}});
+      }};
+
+      // Refresh 🔄
+      document.getElementById(CODEX_ID + '-refresh').onclick = () => {{
+        window.echoCodexResolve({{action:'refresh', filename:currentFile || ''}});
+      }};
+      document.getElementById(CODEX_ID + '-hist-pin').onclick = () => {{
+        if (currentFile) window.echoCodexResolve({{action:'history_exit', filename:currentFile}});
+      }};
+      document.getElementById(CODEX_ID + '-hist-restore').onclick = () => {{
+        if (currentFile && historyContent !== null) {{
+          window.echoCodexResolve({{action:'history_restore', filename:currentFile, content:historyContent, source_hash:document.getElementById(CODEX_ID+'-status-text').dataset.hash||''}});
+        }}
+      }};
+
+      // ===== DIFF ACCEPT/REJECT =====
+      document.getElementById(CODEX_ID + '-diff-accept').onclick = () => {{
+        if (diffEditor) {{
+          const content = diffEditor.getModifiedEditor().getValue();
+          window.echoCodexResolve({{action:'accept_diff', filename:currentFile, content:content, instruction:lastInstruction}});
+        }}
+      }};
+      document.getElementById(CODEX_ID + '-diff-reject').onclick = () => {{
+        window.echoCodexResolve({{action:'reject_diff'}});
+      }};
+
+      // ===== SAVE STATE =====
+      function saveState() {{
+        try {{
+          localStorage.setItem(STATE_KEY, JSON.stringify({{
+            x: hud.style.left, y: hud.style.top,
+            w: hud.style.width, h: hud.style.height,
+          }}));
+        }} catch(e) {{}}
+      }}
+
+      // Ctrl+S
+      editorWrap.onkeydown = (e) => {{
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {{
+          e.preventDefault();
+          if (currentFile && editor) {{
+            window.echoCodexResolve({{action:'save', filename:currentFile, content:editor.getValue(),
+              language:files.find(f=>f.filename===currentFile)?.lang||'plaintext'}});
+            modified = false;
+            renderFileTree();
+          }}
+        }}
+      }};
+
+      // ===== GLOBAL API (callable from Python) =====
+
+      window.echoCodexNotify = (type, msg) => {{
+        hideButtonSpinner();
+        if (type === 'saved') {{ updateStatus('\ud83d\udcbe Sauvegard\u00e9 \u2022 ' + msg); modified = false; renderFileTree(); }}
+        else if (type === 'committed') {{
+          updateStatus('\u2705 Commit\u00e9 \u2022 ' + msg); exitDiffMode();
+          modified = false; renderFileTree();
+          // Reload géré côté Python (push echoCodexSetContent)
+        }}
+        else if (type === 'restored') {{ updateStatus('\u2934\ufe0f Restaur\u00e9 \u2022 ' + msg); exitHistoryMode(); }}
+        else {{ updateStatus(msg); }}
+      }};
+
+      // Repositionner le dropdown sur le modèle effectif (après cascade)
+      window.echoCodexSetModel = (modelKey) => {{
+        lastModel = modelKey;
+        const sel = document.getElementById(CODEX_ID + '-model');
+        if (!sel) return;
+        for (let i = 0; i < sel.options.length; i++) {{
+          if (sel.options[i].value === modelKey) {{
+            sel.selectedIndex = i;
+            return;
+          }}
+        }}
+      }};
+
+      window.echoCodexShowDiff = (modifiedContent) => {{
+        hideButtonSpinner();
+        isDiffMode = true;
+        editorWrap.innerHTML = '';
+        diffEditor = monaco.editor.createDiffEditor(editorWrap, {{
+          theme: theme, readOnly: false, renderSideBySide: true,
+          automaticLayout: true, minimap: {{enabled: false}},
+        }});
+        const originalModel = monaco.editor.createModel(editor ? editor.getValue() : '', files.find(f=>f.filename===currentFile)?.lang||'plaintext');
+        const modifiedModel = monaco.editor.createModel(modifiedContent, files.find(f=>f.filename===currentFile)?.lang||'plaintext');
+        diffEditor.setModel({{ original: originalModel, modified: modifiedModel }});
+        document.getElementById(CODEX_ID + '-diff-bar').style.display = 'flex';
+        aiPanel.style.display = 'none';
+      }};
+
+      window.echoCodexRevertDiff = () => {{
+        hideButtonSpinner();
+        exitDiffMode();
+        // Reload géré côté Python (push echoCodexSetContent)
+      }};
+
+      function exitDiffMode() {{
+        if (!isDiffMode) return;
+        isDiffMode = false;
+        diffEditor = null;
+        document.getElementById(CODEX_ID + '-diff-bar').style.display = 'none';
+        aiPanel.style.display = 'flex';
+        initEditor();
+        // Restaurer la sélection modèle après réaffichage du panel
+        window.echoCodexSetModel(lastModel);
+      }}
+
+      window.echoCodexRefreshTree = (newFiles) => {{
+        files = newFiles;
+        renderFileTree();
+      }};
+
+      window.echoCodexDownload = (name, content) => {{
+        const blob = new Blob([content], {{type: 'text/plain'}});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }};
+
+      window.echoCodexReset = () => {{ hud.remove(); }};
+
+      // Chargement de contenu depuis le backend Python
+      window.echoCodexSetContent = (content, filename) => {{
+        if (editor) {{
+          const lang = files.find(f => f.filename === filename)?.lang || 'plaintext';
+          const model = monaco.editor.createModel(content, lang);
+          editor.setModel(model);
+          editor.onDidChangeModelContent(() => {{ modified = true; renderFileTree(); }});
+          modified = false;
+          // Mettre à jour le sélecteur de langage
+          const langSelect = document.getElementById(CODEX_ID + '-lang');
+          if (langSelect) langSelect.value = lang;
+          updateStatus(filename + ' \u2022 charg\u00e9');
+        }}
+      }};
+
+      window.echoCodexLoadVersion = (content, info, idx, total) => {{
+        isHistoryMode = true;
+        historyContent = content;
+        if (editor) {{
+          editor.setValue(content);
+          editor.updateOptions({{readOnly: true}});
+        }}
+        editorWrap.style.background = historyBg;
+        const statusText = document.getElementById(CODEX_ID + '-status-text');
+        statusText.textContent = `(${{idx+1}}/${{total}}) ${{info.hash}} "${{info.message}}"`;
+        statusText.dataset.hash = info.hash;
+        document.getElementById(CODEX_ID + '-hist-actions').style.display = 'flex';
+      }};
+
+      window.echoCodexExitHistory = () => {{ exitHistoryMode(); }};
+
+      function exitHistoryMode() {{
+        isHistoryMode = false;
+        historyContent = null;
+        if (editor) editor.updateOptions({{readOnly: false}});
+        editorWrap.style.background = 'transparent';
+        document.getElementById(CODEX_ID + '-hist-actions').style.display = 'none';
+        updateStatus(currentFile ? currentFile + ' \u2022 HEAD' : 'Pr\u00eat');
+      }}
+
+      // ===== MONACO LOADER =====
+      function initEditor() {{
+        editorWrap.innerHTML = '';
+        const lang = files.find(f => f.filename === currentFile)?.lang || 'plaintext';
+        editor = monaco.editor.create(editorWrap, {{
+          value: '', language: lang, theme: theme,
+          automaticLayout: true, minimap: {{enabled: true}},
+          fontSize: 13, lineNumbers: 'on', wordWrap: 'on',
+          scrollBeyondLastLine: false, renderWhitespace: 'selection',
+        }});
+        editor.onDidChangeModelContent(() => {{ modified = true; renderFileTree(); }});
+
+        // Populate lang selector
+        const langSelect = document.getElementById(CODEX_ID + '-lang');
+        langSelect.innerHTML = '';
+        const langs = monaco.languages.getLanguages();
+        langs.sort((a,b) => a.id.localeCompare(b.id));
+        langs.forEach(l => {{
+          const opt = document.createElement('option');
+          opt.value = l.id;
+          opt.textContent = l.id;
+          if (l.id === lang) opt.selected = true;
+          langSelect.appendChild(opt);
+        }});
+        langSelect.onchange = () => {{
+          if (editor) monaco.editor.setModelLanguage(editor.getModel(), langSelect.value);
+        }};
+      }}
+
+      function loadMonaco() {{
+        if (window.monaco) {{ initEditor(); renderFileTree(); return; }}
+        const loaderScript = document.createElement('script');
+        loaderScript.src = MONACO_CDN + '/vs/loader.js';
+        loaderScript.onload = () => {{
+          require.config({{ paths: {{ vs: MONACO_CDN + '/vs' }} }});
+          require(['vs/editor/editor.main'], () => {{
+            initEditor();
+            renderFileTree();
+          }});
+        }};
+        document.head.appendChild(loaderScript);
+      }}
+
+      loadMonaco();
+    }})();
+    """
+

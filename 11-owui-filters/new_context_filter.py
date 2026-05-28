@@ -1,7 +1,7 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 7.11
+version: 7.12
 description: 7.5: Fix génération slug. 7.6: Migration Antigravity 2.1 — suppression GOOGLE_OAUTH_CODE_REGEX (PKCE legacy).
              7.7: Centralisation THINKING_LEVEL_FLASH (echo_constants v4.8) — suppression du "HIGH" hardcodé.
              7.8: Injection registre_plan dans environnement_contexte (Strategic Planner v1.0).
@@ -9,6 +9,7 @@ description: 7.5: Fix génération slug. 7.6: Migration Antigravity 2.1 — supp
              dans le Draft. Correction perte texte utilisateur avec images inline.
              7.10: Revert dégradation gracieuse CAS 3 (le fallback INDEXATION suffit).
              7.11: Cosmetic — Anonyme → anonyme (minuscule) dans nom_utilisateur.
+             7.12: Injection registre_codex dans environnement_contexte (ECHO Codex v1.0).
 """
 
 
@@ -312,6 +313,7 @@ class Filter:
                     "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC"),
                     "registre_fichiers": active_registry,
                     "registre_plan": [{"id": p["plan_id"], "goal": p["goal"][:80], "status": p["status"], "modele": p.get("author_model", "?")} for p in (state_manager.get_plans() if chat_id else [])],
+                    "registre_codex": [{"id": d["filename"], "lang": d["language"], "lines": d["lines"], "last_commit": d.get("commit_msg", "")} for d in (state_manager.get_codex_docs() if chat_id else [])],
                 }
 
                 body.setdefault("metadata", {})
