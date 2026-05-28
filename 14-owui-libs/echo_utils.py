@@ -1,7 +1,7 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 7.15
+version: 7.16
 description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
              Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
@@ -21,6 +21,9 @@ description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migra
              Ajout méthode _call_local_distiller (pattern generate_embedding).
              7.15: Crédits OAuth2 opt-in via UserValve pipe (persistance identity.db).
              enabled_credit_types omis par défaut (alignement AGY-IDE).
+              7.16: generate_embedding() retry (1 retry, 2s backoff) + timeouts relaxés
+              pour absorber les environnements contraints (Hyper-V sous charge) :
+              embedding 30→60s, distiller 60→120s, index_rag 120→180s.
 """
 
 import copy
@@ -465,38 +468,47 @@ class EchoGeminiClient:
         task_type: Literal["query", "document"], 
         __user__: dict, 
         __metadata__: dict, 
-        title: str = None
+        title: str = None,
+        max_retries: int = 1
     ) -> List[float]:
         """
-        Génère un vecteur d'embedding via SigLIP 2 (Local / Infinity).
+        Génère un vecteur d'embedding via BAAI/bge-m3 (Local).
         Zéro donnée sortante (infrastructure auto-hébergée).
+        Retry intégré (1 retry, 2s backoff) pour absorber les indisponibilités transitoires.
         """
         from echo_constants import MODEL_EMBEDDING, ECHO_EMBEDDING_URL
         
-        # 1. Formatage compatible OpenAI / Infinity
         payload = {
             "model": MODEL_EMBEDDING,
             "input": text
         }
         
-        # 2. Appel au moteur local
-        try:
-            client = await _get_global_client()
-            resp = await client.post(f"{ECHO_EMBEDDING_URL}/embeddings", json=payload, timeout=30)
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                client = await _get_global_client()
+                resp = await client.post(f"{ECHO_EMBEDDING_URL}/embeddings", json=payload, timeout=60)
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    embeddings = data.get("data", [])
+                    if embeddings:
+                        return embeddings[0].get("embedding", [])
+                    # Réponse 200 mais pas d'embeddings → pas de retry (réponse valide)
+                    return []
+                else:
+                    last_error = f"HTTP {resp.status_code} - {resp.text[:100]}"
+                    print(f"[EchoGemini] ⚠️ Échec Embedding Local : {last_error}")
+            except Exception as e:
+                last_error = str(e)
+                print(f"[EchoGemini] ⚠️ Embedding Local tentative {attempt + 1}/{max_retries + 1} : {last_error}")
             
-            if resp.status_code == 200:
-                data = resp.json()
-                # Infinity renvoie le format OpenAI : {"data": [{"embedding": [...]}]}
-                embeddings = data.get("data", [])
-                if embeddings:
-                    return embeddings[0].get("embedding", [])
-                return []
-            else:
-                print(f"[EchoGemini] ⚠️ Échec Embedding Local : HTTP {resp.status_code} - {resp.text[:100]}")
-                return []
-        except Exception as e: 
-            print(f"[EchoGemini] ❌ Erreur critique Embedding Local : {str(e)}")
-            return []
+            # Retry avec backoff (sauf dernière tentative)
+            if attempt < max_retries:
+                await asyncio.sleep(2 * (attempt + 1))
+        
+        print(f"[EchoGemini] ❌ Embedding Local échoué après {max_retries + 1} tentatives : {last_error}")
+        return []
 
     @staticmethod
     async def call_distillation(
@@ -608,7 +620,7 @@ class EchoGeminiClient:
         resp = await client.post(
             f"{ECHO_GEMMA_URL}/v1/chat/completions",
             json=payload,
-            timeout=60
+            timeout=120
         )
         resp.raise_for_status()
         text = resp.json()["choices"][0]["message"]["content"].strip()
@@ -627,7 +639,7 @@ class EchoGeminiClient:
         __metadata__: dict,
         qdrant_base: str = "http://echo-qdrant:6333",
         max_chunk: int = 1600,
-        timeout: int = 120
+        timeout: int = 180
     ) -> tuple:
         """
         Factorise le pipeline chunk → embed → upsert Qdrant pour le RAG éphémère.

@@ -1,10 +1,13 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 7.8
+version: 7.10
 description: 7.5: Fix génération slug. 7.6: Migration Antigravity 2.1 — suppression GOOGLE_OAUTH_CODE_REGEX (PKCE legacy).
              7.7: Centralisation THINKING_LEVEL_FLASH (echo_constants v4.8) — suppression du "HIGH" hardcodé.
              7.8: Injection registre_plan dans environnement_contexte (Strategic Planner v1.0).
+             7.9: Fix multimodal — extraction ordonnée des text-parts du content OWUI
+             dans le Draft. Correction perte texte utilisateur avec images inline.
+             7.10: Revert dégradation gracieuse CAS 3 (le fallback INDEXATION suffit).
 """
 
 
@@ -264,15 +267,19 @@ class Filter:
                     await asyncio.sleep(0.5)
 
             idx = -1
-            native_parts = []
+            ordered_user_parts = []  # Parts user en ordre (texte + images entrelacés)
             for i in range(len(msgs)-1, -1, -1):
                 if msgs[i].get("role") == "user": 
                     idx = i
                     orig_content = msgs[i].get("content")
                     if isinstance(orig_content, list):
+                        # Content multipart OWUI (texte + images inline) : extraction ordonnée
                         for p in orig_content:
-                            if isinstance(p, dict) and (p.get("type") == "image_url" or "inline_data" in p or "inlineData" in p):
-                                native_parts.append(p)
+                            if isinstance(p, dict):
+                                if p.get("type") == "image_url" or "inline_data" in p or "inlineData" in p:
+                                    ordered_user_parts.append(p)
+                                elif p.get("type") == "text" and p.get("text", "").strip():
+                                    ordered_user_parts.append({"text": p["text"]})
                     break
 
             if idx != -1:
@@ -316,7 +323,7 @@ class Filter:
                 rich_parts = []
                 yaml_str = self._dict_to_yaml(env_snapshot)
                 rich_parts.append({"text": f"<environnement_contexte>\n{yaml_str}\n</environnement_contexte>\n\n"})
-                if native_parts: rich_parts.extend(native_parts)
+                if ordered_user_parts: rich_parts.extend(ordered_user_parts)
                 
                 for res in results:
                     if res.get("status") == "success":

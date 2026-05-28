@@ -1,7 +1,7 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.1
+version: 192.7
 requirements: asyncssh
 description: 190.8: Migration type 'summarized' -> 'rag_ephemeral'.
              191.0: Remplacement Device Flow par PKCE + Authorization Code.
@@ -17,6 +17,7 @@ description: 190.8: Migration type 'summarized' -> 'rag_ephemeral'.
              Valence de la Mort atténuée par RAG éphémère (save_session_context).
              192.6: UserValve ENABLE_PAID_CREDITS (défaut False) — crédits Google One AI
              désactivés par défaut. Persistance write-on-change dans identity.db.
+             192.7: Fix multimodal — guard isinstance sur content liste. Sécurisation scellement shadow.
 """
 
 # ==============================================================================
@@ -316,6 +317,8 @@ class Orchestrator:
                         restored_parts = []
                         restored_parts.extend(self._ensure_gemini_parts(draft_parts, model_id))
                         user_text = content if isinstance(content, str) else ""
+                        # Si content est une liste (multipart OWUI : texte + images inline),
+                        # le texte est déjà dans le draft via le filtre (ordered_user_parts).
                         if user_text.strip(): restored_parts.append({"text": self._resolve_placeholders(user_text, model_id)})
                     else:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
@@ -822,7 +825,10 @@ class Pipe:
             if user_msg_id and user_draft:
                 user_text = body['messages'][-1].get('content', "")
                 full_user_parts = orch._ensure_gemini_parts(user_draft, target_model)
-                if user_text: full_user_parts.append({"text": orch._resolve_placeholders(user_text, target_model)})
+                # Guard : si content est une liste (multipart OWUI), le texte est déjà dans user_draft.
+                # Sans ce guard, la liste entière serait passée à _resolve_placeholders, corrompant le shadow.
+                if isinstance(user_text, str) and user_text.strip():
+                    full_user_parts.append({"text": orch._resolve_placeholders(user_text, target_model)})
                 orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
 
             # 2. Scellement du Registre des Fichiers et Rangement

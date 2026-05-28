@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py v192.6) : Suture Bit-Perfect, routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, UserValve ENABLE_PAID_CREDITS.">
+  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py v192.7) : Suture Bit-Perfect, routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, fix multimodal inline.">
   <title>ECHO v5 — 6. Le Pipe (Cortex)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -20,7 +20,7 @@
 
 
     <p>
-      Le <code>pipe_engine.py</code> (v192.6) est l'unité centrale de traitement d'ECHO.
+      Le <code>pipe_engine.py</code> (v192.7) est l'unité centrale de traitement d'ECHO.
       Open WebUI le voit comme un modèle GenAI standard, mais il agit en réalité comme un
       <strong>orchestrateur de contexte</strong> : il reconstruit l'historique bit-perfect depuis
       SQLite, pilote la boucle d'outils de l'Arsenal, gère l'authentification et l'inférence via
@@ -45,7 +45,7 @@
       <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
       <tbody>
         <tr><td><strong>Fichier source</strong></td><td><code>10-owui-pipes/pipe_engine.py</code></td></tr>
-        <tr><td><strong>Version</strong></td><td>192.6 (déclarée dans le docstring du fichier)</td></tr>
+        <tr><td><strong>Version</strong></td><td>192.7 (déclarée dans le docstring du fichier)</td></tr>
         <tr><td><strong>Type Open WebUI</strong></td><td><code>Pipe</code> — se présente comme un modèle GenAI</td></tr>
         <tr><td><strong>Point d'entrée</strong></td><td><code>Pipe.pipe(body, __event_emitter__)</code></td></tr>
         <tr><td><strong>Exécution</strong></td><td>In-process dans Python d'Open WebUI, asynchrone (<code>asyncio</code>)</td></tr>
@@ -92,6 +92,22 @@
       C'est ici que les placeholders <code>##MODEL_ID##</code>, <code>##MODEL_ORIGIN##</code>
       et <code>##ECHO_VERSION##</code> sont résolus par <code>_resolve_placeholders()</code>.
     </p>
+
+    <div class="note-box">
+      <h4>⚠ Content multipart OWUI (v192.7)</h4>
+      <p>
+        Lorsque l'utilisateur colle des images dans le champ de saisie, Open WebUI transmet
+        <code>content</code> sous forme de <strong>liste</strong> (et non de chaîne). Le filtre
+        extrait les text-parts et image-parts en ordre dans le Draft. Le Pipe détecte ce cas
+        via <code>isinstance(content, str)</code> : si <code>content</code> est une liste,
+        le texte est déjà intégré dans le Draft &mdash; pas de double injection.
+      </p>
+      <p>
+        Le scellement final applique la même garde de type : si <code>content</code> est
+        une liste, il est ignoré pour éviter de corrompre le shadow SQLite en passant
+        une structure non-string à <code>_resolve_placeholders()</code>.
+      </p>
+    </div>
 
     <div class="tech-spec">
       <h4>⚙️ Stérilisation des médias (Double Ancrage)</h4>
@@ -282,7 +298,7 @@ Content-Type: application/json</code></pre>
       Gauge. Le pipeline précis, extrait du code source :
     </p>
 
-    <div class="code-header">Pipeline HUD Quota — pipe_engine.py v192.6</div>
+    <div class="code-header">Pipeline HUD Quota — pipe_engine.py v192.7</div>
     <pre><code># 1. Résolution de l'ID modèle AGY (cloudcode-pa interne)
 ca_id = get_ca_model_id(target_model)
 # ex : MODEL_FLASH → "gemini-3-flash-agent"
@@ -307,15 +323,15 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     quota_rpd_rem=quota_rpd_rem, quota_rpd_lim=quota_rpd_lim, ...)</code></pre>
 
     <div class="audit-note">
-      <h4>✅ Exactitude — Version 192.6</h4>
+      <h4>✅ Exactitude — Version 192.7</h4>
       <p>
-        La version 192.6 intègre la migration complète vers le protocole Antigravity 2.1
-        (User-Agent, identifiants OAuth2 encodés), la gestion des deux backends
-        (AI Studio / API Antigravity) via <code>echo_protocol.py</code>,
-        la chaîne HUD quota par modèle CA (<code>get_model_quota</code>, extraction RPD/RPM),
+        La version 192.7 corrige le traitement multimodal : les images inline (collées/glissées)
+        ne provoquent plus la perte du texte utilisateur. Le scellement final est sécurisé
+        par un guard <code>isinstance</code> empêchant la corruption du shadow SQLite.
+        Intègre également le protocole Antigravity 2.1, la gestion des deux backends
+        (AI Studio / API Antigravity), la chaîne HUD quota par modèle CA,
         l'outil <code>new_cognitive_level</code> pour le routage inter-modèle dynamique,
-        et la UserValve <code>ENABLE_PAID_CREDITS</code> (défaut <code>False</code>) pour le
-        contrôle opt-in des crédits Google One AI.
+        et la UserValve <code>ENABLE_PAID_CREDITS</code> (défaut <code>False</code>).
         Toutes les valeurs (noms de constantes, seuils, chemins) sont vérifiées contre le code source.
       </p>
     </div>
@@ -326,7 +342,7 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     </div>
 
     <footer>
-      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.5 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

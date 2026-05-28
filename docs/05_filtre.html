@@ -37,7 +37,7 @@
       </p>
     </div>
 
-    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.8)</h2>
+    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.9)</h2>
 
     <p>
       Ce filtre est la porte d'entrée cognitive d'ECHO. Il opère en deux phases :
@@ -69,16 +69,53 @@ flowchart LR
   AN -->|"Tout fichier<br/>> 256 Ko"| MOL["🧱 Moulage (Distillation)<br/>Gemma 4 E4B local<br/>→ Qdrant echo_ephemeral"]
   AN -->|"Déjà dans le Vault<br/>(file_id détecté)"| VAULT["📂 Référence Vault<br/>(déduplication — pas de ré-upload)"]
 
-  B64 & TXT & MOL & VAULT --> DRAFT["📦 Draft Sémantique<br/>(_echo_user_parts_draft)"]
+  OWUI -->|"Images inline<br/>(drag/paste)"| INLINE["🖼️ Extraction Ordonnée<br/>(texte + images entrelacés)"]
+
+  B64 & TXT & MOL & VAULT & INLINE --> DRAFT["📦 Draft Sémantique<br/>(_echo_user_parts_draft)"]
   DRAFT -->|"Métadonnées<br/>+ AEC YAML"| PIPE["⚙️ Pipe Engine"]
 
   classDef neutral fill:#1e293b,stroke:#475569,color:#f8fafc
   classDef rag fill:#064e3b,stroke:#10b981,color:#f8fafc
   classDef core fill:#172554,stroke:#4338ca,color:#f8fafc
+  classDef inline fill:#4a1d96,stroke:#8b5cf6,color:#f8fafc
   class U,OWUI,F,AN neutral
   class MOL,VAULT rag
   class DRAFT,PIPE core
+  class INLINE inline
       </div>
+    </div>
+
+    <h3>Extraction ordonnée des parts multimodales (v7.9)</h3>
+    <p>
+      Lorsqu'un utilisateur colle ou glisse des images directement dans le champ de saisie
+      d'Open WebUI (sans utiliser le file picker), OWUI construit un <code>content</code>
+      de type <strong>liste multipart</strong> au lieu d'une simple chaîne :
+    </p>
+
+    <div class="code-header">Format multipart OWUI — content liste</div>
+    <pre><code>[{"type": "text", "text": "Voici l'image 1 :"},
+ {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
+ {"type": "text", "text": "Et l'image 2 :"},
+ {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}},
+ {"type": "text", "text": "Compare-les."}]</code></pre>
+
+    <p>
+      Le filtre itère sur cette liste en <strong>préservant l'ordre d'origine</strong> :
+      chaque part <code>text</code> et chaque part <code>image_url</code> est extraite
+      séquentiellement dans <code>ordered_user_parts</code>, puis injectée dans le Draft.
+      Cette extraction ordonnée garantit que l'entrelacement texte/image voulu par
+      l'utilisateur est fidèlement reproduit dans le contexte envoyé à Gemini.
+    </p>
+
+    <div class="note-box">
+      <h4>⚠ Distinction fichiers inline vs. file picker</h4>
+      <p>
+        Les <strong>images inline</strong> (collées/glissées) arrivent dans
+        <code>messages[-1]["content"]</code> (liste). Les <strong>fichiers du file picker</strong>
+        arrivent dans <code>body["files"]</code> et sont traités par
+        <code>_process_file_task()</code>. Les deux chemins sont fusionnés dans le Draft
+        final : parts ordonnées en premier, résultats fichiers ensuite.
+      </p>
     </div>
 
     <h3>Le Moulage (Semantic Molding)</h3>
@@ -255,7 +292,7 @@ registre_fichiers:
     </div>
 
     <footer>
-      ECHO Framework — Version 5.163.3 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.163.5 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 
