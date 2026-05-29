@@ -167,13 +167,17 @@
       </div>
       <div class="card">
         <h3>🧠 Agents Cognitifs (Conseil d'Experts)</h3>
-        <p>Délégation cognitive sans état (<code>delegate_reasoning</code>), consultation
-        d'experts persistants par rôle (<code>consult_expert_consultant</code>),
+        <p>Consultation d'experts persistants par rôle (<code>consult_expert_consultant</code>),
         <strong>Table Ronde Delphi</strong> (<code>consult_council</code> — N experts en
         tours parallélisés avec thoughtSignatures, synthèse par modèle dédié),
-        forge et gestion des Skills (<code>forge_skill</code>, <code>list_skills</code>).</p>
-        <p><strong>Source :</strong> <code>12-owui-tools/cognitive_agents.py</code></p>
-        <a href="07h_cognitive_agents.html">Explorer →</a>
+        forge et gestion des Skills (<code>forge_skill</code>, <code>list_skills</code>),
+        <strong>Sous-agent stateful</strong> (<code>delegate_to_subagent</code> dans
+        <code>delegate_tool.py</code> — remplace <code>delegate_reasoning</code> v5.14).</p>
+        <p><strong>Sources :</strong> <code>12-owui-tools/cognitive_agents.py</code>,
+        <code>12-owui-tools/delegate_tool.py</code></p>
+        <a href="07h_cognitive_agents.html">Agents →</a>
+        &nbsp;|
+        <a href="07i_delegate_subagent.html">Delegate Sub-Agent →</a>
       </div>
       <div class="card">
         <h3>🗺️ Maps Grounding</h3>
@@ -183,7 +187,19 @@
         <code>THINKING_LEVEL_TOOLS</code> (MINIMAL).
         Contexte géographique optionnel (<code>latitude</code>,
         <code>longitude</code>).</p>
-        <p><strong>Source :</strong> <code>12-owui-tools/gemini_maps_grounding.py</code></p>
+        <p><strong>Source :</strong> <code>12-owui-tools/gemini_maps_grounding.py</code></p>
+      </div>
+      <div class="card">
+        <h3>📝 ECHO Codex (Éditeur de Code)</h3>
+        <p>Éditeur Monaco multi-langage avec Git intégré (dulwich, Python pur). 9 fonctions
+        Tool Call (<code>create</code>, <code>edit</code>, <code>read</code>,
+        <code>search</code>, <code>summarize</code>, <code>list</code>, <code>delete</code>,
+        <code>history</code>, <code>restore</code>). Action HUD draggable avec
+        édition AI assistée (cascade Gemini), diff accept/reject et navigation historique
+        &#9664; &#9654;. Propriéception via <code>registre_codex</code>.</p>
+        <p><strong>Sources :</strong> <code>12-owui-tools/echo_codex_tool.py</code>,
+        <code>13-owui-actions/echo_codex_action.py</code></p>
+        <a href="07h_codex_editor.html">Explorer →</a>
       </div>
     </div>
 
@@ -203,7 +219,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py v192.15) : Suture Bit-Perfect, routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modèle centralisée Pipe → outils.">
+  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py) : Suture Bit-Perfect, routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modèle centralisée Pipe → outils, bridge _TOOLS_CACHE pour délégation sous-agent.">
   <title>ECHO v5 — 6. Le Pipe (Cortex)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -48,7 +48,7 @@
       <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
       <tbody>
         <tr><td><strong>Fichier source</strong></td><td><code>10-owui-pipes/pipe_engine.py</code></td></tr>
-        <tr><td><strong>Version</strong></td><td>192.15 (déclarée dans le docstring du fichier)</td></tr>
+        <tr><td><strong>Version</strong></td><td>192.17+ (déclarée dans le docstring du fichier)</td></tr>
         <tr><td><strong>Type Open WebUI</strong></td><td><code>Pipe</code> — se présente comme un modèle GenAI</td></tr>
         <tr><td><strong>Point d'entrée</strong></td><td><code>Pipe.pipe(body, __event_emitter__)</code></td></tr>
         <tr><td><strong>Exécution</strong></td><td>In-process dans Python d'Open WebUI, asynchrone (<code>asyncio</code>)</td></tr>
@@ -345,6 +345,63 @@ x-goog-api-client: antigravity/2.1.0
 Authorization: Bearer {oauth_token}
 Content-Type: application/json</code></pre>
 
+    <h2>Bridge <code>_TOOLS_CACHE</code> — Partage des Callables Outils</h2>
+
+    <p>
+      OWUI injecte le dictionnaire <code>__tools__</code> (contenant les callables Python réels
+      des outils associés au modèle) dans le <code>Pipe</code>, mais <strong>ne le propage pas</strong>
+      aux tool callables (chaque outil reçoit un <code>__metadata__</code> indépendant).
+      Cette contrainte architecturale empêche <code>delegate_to_subagent</code> d'accéder aux
+      callables des autres outils pour les exécuter au nom du sous-agent.
+    </p>
+
+    <div class="tech-spec">
+      <h4>⚙️ Solution — Cache module-level</h4>
+      <p>
+        Le Pipe stocke <code>__tools__[chat_id]</code> dans <code>_TOOLS_CACHE</code>,
+        un dictionnaire module-level défini dans <code>pipe_engine.py</code>. Comme le Pipe
+        et tous les outils s'exécutent dans le <strong>même processus Python</strong> (uvicorn),
+        <code>delegate_tool</code> y accède via
+        <code>sys.modules["function_pipe_engine"]._TOOLS_CACHE[chat_id]</code>.
+        Ce cache persiste tant que le processus tourne ; il est reconstitué au premier message
+        de chaque chat après un redémarrage.
+      </p>
+    </div>
+
+    <h3>Trois formes de <code>__tools__</code> gérées</h3>
+
+    <table>
+      <thead><tr><th>Format</th><th>Type</th><th>Contenu</th><th>Action Pipe</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Cas 1</strong> — Production ECHO</td>
+          <td><code>dict</code> <code>{fn_name: {callable, spec, tool_id, metadata}}</code></td>
+          <td>Callables Python directement utilisables</td>
+          <td>Stockage dans <code>_TOOLS_CACHE[chat_id]</code> + construction <code>_echo_body_tools</code> (specs OpenAI)</td>
+        </tr>
+        <tr>
+          <td><strong>Cas 2</strong> — Doc officielle OWUI</td>
+          <td><code>list[ToolUserModel]</code> avec attribut <code>.specs</code></td>
+          <td>Specs OpenAI sans callables</td>
+          <td>Extraction des specs dans <code>_echo_body_tools</code> uniquement</td>
+        </tr>
+        <tr>
+          <td><strong>Cas 3</strong> — Aucun outil</td>
+          <td><code>None</code> ou vide</td>
+          <td>—</td>
+          <td>Fallback : <code>_echo_body_tools = body.get("tools", [])</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      Clés injectées dans <code>__metadata__</code> par ce mécanisme :
+    </p>
+    <ul>
+      <li><code>_echo_tools_dict</code> — dict brut OWUI (peut être vide)</li>
+      <li><code>_echo_body_tools</code> — specs format OpenAI pour tous les outils disponibles</li>
+    </ul>
+
     <h2>Phase de Scellement</h2>
 
     <p>
@@ -424,7 +481,7 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     </div>
 
     <footer>
-      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

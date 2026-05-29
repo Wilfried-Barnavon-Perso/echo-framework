@@ -30,7 +30,7 @@
       </p>
     </div>
 
-    <h2><code>echo_constants.py</code> — Constantes et Topologie (v5.3)</h2>
+    <h2><code>echo_constants.py</code> — Constantes et Topologie (v5.6)</h2>
 
     <p>
       Registre unique de toutes les vérités immuables du système. Tout composant qui a besoin
@@ -96,6 +96,49 @@
         <tr><td><code>THINKING_LEVEL_TOOLS</code></td><td><code>"MINIMAL"</code></td><td>Outils stateless (maps, grounding, distillation rapide).</td></tr>
         <tr><td><code>TEMP_DEFAULT</code></td><td>1,0</td><td>Température de génération principale.</td></tr>
         <tr><td><code>TOP_P_DEFAULT</code></td><td>0,90</td><td>Nucleus sampling.</td></tr>
+        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.166.6)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>§1.4 ECHO Codex — Constantes</h3>
+
+    <p>Section ajoutée en v5.4. Centralise tous les paramètres de l'éditeur Codex.</p>
+
+    <table>
+      <thead><tr><th>Constante</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>CODEX_DIR_NAME</code></td><td><code>str</code></td><td>Nom du sous-dossier Codex dans le Vault (<code>"codex"</code>).</td></tr>
+        <tr><td><code>CODEX_LANG_MAP</code></td><td><code>dict</code></td><td>Mapping extension &rarr; identifiant Monaco Editor (30+ langages). Exemple : <code>.py → "python"</code>, <code>.ts → "typescript"</code>.</td></tr>
+        <tr><td><code>CODEX_DEFAULT_LANG</code></td><td><code>str</code></td><td>Fallback si l'extension est inconnue (<code>"plaintext"</code>).</td></tr>
+        <tr><td><code>CODEX_EDIT_SYSTEM_PROMPT</code></td><td><code>str</code></td><td>System prompt injecté dans le sub-chat d'édition AI. Impose le retour du fichier complet modifié, sans explication ni Markdown enveloppant.</td></tr>
+        <tr><td><code>CODEX_SUMMARIZE_PROMPT</code></td><td><code>str</code></td><td>Prompt pour la distillation locale (Gemma) d'un fichier. Structure en 5 sections : objectif, architecture, dépendances, patterns, dette technique.</td></tr>
+        <tr><td><code>CODEX_QUICK_ACTIONS</code></td><td><code>dict</code></td><td>8 actions rapides prédéfinies (shorter, longer, comment, uncomment, refactor, fix, tests, optimize) affichées comme boutons dans le HUD Monaco.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>§1.5 DELEGATE SUB-AGENT — Blacklist et Appendice Système</h3>
+
+    <p>Section ajoutée en v5.6. Centralise les règles de filtrage des outils transmis au sous-agent.</p>
+
+    <table>
+      <thead><tr><th>Constante</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>DELEGATE_SUBAGENT_BLACKLIST</code></td>
+          <td><code>frozenset</code></td>
+          <td>
+            Ensemble des noms de fonctions interdites au sous-agent. 4 catégories d'exclusion :<br>
+            &bull; <strong>Récursion</strong> : <code>delegate_to_subagent</code> (guard depth=1 absolu)<br>
+            &bull; <strong>Écriture RAG</strong> : <code>save_memory</code>, <code>forget_memory</code>, <code>save_session_context</code><br>
+            &bull; <strong>Rendu UI</strong> : <code>generate_rich_visualization</code><br>
+            &bull; <strong>Méta-session</strong> : <code>list_subagent_sessions</code>, <code>close_subagent_session</code>, <code>summarize_subagent_session</code>, <code>context_gauge</code>
+          </td>
+        </tr>
+        <tr>
+          <td><code>DELEGATE_SYSTEM_APPENDIX</code></td>
+          <td><code>str</code></td>
+          <td>Bloc de règles injecté automatiquement à la fin du <code>system_prompt</code> de chaque sous-agent. Substitutions : <code>{sub_sid}</code> et <code>{max_calls}</code>. Définit le SESSION_ID, le budget d'appels, le protocole <code>QUESTION:</code> et la séquentialité obligatoire des outils.</td>
+        </tr>
       </tbody>
     </table>
 
@@ -113,7 +156,7 @@
       <li>Fallback sécuritaire : <code>application/octet-stream</code>, non supporté.</li>
     </ol>
 
-    <h2><code>echo_utils.py</code> — Cœur Réactif (v7.20)</h2>
+    <h2><code>echo_utils.py</code> — Cœur Réactif (v7.21)</h2>
 
     <h3>EchoStateManager — Persistance Bit-Perfect</h3>
     <p>
@@ -307,6 +350,24 @@
       </tbody>
     </table>
 
+    <h3>Table <code>codex_docs</code> — Registre Codex (v7.21)</h3>
+
+    <p>
+      Table SQLite ajoutée dans <code>{chat_id}.db</code> pour le suivi des fichiers ECHO Codex.
+      Elle permet l'injection dans le vecteur proprioceptif (<code>registre_codex</code>)
+      et des statistiques rapides sans accès disque.
+    </p>
+
+    <table>
+      <thead><tr><th>Méthode</th><th>Rôle</th></tr></thead>
+      <tbody>
+        <tr><td><code>save_codex_record(filename, language, lines, last_commit, commit_msg)</code></td><td>INSERT OR UPDATE dans <code>codex_docs</code>. Appelé après chaque commit Codex.</td></tr>
+        <tr><td><code>delete_codex_record(filename)</code></td><td>Supprime une entrée du registre (appelé lors de la suppression d'un fichier).</td></tr>
+        <tr><td><code>get_codex_docs()</code></td><td>Retourne tous les fichiers Codex du chat (pour injection dans <code>registre_codex</code> par le Filtre).</td></tr>
+        <tr><td><code>clear_codex_records()</code></td><td>Purge intégrale du registre (appelé par l'action Reset du HUD).</td></tr>
+      </tbody>
+    </table>
+
     <h2><code>echo_auth.py</code> — Identités d'Accès aux Modèles (v7.3)</h2>
 
     <p>
@@ -430,7 +491,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

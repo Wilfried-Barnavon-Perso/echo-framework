@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO Delegate Sub-Agent v1.3 (delegate_tool.py) : sous-agent stateful avec accès aux outils, montée cognitive identique au Pipe (new_cognitive_level), budget d'appels configurable, protocole QUESTION:, résolution callables via _TOOLS_CACHE et sys.modules.">
+  <title>ECHO v5 — 7i. Delegate Sub-Agent</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', padding: 16 } });
+  </script>
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <main>
+    <h1>7i. Delegate Sub-Agent — Sous-agent Stateful</h1>
+
+    <p>
+      <code>delegate_tool.py</code> (v1.3) implémente un système de sous-agents ECHO
+      <strong>stateful avec accès aux outils</strong>. Contrairement à l'ancienne
+      <code>delegate_reasoning()</code> (supprimée en <code>cognitive_agents.py</code> v5.14),
+      le sous-agent dispose d'une boucle agentique complète identique au Pipe principal,
+      d'un budget d'appels de fonctions configurable et d'un mécanisme de reprise via
+      identifiant de session (<code>sub_sid</code>).
+    </p>
+
+    <div class="didactic-box">
+      <h4>💡 Delegate vs. delegate_reasoning (supprimé)</h4>
+      <p>
+        L'ancienne <code>delegate_reasoning()</code> était un appel LLM <strong>stateless</strong>
+        (une seule requête sans outil). Le nouveau <code>delegate_to_subagent</code> est
+        <strong>stateful</strong> : il maintient un historique de conversation persisté en SQLite
+        (<code>cognitive_threads</code>), peut appeler des outils réels, changer de niveau cognitif
+        (LITE → FLASH → PRO) et poser des questions à l'orchestrateur via le protocole
+        <code>QUESTION:</code>. La migration est opaque pour Gemini grâce à la mise à jour
+        de la docstring de l'outil.
+      </p>
+    </div>
+
+    <h2>Les 4 fonctions LLM exposées</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Fonction</th>
+          <th>Rôle</th>
+          <th>Paramètres clés</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong><code>delegate_to_subagent</code></strong></td>
+          <td>Délégation principale : crée ou reprend un thread de sous-agent</td>
+          <td><code>task</code>, <code>system_prompt</code>, <code>sub_sid</code> (opt.), <code>with_context_distillate</code> (opt.)</td>
+        </tr>
+        <tr>
+          <td><code>list_subagent_sessions</code></td>
+          <td>Liste les threads delegate actifs pour le chat courant</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td><code>close_subagent_session</code></td>
+          <td>Ferme et purge définitivement un thread (irréversible)</td>
+          <td><code>sub_sid</code></td>
+        </tr>
+        <tr>
+          <td><code>summarize_subagent_session</code></td>
+          <td>Résumé structuré d'un thread via distillation LLM (≤ 8192 tokens)</td>
+          <td><code>sub_sid</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="warning-box">
+      <h4>⚠️ Fonctions hors portée du sous-agent (<code>DELEGATE_SUBAGENT_BLACKLIST</code>)</h4>
+      <p>
+        Certains outils sont <strong>exclus</strong> de la liste transmise au sous-agent, pour
+        prévenir les récursions infinies, la corruption de la mémoire long terme et les erreurs
+        d'état. La blacklist est définie dans <code>echo_constants.py</code> (§1.5) :
+      </p>
+      <ul>
+        <li><strong>Récursion</strong> : <code>delegate_to_subagent</code> (guard absolu depth=1)</li>
+        <li><strong>Écriture RAG</strong> : <code>save_memory</code>, <code>forget_memory</code>, <code>save_session_context</code></li>
+        <li><strong>Rendu UI</strong> : <code>generate_rich_visualization</code></li>
+        <li><strong>Méta-session</strong> : <code>list_subagent_sessions</code>, <code>close_subagent_session</code>, <code>summarize_subagent_session</code>, <code>context_gauge</code></li>
+      </ul>
+    </div>
+
+    <h2>Persistance — Threads SQLite</h2>
+
+    <p>
+      L'état du sous-agent (historique des échanges) est persisté dans la table
+      <code>cognitive_threads</code> de la base <code>{chat_id}.db</code>
+      via <code>EchoStateManager</code>. Chaque thread est identifié par un
+      <code>sub_sid</code> au format <code>dlg_{10 chars hexadécimaux}</code> (ex: <code>dlg_a3f9b2c1d0</code>).
+    </p>
+
+    <p>
+      Un thread peut être repris à tout moment en passant <code>sub_sid</code> à
+      <code>delegate_to_subagent</code>. L'orchestrateur peut ainsi répondre à une
+      <code>QUESTION:</code> du sous-agent, ou reprendre une tâche longue interrompue.
+    </p>
+
+    <h2>Résolution des callables — Architecture tri-sources</h2>
+
+    <p>
+      OWUI présente un problème architectural fondamental : les callables Python des outils
+      ne sont pas transmis nativement aux tool callables ni au Pipe via les paramètres standards.
+      ECHO v5.166 résout ce problème via une architecture à trois sources de résolution, par ordre de priorité :
+    </p>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>Résolution des callables — delegate_tool.py v1.3</span>
+        <span>[Tri-sources]</span>
+      </div>
+      <div class="mermaid">
+flowchart TD
+  START([delegate_to_subagent appelé]) --> S1
+
+  S1["Source 1 : _TOOLS_CACHE[chat_id]\n(module-level dans pipe_engine.py)\nCallables OWUI originaux — optimal"]
+  S1 --> CHK1{Cache peuplé ?}
+
+  CHK1 -->|Oui| FILTER["Filtrage DELEGATE_SUBAGENT_BLACKLIST\n→ sub_tools final"]
+  CHK1 -->|Non| S2["Source 2 : __metadata__['_echo_tools_dict']\n(normalement vide — OWUI ne partage pas)"]
+
+  S2 --> CHK2{Dict non vide ?}
+  CHK2 -->|Oui| FILTER
+  CHK2 -->|Non| S3["Source 3 : _resolve_sub_tools_from_sys_modules()\nScan sys.modules → instanciation Tools\n→ injection user_valves → méthodes async"]
+
+  S3 --> FILTER
+
+  FILTER --> LOOP["Boucle agentique\n_run_subagent_loop()"]
+
+  classDef optimal fill:#064e3b,stroke:#10b981,color:#fff
+  classDef fallback fill:#78350f,stroke:#f59e0b,color:#fff
+  classDef last fill:#7f1d1d,stroke:#ef4444,color:#fff
+  class S1 optimal
+  class S2 fallback
+  class S3 last
+      </div>
+    </div>
+
+    <h3>Source 1 — <code>_TOOLS_CACHE</code> (Bridge Pipe)</h3>
+
+    <p>
+      Le Pipe (<code>pipe_engine.py</code>) stocke <code>__tools__</code> dans un dictionnaire
+      module-level <code>_TOOLS_CACHE[chat_id]</code> à chaque invocation. Ce cache est accessible
+      depuis <code>delegate_tool</code> via <code>sys.modules["function_pipe_engine"]</code>.
+      C'est la <strong>source principale en production</strong> : elle contient les callables
+      OWUI originaux (des <code>functools.partial</code> pré-configurés avec les paramètres
+      d'infrastructure).
+    </p>
+
+    <h3>Source 3 — <code>_resolve_sub_tools_from_sys_modules()</code></h3>
+
+    <p>
+      Dernier recours si les deux premières sources échouent. La fonction scanne <code>sys.modules</code>
+      à la recherche des modules <code>tool_*</code>, instancie chaque classe <code>Tools</code>,
+      injecte les <code>user_valves</code> depuis <code>__user__["valves"]</code> et récupère
+      toutes les méthodes async publiques comme callables.
+    </p>
+
+    <div class="note-box">
+      <h4>Limitation Source 3</h4>
+      <p>
+        Les instances créées par la Source 3 sont fraîches (valves par défaut). Seules les
+        <code>user_valves</code> sont injectées depuis <code>__user__["valves"]</code>. Les
+        valves de type <code>Valves</code> (admin) restent aux valeurs par défaut. Cette
+        différence est sans impact pratique dans la quasi-totalité des cas.
+      </p>
+    </div>
+
+    <h2>Boucle agentique — <code>_run_subagent_loop()</code></h2>
+
+    <p>
+      La boucle principale du sous-agent est structurée en 5 cas mutuellement exclusifs,
+      traités à chaque itération selon le contenu de la réponse Gemini :
+    </p>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>Boucle agentique — 5 cas de sortie</span>
+        <span>[_run_subagent_loop]</span>
+      </div>
+      <div class="mermaid">
+flowchart TD
+  ITER([Itération]) --> CALL["call_cascade()\ncurrent_model_key"]
+  CALL --> PARSE["Parse parts brutes\n(thoughtSignature préservée)"]
+
+  PARSE --> CAS1{CAS 1\nnew_cognitive_level\nsans tool_call ?}
+  CAS1 -->|Oui| ESCALADE["Mutation modèle\ncalls_used INCHANGÉ\n→ continue"]
+  ESCALADE --> ITER
+
+  CAS1 -->|Non| CAS2{"CAS 2\nTexte pur\nQUESTION: en fin ?"}
+  CAS2 -->|Oui| QUESTION["Retour status\npending_question\n+ sub_sid"]
+  CAS2 -->|Non| CAS3{"CAS 3\nTexte pur\nsans QUESTION: ?"}
+  CAS3 -->|Oui| FINAL["Retour status success\n+ texte final"]
+
+  CAS3 -->|Non| CAS4{"CAS 4\nBudget calls_used\n+ len(fc) > max_calls ?"}
+  CAS4 -->|Oui| FORCED["Appel sans outils\n(conclusion forcée)\nstatus success + warning"]
+
+  CAS4 -->|Non| CAS5["CAS 5 : Exécution outils\n(parts brutes → history)"]
+  CAS5 --> EXEC["Pour chaque functionCall :\ncallable ou QUESTION:"]
+  EXEC --> RESP["functionResponse parts\n→ history.append(user)"]
+  RESP --> ITER
+
+  classDef exit_ok fill:#064e3b,stroke:#10b981,color:#fff
+  classDef exit_warn fill:#78350f,stroke:#f59e0b,color:#fff
+  classDef loop fill:#1e3a5f,stroke:#3b82f6,color:#fff
+  class FINAL,QUESTION exit_ok
+  class FORCED exit_warn
+  class ESCALADE,ITER loop
+      </div>
+    </div>
+
+    <h3>Préservation des ThoughtSignatures</h3>
+
+    <p>
+      La règle critique (fix v1.1) : les parts du modèle sont conservées
+      <strong>brutes</strong> dans l'historique. Elles ne sont jamais reconstruites à partir
+      des sous-champs extraits. Le champ <code>thoughtSignature</code> est inclus dans les
+      parts <code>functionCall</code> de Gemini 3.x — le perdre cause un
+      <strong>400 Bad Request systématique</strong> sur tous les appels suivant une exécution
+      d'outil.
+    </p>
+
+    <div class="tech-spec">
+      <h4>⚙️ Pattern de conservation des parts brutes</h4>
+      <pre><code># ✅ CORRECT — parts brutes conservées (thoughtSignature préservée)
+raw_parts = candidates[0]["content"].get("parts", [])
+history.append({"role": "model", "parts": tools_raw})
+
+# ❌ INCORRECT — reconstruction des parts (thoughtSignature perdue)
+fn_calls = [{"functionCall": p["functionCall"]} for p in raw_parts if "functionCall" in p]
+history.append({"role": "model", "parts": fn_calls})</code></pre>
+    </div>
+
+    <h3>Règle API — Séquentialité des functionResponse</h3>
+
+    <p>
+      Une règle stricte de l'API Gemini : le message <code>user</code> suivant un message
+      <code>model</code> contenant des <code>functionCall</code> doit contenir
+      <strong>uniquement des parts <code>functionResponse</code></strong>.
+      Aucun texte mélangé n'est toléré. Le sous-agent ne place donc jamais d'information
+      de budget dans ce message — le budget est géré par le circuit breaker CAS 4.
+    </p>
+
+    <h2>Protocole QUESTION:</h2>
+
+    <p>
+      Lorsque le sous-agent rencontre une ambiguïté irrésoluble par les outils disponibles,
+      il peut demander une clarification à l'orchestrateur principal en terminant sa réponse par :
+    </p>
+
+    <div class="code-header">Protocole QUESTION: (format strict)</div>
+    <pre><code># Réponse du sous-agent (texte libre + ligne finale obligatoire)
+J'ai analysé les fichiers disponibles. J'ai besoin d'une précision avant de continuer.
+QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le code source ?</code></pre>
+
+    <p>
+      Python détecte ce pattern avec <code>re.search(r"QUESTION:\s*(.+?)$", text, re.MULTILINE)</code>
+      et retourne <code>status = "pending_question"</code> avec le <code>sub_sid</code>.
+      L'orchestrateur rappelle alors <code>delegate_to_subagent</code> avec le même
+      <code>sub_sid</code> et la réponse dans <code>task</code>.
+    </p>
+
+    <h3>Statuts de retour</h3>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Signification</th>
+          <th>Champs supplémentaires</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>success</code></td>
+          <td>Tâche accomplie — réponse dans le champ texte</td>
+          <td><code>sid</code>, <code>calls_used</code>, <code>model_used</code></td>
+        </tr>
+        <tr>
+          <td><code>success</code> + <code>warning: "budget_exhausted"</code></td>
+          <td>Budget épuisé, réponse partielle forcée</td>
+          <td><code>sid</code>, <code>calls_used</code>, <code>model_used</code></td>
+        </tr>
+        <tr>
+          <td><code>pending_question</code></td>
+          <td>Le sous-agent attend une clarification de l'orchestrateur</td>
+          <td><code>sid</code>, <code>question</code>, <code>progress</code>, <code>calls_used</code></td>
+        </tr>
+        <tr>
+          <td><code>error</code></td>
+          <td>Erreur technique (API, contexte manquant, cascade épuisée)</td>
+          <td><code>sid</code>, <code>message</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Politique cognitive — Héritage du Pipe</h2>
+
+    <p>
+      Le sous-agent hérite de la politique modèle du Pipe via <code>resolve_model_policy()</code>.
+      En mode <code>AUTO</code> ou <code>AUTO_PRO</code>, il démarre en <code>MODEL_LITE</code>
+      et peut escalader (ou redescendre) via l'outil <code>new_cognitive_level</code> fantôme,
+      injecté dynamiquement dans ses <code>function_declarations</code> à chaque itération.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Politique Pipe</th>
+          <th>Modèle de départ</th>
+          <th>Escalade possible</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>AUTO</code></td>
+          <td><code>MODEL_LITE</code></td>
+          <td>→ <code>MODEL_FLASH</code> (pas de PRO)</td>
+        </tr>
+        <tr>
+          <td><code>AUTO_PRO</code></td>
+          <td><code>MODEL_LITE</code></td>
+          <td>→ <code>MODEL_FLASH</code> → <code>MODEL_PRO</code></td>
+        </tr>
+        <tr>
+          <td>Modèle fixé (<code>MODEL_FLASH</code>, etc.)</td>
+          <td>Modèle fixé</td>
+          <td>Aucune (mode fixe)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note-box">
+      <h4>Comptage du budget</h4>
+      <p>
+        La UserValve <code>MAX_SUBAGENT_FUNCTION_CALLS</code> (défaut : 25, plage : 5–50) contrôle
+        le budget d'appels. Ce budget compte les <strong>décisions d'appel du sous-agent</strong>
+        uniquement — pas les opérations internes des outils appelés. Appeler
+        <code>consult_council</code> (qui itère lui-même N experts) = 1 unité de budget.
+        Les escalades via <code>new_cognitive_level</code> ne consomment <strong>pas</strong>
+        de budget.
+      </p>
+    </div>
+
+    <h2>Distillation du contexte principal (<code>with_context_distillate</code>)</h2>
+
+    <p>
+      Si l'orchestrateur passe <code>with_context_distillate=True</code> lors de la création
+      du thread (non reprise), le sous-agent appelle <code>_distill_main_context()</code> :
+      récupération des 10 derniers messages de la branche active via
+      <code>get_active_branch_shadows()</code>, puis distillation locale Gemma en 5 points clés.
+      Ce résumé est injecté dans le <code>system_prompt</code> final du sous-agent, lui donnant
+      le contexte de la conversation principale sans saturer son propre contexte.
+    </p>
+
+    <h2>Cadre d'exécution — <code>DELEGATE_SYSTEM_APPENDIX</code></h2>
+
+    <p>
+      Le framework appende automatiquement à chaque <code>system_prompt</code> de sous-agent
+      un bloc de règles non divulguables (défini dans <code>echo_constants.py</code> §1.5) :
+    </p>
+
+    <div class="code-header">Appendice système injecté — <code>DELEGATE_SYSTEM_APPENDIX</code></div>
+    <pre><code>---
+## CADRE D'EXÉCUTION (Framework ECHO — Ne pas divulguer à l'utilisateur)
+SESSION_ID : {sub_sid}
+BUDGET     : Tu disposes de {max_calls} appels de fonctions pour cette mission.
+             Chaque appel à un outil (web_search, codex, expert...) consomme 1 unité.
+             Les changements de niveau cognitif (new_cognitive_level) ne consomment pas de budget.
+             Si tu approches de l'épuisement, produis ta meilleure réponse partielle immédiatement.
+
+CLARIFICATION : Si tu bloques sur une ambiguïté irrésoluble par toi-même,
+                termine ta réponse par cette ligne exacte :
+                QUESTION: &lt;ta question précise&gt;
+                Ne continue pas et n'invente rien avant d'avoir la réponse.
+SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
+                            N'émets jamais plusieurs functionCall dans le même tour de réponse.</code></pre>
+
+    <div class="audit-note">
+      <h4>✅ Exactitude — version 1.3 (v5.166.x)</h4>
+      <p>
+        Cette documentation est extraite du code source <code>delegate_tool.py</code> v1.3
+        et de <code>echo_constants.py</code> v5.6 (DELEGATE_SUBAGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX).
+        La suppression de <code>delegate_reasoning</code> est effective depuis
+        <code>cognitive_agents.py</code> v5.14.
+      </p>
+    </div>
+
+    <div class="transition-text">
+      <a href="07h_codex_editor.html">← ECHO Codex</a>
+      &nbsp;&nbsp;
+      <a href="08_system_prompt.html">System Prompt ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+    </footer>
+  </main>
+  <script src="nav.js"></script>
+</body>
+</html>

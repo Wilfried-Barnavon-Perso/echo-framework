@@ -1,7 +1,7 @@
 """
 title: ECHO Cognitive Agents
 author: ECHO Framework
-version: 5.13
+version: 5.14
 description: 5.7: Résolution du conflit de nom get_all_skills (shadowing).
              5.8: Centralisation des niveaux de réflexion (THINKING_LEVEL_*) — suppression
              valves FLASH_THINKING et PRO_THINKING. Remplacement par constantes echo_constants.
@@ -15,6 +15,9 @@ description: 5.7: Résolution du conflit de nom get_all_skills (shadowing).
              message d'erreur actionnable (liste skills + invite forge_skill).
              5.13: Centralisation politique modèle Pipe. Migration call() → call_cascade().
              Suppression résolution manuelle modèle/thinking. Docstrings informent de la cascade auto.
+             5.14: Suppression delegate_reasoning (stateless, sans outils) →
+             remplacé par delegate_to_subagent dans delegate_tool.py
+             (stateful, montée cognitive Pipe, budget d'appels, QUESTION:).
 """
 
 import sys
@@ -131,68 +134,6 @@ class Tools:
             res += f"  > *Description:* {s['description']}\n"
             
         return wrap_tool_output(text=res)
-
-    async def delegate_reasoning(
-        self,
-        context: str,
-        prompt: str,
-        target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"],
-        system_instruction: Optional[str] = None,
-        __user__: Optional[dict] = None,
-        __metadata__: dict = {},
-        __event_emitter__: Any = None,
-        __event_call__: Any = None
-    ) -> str:
-        """
-        Délégation cognitive sans état (stateless). Chaque appel est indépendant et ne conserve aucune mémoire des échanges précédents.
-        
-        Choisissez le modèle parmi ceux disponibles :
-        - MODEL_LITE : distillation rapide, extraction de données.
-        - MODEL_FLASH : tâches intermédiaires, formatage, logique standard.
-        - MODEL_PRO : architecture complexe, debug profond, planification stratégique.
-        La politique ECHO gère automatiquement la cascade (fallback) si le modèle est saturé.
-        
-        :param context: Contexte sémantique (Markdown) de référence pour la tâche.
-        :param prompt: L'instruction ou la tâche spécifique à exécuter.
-        :param target_model: Le modèle à utiliser (MODEL_LITE, MODEL_FLASH, MODEL_PRO).
-        :param system_instruction: (Optionnel) Comportement strict ou format de sortie attendu.
-        """
-        events = EchoEvents(__event_emitter__, __event_call__)
-        user_id = __user__.get("id", "system") if __user__ else "system"
-
-        await events.status(f"🧠 Délégation Cognitive ({target_model}) pour {user_id}...")
-        
-        combined_prompt = f"### CONTEXTE\n{context}\n\n### TÂCHE\n{prompt}"
-        sys_instr = {"parts": [{"text": system_instruction}]} if system_instruction else None
-        
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": combined_prompt}]}],
-            "generationConfig": {"temperature": TEMP_DEFAULT, "topP": TOP_P_DEFAULT, "maxOutputTokens": 16000}
-        }
-        if sys_instr: payload["systemInstruction"] = sys_instr
-
-        data, model_used, reason = await EchoGeminiClient.call_cascade(
-            target_model_key=target_model,
-            payload=payload,
-            user_id=user_id,
-            metadata=__metadata__,
-            events=events,
-            threshold=self.valves.KEY_SWITCH_THRESHOLD,
-            max_retries=self.valves.MAX_RETRIES,
-            timeout=self.valves.COGNITIVE_TIMEOUT,
-            include_thoughts=False,
-        )
-        
-        if not data:
-            return wrap_tool_output(text=f"❌ Cascade épuisée : aucun modèle disponible pour la délégation (demandé : {target_model}).")
-
-        candidates = data.get("candidates", [])
-        if candidates and candidates[0].get("content"):
-            full_text = "".join([p.get("text", "") for p in candidates[0]["content"].get("parts", [])])
-            await events.status(f"Délégation terminée ({model_used}).", done=True)
-            return wrap_cascade_output(text=full_text, model_requested=target_model, model_used=model_used, reason=reason)
-        
-        return wrap_tool_output(text="❌ Erreur: Réponse Gemini vide.")
 
     async def consult_expert_consultant(
         self,

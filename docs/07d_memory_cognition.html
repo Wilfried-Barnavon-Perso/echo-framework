@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -137,8 +137,8 @@
       <thead><tr><th>Outil</th><th>Description</th></tr></thead>
       <tbody>
         <tr>
-          <td><code>delegate_reasoning(context, prompt, target_model)</code></td>
-          <td>Délégation cognitive <strong>sans état</strong>. Appel unique à Gemini (LITE/FLASH/PRO) avec injection d'un contexte Markdown explicite. Ne conserve aucune mémoire entre les appels. Niveau de réflexion fixé via les constantes <code>THINKING_LEVEL_*</code>.</td>
+          <td><code>delegate_to_subagent(task, system_prompt, sub_sid)</code></td>
+          <td>Délégation cognitive <strong>stateful</strong> (depuis <code>delegate_tool.py</code> v1.0, remplace <code>delegate_reasoning</code> supprimée en v5.14). Boucle agentique complète avec accès aux outils, budget d'appels configurable, montée cognitive LITE&rarr;FLASH&rarr;PRO. Persistance de l'historique de thread dans SQLite (<code>cognitive_threads</code>). Protocole <code>QUESTION:</code> pour les clarifications.</td>
         </tr>
         <tr>
           <td><code>consult_expert_consultant(role_name, prompt, sub_sid, target_model)</code></td>
@@ -219,7 +219,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

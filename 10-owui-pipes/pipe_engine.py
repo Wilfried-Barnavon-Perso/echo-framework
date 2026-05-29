@@ -495,6 +495,28 @@ class StreamProcessor:
 # ==============================================================================
 # SECTION 8 : LE PIPE
 # ==============================================================================
+
+# =============================================================================
+# BRIDGE TOOLS : _TOOLS_CACHE
+# =============================================================================
+# Problème fondamental OWUI :
+#   OWUI injecte __tools__ (dict {fn_name: {callable, spec, tool_id}}) dans le
+#   Pipe lorsque des outils sont associés au modèle. Ce dict contient les
+#   callables Python réels prêts à être appelés.
+#
+#   En revanche, OWUI NE propage PAS ces callables aux tool callables (ex:
+#   delegate_to_subagent). Chaque outil reçoit un __metadata__ vierge, déconnecté
+#   des modifications faites par le Pipe.
+#
+# Solution : le Pipe stocke __tools__[chat_id] dans ce dict module-level.
+#   Comme le Pipe et tous les outils s'exécutent dans le même processus Python,
+#   delegate_tool peut accéder à ce cache via sys.modules["function_pipe_engine"].
+#
+# Durée de vie : le cache persiste tant que le processus uvicorn tourne.
+#   En cas de redémarrage, il est reconstitué au premier message de chaque chat.
+# =============================================================================
+_TOOLS_CACHE: dict = {}  # {chat_id: dict[fn_name, {callable, spec, tool_id, metadata}]}
+
 class Pipe:
     class Valves(BaseModel):
         HTTP_CLIENT_TIMEOUT: int = Field(default=600)
@@ -514,7 +536,7 @@ class Pipe:
 
     def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
 
-    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
+    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         events = EchoEvents(__event_emitter__)
         if not __user__: yield "❌ Identité manquante."; return
         user_valves = __user__.get("valves") or self.UserValves()
@@ -529,6 +551,64 @@ class Pipe:
             __metadata__ = {}
         __metadata__["_echo_model_policy"] = user_valves.MODEL_SELECTION
         __metadata__["_echo_enable_paid_credits"] = user_valves.ENABLE_PAID_CREDITS
+
+        # -----------------------------------------------------------------------
+        # INJECTION DES OUTILS (bridge __tools__ → _TOOLS_CACHE)
+        # -----------------------------------------------------------------------
+        # OWUI injecte __tools__ dans le Pipe sous deux formes selon la version :
+        #   1. dict {fn_name: {tool_id, callable, spec, metadata}}  ← observé en production
+        #      Contient les callables Python directement utilisables.
+        #   2. list[ToolUserModel] avec attribut .specs               ← doc officielle
+        #      Contient les specs OpenAI mais PAS les callables.
+        #
+        # Dans le cas 1 (dict), on stocke dans _TOOLS_CACHE[chat_id] pour que
+        # delegate_tool puisse y accéder sans passer par __metadata__.
+        # Dans le cas 2 (list), on extrait les specs pour construire _echo_body_tools,
+        # mais les callables devront être reconstruits via sys.modules dans delegate_tool.
+        import logging as _plog
+        _log_pipe = _plog.getLogger("echo.pipe")
+
+        if isinstance(__tools__, dict) and __tools__:
+            # Cas 1 — dict avec callables (production ECHO)
+            __metadata__["_echo_tools_dict"] = __tools__          # Conservé pour compatibilité
+            __metadata__["_echo_body_tools"] = [                  # Specs format OpenAI
+                {"type": "function", "function": v["spec"]}
+                for v in __tools__.values()
+                if isinstance(v, dict) and "spec" in v
+            ]
+            # Bridge principal : stockage dans le cache module-level
+            if chat_id:
+                _TOOLS_CACHE[chat_id] = __tools__
+                _log_pipe.debug("_TOOLS_CACHE[%s] = %d outils", chat_id, len(__tools__))
+
+        elif isinstance(__tools__, list) and __tools__:
+            # Cas 2 — list[ToolUserModel] sans callables
+            __metadata__["_echo_tools_dict"] = {}
+            _specs: list = []
+            for _tm in __tools__:
+                for _sp in (getattr(_tm, "specs", None) or (_tm.get("specs") if isinstance(_tm, dict) else []) or []):
+                    _specs.append({"type": "function", "function": _sp})
+            __metadata__["_echo_body_tools"] = _specs
+
+        else:
+            # Aucun outil injecté (modèle sans outils associés ou fallback OpenAI)
+            __metadata__["_echo_tools_dict"] = {}
+            __metadata__["_echo_body_tools"] = body.get("tools", [])
+
+        # Log diagnostic (DEBUG uniquement, ne pas laisser en WARNING en production)
+        if isinstance(__tools__, dict):
+            _tools_info = f"dict({len(__tools__)} keys) — sample: {list(__tools__.keys())[:3]}"
+        elif isinstance(__tools__, list):
+            _first_type = type(__tools__[0]).__name__ if __tools__ else "empty"
+            _tools_info = f"list({len(__tools__)} items, item[0]={_first_type})"
+        else:
+            _tools_info = f"{type(__tools__).__name__}: {__tools__}"
+        _log_pipe.debug(
+            "pipe [tools]: %s | _body_tools=%s | cache=%s",
+            _tools_info,
+            len(__metadata__.get("_echo_body_tools", [])),
+            len(_TOOLS_CACHE.get(chat_id, {})),
+        )
 
         # Persistance identity.db → lu par clamp_model() côté outils (fallback SQLite)
         from echo_utils import EchoStateManager

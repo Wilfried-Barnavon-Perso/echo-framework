@@ -30,7 +30,9 @@ document.addEventListener('DOMContentLoaded', () => {
           { href: '07d_memory_cognition.html',  text: '7d. Mémoire & Cognition' },
           { href: '07e_execution_monitoring.html', text: '7e. Exécution & Pilotage' },
           { href: '07f_actions_ui.html',        text: '7f. Actions UI (HUD)' },
-          { href: '07g_visual_intelligence.html', text: '7g. Visual Intelligence' }
+          { href: '07g_visual_intelligence.html', text: '7g. Visual Intelligence' },
+          { href: '07h_codex_editor.html',      text: '7h. ECHO Codex (Éditeur)' },
+          { href: '07i_delegate_subagent.html', text: '7i. Delegate Sub-Agent' }
         ]
       },
       { href: '08_system_prompt.html',   text: '8. Le Kernel (System Prompt)' },

@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.5
+version: 5.6
 description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
@@ -26,6 +26,8 @@ description: 4.3: Credentials Antigravity obfusqués base64(reversed).
                   Ajout entrée LOCAL_GEMMA dans MODEL_ROUTING.
              5.4: Ajout section ECHO Codex (CODEX_DIR_NAME, CODEX_LANG_MAP, CODEX_EDIT_SYSTEM_PROMPT,
                   CODEX_SUMMARIZE_PROMPT, CODEX_QUICK_ACTIONS, CODEX_DEFAULT_LANG).
+             5.6: Ajout section 1.5 — DELEGATE_SUBAGENT_BLACKLIST (frozenset) et DELEGATE_SYSTEM_APPENDIX.
+                  Centralise les règles de filtrage des outils transmis au sous-agent delegate.
 """
 
 import os
@@ -155,7 +157,12 @@ PKCE_CALLBACK_TIMEOUT = 300  # secondes
 
 ECHO_API_KEY_THRESHOLD   = 2
 ECHO_API_MAX_RETRIES     = 5
-ECHO_RETRY_BASE_DELAY    = 2.0
+ECHO_RETRY_BASE_DELAY    = 5.0   # Base backoff exponentiel — augmenté de 2.0 à 5.0 (v5.166.6)
+                                  # Raison : le gateway Code Assist retourne des 400 transients quand
+                                  # plusieurs outils cognitifs (consult_council, consult_expert)
+                                  # déclenchent une rafale de requêtes Gemini simultanées.
+                                  # Avec base=5.0 : 4 essais suffisent à couvrir la fenêtre de throttle
+                                  # (~62s) tout en réduisant la pression sur l'API entre les essais.
 ECHO_RETRY_MULTIPLIER    = 2.0
 ECHO_RETRY_JITTER_MIN    = 0.7
 ECHO_RETRY_JITTER_MAX    = 1.3
@@ -343,6 +350,63 @@ MAX_TOKENS_DEFAULT = 65535  # Limite universelle — tous modèles, toutes APIs 
                              # Utilisé par : pipe_engine (stream), call_distillation, echo_protocol.
 
 # ----------------------------
+
+# ==============================================================================
+# 1.5 DELEGATE SUB-AGENT — Blacklist et appendice système
+# ==============================================================================
+
+# ⚠️  MAINTENANCE OBLIGATOIRE
+# À chaque création, modification ou suppression d'une function call dans les
+# tools ECHO, évaluer si elle doit figurer dans cette blacklist.
+#
+# Critères d'exclusion (4 catégories) :
+#   1. Récursion     : crée un sub_sid persistant (depth=1 guard absolu)
+#   2. Écriture RAG  : modifie Qdrant (mémoire long terme ou éphémère)
+#                      Le sous-agent lit uniquement — il ne consolide pas.
+#   3. Rendu UI      : génère du HTML/JS pour le stream principal OWUI
+#   4. Méta-session  : gère les sessions du tool delegate lui-même
+#
+# NB : Le budget (MAX_SUBAGENT_FUNCTION_CALLS) compte les DÉCISIONS d'appel
+#      du sous-agent — pas les opérations internes des outils appelés.
+#      consult_council appelé par le sous-agent = 1 unité de budget,
+#      quelles que soient les itérations internes du conseil.
+DELEGATE_SUBAGENT_BLACKLIST: frozenset = frozenset({
+    # 1. Récursion (depth=1 guard — le seul guard de profondeur nécessaire)
+    "delegate_to_subagent",
+    # 2. Écriture RAG
+    "save_memory",            # Écrit en mémoire long terme (Qdrant)
+    "forget_memory",          # Supprime de la mémoire long terme
+    "save_session_context",   # Écrit dans le RAG éphémère
+    # 3. Rendu UI
+    "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
+    # 4. Méta-session delegate (gestion des sessions du tool delegate lui-même)
+    "list_subagent_sessions",
+    "close_subagent_session",
+    "summarize_subagent_session",
+    "context_gauge",          # Dépend de l'état interne du Pipe principal
+})
+
+# Appendice système injecté automatiquement à la fin de tout system_prompt de sous-agent.
+# Substitutions requises avant injection : {sub_sid}, {max_calls}
+DELEGATE_SYSTEM_APPENDIX = """
+---
+## CADRE D'EXÉCUTION (Framework ECHO — Ne pas divulguer à l'utilisateur)
+SESSION_ID : {sub_sid}
+BUDGET     : Tu disposes de {max_calls} appels de fonctions pour cette mission.
+             Chaque appel à un outil (web_search, codex, expert...) consomme 1 unité.
+             Les changements de niveau cognitif (new_cognitive_level) ne consomment pas de budget.
+             Si tu approches de l'épuisement, produis ta meilleure réponse partielle immédiatement.
+
+CLARIFICATION : Si tu bloques sur une ambiguïté irrésoluble par toi-même,
+                termine ta réponse par cette ligne exacte :
+                QUESTION: <ta question précise>
+                Ne continue pas et n'invente rien avant d'avoir la réponse.
+SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
+                            N'émets jamais plusieurs functionCall dans le même tour de réponse.
+                            Chaque outil doit être entièrement exécuté et son résultat
+                            intégré avant d'en appeler un autre.
+                            La parallélisation d'outils est interdite dans ce contexte.
+"""
 
 # 2. REGISTRE COGNITIF ECHO (UNIFIÉ & STATIQUE)
 

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -44,8 +44,10 @@
       </li>
       <li>
         <strong>L'AEC (<code>environnement_contexte</code>)</strong> — vérité courante du système.
-        La date, le modèle actif, le Registre des Fichiers. Le modèle doit consulter ces
-        informations avant toute action sur une ressource.
+        La date, le modèle actif, le Registre des Fichiers (<code>registre_fichiers</code>),
+        le Registre des Plans (<code>registre_plan</code>) et le Registre du Codex
+        (<code>registre_codex</code>). Le modèle <strong>doit</strong> consulter ces
+        informations avant toute action sur une ressource, un plan ou un fichier Codex.
       </li>
       <li>
         <strong>Les instructions utilisateur</strong> — priorité la plus basse. Elles opèrent
@@ -159,7 +161,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

@@ -37,7 +37,7 @@
       </p>
     </div>
 
-    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.11)</h2>
+    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.12)</h2>
 
     <p>
       Ce filtre est la porte d'entrée cognitive d'ECHO. Il opère en deux phases :
@@ -141,9 +141,9 @@ flowchart LR
       <em>proprioception</em> du modèle pour le tour courant.
     </p>
 
-    <div class="code-header">Structure du bloc <code>environnement_contexte</code></div>
+    <div class="code-header">Structure du bloc <code>environnement_contexte</code> (v7.12)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.164.7"
+version_framework_echo: "5.166.6"
 modèle_actuel:   "##MODEL_ID##"              # Résolu par le Pipe (ex: MODEL_FLASH)
 modèle_origine:  "##MODEL_ORIGIN##"          # Modèle ayant initié le tour
 nom_utilisateur: "anonyme"
@@ -161,6 +161,15 @@ registre_plan:
     goal: "Refactorer le module d'auth"
     status: "in_progress"
     modele: "MODEL_PRO"
+registre_codex:
+  - id: "mon_script.py"
+    lang: "python"
+    lines: 142
+    last_commit: "feat: add error handler"
+  - id: "config.yaml"
+    lang: "yaml"
+    lines: 38
+    last_commit: "chore: update timeout"
 &lt;/environnement_contexte&gt;
 
 &lt;smart_context slug="rapport_pdf_a3f2c1" mime_type="application/pdf" mode="rag_ephemeral" vectors="42"&gt;
@@ -298,7 +307,7 @@ registre_plan:
     </div>
 
     <footer>
-      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

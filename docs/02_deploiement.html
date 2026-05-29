@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -98,6 +98,17 @@
       l'Arsenal (Pipes, Filtres, Outils, Actions) dans l'API d'Open WebUI et configure le
       system prompt.
     </p>
+
+    <div class="note-box">
+      <h4>⚠ Dépendances Python additionnelles (stack-echo.yml v9.2)</h4>
+      <p>
+        Le service <code>open-webui</code> installe des packages Python au démarrage
+        via la commande <code>/bin/bash -c "pip install mgzip dulwich &amp;&amp; ./start.sh"</code>.
+        <code>mgzip</code> est requis pour les exports gzip, <code>dulwich</code> (ajouté en v9.2)
+        est la bibliothèque Git Python pur requise par l'ECHO Codex pour créer et gérer
+        les dépôts Git sans binaire <code>git</code> installé dans le conteneur.
+      </p>
+    </div>
 
     <h2>Voie B — Linux Natif (Serveur Dédié)</h2>
 
@@ -243,7 +254,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

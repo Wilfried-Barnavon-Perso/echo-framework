@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -14,9 +14,9 @@
 
     <p>
       En termes Open WebUI, une <em>Action</em> est un bouton interactif injecté dans l'interface
-      de chat, déclenché explicitement par l'utilisateur. ECHO déploie quatre actions couvrant la
-      maintenance cognitive, l'archivage visuel et l'export documentaire. Elles sont définies dans
-      le répertoire <code>13-owui-actions/</code> du dépôt.
+      de chat, déclenché explicitement par l'utilisateur. ECHO déploie cinq actions couvrant la
+      maintenance cognitive, l'archivage visuel, l'export documentaire et l'édition de code souverain.
+      Elles sont définies dans le répertoire <code>13-owui-actions/</code> du dépôt.
     </p>
 
     <div class="didactic-box">
@@ -107,7 +107,14 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
           <td><code>export_pdf_action.py</code></td>
           <td>Export PDF</td>
           <td><code>4</code></td>
-          <td>Capture conversation → PDF (texte + Rich Embeds)</td>
+          <td>Capture conversation &rarr; PDF (texte + Rich Embeds)</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td><code>echo_codex_action.py</code></td>
+          <td>ECHO Codex</td>
+          <td><code>4</code></td>
+          <td>HUD Monaco éditeur de code avec Git intégré et assistance AI</td>
         </tr>
       </tbody>
     </table>
@@ -425,14 +432,53 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
+    <h2>Action 5 — ECHO Codex (<code>echo_codex_action.py</code>, v1.5)</h2>
+
+    <p>
+      Ouvre un éditeur de code Monaco complet dans un HUD draggable et redimensionnable,
+      directement intégré dans le DOM d'Open WebUI. Chaque conversation dispose de
+      son propre dépôt Git isolé (via <code>dulwich</code>, Python pur sans binaire git)
+      dans le Vault utilisateur. La position et la taille du HUD sont persistantes
+      via <code>localStorage</code> (clé <code>echo_codex_{chat_id}</code>).
+    </p>
+
+    <h3>Fonctionnalités principales</h3>
+    <table>
+      <thead>
+        <tr><th>Fonctionnalité</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>File Tree</strong></td><td>Panneau gauche : liste des fichiers du Codex. Clic &rarr; chargement dans l'éditeur. Bouton &times; &rarr; suppression avec commit. Bouton + &rarr; création fichier.</td></tr>
+        <tr><td><strong>Éditeur Monaco</strong></td><td>Monaco Editor 0.52.2 via CDN jsDelivr. Coloration syntaxique 30+ langages, numéros de lignes, word wrap, minimap. Ctrl+S &rarr; sauvegarde + commit immédiat.</td></tr>
+        <tr><td><strong>Édition AI</strong></td><td>Instruction libre ou action rapide prédéfinie (shorter, comment, refactor, fix, tests…). Sélecteur LITE/FLASH/PRO. Affiche un diff côte-à-côte Accept/Rejeter.</td></tr>
+        <tr><td><strong>Navigation Git &#9664; &#9654;</strong></td><td>Navigation commit par commit pour un fichier. Mode read-only visuel. Bouton Restaurer &rarr; nouveau commit de restauration.</td></tr>
+        <tr><td><strong>Import/Export</strong></td><td>Téléchargement depuis le PC vers le Codex (upload), téléchargement du fichier vers le PC (download natif navigateur).</td></tr>
+        <tr><td><strong>Reset</strong></td><td>Suppression intégrale du dépôt (confirmation JS + purge SQLite). Irréversible.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="didactic-box">
+      <h4>💡 Complémentarité HUD (Action) vs. Outil LLM (Tool Call)</h4>
+      <p>
+        L'Action ECHO Codex (ce HUD) est complémentaire de l'outil LLM
+        <code>echo_codex_tool.py</code> : le HUD est piloté <strong>par l'utilisateur</strong>
+        (bouton sous le message), l'outil LLM est piloté <strong>par Gemini</strong>
+        (Tool Call au cours d'une génération). Les deux accèdent au même dépôt Git
+        et au même registre SQLite <code>codex_docs</code>.
+      </p>
+    </div>
+
+    <p>Pour la documentation technique complète (architecture, API JS, protocole Python↔JS),
+    voir <a href="07h_codex_editor.html">ECHO Codex &rarr;</a>.</p>
+
     <div class="transition-text">
-      <a href="07e_execution_monitoring.html">← Exécution &amp; Pilotage</a>
+      <a href="07e_execution_monitoring.html">&larr; Exécution &amp; Pilotage</a>
       &nbsp;&nbsp;
-      <a href="07g_visual_intelligence.html">Visual Intelligence ➔</a>
+      <a href="07g_visual_intelligence.html">Visual Intelligence &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework — Version 5.164.7 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

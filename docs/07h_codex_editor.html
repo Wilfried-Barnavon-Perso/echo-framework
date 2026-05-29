@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO Codex v5.166 : éditeur de code Monaco multi-langage avec Git intégré (dulwich), HUD draggable, édition AI assistée via cascade Gemini, navigation historique, 9 fonctions LLM (create, edit, read, search, summarize, list, delete, history, restore).">
+  <title>ECHO v5 — 7h. ECHO Codex (Éditeur)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <main>
+    <h1>7h. ECHO Codex — Éditeur de Code Souverain</h1>
+
+    <p>
+      ECHO Codex est un environnement d'édition de code complet, entièrement intégré dans Open WebUI.
+      Il associe un <strong>éditeur Monaco</strong> (le même moteur que VS Code) à un
+      <strong>dépôt Git local</strong> (via <code>dulwich</code>, Python pur, sans binaire Git externe)
+      et à une <strong>assistance AI</strong> (sous-chat Gemini via <code>call_cascade()</code>).
+      Chaque conversation dispose de son propre espace de stockage isolé, persistent et versionné.
+    </p>
+
+    <div class="didactic-box">
+      <h4>💡 Architecture en trois couches</h4>
+      <p>
+        ECHO Codex repose sur trois composants distincts qui coopèrent :
+      </p>
+      <ul>
+        <li>
+          <strong><code>echo_codex_git.py</code></strong> (<code>14-owui-libs/</code>) — Bibliothèque bas niveau :
+          classe <code>CodexRepo</code> gérant le dépôt Git dulwich (CRUD fichiers, commits, historique, diff, lecture à un commit donné).
+        </li>
+        <li>
+          <strong><code>echo_codex_tool.py</code></strong> (<code>12-owui-tools/</code>) — Outil LLM (Tool Call) :
+          9 fonctions exposées à Gemini pour créer, lire, modifier, rechercher et gérer les fichiers du Codex depuis le chat.
+        </li>
+        <li>
+          <strong><code>echo_codex_action.py</code></strong> (<code>13-owui-actions/</code>) — Action HUD :
+          éditeur Monaco interactif injecté dans le DOM d'Open WebUI, avec édition AI, navigation Git et accès bidirectionnel Python ↔ JS.
+        </li>
+      </ul>
+    </div>
+
+    <h2>Stockage — Le Vault Codex</h2>
+
+    <p>
+      Chaque conversation dispose d'un dépôt Git dédié, isolé dans le Vault utilisateur :
+    </p>
+
+    <div class="code-header">Chemin du dépôt Codex par conversation</div>
+    <pre><code>/app/backend/data/users/{user_id}/files/codex/{chat_id}/
+├── .git/           ← Dépôt Git dulwich (Python pur, pas de binaire git requis)
+├── mon_script.py
+├── config.yaml
+└── README.md</code></pre>
+
+    <p>
+      La constante <code>CODEX_DIR_NAME = "codex"</code> (<code>echo_constants.py</code>) définit
+      le nom du sous-dossier. L'isolation est garantie par <code>user_id</code> et <code>chat_id</code> :
+      un utilisateur ne peut jamais accéder au Codex d'un autre, ni à celui d'une autre conversation.
+    </p>
+
+    <h3>Registre SQLite — <code>codex_docs</code></h3>
+
+    <p>
+      Chaque fichier créé ou modifié est enregistré dans la table <code>codex_docs</code> de la base
+      <code>{chat_id}.db</code> (<code>EchoStateManager</code>). Ce registre sert à deux fins :
+      injection dans le vecteur proprioceptif (<code>registre_codex</code>) et statistiques rapides
+      sans accès disque.
+    </p>
+
+    <table>
+      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>filename</code></td><td>TEXT (PK)</td><td>Nom du fichier (clé primaire)</td></tr>
+        <tr><td><code>language</code></td><td>TEXT</td><td>Langage Monaco détecté depuis l'extension</td></tr>
+        <tr><td><code>lines</code></td><td>INTEGER</td><td>Nombre de lignes au dernier commit</td></tr>
+        <tr><td><code>last_commit</code></td><td>TEXT</td><td>Hash court (12 chars) du dernier commit</td></tr>
+        <tr><td><code>commit_msg</code></td><td>TEXT</td><td>Message du dernier commit</td></tr>
+        <tr><td><code>created_at</code></td><td>INTEGER</td><td>Timestamp Unix de création</td></tr>
+        <tr><td><code>updated_at</code></td><td>INTEGER</td><td>Timestamp Unix de dernière modification</td></tr>
+      </tbody>
+    </table>
+
+    <div class="tech-spec">
+      <h4>⚙️ Détection de langage — <code>CodexRepo.detect_language()</code></h4>
+      <p>
+        Méthode statique qui mappe l'extension du fichier vers l'identifiant Monaco Editor.
+        La table de correspondance <code>CODEX_LANG_MAP</code> (<code>echo_constants.py</code>) couvre
+        plus de 30 langages : Python, JavaScript, TypeScript, C/C++, Rust, Go, Java, SQL, Shell,
+        PowerShell, HTML, CSS, JSON, YAML, TOML, Markdown, etc. Fallback : <code>plaintext</code>.
+      </p>
+    </div>
+
+    <h2>Classe <code>CodexRepo</code> (<code>echo_codex_git.py</code>)</h2>
+
+    <p>
+      Abstraction autour de la bibliothèque <code>dulwich</code> (implémentation Python pure de Git).
+      Elle évite toute dépendance à un binaire <code>git</code> dans le conteneur.
+    </p>
+
+    <h3>Opérations CRUD</h3>
+
+    <table>
+      <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>commit_file(filename, content, message)</code></td>
+          <td>Écrit le contenu sur disque, indexe le fichier et crée un commit. Retourne le hash SHA du commit (str).</td>
+        </tr>
+        <tr>
+          <td><code>read_file(filename, start_line, end_line)</code></td>
+          <td>Lit le contenu d'un fichier. Sans plage : fichier complet. Avec start/end : tranche [start, end] (1-indexed, inclusif). Retourne <code>{"content", "total_lines", "range"}</code>.</td>
+        </tr>
+        <tr>
+          <td><code>delete_file(filename, message)</code></td>
+          <td>Supprime le fichier avec <code>porcelain.rm()</code> et crée un commit. Retourne le hash ou None si fichier inexistant.</td>
+        </tr>
+        <tr>
+          <td><code>list_files()</code></td>
+          <td>Liste tous les fichiers trackés (hors <code>.git/</code>). Retourne <code>[{"filename", "lang", "lines", "size_bytes"}]</code> trié alphabétiquement.</td>
+        </tr>
+        <tr>
+          <td><code>search_in_file(filename, pattern, is_regex)</code></td>
+          <td>Recherche un pattern (littéral ou regex). Retourne <code>[{"line_number", "line_content"}]</code>. Limité à 50 résultats.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Historique Git</h3>
+
+    <table>
+      <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>get_log(filename, limit)</code></td>
+          <td>Retourne l'historique des commits. Si <code>filename</code> fourni, filtre les commits touchant ce fichier. Retourne <code>[{"hash", "hash_full", "message", "author", "timestamp"}]</code>.</td>
+        </tr>
+        <tr>
+          <td><code>get_file_at_commit(filename, commit_hash)</code></td>
+          <td>Lit le contenu d'un fichier à un commit donné (checkout virtuel sans modifier le working tree). Utilisé pour la navigation historique ◀ ▶ dans le HUD.</td>
+        </tr>
+        <tr>
+          <td><code>get_file_history_index(filename)</code></td>
+          <td>Retourne la liste ordonnée des commits touchant un fichier (du plus ancien au plus récent). Structure l'index de navigation du HUD.</td>
+        </tr>
+        <tr>
+          <td><code>get_diff(commit_a, commit_b)</code></td>
+          <td>Diff unifié entre deux commits. Si <code>commit_b</code> est None, diff commit_a contre son parent.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Administration</h3>
+
+    <table>
+      <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>reset_all()</code></td>
+          <td>Supprime entièrement le dépôt (<code>shutil.rmtree</code>). Irréversible. Déclenché par l'action Reset du HUD.</td>
+        </tr>
+        <tr>
+          <td><code>get_repo_stats()</code></td>
+          <td>Retourne <code>{"total_files", "total_commits", "total_size_bytes", "last_commit_hash", "last_commit_message"}</code>.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Outil LLM — <code>echo_codex_tool.py</code> (9 fonctions)</h2>
+
+    <p>
+      Ces fonctions sont exposées à Gemini comme Tool Calls. Le modèle peut les invoquer
+      autonomement pendant une conversation pour interagir avec les fichiers du Codex.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Fonction</th>
+          <th>Cas d'usage principal</th>
+          <th>Paramètres clés</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>create_codex</code></td>
+          <td>Créer un nouveau fichier avec contenu initial</td>
+          <td><code>filename</code>, <code>content</code>, <code>commit_msg</code> (optionnel)</td>
+        </tr>
+        <tr>
+          <td><code>edit_codex</code></td>
+          <td>Écraser ou modifier un fichier existant</td>
+          <td><code>filename</code>, <code>content</code>, <code>commit_msg</code> (optionnel)</td>
+        </tr>
+        <tr>
+          <td><code>read_codex</code></td>
+          <td>Lire tout ou partie d'un fichier</td>
+          <td><code>filename</code>, <code>start_line</code> (opt.), <code>end_line</code> (opt.)</td>
+        </tr>
+        <tr>
+          <td><code>search_codex</code></td>
+          <td>Chercher un pattern pour cibler une zone avant lecture</td>
+          <td><code>filename</code>, <code>query</code>, <code>is_regex</code> (opt.)</td>
+        </tr>
+        <tr>
+          <td><code>summarize_codex</code></td>
+          <td>Synthèse technique structurée via distillation locale (Gemma)</td>
+          <td><code>filename</code></td>
+        </tr>
+        <tr>
+          <td><code>list_codex</code></td>
+          <td>Inventaire de tous les fichiers (nom, lang, lignes, taille)</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td><code>delete_codex</code></td>
+          <td>Supprimer un fichier (commit de suppression)</td>
+          <td><code>filename</code></td>
+        </tr>
+        <tr>
+          <td><code>history_codex</code></td>
+          <td>Afficher l'historique Git global ou d'un fichier spécifique</td>
+          <td><code>filename</code> (opt.), <code>limit</code> (défaut 20)</td>
+        </tr>
+        <tr>
+          <td><code>restore_codex</code></td>
+          <td>Restaurer un fichier à un commit antérieur (crée un nouveau commit de restauration)</td>
+          <td><code>filename</code>, <code>commit_hash</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="didactic-box">
+      <h4>💡 Stratégie de lecture pour les grands fichiers</h4>
+      <p>
+        La docstring de <code>read_codex</code> recommande une approche en deux temps pour les fichiers
+        de plus de 300 lignes :
+      </p>
+      <ol>
+        <li>
+          <strong><code>summarize_codex</code></strong> : distillation locale Gemma → vue d'ensemble
+          (architecture, classes, dépendances) sans saturer le contexte.
+        </li>
+        <li>
+          <strong><code>search_codex</code></strong> : localiser la zone d'intérêt (numéros de ligne).
+        </li>
+        <li>
+          <strong><code>read_codex(start_line, end_line)</code></strong> : lecture chirurgicale
+          de la plage ciblée.
+        </li>
+      </ol>
+    </div>
+
+    <h3>Distillation dans <code>summarize_codex</code></h3>
+
+    <p>
+      <code>summarize_codex</code> appelle <code>EchoGeminiClient.call_distillation()</code> avec
+      le prompt <code>CODEX_SUMMARIZE_PROMPT</code> (défini dans <code>echo_constants.py</code>).
+      La distillation est locale (Gemma 4 E4B, <code>echo-gemma-distiller:7998</code>), sans appel
+      à l'API Gemini distante, pour un budget tokens minimal. La sortie est limitée à 8192 tokens.
+    </p>
+
+    <div class="code-header">Structure du résumé généré — <code>CODEX_SUMMARIZE_PROMPT</code></div>
+    <pre><code>1. Objectif et rôle du fichier
+2. Architecture : classes, fonctions, structures principales
+3. Dépendances et imports
+4. Patterns et conventions utilisés
+5. Points d'attention, complexité, dette technique éventuelle</code></pre>
+
+    <h2>Action HUD — <code>echo_codex_action.py</code> (v1.5)</h2>
+
+    <p>
+      L'Action ECHO Codex injecte un <strong>éditeur Monaco complet</strong> directement dans le DOM
+      d'Open WebUI. C'est un HUD draggable et redimensionnable qui communique en temps réel avec
+      le backend Python via le Pattern Promise (<code>__event_call__</code>).
+    </p>
+
+    <h3>Architecture HUD</h3>
+
+    <p>
+      Le HUD est généré par <code>EchoUI._generate_codex_js()</code> (<code>echo_ui.py</code>).
+      Il s'agit d'un script JS auto-exécutable (IIFE) injecté une seule fois dans le DOM,
+      qui charge Monaco Editor depuis CDN (<code>monaco-editor@0.52.0</code> sur jsDelivr).
+    </p>
+
+    <table>
+      <thead><tr><th>Zone du HUD</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>File Tree (panneau gauche)</strong></td>
+          <td>Liste des fichiers du Codex. Clic → chargement dans l'éditeur. Icône × → suppression. Icône + → nouveau fichier.</td>
+        </tr>
+        <tr>
+          <td><strong>Monaco Editor (zone centrale)</strong></td>
+          <td>Éditeur pleine page avec coloration syntaxique, numéros de lignes, word wrap, minimap. Ctrl+S → sauvegarde immédiate.</td>
+        </tr>
+        <tr>
+          <td><strong>Barre d'état</strong></td>
+          <td>Affiche le fichier courant, le hash du dernier commit, ou le hash de la version consultée (mode historique).</td>
+        </tr>
+        <tr>
+          <td><strong>Panneau AI (bas)</strong></td>
+          <td>Champ instruction, sélecteur modèle (LITE/FLASH/PRO), boutons d'actions rapides prédéfinies, bouton <em>Appliquer</em>.</td>
+        </tr>
+        <tr>
+          <td><strong>Barre de navigation historique</strong></td>
+          <td>Boutons ◀ ▶ pour naviguer commit par commit. Mode read-only visuel (fond différent). Bouton Restaurer.</td>
+        </tr>
+        <tr>
+          <td><strong>Barre Diff (Accept/Reject)</strong></td>
+          <td>Affichée après une édition AI : vue diff côte-à-côte (original vs. proposition). Accepter → commit. Rejeter → retour HEAD.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Boucle événementielle bidirectionnelle</h3>
+
+    <p>
+      La boucle Python est une boucle <code>while True</code> bloquée sur une Promise JS.
+      Chaque interaction utilisateur dans le HUD résout la Promise et renvoie un dictionnaire
+      <code>{ action: "...", filename: "...", content: "...", ... }</code> au backend Python.
+    </p>
+
+    <table>
+      <thead><tr><th>Action JS</th><th>Traitement Python</th></tr></thead>
+      <tbody>
+        <tr><td><code>close</code></td><td>Sortie de la boucle.</td></tr>
+        <tr><td><code>save</code></td><td><code>CodexRepo.commit_file()</code> + <code>state.save_codex_record()</code> + notification JS <code>echoCodexNotify('saved')</code>.</td></tr>
+        <tr><td><code>ai_edit</code></td><td>Appel <code>_codex_ai_edit()</code> → <code>call_cascade()</code> → <code>echoCodexShowDiff()</code>.</td></tr>
+        <tr><td><code>accept_diff</code></td><td><code>commit_file()</code> + <code>echoCodexNotify('committed')</code> + rechargement contenu.</td></tr>
+        <tr><td><code>reject_diff</code></td><td><code>echoCodexRevertDiff()</code> + rechargement contenu HEAD.</td></tr>
+        <tr><td><code>upload</code></td><td>Import fichier PC → <code>commit_file()</code> + refresh tree.</td></tr>
+        <tr><td><code>download</code></td><td>Lecture fichier → <code>echoCodexDownload(name, content)</code> (téléchargement navigateur).</td></tr>
+        <tr><td><code>history_prev</code> / <code>history_next</code></td><td><code>get_file_at_commit()</code> → <code>echoCodexLoadVersion()</code> (mode read-only).</td></tr>
+        <tr><td><code>history_restore</code></td><td><code>commit_file()</code> avec message <code>"Restore from {hash}"</code> + <code>echoCodexNotify('restored')</code>.</td></tr>
+        <tr><td><code>new_file</code></td><td><code>commit_file(filename, "", "Create ...")</code> + refresh tree.</td></tr>
+        <tr><td><code>load_file</code></td><td><code>read_file()</code> → <code>echoCodexSetContent()</code>.</td></tr>
+        <tr><td><code>delete_file</code></td><td><code>delete_file()</code> + <code>delete_codex_record()</code> + refresh tree + auto-switch vers premier fichier.</td></tr>
+        <tr><td><code>reset</code></td><td><code>repo.reset_all()</code> + <code>state.clear_codex_records()</code> + <code>echoCodexReset()</code> (destroy HUD) + sortie boucle.</td></tr>
+        <tr><td><code>refresh</code></td><td><code>list_files()</code> → <code>echoCodexRefreshTree()</code> + rechargement fichier courant.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Édition AI — <code>_codex_ai_edit()</code></h3>
+
+    <p>
+      La méthode privée <code>_codex_ai_edit()</code> orchestre un sub-chat dédié (sans historique,
+      sans pensées) pour modifier le code. Elle retourne <code>(texte_modifié, model_key_effectif)</code>
+      ou <code>None</code> en cas d'échec.
+    </p>
+
+    <div class="code-header">Prompt envoyé au LLM lors d'une édition AI</div>
+    <pre><code>## Document complet
+```{lang}
+{content complet du fichier}
+```
+
+## Sélection ciblée   ← uniquement si l'utilisateur a sélectionné du texte
+```{lang}
+{selection}
+```
+
+## Instruction
+{instruction de l'utilisateur}</code></pre>
+
+    <p>
+      Le système prompt (<code>CODEX_EDIT_SYSTEM_PROMPT</code> dans <code>echo_constants.py</code>)
+      impose au LLM de retourner <strong>uniquement le fichier complet modifié</strong>, sans explication,
+      sans bloc Markdown enveloppant. Le code Python nettoie les backticks parasites résiduels.
+      La cascade (<code>call_cascade()</code>) gère le clamping politique et le basculement
+      LITE/FLASH/PRO selon la disponibilité des modèles.
+    </p>
+
+    <h3>Actions rapides prédéfinies (<code>CODEX_QUICK_ACTIONS</code>)</h3>
+
+    <p>
+      L'utilisateur peut déclencher des transformations courantes via des boutons dans le panneau AI,
+      sans rédiger d'instruction manuelle. Ces raccourcis sont définis dans <code>echo_constants.py</code> :
+    </p>
+
+    <table>
+      <thead><tr><th>Bouton</th><th>Instruction envoyée au LLM</th></tr></thead>
+      <tbody>
+        <tr><td><strong>shorter</strong></td><td>Raccourcis ce code/texte sans changer la logique ni le comportement.</td></tr>
+        <tr><td><strong>longer</strong></td><td>Développe avec plus de détails, commentaires et documentation.</td></tr>
+        <tr><td><strong>comment</strong></td><td>Ajoute des commentaires explicatifs clairs et concis.</td></tr>
+        <tr><td><strong>uncomment</strong></td><td>Supprime tous les commentaires du code. Ne conserve que le code exécutable.</td></tr>
+        <tr><td><strong>refactor</strong></td><td>Refactorise pour plus de lisibilité, maintenabilité et respect des conventions.</td></tr>
+        <tr><td><strong>fix</strong></td><td>Identifie et corrige les bugs potentiels. Explique chaque correction dans un commentaire.</td></tr>
+        <tr><td><strong>tests</strong></td><td>Génère les tests unitaires pertinents pour ce code.</td></tr>
+        <tr><td><strong>optimize</strong></td><td>Optimise les performances sans changer l'interface publique.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>API JS globale (callable depuis Python)</h3>
+
+    <p>
+      Le HUD expose ses fonctions de contrôle sur <code>window</code> pour être appelées
+      depuis les pushes Python via <code>__event_call__({ type: "execute", data: { code } })</code> :
+    </p>
+
+    <table>
+      <thead><tr><th>Fonction JS</th><th>Rôle</th></tr></thead>
+      <tbody>
+        <tr><td><code>window.echoCodexNotify(type, msg)</code></td><td>Affiche une notification dans la barre d'état. Types : <code>'saved'</code>, <code>'committed'</code>, <code>'restored'</code>, générique.</td></tr>
+        <tr><td><code>window.echoCodexSetContent(content, filename)</code></td><td>Charge un contenu dans l'éditeur Monaco et met à jour le sélecteur de langage.</td></tr>
+        <tr><td><code>window.echoCodexShowDiff(modifiedContent)</code></td><td>Active le mode Diff (MonacoDiffEditor côte-à-côte) avec le contenu proposé.</td></tr>
+        <tr><td><code>window.echoCodexRevertDiff()</code></td><td>Quitte le mode Diff et restaure l'éditeur normal.</td></tr>
+        <tr><td><code>window.echoCodexRefreshTree(newFiles)</code></td><td>Met à jour la liste des fichiers dans le file tree.</td></tr>
+        <tr><td><code>window.echoCodexLoadVersion(content, info, idx, total)</code></td><td>Active le mode historique read-only avec le contenu d'un commit donné.</td></tr>
+        <tr><td><code>window.echoCodexExitHistory()</code></td><td>Quitte le mode historique et restaure l'éditeur normal.</td></tr>
+        <tr><td><code>window.echoCodexDownload(name, content)</code></td><td>Déclenche le téléchargement natif du navigateur (Blob URL).</td></tr>
+        <tr><td><code>window.echoCodexSetModel(modelKey)</code></td><td>Repositionne le sélecteur de modèle dans le panneau AI (feedback cascade).</td></tr>
+        <tr><td><code>window.echoCodexReset()</code></td><td>Supprime entièrement le HUD du DOM.</td></tr>
+        <tr><td><code>window.echoCodexResolve({action, ...})</code></td><td>Résout la Promise en cours (retour utilisateur → Python).</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Proprioception — <code>registre_codex</code></h2>
+
+    <p>
+      Le Filtre (<code>new_context_filter.py</code> v7.12) injecte automatiquement un registre
+      des fichiers Codex dans le vecteur d'état <code>environnement_contexte</code> (AEC) à
+      chaque tour de conversation. Gemini dispose ainsi d'une vue à jour de l'état du Codex
+      sans avoir à appeler <code>list_codex</code>.
+    </p>
+
+    <div class="code-header">Extrait YAML — <code>registre_codex</code> dans <code>environnement_contexte</code></div>
+    <pre><code>registre_codex:
+  - id: "mon_script.py"
+    lang: "python"
+    lines: 142
+    last_commit: "feat: add error handler"
+  - id: "config.yaml"
+    lang: "yaml"
+    lines: 38
+    last_commit: "chore: update timeout"</code></pre>
+
+    <div class="warning-box">
+      <h4>⚠️ Règle d'Or — Consulter le registre avant toute opération</h4>
+      <p>
+        Le modèle <strong>doit</strong> consulter <code>registre_codex</code> pour vérifier
+        l'existence d'un fichier avant d'appeler <code>read_codex</code>, <code>edit_codex</code>
+        ou <code>delete_codex</code>. Cette règle évite les erreurs 404 inutiles et les tentatives
+        de création de doublons.
+      </p>
+    </div>
+
+    <h2>Tableau récapitulatif des composants</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Composant</th>
+          <th>Fichier</th>
+          <th>Version</th>
+          <th>Rôle</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>CodexRepo</code></td>
+          <td><code>14-owui-libs/echo_codex_git.py</code></td>
+          <td>1.0</td>
+          <td>Gestion dépôt Git dulwich (CRUD, historique, diff)</td>
+        </tr>
+        <tr>
+          <td>Outil LLM Codex</td>
+          <td><code>12-owui-tools/echo_codex_tool.py</code></td>
+          <td>1.0</td>
+          <td>9 Tool Calls exposés à Gemini</td>
+        </tr>
+        <tr>
+          <td>Action HUD Codex</td>
+          <td><code>13-owui-actions/echo_codex_action.py</code></td>
+          <td>1.5</td>
+          <td>Éditeur Monaco interactif (priorité 4)</td>
+        </tr>
+        <tr>
+          <td><code>_generate_codex_js()</code></td>
+          <td><code>14-owui-libs/echo_ui.py</code></td>
+          <td>—</td>
+          <td>Générateur du HUD JS Monaco</td>
+        </tr>
+        <tr>
+          <td>Constantes Codex</td>
+          <td><code>14-owui-libs/echo_constants.py</code> §1.4</td>
+          <td>5.4</td>
+          <td><code>CODEX_DIR_NAME</code>, <code>CODEX_LANG_MAP</code>, prompts, actions rapides</td>
+        </tr>
+        <tr>
+          <td>Table <code>codex_docs</code></td>
+          <td><code>14-owui-libs/echo_utils.py</code></td>
+          <td>7.21</td>
+          <td>Registre SQLite par conversation (CRUD + injection AEC)</td>
+        </tr>
+        <tr>
+          <td><code>registre_codex</code></td>
+          <td><code>11-owui-filters/new_context_filter.py</code></td>
+          <td>7.12</td>
+          <td>Injection proprioceptive dans <code>environnement_contexte</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="audit-note">
+      <h4>✅ Exactitude — version 5.166.x</h4>
+      <p>
+        Les informations de cette page sont entièrement extraites du code source :
+        <code>echo_codex_git.py</code>, <code>echo_codex_tool.py</code>,
+        <code>echo_codex_action.py</code>, <code>echo_ui.py</code>,
+        <code>echo_constants.py</code> (§1.4), <code>echo_utils.py</code> (v7.21) et
+        <code>new_context_filter.py</code> (v7.12). Toute divergence avec ce document
+        est à résoudre en faveur du code source.
+      </p>
+    </div>
+
+    <div class="transition-text">
+      <a href="07g_visual_intelligence.html">← Visual Intelligence</a>
+      &nbsp;&nbsp;
+      <a href="07i_delegate_subagent.html">Delegate Sub-Agent ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+    </footer>
+  </main>
+  <script src="nav.js"></script>
+</body>
+</html>
