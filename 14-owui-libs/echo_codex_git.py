@@ -1,10 +1,11 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.1
+version: 1.2
 description: 1.0: Wrapper dulwich pour la gestion de dépôts Git par user/chat.
              Couche pure, testable, sans dépendance OWUI/LLM/events.
              1.1: Fix bytes.fromhex → encode('ascii') pour object_store dulwich.
+             1.2: Ajout rename_file() (rename Git + commit). list_files tri par mtime desc.
 """
 
 import os
@@ -18,6 +19,12 @@ from dulwich.objects import Blob, Tree, Commit
 from dulwich import porcelain
 
 from echo_constants import ECHO_USERS_ROOT, CODEX_DIR_NAME, CODEX_LANG_MAP, CODEX_DEFAULT_LANG
+
+# Mapping inversé langage Monaco → extension (première extension trouvée)
+CODEX_LANG_TO_EXT: dict[str, str] = {}
+for _ext, _lang in CODEX_LANG_MAP.items():
+    if _lang not in CODEX_LANG_TO_EXT:
+        CODEX_LANG_TO_EXT[_lang] = _ext
 
 
 class CodexRepo:
@@ -100,8 +107,34 @@ class CodexRepo:
         )
         return commit_sha.decode("ascii") if isinstance(commit_sha, bytes) else str(commit_sha)
 
+    def rename_file(self, old_name: str, new_name: str, message: str,
+                    author: str = "ECHO Codex") -> Optional[str]:
+        """Renomme un fichier dans le dépôt (rename OS + git add/rm + commit).
+        Retourne le hash du commit ou None si échec."""
+        safe_old = os.path.basename(old_name)
+        safe_new = os.path.basename(new_name)
+        old_path = os.path.join(self.repo_path, safe_old)
+        new_path = os.path.join(self.repo_path, safe_new)
+
+        if not os.path.exists(old_path) or safe_old == safe_new:
+            return None
+        if os.path.exists(new_path):
+            return None  # Nom déjà pris
+
+        os.rename(old_path, new_path)
+        porcelain.add(self.repo_path, paths=[safe_new])
+        porcelain.rm(self.repo_path, paths=[safe_old])
+        commit_sha = porcelain.commit(
+            self.repo_path,
+            message=message.encode("utf-8"),
+            author=f"{author} <codex@echo.local>".encode("utf-8"),
+            committer=f"{author} <codex@echo.local>".encode("utf-8"),
+        )
+        return commit_sha.decode("ascii") if isinstance(commit_sha, bytes) else str(commit_sha)
+
     def list_files(self) -> List[dict]:
-        """Liste tous les fichiers trackés dans le working tree."""
+        """Liste tous les fichiers trackés dans le working tree.
+        Triés par date de modification décroissante (dernier modifié en premier)."""
         files = []
         if not os.path.exists(self.repo_path):
             return files
@@ -116,17 +149,20 @@ class CodexRepo:
                 with open(filepath, "r", encoding="utf-8", errors="replace") as f:
                     line_count = sum(1 for _ in f)
                 size = os.path.getsize(filepath)
+                mtime = os.path.getmtime(filepath)
             except:
                 line_count = 0
                 size = 0
+                mtime = 0
 
             files.append({
                 "filename": entry,
                 "lang": self.detect_language(entry),
                 "lines": line_count,
                 "size_bytes": size,
+                "mtime": mtime,
             })
-        return sorted(files, key=lambda x: x["filename"])
+        return sorted(files, key=lambda x: x["mtime"], reverse=True)
 
     def search_in_file(self, filename: str, pattern: str,
                        is_regex: bool = False) -> List[dict]:

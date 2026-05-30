@@ -1,8 +1,11 @@
-version: '3.8'
-
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.22
+# VERSION : 1.23
+# ==============================================================================
+# CHANGELOG 1.23 : Bump BunkerWeb 1.6.9 -> 1.6.11 (correctifs stabilité/sécurité)
+#                  Bump MariaDB 10.11 -> 11.4 (LTS, EOL 2029)
+#                  Ajout healthcheck bw-db + depends_on ordonné
+#                  Suppression directive version (deprecated Compose V2)
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
 # ==============================================================================
@@ -25,7 +28,7 @@ services:
   
   # 1. BunkerWeb (Frontal HTTP/HTTPS)
   bunkerweb:
-    image: bunkerity/bunkerweb:1.6.9
+    image: bunkerity/bunkerweb:1.6.11
     container_name: bunkerweb
     restart: unless-stopped
     ports:
@@ -55,13 +58,16 @@ services:
 
   # 2. Autoconf (Contrôleur Dynamique)
   bw-autoconf:
-    image: bunkerity/bunkerweb-autoconf:1.6.9
+    image: bunkerity/bunkerweb-autoconf:1.6.11
     container_name: bw-autoconf
     restart: unless-stopped
     depends_on:
-      - bunkerweb
-      - bw-docker
-      - bw-db
+      bunkerweb:
+        condition: service_started
+      bw-docker:
+        condition: service_started
+      bw-db:
+        condition: service_healthy
     environment:
       <<: *bw-config
       DOCKER_HOST: "tcp://bw-docker:2375"
@@ -73,13 +79,16 @@ services:
 
   # 3. Scheduler (Tâches de fond)
   bw-scheduler:
-    image: bunkerity/bunkerweb-scheduler:1.6.9
+    image: bunkerity/bunkerweb-scheduler:1.6.11
     container_name: bw-scheduler
     restart: unless-stopped
     depends_on:
-      - bunkerweb
-      - bw-docker
-      - bw-db
+      bunkerweb:
+        condition: service_started
+      bw-docker:
+        condition: service_started
+      bw-db:
+        condition: service_healthy
     environment:
       <<: *bw-config
       DOCKER_HOST: "tcp://bw-docker:2375"
@@ -107,9 +116,9 @@ services:
     networks:
       - bw-docker
 
-  # 5. Base de Données (MariaDB)
+  # 5. Base de Données (MariaDB 11.4 LTS)
   bw-db:
-    image: mariadb:10.11
+    image: mariadb:11.4
     container_name: bw-db
     restart: unless-stopped
     environment:
@@ -121,6 +130,13 @@ services:
       - bw-db-data:/var/lib/mysql
     networks:
       - bw-universe
+    # Healthcheck TCP : garantit que MySQL accepte les connexions avant Autoconf/Scheduler
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
 

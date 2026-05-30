@@ -1459,6 +1459,30 @@ class EchoStateManager:
         except: pass
         return history
 
+    def get_thread_steps_enriched(self, sub_sid: str) -> List[dict]:
+        """Retourne les steps enrichis d'un thread (role, role_id, parts, timestamp).
+        Utilisé par le Sub-Agent Monitor pour reconstruire l'arbre d'appels."""
+        steps = []
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT step_index, role, role_id, content_json, updated_at "
+                    "FROM cognitive_threads WHERE sub_sid = ? ORDER BY step_index ASC",
+                    (sub_sid,)
+                ).fetchall()
+                for row in rows:
+                    parts = json.loads(row[3])
+                    steps.append({
+                        "index": row[0],
+                        "role": row[1],
+                        "role_id": row[2],
+                        "parts": parts,
+                        "timestamp": row[4]
+                    })
+        except: pass
+        return steps
+
+
     def list_threads(self, chat_id: str) -> List[dict]:
         threads = []
         try:

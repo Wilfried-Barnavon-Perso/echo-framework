@@ -1,15 +1,14 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.2
+# Version : 9.3
 # ==============================================================================
+# CHANGELOG 9.3 : Tuning WAF ModSecurity - Remplacement ruleEngine=Off par
+#                 exclusions CRS granulaires (SecRuleRemoveById) pour conserver
+#                 le moteur WAF actif tout en eliminant les faux positifs OWUI.
+#                 Ajout PATCH dans ALLOWED_METHODS. Retrait 400 de BAD_BEHAVIOR.
 # CHANGELOG 9.2 : Ajout dulwich (Git pur Python) dans la commande de demarrage
 #                 open-webui pour le module ECHO Codex.
 # CHANGELOG 8.9 : Tunnel SSH ephemere PKCE (asyncssh).
-#                 Ports SSH 8020-8024 exposes par Docker (connexion client SSH).
-#                 Ports callback 8025-8034 internes uniquement (via tunnel SSH).
-#                 Remplacement port 8765 fixe. Multi-user natif (5 sessions max).
-# CHANGELOG 8.8 : Migration auth PKCE - Port 8765 expose sur open-webui.
-# CHANGELOG 8.7 : Migration embedding worker SigLIP-2 -> bge-m3 (1024d, text-first).
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
 
@@ -96,14 +95,28 @@ services:
       - "bunkerweb.MODSEC_CRS_PARANOIA_LEVEL=1"
       - "bunkerweb.USE_BAD_BEHAVIOR=yes"
       # EXCLUSION CRITIQUE : Ne pas bannir sur 404 (Assets manquants) ni 429 (Rate Limit)
-      - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=400 401 403 405 444 500 502 503 504"
+      # 400 retiré : les SPA génèrent légitimement des 400 sur les preflight CORS
+      - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=401 403 405 444 500 502 503 504"
 
-      # Autoriser les verbes HTTP pour l'API (Suppression de chat, etc.)
-      - "bunkerweb.ALLOWED_METHODS=GET|POST|HEAD|PUT|DELETE|OPTIONS"
+      # Autoriser les verbes HTTP pour l'API (Suppression de chat, édition, etc.)
+      - "bunkerweb.ALLOWED_METHODS=GET|POST|HEAD|PUT|DELETE|PATCH|OPTIONS"
 
-      # Tuning ModSecurity pour API (Prompts IA)
-      # Désactivation totale du moteur de règles pour /api/ afin d'éviter les faux positifs sur le contenu des chats (code, urls, etc.)
-      - 'bunkerweb.CUSTOM_CONF_MODSEC_openwebui_tuning=SecRule REQUEST_URI "@beginsWith /api/" "id:10002,phase:1,pass,nolog,ctl:ruleEngine=Off"'   
+      # Tuning ModSecurity : Exclusions CRS Granulaires (moteur WAF conservé ACTIF)
+      # Stratégie : SecRuleRemoveById chirurgical sur les règles générant des faux
+      # positifs documentés sur les applications LLM/SPA. Le WAF reste opérationnel
+      # et continue de bloquer les scanners, bots et tentatives d'exploitation réelles.
+      #
+      # Groupe 1 : Corps de requête (Prompts IA, JSON complexes)
+      #   920230 Multiple URL encodings, 921151 HTTP param pollution
+      #   941101/941160 XSS Detection, 942421 SQLi restricted chars
+      # Groupe 2 : Méthodes HTTP (DELETE suppression chat, PATCH édition)
+      #   911100 Method not allowed
+      # Groupe 3 : Upload de fichiers (multipart MIME variés, gros fichiers)
+      #   920420 Content-Type not allowed, 200003 Multipart parser anomaly
+      # Groupe 4 : Headers (CORS preflight, requêtes SPA internes)
+      #   920300 Accept header missing, 920320 Missing User-Agent
+      - "bunkerweb.CUSTOM_CONF_MODSEC_CRS_openwebui_tuning=SecRuleRemoveById 920230 921151 941101 941160 942421 911100 920420 200003 920300 920320"
+
 
       # 5. UX & PERFORMANCE
       - "bunkerweb.USE_BROTLI=yes"
@@ -164,6 +177,7 @@ services:
       - /opt/ECHO/echo-images:/app/static:ro
       - echo-backups:/backups
       - echo-webui-data:/app/backend/data
+      - echo-qdrant-data:/qdrant/storage
       - /opt/ECHO/.secrets:/app/secrets:ro
       - /opt/ECHO/ECHO_VERSION:/app/ECHO_VERSION:ro
     

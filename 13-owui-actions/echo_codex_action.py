@@ -1,7 +1,7 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 1.5
+version: 1.7
 description: 1.0: Action HUD Codex — Éditeur Monaco multi-langage avec Git intégré.
              Boucle événementielle bidirectionnelle (save, ai_edit, accept/reject diff,
              upload, download, historique ◀ ▶, reset). Sub-chat MODEL_FLASH via call_cascade.
@@ -10,6 +10,10 @@ description: 1.0: Action HUD Codex — Éditeur Monaco multi-langage avec Git in
              1.2: Support sélecteur modèle (Flash/Pro/Lite). Spinner masqué sur erreur AI.
              1.3: Feedback modèle effectif — repositionnement dropdown après cascade.
              Bouton copier. _codex_ai_edit retourne (texte, model_key).
+             1.6: Preview Panel WYSIWYG — Panneau latéral droit déployable (toggle 🤖).
+             Rendu Markdown/HTML/CSS/SVG temps réel. Splitter draggable.
+             1.7: Bouton Sauver explicite. Rename fichier via changement de langage.
+             1.8: Rename fichier via handler dédié.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNCAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWOHoiLz48cG9seWxpbmUgcG9pbnRzPSIxNCAyIDE0IDggMjAgOCIvPjxwYXRoIGQ9Ik04IDEzaDgiLz48cGF0aCBkPSJNOCAxN2g4Ii8+PHBhdGggZD0iTTEwIDloLTIiLz48L3N2Zz4=
 """
 
@@ -383,6 +387,39 @@ class Action:
                         await __event_call__({"type": "execute", "data": {"code": switch_code}})
 
                 await events.status(f"🗑️ {filename} supprimé.", done=True)
+
+            # ---- RENOMMAGE FICHIER (changement de langage) ----
+            elif action_type == "rename_file":
+                old_name = response.get("old_name", "")
+                new_name = response.get("new_name", "")
+                if not old_name or not new_name:
+                    continue
+
+                commit_hash = repo.rename_file(old_name, new_name, f"Rename {old_name} → {new_name}")
+                if commit_hash:
+                    # Mettre à jour le registre codex (supprimer ancien, créer nouveau)
+                    state.delete_codex_record(old_name)
+                    new_lang = CodexRepo.detect_language(new_name)
+                    result = repo.read_file(new_name)
+                    line_count = result["total_lines"] if result else 0
+                    state.save_codex_record(new_name, new_lang, line_count, commit_hash[:12], f"Rename {old_name} → {new_name}")
+
+                    # Refresh tree + charger le fichier renommé
+                    updated_files = repo.list_files()
+                    files_json = json.dumps(updated_files).decode("utf-8")
+                    escaped_name = json.dumps(new_name).decode("utf-8")
+                    content = result["content"] if result else ""
+                    escaped_content = json.dumps(content).decode("utf-8")
+                    combined = (
+                        f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                        f"currentFile = {escaped_name};"
+                        f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                    )
+                    await __event_call__({"type": "execute", "data": {"code": combined}})
+                    await events.status(f"✏️ Renommé : {old_name} → {new_name} ({commit_hash[:7]})", done=True)
+                else:
+                    notify_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Renommage \u00e9chou\u00e9');"
+                    await __event_call__({"type": "execute", "data": {"code": notify_code}})
 
         return {"status": "success"}
 

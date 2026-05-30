@@ -1,7 +1,7 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.27
+version: 5.31
 description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro. 5.17: Ajout show_image_js (injection JS sans HTMLResponse).
              5.18: Tooltip AUTHENTIFICATION refondu : section QUOTAS détaillée (Crédits, Quota modèle, Reset, Type).
              5.19: Nouveaux paramètres quota (quota_model, RPD, RPM) dans la signature et le tooltip.
@@ -17,6 +17,12 @@ description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-he
              navigation historique ◀ ▶, détection thème dark/light.
              5.24: Spinner AI, refresh post-diff via load_file, sélecteur modèle
              (Flash/Pro/Lite), bouton × suppression par fichier.
+             5.28: Preview Panel WYSIWYG — Panneau latéral droit déployable (toggle 🤖).
+             Rendu temps réel debounced pour Markdown (marked.js), HTML (iframe srcdoc),
+             CSS (iframe + template), SVG (DOM inline). Splitter draggable.
+             Ajout _generate_subagent_monitor_js() — HUD Cognitive Monitor.
+             Visualisation arborescente des agents cognitifs, onglets verticaux,
+             refresh manuel + auto-refresh slider 2-15s, clampHud viewport.
 """
 
 from fastapi.responses import HTMLResponse
@@ -606,6 +612,15 @@ class EchoUI(EchoRichUI):
       // --- State ---
       let files = {files_json};
       const quickActions = {quick_actions_json};
+      // Mapping langage Monaco → extension (pour rename)
+      const LANG_TO_EXT = {{
+        python:'.py', javascript:'.js', typescript:'.ts', c:'.c', cpp:'.cpp',
+        java:'.java', go:'.go', rust:'.rs', ruby:'.rb', php:'.php', swift:'.swift',
+        kotlin:'.kt', csharp:'.cs', vb:'.vb', shell:'.sh', powershell:'.ps1',
+        bat:'.bat', html:'.html', css:'.css', json:'.json', xml:'.xml',
+        yaml:'.yaml', toml:'.toml', ini:'.ini', markdown:'.md', plaintext:'.txt',
+        sql:'.sql', r:'.r', lua:'.lua', perl:'.pl', dockerfile:'.dockerfile',
+      }};
       let currentFile = files.length > 0 ? files[0].filename : null;
       let editor = null;
       let diffEditor = null;
@@ -615,10 +630,17 @@ class EchoUI(EchoRichUI):
       let lastInstruction = '';
       let lastModel = 'MODEL_FLASH';
       let modified = false;
+      let previewOpen = false;
+      let previewWidth = 350;
+      const PREVIEW_LANGS = ['markdown', 'html', 'css', 'xml'];
+      let markedLoaded = false;
+      let previewDebounceTimer = null;
 
       // --- Restore position ---
       let savedState = {{}};
       try {{ savedState = JSON.parse(localStorage.getItem(STATE_KEY) || '{{}}'); }} catch(e) {{}}
+      if (savedState.previewOpen !== undefined) previewOpen = savedState.previewOpen;
+      if (savedState.previewWidth) previewWidth = savedState.previewWidth;
 
       // --- Theme Detection ---
       const isDark = document.documentElement.classList.contains('dark') ||
@@ -659,6 +681,8 @@ class EchoUI(EchoRichUI):
         <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;">💾</button>
         <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
+        <button id="${{CODEX_ID}}-save" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button>
+        <button id="${{CODEX_ID}}-preview-toggle" title="Prévisualisation" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px; opacity:0.4;">👁️</button>
         <button id="${{CODEX_ID}}-minimize" title="Minimiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;">—</button>
         <button id="${{CODEX_ID}}-close" title="Fermer" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:18px;">×</button>`;
       hud.appendChild(header);
@@ -678,8 +702,28 @@ class EchoUI(EchoRichUI):
       editorWrap.id = CODEX_ID + '-editor';
       editorWrap.style.cssText = 'flex:1; overflow:hidden; position:relative;';
 
+      // Splitter (entre éditeur et preview)
+      const splitter = document.createElement('div');
+      splitter.id = CODEX_ID + '-splitter';
+      splitter.style.cssText = `width:5px; cursor:col-resize; background:${{borderColor}}; flex-shrink:0; display:none; transition:background 0.15s;`;
+      splitter.onmouseenter = () => splitter.style.background = accentColor;
+      splitter.onmouseleave = () => splitter.style.background = borderColor;
+
+      // Preview panel (panneau latéral droit)
+      const previewPanel = document.createElement('div');
+      previewPanel.id = CODEX_ID + '-preview';
+      previewPanel.style.cssText = `width:${{previewWidth}}px; display:none; flex-shrink:0; flex-direction:column; overflow:hidden; background:${{bgColor}};`;
+      previewPanel.innerHTML = `
+        <div style="padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0;">
+          <span id="${{CODEX_ID}}-preview-label">Preview</span>
+        </div>
+        <div id="${{CODEX_ID}}-preview-content" style="flex:1; padding:12px; overflow:auto; font-size:14px; line-height:1.6;"></div>
+      `;
+
       body.appendChild(sidebar);
       body.appendChild(editorWrap);
+      body.appendChild(splitter);
+      body.appendChild(previewPanel);
       hud.appendChild(body);
 
       // --- AI PANEL (mini-chat + quick actions + model selector) ---
@@ -998,20 +1042,34 @@ class EchoUI(EchoRichUI):
           localStorage.setItem(STATE_KEY, JSON.stringify({{
             x: hud.style.left, y: hud.style.top,
             w: hud.style.width, h: hud.style.height,
+            previewOpen: previewOpen,
+            previewWidth: previewWidth,
           }}));
         }} catch(e) {{}}
       }}
 
       // Ctrl+S
+      function doSave() {{
+        if (currentFile && editor) {{
+          window.echoCodexResolve({{action:'save', filename:currentFile, content:editor.getValue(),
+            language:files.find(f=>f.filename===currentFile)?.lang||'plaintext'}});
+          modified = false;
+          renderFileTree();
+          updateSaveButton();
+        }}
+      }}
+      // Mise à jour visuelle du bouton save
+      function updateSaveButton() {{
+        const btn = document.getElementById(CODEX_ID + '-save');
+        if (!btn) return;
+        btn.style.opacity = modified ? '1' : '0.3';
+        btn.style.color = modified ? accentColor : textColor;
+      }}
+      document.getElementById(CODEX_ID + '-save').onclick = () => doSave();
       editorWrap.onkeydown = (e) => {{
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {{
           e.preventDefault();
-          if (currentFile && editor) {{
-            window.echoCodexResolve({{action:'save', filename:currentFile, content:editor.getValue(),
-              language:files.find(f=>f.filename===currentFile)?.lang||'plaintext'}});
-            modified = false;
-            renderFileTree();
-          }}
+          doSave();
         }}
       }};
 
@@ -1045,6 +1103,9 @@ class EchoUI(EchoRichUI):
       window.echoCodexShowDiff = (modifiedContent) => {{
         hideButtonSpinner();
         isDiffMode = true;
+        // Masquer le preview pendant le diff
+        document.getElementById(CODEX_ID + '-preview').style.display = 'none';
+        document.getElementById(CODEX_ID + '-splitter').style.display = 'none';
         editorWrap.innerHTML = '';
         diffEditor = monaco.editor.createDiffEditor(editorWrap, {{
           theme: theme, readOnly: false, renderSideBySide: true,
@@ -1072,6 +1133,12 @@ class EchoUI(EchoRichUI):
         initEditor();
         // Restaurer la sélection modèle après réaffichage du panel
         window.echoCodexSetModel(lastModel);
+        // Restaurer le preview si ouvert
+        if (previewOpen && getPreviewLang()) {{
+          document.getElementById(CODEX_ID + '-preview').style.display = 'flex';
+          document.getElementById(CODEX_ID + '-splitter').style.display = 'block';
+          setTimeout(updatePreview, 100);
+        }}
       }}
 
       window.echoCodexRefreshTree = (newFiles) => {{
@@ -1096,12 +1163,25 @@ class EchoUI(EchoRichUI):
           const lang = files.find(f => f.filename === filename)?.lang || 'plaintext';
           const model = monaco.editor.createModel(content, lang);
           editor.setModel(model);
-          editor.onDidChangeModelContent(() => {{ modified = true; renderFileTree(); }});
+          editor.onDidChangeModelContent(() => {{
+            modified = true; renderFileTree(); updateSaveButton();
+            if (previewOpen) {{
+              clearTimeout(previewDebounceTimer);
+              previewDebounceTimer = setTimeout(updatePreview, 400);
+            }}
+          }});
           modified = false;
           // Mettre à jour le sélecteur de langage
           const langSelect = document.getElementById(CODEX_ID + '-lang');
           if (langSelect) langSelect.value = lang;
           updateStatus(filename + ' \u2022 charg\u00e9');
+          // Preview : mise à jour du bouton et du rendu
+          updatePreviewButton();
+          if (previewOpen && !PREVIEW_LANGS.includes(lang)) {{
+            togglePreview(false);
+          }} else if (previewOpen) {{
+            updatePreview();
+          }}
         }}
       }};
 
@@ -1130,6 +1210,229 @@ class EchoUI(EchoRichUI):
         updateStatus(currentFile ? currentFile + ' \u2022 HEAD' : 'Pr\u00eat');
       }}
 
+      // ===== PREVIEW PANEL =====
+
+      // Styles prose pour le rendu Markdown
+      if (!document.getElementById(CODEX_ID + '-prose-styles')) {{
+        const _ps = document.createElement('style');
+        _ps.id = CODEX_ID + '-prose-styles';
+        _ps.textContent = `
+          .echo-codex-prose {{ color: ${{textColor}}; line-height: 1.7; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; word-wrap: break-word; }}
+          .echo-codex-prose h1 {{ font-size: 1.8em; margin: 0.8em 0 0.4em; border-bottom: 1px solid ${{borderColor}}; padding-bottom: 0.3em; }}
+          .echo-codex-prose h2 {{ font-size: 1.5em; margin: 0.7em 0 0.3em; }}
+          .echo-codex-prose h3 {{ font-size: 1.25em; margin: 0.6em 0 0.3em; }}
+          .echo-codex-prose h4 {{ font-size: 1.1em; margin: 0.5em 0 0.2em; }}
+          .echo-codex-prose p {{ margin: 0.5em 0; }}
+          .echo-codex-prose code {{ background: rgba(127,127,127,0.15); padding: 2px 5px; border-radius: 3px; font-size: 0.9em; font-family: 'Cascadia Code', 'Fira Code', monospace; }}
+          .echo-codex-prose pre {{ background: ${{isDark ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.06)'}}; padding: 12px; border-radius: 6px; overflow-x: auto; }}
+          .echo-codex-prose pre code {{ background: none; padding: 0; }}
+          .echo-codex-prose blockquote {{ border-left: 3px solid ${{accentColor}}; padding-left: 12px; margin-left: 0; opacity: 0.85; font-style: italic; }}
+          .echo-codex-prose table {{ border-collapse: collapse; width: 100%; margin: 0.5em 0; }}
+          .echo-codex-prose th, .echo-codex-prose td {{ border: 1px solid ${{borderColor}}; padding: 6px 10px; text-align: left; }}
+          .echo-codex-prose th {{ background: ${{isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}}; font-weight: 600; }}
+          .echo-codex-prose img {{ max-width: 100%; border-radius: 4px; }}
+          .echo-codex-prose a {{ color: ${{accentColor}}; text-decoration: none; }}
+          .echo-codex-prose a:hover {{ text-decoration: underline; }}
+          .echo-codex-prose ul, .echo-codex-prose ol {{ padding-left: 1.5em; }}
+          .echo-codex-prose li {{ margin: 0.25em 0; }}
+          .echo-codex-prose hr {{ border: none; border-top: 1px solid ${{borderColor}}; margin: 1em 0; }}
+        `;
+        document.head.appendChild(_ps);
+      }}
+
+      function getPreviewLang() {{
+        if (!currentFile) return null;
+        const lang = files.find(f => f.filename === currentFile)?.lang || 'plaintext';
+        return PREVIEW_LANGS.includes(lang) ? lang : null;
+      }}
+
+      function updatePreviewButton() {{
+        const btn = document.getElementById(CODEX_ID + '-preview-toggle');
+        if (!btn) return;
+        const lang = getPreviewLang();
+        if (lang) {{
+          btn.disabled = false;
+          btn.style.opacity = previewOpen ? '1' : '0.6';
+          btn.style.color = previewOpen ? accentColor : textColor;
+          btn.title = 'Pr\u00e9visualisation ' + lang.toUpperCase();
+        }} else {{
+          btn.disabled = true;
+          btn.style.opacity = '0.25';
+          btn.style.color = textColor;
+          btn.title = 'Pr\u00e9visualisation indisponible';
+        }}
+      }}
+
+      function togglePreview(forceState) {{
+        const panel = document.getElementById(CODEX_ID + '-preview');
+        const split = document.getElementById(CODEX_ID + '-splitter');
+        if (!panel || !split) return;
+
+        previewOpen = forceState !== undefined ? forceState : !previewOpen;
+
+        if (previewOpen && !getPreviewLang()) {{
+          previewOpen = false;
+          return;
+        }}
+
+        panel.style.display = previewOpen ? 'flex' : 'none';
+        panel.style.width = previewWidth + 'px';
+        split.style.display = previewOpen ? 'block' : 'none';
+
+        updatePreviewButton();
+        saveState();
+
+        if (previewOpen) updatePreview();
+      }}
+
+      function updatePreview() {{
+        const lang = getPreviewLang();
+        if (!lang || !previewOpen) return;
+
+        const content = editor ? editor.getValue() : '';
+        const container = document.getElementById(CODEX_ID + '-preview-content');
+        const label = document.getElementById(CODEX_ID + '-preview-label');
+        if (!container) return;
+
+        if (lang === 'markdown') {{
+          if (label) label.textContent = 'Markdown Preview';
+          renderMarkdown(content, container);
+        }} else if (lang === 'html') {{
+          if (label) label.textContent = 'HTML Preview';
+          renderHTML(content, container);
+        }} else if (lang === 'css') {{
+          if (label) label.textContent = 'CSS Preview';
+          renderCSS(content, container);
+        }} else if (lang === 'xml') {{
+          if (label) label.textContent = 'SVG Preview';
+          renderSVG(content, container);
+        }}
+      }}
+
+      function renderMarkdown(content, container) {{
+        container.style.padding = '12px';
+        const oldIframe = container.querySelector('iframe');
+        if (oldIframe) oldIframe.remove();
+        if (window.marked) {{
+          container.innerHTML = '<div class="echo-codex-prose">' + window.marked.parse(content) + '</div>';
+        }} else if (!markedLoaded) {{
+          container.innerHTML = '<div style="color:' + (isDark ? '#a6adc8' : '#888') + '; padding:20px;">Chargement marked.js...</div>';
+          loadMarked(() => renderMarkdown(content, container));
+        }} else {{
+          container.innerHTML = '<div style="color:#f38ba8; padding:12px;">\u274c marked.js non disponible</div>';
+        }}
+      }}
+
+      function renderHTML(content, container) {{
+        container.style.padding = '0';
+        let iframe = container.querySelector('iframe');
+        if (!iframe) {{
+          container.innerHTML = '';
+          iframe = document.createElement('iframe');
+          iframe.sandbox = 'allow-scripts';
+          iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';
+          container.appendChild(iframe);
+        }}
+        iframe.srcdoc = content;
+      }}
+
+      function renderCSS(content, container) {{
+        container.style.padding = '0';
+        let iframe = container.querySelector('iframe');
+        if (!iframe) {{
+          container.innerHTML = '';
+          iframe = document.createElement('iframe');
+          iframe.sandbox = 'allow-scripts';
+          iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';
+          container.appendChild(iframe);
+        }}
+        iframe.srcdoc = '<!DOCTYPE html><html><head><style>' + content + '</style></head><body>' +
+          '<h1>Heading 1</h1><h2>Heading 2</h2><h3>Heading 3</h3>' +
+          '<p>Paragraph with <strong>bold</strong>, <em>italic</em>, and <a href="#">link</a>.</p>' +
+          '<ul><li>Item 1</li><li>Item 2</li><li>Item 3</li></ul>' +
+          '<blockquote>Blockquote example</blockquote>' +
+          '<pre><code>code {{ display: block; }}</code></pre>' +
+          '<table><tr><th>Header</th><th>Header</th></tr><tr><td>Cell</td><td>Cell</td></tr></table>' +
+          '<button>Button</button> <input type="text" placeholder="Input" />' +
+          '<div class="demo">Demo div</div></body></html>';
+      }}
+
+      function renderSVG(content, container) {{
+        container.style.padding = '12px';
+        const oldIframe = container.querySelector('iframe');
+        if (oldIframe) oldIframe.remove();
+        const cleaned = content.replace(/<script[\s\S]*?<\/script>/gi, '');
+        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; min-height:200px;">' + cleaned + '</div>';
+        const svg = container.querySelector('svg');
+        if (svg) {{
+          svg.style.maxWidth = '100%';
+          svg.style.height = 'auto';
+        }}
+      }}
+
+      function loadMarked(callback) {{
+        if (markedLoaded) {{ if (window.marked) callback(); return; }}
+        // import() ESM natif : bypasse totalement l'AMD loader de Monaco
+        // qui intercepte les script tags UMD via define/require
+        import('https://cdn.jsdelivr.net/npm/marked@15/+esm')
+          .then(m => {{
+            window.marked = m;
+            markedLoaded = true;
+            callback();
+          }})
+          .catch(err => {{
+            markedLoaded = true;
+            const c = document.getElementById(CODEX_ID + '-preview-content');
+            if (c) c.innerHTML = '<div style="color:#f38ba8; padding:12px;">\u274c marked.js: ' + err.message + '</div>';
+          }});
+      }}
+
+      // Toggle preview
+      document.getElementById(CODEX_ID + '-preview-toggle').onclick = () => {{
+        togglePreview();
+      }};
+
+      // Splitter drag logic
+      let isDraggingSplit = false;
+      document.getElementById(CODEX_ID + '-splitter').onmousedown = (e) => {{
+        e.preventDefault();
+        isDraggingSplit = true;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        // Bloquer les events sur l'iframe du preview (sinon elle capture les mousemove)
+        document.getElementById(CODEX_ID + '-preview').style.pointerEvents = 'none';
+        editorWrap.style.pointerEvents = 'none';
+      }};
+      document.addEventListener('mousemove', (e) => {{
+        if (!isDraggingSplit) return;
+        const hudRect = hud.getBoundingClientRect();
+        const sidebarW = document.getElementById(CODEX_ID + '-sidebar').offsetWidth;
+        const avail = hudRect.width - sidebarW - 5;
+        const newW = Math.max(200, Math.min(hudRect.right - e.clientX, avail - 300));
+        previewWidth = newW;
+        document.getElementById(CODEX_ID + '-preview').style.width = newW + 'px';
+      }});
+      document.addEventListener('mouseup', () => {{
+        if (isDraggingSplit) {{
+          isDraggingSplit = false;
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          document.getElementById(CODEX_ID + '-preview').style.pointerEvents = '';
+          editorWrap.style.pointerEvents = '';
+          saveState();
+        }}
+      }});
+
+      // Restaurer l'état du preview
+      if (previewOpen) {{
+        const _pp = document.getElementById(CODEX_ID + '-preview');
+        const _sp = document.getElementById(CODEX_ID + '-splitter');
+        if (_pp) _pp.style.display = 'flex';
+        if (_pp) _pp.style.width = previewWidth + 'px';
+        if (_sp) _sp.style.display = 'block';
+      }}
+      updatePreviewButton();
+
       // ===== MONACO LOADER =====
       function initEditor() {{
         editorWrap.innerHTML = '';
@@ -1140,7 +1443,13 @@ class EchoUI(EchoRichUI):
           fontSize: 13, lineNumbers: 'on', wordWrap: 'on',
           scrollBeyondLastLine: false, renderWhitespace: 'selection',
         }});
-        editor.onDidChangeModelContent(() => {{ modified = true; renderFileTree(); }});
+        editor.onDidChangeModelContent(() => {{
+          modified = true; renderFileTree(); updateSaveButton();
+          if (previewOpen) {{
+            clearTimeout(previewDebounceTimer);
+            previewDebounceTimer = setTimeout(updatePreview, 400);
+          }}
+        }});
 
         // Populate lang selector
         const langSelect = document.getElementById(CODEX_ID + '-lang');
@@ -1155,7 +1464,22 @@ class EchoUI(EchoRichUI):
           langSelect.appendChild(opt);
         }});
         langSelect.onchange = () => {{
-          if (editor) monaco.editor.setModelLanguage(editor.getModel(), langSelect.value);
+          const newLang = langSelect.value;
+          if (editor) monaco.editor.setModelLanguage(editor.getModel(), newLang);
+          // Proposer le rename si l'extension correspond à un langage connu
+          if (currentFile && LANG_TO_EXT[newLang]) {{
+            const baseName = currentFile.replace(/\.[^.]+$/, '');
+            const newExt = LANG_TO_EXT[newLang];
+            const newFilename = baseName + newExt;
+            if (newFilename !== currentFile) {{
+              if (confirm('Renommer ' + currentFile + ' \u2192 ' + newFilename + ' ?')) {{
+                window.echoCodexResolve({{action:'rename_file', old_name:currentFile, new_name:newFilename}});
+              }}
+            }}
+          }}
+          // Mise à jour preview
+          updatePreviewButton();
+          if (previewOpen) updatePreview();
         }};
       }}
 
@@ -1176,4 +1500,381 @@ class EchoUI(EchoRichUI):
       loadMonaco();
     }})();
     """
+
+  # =====================================================================
+  # ECHO COGNITIVE MONITOR — HUD Sub-Agent Visualization
+  # =====================================================================
+
+  @staticmethod
+  def _generate_subagent_monitor_js(threads_json: str, chat_id: str) -> str:
+    """Génère le script JS complet du HUD Cognitive Monitor.
+    Injection via __event_call__(type: 'execute', data: code: ...).
+    
+    Affiche les threads cognitifs (delegates, experts, conseils) sous forme
+    d'onglets verticaux avec arbre d'appels expand/collapse.
+    3 contrôles : refresh manuel, auto-refresh slider 2-15s, réduire."""
+
+    return (
+      "(function() {\n"
+      "  const HUD_ID = 'echo-cognitive-monitor';\n"
+      "  const CID = '" + chat_id + "';\n"
+      "  const STATE_KEY = 'echo_cogmon_' + CID;\n"
+      "\n"
+      "  var existing = document.getElementById(HUD_ID);\n"
+      "  if (existing) existing.remove();\n"
+      "\n"
+      "  var threads = " + threads_json + ";\n"
+      "\n"
+      "  var activeThreadIdx = 0;\n"
+      "  var expandedNodes = {};\n"
+      "  var autoRefreshTimer = null;\n"
+      "  var isMinimized = false;\n"
+      "\n"
+      "  var saved = {};\n"
+      "  try { saved = JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch(e) {}\n"
+      "  var posX = saved.x || 60;\n"
+      "  var posY = saved.y || 60;\n"
+      "  var hudW = saved.w || '720px';\n"
+      "  var hudH = saved.h || '500px';\n"
+      "  var autoInterval = saved.interval || 5;\n"
+      "  var autoEnabled = saved.autoOn || false;\n"
+      "  isMinimized = saved.min || false;\n"
+      "  if (saved.activeIdx !== undefined) activeThreadIdx = saved.activeIdx;\n"
+      "  if (saved.expanded) try { expandedNodes = JSON.parse(saved.expanded); } catch(e) {}\n"
+      "\n"
+      "  var isDark = document.documentElement.classList.contains('dark') ||\n"
+      "               window.matchMedia('(prefers-color-scheme: dark)').matches;\n"
+      "  var C = {\n"
+      "    bg:       isDark ? '#1a1b2e' : '#ffffff',\n"
+      "    headerBg: isDark ? 'rgba(26,27,46,0.97)' : 'rgba(245,245,250,0.97)',\n"
+      "    sidebarBg:isDark ? '#151626' : '#f5f5fa',\n"
+      "    text:     isDark ? '#e2e8f0' : '#1e293b',\n"
+      "    textMuted:isDark ? '#94a3b8' : '#64748b',\n"
+      "    border:   isDark ? '#2d3748' : '#e2e8f0',\n"
+      "    accent:   '#38bdf8',\n"
+      "    hoverBg:  isDark ? 'rgba(56,189,248,0.08)' : 'rgba(56,189,248,0.06)',\n"
+      "    success:  '#10b981',\n"
+      "    error:    '#ef4444',\n"
+      "    warning:  '#f59e0b',\n"
+      "    cyan:     '#38bdf8',\n"
+      "  };\n"
+      "\n"
+      "  function esc(s) { return (s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }\n"
+      "  function trunc(s, n) { s = s || ''; return s.length > n ? s.substring(0, n) + '\\u2026' : s; }\n"
+      "  function fmtTime(ts) {\n"
+      "    if (!ts) return '';\n"
+      "    var d = new Date(ts * 1000);\n"
+      "    return d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});\n"
+      "  }\n"
+      "  function saveState() {\n"
+      "    var hud = document.getElementById(HUD_ID);\n"
+      "    if (!hud) return;\n"
+      "    localStorage.setItem(STATE_KEY, JSON.stringify({\n"
+      "      x: posX, y: posY,\n"
+      "      w: hud.style.width, h: hud.style.height,\n"
+      "      interval: autoInterval, autoOn: autoEnabled, min: isMinimized,\n"
+      "      activeIdx: activeThreadIdx, expanded: JSON.stringify(expandedNodes)\n"
+      "    }));\n"
+      "  }\n"
+      "  function clampHud() {\n"
+      "    var hud = document.getElementById(HUD_ID);\n"
+      "    if (!hud) return;\n"
+      "    var vw = window.innerWidth, vh = window.innerHeight;\n"
+      "    var w = hud.offsetWidth, h = hud.offsetHeight;\n"
+      "    if (posX < 0) posX = 0;\n"
+      "    if (posY < 0) posY = 0;\n"
+      "    if (posX + w > vw) posX = Math.max(0, vw - w);\n"
+      "    if (posY + h > vh) posY = Math.max(0, vh - h);\n"
+      "    hud.style.left = posX + 'px';\n"
+      "    hud.style.top = posY + 'px';\n"
+      "  }\n"
+      "\n"
+      "  // =============== SIDEBAR ONGLETS VERTICAUX ===============\n"
+      "  function renderSidebar() {\n"
+      "    var sb = document.getElementById(HUD_ID + '-sidebar');\n"
+      "    if (!sb) return;\n"
+      "    sb.innerHTML = '';\n"
+      "    threads.forEach(function(t, i) {\n"
+      "      var isActive = (i === activeThreadIdx);\n"
+      "      var tab = document.createElement('div');\n"
+      "      tab.style.cssText = 'padding:8px 10px; cursor:pointer; border-left:3px solid ' + (isActive ? t.color : 'transparent') + ';"
+      " background:' + (isActive ? C.hoverBg : 'transparent') + '; transition:all 0.15s; margin:2px 0;';\n"
+      "      tab.innerHTML = '<div style=\"font-size:16px; text-align:center;\">' + t.icon + '</div>'\n"
+      "        + '<div style=\"font-size:10px; color:' + t.color + '; text-align:center; font-family:monospace;"
+      " overflow:hidden; text-overflow:ellipsis; white-space:nowrap;\">' + t.sid.substring(0, 10) + '</div>'\n"
+      "        + '<div style=\"font-size:9px; color:' + C.textMuted + '; text-align:center;\">' + esc(t.label) + '</div>'\n"
+      "        + '<div style=\"font-size:9px; color:' + C.textMuted + '; text-align:center; margin-top:2px;"
+      " background:rgba(255,255,255,0.05); border-radius:8px; padding:1px 4px;\">' + t.steps_count + '</div>';\n"
+      "      tab.onmouseenter = function() { if (!isActive) tab.style.background = C.hoverBg; };\n"
+      "      tab.onmouseleave = function() { if (!isActive) tab.style.background = 'transparent'; };\n"
+      "      tab.onclick = function() { activeThreadIdx = i; renderSidebar(); renderTree(); saveState(); };\n"
+      "      sb.appendChild(tab);\n"
+      "    });\n"
+      "  }\n"
+      "\n"
+      "  // =============== ARBRE D'APPELS ===============\n"
+      "  function renderTree() {\n"
+      "    var tree = document.getElementById(HUD_ID + '-tree');\n"
+      "    if (!tree || !threads.length) { if(tree) tree.innerHTML = '<div style=\"padding:20px; color:' + C.textMuted + ';\">Aucun thread.</div>'; return; }\n"
+      "    var t = threads[activeThreadIdx];\n"
+      "    var html = '<div style=\"padding:12px 16px; border-bottom:1px solid ' + C.border + '; display:flex; align-items:center; gap:8px;\">'\n"
+      "      + '<span style=\"font-size:18px;\">' + t.icon + '</span>'\n"
+      "      + '<div><div style=\"font-weight:600; font-size:13px; color:' + t.color + ';\">' + esc(t.label) + '</div>'\n"
+      "      + '<div style=\"font-size:11px; color:' + C.textMuted + '; font-family:monospace;\">' + t.sid + ' \\u00b7 ' + t.steps_count + ' \\u00e9tapes \\u00b7 ' + fmtTime(t.updated_at) + '</div></div></div>';\n"
+      "\n"
+      "    html += '<div style=\"padding:8px 12px; overflow-y:auto; flex:1;\">';\n"
+      "\n"
+      "    if (!t.nodes || t.nodes.length === 0) {\n"
+      "      html += '<div style=\"color:' + C.textMuted + '; font-style:italic; padding:16px;\">Thread vide.</div>';\n"
+      "    } else {\n"
+      "      t.nodes.forEach(function(node, ni) {\n"
+      "        var nodeId = t.sid + '_' + ni;\n"
+      "        var isExpanded = !!expandedNodes[nodeId];\n"
+      "        var icon = '', label = '', detail = '', color = C.text, indent = 0;\n"
+      "\n"
+      "        if (node.type === 'text') {\n"
+      "          if (node.role === 'user' && ni === 0) { icon = '\\ud83d\\udccb'; label = 'T\\u00e2che'; color = C.accent; }\n"
+      "          else if (node.role === 'model') { icon = '\\ud83d\\udcac'; label = 'R\\u00e9ponse'; color = C.success; }\n"
+      "          else { icon = '\\ud83d\\udcad'; label = node.role === 'user' ? 'User' : 'Model'; color = C.textMuted; }\n"
+      "          detail = esc(node.content || '');\n"
+      "        } else if (node.type === 'functionCall') {\n"
+      "          icon = '\\ud83d\\udd27'; label = node.fn_name || '?'; color = C.cyan; indent = 1;\n"
+      "          var args = node.fn_args || {};\n"
+      "          var argParts = [];\n"
+      "          for (var k in args) { if (args.hasOwnProperty(k)) argParts.push(k + ': ' + esc(trunc(args[k], 80))); }\n"
+      "          detail = argParts.join(' \\u00b7 ');\n"
+      "        } else if (node.type === 'functionResponse') {\n"
+      "          var isOk = (node.status === 'ok' || node.status === 'success');\n"
+      "          icon = isOk ? '\\u2705' : '\\u274c'; label = node.fn_name || '?'; indent = 2;\n"
+      "          color = isOk ? C.success : C.error;\n"
+      "          detail = esc(trunc(node.content || '', 200));\n"
+      "        } else if (node.type === 'escalation') {\n"
+      "          icon = '\\ud83d\\ude80'; label = 'Escalade cognitive'; color = C.warning;\n"
+      "          detail = esc(node.content || '');\n"
+      "        } else if (node.type === 'question') {\n"
+      "          icon = '\\u2753'; label = 'Question en attente'; color = C.warning;\n"
+      "          detail = esc(node.content || '');\n"
+      "        } else {\n"
+      "          icon = '\\u00b7'; label = node.type || '?'; detail = '';\n"
+      "        }\n"
+      "\n"
+      "        var marginLeft = indent * 20;\n"
+      "        var connector = indent > 0 ? '<span style=\"color:' + C.border + '; margin-right:4px;\">' + (indent > 1 ? '\\u2514\\u2500' : '\\u251c\\u2500\\u2500') + '</span>' : '';\n"
+      "        var expandable = detail.length > 60;\n"
+      "        var displayDetail = isExpanded ? detail : trunc(detail, 60);\n"
+      "        var ts = node.timestamp ? '<span style=\"font-size:9px; color:' + C.textMuted + '; margin-left:auto; flex-shrink:0;\">' + fmtTime(node.timestamp) + '</span>' : '';\n"
+      "\n"
+      "        html += '<div data-nodeid=\"' + nodeId + '\" style=\"display:flex; align-items:flex-start; gap:6px; padding:4px 6px; margin-left:' + marginLeft + 'px;'\n"
+      "          + ' border-radius:6px; cursor:' + (expandable ? 'pointer' : 'default') + '; transition:background 0.12s;\"'\n"
+      "          + ' onmouseenter=\"this.style.background=\\'' + C.hoverBg + '\\';\"'\n"
+      "          + ' onmouseleave=\"this.style.background=\\'transparent\\';\"'\n"
+      "          + '>'\n"
+      "          + connector\n"
+      "          + '<span style=\"flex-shrink:0;\">' + icon + '</span>'\n"
+      "          + '<span style=\"font-size:12px; font-weight:600; color:' + color + '; flex-shrink:0;\">' + esc(label) + '</span>'\n"
+      "          + '<span style=\"font-size:11px; color:' + C.textMuted + '; overflow:hidden; word-break:break-word;\">' + displayDetail\n"
+      "          + (expandable && !isExpanded ? ' <span style=\"color:' + C.accent + '; font-size:10px;\">\\u25b8</span>' : '')\n"
+      "          + '</span>'\n"
+      "          + ts\n"
+      "          + '</div>';\n"
+      "      });\n"
+      "    }\n"
+      "    html += '</div>';\n"
+      "    tree.innerHTML = html;\n"
+      "\n"
+      "    // Attach click handlers for expand/collapse\n"
+      "    tree.querySelectorAll('[data-nodeid]').forEach(function(el) {\n"
+      "      el.onclick = function() {\n"
+      "        var nid = el.getAttribute('data-nodeid');\n"
+      "        if (expandedNodes[nid]) delete expandedNodes[nid];\n"
+      "        else expandedNodes[nid] = true;\n"
+      "        renderTree();\n"
+      "        saveState();\n"
+      "      };\n"
+      "    });\n"
+      "  }\n"
+      "\n"
+      "  // =============== CONSTRUCTION DU HUD ===============\n"
+      "  var hud = document.createElement('div');\n"
+      "  hud.id = HUD_ID;\n"
+      "  hud.style.cssText = 'position:fixed; z-index:10001; display:flex; flex-direction:column;'\n"
+      "    + ' background:' + C.bg + '; border:1px solid ' + C.border + '; border-radius:12px;'\n"
+      "    + ' box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:Segoe UI,system-ui,sans-serif;'\n"
+      "    + ' color:' + C.text + '; overflow:hidden; resize:both; min-width:500px; min-height:200px;'\n"
+      "    + ' width:' + hudW + '; height:' + hudH + '; left:' + posX + 'px; top:' + posY + 'px;';\n"
+      "\n"
+      "  // --- HEADER ---\n"
+      "  var header = document.createElement('div');\n"
+      "  header.id = HUD_ID + '-header';\n"
+      "  header.style.cssText = 'display:flex; align-items:center; padding:8px 14px; gap:10px;'\n"
+      "    + ' background:' + C.headerBg + '; border-bottom:1px solid ' + C.border + '; cursor:move;'\n"
+      "    + ' user-select:none; flex-shrink:0; min-height:42px;';\n"
+      "  header.innerHTML = '<span style=\"font-size:16px;\">\\ud83e\\udde0</span>'\n"
+      "    + '<span style=\"font-weight:600; font-size:13px; flex:1;\">Cognitive Monitor</span>'\n"
+      "    + '<button id=\"' + HUD_ID + '-refresh\" title=\"Rafra\\u00eechir\" style=\"background:none; border:none; color:' + C.text + '; cursor:pointer; font-size:14px;\">\\ud83d\\udd04</button>'\n"
+      "    + '<button id=\"' + HUD_ID + '-auto-toggle\" title=\"Auto-refresh\" style=\"background:none; border:1px solid ' + C.border + '; color:' + C.textMuted + '; cursor:pointer; font-size:11px; padding:2px 6px; border-radius:4px;\">\\u25b6</button>'\n"
+      "    + '<input id=\"' + HUD_ID + '-auto-slider\" type=\"range\" min=\"2\" max=\"15\" value=\"' + autoInterval + '\" title=\"Intervalle auto-refresh\" style=\"width:60px; accent-color:' + C.accent + '; cursor:pointer;\" />'\n"
+      "    + '<span id=\"' + HUD_ID + '-auto-label\" style=\"font-size:10px; color:' + C.textMuted + '; min-width:22px;\">' + autoInterval + 's</span>'\n"
+      "    + '<button id=\"' + HUD_ID + '-minimize\" title=\"R\\u00e9duire\" style=\"background:none; border:none; color:' + C.textMuted + '; cursor:pointer; font-size:16px;\">\\u2014</button>'\n"
+      "    + '<button id=\"' + HUD_ID + '-close\" title=\"Fermer\" style=\"background:none; border:none; color:' + C.error + '; cursor:pointer; font-size:18px;\">\\u00d7</button>';\n"
+      "  hud.appendChild(header);\n"
+      "\n"
+      "  // --- BODY ---\n"
+      "  var body = document.createElement('div');\n"
+      "  body.id = HUD_ID + '-body';\n"
+      "  body.style.cssText = 'display:' + (isMinimized ? 'none' : 'flex') + '; flex:1; overflow:hidden;';\n"
+      "\n"
+      "  var sidebar = document.createElement('div');\n"
+      "  sidebar.id = HUD_ID + '-sidebar';\n"
+      "  sidebar.style.cssText = 'width:80px; background:' + C.sidebarBg + '; border-right:1px solid ' + C.border + ';'\n"
+      "    + ' overflow-y:auto; flex-shrink:0; scrollbar-width:thin;';\n"
+      "\n"
+      "  var treePanel = document.createElement('div');\n"
+      "  treePanel.id = HUD_ID + '-tree';\n"
+      "  treePanel.style.cssText = 'flex:1; overflow-y:auto; display:flex; flex-direction:column; scrollbar-width:thin;';\n"
+      "\n"
+      "  body.appendChild(sidebar);\n"
+      "  body.appendChild(treePanel);\n"
+      "  hud.appendChild(body);\n"
+      "\n"
+      "  // --- STATUS BAR ---\n"
+      "  var statusBar = document.createElement('div');\n"
+      "  statusBar.id = HUD_ID + '-status';\n"
+      "  statusBar.style.cssText = 'display:' + (isMinimized ? 'none' : 'flex') + '; align-items:center; padding:4px 14px;'\n"
+      "    + ' background:' + C.sidebarBg + '; border-top:1px solid ' + C.border + '; font-size:11px;'\n"
+      "    + ' color:' + C.textMuted + '; font-family:monospace; flex-shrink:0; gap:12px;';\n"
+      "  var totalSteps = threads.reduce(function(s, t) { return s + (t.steps_count || 0); }, 0);\n"
+      "  var lastUpdate = threads.length ? fmtTime(Math.max.apply(null, threads.map(function(t) { return t.updated_at || 0; }))) : '';\n"
+      "  statusBar.innerHTML = '<span>\\ud83d\\udcca ' + threads.length + ' thread' + (threads.length > 1 ? 's' : '') + '</span>'\n"
+      "    + '<span>|</span>'\n"
+      "    + '<span>' + totalSteps + ' \\u00e9tapes</span>'\n"
+      "    + '<span>|</span>'\n"
+      "    + '<span>' + lastUpdate + '</span>'\n"
+      "    + '<span style=\"flex:1;\"></span>'\n"
+      "    + '<span id=\"' + HUD_ID + '-auto-status\" style=\"color:' + (autoEnabled ? C.success : C.textMuted) + ';\">' + (autoEnabled ? '\\u25cf Auto' : '\\u25cb Manuel') + '</span>';\n"
+      "  hud.appendChild(statusBar);\n"
+      "\n"
+      "  document.body.appendChild(hud);\n"
+      "\n"
+      "  // =============== ÉVÉNEMENTS ===============\n"
+      "\n"
+      "  // Draggable\n"
+      "  header.onmousedown = function(e) {\n"
+      "    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;\n"
+      "    e.preventDefault();\n"
+      "    var ox = e.clientX, oy = e.clientY;\n"
+      "    function move(me) {\n"
+      "      posX += (me.clientX - ox); posY += (me.clientY - oy);\n"
+      "      ox = me.clientX; oy = me.clientY;\n"
+      "      clampHud();\n"
+      "    }\n"
+      "    function up() {\n"
+      "      document.removeEventListener('mousemove', move);\n"
+      "      document.removeEventListener('mouseup', up);\n"
+      "      saveState();\n"
+      "    }\n"
+      "    document.addEventListener('mousemove', move);\n"
+      "    document.addEventListener('mouseup', up);\n"
+      "  };\n"
+      "\n"
+      "  window.addEventListener('resize', clampHud);\n"
+      "\n"
+      "  // Refresh\n"
+      "  document.getElementById(HUD_ID + '-refresh').onclick = function() {\n"
+      "    if (window.echoSubagentResolve) {\n"
+      "      window.echoSubagentResolve({action: 'refresh'});\n"
+      "    } else {\n"
+      "      var btn = document.getElementById(HUD_ID + '-refresh');\n"
+      "      if (btn) { btn.textContent = '\\u23f3'; setTimeout(function() { if (btn) btn.textContent = '\\ud83d\\udd04'; }, 1000); }\n"
+      "    }\n"
+      "  };\n"
+      "\n"
+      "  // Auto-refresh\n"
+      "  var toggleBtn = document.getElementById(HUD_ID + '-auto-toggle');\n"
+      "  var slider = document.getElementById(HUD_ID + '-auto-slider');\n"
+      "  var autoLabel = document.getElementById(HUD_ID + '-auto-label');\n"
+      "  var autoStatusEl = document.getElementById(HUD_ID + '-auto-status');\n"
+      "\n"
+      "  function updateAutoState() {\n"
+      "    toggleBtn.textContent = autoEnabled ? '\\u23f8' : '\\u25b6';\n"
+      "    toggleBtn.style.borderColor = autoEnabled ? C.success : C.border;\n"
+      "    toggleBtn.style.color = autoEnabled ? C.success : C.textMuted;\n"
+      "    if (autoStatusEl) {\n"
+      "      autoStatusEl.textContent = autoEnabled ? '\\u25cf Auto ' + autoInterval + 's' : '\\u25cb Manuel';\n"
+      "      autoStatusEl.style.color = autoEnabled ? C.success : C.textMuted;\n"
+      "    }\n"
+      "    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }\n"
+      "    if (autoEnabled) {\n"
+      "      autoRefreshTimer = setInterval(function() {\n"
+      "        if (window.echoSubagentResolve) window.echoSubagentResolve({action: 'refresh'});\n"
+      "      }, autoInterval * 1000);\n"
+      "    }\n"
+      "    saveState();\n"
+      "  }\n"
+      "\n"
+      "  toggleBtn.onclick = function() { autoEnabled = !autoEnabled; updateAutoState(); };\n"
+      "  slider.oninput = function() {\n"
+      "    autoInterval = parseInt(slider.value);\n"
+      "    autoLabel.textContent = autoInterval + 's';\n"
+      "    if (autoEnabled) updateAutoState();\n"
+      "    saveState();\n"
+      "  };\n"
+      "\n"
+      "  // Minimize\n"
+      "  document.getElementById(HUD_ID + '-minimize').onclick = function() {\n"
+      "    isMinimized = !isMinimized;\n"
+      "    body.style.display = isMinimized ? 'none' : 'flex';\n"
+      "    statusBar.style.display = isMinimized ? 'none' : 'flex';\n"
+      "    hud.style.minHeight = isMinimized ? '42px' : '200px';\n"
+      "    hud.style.height = isMinimized ? '42px' : hudH;\n"
+      "    hud.style.resize = isMinimized ? 'none' : 'both';\n"
+      "    saveState();\n"
+      "  };\n"
+      "\n"
+      "  // Close — resolve pour sortir de la boucle Python\n"
+      "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
+      "    if (autoRefreshTimer) clearInterval(autoRefreshTimer);\n"
+      "    hud.remove();\n"
+      "    if (window.echoSubagentResolve) window.echoSubagentResolve({action: 'close'});\n"
+      "  };\n"
+      "\n"
+      "  // Resize persistence\n"
+      "  new ResizeObserver(function() {\n"
+      "    hudW = hud.style.width;\n"
+      "    hudH = hud.style.height;\n"
+      "    saveState();\n"
+      "  }).observe(hud);\n"
+      "\n"
+      "  // =============== STATUS BAR UPDATE ===============\n"
+      "  function updateStatusBar() {\n"
+      "    var sb = document.getElementById(HUD_ID + '-status');\n"
+      "    if (!sb) return;\n"
+      "    var totalSteps = threads.reduce(function(s, t) { return s + (t.steps_count || 0); }, 0);\n"
+      "    var lastUpdate = threads.length ? fmtTime(Math.max.apply(null, threads.map(function(t) { return t.updated_at || 0; }))) : '';\n"
+      "    sb.innerHTML = '<span>\\ud83d\\udcca ' + threads.length + ' thread' + (threads.length > 1 ? 's' : '') + '</span>'\n"
+      "      + '<span>|</span>'\n"
+      "      + '<span>' + totalSteps + ' \\u00e9tapes</span>'\n"
+      "      + '<span>|</span>'\n"
+      "      + '<span>' + lastUpdate + '</span>'\n"
+      "      + '<span style=\"flex:1;\"></span>'\n"
+      "      + '<span id=\"' + HUD_ID + '-auto-status\" style=\"color:' + (autoEnabled ? C.success : C.textMuted) + ';\">' + (autoEnabled ? '\\u25cf Auto ' + autoInterval + 's' : '\\u25cb Manuel') + '</span>';\n"
+      "    autoStatusEl = document.getElementById(HUD_ID + '-auto-status');\n"
+      "  }\n"
+      "\n"
+      "  // =============== GLOBAL API — Mise à jour live ===============\n"
+      "  window.echoMonitorUpdate = function(newThreads) {\n"
+      "    threads = newThreads;\n"
+      "    if (activeThreadIdx >= threads.length) activeThreadIdx = Math.max(0, threads.length - 1);\n"
+      "    renderSidebar();\n"
+      "    renderTree();\n"
+      "    updateStatusBar();\n"
+      "  };\n"
+      "\n"
+      "  // =============== INIT ===============\n"
+      "  clampHud();\n"
+      "  renderSidebar();\n"
+      "  renderTree();\n"
+      "  updateAutoState();\n"
+      "})();\n"
+    )
 
