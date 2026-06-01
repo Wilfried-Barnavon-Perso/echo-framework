@@ -18,7 +18,8 @@ from dulwich.repo import Repo
 from dulwich.objects import Blob, Tree, Commit
 from dulwich import porcelain
 
-from echo_constants import ECHO_USERS_ROOT, CODEX_DIR_NAME, CODEX_LANG_MAP, CODEX_DEFAULT_LANG
+from echo_constants import CODEX_LANG_MAP, CODEX_DEFAULT_LANG
+from echo_utils import get_echo_session_path
 
 # Mapping inversé langage Monaco → extension (première extension trouvée)
 CODEX_LANG_TO_EXT: dict[str, str] = {}
@@ -33,16 +34,13 @@ class CodexRepo:
     Toutes les opérations sont synchrones et sans effet de bord réseau."""
 
     def __init__(self, user_id: str, chat_id: str):
-        safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
-        safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
-        self.repo_path = os.path.join(ECHO_USERS_ROOT, safe_uid, CODEX_DIR_NAME, safe_cid)
+        self.repo_path = get_echo_session_path(user_id, chat_id, "codex")
         self.repo = self._ensure_repo()
 
     def _ensure_repo(self) -> Repo:
         """Initialise le dépôt s'il n'existe pas, sinon l'ouvre."""
         if os.path.exists(os.path.join(self.repo_path, ".git")):
             return Repo(self.repo_path)
-        os.makedirs(self.repo_path, exist_ok=True)
         return Repo.init(self.repo_path)
 
     # =========================================================================

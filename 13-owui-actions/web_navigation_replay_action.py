@@ -366,8 +366,8 @@ class Action:
         if not cid: return None
 
         # Redirection vers le Vault (v3.0)
-        safe_uid = "".join(x for x in str(uid) if x.isalnum() or x in "-_")
-        vault_path = os.path.join(ECHO_USERS_ROOT, safe_uid, "files")
+        from echo_utils import get_echo_session_path
+        vault_path = get_echo_session_path(uid, cid, "files")
 
         prefix = f"U_{uid}_C_{cid}_T_"
         files = []

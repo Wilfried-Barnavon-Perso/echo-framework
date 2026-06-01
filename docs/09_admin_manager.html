@@ -1,11 +1,16 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Admin Manager ECHO v5 (server.py v5.55) : monitoring Docker, purge TTL Qdrant, sauvegardes à chaud, rotation de mots de passe, surface de sécurité.">
+  <meta name="description" content="Admin Manager ECHO v5 (server.py v5.55) : Dashboard Gridstack interactif, monitoring Docker, purge TTL Qdrant, consolidation SQLite, sauvegardes à chaud, surface de sécurité.">
   <title>ECHO v5 — 9. Admin Manager</title>
   <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', padding: 16 } });
+  </script>
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
@@ -15,8 +20,9 @@
 
     <p>
       L'Admin Manager est le système de gouvernance infrastructure d'ECHO. Il surveille la santé
-      du cluster Docker, orchestre la purge temporelle de la mémoire vectorielle (Qdrant),
-      gère les sauvegardes et offre une surface de contrôle sur les identités d'accès.
+      du cluster Docker via un <strong>Dashboard interactif (Gridstack)</strong>, orchestre la purge
+      temporelle de la mémoire vectorielle (Qdrant), gère les sauvegardes et la consolidation des
+      bases de données.
     </p>
 
     <div class="didactic-box">
@@ -44,10 +50,12 @@
       </tbody>
     </table>
 
-    <h2>1. Monitoring Holistique</h2>
+    <h2>1. Monitoring Holistique (Dashboard Gridstack)</h2>
 
     <p>
-      L'interface de monitoring affiche en temps réel les constantes vitales de l'infrastructure :
+      L'interface de l'Admin Manager repose sur un <strong>Dashboard interactif</strong> propulsé par
+      <code>Gridstack.js</code>. Il permet de réorganiser les widgets en drag &amp; drop et affiche
+      en temps réel les constantes vitales de l'infrastructure :
     </p>
     <ul>
       <li>
@@ -68,6 +76,24 @@
     </ul>
 
     <h2>2. Cycle de Vie et Oubli Organique (TTL)</h2>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>Cycle de Vie des Données (Admin Manager)</span>
+        <span>[RÉGULATION & PURGE]</span>
+      </div>
+      <div class="mermaid">
+flowchart TD
+  AM[Admin Manager<br/>Cron Jobs] --> TTL[Purge TTL<br/>echo_memory]
+  AM --> ORPH[Sync Qdrant<br/>Points orphelins]
+  AM --> EPH[Purge Post-Session<br/>echo_ephemeral]
+  AM --> VAC[Vacuum & Consolidation<br/>SQLite]
+  AM --> BAK[Sauvegardes à chaud<br/>/backups]
+
+  classDef job fill:#1e1b4b,stroke:#4338ca,color:#fff
+  class AM job
+      </div>
+    </div>
 
     <p>
       L'Admin Manager centralise la logique d'<strong>Atrophie Sémantique</strong> — la purge
@@ -105,11 +131,11 @@
       (analyses web, distillations) ne s'accumulent pas indéfiniment.
     </p>
 
-    <h3>Vacuum SQLite</h3>
+    <h3>Vacuum & Consolidation SQLite</h3>
     <p>
       Optimisation physique régulière des bases de données de session (commande SQL <code>VACUUM</code>)
       pour récupérer l'espace disque des enregistrements supprimés et maintenir les performances
-      d'accès.
+      d'accès. L'Admin Manager exécute également une consolidation des fragments de bases en mode WAL.
     </p>
 
     <h2>3. Sauvegardes et Restauration à Chaud</h2>
@@ -165,7 +191,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,7 +1,7 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 7.12
+version: 7.18
 description: 7.5: Fix génération slug. 7.6: Migration Antigravity 2.1 — suppression GOOGLE_OAUTH_CODE_REGEX (PKCE legacy).
              7.7: Centralisation THINKING_LEVEL_FLASH (echo_constants v4.8) — suppression du "HIGH" hardcodé.
              7.8: Injection registre_plan dans environnement_contexte (Strategic Planner v1.0).
@@ -10,6 +10,15 @@ description: 7.5: Fix génération slug. 7.6: Migration Antigravity 2.1 — supp
              7.10: Revert dégradation gracieuse CAS 3 (le fallback INDEXATION suffit).
              7.11: Cosmetic — Anonyme → anonyme (minuscule) dans nom_utilisateur.
              7.12: Injection registre_codex dans environnement_contexte (ECHO Codex v1.0).
+             7.13: Isolation stricte des fichiers par session (resolve_upload_file_path avec chat_id).
+             7.14: Refonte Smart Context (RAG Éphémère & Map-Reduce) + Indexation de la donnée brute.
+             7.15: Correction hallucination outil RAG et unification directive impérative.
+             7.16: Pipeline RAG Éphémère Transmodal. Extraction textuelle API (Phase 1)
+             puis Map-Reduce local (Phase 2) pour unifier le traitement du binaire et du texte.
+             7.17: Fast-Path pour bypass Map-Reduce sur textes courts (ECHO_MR_SUMMARY_MAX_WORDS).
+             7.18: Correction bug multimodal (prompt texte écrasé par echo_utils) + Refonte Prompts.
+             7.19: Refonte architecturale identifiants (Éradication du slug). Utilisation de
+             file_id natif comme source_id pour le RAG éphémère.
 """
 
 
@@ -35,7 +44,9 @@ from echo_constants import (
     get_gemini_mime, ECHO_USERS_ROOT, 
     GOOGLE_API_KEY_REGEX, MODEL_FLASH,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    THINKING_LEVEL_FLASH
+    THINKING_LEVEL_FLASH,
+    MAX_DIRECT_TEXT_INJECT_SIZE, MAX_DIRECT_MMEDIA_INJECT_SIZE,
+    ECHO_MR_CHUNK_SIZE, ECHO_MR_OVERLAP_SIZE, ECHO_MR_MAX_TOKENS, ECHO_MR_SUMMARY_MAX_WORDS
 )
 
 # Configuration du Logger
@@ -48,7 +59,6 @@ class Filter:
 
     class Valves(BaseModel):
         ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Active le résumé intelligent des fichiers volumineux via Gemini Flash.")
-        MAX_DIRECT_TEXT_SIZE: int = Field(default=262144, description="Taille max (octets) pour l'injection directe sans résumé.")
         KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
         MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum pour le Smart Context.")
         SMART_CONTEXT_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour l'analyse Flash.")
@@ -77,7 +87,7 @@ class Filter:
         filename = file_obj.get("name") or file_obj.get("file", {}).get("meta", {}).get("name", "inconnu")
         mime = file_obj.get("mime_type") or file_obj.get("file", {}).get("meta", {}).get("content_type", "application/octet-stream")
         
-        path = resolve_upload_file_path(user_id, file_id)
+        path = resolve_upload_file_path(user_id, file_id, chat_id=chat_id)
         if not path or not os.path.exists(path):
             print(f"[ECHO-FILTER] ❌ Fichier {filename} introuvable sur le disque.", flush=True)
             return {"status": "error", "fid": file_id, "error": "Fichier introuvable sur le disque."}
@@ -88,7 +98,7 @@ class Filter:
         print(f"[ECHO-FILTER] 📄 Analyse de {filename} ({mime}) - Taille: {size} octets", flush=True)
 
         # --- CAS 1 : IMAGE / AUDIO / VIDEO / PDF (Injection Binaire Directe si petit) ---
-        if is_supported and any(x in mime for x in ["image/", "audio/", "video/", "pdf"]) and size < self.valves.MAX_DIRECT_TEXT_SIZE:
+        if is_supported and any(x in mime for x in ["image/", "audio/", "video/", "pdf"]) and size < MAX_DIRECT_MMEDIA_INJECT_SIZE:
             try:
                 print(f"[ECHO-FILTER] --> Mode: BINAIRE (Base64)", flush=True)
                 await events.status(f"Encapsulation de {filename}...", False)
@@ -103,7 +113,7 @@ class Filter:
                 return {"status": "error", "fid": file_id, "name": filename, "mime": mime, "error": f"Erreur binaire : {str(e)}"}
 
         # --- CAS 2 : TEXTE PETIT (Injection Directe) ---
-        if is_supported and size < self.valves.MAX_DIRECT_TEXT_SIZE and "text/" in mime:
+        if is_supported and size < MAX_DIRECT_TEXT_INJECT_SIZE and ("text/" in mime or "application/json" in mime):
             try:
                 print(f"[ECHO-FILTER] --> Mode: INJECTION_DIRECTE (Texte)", flush=True)
                 with open(path, "r", encoding="utf-8", errors="ignore") as f: content = f.read()
@@ -115,77 +125,114 @@ class Filter:
                 print(f"[ECHO-FILTER] !! Erreur lecture: {e}", flush=True)
                 return {"status": "error", "fid": file_id, "name": filename, "mime": mime, "error": f"Erreur lecture : {str(e)}"}
 
-        # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (RAG Éphémère v7.1) ---
-        # Remplace l'injection directe <smart_context> par un pipeline vectoriel.
-        # Toutes les étapes sont des tâches de fond invisibles → MODEL_DISTILLATION.
+        # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (RAG Éphémère v8.0 Map-Reduce Transmodal) ---
         if self.valves.ENABLE_SMART_CONTEXT and is_supported:
             try:
-                print(f"[ECHO-FILTER] --> Mode: RAG_EPHEMERAL (distillation → Qdrant echo_ephemeral)", flush=True)
-                await events.status(f"Distillation de {filename}...", False)
-
-                # Construction du prompt selon MIME
-                content_part = {}
-                if "text/" in mime or "application/json" in mime:
-                    with open(path, "r", encoding="utf-8", errors="ignore") as f: raw_text = f.read()
-                    content_part = {"text": f"Analyse et résume ce fichier technique nommé '{filename}' :\n\n{raw_text[:200000]}"}
-                else:
-                    with open(path, "rb") as f: b64_data = base64.b64encode(f.read()).decode("utf-8")
-                    content_part = {"inline_data": {"mime_type": mime, "data": b64_data}}
-
-                # Distillat exhaustif → MODEL_DISTILLATION (call_distillation sans target_model)
+                import unicodedata as _ud
                 u_ctx = {"id": user_id}
                 m_ctx = {"chat_id": chat_id}
-                distillate = await EchoGeminiClient.call_distillation(
-                    "Tu es l'unité de prétraitement contextuel d'ECHO. "
-                    "Ta mission est de produire un résumé technique exhaustif et structuré du fichier fourni.",
-                    u_ctx, m_ctx, is_json=False,
-                    parts=[{"role": "user", "parts": [content_part]}],
-                    max_tokens=8192
-                )
-                if not distillate:
-                    raise ValueError("Distillation vide — modèle non disponible")
-
-                # Slug : ASCII uniquement, alphanumériques + underscores, tirets et espaces → underscore
-                import unicodedata as _ud
-                normalized_name = _ud.normalize("NFKD", filename.rsplit(".", 1)[0])
-                # Remplacer espaces et tirets par _ avant le filtrage
-                cleaned = normalized_name.replace("-", "_").replace(" ", "_")
-                safe_name = "".join(c for c in cleaned if (c.isascii() and c.isalnum()) or c == "_")[:24].strip("_")
-                slug = f"{safe_name}_{_uuid_module.uuid4().hex[:4]}"
-
-                # Vectorisation → méthode partagée (MODEL_DISTILLATION en interne)
+                
+                is_text = ("text/" in mime or "application/json" in mime)
+                
+                # --- PHASE 1 : EXTRACTION / TRANSCRIPTION ---
+                source_text = ""
+                if not is_text:
+                    print(f"[ECHO-FILTER] --> Phase 1 (Extraction Multimédia) pour {filename}", flush=True)
+                    with open(path, "rb") as f: b64_data = base64.b64encode(f.read()).decode("utf-8")
+                    content_part = {"inline_data": {"mime_type": mime, "data": b64_data}}
+                    
+                    await events.status(f"Transcription API de {filename}...", False)
+                    # On utilise l'API Gemini pour contourner l'incapacité locale sur la vidéo.
+                    # Pas de limite stricte de tokens pour récupérer la transcription intégrale.
+                    extraction_prompt = (
+                        "Tu es un extracteur de données brut. Ta mission est de décrire, transcrire et analyser "
+                        "ce document. Si le document est structuré reproduis et respecte strictement la structure. "
+                        "Si le document est textuel, respecte strictement son verbatim. Si le document est audiovisuel "
+                        "la description doit être précise, détaillée, complète, couvrant autant le visuel que l'audio, et parfaitement horodatée."
+                    )
+                    multimodal_parts = [{"text": extraction_prompt}, content_part]
+                    
+                    source_text = await EchoGeminiClient.call_distillation(
+                        extraction_prompt,
+                        u_ctx, m_ctx, is_json=False,
+                        parts=[{"role": "user", "parts": multimodal_parts}],
+                        target_model="MODEL_DISTILLATION"
+                    )
+                    if not source_text:
+                        raise ValueError("Transcription multimédia vide ou échouée.")
+                else:
+                    print(f"[ECHO-FILTER] --> Phase 1 (Lecture Texte) pour {filename}", flush=True)
+                    with open(path, "r", encoding="utf-8", errors="ignore") as f: source_text = f.read()
+                
+                # --- PHASE 2 : MAP-REDUCE UNIVERSEL ---
+                print(f"[ECHO-FILTER] --> Phase 2 (Indexation Brute + Map-Reduce) pour {filename}", flush=True)
+                
+                # ETAPE 1 : Indexation Brute (Rapide)
                 await events.status(f"Vectorisation de {filename}...", False)
                 nb_points, err = await EchoGeminiClient.index_text_in_ephemeral_rag(
-                    distillate, slug, user_id, chat_id, u_ctx, m_ctx
+                    source_text, file_id, user_id, chat_id, u_ctx, m_ctx
                 )
                 if nb_points == 0:
                     print(f"[ECHO-FILTER] !! Vectorisation échouée pour {filename} : {err}", flush=True)
                     raise ValueError(f"Vectorisation échouée : {err}")
-
-                # Brief résumé pour le prompt (≤ 300 mots) → MODEL_DISTILLATION
-                brief_prompt = f"Résume en maximum 300 mots les points clés de ce texte :\n\n{distillate[:15000]}"
-                brief_summary = await EchoGeminiClient.call_distillation(
-                    brief_prompt, u_ctx, m_ctx, is_json=False, max_tokens=2048
-                )
-
-                # Le slug est aussi dans <environnement_contexte> YAML, mais on le rappelle
-                # explicitement ici pour MODEL_LITE qui ne lit pas toujours le YAML fiablement.
+                    
+                # ETAPE 2 : Map-Reduce Local (sur la source unifiée)
+                brief_summary = "Résumé indisponible (fichier trop complexe)."
+                try:
+                    words_len = len(source_text.split())
+                    if words_len <= ECHO_MR_SUMMARY_MAX_WORDS:
+                        await events.status(f"Fast-Path appliqué pour {filename} (texte court)...", False)
+                        brief_summary = source_text
+                    else:
+                        await events.status(f"Distillation Map-Reduce de {filename}...", False)
+                        chunks = []
+                        start = 0
+                        text_len = len(source_text)
+                        while start < text_len:
+                            end = min(start + ECHO_MR_CHUNK_SIZE, text_len)
+                            chunks.append(source_text[start:end])
+                            if end == text_len: break
+                            start = end - ECHO_MR_OVERLAP_SIZE
+                            
+                        distillates = []
+                        for i, chunk in enumerate(chunks):
+                            await events.status(f"Distillation (partie {i+1}/{len(chunks)}) de {filename}...", False)
+                            prompt = f"Résume ce passage selon l'importance des données; en maximum {ECHO_MR_SUMMARY_MAX_WORDS} mots.:\n\n{chunk}"
+                            res = await EchoGeminiClient.call_distillation(
+                                prompt, u_ctx, m_ctx, is_json=False, max_tokens=ECHO_MR_MAX_TOKENS
+                            )
+                            if res: distillates.append(res)
+                            
+                        if len(distillates) > 1:
+                            await events.status(f"Synthèse finale de {filename}...", False)
+                            combined = "\n\n---\n\n".join(distillates)
+                            prompt = f"Fais un résumé global de {ECHO_MR_SUMMARY_MAX_WORDS} mots maximum à partir de ces synthèses partielles du document d'origine :\n\n{combined}"
+                            brief_summary = await EchoGeminiClient.call_distillation(
+                                prompt, u_ctx, m_ctx, is_json=False, max_tokens=ECHO_MR_MAX_TOKENS
+                            )
+                        elif len(distillates) == 1:
+                            brief_summary = distillates[0]
+                except Exception as mr_err:
+                    print(f"[ECHO-FILTER] !! Map-Reduce Timeout/Erreur pour {filename} : {mr_err}", flush=True)
+                    # On continue car l'indexation brute a réussi.
+                    brief_summary = "⚠️ *Le résumé automatique a échoué en raison de la complexité ou de la taille du fichier.*"
+                    
                 res_text = (
                     f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\" mode=\"rag_ephemeral\"\n"
-                    f"                vectors=\"{nb_points}\">\n"
+                    f"                source_id=\"{file_id}\">\n"
                     f"{brief_summary}\n\n"
-                    f"> ⚠️ Ce fichier est vectorisé dans le RAG éphémère ({nb_points} vecteurs). "
-                    f"Pour l'interroger, utiliser `query_distilled_data(slug=\"{slug}\", query=\"...\")`.\n"
+                    f"> ⚙️ DIRECTIVE SYSTÈME : Les détails exhaustifs du fichier sont stockés dans le RAG éphémère.\n"
+                    f"> Pour analyser le contenu brut ou répondre à l'utilisateur, vous DEVEZ utiliser l'outil `search_session_context` avec le paramètre source_id=\"{file_id}\" et une `query` précise.\n"
                     f"</smart_context>"
                 )
 
                 state = EchoStateManager(user_id=user_id, chat_id=chat_id)
                 state.mark_processed(chat_id, file_id, filename, mime, "rag_ephemeral", res_text)
-                print(f"[ECHO-FILTER] ✅ {filename} → RAG éphémère (slug={slug}, {nb_points} vecteurs).", flush=True)
-                return {"status": "success", "type": "rag_ephemeral", "slug": slug, "fid": file_id, "name": filename, "mime": mime, "content": res_text}
+                print(f"[ECHO-FILTER] ✅ {filename} → RAG éphémère (source_id={file_id}).", flush=True)
+                return {"status": "success", "type": "rag_ephemeral", "source_id": file_id, "fid": file_id, "name": filename, "mime": mime, "content": res_text}
 
             except Exception as e:
-                print(f"[ECHO-FILTER] !! Exception RAG Éphémère pour {filename}: {e}", flush=True)
+                print(f"[ECHO-FILTER] !! Exception CAS 3 pour {filename}: {e}", flush=True)
                 # Fallback → CAS 4 (indexation)
 
         # --- CAS 4 : FALLBACK BINAIRE (Indexation) ---
@@ -251,12 +298,12 @@ class Filter:
 
             files_to_process = []
             if chat_id:
-                safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
-                vault_dir = os.path.normpath(os.path.join(ECHO_USERS_ROOT, safe_uid, "files"))
+                from echo_utils import get_echo_session_path
+                vault_dir = os.path.normpath(get_echo_session_path(user_id, chat_id, "files"))
                 for f in all_files:
                     fid = f.get("id") or f.get("file", {}).get("id")
                     if fid:
-                        path = resolve_upload_file_path(user_id, fid)
+                        path = resolve_upload_file_path(user_id, fid, chat_id=chat_id)
                         if path and not os.path.normpath(path).startswith(vault_dir):
                             files_to_process.append(f)
                 
@@ -292,7 +339,7 @@ class Filter:
                 for r in results:
                     if r.get("status") == "success":
                         entry = {"id": r.get("fid"), "mime": r.get("mime"), "statut": r.get("type")}
-                        if r.get("slug"): entry["slug"] = r["slug"]  # Expose le slug dans le YAML → modèle peut interroger le RAG directement
+                        if r.get("source_id"): entry["source_id"] = r["source_id"]  # Expose le source_id dans le YAML → modèle peut interroger le RAG directement
                         active_registry[r.get("name")] = entry
 
                 meta_vars = meta.get("variables", {})

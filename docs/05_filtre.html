@@ -37,7 +37,7 @@
       </p>
     </div>
 
-    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.12)</h2>
+    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.18)</h2>
 
     <p>
       Ce filtre est la porte d'entrée cognitive d'ECHO. Il opère en deux phases :
@@ -64,14 +64,15 @@ flowchart LR
 
   F --> AN{Analyse<br/>MIME + Taille}
 
-  AN -->|"Image/Audio/PDF<br/>≤ 256 Ko"| B64["📎 Encapsulation Base64<br/>(inlineData natif Gemini)"]
-  AN -->|"Texte/Code<br/>≤ 256 Ko"| TXT["📝 Injection Texte Brut<br/>(part text)"]
-  AN -->|"Tout fichier<br/>> 256 Ko"| MOL["🧱 Moulage (Distillation)<br/>Gemma 4 E4B local<br/>→ Qdrant echo_ephemeral"]
-  AN -->|"Déjà dans le Vault<br/>(file_id détecté)"| VAULT["📂 Référence Vault<br/>(déduplication — pas de ré-upload)"]
+  AN -->|"Image/Audio/PDF/Vidéo<br/>≤ 256 Ko"| B64["📎 Encapsulation Base64<br/>(inlineData)"]
+  AN -->|"Texte/Code<br/>≤ 256 Ko"| TXT["📝 Injection Texte Brut"]
+  AN -->|"Tout fichier<br/>> 256 Ko"| EXTR["🔍 Extraction Transmodale<br/>(API ou Lecture Locale)"]
+  EXTR -->|"Texte unifié"| RAG["🧱 RAG Éphémère & Map-Reduce<br/>(Qdrant echo_ephemeral)"]
+  AN -->|"Déjà dans le Vault<br/>(file_id détecté)"| VAULT["📂 Référence Vault"]
 
   OWUI -->|"Images inline<br/>(drag/paste)"| INLINE["🖼️ Extraction Ordonnée<br/>(texte + images entrelacés)"]
 
-  B64 & TXT & MOL & VAULT & INLINE --> DRAFT["📦 Draft Sémantique<br/>(_echo_user_parts_draft)"]
+  B64 & TXT & RAG & VAULT & INLINE --> DRAFT["📦 Draft Sémantique<br/>(_echo_user_parts_draft)"]
   DRAFT -->|"Métadonnées<br/>+ AEC YAML"| PIPE["⚙️ Pipe Engine"]
 
   classDef neutral fill:#1e293b,stroke:#475569,color:#f8fafc
@@ -79,7 +80,7 @@ flowchart LR
   classDef core fill:#172554,stroke:#4338ca,color:#f8fafc
   classDef inline fill:#4a1d96,stroke:#8b5cf6,color:#f8fafc
   class U,OWUI,F,AN neutral
-  class MOL,VAULT rag
+  class EXTR,RAG,VAULT rag
   class DRAFT,PIPE core
   class INLINE inline
       </div>
@@ -118,20 +119,24 @@ flowchart LR
       </p>
     </div>
 
-    <h3>Le Moulage (Semantic Molding)</h3>
+    <h3>RAG Éphémère Transmodal et Map-Reduce</h3>
     <p>
       Lorsqu'un fichier dépasse <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko), le filtre déclenche
-      <code>_process_file_task()</code> — une tâche asynchrone en arrière-plan. Le
-      <code>MODEL_DISTILLATION</code> (Gemma 4 E4B local, service <code>echo-gemma-distiller:7998</code>)
-      produit un distillat structuré du fichier. Si le service local est indisponible, la tâche
-      échoue (pas de fallback API). Le distillat est découpé en chunks (<code>CHUNK_SIZE</code>)
-      avec recouvrement (<code>CHUNK_OVERLAP</code>) pour préserver le contexte aux jointures,
-      vectorisé par bge-m3 (1024d) et stocké dans <code>echo_ephemeral</code> (Qdrant).
+      un processus de traitement approfondi en arrière-plan : le <strong>RAG Éphémère</strong>. 
+      La première phase est l'<strong>Extraction Transmodale</strong> : les fichiers textuels sont lus localement, 
+      tandis que les fichiers multimédias complexes (images, vidéos) sont transcrits textuellement.
     </p>
     <p>
-      Le modèle principal reçoit uniquement un résumé de distillation (≤ 300 mots) et le
-      <code>slug</code> Qdrant de la session, lui permettant d'interroger les détails précis via
-      <code>search_session_context(slug, query)</code> sans saturer sa fenêtre contextuelle.
+      Le texte brut unifié est immédiatement vectorisé par <code>bge-m3</code> (1024d) et stocké dans 
+      la collection <code>echo_ephemeral</code>. Ensuite, un processus de <strong>Map-Reduce local</strong> 
+      est exécuté (Gemma 4 E4B, <code>echo-gemma-distiller:7998</code>) pour générer un résumé synthétique. 
+      Un <em>Fast-path</em> (court-circuit) est appliqué si le texte est suffisamment court (<code>ECHO_MR_SUMMARY_MAX_WORDS</code>), 
+      évitant une distillation inutile.
+    </p>
+    <p>
+      Le modèle principal reçoit uniquement le résumé et le <code>source_id</code> (identifiant de fichier natif), 
+      lui permettant d'interroger la donnée brute avec précision via <code>search_session_context(source_id, query)</code> 
+      sans saturer sa fenêtre de contexte. Le concept obsolète de "slug" a été définitivement supprimé.
     </p>
 
     <h3>Le bloc AEC (<code>environnement_contexte</code>)</h3>
@@ -141,13 +146,13 @@ flowchart LR
       <em>proprioception</em> du modèle pour le tour courant.
     </p>
 
-    <div class="code-header">Structure du bloc <code>environnement_contexte</code> (v7.12)</div>
+    <div class="code-header">Structure du bloc <code>environnement_contexte</code> (v7.18)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.166.6"
+version_framework_echo: "5.170.13"
 modèle_actuel:   "##MODEL_ID##"              # Résolu par le Pipe (ex: MODEL_FLASH)
 modèle_origine:  "##MODEL_ORIGIN##"          # Modèle ayant initié le tour
 nom_utilisateur: "anonyme"
-date_et_heure:   "2026-05-28 09:00"
+date_et_heure:   "2026-05-31 14:00"
 localisation:    "Paris, France"
 timezone:        "Europe/Paris"
 registre_fichiers:
@@ -155,7 +160,7 @@ registre_fichiers:
     id:     "U_abc123_C_xyz789_T_1748246400"
     mime:   "application/pdf"
     statut: "rag_ephemeral"
-    slug:   "rapport_pdf_a3f2c1"
+    source_id: "U_abc123_C_xyz789_T_1748246400"
 registre_plan:
   - id: "plan_abc"
     goal: "Refactorer le module d'auth"
@@ -172,9 +177,11 @@ registre_codex:
     last_commit: "chore: update timeout"
 &lt;/environnement_contexte&gt;
 
-&lt;smart_context slug="rapport_pdf_a3f2c1" mime_type="application/pdf" mode="rag_ephemeral" vectors="42"&gt;
-[Résumé ≤ 300 mots du contenu de rapport.pdf, produit par Gemma 4 E4B local]
-[Utiliser search_session_context("rapport_pdf_a3f2c1", query) pour les détails]
+&lt;smart_context filename="rapport.pdf" mime_type="application/pdf" mode="rag_ephemeral" source_id="U_abc123_C_xyz789_T_1748246400"&gt;
+[Résumé ≤ 300 mots généré par Map-Reduce local]
+
+> ⚙️ DIRECTIVE SYSTÈME : Les détails exhaustifs du fichier sont stockés dans le RAG éphémère.
+> Pour analyser le contenu brut ou répondre à l'utilisateur, vous DEVEZ utiliser l'outil `search_session_context` avec le paramètre source_id="U_abc123_C_xyz789_T_1748246400" et une `query` précise.
 &lt;/smart_context&gt;</code></pre>
 
     <div class="note-box">
@@ -241,7 +248,7 @@ registre_codex:
         <strong>Gemma Distiller local</strong> (<code>echo-gemma-distiller:7998</code>). En cas d'indisponibilité,
         fallback transparent vers <code>gemini-2.5-flash</code> (API).
         Génère un JSON structuré : <code>summary</code> (100–1000 mots), <code>memory_importance</code> (1–5),
-        <code>slug</code> sémantique, et 3–5 <code>tags</code> techniques.
+      <code>memory_id</code> technique court, et 3–5 <code>tags</code> qualifiants.
       </li>
       <li>
         <strong>Vectorisation locale :</strong> le résumé est envoyé à l'Embedding Worker
@@ -263,7 +270,7 @@ registre_codex:
         <strong>Stockage Qdrant :</strong> le vecteur est upserted dans la collection
         <code>echo_memory</code>, avec les métadonnées
         <code>user_id</code>, <code>chat_id</code>, <code>timestamp</code>,
-        <code>memory_importance</code> (1–5), <code>slug</code>, <code>tags</code>.
+        <code>memory_importance</code> (1–5), <code>memory_id</code>, <code>tags</code>.
       </li>
     </ol>
 
@@ -307,7 +314,7 @@ registre_codex:
     </div>
 
     <footer>
-      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

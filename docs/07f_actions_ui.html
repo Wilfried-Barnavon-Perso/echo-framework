@@ -111,9 +111,16 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
         </tr>
         <tr>
           <td>5</td>
+          <td><code>subagent_monitor_action.py</code></td>
+          <td>Sub-Agent Monitor</td>
+          <td><code>4</code></td>
+          <td>HUD de visualisation arborescente des threads cognitifs en temps réel</td>
+        </tr>
+        <tr>
+          <td>6</td>
           <td><code>echo_codex_action.py</code></td>
           <td>ECHO Codex</td>
-          <td><code>4</code></td>
+          <td><code>5</code></td>
           <td>HUD Monaco éditeur de code avec Git intégré et assistance AI</td>
         </tr>
       </tbody>
@@ -432,7 +439,20 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 5 — ECHO Codex (<code>echo_codex_action.py</code>, v1.5)</h2>
+    <h2>Action 5 — Sub-Agent Monitor (<code>subagent_monitor_action.py</code>, v1.1)</h2>
+
+    <p>
+      Ouvre un HUD interactif (div draggable et redimensionnable) injecté dans le DOM permettant de
+      visualiser l'arborescence des threads des sub-agents cognitifs en temps réel.
+    </p>
+    <p>
+      Basé sur une boucle d'événements bidirectionnelle avec le frontend (Pattern Promise), ce cockpit
+      interroge le statut des agents pour afficher l'état courant de l'escalade cognitive. L'interface 
+      présente sous forme d'arbre hiérarchique les délégations en cours, les modèles sollicités et
+      l'état de la réflexion sans saturer l'interface principale de chat.
+    </p>
+
+    <h2>Action 6 — ECHO Codex (<code>echo_codex_action.py</code>, v1.8)</h2>
 
     <p>
       Ouvre un éditeur de code Monaco complet dans un HUD draggable et redimensionnable,
@@ -448,8 +468,8 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
         <tr><th>Fonctionnalité</th><th>Description</th></tr>
       </thead>
       <tbody>
-        <tr><td><strong>File Tree</strong></td><td>Panneau gauche : liste des fichiers du Codex. Clic &rarr; chargement dans l'éditeur. Bouton &times; &rarr; suppression avec commit. Bouton + &rarr; création fichier.</td></tr>
-        <tr><td><strong>Éditeur Monaco</strong></td><td>Monaco Editor 0.52.2 via CDN jsDelivr. Coloration syntaxique 30+ langages, numéros de lignes, word wrap, minimap. Ctrl+S &rarr; sauvegarde + commit immédiat.</td></tr>
+        <tr><td><strong>File Tree</strong></td><td>Panneau gauche : liste des fichiers du Codex (tri dynamique par <code>mtime</code>). Clic &rarr; chargement dans l'éditeur. Action contextuelle &rarr; Renommage intégré (OS + Git). Bouton &times; &rarr; suppression avec commit. Bouton + &rarr; création fichier.</td></tr>
+        <tr><td><strong>Éditeur Monaco</strong></td><td>Monaco Editor 0.52.2 via CDN jsDelivr. Coloration syntaxique 30+ langages. Intègre un <strong>panneau de prévisualisation WYSIWYG</strong>. Bouton de sauvegarde explicite et Ctrl+S &rarr; sauvegarde + commit immédiat.</td></tr>
         <tr><td><strong>Édition AI</strong></td><td>Instruction libre ou action rapide prédéfinie (shorter, comment, refactor, fix, tests…). Sélecteur LITE/FLASH/PRO. Affiche un diff côte-à-côte Accept/Rejeter.</td></tr>
         <tr><td><strong>Navigation Git &#9664; &#9654;</strong></td><td>Navigation commit par commit pour un fichier. Mode read-only visuel. Bouton Restaurer &rarr; nouveau commit de restauration.</td></tr>
         <tr><td><strong>Import/Export</strong></td><td>Téléchargement depuis le PC vers le Codex (upload), téléchargement du fichier vers le PC (download natif navigateur).</td></tr>
@@ -478,7 +498,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
     </div>
 
     <footer>
-      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

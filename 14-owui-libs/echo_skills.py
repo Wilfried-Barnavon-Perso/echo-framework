@@ -8,12 +8,11 @@ description: 1.3: Alignement avec le Hotfix Core 6.9.
 import os
 import re
 from typing import List, Dict, Optional
-from echo_constants import ECHO_USERS_ROOT
+from echo_utils import get_echo_global_path
 
 def get_skills_dir(user_id: str) -> str:
     """Retourne le chemin du répertoire des skills de l'utilisateur."""
-    safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
-    skills_dir = os.path.join(ECHO_USERS_ROOT, safe_uid, "skills")
+    skills_dir = get_echo_global_path(user_id, "skills")
     os.makedirs(skills_dir, exist_ok=True)
     return skills_dir
 

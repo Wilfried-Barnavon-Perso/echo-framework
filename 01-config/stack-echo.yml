@@ -1,7 +1,13 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.3
+# Version : 9.5
 # ==============================================================================
+# CHANGELOG 9.5 : Fix crash backend `ValueError: Unknown embedding engine: ""` 
+#                 en remplaçant `RAG_EMBEDDING_ENGINE=""` par `"openai"` pour
+#                 éviter le téléchargement de modèles locaux sans faire crasher l'app.
+# CHANGELOG 9.4 : Fix erreur `unhealthy` Open WebUI. Ajout PIP_BREAK_SYSTEM_PACKAGES=1 
+#                 pour contourner PEP 668 sur Debian Bookworm et suppression de jq
+#                 dans le healthcheck.
 # CHANGELOG 9.3 : Tuning WAF ModSecurity - Remplacement ruleEngine=Off par
 #                 exclusions CRS granulaires (SecRuleRemoveById) pour conserver
 #                 le moteur WAF actif tout en eliminant les faux positifs OWUI.
@@ -16,7 +22,7 @@ services:
 
   # 1. Open WebUI (Le Cœur d'ECHO)
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:main-slim
     container_name: echo-open-webui
     restart: always
     networks:
@@ -45,7 +51,9 @@ services:
       - "WEBUI_AUTH_COOKIE_SAME_SITE=lax"
 
       - DATA_DIR=/app/backend/data
-      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-echo-secret-key-12345}
+      # Désactivation RAG natif au boot
+      - RAG_EMBEDDING_ENGINE=openai
+      - ENABLE_RAG_WEB_SEARCH=False
       - ECHO_VERSION_PATH=/app/backend/data/ECHO_VERSION
     volumes:
       - /opt/ECHO/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
@@ -124,7 +132,13 @@ services:
       # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
     command: >
-      /bin/bash -c "pip install mgzip dulwich && ./start.sh"
+      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 pip install mgzip dulwich && ./start.sh"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
     depends_on:
       qdrant:
         condition: service_healthy
@@ -245,6 +259,9 @@ services:
       timeout: 5s
       retries: 20
       start_period: 120s
+    depends_on:
+      gemma-distiller:
+        condition: service_healthy
 
   # 3. SearxNG (Métamoteur de recherche souverain)
   searxng:
@@ -274,8 +291,8 @@ services:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080 || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 5s
+      retries: 5
+      start_period: 30s
 
   # 5. Watchtower (Auto-Update)
   watchtower:
@@ -342,8 +359,8 @@ services:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:7997/health\")' 2>/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 20
-      start_period: 60s
+      retries: 30
+      start_period: 300s
     depends_on:
       qdrant:
         condition: service_healthy
@@ -379,7 +396,7 @@ services:
       retries: 40
       start_period: 120s
     depends_on:
-      qdrant:
+      embedding:
         condition: service_healthy
 
 # ==============================================================================

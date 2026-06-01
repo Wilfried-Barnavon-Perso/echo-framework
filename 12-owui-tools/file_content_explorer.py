@@ -1,8 +1,8 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.11
-description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade().
+version: 5.109.12
+description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade(). 5.109.12: Injection __metadata__ et chat_id pour respect isolation fichiers par session.
 """
 
 import os
@@ -56,6 +56,7 @@ class Tools:
         output_mode: Literal["text", "base64", "hex"] = "text",
         byte_offset: int = 0,
         __user__: dict = {},
+        __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
@@ -65,7 +66,7 @@ class Tools:
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
-        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
+        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
 
         size = os.path.getsize(fpath)
@@ -118,7 +119,7 @@ class Tools:
         """Sonde sémantiquement un fichier volumineux ou complexe via call_cascade centralisé."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
-        fpath = resolve_upload_file_path(user_id, file_id, self.uploads_dir)
+        fpath = resolve_upload_file_path(user_id, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
 
         mime, supported = get_gemini_mime(fpath)
@@ -164,13 +165,14 @@ class Tools:
         self, 
         file_id: str, 
         __user__: dict = {},
+        __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
         """Transmet un fichier multimédia au moteur Gemini."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
-        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
+        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
 
         mime, supported = get_gemini_mime(fpath)
@@ -191,6 +193,7 @@ class Tools:
         self, 
         target: str, 
         __user__: dict = {},
+        __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> dict:
@@ -228,7 +231,7 @@ class Tools:
                 title = f"Distant : {target[:50]}...{suffix}"
                 img_url = target
             else:
-                fpath = resolve_upload_file_path(uid, target, self.uploads_dir)
+                fpath = resolve_upload_file_path(uid, target, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
                 if not fpath:
                     return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"})
                 mime, _ = mimetypes.guess_type(fpath)
@@ -293,21 +296,21 @@ class Tools:
             if os.path.exists(fpath): os.remove(fpath)
             return wrap_tool_output(text=f"❌ Échec téléchargement : {str(e)}", status={"status": "error"})
 
-    async def get_file_metadata(self, file_id: str, __user__: dict = {}, __event_emitter__: Any = None) -> str:
+    async def get_file_metadata(self, file_id: str, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> str:
         """Récupère les métadonnées techniques d'un fichier."""
         uid = __user__.get("id", "anonymous")
-        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir)
+        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
         stat = os.stat(fpath)
         mime, _ = get_gemini_mime(fpath)
         return wrap_tool_output(text=f"📊 **{os.path.basename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}", status={"status": "success"})
 
-    async def calculate_file_hashes(self, file_ids: List[str], __user__: dict = {}, __event_emitter__: Any = None) -> str:
+    async def calculate_file_hashes(self, file_ids: List[str], __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> str:
         """Calcule les hashs SHA-256 de fichiers."""
         uid = __user__.get("id", "anonymous")
         res = []
         for fid in file_ids:
-            p = resolve_upload_file_path(uid, fid, self.uploads_dir)
+            p = resolve_upload_file_path(uid, fid, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
             if p:
                 with open(p, 'rb') as f: h = hashlib.sha256(f.read()).hexdigest()
                 res.append(f"{os.path.basename(p)}: {h}")

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -247,10 +247,15 @@ flowchart TD
         <text x="504" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">/users/{uid}/files/</text>
         <text x="504" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Fichiers utilisateurs (pérennes)</text>
 
-        <rect x="600" y="464" width="260" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="730" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Embedding Worker :7997</text>
-        <text x="730" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">BAAI/bge-m3 — 1024d (Infinity)</text>
-        <text x="730" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Vectorisation locale, 0 donnée sortante</text>
+        <rect x="600" y="464" width="120" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
+        <text x="660" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Worker :7997</text>
+        <text x="660" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">bge-m3</text>
+        <text x="660" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Vector local</text>
+
+        <rect x="730" y="464" width="130" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
+        <text x="795" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Distiller :7998</text>
+        <text x="795" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Gemma 4 E4B</text>
+        <text x="795" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Distill. locale</text>
 
         <!-- ====== FLÈCHES ====== -->
         <!-- Filtre → Pipe -->
@@ -287,7 +292,10 @@ flowchart TD
         <text x="370" y="420" fill="#7f1d1d" font-size="8" font-family="monospace">Vacuum</text>
 
         <!-- Embedding Worker -->
-        <line x1="196" y1="380" x2="730" y2="464" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
+        <line x1="196" y1="380" x2="660" y2="464" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
+        
+        <!-- Gemma Distiller -->
+        <line x1="196" y1="380" x2="795" y2="464" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
       </svg>
 
       <div class="svg-legend">
@@ -366,7 +374,7 @@ flowchart TD
       <div class="card">
         <h3>📡 L'AEC</h3>
         <p><strong>Nature :</strong> Bloc YAML proprioceptif injecté par le Filtre.</p>
-        <p>Contient <code>&lt;environnement_contexte&gt;</code> (identité, date, Registre Fichiers) et <code>&lt;smart_context&gt;</code> (RAG éphémère : résumé ≤ 300 mots + <code>slug</code> Qdrant).</p>
+        <p>Contient <code>&lt;environnement_contexte&gt;</code> (identité, date, Registre Fichiers) et <code>&lt;smart_context&gt;</code> (RAG éphémère : résumé ≤ 300 mots + <code>source_id</code> Qdrant).</p>
       </div>
       <div class="card">
         <h3>🧱 Le Moulage (Semantic Molding)</h3>
@@ -375,7 +383,7 @@ flowchart TD
           Déclenché par le Filtre pour tout fichier dépassant <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko).
           Le Gemma Distiller local (<code>call_distillation</code>, fallback <code>gemini-2.5-flash</code>) produit un distillat structuré, vectorisé
           dans <code>echo_ephemeral</code> (Qdrant, bge-m3). Le modèle principal reçoit un résumé
-          (≤ 300 mots) et le <code>slug</code> pour interroger les détails.
+          (≤ 300 mots) et le <code>source_id</code> pour interroger les détails.
         </p>
       </div>
       <div class="card">
@@ -431,7 +439,7 @@ flowchart TD
       <div class="card">
         <h3>⏱️ RAG Éphémère (<code>echo_ephemeral</code>)</h3>
         <p><strong>Outils :</strong> <code>save_session_context</code>, <code>search_session_context</code></p>
-        <p><strong>Scope :</strong> <code>user_id + chat_id + slug</code> — session courante uniquement.</p>
+        <p><strong>Scope :</strong> <code>user_id + chat_id + source_id</code> — session courante uniquement.</p>
         <p><strong>Usage :</strong> Distillats de fichiers volumineux, résultats de navigation web, données intermédiaires d'analyse.</p>
         <p><strong>Purge :</strong> Automatique en fin de session par l'Admin Manager (suppression filtrée par <code>chat_id</code>).</p>
       </div>
@@ -709,7 +717,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

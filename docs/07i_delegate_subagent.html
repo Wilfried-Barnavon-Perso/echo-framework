@@ -23,7 +23,8 @@
       <code>delegate_reasoning()</code> (supprimée en <code>cognitive_agents.py</code> v5.14),
       le sous-agent dispose d'une boucle agentique complète identique au Pipe principal,
       d'un budget d'appels de fonctions configurable et d'un mécanisme de reprise via
-      identifiant de session (<code>sub_sid</code>).
+      identifiant de session (<code>sub_sid</code>). L'état et la cascade de cette boucle 
+      peuvent être visualisés en temps réel via l'action HUD <a href="07f_actions_ui.html">Sub-Agent Monitor</a>.
     </p>
 
     <div class="didactic-box">
@@ -177,7 +178,9 @@ flowchart TD
 
     <p>
       La boucle principale du sous-agent est structurée en 5 cas mutuellement exclusifs,
-      traités à chaque itération selon le contenu de la réponse Gemini :
+      traités à chaque itération selon le contenu de la réponse Gemini. L'état courant de
+      l'escalade cognitive est systématiquement persisté et peut être observé via
+      l'action UI <strong>Sub-Agent Monitor</strong>.
     </p>
 
     <div class="mermaid-wrapper">
@@ -187,7 +190,8 @@ flowchart TD
       </div>
       <div class="mermaid">
 flowchart TD
-  ITER([Itération]) --> CALL["call_cascade()\ncurrent_model_key"]
+  ITER([Itération]) --> STATUS["Mise à jour SQLite\n(Sub-Agent Monitor)"]
+  STATUS --> CALL["call_cascade()\ncurrent_model_key"]
   CALL --> PARSE["Parse parts brutes\n(thoughtSignature préservée)"]
 
   PARSE --> CAS1{CAS 1\nnew_cognitive_level\nsans tool_call ?}
@@ -384,7 +388,7 @@ SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
                             N'émets jamais plusieurs functionCall dans le même tour de réponse.</code></pre>
 
     <div class="audit-note">
-      <h4>✅ Exactitude — version 1.3 (v5.166.x)</h4>
+      <h4>✅ Exactitude — version 1.3 (v5.170.x)</h4>
       <p>
         Cette documentation est extraite du code source <code>delegate_tool.py</code> v1.3
         et de <code>echo_constants.py</code> v5.6 (DELEGATE_SUBAGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX).
@@ -400,7 +404,7 @@ SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
     </div>
 
     <footer>
-      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.166.0
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.170.17
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -8,8 +8,8 @@ ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestratio
 - **IDE :** VS Code.
 - **Terminal :** PowerShell (Admin requis pour Hyper-V).
 - **Infrastructure Cible :** Machine Virtuelle Ubuntu 24.04 sur Hyper-V.
-- **Orchestration :** Docker Compose (Standardisé version 7.7+).
-- **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `deploy-hyperv.ps1` (injection ZIP via disque Seed) et `/opt/ECHO/echo-scripts/sync-echo.sh`.
+- **Orchestration :** Docker Compose (Standardisé version 9.3+ avec WAF ModSecurity granulaire).
+- **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `deploy-hyperv.ps1` (injection ZIP via disque Seed), `sync-echo.sh` (distribution), et `upgrade-echo.sh` (mise à niveau majeure de l'infrastructure).
 
 ## 🏗️ Architecture V5 : Le Triptyque Fondamental
 
@@ -25,7 +25,7 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 ### 2. La Conscience (`/opt/ECHO/owui-filters/`)
 - **Base vectorielle des souvenirs :** Système RAG vectoriel (Qdrant) avec Distillation Contextuelle automatique par **fenêtre glissante déterministe** (`WINDOW_SIZE`=5 + `WINDOW_OVERLAP`=2, configurable). Nettoyage des messages (role+content+fichiers) pour optimiser le budget tokens du Gemma 4 E4B local.
 - **Gestion de l'importance des souvenirs :** Algorithme de fusion sémantique préservant le score `memory_importance` maximal des souvenirs.
-- **Smart Context :** Injection de faits via des balises XML structurelles (`<smart_context>`).
+- **Smart Context :** Injection de faits via des balises XML structurelles (`<smart_context>`) et utilisation de `source_id` natifs (au lieu de slugs) pour le RAG éphémère.
 
 ### 3. Contexte Proprioceptif : `environnement_contexte`
 Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté systématiquement par le filtre `new_context_filter.py`.
@@ -37,17 +37,20 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites de gestion mémoire : `save_memory` (long terme, importance 1→5), `search_memory` (reranking pondéré), `save_session_context` / `search_session_context` (RAG éphémère par session), `forget_memory`, `list_memory_topics`.
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes) via `universal_visual_generator.py` et `echo_visuals.py` (Pattern 'Data Island' pour isoler le JS).
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) avec distillation de page (`distill_page`) et indexation RAG éphémère automatique.
+- **Delegate Sub-Agent (`delegate_tool.py`) :** Délégation asynchrone sécurisée. Contraintes pour l'agent de codage : pas de récursion (`depth=1`), pas d'écriture RAG (`save_memory` interdit), et appendice système injecté dynamiquement.
 - **Explorateur de l'Espace Personnel :** Analyse sécurisée et indexation des documents locaux de l'utilisateur.
 - **ECHO Codex (`echo_codex_tool.py`) :** Éditeur multi-langage avec Git intégré (dulwich). 9 fonctions (create, edit, read, search, summarize, list, delete, history). Édition assistée par sub-chat `MODEL_FLASH` via `call_cascade`. Registre `codex_docs` dans SQLite par chat. Distillation locale Gemma pour résumé technique.
 
 ### 5. Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
-- **Régulation :** Monitoring du framework et gestion des sessions.
+- **Dashboard Gridstack :** Interface interactive de monitoring du cluster Docker et des ressources système.
+- **Régulation & Consolidation :** Optimisation physique SQLite (Vacuum/WAL) et gestion des sauvegardes à chaud.
 - **Purge Temporelle des Souvenirs (TTL) :** Centralisation du processus d'élagage de la base vectorielle des souvenirs pour optimiser les performances.
 
 ### 6. Actions Interactives (`/opt/ECHO/owui-actions/`)
 - **Cockpit de Rejeu :** Interface de contrôle pour la navigation web (`web_navigation_replay_action.py`).
 - **Export PDF :** Export de conversations en PDF via `export_pdf_action.py`.
 - **Purge Mémoire :** Interface scrollable de suppression sélective de la base vectorielle (`purge_memory_action.py`) avec filtrage par tags, sélection par plage et confirmation.
+- **Sub-Agent Monitor :** Action HUD (`subagent_monitor_action.py`) offrant une vue arborescente des threads cognitifs en temps réel via lecture SQLite.
 - **Réinitialisation Auth :** Purge des tokens Google OAuth2 de l'Espace Personnel (`reset_auth_action.py`).
 - **ECHO Codex (`echo_codex_action.py`) :** HUD Monaco Editor draggable avec file tree, mini-chat AI (quick actions), diff view (accept/reject), import/export PC, navigation historique Git (◀ ▶ avec mode read-only), restauration de version.
 
@@ -98,6 +101,6 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.166.0*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.170.17*
 
 

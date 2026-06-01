@@ -1,8 +1,8 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 9.4
-description: 8.5: RAG éphémère. 8.8: Suppression manual_control. 8.9: Fix Qdrant. 9.0: Fix SigLIP-2. 9.1: bge-m3 — chunking paragraphes sémantiques, max_tokens=8192, dim=1024. 9.2: Fix MODEL_FLASH→MODEL_DISTILLATION sur brief_summary, factorisation vectorisation via index_text_in_ephemeral_rag. 9.3: Suppression ANALYSE_MODEL UserValve. Distillation page via call_cascade() centralisé. 9.4: Propagation user_id au clamp_model (fallback SQLite echo_settings).
+version: 9.5
+description: 8.5: RAG éphémère. 8.8: Suppression manual_control. 8.9: Fix Qdrant. 9.0: Fix SigLIP-2. 9.1: bge-m3 — chunking paragraphes sémantiques, max_tokens=8192, dim=1024. 9.2: Fix MODEL_FLASH→MODEL_DISTILLATION sur brief_summary, factorisation vectorisation via index_text_in_ephemeral_rag. 9.3: Suppression ANALYSE_MODEL UserValve. Distillation page via call_cascade() centralisé. 9.4: Propagation user_id au clamp_model (fallback SQLite echo_settings). 9.5: Isolation stricte des screenshots web dans le Vault de la session (get_echo_session_path).
 """
 
 import httpx
@@ -19,7 +19,7 @@ from typing import Optional, Literal, Dict, Any, List
 
 # Import Lib Partagée (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, clamp_model
+from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, clamp_model, get_echo_session_path
 from echo_ui import EchoUI
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, MODEL_ROUTING,
@@ -66,9 +66,7 @@ async def _deploy_navigation_monitor(valves, res_view, chat_id, uid, u_valves, e
             file_id = generate_echo_file_id(uid, chat_id)
             filename = f"{file_id}_frame.png"
             state_manager = EchoStateManager(user_id=uid)
-            vault_path = os.path.join(state_manager.user_dir, "files")
-            
-            if not os.path.exists(vault_path): os.makedirs(vault_path, exist_ok=True)
+            vault_path = get_echo_session_path(uid, chat_id, "files")
             
             img_data = base64.b64decode(b64)
             with open(os.path.join(vault_path, filename), "wb") as f: 
@@ -158,7 +156,7 @@ class Tools:
             res_view = await _req(self.valves, "/action", {"session_id": chat_id, "action": "highlight"}, uid)
             current_url = res_view.get("url", "unknown")
             domain = urllib.parse.urlparse(current_url).netloc.replace(".", "_") if current_url != "unknown" else "page"
-            slug = f"{domain}_{uuid.uuid4().hex[:4]}"
+            source_id = f"{domain}_{uuid.uuid4().hex[:4]}"
             
             await events.status(f"🧠 Distillation de la page → vectorisation locale...")
             try:
@@ -188,7 +186,7 @@ class Tools:
                 
                 # --- VECTORISATION DANS LE RAG ÉPHÉMÈRE (méthode partagée) ---
                 nb_points, err = await EchoGeminiClient.index_text_in_ephemeral_rag(
-                    distillate, slug, uid, chat_id, __user__, __metadata__
+                    distillate, source_id, uid, chat_id, __user__, __metadata__
                 )
                 if nb_points == 0:
                     return wrap_tool_output(
@@ -204,9 +202,9 @@ class Tools:
                 brief_summary = await EchoGeminiClient.call_distillation(summary_prompt, __user__, __metadata__, is_json=False, max_tokens=8000, target_model="MODEL_DISTILLATION")
                 
                 out_msg = (
-                    f"✅ Page web traitée et indexée sous le slug `{slug}` ({nb_points} vecteurs).\n\n"
+                    f"✅ Page web traitée et indexée sous l'identifiant `{source_id}` ({nb_points} vecteurs).\n\n"
                     f"### Résumé Sémantique\n{brief_summary}\n\n"
-                    f"> **Action requise :** Utilisez l'outil `search_session_context(slug=\"{slug}\", query=\"...\")` pour interroger la page en profondeur."
+                    f"> **Action requise :** Utilisez l'outil `search_session_context(source_id=\"{source_id}\", query=\"...\")` pour interroger la page en profondeur."
                 )
                 
                 # IMPORTANT: On ne retourne pas res_action dans status, car il contient 'content' (le HTML b64 complet)

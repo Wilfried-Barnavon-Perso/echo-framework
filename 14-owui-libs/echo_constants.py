@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.6
+version: 5.9
 description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
@@ -18,6 +18,8 @@ description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              cognitive_agents — point de vérité unique pour tout le framework ECHO.
              4.9: Ajout MODEL_MAP_CA (capacités AGY certifiées, diag v2.1 2026-05-25).
              AGY_MODEL_MAP devient alias auto-généré depuis MODEL_MAP_CA.
+             5.7: Ajout des constantes globales Smart Context (Map-Reduce RAG V2).
+             5.8: Update MODEL_DISTILLATION to gemini-3.1-flash-lite.
              MAX_TOKENS_DEFAULT 65536→65535 (limite universelle AI Studio + AGY).
              5.0: Renommage des identifiants Code Assist → AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
              CODE_ASSIST_BASE_URL→AGY_BASE_URL, CODE_ASSIST_MODEL_MAP→AGY_MODEL_MAP (alias rétrocompat conservé).
@@ -50,6 +52,9 @@ ECHO_USERS_ROOT = f"{ECHO_BASE_DATA_DIR}/users"
 ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
+
+ECHO_SESSION_DOMAINS = ["plans", "codex", "files", "db"]
+ECHO_GLOBAL_DOMAINS = ["skills"]
 
 # Identité Réseau (Antigravity 2.1)
 ECHO_USER_AGENT             = "antigravity/2.1.0"
@@ -168,7 +173,8 @@ ECHO_RETRY_JITTER_MIN    = 0.7
 ECHO_RETRY_JITTER_MAX    = 1.3
 
 # ==============================================================================
-# 1.1 MODÈLES ECHO & REGISTRE COGNITIF (v5.99.1)
+# 1.1 MODULE : CONSTANTES ET DEFAULTS ECHO (CENTRALISATION)
+# VERSION : 5.999.1
 # ==============================================================================
 
 # 1. IDENTIFIANTS TECHNIQUES — référence AI Studio (canonique).
@@ -179,7 +185,7 @@ MODEL_FLASH = "gemini-3.5-flash"        # FLASH — AI Studio ✅ 200      | CA 
 MODEL_LITE  = "gemini-3.1-flash-lite"   # LITE  — identique sur les deux APIs ✅ 200
 
 # --- MÉMOIRE ORGANIQUE V2 ---
-MODEL_DISTILLATION = "gemini-2.5-flash"  # identique sur les deux APIs ✅ 200
+MODEL_DISTILLATION = "gemini-3.1-flash-lite"  # identique sur les deux APIs ✅ 200
 MODEL_EMBEDDING    = "BAAI/bge-m3"      # Modèle texte-first, multilingue, 1024d, 8192 tokens
 MODEL_LOCAL_GEMMA  = "LOCAL_GEMMA"      # Distillation locale (Gemma 4 E4B, GGUF Q5_K_M)
 
@@ -348,6 +354,14 @@ MAX_TOKENS_DEFAULT = 65535  # Limite universelle — tous modèles, toutes APIs 
                              # 65535 : aligné sur les modèles Gemini 3.1 sur CA (Pro, Lite, 2.5-flash).
                              # Gemini 3 Flash CA supporte 65536 mais on aligne sur le plus restrictif.
                              # Utilisé par : pipe_engine (stream), call_distillation, echo_protocol.
+
+# --- INJECTION ET SMART CONTEXT (RAG ÉPHÉMÈRE) ---
+MAX_DIRECT_TEXT_INJECT_SIZE   = 32768    # 32 Ko : Plafond d'injection directe pour le texte
+MAX_DIRECT_MMEDIA_INJECT_SIZE = 5242880  # 5 Mo  : Plafond d'injection directe base64 multimédia
+ECHO_MR_CHUNK_SIZE            = 262144   # 256 Ko : Taille d'un chunk Map-Reduce texte
+ECHO_MR_OVERLAP_SIZE          = 1024     # 1 Ko   : Recouvrement (overlap) entre chunks
+ECHO_MR_MAX_TOKENS            = 1600     # Limite de sortie (tokens) pour les distillations du Map-Reduce
+ECHO_MR_SUMMARY_MAX_WORDS     = 400      # Limite de taille en mots pour les résumés générés ET pour le bypass (Fast-Path)
 
 # ----------------------------
 

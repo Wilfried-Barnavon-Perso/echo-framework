@@ -15,7 +15,7 @@ from typing import Any
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output
-from echo_constants import ECHO_USERS_ROOT
+from echo_constants import ECHO_BASE_DATA_DIR
 
 class Tools:
     class Valves(BaseModel):
@@ -27,7 +27,7 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
         # Le chemin racine des bases de données unifiées (v5.76.0+)
-        self.db_root_dir = ECHO_USERS_ROOT
+        self.db_root_dir = f"{ECHO_BASE_DATA_DIR}/users"
 
     def get_context_load(
         self, 
@@ -59,8 +59,8 @@ class Tools:
             
             # 2. Chemin vers la session (Tokens)
             if chat_id:
-                safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
-                session_db = os.path.join(self.db_root_dir, safe_uid, "chats", f"{safe_cid}.db")
+                from echo_utils import get_echo_session_path
+                session_db = get_echo_session_path(user_id, chat_id, "db")
             else:
                 session_db = identity_db # Fallback sur identity si pas de chat_id
 

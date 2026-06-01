@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.8
+# VERSION : 6.9
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
@@ -46,6 +46,7 @@ if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
     docker rm $(docker ps -aq) > /dev/null 2>&1 && echo "Conteneurs supprimés"
     docker volume rm $(docker volume ls -q) > /dev/null 2>&1 && echo "Volumes actifs supprimés"
     docker system prune -a --volumes -f > /dev/null 2>&1 && echo "Volumes orphelins et images supprimé"
+    docker builder prune -a -f > /dev/null 2>&1 && echo "Cache de construction purgé"
     rm -rf "$ECHO_SECRETS" && echo "Fichiers secrets supprimés"
 fi
 

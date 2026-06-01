@@ -3,9 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ECHO Codex v5.166 : éditeur de code Monaco multi-langage avec Git intégré (dulwich), HUD draggable, édition AI assistée via cascade Gemini, navigation historique, 9 fonctions LLM (create, edit, read, search, summarize, list, delete, history, restore).">
+  <meta name="description" content="ECHO Codex v5.170 : éditeur de code Monaco multi-langage avec Git intégré (dulwich), HUD draggable, édition AI assistée, WYSIWYG, navigation historique, 9 fonctions LLM (create, edit, read, search, summarize, list, delete, history, restore).">
   <title>ECHO v5 — 7h. ECHO Codex (Éditeur)</title>
   <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', padding: 16 } });
+  </script>
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
@@ -28,7 +33,7 @@
       <ul>
         <li>
           <strong><code>echo_codex_git.py</code></strong> (<code>14-owui-libs/</code>) — Bibliothèque bas niveau :
-          classe <code>CodexRepo</code> gérant le dépôt Git dulwich (CRUD fichiers, commits, historique, diff, lecture à un commit donné).
+          classe <code>CodexRepo</code> gérant le dépôt Git dulwich (CRUD fichiers, commits, historique, diff, lecture à un commit donné, renommage).
         </li>
         <li>
           <strong><code>echo_codex_tool.py</code></strong> (<code>12-owui-tools/</code>) — Outil LLM (Tool Call) :
@@ -36,9 +41,34 @@
         </li>
         <li>
           <strong><code>echo_codex_action.py</code></strong> (<code>13-owui-actions/</code>) — Action HUD :
-          éditeur Monaco interactif injecté dans le DOM d'Open WebUI, avec édition AI, navigation Git et accès bidirectionnel Python ↔ JS.
+          éditeur Monaco interactif injecté dans le DOM d'Open WebUI, avec édition AI, panneau de prévisualisation WYSIWYG, navigation Git et accès bidirectionnel Python ↔ JS.
         </li>
       </ul>
+      <div class="mermaid-wrapper">
+        <div class="mermaid-header">
+          <span>Architecture Codex</span>
+          <span>[Interaction Components]</span>
+        </div>
+        <div class="mermaid">
+flowchart TD
+  U([Utilisateur]) -->|HUD interactif| ACT[echo_codex_action.py<br/>HUD + Monaco + WYSIWYG]
+  LLM[Gemini] -->|Tool Calls| TOOL[echo_codex_tool.py<br/>9 Fonctions LLM]
+
+  ACT --> |Python ↔ JS Promise| GIT[echo_codex_git.py<br/>CodexRepo dulwich]
+  TOOL --> GIT
+
+  GIT --> |CRUD + Git| FS[Vault Codex<br/>/users/id/files/codex/]
+  GIT --> |Proprioception| DB[(SQLite codex_docs)]
+
+  classDef frontend fill:#4a1d96,stroke:#8b5cf6,color:#f8fafc
+  classDef backend fill:#1e293b,stroke:#475569,color:#f8fafc
+  classDef db fill:#0f172a,stroke:#3b82f6,color:#f8fafc
+
+  class ACT frontend
+  class TOOL,GIT backend
+  class FS,DB db
+        </div>
+      </div>
     </div>
 
     <h2>Stockage — Le Vault Codex</h2>
@@ -268,7 +298,7 @@
 4. Patterns et conventions utilisés
 5. Points d'attention, complexité, dette technique éventuelle</code></pre>
 
-    <h2>Action HUD — <code>echo_codex_action.py</code> (v1.5)</h2>
+    <h2>Action HUD — <code>echo_codex_action.py</code> (v1.8)</h2>
 
     <p>
       L'Action ECHO Codex injecte un <strong>éditeur Monaco complet</strong> directement dans le DOM
@@ -289,11 +319,11 @@
       <tbody>
         <tr>
           <td><strong>File Tree (panneau gauche)</strong></td>
-          <td>Liste des fichiers du Codex. Clic → chargement dans l'éditeur. Icône × → suppression. Icône + → nouveau fichier.</td>
+          <td>Liste dynamique des fichiers du Codex triés par <code>mtime</code>. Clic → chargement dans l'éditeur. Clic droit → Renommage natif (OS/Git). Icône × → suppression. Icône + → nouveau fichier.</td>
         </tr>
         <tr>
           <td><strong>Monaco Editor (zone centrale)</strong></td>
-          <td>Éditeur pleine page avec coloration syntaxique, numéros de lignes, word wrap, minimap. Ctrl+S → sauvegarde immédiate.</td>
+          <td>Éditeur Monaco avec <strong>panneau de prévisualisation WYSIWYG</strong> intégré (rendu HTML/Markdown). Bouton de sauvegarde explicite. Ctrl+S → sauvegarde + commit immédiat.</td>
         </tr>
         <tr>
           <td><strong>Barre d'état</strong></td>
@@ -336,6 +366,7 @@
         <tr><td><code>history_restore</code></td><td><code>commit_file()</code> avec message <code>"Restore from {hash}"</code> + <code>echoCodexNotify('restored')</code>.</td></tr>
         <tr><td><code>new_file</code></td><td><code>commit_file(filename, "", "Create ...")</code> + refresh tree.</td></tr>
         <tr><td><code>load_file</code></td><td><code>read_file()</code> → <code>echoCodexSetContent()</code>.</td></tr>
+        <tr><td><code>rename_file</code></td><td><code>repo.rename_file(old, new)</code> + mise à jour <code>codex_docs</code> + refresh tree.</td></tr>
         <tr><td><code>delete_file</code></td><td><code>delete_file()</code> + <code>delete_codex_record()</code> + refresh tree + auto-switch vers premier fichier.</td></tr>
         <tr><td><code>reset</code></td><td><code>repo.reset_all()</code> + <code>state.clear_codex_records()</code> + <code>echoCodexReset()</code> (destroy HUD) + sortie boucle.</td></tr>
         <tr><td><code>refresh</code></td><td><code>list_files()</code> → <code>echoCodexRefreshTree()</code> + rechargement fichier courant.</td></tr>
@@ -474,8 +505,8 @@
         <tr>
           <td>Action HUD Codex</td>
           <td><code>13-owui-actions/echo_codex_action.py</code></td>
-          <td>1.5</td>
-          <td>Éditeur Monaco interactif (priorité 4)</td>
+          <td>1.8</td>
+          <td>Éditeur Monaco interactif avec WYSIWYG (priorité 5)</td>
         </tr>
         <tr>
           <td><code>_generate_codex_js()</code></td>
@@ -498,7 +529,7 @@
         <tr>
           <td><code>registre_codex</code></td>
           <td><code>11-owui-filters/new_context_filter.py</code></td>
-          <td>7.12</td>
+          <td>7.18</td>
           <td>Injection proprioceptive dans <code>environnement_contexte</code></td>
         </tr>
       </tbody>
@@ -523,7 +554,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

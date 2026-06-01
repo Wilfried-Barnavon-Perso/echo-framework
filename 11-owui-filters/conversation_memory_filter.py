@@ -3,6 +3,7 @@ title: ECHO Memory Filter V2 (Base Vectorielle des Souvenirs)
 author: Wilfried BARNAVON
 version: 4.0
 description: 4.0: Fenêtre glissante déterministe (WINDOW_SIZE + WINDOW_OVERLAP), nettoyage des messages (role+content+fichiers), prompt 100-1000 mots, suppression du déclenchement probabiliste.
+             4.1: Clean Slate refactor. Remplacement complet de 'slug' par 'memory_id'.
 """
 
 from pydantic import BaseModel, Field
@@ -110,7 +111,7 @@ class Filter:
                 "             La densité et la précision priment sur l'exhaustivité.\n"
                 "             Concentre-toi sur les faits techniques, décisions et préférences actionnables.\n"
                 "- 'memory_importance': Score de 1 (Trivial) à 5 (Critique/Fondateur).\n"
-                "- 'slug': Identifiant sémantique court et unique (ex: 'pref_python_format', 'archi_db_cluster').\n"
+                "- 'memory_id': Identifiant sémantique court et unique (ex: 'pref_python_format', 'archi_db_cluster').\n"
                 "- 'tags': 3 à 5 tags techniques TRÈS SPÉCIFIQUES."
             )
             u_ctx = {"id": user_id}
@@ -127,11 +128,11 @@ class Filter:
             
             summary = distilled["summary"]
             new_memory_importance = int(distilled.get("memory_importance", distilled.get("importance", 1))) # fallback compatibilité
-            new_slug = distilled.get("slug", "generic_note")
+            new_memory_id = distilled.get("memory_id", distilled.get("slug", "generic_note"))
             tags = distilled.get("tags", [])
             
             # --- 2. Vectorisation Locale (BAAI/bge-m3 via echo-embedding worker) ---
-            vector = await EchoGeminiClient.generate_embedding(summary, "document", u_ctx, m_ctx, title=new_slug)
+            vector = await EchoGeminiClient.generate_embedding(summary, "document", u_ctx, m_ctx, title=new_memory_id)
             if not vector: return
 
             # 3. Collision Sémantique (Recherche vectorielle pure)
@@ -143,8 +144,8 @@ class Filter:
                 resp_search = await client.post(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/search", json=search_payload)
                 results = resp_search.json().get("result", [])
                 
-                final_summary = summary; final_slug = new_slug; final_memory_importance = new_memory_importance
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{new_slug}"))
+                final_summary = summary; final_memory_id = new_memory_id; final_memory_importance = new_memory_importance
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{new_memory_id}"))
                 
                 if results:
                     hit = results[0]
@@ -153,7 +154,7 @@ class Filter:
                     
                     if score > self.valves.SIMILARITY_THRESHOLD:
                         point_id = hit.get("id")
-                        final_slug = old_payload.get("slug", new_slug)
+                        final_memory_id = old_payload.get("memory_id", old_payload.get("slug", new_memory_id))
                         old_memory_importance = int(old_payload.get("memory_importance", old_payload.get("importance", 1))) # fallback compatibilité
                         # Gestion de l'importance des souvenirs : on conserve le score maximal (fusion préservative)
                         final_memory_importance = max(old_memory_importance, new_memory_importance)
@@ -170,13 +171,13 @@ class Filter:
                         "id": point_id, "vector": vector,
                         "payload": {
                             "user_id": user_id, "chat_id": chat_id, "timestamp": int(time.time()),
-                            "memory_importance": final_memory_importance, "slug": final_slug, "tags": tags, "summary": final_summary
+                            "memory_importance": final_memory_importance, "memory_id": final_memory_id, "tags": tags, "summary": final_summary
                         }
                     }]
                 }
                 await client.put(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points", json=point_payload)
                 
-            logger.info(f"[ECHO-MEMORY-V2] ✅ Enregistrement vectoriel '{final_slug}' (Lvl {final_memory_importance}) effectué.")
+            logger.info(f"[ECHO-MEMORY-V2] ✅ Enregistrement vectoriel '{final_memory_id}' (Lvl {final_memory_importance}) effectué.")
 
         except Exception as e:
             logger.error(f"[ECHO-MEMORY-V2] ❌ Erreur pipeline: {e}")

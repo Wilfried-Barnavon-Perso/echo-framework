@@ -1,18 +1,21 @@
 """
 MODULE : ECHO GEMMA DISTILLER
-VERSION : 1.0
+VERSION : 1.2
 ROLE : Serveur de distillation locale (Gemma 4 E4B, GGUF Q5_K_M)
        API compatible OpenAI /v1/chat/completions
        Détection GPU automatique (CUDA → CPU fallback)
+       Support natif multi-threading dynamique (N_THREADS)
 """
 
 import os
 import time
 import logging
+import asyncio
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from typing import Optional
 import uvicorn
+import multiprocessing
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ECHO-GEMMA")
@@ -25,6 +28,9 @@ MODEL_PATH = os.environ.get("MODEL_PATH", "/models/distiller.gguf")
 N_CTX      = int(os.environ.get("N_CTX", 4096))
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", 2048))
 PORT       = int(os.environ.get("PORT", 7998))
+
+DEFAULT_THREADS = max(1, multiprocessing.cpu_count())
+N_THREADS = int(os.environ.get("N_THREADS", DEFAULT_THREADS))
 
 # ==============================================================================
 # CHARGEMENT DU MODÈLE (une seule fois au démarrage)
@@ -43,16 +49,18 @@ except ImportError:
 N_GPU_LAYERS = -1 if GPU_AVAILABLE else 0  # -1 = toutes les couches sur GPU
 DEVICE = "cuda" if GPU_AVAILABLE else "cpu"
 
-logger.info(f"🔧 Device détecté : {DEVICE} (n_gpu_layers={N_GPU_LAYERS})")
+logger.info(f"🔧 Device détecté : {DEVICE} (n_gpu_layers={N_GPU_LAYERS}, n_threads={N_THREADS})")
 logger.info(f"📦 Chargement du modèle : {MODEL_PATH}")
 
 model = Llama(
     model_path=MODEL_PATH,
     n_ctx=N_CTX,
     n_gpu_layers=N_GPU_LAYERS,
+    n_threads=N_THREADS,
+    n_threads_batch=N_THREADS,
     verbose=False
 )
-logger.info(f"✅ Modèle chargé sur {DEVICE}")
+logger.info(f"✅ Modèle chargé sur {DEVICE} avec {N_THREADS} threads")
 
 # ==============================================================================
 # GRAMMAR GBNF — Force la sortie JSON valide (équivalent response_mime_type)
@@ -80,7 +88,10 @@ ws     ::= [ \t\n]*
 # API FastAPI
 # ==============================================================================
 
-app = FastAPI(title="ECHO Gemma Distiller", version="1.0")
+app = FastAPI(title="ECHO Gemma Distiller", version="1.1")
+
+# Verrou asynchrone global pour sérialiser l'inférence
+inference_lock = asyncio.Lock()
 
 
 class ChatMessage(BaseModel):
@@ -124,13 +135,20 @@ async def chat_completions(req: CompletionRequest):
         grammar = LlamaGrammar.from_string(JSON_GBNF)
 
     t0 = time.time()
-    output = model(
-        prompt,
-        max_tokens=req.max_tokens,
-        temperature=max(req.temperature, 0.01),  # llama.cpp refuse temperature=0.0 strict
-        grammar=grammar,
-        stop=["<end_of_turn>", "<eos>"]
-    )
+    
+    def run_inference():
+        return model(
+            prompt,
+            max_tokens=req.max_tokens,
+            temperature=max(req.temperature, 0.01),  # llama.cpp refuse temperature=0.0 strict
+            grammar=grammar,
+            stop=["<end_of_turn>", "<eos>"]
+        )
+
+    # Exécution protégée dans le threadpool pour ne pas bloquer l'Event Loop
+    async with inference_lock:
+        output = await asyncio.to_thread(run_inference)
+        
     elapsed = time.time() - t0
 
     text = output["choices"][0]["text"].strip()

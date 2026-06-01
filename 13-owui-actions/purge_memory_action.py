@@ -3,6 +3,7 @@ title: Purge Mémoire Long Terme /!\
 author: Wilfried BARNAVON
 version: 3.2
 description: 3.2: Confirmation finale scrollable + tri alpha slugs. Dialog périmètre avec explication mémoire long terme (voix ECHO). 3.1: HUD déroulant, sélection vide = TOUT.
+             3.3: Refonte identifiants, remplacement des slugs par memory_id.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5Z29uIHBvaW50cz0iMjIgMyAyIDMgMTAgMTIuNDYgMTAgMTkgMTQgMjEgMTQgMTIuNDYgMjIgMyIvPjwvc3ZnPg==
 """
 
@@ -70,15 +71,15 @@ class Action:
             print(f"[ECHO-PURGE] Erreur tags enriched: {e}")
             return []
 
-    async def _get_impacted_slugs(self, must_filters: List[Dict]) -> List[str]:
-        """Effectue un Dry Run pour récupérer les slugs des souvenirs qui vont être supprimés."""
-        slugs: Set[str] = set()
+    async def _get_impacted_memory_ids(self, must_filters: List[Dict]) -> List[str]:
+        """Effectue un Dry Run pour récupérer les memory_ids des souvenirs qui vont être supprimés."""
+        memory_ids: Set[str] = set()
         try:
             async with httpx.AsyncClient(timeout=20) as client:
                 search_payload = {
                     "filter": {"must": must_filters},
                     "limit": 50, # On limite l'affichage
-                    "with_payload": ["slug"]
+                    "with_payload": ["memory_id", "slug"]
                 }
                 
                 resp = await client.post(
@@ -89,9 +90,9 @@ class Action:
                 if resp.status_code == 200:
                     results = resp.json().get("result", {}).get("points", [])
                     for p in results:
-                        slug = p.get("payload", {}).get("slug")
-                        if slug: slugs.add(slug)
-                return list(slugs)
+                        memory_id = p.get("payload", {}).get("memory_id", p.get("payload", {}).get("slug"))
+                        if memory_id: memory_ids.add(memory_id)
+                return list(memory_ids)
         except: return []
 
     async def action(self, body: dict, __user__: Optional[dict] = None, __event_emitter__: Any = None, __event_call__: Any = None, **kwargs):
@@ -217,29 +218,29 @@ class Action:
         if scope_choice and chat_id:
             must_filters.append({"key": "chat_id", "match": {"value": chat_id}})
             
-        impacted_slugs = await self._get_impacted_slugs(must_filters)
+        impacted_memory_ids = await self._get_impacted_memory_ids(must_filters)
         
-        if not impacted_slugs:
+        if not impacted_memory_ids:
             await events.status("🧠 Aucun souvenir correspondant à ces critères.", True)
             await events.toast("Aucun souvenir trouvé pour ces tags dans ce périmètre.", "info")
             return None
             
         # Tri alphabétique des sujets impactés
-        impacted_slugs.sort()
-        slug_items = "".join([f"<div style='padding:1px 0'>• <i>{s}</i></div>" for s in impacted_slugs])
-        slug_preview = (
+        impacted_memory_ids.sort()
+        memory_id_items = "".join([f"<div style='padding:1px 0'>• <i>{s}</i></div>" for s in impacted_memory_ids])
+        memory_id_preview = (
             f"<div style='max-height:150px; overflow-y:auto; border:1px solid #444; "
             f"border-radius:6px; padding:6px 8px; margin:6px 0; background:rgba(0,0,0,0.2); "
-            f"font-size:12px; scrollbar-width:thin;'>{slug_items}</div>"
+            f"font-size:12px; scrollbar-width:thin;'>{memory_id_items}</div>"
         )
 
         # 5. Confirmation finale Sécurisée
         final_conf = await events.confirm(
             "⚠️ Confirmation finale de suppression",
             (
-                f"ECHO va oublier <b>{len(impacted_slugs)} souvenir(s)</b> associé(s) aux tags "
+                f"ECHO va oublier <b>{len(impacted_memory_ids)} souvenir(s)</b> associé(s) aux tags "
                 f"[{', '.join(selected_tags)}] dans {scope_text}.<br><br>"
-                f"<b>Sujets impactés :</b>{slug_preview}"
+                f"<b>Sujets impactés :</b>{memory_id_preview}"
                 f"Cette action est irréversible. Continuer ?"
             )
         )
@@ -261,7 +262,7 @@ class Action:
 
                 if resp.status_code == 200:
                     await events.status("🧠 Mémoire purgée avec succès.", True)
-                    await events.toast(f"✅ {len(impacted_slugs)} souvenirs oubliés.", "success")
+                    await events.toast(f"✅ {len(impacted_memory_ids)} souvenirs oubliés.", "success")
                 else:
                     await events.status("❌ Échec de la purge.", True)
                     await events.toast(f"❌ Erreur Qdrant : {resp.text}", "error")

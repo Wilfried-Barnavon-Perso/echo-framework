@@ -1,7 +1,7 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 7.21
+version: 7.24
 description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
              Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
@@ -23,6 +23,7 @@ description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migra
              enabled_credit_types omis par défaut (alignement AGY-IDE).
               7.16: generate_embedding() retry (1 retry, 2s backoff) + timeouts relaxés
               pour absorber les environnements contraints (Hyper-V sous charge) :
+              7.23: Suppression 'target_model != MODEL_DISTILLATION' dans call_distillation pour autoriser le routage.
               embedding 30→60s, distiller 60→120s, index_rag 120→180s.
                7.17: Centralisation politique modèle Pipe → outils. resolve_model_policy(),
                clamp_model(), call_cascade(). Crédits via enable_paid_credits paramètre
@@ -39,6 +40,7 @@ description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migra
                (data, model_key, reason) avec reason contextuel (policy/API error/exhausted).
                7.21: Ajout table codex_docs et méthodes CRUD (save_codex_record, delete_codex_record,
                get_codex_docs, clear_codex_records) pour le Codex ECHO.
+               7.22: Fix OSError dans move_to_vault (création du dossier session manquante).
 """
 
 import copy
@@ -76,6 +78,33 @@ from echo_constants import (
     ECHO_GEMMA_URL,      # URL du service de distillation local (Gemma 4 E4B)
 )
 from echo_protocol import get_ca_model_id, build_ca_generation_config
+
+# ==============================================================================
+# ROUTAGE D'ARCHITECTURE (Session & Global)
+# ==============================================================================
+from echo_constants import ECHO_SESSION_DOMAINS, ECHO_GLOBAL_DOMAINS
+
+def get_echo_global_path(user_id: str, domain: str) -> str:
+    """Retourne le chemin standardisé pour un domaine global (ex: skills)."""
+    if domain not in ECHO_GLOBAL_DOMAINS:
+        raise ValueError(f"[ECHO] Domaine global invalide : {domain}")
+    safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+    return os.path.join(ECHO_USERS_ROOT, safe_uid, domain)
+
+def get_echo_session_path(user_id: str, chat_id: str, domain: str) -> str:
+    """Retourne le chemin standardisé pour un domaine du conteneur de session."""
+    if domain not in ECHO_SESSION_DOMAINS:
+        raise ValueError(f"[ECHO] Domaine de session invalide : {domain}")
+    
+    safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+    safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
+    base_dir = os.path.join(ECHO_USERS_ROOT, safe_uid, "chats", safe_cid)
+    
+    # La base SQLite se nomme session.db à la racine du conteneur
+    if domain == "db":
+        return os.path.join(base_dir, "session.db")
+    
+    return os.path.join(base_dir, domain)
 
 # ==============================================================================
 # SECTION 0 : CLIENT HTTP GLOBAL (HTTP/2)
@@ -184,14 +213,22 @@ def generate_echo_file_id(user_id: str, chat_id: str) -> str:
     ts = int(time.time() * 1000)
     return f"U_{user_id}_C_{chat_id}_T_{ts}"
 
-def resolve_upload_file_path(user_id: str, file_id: str, uploads_dir: str = ECHO_UPLOADS_TRANSIT_DIR) -> Optional[str]:
+def resolve_upload_file_path(user_id: str, file_id: str, uploads_dir: str = ECHO_UPLOADS_TRANSIT_DIR, chat_id: Optional[str] = None) -> Optional[str]:
     if not file_id: return None
     if user_id and user_id != "anonymous" and "/" not in str(user_id):
         safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
-        user_vault = os.path.join(ECHO_USERS_ROOT, safe_uid, "files")
-        pattern = os.path.join(user_vault, f"{file_id}_*")
-        matches = glob.glob(pattern)
-        if matches: return matches[0]
+        if chat_id:
+            user_vault = get_echo_session_path(user_id, chat_id, "files")
+            pattern = os.path.join(user_vault, f"{file_id}_*")
+            matches = glob.glob(pattern)
+            if matches: return matches[0]
+        else:
+            # Fallback de sécurité si appelé hors contexte chat_id
+            user_chats = os.path.join(ECHO_USERS_ROOT, safe_uid, "chats")
+            pattern = os.path.join(user_chats, "*", "files", f"{file_id}_*")
+            matches = glob.glob(pattern)
+            if matches: return matches[0]
+            
     pattern = os.path.join(uploads_dir, f"{file_id}_*")
     matches = glob.glob(pattern)
     return matches[0] if matches else None
@@ -612,7 +649,7 @@ class EchoGeminiClient:
         # - target_model explicite (FLASH, PRO) → API Gemini
         # - target_model=None ou "MODEL_DISTILLATION" → LOCAL_GEMMA (service local)
         use_local = False
-        if target_model and target_model != "MODEL_DISTILLATION":
+        if target_model:
             actual_model = MODEL_ROUTING.get(target_model, target_model)
         else:
             use_local = True
@@ -705,7 +742,7 @@ class EchoGeminiClient:
     @staticmethod
     async def index_text_in_ephemeral_rag(
         distillate: str,
-        slug: str,
+        source_id: str,
         uid: str,
         chat_id: str,
         __user__: dict,
@@ -781,17 +818,17 @@ class EchoGeminiClient:
                 # --- 4. GÉNÉRATION DES EMBEDDINGS ET CONSTRUCTION DES POINTS ---
                 for i, chunk in enumerate(chunks):
                     vector = await EchoGeminiClient.generate_embedding(
-                        chunk, "document", __user__, __metadata__, title=slug
+                        chunk, "document", __user__, __metadata__, title=source_id
                     )
                     if vector:
-                        point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{uid}_{chat_id}_{slug}_{i}"))
+                        point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{uid}_{chat_id}_{source_id}_{i}"))
                         points.append({
                             "id": point_id,
                             "vector": vector,
                             "payload": {
                                 "user_id": uid,
                                 "chat_id": chat_id,
-                                "slug": slug,
+                                "source_id": source_id,
                                 "text": chunk,
                                 "timestamp": int(time.time())
                             }
@@ -1166,12 +1203,16 @@ class EchoStateManager:
         self.chat_id = chat_id
         safe_uid = "".join(x for x in str(self.user_id) if x.isalnum() or x in "-_")
         self.user_dir = os.path.join(ECHO_USERS_ROOT, safe_uid)
-        os.makedirs(os.path.join(self.user_dir, "files"), exist_ok=True)
-        os.makedirs(os.path.join(self.user_dir, "chats"), exist_ok=True)
+        
         if chat_id:
-            safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
-            self.db_path = os.path.join(self.user_dir, "chats", f"{safe_cid}.db")
-        else: self.db_path = os.path.join(self.user_dir, "identity.db")
+            for domain in ECHO_SESSION_DOMAINS:
+                if domain != "db":
+                    os.makedirs(get_echo_session_path(self.user_id, self.chat_id, domain), exist_ok=True)
+            self.db_path = get_echo_session_path(self.user_id, self.chat_id, "db")
+        else: 
+            self.db_path = os.path.join(self.user_dir, "identity.db")
+            
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
     def _get_connection(self):
@@ -1422,11 +1463,15 @@ class EchoStateManager:
         return {}
 
     def move_to_vault(self, file_id: str, filename: str) -> bool:
-        old_path = resolve_upload_file_path(self.user_id, file_id)
+        old_path = resolve_upload_file_path(self.user_id, file_id, chat_id=self.chat_id)
         if not old_path: return False
-        new_path = os.path.join(self.user_dir, "files", os.path.basename(old_path))
+        new_path = os.path.join(get_echo_session_path(self.user_id, self.chat_id, "files"), os.path.basename(old_path))
         try:
-            if not os.path.exists(new_path): shutil.move(old_path, new_path)
+            if not os.path.exists(new_path):
+                if ECHO_UPLOADS_TRANSIT_DIR in old_path:
+                    shutil.move(old_path, new_path)
+                else:
+                    shutil.copy2(old_path, new_path)
             return True
         except: return False
 

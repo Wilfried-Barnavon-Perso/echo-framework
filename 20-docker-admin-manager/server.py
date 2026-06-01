@@ -294,15 +294,35 @@ def run_semantic_pruning():
     report = []
     config = load_maint_config()
     
-    # 1. Orphelins (Dossiers Utilisateurs et Mémoire Qdrant)
+    # 1. API Safeguard (Garde-fou)
+    if HAS_HTTPX:
+        try:
+            admin_token = ""
+            if os.path.exists(OWUI_ADMIN_SECRET_PATH):
+                with open(OWUI_ADMIN_SECRET_PATH, "r") as f:
+                    admin_token = f.read().strip()
+            owui_url = os.environ.get("WEBUI_URL", "http://echo-open-webui:8080")
+            r_auth = httpx.get(f"{owui_url}/api/v1/users/", headers={"Authorization": f"Bearer {admin_token}"}, timeout=5)
+            if r_auth.status_code != 200:
+                err_msg = f"API Safeguard: Auth OWUI échouée (HTTP {r_auth.status_code}). Pruning annulé."
+                print(f"❌ {err_msg}")
+                save_maint_report(err_msg)
+                return err_msg
+        except Exception as e:
+            err_msg = f"API Safeguard: OWUI injoignable ({str(e)}). Pruning annulé."
+            print(f"❌ {err_msg}")
+            save_maint_report(err_msg)
+            return err_msg
+
+    # 2. Orphelins (Dossiers Utilisateurs et Mémoire Qdrant)
     orphans = 0
     qdrant_synced = False
     if os.path.exists(ECHO_USERS_ROOT):
         try:
             conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True)
             valid_ids = {str(row[0]) for row in conn.execute("SELECT id FROM user").fetchall()}
-            try: valid_chats = {str(row[0]) for row in conn.execute("SELECT id FROM chat").fetchall()}
-            except Exception: valid_chats = set()
+            try: db_valid_chats = {str(row[0]) for row in conn.execute("SELECT id FROM chat").fetchall()}
+            except Exception: db_valid_chats = set()
             conn.close()
             
             # --- A. Purge des dossiers de l'Espace Personnel ---
@@ -316,11 +336,11 @@ def run_semantic_pruning():
                 for folder in valid_ids:
                     user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
                     if os.path.exists(user_chats_dir):
-                        for cfile in os.listdir(user_chats_dir):
-                            if cfile.endswith('.db'):
-                                chat_id = cfile.replace('.db', '')
-                                if chat_id not in valid_chats:
-                                    os.remove(os.path.join(user_chats_dir, cfile))
+                        for cdir in os.listdir(user_chats_dir):
+                            if os.path.isdir(os.path.join(user_chats_dir, cdir)):
+                                chat_id = cdir
+                                if chat_id not in db_valid_chats:
+                                    shutil.rmtree(os.path.join(user_chats_dir, cdir))
                                     orphans += 1
             
             # --- B. Purge Temporelle des Souvenirs & Garbage Collection (Qdrant) ---
@@ -353,18 +373,18 @@ def run_semantic_pruning():
                             str_uid = str(uid)
                             # Purge Chats
                             user_chats_dir = os.path.join(ECHO_USERS_ROOT, str_uid, "chats")
-                            valid_chats = []
+                            physical_chats = []
                             if os.path.exists(user_chats_dir):
-                                valid_chats = [f.replace('.db', '') for f in os.listdir(user_chats_dir) if f.endswith('.db')]
+                                physical_chats = [f for f in os.listdir(user_chats_dir) if os.path.isdir(os.path.join(user_chats_dir, f))]
                             
                             if config.get("purge_orphaned_chats", False):
-                                if not valid_chats:
+                                if not physical_chats:
                                     payload = {"filter": {"must": [{"key": "user_id", "match": {"value": str_uid}}]}}
                                 else:
                                     payload = {
                                         "filter": {
                                             "must": [{"key": "user_id", "match": {"value": str_uid}}],
-                                            "must_not": [{"key": "chat_id", "match": {"any": valid_chats}}]
+                                            "must_not": [{"key": "chat_id", "match": {"any": physical_chats}}]
                                         }
                                     }
                                 httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", json=payload, timeout=30)
@@ -396,8 +416,7 @@ def run_semantic_pruning():
 
     # 2. Atrophie
     rem_u = prune_recursive(UPLOADS_DIR, config["retention"]["uploads_days"])
-    rem_v = prune_recursive(ECHO_USERS_ROOT, config["retention"]["vault_days"])
-    report.append(f"Élagage: {rem_u + rem_v}")
+    report.append(f"Élagage: {rem_u}")
 
     # 3. Vacuum
     vax = 0
@@ -522,8 +541,8 @@ def consolidate_memories_for_user(user_id: str, config: dict) -> dict:
             summaries    = [pt["payload"].get("summary", "") for pt in cluster if pt.get("payload")]
             fused_summary = " | ".join(s for s in summaries if s)
             tags          = list({t for pt in cluster for t in pt.get("payload", {}).get("tags", [])})[:5]
-            new_slug      = f"consolidated_{uuid.uuid4().hex[:8]}"
-            new_id        = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{new_slug}"))
+            new_memory_id = f"consolidated_{uuid.uuid4().hex[:8]}"
+            new_id        = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{new_memory_id}"))
 
             # Upsert du nouveau point lvl2
             upsert_resp = httpx.put(
@@ -536,7 +555,7 @@ def consolidate_memories_for_user(user_id: str, config: dict) -> dict:
                         "chat_id":           "consolidated",
                         "timestamp":         int(time.time()),
                         "memory_importance": 2,      # Promotion lvl1 → lvl2
-                        "slug":              new_slug,
+                        "memory_id":         new_memory_id,
                         "tags":              tags,
                         "summary":           fused_summary
                     }
@@ -557,7 +576,7 @@ def consolidate_memories_for_user(user_id: str, config: dict) -> dict:
                 report["points_deleted"]  += len(cluster)
                 report["points_promoted"] += 1
                 report["points_merged"]   += len(cluster)
-                print(f"[ECHO-CONSOLIDATION] \u2705 Cluster {new_slug} : "
+                print(f"[ECHO-CONSOLIDATION] \u2705 Cluster {new_memory_id} : "
                       f"{len(cluster)} lvl1 → 1 lvl2 (user={user_id[:8]})")
 
     except Exception as e:

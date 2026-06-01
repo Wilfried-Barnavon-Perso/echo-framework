@@ -28,7 +28,6 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager, clamp_model
 from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING,
-    ECHO_USERS_ROOT,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
     TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
     THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
@@ -143,19 +142,16 @@ class Tools:
 
     @staticmethod
     def _get_plan_dir(uid: str, chat_id: str) -> str:
-        """Retourne le répertoire des plans pour un chat donné. Le crée si nécessaire."""
-        safe_uid = "".join(x for x in str(uid) if x.isalnum() or x in "-_")
-        safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
-        plan_dir = os.path.join(ECHO_USERS_ROOT, safe_uid, "plans", safe_cid)
-        os.makedirs(plan_dir, exist_ok=True)
+        """Retourne le répertoire des plans pour un chat donné."""
+        from echo_utils import get_echo_session_path
+        plan_dir = get_echo_session_path(uid, chat_id, "plans")
         return plan_dir
 
     @staticmethod
     def _get_plan_path(uid: str, chat_id: str, plan_id: str) -> Optional[str]:
         """Résout le chemin physique d'un plan via glob sur {plan_id}_*.md."""
-        safe_uid = "".join(x for x in str(uid) if x.isalnum() or x in "-_")
-        safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
-        plan_dir = os.path.join(ECHO_USERS_ROOT, safe_uid, "plans", safe_cid)
+        from echo_utils import get_echo_session_path
+        plan_dir = get_echo_session_path(uid, chat_id, "plans")
         matches = glob.glob(os.path.join(plan_dir, f"{plan_id}_*.md"))
         return matches[0] if matches else None
 

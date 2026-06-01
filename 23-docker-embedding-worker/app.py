@@ -19,6 +19,7 @@ CHANGELOG :
 
 import os
 import logging
+import asyncio
 import torch
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
@@ -35,8 +36,11 @@ logger = logging.getLogger("echo-embedding")
 app = FastAPI(
     title="ECHO bge-m3 Embedding Worker",
     description="Worker souverain pour embeddings texte multilingues (BAAI/bge-m3)",
-    version="1.3"
+    version="1.4"
 )
+
+# Verrou asynchrone global pour sérialiser l'inférence
+embedding_lock = asyncio.Lock()
 
 # Configuration via variables d'environnement
 MODEL_ID = os.getenv("MODEL_ID", "BAAI/bge-m3")
@@ -115,14 +119,20 @@ async def create_embeddings(request: EmbeddingRequest, req: Request):
         if isinstance(inputs, str):
             inputs = [inputs]
 
-        data = []
-        for i, item in enumerate(inputs):
-            embedding_vector = process_single_input(item)
-            data.append({
-                "object": "embedding",
-                "index": i,
-                "embedding": embedding_vector
-            })
+        def process_batch_sync(inputs_list):
+            batch_data = []
+            for i, item in enumerate(inputs_list):
+                embedding_vector = process_single_input(item)
+                batch_data.append({
+                    "object": "embedding",
+                    "index": i,
+                    "embedding": embedding_vector
+                })
+            return batch_data
+
+        # Exécution protégée dans le threadpool pour ne pas bloquer l'Event Loop
+        async with embedding_lock:
+            data = await asyncio.to_thread(process_batch_sync, inputs)
 
         duration = time.time() - start_time
         logger.info(f"✨ Vectors Generated | User: {user_id} | Count: {len(inputs)} | Time: {duration:.3f}s")

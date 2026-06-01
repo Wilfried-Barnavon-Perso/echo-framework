@@ -137,10 +137,11 @@
         <a href="07c_vault_explorer.html">Explorer ➔</a>
       </div>
       <div class="card">
-        <h3>🧠 Mémoire &amp; Cognition</h3>
-        <p>RAG organique (<code>save_memory</code>, <code>search_memory</code>,
-        <code>list_memory_topics</code>, <code>forget_memory</code>) et RAG éphémère
-        (<code>save_session_context</code>, <code>search_session_context</code>).</p>
+        <h3>🧠 Mémoire Organique &amp; Éphémère</h3>
+        <p>Architecture mémorielle scindée en deux espaces distincts. La <strong>Mémoire Organique</strong> à long terme 
+        (<code>save_memory</code>, <code>search_memory</code>, <code>forget_memory</code>, <code>list_memory_topics</code>) stockée définitivement, et le 
+        <strong>RAG Éphémère</strong> (<code>save_session_context</code>, <code>search_session_context</code>) servant 
+        d'espace de travail temporaire confiné à la session courante.</p>
         <p><strong>Source :</strong> <code>12-owui-tools/memory_and_rag_tool.py</code></p>
         <a href="07d_memory_cognition.html">Explorer →</a>
       </div>
@@ -152,9 +153,9 @@
         <a href="07e_execution_monitoring.html">Explorer ➔</a>
       </div>
       <div class="card">
-        <h3>🎮 Actions UI (HUD)</h3>
-        <p>Boutons de contrôle manuel injectés dans l'interface : purge mémoire, reset auth,
-        pilotage du Replay web depuis le HUD.</p>
+        <h3>🎮 Actions UI (Cockpits)</h3>
+        <p>Boutons de contrôle manuel et interfaces riches (HUDs) injectés dans l'UI Open WebUI : Cockpit de purge sélective 
+        (Mémoire long terme), Sub-Agent Monitor (visualisation arborescente des threads cognitifs), Reset Auth, Replay Web.</p>
         <p><strong>Source :</strong> <code>13-owui-actions/</code></p>
         <a href="07f_actions_ui.html">Explorer ➔</a>
       </div>
@@ -191,12 +192,10 @@
       </div>
       <div class="card">
         <h3>📝 ECHO Codex (Éditeur de Code)</h3>
-        <p>Éditeur Monaco multi-langage avec Git intégré (dulwich, Python pur). 9 fonctions
-        Tool Call (<code>create</code>, <code>edit</code>, <code>read</code>,
-        <code>search</code>, <code>summarize</code>, <code>list</code>, <code>delete</code>,
-        <code>history</code>, <code>restore</code>). Action HUD draggable avec
-        édition AI assistée (cascade Gemini), diff accept/reject et navigation historique
-        &#9664; &#9654;. Propriéception via <code>registre_codex</code>.</p>
+        <p>Éditeur Monaco multi-langage avec Git intégré (dulwich, Python pur). Fonctions
+        Tool Call de contrôle complet (CRUD, search, git history/restore, rename). Action HUD draggable avec
+        panneau de prévisualisation WYSIWYG, édition AI assistée (cascade Gemini), diff accept/reject et 
+        navigation historique temporelle. Propriéception via <code>registre_codex</code>.</p>
         <p><strong>Sources :</strong> <code>12-owui-tools/echo_codex_tool.py</code>,
         <code>13-owui-actions/echo_codex_action.py</code></p>
         <a href="07h_codex_editor.html">Explorer →</a>
@@ -219,7 +218,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

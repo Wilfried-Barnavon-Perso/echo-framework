@@ -6,6 +6,11 @@
   <meta name="description" content="Mémoire et Cognition ECHO v5 : RAG organique echo_memory, RAG éphémère echo_ephemeral, système d'importance mémorielle, routage cognitif new_cognitive_level, Agents Cognitifs (Conseil d'Experts) cognitive_agents.py.">
   <title>ECHO v5 — 7d. Mémoire &amp; Cognition</title>
   <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', padding: 16 } });
+  </script>
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
@@ -32,7 +37,7 @@
       <tbody>
         <tr>
           <td><code>save_memory(fact, importance)</code></td>
-          <td>Vectorise et stocke un souvenir dans <code>echo_memory</code>. Utilise un UUID déterministe (UUIDv5) basé sur le slug distillé — un appel avec le même slug <em>remplace</em> le souvenir existant (upsert). Paramètre <code>importance</code> de 1 (Trivial) à 5 (Axiome), défaut 1.</td>
+          <td>Vectorise et stocke un souvenir dans <code>echo_memory</code>. Utilise un UUID déterministe (UUIDv5) basé sur le <code>memory_id</code> technique distillé — un appel avec le même <code>memory_id</code> <em>remplace</em> le souvenir existant (upsert). Paramètre <code>importance</code> de 1 (Trivial) à 5 (Axiome), défaut 1.</td>
         </tr>
         <tr>
           <td><code>search_memory(query, limit)</code></td>
@@ -40,11 +45,11 @@
         </tr>
         <tr>
           <td><code>list_memory_topics(scope)</code></td>
-          <td>Liste les thèmes mémorisés (slugs, tags, niveau d'importance). Paramètre <code>scope</code> optionnel, défaut <code>"global"</code>. Utile avant un <code>forget_memory</code> pour retrouver le slug exact.</td>
+          <td>Liste les thèmes mémorisés (<code>memory_id</code>, tags, niveau d'importance). Paramètre <code>scope</code> optionnel, défaut <code>"global"</code>. Utile avant un <code>forget_memory</code> pour retrouver l'identifiant exact.</td>
         </tr>
         <tr>
-          <td><code>forget_memory(slug)</code></td>
-          <td>Supprime définitivement un souvenir de la collection Qdrant par son <code>slug</code>. Irréversible. Le slug exact est requis — utiliser <code>list_memory_topics</code> pour le retrouver si inconnu.</td>
+          <td><code>forget_memory(memory_id)</code></td>
+          <td>Supprime définitivement un souvenir de la collection Qdrant par son <code>memory_id</code>. Irréversible. L'identifiant exact est requis — utiliser <code>list_memory_topics</code> pour le retrouver si inconnu.</td>
         </tr>
       </tbody>
     </table>
@@ -62,12 +67,12 @@
       <thead><tr><th>Outil</th><th>Description</th></tr></thead>
       <tbody>
         <tr>
-          <td><code>save_session_context(text, slug)</code></td>
-          <td>Indexe du texte dans <code>echo_ephemeral</code>, partitioné par <code>user_id + chat_id + slug</code>. Le texte est découpé automatiquement en chunks sémantiques. Paramètre <code>text</code> en premier, <code>slug</code> en second (identifiant court unique, ex. <code>"analyse-pr42"</code>).</td>
+          <td><code>save_session_context(text, source_id)</code></td>
+          <td>Indexe du texte dans <code>echo_ephemeral</code>, partitioné par <code>user_id + chat_id + source_id</code>. Le texte est découpé automatiquement en chunks sémantiques. Paramètre <code>text</code> en premier, <code>source_id</code> en second (identifiant natif du fichier).</td>
         </tr>
         <tr>
-          <td><code>search_session_context(slug, query)</code></td>
-          <td>Recherche sémantique dans la partition du slug courant. Retourne les chunks les plus pertinents au-dessus du <code>SCORE_THRESHOLD</code> (défaut 0.45).</td>
+          <td><code>search_session_context(source_id, query)</code></td>
+          <td>Recherche sémantique dans la partition du <code>source_id</code> courant. Retourne les chunks les plus pertinents au-dessus du <code>SCORE_THRESHOLD</code> (défaut 0.45).</td>
         </tr>
       </tbody>
     </table>
@@ -75,11 +80,11 @@
     <div class="note-box">
       <h4>Usage canonique du RAG éphémère</h4>
       <p>
-        Lorsque le Filtre effectue le Moulage d'un fichier volumineux, il génère un
-        <code>slug</code> unique (ex. <code>rapport_pdf_a3f2c1</code>) et indexe le distillat
-        dans <code>echo_ephemeral</code>. Le modèle reçoit ce slug dans l'AEC et l'utilise pour
-        interroger les détails précis : <code>search_session_context("rapport_pdf_a3f2c1", "...")</code>.
-        Ce mécanisme remplace avantageusement l'injection brute du fichier dans le contexte,
+        Lorsque le Filtre effectue l'extraction transmodale et le Map-Reduce d'un fichier volumineux, il utilise le
+        <code>source_id</code> natif (ex. <code>U_abc123_C_xyz789_T_1748246400</code>) et indexe les chunks bruts
+        dans <code>echo_ephemeral</code>. Le modèle reçoit ce <code>source_id</code> dans l'AEC (registre_fichiers) et l'utilise pour
+        interroger les détails précis de la source brute : <code>search_session_context("U_abc123_C_xyz789...", "...")</code>.
+        Ce mécanisme remplace avantageusement l'injection du fichier complet dans le contexte,
         qui serait prohibitive en tokens.
       </p>
     </div>
@@ -119,6 +124,25 @@
         <code>search_memory</code> couvre les informations des sessions antérieures, totalement
         absentes du contexte actif.
       </p>
+      <div class="mermaid-wrapper">
+        <div class="mermaid-header">
+          <span>Topologie Vectorielle (Qdrant)</span>
+          <span>[Stockage]</span>
+        </div>
+        <div class="mermaid">
+flowchart TD
+  O["Outils Cognitifs<br/>(memory_and_rag_tool)"] --> |save_memory<br/>search_memory| COL1
+  O --> |save_session_context<br/>search_session_context| COL2
+
+  subgraph Q["Qdrant Engine (Port 6333)"]
+    COL1[("🧠 echo_memory<br/>Mémoire long terme<br/>TTL, Consolidation, Importance")]
+    COL2[("⏳ echo_ephemeral<br/>RAG de session<br/>Map-Reduce, source_id, Purge auto")]
+  end
+
+  classDef db fill:#0f172a,stroke:#3b82f6,color:#f8fafc
+  class COL1,COL2 db
+        </div>
+      </div>
     </div>
 
     <h2 id="agents-cognitifs">Agents Cognitifs — <code>cognitive_agents.py</code></h2>
@@ -219,7 +243,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.166.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>
