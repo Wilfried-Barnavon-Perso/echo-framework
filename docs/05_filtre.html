@@ -128,8 +128,8 @@ flowchart LR
     </p>
     <p>
       Le texte brut unifié est immédiatement vectorisé par <code>bge-m3</code> (1024d) et stocké dans 
-      la collection <code>echo_ephemeral</code>. Ensuite, un processus de <strong>Map-Reduce local</strong> 
-      est exécuté (Gemma 4 E4B, <code>echo-gemma-distiller:7998</code>) pour générer un résumé synthétique. 
+      la collection <code>echo_ephemeral</code>. Ensuite, un processus de <strong>Map-Reduce</strong> 
+      est exécuté (via l'API Gemini) pour générer un résumé synthétique. 
       Un <em>Fast-path</em> (court-circuit) est appliqué si le texte est suffisamment court (<code>ECHO_MR_SUMMARY_MAX_WORDS</code>), 
       évitant une distillation inutile.
     </p>
@@ -148,7 +148,7 @@ flowchart LR
 
     <div class="code-header">Structure du bloc <code>environnement_contexte</code> (v7.18)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.170.13"
+version_framework_echo: "5.173.6"
 modèle_actuel:   "##MODEL_ID##"              # Résolu par le Pipe (ex: MODEL_FLASH)
 modèle_origine:  "##MODEL_ORIGIN##"          # Modèle ayant initié le tour
 nom_utilisateur: "anonyme"
@@ -237,16 +237,14 @@ registre_codex:
       ne conservant que <code>role</code>, <code>content</code> et les <strong>noms de fichiers joints</strong>.
       Les UUIDs, timestamps, metadata OWUI et identifiants de branches sont éliminés.
       Ce nettoyage réduit le budget tokens d'environ 8× par rapport à la sérialisation
-      brute <code>str(messages)</code>, garantissant que chaque token transmis au Gemma Distiller
+      brute <code>str(messages)</code>, garantissant que chaque token transmis à l'API de distillation
       porte de l'information sémantique utile.
     </p>
 
     <h3>Pipeline de distillation et vectorisation</h3>
     <ol>
       <li>
-        <strong>Distillation asynchrone :</strong> <code>call_distillation</code> route vers le
-        <strong>Gemma Distiller local</strong> (<code>echo-gemma-distiller:7998</code>). En cas d'indisponibilité,
-        fallback transparent vers <code>gemini-2.5-flash</code> (API).
+        <strong>Distillation asynchrone :</strong> <code>call_distillation</code> route vers <code>gemini-2.5-flash</code> (API).
         Génère un JSON structuré : <code>summary</code> (100–1000 mots), <code>memory_importance</code> (1–5),
       <code>memory_id</code> technique court, et 3–5 <code>tags</code> qualifiants.
       </li>
@@ -314,7 +312,7 @@ registre_codex:
     </div>
 
     <footer>
-      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

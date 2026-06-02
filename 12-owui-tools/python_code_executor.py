@@ -18,10 +18,10 @@ from typing import Optional, Any
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, EchoEvents
+from echo_constants import PYTHON_WORKER_URL
 
 class Tools:
     class Valves(BaseModel):
-        PYTHON_WORKER_URL: str = Field(default="http://python-worker:5000/execute", description="URL du microservice d'exécution Python.")
         TIMEOUT: int = Field(default=30, description="Délai d'attente maximum pour l'exécution (secondes).")
 
     def __init__(self):
@@ -47,7 +47,7 @@ class Tools:
 
         try:
             response = requests.post(
-                self.valves.PYTHON_WORKER_URL,
+                PYTHON_WORKER_URL,
                 json={"code": code},
                 timeout=self.valves.TIMEOUT
             )

@@ -62,7 +62,6 @@ ECHO_AGY_USER_AGENT = "antigravity/2.1.0 (language_server; os_type=Windows; os_v
 
 # Points d'accès Locaux (Souveraineté)
 ECHO_EMBEDDING_URL = "http://echo-embedding:7997/v1"
-ECHO_GEMMA_URL     = "http://echo-gemma-distiller:7998"  # Distillation locale (Gemma 4 E4B)
 
 # ==============================================================================
 # 1. PROTOCOLE ANTIGRAVITY 2.1 — AUTH UNIFIÉE
@@ -187,7 +186,6 @@ MODEL_LITE  = "gemini-3.1-flash-lite"   # LITE  — identique sur les deux APIs 
 # --- MÉMOIRE ORGANIQUE V2 ---
 MODEL_DISTILLATION = "gemini-3.1-flash-lite"  # identique sur les deux APIs ✅ 200
 MODEL_EMBEDDING    = "BAAI/bge-m3"      # Modèle texte-first, multilingue, 1024d, 8192 tokens
-MODEL_LOCAL_GEMMA  = "LOCAL_GEMMA"      # Distillation locale (Gemma 4 E4B, GGUF Q5_K_M)
 
 # Table de capacités Code Assist — source de vérité documentaire.
 # max_output_tokens : limites réelles certifiées par diagnostic live v2.1 (2026-05-25).
@@ -358,7 +356,7 @@ MAX_TOKENS_DEFAULT = 65535  # Limite universelle — tous modèles, toutes APIs 
 # --- INJECTION ET SMART CONTEXT (RAG ÉPHÉMÈRE) ---
 MAX_DIRECT_TEXT_INJECT_SIZE   = 32768    # 32 Ko : Plafond d'injection directe pour le texte
 MAX_DIRECT_MMEDIA_INJECT_SIZE = 5242880  # 5 Mo  : Plafond d'injection directe base64 multimédia
-ECHO_MR_CHUNK_SIZE            = 262144   # 256 Ko : Taille d'un chunk Map-Reduce texte
+ECHO_MR_CHUNK_SIZE            = 182858   # 178 Ko : Taille d'un chunk Map-Reduce texte
 ECHO_MR_OVERLAP_SIZE          = 1024     # 1 Ko   : Recouvrement (overlap) entre chunks
 ECHO_MR_MAX_TOKENS            = 1600     # Limite de sortie (tokens) pour les distillations du Map-Reduce
 ECHO_MR_SUMMARY_MAX_WORDS     = 400      # Limite de taille en mots pour les résumés générés ET pour le bypass (Fast-Path)
@@ -430,7 +428,6 @@ MODEL_ROUTING = {
     "MODEL_FLASH":        MODEL_FLASH,
     "MODEL_PRO":          MODEL_PRO,
     "MODEL_DISTILLATION": MODEL_DISTILLATION,  # Fix : résout la clé string dans call_distillation
-    "LOCAL_GEMMA":        MODEL_LOCAL_GEMMA,    # Résout vers le service de distillation local
 }
 
 # IDENTITÉ : ID Technique -> Label de Catégorie (Pour le badge ##MODEL_ID##)
@@ -458,6 +455,41 @@ MODEL_ENUM_BY_POLICY = {
 
 # Set de référence pour détecter les enum modèle dans les specs d'outils
 MODEL_ENUM_REFERENCE = {"MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"}
+
+# ==============================================================================
+# 1.6 INFRASTRUCTURE & RÉSEAU (CENTRALISATION V5)
+# ==============================================================================
+
+# --- URLs Internes de l'Infrastructure Docker ---
+# Anciennement définies comme Valves individuelles dans chaque outil/filtre.
+# Centralisées ici pour garantir une configuration unique au sein de la Stack ECHO.
+# ECHO_QDRANT_URL : Utilisée par memory_and_rag_tool et conversation_memory_filter pour le stockage vectoriel.
+ECHO_QDRANT_URL = "http://echo-qdrant:6333"
+
+# ECHO_PYTHON_WORKER_URL : Utilisée par python_code_executor pour isoler l'exécution de code Python.
+ECHO_PYTHON_WORKER_URL = "http://python-worker:5000/execute"
+
+# NAVIGATION_ENGINE_URL : Utilisée par navigation_engine_tool pour le pilotage Playwright/Chrome.
+NAVIGATION_ENGINE_URL = "http://browser-agent:5002"
+
+# ECHO_SEARXNG_BASE_URL : Utilisée par sovereign_web_search pour les recherches web profond.
+ECHO_SEARXNG_BASE_URL = "http://searxng:8080"
+
+# Sécurité Réseau (SSRF)
+# ECHO_ALLOWED_DOMAINS : Domaines autorisés pour api_client (* = tous sauf RFC 1918 locaux).
+ECHO_ALLOWED_DOMAINS = "*"
+
+# --- Configuration HTTP/2 & Connexions (Pool httpx partagé) ---
+# Anciennement Valves dans pipe_engine, elles pilotent le client global _get_global_client() dans echo_utils.py.
+# Optimisation du pool de connexion HTTP(2) pour éviter la saturation réseau sous forte charge.
+ECHO_HTTP_CLIENT_TIMEOUT = 600       # Délai d'abandon (600s) si Google API ne répond pas.
+ECHO_HTTP_MAX_CONNECTIONS = 100      # Nombre max de connexions simultanées.
+ECHO_HTTP_MAX_KEEPALIVE = 20         # Nombre max de connexions Keep-Alive maintenues.
+ECHO_HTTP_KEEPALIVE_EXPIRY = 300     # Expiration des connexions Keep-Alive (en secondes).
+
+# Limite Physique de Contexte
+# ECHO_MAX_CONTEXT_SIZE : Taille officielle du contexte absorbable par les modèles Gemini.
+ECHO_MAX_CONTEXT_SIZE = 1048576
 
 # ==============================================================================
 # 2. MAPPING MIME TYPES

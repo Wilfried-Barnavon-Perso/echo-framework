@@ -1,7 +1,7 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 7.24
+version: 7.26
 description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
              Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
@@ -41,6 +41,8 @@ description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migra
                7.21: Ajout table codex_docs et méthodes CRUD (save_codex_record, delete_codex_record,
                get_codex_docs, clear_codex_records) pour le Codex ECHO.
                7.22: Fix OSError dans move_to_vault (création du dossier session manquante).
+               7.25: Retrait définitif de l'import obsolète ECHO_GEMMA_URL suite à la dépréciation
+               du distiller local. Corrige les HTTP 400/401 lors de l'import des libs partagées.
 """
 
 import copy
@@ -75,7 +77,8 @@ from echo_constants import (
     GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, AGY_BASE_URL,
     GOOGLE_OAUTH_TOKEN_LIFETIME, AUTH_DATA_USER_TIER,
     MAX_TOKENS_DEFAULT,  # Utilisé comme valeur par défaut de call_distillation.max_tokens
-    ECHO_GEMMA_URL,      # URL du service de distillation local (Gemma 4 E4B)
+    ECHO_HTTP_CLIENT_TIMEOUT, ECHO_HTTP_MAX_CONNECTIONS,
+    ECHO_HTTP_MAX_KEEPALIVE, ECHO_HTTP_KEEPALIVE_EXPIRY,
 )
 from echo_protocol import get_ca_model_id, build_ca_generation_config
 
@@ -114,13 +117,19 @@ _SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
 _LAST_CLIENT_ACCESS: float = 0.0
 
 async def _get_global_client(
-    timeout: int = 600,
-    max_connections: int = 100,
-    max_keepalive: int = 20,
-    keepalive_expiry: int = 300
+    timeout: int = None,
+    max_connections: int = None,
+    max_keepalive: int = None,
+    keepalive_expiry: int = None
 ) -> httpx.AsyncClient:
     """Gestionnaire de client HTTP/2 STRICT (Mutualisé)."""
     global _SHARED_ASYNC_CLIENT, _LAST_CLIENT_ACCESS
+    
+    timeout = timeout or ECHO_HTTP_CLIENT_TIMEOUT
+    max_connections = max_connections or ECHO_HTTP_MAX_CONNECTIONS
+    max_keepalive = max_keepalive or ECHO_HTTP_MAX_KEEPALIVE
+    keepalive_expiry = keepalive_expiry or ECHO_HTTP_KEEPALIVE_EXPIRY
+    
     now = time.time()
 
     if _SHARED_ASYNC_CLIENT and (now - _LAST_CLIENT_ACCESS > timeout):
@@ -134,7 +143,7 @@ async def _get_global_client(
             max_connections=max_connections,
             keepalive_expiry=keepalive_expiry
         )
-        _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=300, limits=limits, http2=True)
+        _SHARED_ASYNC_CLIENT = httpx.AsyncClient(timeout=timeout, limits=limits, http2=True)
 
     _LAST_CLIENT_ACCESS = now
     return _SHARED_ASYNC_CLIENT
@@ -637,31 +646,17 @@ class EchoGeminiClient:
     ) -> Union[Dict, str]:
         """
         Exécute une tâche de distillation (extraction sémantique).
-        LOCAL_GEMMA par défaut (Gemma 4 E4B via echo-gemma-distiller).
-        Gemma local uniquement. Pas de fallback API distant.
-        Les appels avec target_model explicite (FLASH, PRO) restent routés vers l'API Gemini.
+        Route exclusivement vers l'API Gemini (MODEL_DISTILLATION) suite à la rationalisation (suppression Gemma).
         """
         from echo_constants import MODEL_DISTILLATION, MODEL_ROUTING, TEMP_DISTILLATION, TOP_P_DISTILLATION
         user_id = __user__.get("id", "system")
         chat_id = __metadata__.get("chat_id")
         
-        # Résolution du modèle :
-        # - target_model explicite (FLASH, PRO) → API Gemini
-        # - target_model=None ou "MODEL_DISTILLATION" → LOCAL_GEMMA (service local)
-        use_local = False
-        if target_model:
-            actual_model = MODEL_ROUTING.get(target_model, target_model)
-        else:
-            use_local = True
+        # Résolution du modèle
+        actual_model = MODEL_ROUTING.get(target_model, MODEL_DISTILLATION) if target_model else MODEL_DISTILLATION
 
         # 1. Préparation du contenu
         contents = parts if parts else [{"role": "user", "parts": [{"text": prompt}]}]
-
-        # --- ROUTAGE LOCAL (Gemma 4 E4B via echo-gemma-distiller) ---
-        if use_local:
-            return await EchoGeminiClient._call_local_distiller(
-                prompt, contents, is_json, max_tokens
-            )
 
         # --- ROUTAGE API (Gemini 2.5 Flash ou modèle explicite) ---
         payload = {
@@ -693,53 +688,6 @@ class EchoGeminiClient:
             return {} if is_json else "Analyse indisponible."
 
     @staticmethod
-    async def _call_local_distiller(
-        prompt: str,
-        contents: List[Dict],
-        is_json: bool,
-        max_tokens: int
-    ) -> Union[Dict, str]:
-        """
-        Appel direct au service Gemma local (bypass complet du maillage d'authentification Gemini).
-        Même pattern que generate_embedding : POST HTTP direct via httpx.
-        Lève une exception si le service est indisponible (le caller gère le fallback).
-        """
-        from echo_constants import TEMP_DISTILLATION
-        client = await _get_global_client()
-
-        # Construction des messages au format OpenAI depuis le format Gemini contents[]
-        messages = []
-        for c in contents:
-            role = c.get("role", "user")
-            text_parts = [p.get("text", "") for p in c.get("parts", []) if "text" in p]
-            if text_parts:
-                messages.append({"role": role, "content": "".join(text_parts)})
-
-        # Si prompt explicite et pas de messages construits, utiliser le prompt directement
-        if not messages and prompt:
-            messages = [{"role": "user", "content": prompt}]
-
-        payload = {
-            "messages": messages,
-            "temperature": TEMP_DISTILLATION,
-            "max_tokens": min(max_tokens, 2048),  # Le service local est capé à 2048 par défaut
-        }
-        if is_json:
-            payload["response_format"] = {"type": "json_object"}
-
-        resp = await client.post(
-            f"{ECHO_GEMMA_URL}/v1/chat/completions",
-            json=payload,
-            timeout=120
-        )
-        resp.raise_for_status()
-        text = resp.json()["choices"][0]["message"]["content"].strip()
-
-        if is_json:
-            return std_json.loads(text)
-        return text
-
-    @staticmethod
     async def index_text_in_ephemeral_rag(
         distillate: str,
         source_id: str,
@@ -747,7 +695,6 @@ class EchoGeminiClient:
         chat_id: str,
         __user__: dict,
         __metadata__: dict,
-        qdrant_base: str = "http://echo-qdrant:6333",
         max_chunk: int = 1600,
         timeout: int = 180
     ) -> tuple:
@@ -762,7 +709,8 @@ class EchoGeminiClient:
         0 points indique un échec total (embedding worker indisponible ou Qdrant KO).
         """
         import uuid as _uuid
-        from echo_constants import COLLECTION_EPHEMERAL, EMBEDDING_DIM_V2
+        from echo_constants import COLLECTION_EPHEMERAL, EMBEDDING_DIM_V2, ECHO_QDRANT_URL
+        qdrant_base = ECHO_QDRANT_URL
 
         # --- 1. CHUNKING PAR PARAGRAPHES SÉMANTIQUES ---
         raw_paragraphs = [p.strip() for p in distillate.split("\n\n") if p.strip()]

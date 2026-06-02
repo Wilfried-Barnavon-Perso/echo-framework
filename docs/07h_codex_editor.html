@@ -235,7 +235,7 @@ flowchart TD
         </tr>
         <tr>
           <td><code>summarize_codex</code></td>
-          <td>Synthèse technique structurée via distillation locale (Gemma)</td>
+          <td>Synthèse technique structurée via API Gemini</td>
           <td><code>filename</code></td>
         </tr>
         <tr>
@@ -269,7 +269,7 @@ flowchart TD
       </p>
       <ol>
         <li>
-          <strong><code>summarize_codex</code></strong> : distillation locale Gemma → vue d'ensemble
+          <strong><code>summarize_codex</code></strong> : distillation via Gemini → vue d'ensemble
           (architecture, classes, dépendances) sans saturer le contexte.
         </li>
         <li>
@@ -287,8 +287,7 @@ flowchart TD
     <p>
       <code>summarize_codex</code> appelle <code>EchoGeminiClient.call_distillation()</code> avec
       le prompt <code>CODEX_SUMMARIZE_PROMPT</code> (défini dans <code>echo_constants.py</code>).
-      La distillation est locale (Gemma 4 E4B, <code>echo-gemma-distiller:7998</code>), sans appel
-      à l'API Gemini distante, pour un budget tokens minimal. La sortie est limitée à 8192 tokens.
+      La sortie est limitée à 8192 tokens.
     </p>
 
     <div class="code-header">Structure du résumé généré — <code>CODEX_SUMMARIZE_PROMPT</code></div>
@@ -554,7 +553,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

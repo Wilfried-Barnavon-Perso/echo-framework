@@ -23,7 +23,8 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoGeminiClient, EchoEvents, EchoAuth
 from echo_constants import (
     MODEL_DISTILLATION, MODEL_EMBEDDING, 
-    EMBEDDING_DIM_V2, COLLECTION_MEMORY
+    EMBEDDING_DIM_V2, COLLECTION_MEMORY,
+    ECHO_QDRANT_URL
 )
 
 # Configuration du Logger
@@ -43,7 +44,6 @@ class Filter:
         SIMILARITY_THRESHOLD: float = Field(default=0.85, description="Seuil de similarité pour déclencher la fusion LLM (0.0 à 1.0).")
         EXACT_MATCH_THRESHOLD: float = Field(default=0.95, description="Seuil pour simple mise à jour de date (sans coût LLM).")
         
-        QDRANT_URL: str = Field(default="http://echo-qdrant:6333", description="URL interne de Qdrant.")
         DEBUG_MEMORY: bool = Field(default=False, description="Affiche les détails de fusion et de pruning dans les logs.")
 
     class UserValves(BaseModel):
@@ -81,13 +81,13 @@ class Filter:
         if self.collection_verified: return
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}")
+                resp = await client.get(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}")
                 if resp.status_code == 200:
                     self.collection_verified = True; return
 
                 logger.info(f"[ECHO-MEMORY-V2] 🏗️ Création de la collection {COLLECTION_MEMORY} ({EMBEDDING_DIM_V2}d)...")
                 create_payload = {"vectors": {"size": EMBEDDING_DIM_V2, "distance": "Cosine"}}
-                cr = await client.put(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}", json=create_payload)
+                cr = await client.put(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}", json=create_payload)
                 if cr.status_code not in (200, 201):
                     logger.error(f"[ECHO-MEMORY-V2] ❌ Échec création collection ({cr.status_code}): {cr.text}")
                     return  # Ne pas valider si la création a échoué
@@ -141,7 +141,7 @@ class Filter:
                     "vector": vector, "limit": 1, "with_payload": True,
                     "filter": {"must": [{"key": "user_id", "match": {"value": user_id}}]}
                 }
-                resp_search = await client.post(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/search", json=search_payload)
+                resp_search = await client.post(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/search", json=search_payload)
                 results = resp_search.json().get("result", [])
                 
                 final_summary = summary; final_memory_id = new_memory_id; final_memory_importance = new_memory_importance
@@ -175,7 +175,7 @@ class Filter:
                         }
                     }]
                 }
-                await client.put(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points", json=point_payload)
+                await client.put(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points", json=point_payload)
                 
             logger.info(f"[ECHO-MEMORY-V2] ✅ Enregistrement vectoriel '{final_memory_id}' (Lvl {final_memory_importance}) effectué.")
 

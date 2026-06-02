@@ -1,7 +1,9 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.5
+# Version : 9.6
 # ==============================================================================
+# CHANGELOG 9.6 : Ajout du montage de volume pour tts_api.py et override de la 
+#                 commande uvicorn avec --reload pour permettre le hot-reload du TTS.
 # CHANGELOG 9.5 : Fix crash backend `ValueError: Unknown embedding engine: ""` 
 #                 en remplaçant `RAG_EMBEDDING_ENGINE=""` par `"openai"` pour
 #                 éviter le téléchargement de modèles locaux sans faire crasher l'app.
@@ -132,7 +134,7 @@ services:
       # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
     command: >
-      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 pip install mgzip dulwich && ./start.sh"
+      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc) pip install mgzip dulwich && ./start.sh"
     healthcheck:
       test: ["CMD-SHELL", "curl --silent --fail http://localhost:8080/health || exit 1"]
       interval: 15s
@@ -143,8 +145,6 @@ services:
       qdrant:
         condition: service_healthy
       embedding:
-        condition: service_healthy
-      gemma-distiller:
         condition: service_healthy
       searxng:
         condition: service_healthy
@@ -252,16 +252,56 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
     command: >
-      /bin/bash -c "pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002"
+      /bin/bash -c "CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc) pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002"
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5002/health\")' 2>/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 20
       start_period: 120s
-    depends_on:
-      gemma-distiller:
-        condition: service_healthy
+
+  stt-worker:
+    build:
+      context: /opt/ECHO/docker-stt-worker
+      dockerfile: Dockerfile
+    container_name: echo-stt-worker
+    restart: always
+    networks:
+      - echo-network
+    environment:
+      - TZ=Europe/Paris
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:7995/health\")' 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  tts-worker:
+    build:
+      context: /opt/ECHO/docker-tts-worker
+      dockerfile: Dockerfile
+    container_name: echo-tts-worker
+    restart: always
+    networks:
+      - echo-network
+    environment:
+      - TZ=Europe/Paris
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+    volumes:
+      - /opt/ECHO/docker-tts-worker/tts_api.py:/app/tts_api.py:ro
+    command: ["uvicorn", "tts_api:app", "--host", "0.0.0.0", "--port", "7996", "--reload"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:7996/health\")' 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
 
   # 3. SearxNG (Métamoteur de recherche souverain)
   searxng:
@@ -363,40 +403,6 @@ services:
       start_period: 300s
     depends_on:
       qdrant:
-        condition: service_healthy
-
-  # 7. ECHO Gemma Distiller (Gemma 4 E4B — Distillation locale, GGUF Q5_K_M)
-  gemma-distiller:
-    build:
-      context: /opt/ECHO/docker-gemma-distiller
-      dockerfile: Dockerfile
-    container_name: echo-gemma-distiller
-    restart: always
-    networks:
-      - echo-network
-    environment:
-      - TZ=Europe/Paris
-      - MODEL_PATH=/models/distiller.gguf
-      - N_CTX=4096
-      - MAX_TOKENS=2048
-    volumes:
-      - /opt/ECHO/docker-gemma-distiller/app.py:/app/app.py:ro
-      - /opt/ECHO/models:/models
-    deploy:
-      resources:
-        limits:
-          memory: 4g
-    labels:
-      - "com.centurylinklabs.watchtower.enable=false"
-      - "echo.hot-reload=true"
-    healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:7998/health\")' 2>/dev/null || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 40
-      start_period: 120s
-    depends_on:
-      embedding:
         condition: service_healthy
 
 # ==============================================================================

@@ -28,7 +28,6 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager, clamp_model
 from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
     TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
     THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
     PLAN_STATUS, PLAN_TASK_STATUS, PLAN_EXECUTABLE_STATUSES,
@@ -101,14 +100,6 @@ Ne retourne RIEN d'autre que le plan Markdown complet."""
 
 class Tools:
     class Valves(BaseModel):
-        KEY_SWITCH_THRESHOLD: int = Field(
-            default=ECHO_API_KEY_THRESHOLD,
-            description="Nombre d'erreurs 429/503 avant bascule sur la clé de secours."
-        )
-        MAX_RETRIES: int = Field(
-            default=ECHO_API_MAX_RETRIES,
-            description="Nombre de tentatives maximum."
-        )
         PLANNER_TIMEOUT: int = Field(
             default=180,
             description="Timeout (secondes) pour l'appel LLM planificateur."

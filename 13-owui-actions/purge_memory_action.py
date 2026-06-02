@@ -1,7 +1,7 @@
 """
 title: Purge Mémoire Long Terme /!\
 author: Wilfried BARNAVON
-version: 3.2
+version: 3.3
 description: 3.2: Confirmation finale scrollable + tri alpha slugs. Dialog périmètre avec explication mémoire long terme (voix ECHO). 3.1: HUD déroulant, sélection vide = TOUT.
              3.3: Refonte identifiants, remplacement des slugs par memory_id.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5Z29uIHBvaW50cz0iMjIgMyAyIDMgMTAgMTIuNDYgMTAgMTkgMTQgMjEgMTQgMTIuNDYgMjIgMyIvPjwvc3ZnPg==
@@ -16,11 +16,10 @@ from typing import Any, Optional, List, Set, Dict
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents
-from echo_constants import COLLECTION_MEMORY
+from echo_constants import COLLECTION_MEMORY, ECHO_QDRANT_URL
 
 class Action:
     class Valves(BaseModel):
-        QDRANT_URL: str = Field(default="http://echo-qdrant:6333", description="URL interne de Qdrant.")
         priority: int = Field(default=2, description="Priorité d'affichage.")
 
     def __init__(self):
@@ -38,7 +37,7 @@ class Action:
                 }
                 
                 resp = await client.post(
-                    f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
                     json=scroll_payload
                 )
                 
@@ -83,7 +82,7 @@ class Action:
                 }
                 
                 resp = await client.post(
-                    f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
                     json=search_payload
                 )
                 
@@ -256,7 +255,7 @@ class Action:
 
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
-                    f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete",
                     json=delete_payload
                 )
 

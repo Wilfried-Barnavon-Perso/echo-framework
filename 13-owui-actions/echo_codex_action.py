@@ -26,7 +26,6 @@ from pydantic import BaseModel, Field
 
 sys.path.append("/app/backend/echo_libs")
 from echo_constants import (
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
     TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
     CODEX_EDIT_SYSTEM_PROMPT, CODEX_QUICK_ACTIONS,
 )

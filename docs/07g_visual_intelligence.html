@@ -1,84 +1,84 @@
-Ôªø<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Visual Intelligence ECHO v5 (universal_visual_generator.py v5.1) : 16 moteurs de rendu ‚Äî markmap, mermaid, sketch, echarts, vega, timeline, bpmn, gantt, aframe, svg, cytoscape, wavedrom, chem, science, bio, astro.">
-  <title>ECHO v5 ‚Äî 7g. Visual Intelligence</title>
+  <meta name="description" content="Visual Intelligence ECHO v5 (universal_visual_generator.py v5.1) : 16 moteurs de rendu ó markmap, mermaid, sketch, echarts, vega, timeline, bpmn, gantt, aframe, svg, cytoscape, wavedrom, chem, science, bio, astro.">
+  <title>ECHO v5 ó 7g. Visual Intelligence</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu g√©n√©r√© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu gÈnÈrÈ dynamiquement par nav.js --></aside>
   <main>
     <h1>7g. Visual Intelligence</h1>
 
     <p>
       L'outil <code>generate_rich_visualization</code> (<code>universal_visual_generator.py</code> v5.1)
-      g√©n√®re des interfaces visuelles interactives et les injecte dans la conversation via le HUD.
-      Le moteur est s√©lectionn√© automatiquement par le mod√®le en fonction de l'intention, ou peut
-      √™tre impos√© explicitement via le param√®tre <code>moteur</code>.
+      gÈnËre des interfaces visuelles interactives et les injecte dans la conversation via le HUD.
+      Le moteur est sÈlectionnÈ automatiquement par le modËle en fonction de l'intention, ou peut
+      Ítre imposÈ explicitement via le paramËtre <code>moteur</code>.
     </p>
 
-    <h2>Architecture ‚Äî Pattern Data Island</h2>
+    <h2>Architecture ó Pattern Data Island</h2>
 
     <p>
       Toutes les interfaces visuelles suivent le <strong>Pattern Data Island</strong> :
-      les donn√©es (JSON, Markdown, XML, SMILES‚Ä¶) sont encapsul√©es dans un √©l√©ment HTML
+      les donnÈes (JSON, Markdown, XML, SMILESÖ) sont encapsulÈes dans un ÈlÈment HTML
       <code>&lt;script type="application/json"&gt;</code> statique, puis lues et rendues par un
-      bloc <code>&lt;script&gt;</code> s√©par√© chargeant la biblioth√®que graphique via CDN.
-      Cette s√©paration garantit que les donn√©es utilisateur ne sont jamais interpol√©es dans
+      bloc <code>&lt;script&gt;</code> sÈparÈ chargeant la bibliothËque graphique via CDN.
+      Cette sÈparation garantit que les donnÈes utilisateur ne sont jamais interpolÈes dans
       du code JavaScript directement.
     </p>
 
-    <h2>Moteurs disponibles ‚Äî liste compl√®te</h2>
+    <h2>Moteurs disponibles ó liste complËte</h2>
 
-    <p>Les 16 moteurs suivants sont disponibles via le param√®tre <code>moteur</code>¬†:</p>
+    <p>Les 16 moteurs suivants sont disponibles via le paramËtre <code>moteur</code>†:</p>
 
     <table>
       <thead>
-        <tr><th>Cl√© moteur</th><th>Biblioth√®que / Standard</th><th>Usage typique</th><th>Format d'entr√©e</th></tr>
+        <tr><th>ClÈ moteur</th><th>BibliothËque / Standard</th><th>Usage typique</th><th>Format d'entrÈe</th></tr>
       </thead>
       <tbody>
         <tr>
           <td><code>markmap</code></td>
           <td>Markmap.js</td>
-          <td>Mindmaps et hi√©rarchies</td>
-          <td>Markdown hi√©rarchique pur (niveaux <code>#</code>)</td>
+          <td>Mindmaps et hiÈrarchies</td>
+          <td>Markdown hiÈrarchique pur (niveaux <code>#</code>)</td>
         </tr>
         <tr>
           <td><code>mermaid</code></td>
           <td>Mermaid v11.14.0</td>
-          <td>Flowcharts, s√©quences, UML, ERD</td>
-          <td>Syntaxe Mermaid v11 (<code>flowchart TD</code>, <code>sequenceDiagram</code>‚Ä¶)</td>
+          <td>Flowcharts, sÈquences, UML, ERD</td>
+          <td>Syntaxe Mermaid v11 (<code>flowchart TD</code>, <code>sequenceDiagram</code>Ö)</td>
         </tr>
         <tr>
           <td><code>sketch</code></td>
           <td>Mermaid + Rough.js</td>
-          <td>Sch√©mas fa√ßon croquis √† main lev√©e</td>
-          <td>Syntaxe Mermaid (rendu ¬´ rough ¬ª)</td>
+          <td>SchÈmas faÁon croquis ‡ main levÈe</td>
+          <td>Syntaxe Mermaid (rendu ´ rough ª)</td>
         </tr>
         <tr>
           <td><code>echarts</code></td>
           <td>Apache ECharts 5+</td>
           <td>Tableaux de bord, Finance, Heatmaps</td>
-          <td>JSON ECharts (avec <code>tooltip</code>, <code>legend</code>, <code>series</code>‚Ä¶)</td>
+          <td>JSON ECharts (avec <code>tooltip</code>, <code>legend</code>, <code>series</code>Ö)</td>
         </tr>
         <tr>
           <td><code>vega</code></td>
           <td>Vega-Lite</td>
-          <td>Statistiques, Science des donn√©es</td>
-          <td>JSON Vega-Lite strict (<code>$schema</code>, <code>data</code>, <code>mark</code>‚Ä¶)</td>
+          <td>Statistiques, Science des donnÈes</td>
+          <td>JSON Vega-Lite strict (<code>$schema</code>, <code>data</code>, <code>mark</code>Ö)</td>
         </tr>
         <tr>
           <td><code>timeline</code></td>
           <td>TimelineJS</td>
           <td>Chronologies et frises historiques</td>
-          <td>JSON TimelineJS (<code>events[].start_date</code>, <code>text.headline</code>‚Ä¶)</td>
+          <td>JSON TimelineJS (<code>events[].start_date</code>, <code>text.headline</code>Ö)</td>
         </tr>
         <tr>
           <td><code>bpmn</code></td>
           <td>BPMN 2.0</td>
-          <td>Processus m√©tiers norm√©s</td>
+          <td>Processus mÈtiers normÈs</td>
           <td>XML BPMN 2.0 valide</td>
         </tr>
         <tr>
@@ -90,67 +90,67 @@
         <tr>
           <td><code>aframe</code></td>
           <td>A-Frame</td>
-          <td>Sc√®nes 3D, architecture, volumes</td>
-          <td>HTML A-Frame (<code>&lt;a-scene&gt;</code>, <code>&lt;a-box&gt;</code>‚Ä¶)</td>
+          <td>ScËnes 3D, architecture, volumes</td>
+          <td>HTML A-Frame (<code>&lt;a-scene&gt;</code>, <code>&lt;a-box&gt;</code>Ö)</td>
         </tr>
         <tr>
           <td><code>svg</code></td>
           <td>SVG natif</td>
-          <td>Plans 2D, sch√©mas vectoriels sur mesure</td>
+          <td>Plans 2D, schÈmas vectoriels sur mesure</td>
           <td>Code XML SVG complet et valide</td>
         </tr>
         <tr>
           <td><code>cytoscape</code></td>
           <td>Cytoscape.js</td>
-          <td>R√©seaux, graphes de force, clusters</td>
+          <td>RÈseaux, graphes de force, clusters</td>
           <td>JSON Cytoscape (<code>elements: {nodes: [], edges: []}</code>)</td>
         </tr>
         <tr>
           <td><code>wavedrom</code></td>
           <td>WaveDrom</td>
-          <td>√âlectronique, signaux num√©riques</td>
+          <td>…lectronique, signaux numÈriques</td>
           <td>JSON WaveDrom (<code>signal: []</code>)</td>
         </tr>
         <tr>
           <td><code>chem</code></td>
           <td>RDKit / Ketcher</td>
-          <td>Chimie mol√©culaire</td>
-          <td>Cha√Æne SMILES (ex. <code>CC(=O)OC1=CC=CC=C1C(=O)O</code>)</td>
+          <td>Chimie molÈculaire</td>
+          <td>ChaÓne SMILES (ex. <code>CC(=O)OC1=CC=CC=C1C(=O)O</code>)</td>
         </tr>
         <tr>
           <td><code>science</code></td>
           <td>Plotly.js</td>
-          <td>Physique &amp; Math√©matiques</td>
+          <td>Physique &amp; MathÈmatiques</td>
           <td>JSON Plotly (<code>data: []</code>, <code>layout: {}</code>)</td>
         </tr>
         <tr>
           <td><code>bio</code></td>
           <td>3Dmol.js / PDB</td>
-          <td>Biologie structurelle, prot√©ines 3D</td>
+          <td>Biologie structurelle, protÈines 3D</td>
           <td>ID PDB (ex. <code>1A8M</code>) ou fichier PDB complet</td>
         </tr>
         <tr>
           <td><code>astro</code></td>
           <td>D3-Celestial</td>
-          <td>Exploration c√©leste, carte du ciel</td>
-          <td>JSON D3-Celestial (<code>projection: 'orthographic'</code>‚Ä¶)</td>
+          <td>Exploration cÈleste, carte du ciel</td>
+          <td>JSON D3-Celestial (<code>projection: 'orthographic'</code>Ö)</td>
         </tr>
       </tbody>
     </table>
 
-    <h2>S√©lection automatique du moteur</h2>
+    <h2>SÈlection automatique du moteur</h2>
 
     <p>
-      Si le param√®tre <code>moteur</code> n'est pas fourni, le mod√®le choisit librement le moteur
-      le plus adapt√© √† l'intention. En cas d'ambigu√Øt√© sur le moteur retourn√© par le mod√®le, le Pipe
-      parcourt les 300 premiers caract√®res de la r√©ponse pour d√©tecter le mot-cl√© correspondant.
+      Si le paramËtre <code>moteur</code> n'est pas fourni, le modËle choisit librement le moteur
+      le plus adaptÈ ‡ l'intention. En cas d'ambiguÔtÈ sur le moteur retournÈ par le modËle, le Pipe
+      parcourt les 300 premiers caractËres de la rÈponse pour dÈtecter le mot-clÈ correspondant.
       Fallback final : <code>mermaid</code>.
     </p>
 
-    <h2>Niveaux cognitifs recommand√©s</h2>
+    <h2>Niveaux cognitifs recommandÈs</h2>
 
     <table>
-      <thead><tr><th>Niveau</th><th>Moteurs conseill√©s</th></tr></thead>
+      <thead><tr><th>Niveau</th><th>Moteurs conseillÈs</th></tr></thead>
       <tbody>
         <tr><td><code>MODEL_LITE</code></td><td>Mindmaps simples (<code>markmap</code>), Flowcharts basiques (<code>mermaid</code>)</td></tr>
         <tr><td><code>MODEL_FLASH</code></td><td>Standard : <code>echarts</code>, <code>bpmn</code>, <code>svg</code>, <code>vega</code>, <code>timeline</code>, <code>gantt</code></td></tr>
@@ -159,24 +159,24 @@
     </table>
 
     <div class="audit-note">
-      <h4>‚úÖ Validation JSON stricte automatique</h4>
+      <h4>? Validation JSON stricte automatique</h4>
       <p>
-        Pour les moteurs √† format JSON (<code>echarts</code>, <code>vega</code>, <code>timeline</code>,
+        Pour les moteurs ‡ format JSON (<code>echarts</code>, <code>vega</code>, <code>timeline</code>,
         <code>cytoscape</code>, <code>wavedrom</code>, <code>science</code>, <code>astro</code>),
         l'outil valide le payload via <code>orjson.loads()</code> avant rendu. En cas d'erreur de
-        syntaxe, une requ√™te de correction est automatiquement envoy√©e au mod√®le avant de passer
+        syntaxe, une requÍte de correction est automatiquement envoyÈe au modËle avant de passer
         au rendu.
       </p>
     </div>
 
     <div class="transition-text">
-      <a href="07f_actions_ui.html">‚Üê Actions UI (HUD)</a>
+      <a href="07f_actions_ui.html">? Actions UI (HUD)</a>
       &nbsp;&nbsp;
-      <a href="08_system_prompt.html">Le Kernel (System Prompt) ‚ûî</a>
+      <a href="08_system_prompt.html">Le Kernel (System Prompt) ?</a>
     </div>
 
     <footer>
-      ECHO Framework ‚Äî Version 5.170.13 ‚Äî Copyright &copy; 2025-2026 Wilfried BARNAVON ‚Äî Licence Apache 2.0
+      ECHO Framework ó Version 5.173.6 ó Copyright &copy; 2025-2026 Wilfried BARNAVON ó Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

@@ -1,128 +1,128 @@
-ï»¿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ECHO Strategic Planner v1.0 : outil de planification stratÃ©gique, cascade cognitive PRO-FLASH-LITE, persistance Markdown dans le Vault et registre SQLite par chat.">
-  <title>ECHO v5 â€” 7a. Planification StratÃ©gique</title>
+  <meta name="description" content="ECHO Strategic Planner v1.0 : outil de planification stratégique, cascade cognitive PRO-FLASH-LITE, persistance Markdown dans le Vault et registre SQLite par chat.">
+  <title>ECHO v5 — 7a. Planification Stratégique</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7a. Planification StratÃ©gique</h1>
+    <h1>7a. Planification Stratégique</h1>
 
     <p>
-      L'outil de <strong>Planification StratÃ©gique</strong> (<code>ECHO Strategic Planner</code>, version 1.0)
-      est le Kernel exÃ©cutif chargÃ© de concevoir, d'ajuster et de piloter des plans d'action structurÃ©s
-      pour la rÃ©solution d'objectifs complexes. Contrairement aux outils ad-hoc, la planification stratÃ©gique
-      ECHO est conÃ§ue comme un contrat d'exÃ©cution persistant, tracÃ© en base de donnÃ©es et intÃ©grÃ© de
-      maniÃ¨re proprioceptive dans le contexte de l'agent.
+      L'outil de <strong>Planification Stratégique</strong> (<code>ECHO Strategic Planner</code>, version 1.0)
+      est le Kernel exécutif chargé de concevoir, d'ajuster et de piloter des plans d'action structurés
+      pour la résolution d'objectifs complexes. Contrairement aux outils ad-hoc, la planification stratégique
+      ECHO est conçue comme un contrat d'exécution persistant, tracé en base de données et intégré de
+      manière proprioceptive dans le contexte de l'agent.
     </p>
 
     <h2>Architecture Technique & Flux</h2>
 
     <p>
-      Le module <code>strategic_planner.py</code> encapsule l'intelligence de planification Ã  travers un
-      systÃ¨me robuste Ã  triple niveau (Fichiers, Base de donnÃ©es SQLite, Contexte d'exÃ©cution) reposant sur une cascade de LLM.
+      Le module <code>strategic_planner.py</code> encapsule l'intelligence de planification à travers un
+      système robuste à triple niveau (Fichiers, Base de données SQLite, Contexte d'exécution) reposant sur une cascade de LLM.
     </p>
 
     <table>
-      <thead><tr><th>Composant</th><th>SpÃ©cification Technique</th></tr></thead>
+      <thead><tr><th>Composant</th><th>Spécification Technique</th></tr></thead>
       <tbody>
         <tr><td><strong>Source</strong></td><td><code>12-owui-tools/strategic_planner.py</code></td></tr>
         <tr><td><strong>Version de l'outil</strong></td><td>1.0</td></tr>
-        <tr><td><strong>Persistance Physique</strong></td><td>Fichiers Markdown (<code>.md</code>) stockÃ©s dans le Vault : <code>ECHO_USERS_ROOT/{user_id}/plans/{chat_id}/</code></td></tr>
-        <tr><td><strong>Registre de ContrÃ´le</strong></td><td>Base SQLite par chat (<code>identity.db</code> / <code>{chat_id}.db</code> via <code>EchoStateManager</code>)</td></tr>
+        <tr><td><strong>Persistance Physique</strong></td><td>Fichiers Markdown (<code>.md</code>) stockés dans le Vault : <code>ECHO_USERS_ROOT/{user_id}/plans/{chat_id}/</code></td></tr>
+        <tr><td><strong>Registre de Contrôle</strong></td><td>Base SQLite par chat (<code>identity.db</code> / <code>{chat_id}.db</code> via <code>EchoStateManager</code>)</td></tr>
         <tr><td><strong>Proprioception</strong></td><td>Injection automatique du statut des plans dans le Registre <code>registre_plan</code> de <code><environnement_contexte></code></td></tr>
-        <tr><td><strong>Algorithme LLM</strong></td><td>Cascade cognitive descendante rÃ©siliente (PRO â” FLASH â” LITE)</td></tr>
+        <tr><td><strong>Algorithme LLM</strong></td><td>Cascade cognitive descendante résiliente (PRO ? FLASH ? LITE)</td></tr>
       </tbody>
     </table>
 
     <h2>La Cascade Cognitive Descendante (<code>_cascade_call</code>)</h2>
 
     <p>
-      L'agent planificateur ne repose pas sur un seul modÃ¨le rigide. Pour garantir la continuitÃ© du service mÃªme en cas
-      de saturation des quotas API (erreurs 429 ou 500), l'outil utilise la mÃ©thode asynchrone <code>_cascade_call()</code>.
-      Le systÃ¨me commence par le modÃ¨le le plus puissant configurÃ©, puis descend automatiquement vers le niveau infÃ©rieur :
+      L'agent planificateur ne repose pas sur un seul modèle rigide. Pour garantir la continuité du service même en cas
+      de saturation des quotas API (erreurs 429 ou 500), l'outil utilise la méthode asynchrone <code>_cascade_call()</code>.
+      Le système commence par le modèle le plus puissant configuré, puis descend automatiquement vers le niveau inférieur :
     </p>
     <ol>
-      <li><strong>MODEL_PRO</strong> (Niveau de rÃ©flexion maximal <code>THINKING_LEVEL_PRO</code>) : UtilisÃ© par dÃ©faut pour la rÃ©daction initiale d'un plan complexe (via <code>build_plan</code>).</li>
-      <li><strong>MODEL_FLASH</strong> (Niveau de rÃ©flexion intermÃ©diaire <code>THINKING_LEVEL_FLASH</code>) : ModÃ¨le par dÃ©faut pour les modifications rapides et la mise Ã  jour des statuts (via <code>update_plan</code>).</li>
-      <li><strong>MODEL_LITE</strong> (Niveau minimal) : ModÃ¨le de repli ultime assurant la rÃ©silience opÃ©rationnelle globale.</li>
+      <li><strong>MODEL_PRO</strong> (Niveau de réflexion maximal <code>THINKING_LEVEL_PRO</code>) : Utilisé par défaut pour la rédaction initiale d'un plan complexe (via <code>build_plan</code>).</li>
+      <li><strong>MODEL_FLASH</strong> (Niveau de réflexion intermédiaire <code>THINKING_LEVEL_FLASH</code>) : Modèle par défaut pour les modifications rapides et la mise à jour des statuts (via <code>update_plan</code>).</li>
+      <li><strong>MODEL_LITE</strong> (Niveau minimal) : Modèle de repli ultime assurant la résilience opérationnelle globale.</li>
     </ol>
     <p>
-      La signature du modÃ¨le ayant effectivement rÃ©digÃ© ou mis Ã  jour le plan est conservÃ©e dans les mÃ©tadonnÃ©es de l'en-tÃªte (YAML Frontmatter) sous la clÃ© <code>author_model</code>.
+      La signature du modèle ayant effectivement rédigé ou mis à jour le plan est conservée dans les métadonnées de l'en-tête (YAML Frontmatter) sous la clé <code>author_model</code>.
     </p>
 
-    <h2>Protocole de Discussion PrÃ©liminaire & ClÃ© d'Appel</h2>
+    <h2>Protocole de Discussion Préliminaire & Clé d'Appel</h2>
 
     <div class="tech-spec">
-      <h4>âš ï¸ RÃ¨gle d'or : Ne pas appeler build_plan prÃ©cipitamment</h4>
+      <h4>?? Règle d'or : Ne pas appeler build_plan précipitamment</h4>
       <p>
-        Un plan stratÃ©gique est un <strong>contrat d'exÃ©cution</strong>. Un objectif vague produit un plan vague. L'agent a l'obligation stricte d'engager une phase de discussion et de clarification avec l'utilisateur <strong>AVANT</strong> de dÃ©clencher le planificateur :
+        Un plan stratégique est un <strong>contrat d'exécution</strong>. Un objectif vague produit un plan vague. L'agent a l'obligation stricte d'engager une phase de discussion et de clarification avec l'utilisateur <strong>AVANT</strong> de déclencher le planificateur :
       </p>
       <ul>
-        <li><strong>PrÃ©cision de l'objectif</strong> : Clarifier le but recherchÃ©, le pÃ©rimÃ¨tre exact de la tÃ¢che et les livrables attendus.</li>
-        <li><strong>Identification des contraintes</strong> : Demander les sources d'information privilÃ©giÃ©es, les outils exclus, ou les limitations matÃ©rielles.</li>
-        <li><strong>CritÃ¨res de succÃ¨s</strong> : DÃ©finir des indicateurs de rÃ©ussite mesurables pour chaque Ã©tape.</li>
-        <li><strong>Structure prÃ©liminaire</strong> : Proposer un brouillon verbal ou une arborescence avant de figer le plan en fichier physique.</li>
+        <li><strong>Précision de l'objectif</strong> : Clarifier le but recherché, le périmètre exact de la tâche et les livrables attendus.</li>
+        <li><strong>Identification des contraintes</strong> : Demander les sources d'information privilégiées, les outils exclus, ou les limitations matérielles.</li>
+        <li><strong>Critères de succès</strong> : Définir des indicateurs de réussite mesurables pour chaque étape.</li>
+        <li><strong>Structure préliminaire</strong> : Proposer un brouillon verbal ou une arborescence avant de figer le plan en fichier physique.</li>
       </ul>
     </div>
 
     <h2>Cycle de Vie d'un Plan (YAML Frontmatter)</h2>
 
     <p>
-      Chaque plan d'action dÃ©bute Ã  l'Ã©tat <strong><code>draft</code></strong> (brouillon non exÃ©cutable) lors de son initialisation par <code>build_plan</code>.
-      Il doit ensuite Ãªtre validÃ© par l'utilisateur (via une mise Ã  jour d'Ã©tat) pour transiter vers les autres Ã©tats dÃ©finis dans les constantes d'ECHO :
+      Chaque plan d'action débute à l'état <strong><code>draft</code></strong> (brouillon non exécutable) lors de son initialisation par <code>build_plan</code>.
+      Il doit ensuite être validé par l'utilisateur (via une mise à jour d'état) pour transiter vers les autres états définis dans les constantes d'ECHO :
     </p>
     <ul>
-      <li><strong><code>draft</code></strong> : Ã‰tat de crÃ©ation initiale. Le plan est modifiable et en attente de validation.</li>
-      <li><strong><code>ready</code></strong> : Le plan a Ã©tÃ© validÃ© et est prÃªt pour l'exÃ©cution automatique ou assistÃ©e.</li>
-      <li><strong><code>executing</code></strong> : Une ou plusieurs tÃ¢ches du plan sont activement en cours d'exÃ©cution.</li>
-      <li><strong><code>success</code></strong> : Toutes les tÃ¢ches principales ont Ã©tÃ© complÃ©tÃ©es avec succÃ¨s et les critÃ¨res de rÃ©ussite sont atteints.</li>
-      <li><strong><code>failed</code></strong> : L'exÃ©cution a Ã©chouÃ© Ã  la suite d'un blocage majeur.</li>
-      <li><strong><code>partial</code></strong> : RÃ©ussi partiellement â€” certains objectifs atteints, d'autres non.</li>
-      <li><strong><code>abandoned</code></strong> : Plan abandonnÃ© volontairement par l'utilisateur.</li>
+      <li><strong><code>draft</code></strong> : État de création initiale. Le plan est modifiable et en attente de validation.</li>
+      <li><strong><code>ready</code></strong> : Le plan a été validé et est prêt pour l'exécution automatique ou assistée.</li>
+      <li><strong><code>executing</code></strong> : Une ou plusieurs tâches du plan sont activement en cours d'exécution.</li>
+      <li><strong><code>success</code></strong> : Toutes les tâches principales ont été complétées avec succès et les critères de réussite sont atteints.</li>
+      <li><strong><code>failed</code></strong> : L'exécution a échoué à la suite d'un blocage majeur.</li>
+      <li><strong><code>partial</code></strong> : Réussi partiellement — certains objectifs atteints, d'autres non.</li>
+      <li><strong><code>abandoned</code></strong> : Plan abandonné volontairement par l'utilisateur.</li>
     </ul>
 
-    <h2>Format de Persistance du Plan (Markdown structurÃ©)</h2>
+    <h2>Format de Persistance du Plan (Markdown structuré)</h2>
 
     <p>
-      Les plans d'action gÃ©nÃ©rÃ©s respectent une structure stricte en Markdown avec un en-tÃªte de mÃ©tadonnÃ©es YAML (Frontmatter) :
+      Les plans d'action générés respectent une structure stricte en Markdown avec un en-tête de métadonnées YAML (Frontmatter) :
     </p>
 
 <pre><code class="language-yaml">---
 plan_id: 1716734567
 chat_id: 1b066fa6-e3dd-41ee-a7d8-726b0d9ad406
 created_at: 2026-05-26T15:00:00Z
-goal: "Nom de l'objectif stratÃ©gique"
+goal: "Nom de l'objectif stratégique"
 author_model: gemini-3.1-pro-preview
 status: draft
 ---
 
-## ğŸ¯ Objectif
-(Reformulation et cadrage prÃ©cis de la mission)
+## ?? Objectif
+(Reformulation et cadrage précis de la mission)
 
-## ğŸ“‹ Plan d'action
-- [ ] Ã‰tape 1 : LibellÃ© de l'Ã©tape
-  - [ ] Sous-tÃ¢che 1.1 : Description (â†’ `nom_outil` si recommandation d'outil)
-  - [/] Sous-tÃ¢che 1.2 : En cours d'exÃ©cution
-  - [x] Sous-tÃ¢che 1.3 : TerminÃ©e
+## ?? Plan d'action
+- [ ] Étape 1 : Libellé de l'étape
+  - [ ] Sous-tâche 1.1 : Description (? `nom_outil` si recommandation d'outil)
+  - [/] Sous-tâche 1.2 : En cours d'exécution
+  - [x] Sous-tâche 1.3 : Terminée
 
-## âš ï¸ Contraintes & Risques
+## ?? Contraintes & Risques
 - Contrainte A...
-- Risque opÃ©rationnel B...
+- Risque opérationnel B...
 
-## âœ… CritÃ¨res de succÃ¨s
-- CritÃ¨re 1 : ...
-- CritÃ¨re 2 : ...
+## ? Critères de succès
+- Critère 1 : ...
+- Critère 2 : ...
 </code></pre>
 
     <h2>Les Outils du Plan (API Function Calling)</h2>
 
     <p>
-      Quatre fonctions Python asynchrones sont exposÃ©es au Kernel pour gÃ©rer intÃ©gralement le cycle de vie des plans :
+      Quatre fonctions Python asynchrones sont exposées au Kernel pour gérer intégralement le cycle de vie des plans :
     </p>
 
     <table>
@@ -134,15 +134,15 @@ status: draft
           <td><code>build_plan</code></td>
           <td><code>goal</code> (str), <code>context</code> (str), <code>planner_model</code> (Literal)</td>
           <td>
-            GÃ©nÃ¨re le fichier Markdown du plan Ã  l'Ã©tat <code>draft</code> en appliquant le prompt systÃ¨me <code>SYSTEM_PROMPT_BUILD</code>.
-            Persiste le fichier dans le dossier de l'utilisateur, l'ajoute dans le registre SQLite de contrÃ´le via <code>save_plan_record</code> et retourne le contenu Markdown complet.
+            Génère le fichier Markdown du plan à l'état <code>draft</code> en appliquant le prompt système <code>SYSTEM_PROMPT_BUILD</code>.
+            Persiste le fichier dans le dossier de l'utilisateur, l'ajoute dans le registre SQLite de contrôle via <code>save_plan_record</code> et retourne le contenu Markdown complet.
           </td>
         </tr>
         <tr>
           <td><code>read_plan</code></td>
           <td><code>plan_id</code> (str)</td>
           <td>
-            RÃ©sout le chemin physique du plan via recherche glob (<code>{plan_id}_*.md</code>) dans le rÃ©pertoire des plans du chat.
+            Résout le chemin physique du plan via recherche glob (<code>{plan_id}_*.md</code>) dans le répertoire des plans du chat.
             Lit et retourne le fichier Markdown complet (Frontmatter inclus).
           </td>
         </tr>
@@ -150,39 +150,39 @@ status: draft
           <td><code>update_plan</code></td>
           <td><code>plan_id</code> (str), <code>instructions</code> (str), <code>planner_model</code> (Literal)</td>
           <td>
-            Modifie le contenu d'un plan existant en appliquant le prompt de rÃ©Ã©criture <code>SYSTEM_PROMPT_UPDATE</code>.
-            Permet de cocher/dÃ©cochez des cases (en attente <code>[ ]</code>, en cours <code>[/]</code>, terminÃ©e <code>[x]</code>, Ã©chouÃ©e <code>[!]</code>, ignorÃ©e <code>[-]</code>) ou de changer le statut global du plan.
-            Si le statut du Frontmatter change, le registre SQLite est mis Ã  jour en consÃ©quence.
+            Modifie le contenu d'un plan existant en appliquant le prompt de réécriture <code>SYSTEM_PROMPT_UPDATE</code>.
+            Permet de cocher/décochez des cases (en attente <code>[ ]</code>, en cours <code>[/]</code>, terminée <code>[x]</code>, échouée <code>[!]</code>, ignorée <code>[-]</code>) ou de changer le statut global du plan.
+            Si le statut du Frontmatter change, le registre SQLite est mis à jour en conséquence.
           </td>
         </tr>
         <tr>
           <td><code>delete_plan</code></td>
           <td><code>plan_id</code> (str)</td>
           <td>
-            Supprime dÃ©finitivement le fichier physique Markdown du plan et nettoie la table du registre SQLite (via <code>delete_plan_record</code>). Cette opÃ©ration est irrÃ©versible.
+            Supprime définitivement le fichier physique Markdown du plan et nettoie la table du registre SQLite (via <code>delete_plan_record</code>). Cette opération est irréversible.
           </td>
         </tr>
       </tbody>
     </table>
 
     <div class="audit-note">
-      <h4>ğŸ“Š IntÃ©gration proprioceptive (registre_plan)</h4>
+      <h4>?? Intégration proprioceptive (registre_plan)</h4>
       <p>
-        Ã€ chaque nouveau tour de discussion, le filtre de contexte d'ECHO interroge le registre SQLite pour ce chat spÃ©cifique.
-        Les mÃ©tadonnÃ©es actives de tous les plans existants sont injectÃ©es de maniÃ¨re transparente dans le bloc proprioceptif 
-        <code>&lt;environnement_contexte&gt;</code> sous la structure <code>registre_plan</code>. Cela garantit que le modÃ¨le a toujours 
+        À chaque nouveau tour de discussion, le filtre de contexte d'ECHO interroge le registre SQLite pour ce chat spécifique.
+        Les métadonnées actives de tous les plans existants sont injectées de manière transparente dans le bloc proprioceptif 
+        <code>&lt;environnement_contexte&gt;</code> sous la structure <code>registre_plan</code>. Cela garantit que le modèle a toujours 
         conscience des plans en cours, de leur statut global et de leur identifiant unique sans avoir besoin de lire les fichiers physiques.
       </p>
     </div>
 
     <div class="transition-text">
-      <a href="07_arsenal_outils.html">â† Retour Ã  l'Arsenal</a>
+      <a href="07_arsenal_outils.html">? Retour à l'Arsenal</a>
       &nbsp;&nbsp;
-      <a href="07b_web_intelligence.html">Passer Ã  la Web Intelligence â”</a>
+      <a href="07b_web_intelligence.html">Passer à la Web Intelligence ?</a>
     </div>
 
     <footer>
-      ECHO Framework â€” Version 5.170.13 â€” Copyright &copy; 2025-2026 Wilfried BARNAVON â€” Licence Apache 2.0
+      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

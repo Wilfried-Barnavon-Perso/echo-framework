@@ -11,7 +11,12 @@
     "pending_user_overlay_content": "",
     "watermark": "",
     "prompt_suggestions": [],
-    "banners": []
+    "banners": [],
+    "default_models": "pipe_engine",
+    "default_pinned_models": "pipe_engine",
+    "model_order_list": [
+      "pipe_engine"
+    ]
   },
   "webhook_url": "",
   "auth": {
@@ -141,12 +146,12 @@
   "audio": {
     "tts": {
       "openai": {
-        "api_base_url": "https://api.openai.com/v1",
-        "api_key": "",
+        "api_base_url": "http://echo-tts-worker:7996/v1",
+        "api_key": "dummy",
         "params": {}
       },
       "api_key": "",
-      "engine": "transformers",
+      "engine": "openai",
       "model": "",
       "voice": "",
       "split_on": "punctuation",
@@ -158,11 +163,11 @@
     },
     "stt": {
       "openai": {
-        "api_base_url": "https://api.openai.com/v1",
-        "api_key": ""
+        "api_base_url": "http://echo-stt-worker:7995/v1",
+        "api_key": "dummy"
       },
-      "engine": "",
-      "model": "",
+      "engine": "openai",
+      "model": "base",
       "supported_content_types": [
         ""
       ],
@@ -186,7 +191,7 @@
   },
   "rag": {
     "embedding_engine": "",
-    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_model": "",
     "embedding_batch_size": 1,
     "enable_async_embedding": false,
     "template": "",

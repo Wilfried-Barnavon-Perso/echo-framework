@@ -2,7 +2,7 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.73 (Suppression de profil Rclone)
+VERSION : 5.74 (QA Constants & Config)
 --- CHANGELOG 5.66 ---
 - Correctif critique : load_maint_config() utilisait une copie superficielle (copy()). Les dicts imbriqués
   (retention, memory_ttl, consolidation) étaient des références partagées vers DEFAULT_MAINT_CONFIG,
@@ -140,6 +140,7 @@ RCLONE_CONF_DIR = os.path.join(OWUI_DATA_ROOT, "rclone")
 RCLONE_CONF_PATH = os.path.join(RCLONE_CONF_DIR, "rclone.conf")
 OWUI_ADMIN_SECRET_PATH = "/app/secrets/.owui-admin-secret"
 
+WEBUI_URL = "http://echo-open-webui:8080"
 QDRANT_URL = "http://echo-qdrant:6333"
 COLLECTION_MEMORY = "echo_memory"
 COLLECTION_EPHEMERAL = "echo_ephemeral"
@@ -301,7 +302,7 @@ def run_semantic_pruning():
             if os.path.exists(OWUI_ADMIN_SECRET_PATH):
                 with open(OWUI_ADMIN_SECRET_PATH, "r") as f:
                     admin_token = f.read().strip()
-            owui_url = os.environ.get("WEBUI_URL", "http://echo-open-webui:8080")
+            owui_url = WEBUI_URL
             r_auth = httpx.get(f"{owui_url}/api/v1/users/", headers={"Authorization": f"Bearer {admin_token}"}, timeout=5)
             if r_auth.status_code != 200:
                 err_msg = f"API Safeguard: Auth OWUI échouée (HTTP {r_auth.status_code}). Pruning annulé."

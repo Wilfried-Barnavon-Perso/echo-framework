@@ -64,8 +64,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient, _get_global_client, get_ca_model_id
 from echo_ui import EchoUI
 from echo_constants import (
-    MODEL_PRO, MODEL_FLASH, MODEL_LITE, MODEL_ROUTING, MODEL_IDENTITY,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, ECHO_RETRY_BASE_DELAY,
+    MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING, MODEL_IDENTITY,
     TEMP_DEFAULT, TOP_P_DEFAULT,
     THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
     MAX_TOKENS_DEFAULT
@@ -519,13 +518,8 @@ _TOOLS_CACHE: dict = {}  # {chat_id: dict[fn_name, {callable, spec, tool_id, met
 
 class Pipe:
     class Valves(BaseModel):
-        HTTP_CLIENT_TIMEOUT: int = Field(default=600)
-        HTTP_MAX_CONNECTIONS: int = Field(default=100); HTTP_MAX_KEEPALIVE: int = Field(default=20)
-        HTTP_KEEPALIVE_EXPIRY: int = Field(default=300)
-        DEBUG_MODE: bool = Field(default=False); MAX_CONTEXT_SIZE: int = Field(default=1048576)
-        RETRY_TIMEBASE: int = Field(default=ECHO_RETRY_BASE_DELAY)
-        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES)
-        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
+        DEBUG_MODE: bool = Field(default=False, description="Active le mode de débogage avancé (logs détaillés dans data_dir).")
+        MAX_CONTEXT_SIZE: int = Field(default=1048576, description="Taille maximale du contexte absorbable en tokens.")
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
         MODEL_SELECTION: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO", "AUTO", "AUTO_PRO"] = Field(default="AUTO")
@@ -826,11 +820,8 @@ class Pipe:
                     target_model=target_model,
                     payload=payload,
                     user_id=__user__["id"],
-                    threshold=self.valves.KEY_SWITCH_THRESHOLD,
-                    max_retries=self.valves.MAX_RETRIES,
                     events=events,
                     process_callback=proc.process,
-                    timeout=self.valves.HTTP_CLIENT_TIMEOUT,
                     chat_id=chat_id,
                     enable_paid_credits=user_valves.ENABLE_PAID_CREDITS,
                 ):

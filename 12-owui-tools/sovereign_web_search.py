@@ -1,8 +1,8 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.1
-description: 1.1: Outil de vérification externe prioritaire pour satisfaire le Principe de Rigueur Analytique et Factuelle (PRAF).
+version: 1.2
+description: 1.2: Refonte de search_instant_answer (force les mots-clés intemporels en anglais).
 """
 
 import httpx
@@ -15,18 +15,18 @@ from pydantic import BaseModel, Field
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoAuth
-from echo_constants import ECHO_USER_AGENT
+from echo_constants import ECHO_USER_AGENT, ECHO_SEARXNG_BASE_URL
 
 class Tools:
     class Valves(BaseModel):
-        SEARXNG_BASE_URL: str = Field(
-            default="http://searxng:8080", 
-            description="URL interne de l'instance SearxNG Docker."
-        )
+        pass
+
+    class UserValves(BaseModel):
         MAX_RESULTS: int = Field(default=8, description="Nombre de résultats web à extraire.")
 
     def __init__(self):
         self.valves = self.Valves()
+        self.user_valves = self.UserValves()
 
     async def search_instant_answer(
         self,
@@ -35,8 +35,10 @@ class Tools:
         __event_emitter__: Any = None
     ) -> str:
         """
-        Récupère une réponse instantanée (faits, définitions, Wikipédia) via DuckDuckGo.
-        Ultra-rapide, idéal pour : "Qui est X ?", "Quelle est la capitale de Y ?", "Définition de Z".
+        Récupère une réponse instantanée (faits, définitions, encyclopédie) via DuckDuckGo.
+        RÈGLE STRICTE : Ne JAMAIS formuler de question complète. Fournissez UNIQUEMENT les mots-clés exacts.
+        TRÈS IMPORTANT : L'entité cible DOIT être traduite en ANGLAIS pour garantir un résultat.
+        Exemples intemporels valides : "Theory of relativity", "Photosynthesis", "Isaac Newton".
         """
         events = EchoEvents(__event_emitter__)
         await events.status(f"🦆 DuckDuckGo Instant Answer : {query}...")
@@ -78,6 +80,7 @@ class Tools:
         :param time_range: (Optionnel) Filtre temporel : 'day', 'week', 'month', 'year'.
         """
         events = EchoEvents(__event_emitter__)
+        u_valves = __user__.get("valves", self.UserValves()) if __user__ else self.UserValves()
         await events.status(f"🔍 SearxNG Deep Search : {query}...")
         
         params = {
@@ -88,7 +91,7 @@ class Tools:
         }
         if time_range: params["time_range"] = time_range
         
-        url = f"{self.valves.SEARXNG_BASE_URL}/search"
+        url = f"{ECHO_SEARXNG_BASE_URL}/search"
         headers = {"User-Agent": ECHO_USER_AGENT}
         
         try:
@@ -98,7 +101,7 @@ class Tools:
                     return wrap_tool_output(text=f"❌ SearxNG indisponible ({resp.status_code}). Vérifiez le conteneur Docker.", status={"status": "error"})
                 
                 data = resp.json()
-                results = data.get("results", [])[:self.valves.MAX_RESULTS]
+                results = data.get("results", [])[:u_valves.MAX_RESULTS]
                 
                 if not results:
                     return wrap_tool_output(text="⚠️ Aucun résultat trouvé pour cette recherche.", status={"status": "no_result"})

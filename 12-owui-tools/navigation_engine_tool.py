@@ -23,14 +23,14 @@ from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_
 from echo_ui import EchoUI
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, MODEL_ROUTING,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
+    NAVIGATION_ENGINE_URL
 )
 
 # --- FONCTIONS UTILITAIRES PRIVÉES ---
 
 async def _req(valves: Any, endpoint: str, data: dict = None, user_id: str = "anonymous") -> dict:
     """Effectue une requête POST asynchrone vers le Browser Agent."""
-    url = f"{valves.AGENT_URL}{endpoint}"
+    url = f"{NAVIGATION_ENGINE_URL}{endpoint}"
     headers = {"Content-Type": "application/json", "X-OpenWebUI-User-Id": str(user_id)}
     try:
         async with httpx.AsyncClient(timeout=valves.HTTP_TIMEOUT) as client:
@@ -92,12 +92,8 @@ async def _deploy_navigation_monitor(valves, res_view, chat_id, uid, u_valves, e
 
 class Tools:
     class Valves(BaseModel):
-        AGENT_URL: str = Field(default="http://browser-agent:5002", description="URL du container Browser Agent")
         HTTP_TIMEOUT: int = Field(default=120, description="Timeout global (sec).")
         IDLE_TIMEOUT: int = Field(default=900, description="Délai auto-fermeture (sec).")
-        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Seuil de basculement de clé.")
-        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
-        UPLOADS_DIR: str = Field(default=ECHO_UPLOADS_TRANSIT_DIR, description="Dossier des uploads OWUI")
 
     class UserValves(BaseModel):
         BROWSER_MODE: Literal["mobile", "desktop"] = Field(default="mobile", description="Mode de navigation (Mobile = Tablette)")

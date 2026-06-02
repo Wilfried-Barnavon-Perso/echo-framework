@@ -253,9 +253,9 @@ flowchart TD
         <text x="660" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Vector local</text>
 
         <rect x="730" y="464" width="130" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="795" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Distiller :7998</text>
-        <text x="795" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Gemma 4 E4B</text>
-        <text x="795" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Distill. locale</text>
+        <text x="795" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Audio Workers</text>
+        <text x="795" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Kokoro TTS :7996</text>
+        <text x="795" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Whisper STT :7995</text>
 
         <!-- ====== FLÈCHES ====== -->
         <!-- Filtre → Pipe -->
@@ -294,7 +294,7 @@ flowchart TD
         <!-- Embedding Worker -->
         <line x1="196" y1="380" x2="660" y2="464" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
         
-        <!-- Gemma Distiller -->
+        <!-- Audio Workers -->
         <line x1="196" y1="380" x2="795" y2="464" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
       </svg>
 
@@ -381,7 +381,7 @@ flowchart TD
         <p><strong>Nature :</strong> Pipeline de distillation asynchrone de fichiers volumineux.</p>
         <p>
           Déclenché par le Filtre pour tout fichier dépassant <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko).
-          Le Gemma Distiller local (<code>call_distillation</code>, fallback <code>gemini-2.5-flash</code>) produit un distillat structuré, vectorisé
+          L'API de distillation (<code>call_distillation</code>) produit un distillat structuré, vectorisé
           dans <code>echo_ephemeral</code> (Qdrant, bge-m3). Le modèle principal reçoit un résumé
           (≤ 300 mots) et le <code>source_id</code> pour interroger les détails.
         </p>
@@ -574,7 +574,6 @@ flowchart TB
     QD[("🧠 Qdrant Engine<br/>[:6333]")]
     FS[("📂 Vault<br/>(Système de fichiers)")]
     EMB[("🔢 Embedding Worker<br/>[:7997]")]
-    GEM[("🧠 Gemma Distiller<br/>[:7998]")]
   end
 
   subgraph SANDBOX ["🛠️ ZONE 4 : ARSENAL ISOLÉ (Sans accès entrant)"]
@@ -582,6 +581,7 @@ flowchart TB
     BA["🌐 Browser Agent<br/>[:3001]"]
     PW["🚀 Python Worker<br/>[:3002]"]
     SNG["🔍 SearxNG Proxy<br/>[:8080]"]
+    AUD["🎙️ Audio Workers<br/>[:7995, :7996]"]
   end
 
   subgraph MGMT ["⚙️ ZONE 5 : PLAN DE CONTRÔLE"]
@@ -610,7 +610,6 @@ flowchart TB
   AM -. "Health/Prune" .-> Kernel & SQL & QD
 
   QD <--> EMB
-  F -. "Distillation" .-> GEM
 
   classDef node fill:#1e293b,stroke:#475569,stroke-width:2px,color:#f8fafc
   classDef db fill:#0f172a,stroke:#f59e0b,stroke-width:2px,color:#f8fafc
@@ -618,9 +617,9 @@ flowchart TB
   classDef tool fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#f8fafc
 
   class U,BW,OWUI,AM,DOCKER node
-  class SQL,QD,FS,EMB,GEM db
+  class SQL,QD,FS,EMB db
   class F,P core
-  class BA,PW,SNG tool
+  class BA,PW,SNG,AUD tool
       </div>
     </div>
 
@@ -717,7 +716,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 

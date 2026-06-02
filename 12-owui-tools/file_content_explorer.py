@@ -33,9 +33,6 @@ from echo_constants import (
 
 class Tools:
     class Valves(BaseModel):
-        UPLOADS_DIR: str = Field(default=ECHO_UPLOADS_TRANSIT_DIR)
-        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
-        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
         PROBE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour le sondage sémantique.")
         MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW).")
         MAX_MULTIMODAL_SIZE_KB: int = Field(default=102400, description="Taille maximale (en Ko) pour l'injection multimédia.")
@@ -45,7 +42,7 @@ class Tools:
 
     def __init__(self):
         self.valves = self.Valves()
-        self.uploads_dir = self.valves.UPLOADS_DIR
+        self.uploads_dir = ECHO_UPLOADS_TRANSIT_DIR
         self.user_valves = self.UserValves()
 
     async def read_raw_file_content(
@@ -141,8 +138,8 @@ class Tools:
                 user_id=user_id,
                 metadata=__metadata__,
                 events=events,
-                threshold=self.valves.KEY_SWITCH_THRESHOLD,
-                max_retries=self.valves.MAX_RETRIES,
+                threshold=ECHO_API_KEY_THRESHOLD,
+                max_retries=ECHO_API_MAX_RETRIES,
                 timeout=self.valves.PROBE_TIMEOUT,
                 include_thoughts=True,
             )

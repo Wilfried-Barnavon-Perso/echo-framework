@@ -99,22 +99,6 @@ if [ ! -s "$ADMIN_SECRET_FILE" ]; then
     echo "   ✅ Admin créé."
 fi
 
-# --- 2-BIS. IMPORT CONFIGURATION GLOBALE ---
-if [ -f "$SETTINGS_FILE" ]; then
-    echo "⚙️ [Config] Import des paramètres globaux..."
-    TMP_PAYLOAD="/tmp/owui_config_import_$$.json"
-    jq -n --slurpfile content "$SETTINGS_FILE" '{config: $content[0]}' > "$TMP_PAYLOAD"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/import" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$TMP_PAYLOAD")
-    [ "$HTTP_CODE" -eq 401 ] && refresh_token && HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/import" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$TMP_PAYLOAD")
-    rm -f "$TMP_PAYLOAD"
-    if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
-        echo "   ✅ Configuration importée."
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN")
-        [ "$HTTP_CODE" -eq 401 ] && refresh_token && curl -s -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN" > /dev/null
-        sleep 5
-    fi
-fi
-
 # --- 3. IMPORT RESSOURCES (STRATÉGIE DISQUE) ---
 api_upsert() {
     local endpoint="$1"; local id="$2"; local payload_file="$3"; local desc="$4"
@@ -226,6 +210,22 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     echo "   ✅ Modèlle $MODEL_ID déployé (HTTP $HTTP_CODE)."
     
     rm -f "$TMP_TOOLS" "$TMP_FILTERS" "$TMP_ACTIONS" "$TMP_FINAL"
+fi
+
+# --- 5. IMPORT CONFIGURATION GLOBALE ---
+if [ -f "$SETTINGS_FILE" ]; then
+    echo "⚙️ [Config] Import des paramètres globaux..."
+    TMP_PAYLOAD="/tmp/owui_config_import_$$.json"
+    jq -n --slurpfile content "$SETTINGS_FILE" '{config: $content[0]}' > "$TMP_PAYLOAD"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/import" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$TMP_PAYLOAD")
+    [ "$HTTP_CODE" -eq 401 ] && refresh_token && HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/import" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$TMP_PAYLOAD")
+    rm -f "$TMP_PAYLOAD"
+    if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+        echo "   ✅ Configuration importée."
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN")
+        [ "$HTTP_CODE" -eq 401 ] && refresh_token && curl -s -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN" > /dev/null
+        sleep 5
+    fi
 fi
 
 echo "✅ [Config] Terminé."

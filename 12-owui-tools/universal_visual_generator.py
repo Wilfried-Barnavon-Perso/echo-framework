@@ -19,14 +19,11 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, wrap_cascade_output, EchoGeminiClient, clamp_model
 from echo_ui import EchoUI
 from echo_constants import (
-    MODEL_FLASH, MODEL_ROUTING,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
+    MODEL_FLASH, MODEL_ROUTING
 )
 
 class Tools:
   class Valves(BaseModel):
-    KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
-    MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre total de tentatives avant d'abandonner.")
     GENERATOR_TIMEOUT: int = Field(default=60, description="Délai d'attente maximum (secondes) pour la génération Rendu Visuel.")
     CDN_TIMEOUT_MS: int = Field(default=10000, description="Délai maximum (en ms) d'attente pour le chargement des librairies graphiques via CDN dans le navigateur.")
 

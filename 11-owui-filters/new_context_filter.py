@@ -1,7 +1,7 @@
 """
 title: ECHO Context Filter
 author: Wilfried BARNAVON
-version: 7.18
+version: 7.19
 description: 7.5: Fix génération slug. 7.6: Migration Antigravity 2.1 — suppression GOOGLE_OAUTH_CODE_REGEX (PKCE legacy).
              7.7: Centralisation THINKING_LEVEL_FLASH (echo_constants v4.8) — suppression du "HIGH" hardcodé.
              7.8: Injection registre_plan dans environnement_contexte (Strategic Planner v1.0).
@@ -43,7 +43,7 @@ from echo_utils import resolve_upload_file_path, EchoStateManager, EchoGeminiCli
 from echo_constants import (
     get_gemini_mime, ECHO_USERS_ROOT, 
     GOOGLE_API_KEY_REGEX, MODEL_FLASH,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
+    ECHO_QDRANT_URL,
     THINKING_LEVEL_FLASH,
     MAX_DIRECT_TEXT_INJECT_SIZE, MAX_DIRECT_MMEDIA_INJECT_SIZE,
     ECHO_MR_CHUNK_SIZE, ECHO_MR_OVERLAP_SIZE, ECHO_MR_MAX_TOKENS, ECHO_MR_SUMMARY_MAX_WORDS
@@ -58,13 +58,10 @@ class Filter:
     priority: int = 1
 
     class Valves(BaseModel):
-        ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Active le résumé intelligent des fichiers volumineux via Gemini Flash.")
-        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
-        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum pour le Smart Context.")
-        SMART_CONTEXT_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour l'analyse Flash.")
         DEBUG_MODE: bool = Field(default=False)
 
     class UserValves(BaseModel):
+        ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Active le résumé intelligent des fichiers volumineux via Gemini Flash.")
         ENABLE_USER_NAME: bool = Field(default=False, description="🔒 Partager mon nom avec le modèle.")
         OVERRIDE_LOCATION: str = Field(default="", description="📍 Surcharger ma position géographique (Ex: Paris, France).")
 
@@ -126,7 +123,7 @@ class Filter:
                 return {"status": "error", "fid": file_id, "name": filename, "mime": mime, "error": f"Erreur lecture : {str(e)}"}
 
         # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (RAG Éphémère v8.0 Map-Reduce Transmodal) ---
-        if self.valves.ENABLE_SMART_CONTEXT and is_supported:
+        if self.user_valves.ENABLE_SMART_CONTEXT and is_supported:
             try:
                 import unicodedata as _ud
                 u_ctx = {"id": user_id}

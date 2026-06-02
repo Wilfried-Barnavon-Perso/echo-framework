@@ -1,7 +1,7 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.2
+version: 2.5
 description: 1.2: Ajout forget_memory. 1.3: RAG éphémère. 1.4: Mise à jour version. 1.5: Reranking par importance (MEMORY_IMPORTANCE_WEIGHTS) dans recall_memories.
              1.6: Docstrings proactifs memorize_that + recall_memories. Fix double-docstring (bug Python L82-83).
              1.7: Docstring proactif query_distilled_data + distinction claire RAG organique vs éphémère.
@@ -31,8 +31,8 @@ from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_constants import (
     MODEL_DISTILLATION, MODEL_EMBEDDING,
     COLLECTION_MEMORY, EMBEDDING_DIM_V2,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    MEMORY_IMPORTANCE_WEIGHTS, MEMORY_IMPORTANCE_LABELS
+    MEMORY_IMPORTANCE_WEIGHTS, MEMORY_IMPORTANCE_LABELS,
+    ECHO_QDRANT_URL
 )
 
 # Configuration du Logger
@@ -42,11 +42,8 @@ logger = logging.getLogger("ECHO-MEMORY-TOOL")
 
 class Tools:
     class Valves(BaseModel):
-        QDRANT_URL: str = Field(default="http://echo-qdrant:6333", description="URL interne de Qdrant.")
         SCORE_THRESHOLD: float = Field(default=0.45, description="Seuil de confiance minimal pour la recherche sémantique (0.0 à 1.0).")
-        RECALL_TIMEOUT: int = Field(default=30, description="Délai d'attente maximum (secondes) pour les requêtes Qdrant.")
-        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
-        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
+        RECALL_TIMEOUT: int = Field(default=60, description="Délai d'attente maximum (secondes) pour les requêtes Qdrant.")
         DEBUG_MODE: bool = Field(default=False, description="Affiche les détails techniques dans les logs.")
 
     def __init__(self):
@@ -61,12 +58,12 @@ class Tools:
         if self._collection_verified:
             return
         try:
-            resp = await client.get(f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}")
+            resp = await client.get(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}")
             if resp.status_code == 404:
                 logger.info(f"[ECHO-MEMORY] 🏗️ Création collection {COLLECTION_MEMORY} ({EMBEDDING_DIM_V2}d)...")
                 create_payload = {"vectors": {"size": EMBEDDING_DIM_V2, "distance": "Cosine"}}
                 cr = await client.put(
-                    f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}",
                     json=create_payload
                 )
                 if cr.status_code not in (200, 201):
@@ -143,11 +140,13 @@ class Tools:
                     }
                 }]}
                 resp = await client.put(
-                    f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points",
                     json=upsert_payload
                 )
                 if resp.status_code != 200:
                     return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"})
+                if self.valves.DEBUG_MODE:
+                    print(f"[ECHO-MEMORY] ✅ save_memory : {memory_id} inséré avec succès. (Tags: {tags}, Imp: {importance})", flush=True)
                 return wrap_tool_output(text=f"✅ Souvenir `{memory_id}` enregistré dans la base vectorielle.", status={"status": "success"})
 
         except Exception as e:
@@ -210,7 +209,7 @@ class Tools:
                     "filter": {"must": [{"key": "user_id", "match": {"value": user_id}}]}
                 }
                 resp = await client.post(
-                    f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/search",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/search",
                     json=search_payload
                 )
                 if resp.status_code != 200:
@@ -235,10 +234,15 @@ class Tools:
             )[:limit]
 
             if not reranked:
+                if self.valves.DEBUG_MODE:
+                    print(f"[ECHO-MEMORY] search_memory : Aucun souvenir pour '{query}' après reranking (seuil {self.valves.SCORE_THRESHOLD}).", flush=True)
                 return wrap_tool_output(
                     text="Aucun souvenir pertinent après reranking.",
                     status={"status": "success", "results": []}
                 )
+
+            if self.valves.DEBUG_MODE:
+                print(f"[ECHO-MEMORY] search_memory : {len(reranked)} résultats retournés pour '{query}' après reranking.", flush=True)
 
             md = "🧠 **Souvenirs retrouvés**\n\n"
             for r in reranked:
@@ -293,7 +297,7 @@ class Tools:
                     "with_payload": ["memory_id", "slug", "tags", "memory_importance", "timestamp"]
                 }
                 resp = await client.post(
-                    f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
                     json=scroll_payload
                 )
                 if resp.status_code != 200:
@@ -302,6 +306,9 @@ class Tools:
                 points = resp.json().get("result", {}).get("points", [])
                 if not points:
                     return wrap_tool_output(text="Votre base vectorielle des souvenirs est actuellement vide.", status={"status": "success"})
+
+                if self.valves.DEBUG_MODE:
+                    print(f"[ECHO-MEMORY] list_memory_topics : {len(points)} sujets trouvés pour {user_id}.", flush=True)
 
                 md = "### 📚 Index de votre Base Vectorielle des Souvenirs\n\n"
                 for p in points:
@@ -344,12 +351,14 @@ class Tools:
                     "points": [point_id]
                 }
                 resp = await client.post(
-                    f"{self.valves.QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete",
                     json=delete_payload
                 )
                 if resp.status_code != 200:
                     return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"})
                 await events.status("🧠 Suppression terminée.", done=True)
+                if self.valves.DEBUG_MODE:
+                    print(f"[ECHO-MEMORY] ✅ forget_memory : {memory_id} supprimé avec succès.", flush=True)
                 return wrap_tool_output(text=f"✅ Souvenir `{memory_id}` supprimé avec succès.", status={"status": "success"})
 
         except Exception as e:
@@ -402,8 +411,7 @@ class Tools:
                 uid=user_id,
                 chat_id=chat_id,
                 __user__=__user__,
-                __metadata__=__metadata__,
-                qdrant_base=self.valves.QDRANT_URL,
+                __metadata__=__metadata__
             )
             if nb_points == 0:
                 return wrap_tool_output(
@@ -469,7 +477,7 @@ class Tools:
                     }
                 }
                 resp = await client.post(
-                    f"{self.valves.QDRANT_URL}/collections/{COLLECTION_EPHEMERAL}/points/search",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_EPHEMERAL}/points/search",
                     json=search_payload
                 )
                 

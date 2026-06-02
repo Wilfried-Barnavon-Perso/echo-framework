@@ -8,19 +8,44 @@ description: 1.4: Switched complex objects to JSON strings to avoid 400 errors w
 import requests
 import orjson as json
 import sys
+import socket
+import ipaddress
+from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 from typing import Dict, Optional, Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output
+from echo_constants import ECHO_ALLOWED_DOMAINS
 
 class Tools:
-    class Valves(BaseModel):
-        allowed_domains: str = Field(default="*", description="Domaines autorisés (séparés par virgule) ou *")
-
     def __init__(self):
-        self.valves = self.Valves()
+        pass
+
+    def _is_safe_url(self, url: str) -> bool:
+        """Vérifie si l'URL pointe vers un réseau privé (SSRF protection)."""
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.hostname
+            if not hostname:
+                return False
+            
+            # Vérification du domaine autorisé
+            if ECHO_ALLOWED_DOMAINS != "*":
+                if hostname not in ECHO_ALLOWED_DOMAINS.split(','):
+                    return False
+
+            # Résolution DNS pour bloquer RFC 1918
+            ip_addr = socket.gethostbyname(hostname)
+            ip = ipaddress.ip_address(ip_addr)
+            
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+                return False
+                
+            return True
+        except Exception:
+            return False
 
     def call_api(
         self,
@@ -36,8 +61,8 @@ class Tools:
         :param headers_json: Dictionnaire optionnel des headers HTTP au format chaîne JSON (ex: '{"Authorization": "Bearer..."}').
         :param body_json: Corps de la requête au format chaîne JSON. Sera automatiquement converti en dictionnaire.
         """
-        if self.valves.allowed_domains != "*" and url.split('/')[2] not in self.valves.allowed_domains.split(','):
-             return wrap_tool_output(text="❌ Domaine non autorisé.", status={"status": "error", "domain": url})
+        if not self._is_safe_url(url):
+             return wrap_tool_output(text="❌ Accès réseau non autorisé (SSRF ou domaine non whitelisté).", status={"status": "error", "domain": url})
 
         # Parsing des paramètres JSON via orjson
         actual_headers = {}

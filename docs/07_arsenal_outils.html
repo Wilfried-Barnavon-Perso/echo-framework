@@ -113,7 +113,7 @@
       </li>
     </ul>
 
-    <h2>Les six familles d'outils</h2>
+    <h2>Les huit familles d'outils</h2>
 
     <div class="grid-container">
       <div class="card">
@@ -130,6 +130,11 @@
         <a href="07b_web_intelligence.html">Explorer ➔</a>
       </div>
       <div class="card">
+        <h3>🔌 Client API Universel</h3>
+        <p>Client HTTP avec protection SSRF (Server-Side Request Forgery) pour requêter des APIs externes en toute sécurité, formatant les payloads JSON proprement via <code>orjson</code>.</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/api_client.py</code></p>
+      </div>
+      <div class="card">
         <h3>📂 Explorateur de l'Espace Personnel</h3>
         <p>Analyse de fichiers locaux, multimodalité (image, PDF, audio), indexation sémantique
         et gestion des métadonnées du Vault.</p>
@@ -144,6 +149,11 @@
         d'espace de travail temporaire confiné à la session courante.</p>
         <p><strong>Source :</strong> <code>12-owui-tools/memory_and_rag_tool.py</code></p>
         <a href="07d_memory_cognition.html">Explorer →</a>
+      </div>
+      <div class="card">
+        <h3>⏱️ Jauge de Contexte</h3>
+        <p>Lecture en temps réel de l'utilisation du contexte (tokens prompt/candidats) via la base <code>context_stats</code> SQLite. Utilisé pour évaluer l'approche de la limite de mémoire de travail de la session.</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/context_gauge.py</code></p>
       </div>
       <div class="card">
         <h3>🐍 Exécution &amp; Pilotage</h3>
@@ -218,7 +228,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.170.13 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
     </footer>
   </main>
 
