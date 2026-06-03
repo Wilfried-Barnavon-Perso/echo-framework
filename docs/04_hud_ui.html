@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Écosystème HUD et UI du Framework ECHO v5 : Context Gauge, Monitor visuel, signature deploy_context_gauge, persistance LocalStorage, architecture Backend/Frontend.">
-  <title>ECHO v5 — 4. Écosystème HUD &amp; UI</title>
+  <title>ECHO v5 - 4. Écosystème HUD &amp; UI</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -93,7 +93,7 @@
         <tr>
           <td>Vide</td>
           <td>Transparent</td>
-          <td>—</td>
+          <td>-</td>
           <td>Espace mémoire de travail restant avant saturation.</td>
         </tr>
       </tbody>
@@ -127,10 +127,10 @@
     <div class="code-header">Section QUOTAS (données fraîches via fetch_available_models)</div>
     <pre><code>💳 Crédits      : google_credits_total (crédits AI disponibles)
 🤖 Modèle CA    : ca_model_id actif (ex: gemini-3-flash-agent)
-📊 Quota        : quota_fraction × 100% — coloré selon seuils
+📊 Quota        : quota_fraction × 100% - coloré selon seuils
 📅 Req/jour     : requestsPerDayRemaining / requestsPerDayLimit (N/A si non fourni)
 ⚡ Req/min      : requestsPerMinuteRemaining / requestsPerMinuteLimit (N/A si non fourni)
-🔄 Reset        : heure de reset du quota — formatée HH:MM (Xmin restantes)
+🔄 Reset        : heure de reset du quota - formatée HH:MM (Xmin restantes)
 🏷️ Type         : google_quota_type (ex: CODE_ASSIST)</code></pre>
 
     <div class="note-box">
@@ -141,7 +141,7 @@
         (JSON dict dans <code>identity.db</code>). Le rafraîchissement est déclenché de manière
         asynchrone et non-bloquante via <code>refresh_quota_if_needed()</code> avec un cooldown
         de 10 minutes. Les champs <code>requestsPerDay/Min</code> peuvent être absents selon les
-        réponses de l'API — dans ce cas, « N/A » est affiché. Cela n'affecte pas la
+        réponses de l'API - dans ce cas, « N/A » est affiché. Cela n'affecte pas la
         <code>quota_fraction</code>, calculée séparément.
       </p>
     </div>
@@ -151,9 +151,9 @@
       La fonction principale du HUD accepte les paramètres suivants (tous avec valeurs par défaut
       sécurisées) :
     </p>
-    <div class="code-header">echo_ui.py v5.27 — deploy_context_gauge()</div>
+    <div class="code-header">echo_ui.py v5.27 - deploy_context_gauge()</div>
     <pre><code>deploy_context_gauge(
-    events,                        # EchoEvents — canal d'injection JS
+    events,                        # EchoEvents - canal d'injection JS
     plan_name, credits_val,        # Identité du plan et crédits disponibles
     quota_str,                     # Résumé quota formaté
     c_t, active_p_t, g_t, max_t,  # Tokens absolus (cache, prompt, génération, max)
@@ -161,7 +161,7 @@
     user_email, user_tier,         # Identité utilisateur
     project_id,                    # google_project_id
     auth_sources,                  # Liste des méthodes d'auth actives
-    quota_amount,                  # Montant quota brut (héritage — N/A si non dispo)
+    quota_amount,                  # Montant quota brut (héritage - N/A si non dispo)
     quota_fraction,                # Fraction restante du quota modèle (0.0–1.0)
     quota_reset,                   # Heure de reset formatée (HH:MM ou HH:MM (Xmin))
     quota_type,                    # Type de quota (ex: CODE_ASSIST)
@@ -181,7 +181,7 @@
     </p>
 
     <div class="note-box">
-      <h4>v5.20 — Unification du moteur visuel</h4>
+      <h4>v5.20 - Unification du moteur visuel</h4>
       <p>
         Depuis la v5.20, <code>show_image_js()</code> réutilise le même moteur
         <code>_generate_webplayer_js()</code> que le navigateur web. L'ancien overlay basique
@@ -234,7 +234,7 @@
       <a href="05_filtre.html">Découvrir le Filtre (Conscience) ➔</a>
     </div>
 
-    <h2><code>_generate_codex_js()</code> — Moteur HUD Monaco Codex (v5.23+)</h2>
+    <h2><code>_generate_codex_js()</code> - Moteur HUD Monaco Codex (v5.23+)</h2>
 
     <p>
       Ajouté en <code>echo_ui.py</code> v5.23, <code>_generate_codex_js()</code> génère
@@ -247,23 +247,23 @@
       <thead><tr><th>Paramètre</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><code>files_json</code></td><td><code>str</code></td><td>JSON des fichiers Codex existants (liste <code>[{filename, language, content}]</code>).</td></tr>
-        <tr><td><code>quick_actions_json</code></td><td><code>str</code></td><td>JSON de <code>CODEX_QUICK_ACTIONS</code> — boutons prédefinis dans le mini-chat AI.</td></tr>
-        <tr><td><code>chat_id</code></td><td><code>str</code></td><td>Identifiant du chat courant — clé <code>localStorage</code> de persistance position/taille HUD.</td></tr>
+        <tr><td><code>quick_actions_json</code></td><td><code>str</code></td><td>JSON de <code>CODEX_QUICK_ACTIONS</code> - boutons prédefinis dans le mini-chat AI.</td></tr>
+        <tr><td><code>chat_id</code></td><td><code>str</code></td><td>Identifiant du chat courant - clé <code>localStorage</code> de persistance position/taille HUD.</td></tr>
       </tbody>
     </table>
 
     <div class="tech-spec">
       <h4>⚙️ Caractéristiques techniques</h4>
       <ul>
-        <li><strong>Monaco Editor 0.52.2</strong> — chargé via CDN jsDelivr (AMD loader)</li>
-        <li><strong>Détection thème</strong> — <code>document.documentElement.classList.contains('dark')</code> → <code>vs-dark</code> ou <code>vs</code></li>
-        <li><strong>Persistance HUD</strong> — position/taille stockées dans <code>localStorage['echo_codex_{chat_id}']</code></li>
-        <li><strong>Pattern draggable</strong> — même architecture que <code>monitor_ECHO()</code> (mousedown/move/up)</li>
+        <li><strong>Monaco Editor 0.52.2</strong> - chargé via CDN jsDelivr (AMD loader)</li>
+        <li><strong>Détection thème</strong> - <code>document.documentElement.classList.contains('dark')</code> → <code>vs-dark</code> ou <code>vs</code></li>
+        <li><strong>Persistance HUD</strong> - position/taille stockées dans <code>localStorage['echo_codex_{chat_id}']</code></li>
+        <li><strong>Pattern draggable</strong> - même architecture que <code>monitor_ECHO()</code> (mousedown/move/up)</li>
       </ul>
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

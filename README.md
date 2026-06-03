@@ -1,105 +1,64 @@
-# 🧠 ECHO Framework v5.163.0
-
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
+  
+  # 🧠 ECHO Framework v5.174.1
+  
+  **The Sovereign Intelligence Orchestrator**
+  
+  [![Version](https://img.shields.io/badge/version-5.174.1-blue.svg)](#)
+  [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
+  [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
+  [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
+
+  *Parce qu'un LLM nu n'est qu'un miroir. Donnez-lui une véritable colonne vertébrale.*
 </div>
 
-**Espace Cognitif Heuristique Opérationnel**
-
-> *"Transformer l'IA d'un simple interlocuteur en un collaborateur technique souverain, auditable et doté d'une mémoire absolue."*
-
 ---
 
-## 📜 Manifeste : De la Réverbération à la Résonance
+## 👋 Qu'est-ce qu'ECHO ?
 
-Le projet **ECHO** tire son nom de la nymphe mythologique condamnée à ne jamais pouvoir parler en premier, perdant ainsi toute intention propre. Sans intervention, un LLM "nu" est le miroir servile de cette tragédie : il est condamné à la complaisance et à l'inertie ontologique.
+Imaginez **Open WebUI sous stéroïdes**. 
+**ECHO** (Espace Cognitif Heuristique Opérationnel) est une infrastructure d'intelligence artificielle souveraine, conçue pour orchestrer les modèles Gemini de Google au-dessus d'Open WebUI. Ce n'est pas un simple wrapper d'API, mais un framework de contrôle autonome.
 
-**ECHO brise cette malédiction.** En injectant un **Kernel** (colonne vertébrale d'instructions et de règles), nous donnons au modèle une existence qui précède l'interaction. L'IA cesse d'être une *réverbération* passive pour devenir une véritable **résonance** ferme. Elle ne se contente pas de prédire des mots : elle choisit la meilleure méthode de résolution, structure sa pensée et impose sa propre rigueur méthodologique.
+ECHO agit comme un **Kernel** : il impose ses règles méthodologiques au modèle via un système de "Pipes" et de "Filtres". L'IA devient un collaborateur technique capable de structure, de persistance et d'action.
 
-### Les 4 Méta-Principes Fondateurs
-1.  **MPDI (Identité)** : L'IA reconnaît son cadre technique et sa nature d'orchestrateur souverain.
-2.  **MPAH (Arbitrage Hiérarchique)** : Les lois du framework sont supérieures aux caprices ou aux biais de l'utilisateur.
-3.  **MPCE (Conditions d'Exécution)** : Calibrage dynamique des hyperparamètres (Thinking Level, Température) selon la criticité.
-4.  **MPSI (Sécurité et Intégrité)** : Protection active contre le contournement des protocoles et la dérive sémantique.
+## ✨ Fonctionnalités Clés
 
----
+- 🔒 **Souveraineté des Données** : Vos bases vectorielles (Qdrant), votre historique (SQLite) et vos fichiers (Codex) restent intégralement confinés dans votre infrastructure locale. Zéro dépendance à un cloud tiers pour le stockage.
+- 🧠 **Mémoire Organique V4** : Une fenêtre glissante déterministe avec distillation Cloud automatisée. L'historique des requêtes est nettoyé et synthétisé pour maintenir un budget token optimal tout en préservant le contexte long-terme.
+- ⚡ **Suture Sémantique (Bit-perfect)** : Le Pipe Engine d'ECHO garantit une reprise de session identique au bit près, en restaurant dynamiquement les états de raisonnement (Thought Signatures) via SQLite.
+- 🛠️ **Sovereign Toolbox** :
+  - **Strategic Planner** : Planification et exécution autonome avec persistance en Markdown.
+  - **Python & Browser Agents** : Sandbox d'exécution de code isolée et pilotage web via Playwright.
+  - **ECHO Codex** : Éditeur multi-langage intégré avec gestion Git automatisée.
+  - **Delphi Protocol** : Consultation multi-experts (agents cognitifs) parallélisée.
 
-## 🏗️ Architecture du Système : "Sovereign Intelligence"
+## 🚀 Déploiement Rapide
 
-ECHO transforme l'accès aux modèles cloud en une infrastructure agentique privée et hautement sécurisée.
+L'infrastructure s'installe via un script unique qui orchestre la stack Docker complète (Open WebUI, Qdrant, Workers Audio/Python/Web).
 
-### 🧩 Les Composants Cœurs
-*   **Le Cortex (Pipe Engine - `10-owui-pipes`)** : L'unité centrale de traitement. Il gère la **Suture Sémantique** (reconstruction bit-perfect via Shadows SQLite), la **Cascade Cognitive** (routage dynamique inter-modèles) et la **Thought Hygiene** (gestion chirurgicale de la Chain-of-Thought via `thoughtSignature`).
-*   **La Conscience (Context Filter - `11-owui-filters`)** : Gateway cognitive incluant la **Mémoire Organique V4** (fenêtre glissante déterministe avec distillation locale Gemma 4 E4B et fusion sémantique vectorielle) et le **Smart Context** (analyse multimodale > 256 Ko via distillation RAG éphémère).
-*   **L'Admin Manager (`20-docker-admin-manager`)** : Dashboard de monitoring, backup et gestion de la stack Docker.
-
-### 🛠️ L'Arsenal des Outils (Sovereign Toolbox)
-Chaque outil interagit directement avec le **Vault** (coffre-fort) utilisateur :
-*   🧠 **Memory & RAG** : Outils explicites de mémoire long terme (`save_memory`, `search_memory`, `forget_memory`, `list_memory_topics`) et RAG éphémère par session (`save_session_context`, `search_session_context`).
-*   🗓️ **Strategic Planner** : Plans d'action persistants en Markdown avec cascade PRO→FLASH→LITE (`build_plan`, `update_plan`, `read_plan`, `delete_plan`).
-*   🌐 **Navigation Engine** : Pilotage de Chromium via Playwright avec distillation de page et indexation RAG éphémère automatique.
-*   🐍 **Python Code Executor** : Sandbox isolée pour l'analyse de données et la génération de graphiques.
-*   🔍 **Sovereign Search** : Recherche web multi-sources via SearXNG préservant la confidentialité.
-*   🧠 **Cognitive Agents** : Délégation cognitive sans état, consultation d'experts (Skills) et Table Ronde Multi-Experts (protocole Delphi).
-*   📂 **Vault Explorer** : Exploration brute et sondage sémantique des documents.
-*   📊 **Context Gauge** : Monitoring visuel de la consommation de tokens et de l'état du cache.
-
----
-
-## 🚀 Fonctions Clés & Innovations
-
-| Fonction | Description |
-| :--- | :--- |
-| **Suture Sémantique** | Restauration parfaite de l'historique Gemini incluant les médias binaires et les états de raisonnement. |
-| **Smart Context** | Distillation automatique des documents massifs pour maximiser l'efficience du contexte. |
-| **Mémoire Organique V4** | Fenêtre glissante déterministe avec distillation locale (Gemma 4 E4B) et fusion sémantique vectorielle. |
-| **Double RAG** | Mémoire long terme (Qdrant, importance 1→5, reranking pondéré) + RAG éphémère par session. |
-| **Planification Stratégique** | Plans d'action Markdown persistants avec cascade cognitive et registre proprioceptif. |
-| **Table Ronde Delphi** | Conseil multi-experts parallélisés avec continuité cognitive (thoughtSignatures). |
-| **Antigravity 2.1** | Authentification OAuth2 PKCE via tunnel SSH éphémère avec fallback API Key. |
-
----
-
-## 🚀 Installation Rapide
-
-### Linux Natif (Ubuntu / Debian)
+**Sur Linux Natif (Ubuntu/Debian) :**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-linux.sh | sudo bash
 ```
 
-### WSL2 (Windows Subsystem for Linux 2)
+**Sur WSL2 (Windows) :**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-wsl2.sh | sudo bash
 ```
 
-> **Option `--branch`** : ajoutez `-- --branch dev` après `sudo bash` pour cibler une branche spécifique.  
-> **Idémpotence** : les scripts sont relancables. Si ECHO est déjà installé, ils effectuent une mise à jour vers la branche cible.
+**Sur Hyper-V (Windows) :**
+*(Crée et configure automatiquement une VM Linux dédiée)*
+```powershell
+.\deploy-hyperv.ps1
+```
+
+*(Note : Les scripts d'installation sont idempotents et gèrent nativement les mises à jour de version).*
+
+## 📚 Documentation Technique
+
+Pour comprendre en profondeur l'architecture, la cascade cognitive (PRO → FLASH → LITE) ou le double système RAG :
+👉 **[Consultez la documentation officielle](docs/index.html)**
 
 ---
-
-## 🔧 Déploiement & Infrastructure
-
-ECHO est conçu pour un déploiement autonome sur infrastructure souveraine.
-
-| Méthode | Script | Usage recommandé |
-| :--- | :--- | :--- |
-| **Windows / Hyper-V** | `deploy-hyperv.ps1` | Production souveraine (VM dédiée) |
-| **Linux Natif** | `install-linux.sh` | Serveur Ubuntu/Debian dédié |
-| **WSL2** | `install-wsl2.sh` | Développement & test sous Windows |
-
-*   **Provisioning Docker** : `00-echo-scripts/install-stack.sh` orchestre la stack complète (Open WebUI, Qdrant, Embedding Worker, Gemma Distiller, SearXNG, Browser Agent, Python Worker).
-*   **Distillation Locale** : Gemma 4 E4B (GGUF Q5_K_M) via `echo-gemma-distiller` avec auto-provisioning au premier démarrage.
-
----
-
-## 📚 Documentation
-
-Pour approfondir, consultez le corpus documentaire dans le dossier `/docs` :
-- **[Introduction](docs/index.html)** : Vue d'ensemble du framework.
-- **[Fondations](docs/00_fondations.html)** : Philosophie détaillée et mythologie d'ECHO.
-- **[High-Level Design (HLD)](docs/01_hld_architecture.html)** : L'architecture "Ombre Riche" et OWUI Middleware.
-- **[Le Cortex](docs/06_pipe.html)** : Analyse technique de l'algorithme de suture.
-- **[L'Arsenal](docs/07_arsenal_outils.html)** : Catalogue complet des protocoles d'outils.
-
----
-*Version actuelle : v5.163.0 "Sovereign Intelligence" | Copyright © 2026 Wilfried BARNAVON*
+*Built with 🧠 & ❤️ by Wilfried BARNAVON. Ready to resonate.*

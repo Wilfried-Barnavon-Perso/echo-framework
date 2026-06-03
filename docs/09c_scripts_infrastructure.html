@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Architecture des scripts d'infrastructure ECHO v5 : orchestration Docker, synchronisation, provisionnement et déploiement.">
+  <title>ECHO v5 - 9c. Scripts d'Infrastructure</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>9c. Scripts d'Infrastructure</h1>
+
+    <p>
+      L'orchestration, le déploiement et la maintenance du framework ECHO reposent sur un ensemble de scripts Shell et PowerShell. Ils garantissent la reproductibilité clinique de l'environnement, de l'hôte Windows jusqu'aux conteneurs Docker de la machine virtuelle Ubuntu.
+    </p>
+
+    <h2>Cartographie des Scripts</h2>
+
+    <table>
+      <thead>
+        <tr><th>Script</th><th>Environnement</th><th>Rôle Principal</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>deploy-hyperv.ps1</code></td><td>Windows (Hôte)</td><td>Injection Zip via VHDX et démarrage VM</td></tr>
+        <tr><td><code>sync-echo.sh</code></td><td>Ubuntu (VM)</td><td>Extraction, distribution des fichiers et attribution des droits</td></tr>
+        <tr><td><code>install-stack.sh</code></td><td>Ubuntu (VM)</td><td>Orchestration globale Docker (stack-echo.yml)</td></tr>
+        <tr><td><code>config-owui.sh</code></td><td>Ubuntu (VM)</td><td>Provisionnement de l'API Open WebUI (Arsenal et Configuration)</td></tr>
+        <tr><td><code>upgrade-echo.sh</code></td><td>Ubuntu (VM)</td><td>Mise à niveau majeure de l'infrastructure hôte</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Architecture de Déploiement (Windows vers VM)</h2>
+
+    <p>
+      Le déploiement d'une nouvelle version d'ECHO s'effectue sans connexion réseau entre l'hôte et la machine virtuelle.
+    </p>
+
+    <h3><code>deploy-hyperv.ps1</code></h3>
+    <p>
+      Ce script PowerShell s'exécute avec des privilèges administrateur sur l'hôte Windows. Il orchestre le transfert physique des données :
+    </p>
+    <ul>
+      <li><strong>Archivage :</strong> Compresse le dépôt courant (branche <code>dev</code>) en un fichier <code>echo-update.zip</code>.</li>
+      <li><strong>Montage VHDX :</strong> Monte le disque virtuel <code>echo-seed.vhdx</code> de la machine virtuelle Hyper-V de destination.</li>
+      <li><strong>Injection :</strong> Copie l'archive et le script d'amorçage dans le disque virtuel, puis le démonte.</li>
+      <li><strong>Démarrage :</strong> Démarre (ou redémarre) la machine virtuelle Hyper-V.</li>
+    </ul>
+
+    <h2>Orchestration Interne (VM)</h2>
+
+    <h3><code>sync-echo.sh</code></h3>
+    <p>
+      Une fois la VM démarrée, ce script extrait l'archive <code>echo-update.zip</code> depuis le point de montage du disque Seed. Il distribue les fichiers dans l'arborescence de production (<code>/opt/ECHO</code>) et rétablit les permissions d'exécution (<code>chmod +x</code>) sur l'ensemble des scripts de la grappe.
+    </p>
+
+    <h3><code>install-stack.sh</code></h3>
+    <p>
+      Il s'agit de l'ordonnanceur principal de la grappe Docker. Ses responsabilités incluent :
+    </p>
+    <ul>
+      <li><strong>Génération du contexte :</strong> Calcul dynamique des <code>ECHO_DETECTED_ORIGINS</code> (CORS) à partir des interfaces réseau actives (Wi-Fi, Ethernet, Tailscale).</li>
+      <li><strong>Injection des secrets :</strong> Consolidation des variables d'environnement dans le fichier <code>/opt/ECHO/.env</code> de production.</li>
+      <li><strong>Lancement de la pile :</strong> Exécution de <code>docker compose -f stack-echo.yml up -d</code>. Ce fichier <code>stack-echo.yml</code> (v9.10) définit la topologie réseau, les volumes de persistance, et les règles WAF BunkerWeb.</li>
+    </ul>
+
+    <h3><code>config-owui.sh</code></h3>
+    <p>
+      Ce script intervient dans la phase de post-démarrage (Post-Start Provisioning). Il interagit directement avec l'API REST d'Open WebUI pour :
+    </p>
+    <ul>
+      <li><strong>Importer les configurations :</strong> Pousse le fichier <code>webui-settings.json</code> via l'endpoint <code>/api/v1/configs/import</code>, configurant dynamiquement le modèle par défaut (<code>pipe_engine</code>) et les endpoints TTS/STT.</li>
+      <li><strong>Déléguer l'authentification :</strong> Désactive l'authentification native de WebUI pour imposer le flux OAuth2 géré par l'infrastructure Antigravity.</li>
+      <li><strong>Injecter l'Arsenal :</strong> Charge les outils (Tools), filtres (Filters) et actions (Actions) dans l'écosystème Open WebUI, les rendant immédiatement accessibles au Modèle.</li>
+    </ul>
+
+    <div class="transition-text">
+      L'ensemble des schémas SQL, des attributions de ports et des règles de pare-feu associés à ces scripts sont compilés dans les annexes.
+      <a href="10_annexes.html">10. Annexes Techniques ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

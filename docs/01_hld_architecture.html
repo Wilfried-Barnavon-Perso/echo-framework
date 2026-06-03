@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="High-Level Design du Framework ECHO v5 : architecture globale, schémas de flux, écorché structurel vectoriel, référentiel conceptuel et schéma SQL des Ombres Riches.">
-  <title>ECHO v5 — 1. High-Level Design (HLD)</title>
+  <title>ECHO v5 - 1. High-Level Design (HLD)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -95,7 +95,7 @@ flowchart TD
       </div>
     </div>
 
-    <h2>Écorché Structurel — Modules Python</h2>
+    <h2>Écorché Structurel - Modules Python</h2>
 
     <p>
       Ce schéma vectoriel représente l'imbrication réelle des modules Python d'ECHO et leurs dépendances.
@@ -106,7 +106,7 @@ flowchart TD
 
     <div class="svg-diagram">
       <svg viewBox="0 0 900 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Écorché structurel des modules Python ECHO v5">
-        <title>Écorché structurel ECHO v5 — Modules Python</title>
+        <title>Écorché structurel ECHO v5 - Modules Python</title>
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
             <path d="M0,0 L0,6 L8,3 z" fill="#4ade80"/>
@@ -190,7 +190,7 @@ flowchart TD
         <text x="376" y="295" fill="#64748b" font-size="9" font-family="monospace">get_ca_model_id()</text>
         <text x="376" y="309" fill="#64748b" font-size="9" font-family="monospace">build_ca_generation_config()</text>
         <text x="376" y="323" fill="#64748b" font-size="9" font-family="monospace">CA_EXCLUDED_GEN_CONF_FIELDS</text>
-        <text x="376" y="340" fill="#475569" font-size="8.5" font-family="monospace">Fonctions pures — aucun</text>
+        <text x="376" y="340" fill="#475569" font-size="8.5" font-family="monospace">Fonctions pures - aucun</text>
         <text x="376" y="353" fill="#475569" font-size="8.5" font-family="monospace">appel réseau, aucun état.</text>
         <text x="376" y="367" fill="#475569" font-size="8.5" font-family="monospace">Point unique de traduction</text>
         <text x="376" y="380" fill="#475569" font-size="8.5" font-family="monospace">ECHO → API Antigravity.</text>
@@ -218,7 +218,7 @@ flowchart TD
         <rect x="614" y="128" width="246" height="64" rx="6" fill="#0f172a" stroke="#0d9488" stroke-width="1.2"/>
         <text x="630" y="148" fill="#2dd4bf" font-size="10" font-family="monospace" font-weight="bold">echo_visuals.py</text>
         <text x="630" y="164" fill="#64748b" font-size="9" font-family="monospace">VisualEngine (Markmap, Mermaid)</text>
-        <text x="630" y="178" fill="#64748b" font-size="9" font-family="monospace">EchoRichUI — Pattern Data Island</text>
+        <text x="630" y="178" fill="#64748b" font-size="9" font-family="monospace">EchoRichUI - Pattern Data Island</text>
 
         <!-- Zone ADMIN -->
         <rect x="600" y="230" width="274" height="100" rx="8" fill="#1a0505" stroke="#7f1d1d" stroke-width="1.5" stroke-dasharray="6,3"/>
@@ -400,7 +400,7 @@ flowchart TD
         <p><strong>Nature :</strong> Jeton opaque impératif de l'API Gemini 3+.</p>
         <p>
           À la fin de chaque génération, l'API Gemini retourne systématiquement une
-          <code>thoughtSignature</code> — un blob opaque dont la structure est interne
+          <code>thoughtSignature</code> - un blob opaque dont la structure est interne
           à Google. En la réinjectant dans le tour suivant
           (<code>p["thoughtSignature"] = sig</code>), ECHO permet au modèle de
           retrouver son état de réflexion sans avoir à relire ses pensées en texte
@@ -427,7 +427,7 @@ flowchart TD
       <div class="card">
         <h3>🧠 RAG Organique (<code>echo_memory</code>)</h3>
         <p><strong>Outils :</strong> <code>save_memory</code>, <code>search_memory</code>, <code>list_memory_topics</code>, <code>forget_memory</code></p>
-        <p><strong>Scope :</strong> <code>user_id</code> — permanent, survit aux sessions.</p>
+        <p><strong>Scope :</strong> <code>user_id</code> - permanent, survit aux sessions.</p>
         <p><strong>Usage :</strong> Préférences, contraintes techniques, décisions structurelles, règles personnelles.</p>
         <p>
           <strong>Reranking :</strong> <code>score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code>.
@@ -439,7 +439,7 @@ flowchart TD
       <div class="card">
         <h3>⏱️ RAG Éphémère (<code>echo_ephemeral</code>)</h3>
         <p><strong>Outils :</strong> <code>save_session_context</code>, <code>search_session_context</code></p>
-        <p><strong>Scope :</strong> <code>user_id + chat_id + source_id</code> — session courante uniquement.</p>
+        <p><strong>Scope :</strong> <code>user_id + chat_id + source_id</code> - session courante uniquement.</p>
         <p><strong>Usage :</strong> Distillats de fichiers volumineux, résultats de navigation web, données intermédiaires d'analyse.</p>
         <p><strong>Purge :</strong> Automatique en fin de session par l'Admin Manager (suppression filtrée par <code>chat_id</code>).</p>
       </div>
@@ -457,7 +457,7 @@ flowchart TD
       </p>
     </div>
 
-    <h2>Pipeline de Suture — Séquence temporelle</h2>
+    <h2>Pipeline de Suture - Séquence temporelle</h2>
 
     <p>
       Ce diagramme de séquence retrace le cycle complet d'un tour de parole, des quatre phases
@@ -505,7 +505,7 @@ sequenceDiagram
   P->>DB: get_message_shadow(msg_id, updated_at)
   DB-->>P: Parts JSON originales + Verrou de Version
   P->>DB: get_thought_signature(message_id)
-  DB-->>P: thoughtSignature (Ancre Gemini 3+ — jeton opaque interne)
+  DB-->>P: thoughtSignature (Ancre Gemini 3+ - jeton opaque interne)
   P->>P: Fusion Draft + Historique → contexte Gemini
 
   note over P,G: PHASE 3 : INFÉRENCE & BOUCLE OUTILS
@@ -623,7 +623,18 @@ flowchart TB
       </div>
     </div>
 
-    <h2>Schéma SQL — Ombres Riches</h2>
+    <h3>Architecture du Worker Kokoro TTS</h3>
+    <p>
+      Le moteur de synthèse vocale (<code>echo-tts-worker</code> sur le port 7996) implémente une API 
+      compatible OpenAI avec des capacités avancées pour le traitement multilingue :
+    </p>
+    <ul>
+      <li><strong>Pipeline Hybride G2P :</strong> Découpage sémantique du texte en phrases, puis détection de la langue par mots via de multiples dictionnaires. Cela préserve la prosodie exacte lors de changements de langue au sein d'une même phrase.</li>
+      <li><strong>Encodage &amp; Streaming :</strong> Utilisation de <code>pydub</code> pour encoder l'inférence audio brute (numpy float32) en PCM 16-bit puis en flux MP3 à 128 kbps à la volée. L'API distribue les segments via une réponse <code>StreamingResponse</code> (Chunked Transfer) pour minimiser le TTFB (Time To First Byte).</li>
+      <li><strong>Mappage Dynamique :</strong> Affectation automatique des modèles de voix féminines selon la langue détectée du segment (ex: <code>ff_siwis</code> pour le français, <code>af_bella</code> pour l'anglais).</li>
+    </ul>
+
+    <h2>Schéma SQL - Ombres Riches</h2>
 
     <p>
       La persistance repose sur la classe <code>EchoStateManager</code> (<code>echo_utils.py v7.14</code>).
@@ -634,7 +645,7 @@ flowchart TB
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
         <span>Entity-Relationship Diagram (ERD)</span>
-        <span>[SCHÉMA SQL — RICH SHADOWS]</span>
+        <span>[SCHÉMA SQL - RICH SHADOWS]</span>
       </div>
       <div class="mermaid">
 erDiagram
@@ -654,7 +665,7 @@ erDiagram
   }
   COGNITIVE_SIGNATURES {
     string message_id PK "UUID du message"
-    string thought_signature "Ancre Gemini 3+ — jeton opaque interne"
+    string thought_signature "Ancre Gemini 3+ - jeton opaque interne"
     integer updated_at
   }
   TOOL_JOURNAL {
@@ -693,13 +704,13 @@ erDiagram
       </p>
       <p>
         <strong>2. Cumulative Hash :</strong> <code>SHA-256(invariant_hash + parent_cumulative_hash)</code>.
-        ADN de la conversation — forme une chaîne de blocs similaire à Merkle.
+        ADN de la conversation - forme une chaîne de blocs similaire à Merkle.
         Tout changement dans l'historique invalide les hashes des tours suivants.
       </p>
     </div>
 
     <div class="audit-note">
-      <h4>✅ Exactitude — Cold Recovery</h4>
+      <h4>✅ Exactitude - Cold Recovery</h4>
       <p>
         Le <strong>Verrou de Version</strong> compare le triplet <code>(message_id, updated_at, parent_hash)</code>
         lors de la Suture. Si un message est détecté comme modifié manuellement dans Open WebUI
@@ -716,7 +727,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

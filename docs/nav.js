@@ -1,7 +1,7 @@
 /**
- * ECHO Documentation — nav.js v2.0
+ * ECHO Documentation - nav.js v2.0
  * Génération sidebar + TOC dynamique imbriqué.
- * Aucun style inline — pilotage exclusif par classes CSS (style.css).
+ * Aucun style inline - pilotage exclusif par classes CSS (style.css).
  */
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -36,15 +36,38 @@ document.addEventListener('DOMContentLoaded', () => {
         ]
       },
       { href: '08_system_prompt.html',   text: '8. Le Kernel (System Prompt)' },
-      { href: '09_admin_manager.html',   text: '9. Admin Manager' },
-      { href: '10_annexes.html',         text: '10. Annexes Techniques' }
+      {
+        href: '09_infrastructure.html',
+        text: '9. Périphériques & Infra',
+        sub: [
+          { href: '09a_admin_manager.html', text: '9a. Admin Manager' },
+          { href: '09b_audio_workers.html', text: '9b. Audio Workers' },
+          { href: '09c_scripts_infrastructure.html', text: '9c. Scripts d\'Infrastructure' }
+        ]
+      },
+      {
+        href: '10_annexes.html',
+        text: '10. Annexes Techniques'
+      },
+      {
+        href: '11_credits.html',
+        text: '11. Crédits Open Source'
+      }
     ];
 
     let html = `
       <div class="logo-container">
-        <img src="logo-echo.png" alt="ECHO Logo">
+        <img src="logo-echo-medium.png" alt="ECHO Logo">
       </div>
       <h2>ECHO v5</h2>
+      <div class="valve-container notranslate">
+        <div class="valve-toggle" id="lang-toggle">
+          <div class="valve-slider" id="valve-slider"></div>
+          <div class="valve-option active" id="opt-fr">FR</div>
+          <div class="valve-option" id="opt-en">EN</div>
+        </div>
+      </div>
+      <div id="google_translate_element" style="display:none;"></div>
       <nav><ul>`;
 
     navItems.forEach(item => {
@@ -239,4 +262,49 @@ document.addEventListener('DOMContentLoaded', () => {
 
   closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+  /* ============================================================
+     4. MOTEUR DE TRADUCTION (Google Translate)
+     ============================================================ */
+  const gtScript = document.createElement('script');
+  gtScript.type = 'text/javascript';
+  // URL absolue obligatoire (https:) pour éviter les échecs sous file:///
+  gtScript.src = 'https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit';
+  document.head.appendChild(gtScript);
+
+  window.googleTranslateElementInit = function() {
+    new google.translate.TranslateElement({
+      pageLanguage: 'fr', 
+      includedLanguages: 'en,fr', 
+      autoDisplay: false
+    }, 'google_translate_element');
+  };
+
+  const langToggle = document.getElementById('lang-toggle');
+  const optFr = document.getElementById('opt-fr');
+  const optEn = document.getElementById('opt-en');
+
+  if (langToggle) {
+    const isEn = document.cookie.includes('googtrans=/fr/en') || window.location.hash === '#googtrans(fr|en)';
+    if (isEn) {
+      langToggle.classList.add('is-en');
+      optFr.classList.remove('active');
+      optEn.classList.add('active');
+    }
+
+    langToggle.addEventListener('click', () => {
+      const currentlyEn = langToggle.classList.contains('is-en');
+      if (!currentlyEn) {
+        // Switch to EN
+        document.cookie = "googtrans=/fr/en; path=/";
+        document.cookie = "googtrans=/fr/en; domain=" + location.hostname + "; path=/";
+        window.location.reload();
+      } else {
+        // Switch to FR
+        document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=" + location.hostname + "; path=/;";
+        window.location.reload();
+      }
+    });
+  }
 });

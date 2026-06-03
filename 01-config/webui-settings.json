@@ -190,8 +190,8 @@
     }
   },
   "rag": {
-    "embedding_engine": "",
-    "embedding_model": "",
+    "embedding_engine": "openai",
+    "embedding_model": "dummy_model",
     "embedding_batch_size": 1,
     "enable_async_embedding": false,
     "template": "",

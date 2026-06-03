@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Déploiement du Framework ECHO v5 : provisioning Hyper-V, installation Linux natif, WSL2, cycle de vie des 6 phases, scripts sync-echo et install-stack.">
-  <title>ECHO v5 — 2. Déploiement &amp; Infrastructure</title>
+  <title>ECHO v5 - 2. Déploiement &amp; Infrastructure</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -31,7 +31,7 @@
       </p>
     </div>
 
-    <h2>Voie A — Hyper-V (Production Souveraine)</h2>
+    <h2>Voie A - Hyper-V (Production Souveraine)</h2>
 
     <p>
       Le scénario Hyper-V est le plus abouti. Il utilise le script PowerShell
@@ -40,7 +40,7 @@
       via le mécanisme <strong>cloud-init</strong>.
     </p>
 
-    <h3>Phase 1 — Assemblage et injection (hôte Windows)</h3>
+    <h3>Phase 1 - Assemblage et injection (hôte Windows)</h3>
     <p>
       <code>deploy-hyperv.ps1</code> agit comme assembleur. Il crée une archive ZIP du projet
       (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>), génère un
@@ -49,7 +49,7 @@
       Boot désactivé et le disque Seed attaché.
     </p>
 
-    <h3>Phase 2 — Provisioning automatisé (VM Linux)</h3>
+    <h3>Phase 2 - Provisioning automatisé (VM Linux)</h3>
     <p>
       Au premier démarrage, l'installateur Ubuntu (Subiquity) détecte le disque CIDATA et
       exécute les instructions cloud-init : installation de Docker, Docker Compose v2,
@@ -58,7 +58,7 @@
       <code>sync-echo.sh --local-only</code> est lancé immédiatement pour distribuer les fichiers.
     </p>
 
-    <h3>Phase 3 — Synchronisation des sources (<code>sync-echo.sh</code>)</h3>
+    <h3>Phase 3 - Synchronisation des sources (<code>sync-echo.sh</code>)</h3>
     <p>
       Ce script est le <strong>distributeur</strong> du framework. Il copie les fichiers sources
       vers leur destination définitive dans <code>/opt/ECHO/</code> selon la cartographie suivante :
@@ -90,14 +90,20 @@
       (ex. <code>update-echo</code> au lieu de <code>/opt/ECHO/echo-scripts/update-echo.sh</code>).
     </p>
 
-    <h3>Phase 4 — Orchestration Docker (<code>install-stack.sh</code>)</h3>
+    <h3>Phase 4 - Orchestration Docker (<code>install-stack.sh</code>)</h3>
     <p>
-      Ce script orchestre le démarrage de la pile Docker Compose. Il centralise les secrets
-      et variables dans <code>/opt/ECHO/.env</code>, calcule dynamiquement les origines CORS
-      autorisées (<code>ECHO_DETECTED_ORIGINS</code>), puis lève les services.
-      Une fois les conteneurs actifs, <code>config-owui.sh</code> injecte automatiquement
-      l'Arsenal (Pipes, Filtres, Outils, Actions) dans l'API d'Open WebUI et configure le
-      system prompt.
+      Ce script orchestre le démarrage de la pile applicative via le fichier de configuration
+      centralisé <code>stack-echo.yml</code>, qui remplace l'usage implicite de docker-compose.yml.
+      Il centralise les secrets et variables dans <code>/opt/ECHO/.env</code>, calcule dynamiquement 
+      les origines CORS autorisées (<code>ECHO_DETECTED_ORIGINS</code>), puis lève les services.
+    </p>
+    <p>
+      Une fois les conteneurs actifs, <code>config-owui.sh</code> exécute l'initialisation : il injecte 
+      l'Arsenal (Pipes, Filtres, Outils, Actions) dans l'API d'Open WebUI, et importe 
+      automatiquement la configuration globale depuis <code>webui-settings.json</code>.
+      Ce fichier configure dynamiquement le modèle par défaut (<code>pipe_engine</code>),
+      configure les moteurs RAG, connecte les API STT et TTS locales (ex: <code>http://echo-tts-worker:7996/v1</code>),
+      et désactive l'authentification native de WebUI pour déléguer la gestion à Antigravity.
     </p>
 
     <div class="note-box">
@@ -111,9 +117,9 @@
       </p>
     </div>
 
-    <h2>Voie B — Linux Natif (Serveur Dédié)</h2>
+    <h2>Voie B - Linux Natif (Serveur Dédié)</h2>
 
-    <div class="code-header">Installation Linux natif — branche main</div>
+    <div class="code-header">Installation Linux natif - branche main</div>
     <pre><code>curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-linux.sh | sudo bash
 
 # Ou sur une branche spécifique :
@@ -127,9 +133,9 @@ sudo bash &lt;(curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Pe
       <code>install-stack.sh</code>.
     </p>
 
-    <h2>Voie C — WSL2 (Développement)</h2>
+    <h2>Voie C - WSL2 (Développement)</h2>
 
-    <div class="code-header">Installation WSL2 — depuis un terminal Ubuntu WSL2</div>
+    <div class="code-header">Installation WSL2 - depuis un terminal Ubuntu WSL2</div>
     <pre><code>curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-wsl2.sh | sudo bash</code></pre>
 
     <p>
@@ -211,7 +217,7 @@ systemd=true</code></pre>
         <tr>
           <td><code>rebuild-echo</code></td>
           <td>Option nucléaire.</td>
-          <td>Suppression de <strong>tous</strong> les conteneurs, volumes, images et secrets. Remise à zéro totale — données perdues.</td>
+          <td>Suppression de <strong>tous</strong> les conteneurs, volumes, images et secrets. Remise à zéro totale - données perdues.</td>
         </tr>
         <tr>
           <td><code>show-echo-admin</code></td>
@@ -226,8 +232,12 @@ systemd=true</code></pre>
     <p>
       L'activation de BunkerWeb (<code>enable-bunkerweb</code>) transforme l'infrastructure
       en plateforme sécurisée exposable sur Internet. BunkerWeb agit comme reverse proxy WAF
-      (Web Application Firewall) devant Open WebUI et l'Admin Manager, filtrant les requêtes
-      malveillantes avant qu'elles n'atteignent l'application.
+      devant Open WebUI et l'Admin Manager.
+    </p>
+    <p>
+      Il implémente une stratégie SPA Robuste de limitation de débit (rate limiting) granulaire :
+      1000 requêtes/s pour les assets statiques, 50 requêtes/s pour la navigation et 20 requêtes/s pour l'API backend.
+      Le moteur ModSecurity est spécifiquement paramétré pour exclure Open WebUI des vérifications de mauvais comportement (contournement des 400 CORS légitimes des SPA), évitant ainsi les faux positifs bloquants.
       La configuration persistante est stockée dans <code>/opt/ECHO/bunkerweb/</code>.
     </p>
 
@@ -255,7 +265,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

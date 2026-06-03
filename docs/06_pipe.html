@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py) : Suture Bit-Perfect, routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modèle centralisée Pipe → outils, bridge _TOOLS_CACHE pour délégation sous-agent.">
-  <title>ECHO v5 — 6. Le Pipe (Cortex)</title>
+  <title>ECHO v5 - 6. Le Pipe (Cortex)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -25,7 +25,7 @@
       <strong>orchestrateur de contexte</strong> : il reconstruit l'historique bit-perfect depuis
       SQLite, pilote la boucle d'outils de l'Arsenal, gère l'authentification et l'inférence via
       deux backends (AI Studio et API Antigravity), puis scelle chaque tour dans les Ombres Riches.
-      Il orchestre également la <strong>politique modèle centralisée</strong> — propagée de ses
+      Il orchestre également la <strong>politique modèle centralisée</strong> - propagée de ses
       <code>UserValves</code> vers tous les outils via <code>__metadata__</code> et le fallback
       SQLite <code>echo_settings</code>.
     </p>
@@ -49,7 +49,7 @@
       <tbody>
         <tr><td><strong>Fichier source</strong></td><td><code>10-owui-pipes/pipe_engine.py</code></td></tr>
         <tr><td><strong>Version</strong></td><td>192.17+ (déclarée dans le docstring du fichier)</td></tr>
-        <tr><td><strong>Type Open WebUI</strong></td><td><code>Pipe</code> — se présente comme un modèle GenAI</td></tr>
+        <tr><td><strong>Type Open WebUI</strong></td><td><code>Pipe</code> - se présente comme un modèle GenAI</td></tr>
         <tr><td><strong>Point d'entrée</strong></td><td><code>Pipe.pipe(body, __event_emitter__)</code></td></tr>
         <tr><td><strong>Exécution</strong></td><td>In-process dans Python d'Open WebUI, asynchrone (<code>asyncio</code>)</td></tr>
         <tr><td><strong>Transport API</strong></td><td>HTTP/2 strict (<code>httpx</code> avec <code>http2=True</code>), SSE streaming</td></tr>
@@ -57,7 +57,7 @@
       </tbody>
     </table>
 
-    <h2>La Suture Bit-Perfect — <code>prepare_context()</code></h2>
+    <h2>La Suture Bit-Perfect - <code>prepare_context()</code></h2>
 
     <p>
       La Suture est l'algorithme central du Pipe. Elle reconstruit le tableau de <code>contents</code>
@@ -116,7 +116,7 @@
       <h4>⚙️ Stérilisation des médias (Double Ancrage)</h4>
       <p>
         Les <code>inlineData</code> (binaires Base64) présents dans les Ombres sont ré-injectés
-        tels quels dans le contexte Gemini. Le contenu binaire n'est jamais retranscodé — garantie
+        tels quels dans le contexte Gemini. Le contenu binaire n'est jamais retranscodé - garantie
         d'une fidélité à l'octet près (<em>bit-perfect</em>). Les pièces jointes qui dépassent
         la limite de taille de l'API sont automatiquement remplacées par leur slug Qdrant.
       </p>
@@ -133,7 +133,7 @@
 
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
-        <span>Routage Cognitif Dynamique — pipe_engine.py</span>
+        <span>Routage Cognitif Dynamique - pipe_engine.py</span>
         <span>[MODE AUTO]</span>
       </div>
       <div class="mermaid">
@@ -142,15 +142,15 @@ flowchart TD
 
   LITE --> NCV{new_cognitive_level\nrequested?}
 
-  NCV -->|"Oui — LITE est dépassé"| TRANS["Plan de Transfert\n(Markdown structuré)"]
+  NCV -->|"Oui - LITE est dépassé"| TRANS["Plan de Transfert\n(Markdown structuré)"]
   TRANS --> MUTATION["Mutation Modèle\n(inject into new model)"]
-  MUTATION --> FLASH[Exécution — MODEL_FLASH]
+  MUTATION --> FLASH[Exécution - MODEL_FLASH]
 
-  NCV -->|"Non — LITE suffit"| CTX{Taux de\nRemplissage}
+  NCV -->|"Non - LITE suffit"| CTX{Taux de\nRemplissage}
 
-  CTX -->|"< 30% — Zone verte"| LITE_OK["✅ Continuer en LITE\n(interactions simples)"]
-  CTX -->|"30–50% — Zone orange"| FLASH["⚡ Escalade vers MODEL_FLASH\n(moteur agentique principal)"]
-  CTX -->|"> 50% — Zone rouge"| PRO["🔴 Escalade PRO impérative\nquelle que soit la tâche"]
+  CTX -->|"< 30% - Zone verte"| LITE_OK["✅ Continuer en LITE\n(interactions simples)"]
+  CTX -->|"30–50% - Zone orange"| FLASH["⚡ Escalade vers MODEL_FLASH\n(moteur agentique principal)"]
+  CTX -->|"> 50% - Zone rouge"| PRO["🔴 Escalade PRO impérative\nquelle que soit la tâche"]
 
   FLASH --> NCV2{new_cognitive_level ?}
   NCV2 -->|"FLASH est dépassé"| PRO
@@ -173,17 +173,17 @@ flowchart TD
       <tbody>
         <tr>
           <td><strong><code>MODEL_LITE</code></strong> (<code>gemini-3.1-flash-lite</code>)</td>
-          <td>Réflexe — point d'entrée par défaut.</td>
+          <td>Réflexe - point d'entrée par défaut.</td>
           <td>Toute requête en mode AUTO. Salutations, extractions triviales.</td>
         </tr>
         <tr>
           <td><strong><code>MODEL_FLASH</code></strong> (<code>gemini-3.5-flash</code>)</td>
           <td>Moteur agentique principal.</td>
-          <td>LITE demande une escalade (<code>new_cognitive_level</code>). Le seuil de 30 % de contexte est un signal de vigilance pour activer préventivement le RAG éphémère — pas un basculement automatique.</td>
+          <td>LITE demande une escalade (<code>new_cognitive_level</code>). Le seuil de 30 % de contexte est un signal de vigilance pour activer préventivement le RAG éphémère - pas un basculement automatique.</td>
         </tr>
         <tr>
           <td><strong><code>MODEL_PRO</code></strong> (<code>gemini-3.1-pro-preview</code>)</td>
-          <td>Expertise — dernier recours uniquement.</td>
+          <td>Expertise - dernier recours uniquement.</td>
           <td>FLASH est manifestement insuffisant, ou contexte ≥ 50 % (<em>Loi de Corrélation Contextuelle</em>).</td>
         </tr>
       </tbody>
@@ -232,7 +232,7 @@ flowchart TD
       </ol>
     </div>
 
-    <h2>Politique Modèle Centralisée — Pipe → Outils</h2>
+    <h2>Politique Modèle Centralisée - Pipe → Outils</h2>
 
     <p>
       La <code>UserValve MODEL_SELECTION</code> du Pipe définit la politique d'utilisation des
@@ -339,13 +339,13 @@ flowchart TD
       de requête reproduisent ceux d'un IDE réel grâce à <code>get_stealth_headers()</code> :
     </p>
 
-    <div class="code-header">En-têtes Stealth — ECHO API Antigravity</div>
+    <div class="code-header">En-têtes Stealth - ECHO API Antigravity</div>
     <pre><code>User-Agent: antigravity/2.1.0 (language_server; os_type=Windows; os_version=10.0.26100; arch=x64)
 x-goog-api-client: antigravity/2.1.0
 Authorization: Bearer {oauth_token}
 Content-Type: application/json</code></pre>
 
-    <h2>Bridge <code>_TOOLS_CACHE</code> — Partage des Callables Outils</h2>
+    <h2>Bridge <code>_TOOLS_CACHE</code> - Partage des Callables Outils</h2>
 
     <p>
       OWUI injecte le dictionnaire <code>__tools__</code> (contenant les callables Python réels
@@ -356,7 +356,7 @@ Content-Type: application/json</code></pre>
     </p>
 
     <div class="tech-spec">
-      <h4>⚙️ Solution — Cache module-level</h4>
+      <h4>⚙️ Solution - Cache module-level</h4>
       <p>
         Le Pipe stocke <code>__tools__[chat_id]</code> dans <code>_TOOLS_CACHE</code>,
         un dictionnaire module-level défini dans <code>pipe_engine.py</code>. Comme le Pipe
@@ -374,21 +374,21 @@ Content-Type: application/json</code></pre>
       <thead><tr><th>Format</th><th>Type</th><th>Contenu</th><th>Action Pipe</th></tr></thead>
       <tbody>
         <tr>
-          <td><strong>Cas 1</strong> — Production ECHO</td>
+          <td><strong>Cas 1</strong> - Production ECHO</td>
           <td><code>dict</code> <code>{fn_name: {callable, spec, tool_id, metadata}}</code></td>
           <td>Callables Python directement utilisables</td>
           <td>Stockage dans <code>_TOOLS_CACHE[chat_id]</code> + construction <code>_echo_body_tools</code> (specs OpenAI)</td>
         </tr>
         <tr>
-          <td><strong>Cas 2</strong> — Doc officielle OWUI</td>
+          <td><strong>Cas 2</strong> - Doc officielle OWUI</td>
           <td><code>list[ToolUserModel]</code> avec attribut <code>.specs</code></td>
           <td>Specs OpenAI sans callables</td>
           <td>Extraction des specs dans <code>_echo_body_tools</code> uniquement</td>
         </tr>
         <tr>
-          <td><strong>Cas 3</strong> — Aucun outil</td>
+          <td><strong>Cas 3</strong> - Aucun outil</td>
           <td><code>None</code> ou vide</td>
-          <td>—</td>
+          <td>-</td>
           <td>Fallback : <code>_echo_body_tools = body.get("tools", [])</code></td>
         </tr>
       </tbody>
@@ -398,8 +398,8 @@ Content-Type: application/json</code></pre>
       Clés injectées dans <code>__metadata__</code> par ce mécanisme :
     </p>
     <ul>
-      <li><code>_echo_tools_dict</code> — dict brut OWUI (peut être vide)</li>
-      <li><code>_echo_body_tools</code> — specs format OpenAI pour tous les outils disponibles</li>
+      <li><code>_echo_tools_dict</code> - dict brut OWUI (peut être vide)</li>
+      <li><code>_echo_body_tools</code> - specs format OpenAI pour tous les outils disponibles</li>
     </ul>
 
     <h2>Phase de Scellement</h2>
@@ -411,31 +411,31 @@ Content-Type: application/json</code></pre>
     <ol>
       <li>
         <strong>Shadow Sealing :</strong> <code>save_message_shadow(parts_finale, updated_at)</code>
-        — enregistre la structure complète des <code>parts</code> envoyées et reçues dans
+        - enregistre la structure complète des <code>parts</code> envoyées et reçues dans
         <code>message_shadows</code>.
       </li>
       <li>
         <strong>Cognitive Sealing :</strong> <code>save_signature_by_id(message_id, thoughtSignature)</code>
-        — ancre la signature dans <code>cognitive_signatures</code>.
+        - ancre la signature dans <code>cognitive_signatures</code>.
       </li>
       <li>
         <strong>Tool Journal :</strong> <code>save_cognitive_data(cumulative_hash, tool_io)</code>
-        — journalise les appels et sorties d'outils dans <code>tool_journal</code>.
+        - journalise les appels et sorties d'outils dans <code>tool_journal</code>.
       </li>
       <li>
         <strong>Suture Index :</strong> <code>index_suture(cumulative_hash, parent_hash)</code>
-        — met à jour la chaîne Merkle de la conversation.
+        - met à jour la chaîne Merkle de la conversation.
       </li>
     </ol>
 
-    <h2>HUD Quota — intégration dans le Pipe</h2>
+    <h2>HUD Quota - intégration dans le Pipe</h2>
 
     <p>
       À chaque fin de tour, le Pipe collecte les métriques de quota et les injecte dans la Context
       Gauge. Le pipeline précis, extrait du code source :
     </p>
 
-    <div class="code-header">Pipeline HUD Quota — pipe_engine.py v192.7</div>
+    <div class="code-header">Pipeline HUD Quota - pipe_engine.py v192.7</div>
     <pre><code># 1. Résolution de l'ID modèle AGY (cloudcode-pa interne)
 ca_id = get_ca_model_id(target_model)
 # ex : MODEL_FLASH → "gemini-3-flash-agent"
@@ -460,7 +460,7 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     quota_rpd_rem=quota_rpd_rem, quota_rpd_lim=quota_rpd_lim, ...)</code></pre>
 
     <div class="audit-note">
-      <h4>✅ Exactitude — Version 192.15</h4>
+      <h4>✅ Exactitude - Version 192.15</h4>
       <p>
         La version 192.15 finalise le refactoring du status tri-état
         (<code>success</code> / <code>warning</code> / <code>error</code>) : suppression de
@@ -481,7 +481,7 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,7 +1,13 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.6
+# Version : 9.10
 # ==============================================================================
+# CHANGELOG 9.10 : Désactivation de ModSecurity pour Open WebUI (standard LLM).
+# CHANGELOG 9.9 : Exclusions ModSecurity (XSS/RCE/PHP) pour les icônes Base64 (SVG)
+#                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
+# CHANGELOG 9.8 : Réactivation de Watchtower pour Open WebUI.
+# CHANGELOG 9.7 : Correction Intégration BunkerWeb & Open WebUI (SSE, 413, OOM, CSRF)
+#                 et correction de l'anti-indexation (Admin Manager).
 # CHANGELOG 9.6 : Ajout du montage de volume pour tts_api.py et override de la 
 #                 commande uvicorn avec --reload pour permettre le hot-reload du TTS.
 # CHANGELOG 9.5 : Fix crash backend `ValueError: Unknown embedding engine: ""` 
@@ -55,14 +61,15 @@ services:
       - DATA_DIR=/app/backend/data
       # Désactivation RAG natif au boot
       - RAG_EMBEDDING_ENGINE=openai
-      - ENABLE_RAG_WEB_SEARCH=False
+      - RAG_EMBEDDING_MODEL=dummy_model
+      - ENABLE_RAG_WEB_SEARCH=false
       - ECHO_VERSION_PATH=/app/backend/data/ECHO_VERSION
     volumes:
       - /opt/ECHO/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
       - /opt/ECHO/owui-libs:/app/backend/echo_libs:ro
       - echo-webui-data:/app/backend/data
     labels:
-      - "com.centurylinklabs.watchtower.enable=false"
+      - "com.centurylinklabs.watchtower.enable=true"
       - "echo.hot-reload=true"
       # 🛡️ TUNING SECURE EDGE (BunkerWeb)
       - "bunkerweb.SERVER_NAME=ui.${ECHO_DOMAIN:-localhost}"
@@ -73,14 +80,17 @@ services:
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
 
       # 1. OPTIMISATIONS STREAMING & UPLOAD
-      - "bunkerweb.REVERSE_PROXY_BUFFERING=off"
+      - "bunkerweb.REVERSE_PROXY_BUFFERING=no"
       - "bunkerweb.REVERSE_PROXY_REQUEST_BUFFERING=no"
-      - "bunkerweb.MAX_CLIENT_BODY_SIZE=200m"
-      - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600"
-      - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600"
+      - "bunkerweb.MAX_CLIENT_SIZE=500m"
+      - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600s"
+      - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600s"
+      - "bunkerweb.REVERSE_PROXY_CONNECT_TIMEOUT=60s"
 
-      # 2. WEBSOCKETS
+      # 2. WEBSOCKETS & ENTÊTES
       - "bunkerweb.REVERSE_PROXY_WS=yes"
+      - "bunkerweb.REVERSE_PROXY_PRESERVE_HOST=yes"
+      - "bunkerweb.KEEP_UPSTREAM_HEADERS=*"
 
       # 3. RATE LIMITING (Stratégie SPA Robuste)
       - "bunkerweb.USE_LIMIT_REQ=yes"
@@ -100,9 +110,8 @@ services:
       - "bunkerweb.LIMIT_REQ_RATE=50r/s"
       - "bunkerweb.LIMIT_REQ_BURST=100"
 
-      # 4. SECURITE & WAF (Anti-Ban & Faux Positifs)
-      - "bunkerweb.USE_MODSECURITY=yes"
-      - "bunkerweb.MODSEC_CRS_PARANOIA_LEVEL=1"
+      # 4. SECURITE (Anti-Ban)
+      - "bunkerweb.USE_MODSECURITY=no"
       - "bunkerweb.USE_BAD_BEHAVIOR=yes"
       # EXCLUSION CRITIQUE : Ne pas bannir sur 404 (Assets manquants) ni 429 (Rate Limit)
       # 400 retiré : les SPA génèrent légitimement des 400 sur les preflight CORS
@@ -110,22 +119,6 @@ services:
 
       # Autoriser les verbes HTTP pour l'API (Suppression de chat, édition, etc.)
       - "bunkerweb.ALLOWED_METHODS=GET|POST|HEAD|PUT|DELETE|PATCH|OPTIONS"
-
-      # Tuning ModSecurity : Exclusions CRS Granulaires (moteur WAF conservé ACTIF)
-      # Stratégie : SecRuleRemoveById chirurgical sur les règles générant des faux
-      # positifs documentés sur les applications LLM/SPA. Le WAF reste opérationnel
-      # et continue de bloquer les scanners, bots et tentatives d'exploitation réelles.
-      #
-      # Groupe 1 : Corps de requête (Prompts IA, JSON complexes)
-      #   920230 Multiple URL encodings, 921151 HTTP param pollution
-      #   941101/941160 XSS Detection, 942421 SQLi restricted chars
-      # Groupe 2 : Méthodes HTTP (DELETE suppression chat, PATCH édition)
-      #   911100 Method not allowed
-      # Groupe 3 : Upload de fichiers (multipart MIME variés, gros fichiers)
-      #   920420 Content-Type not allowed, 200003 Multipart parser anomaly
-      # Groupe 4 : Headers (CORS preflight, requêtes SPA internes)
-      #   920300 Accept header missing, 920320 Missing User-Agent
-      - "bunkerweb.CUSTOM_CONF_MODSEC_CRS_openwebui_tuning=SecRuleRemoveById 920230 921151 941101 941160 942421 911100 920420 200003 920300 920320"
 
 
       # 5. UX & PERFORMANCE
@@ -182,8 +175,7 @@ services:
       - "bunkerweb.LIMIT_REQ_BURST=100"
       
       # 🚫 ANTI-BOTS & INDEXATION
-      - "bunkerweb.HEADERS_RESPONSE_NAME_1=X-Robots-Tag"
-      - "bunkerweb.HEADERS_RESPONSE_VALUE_1=noindex, nofollow"
+      - "bunkerweb.CUSTOM_HEADER_1=X-Robots-Tag: noindex, nofollow"
     
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

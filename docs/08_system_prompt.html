@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Le Kernel ECHO v5 : system prompt, hiérarchie des normes, persona de l'IA, directives opérationnelles, Registre des Fichiers, règles de souveraineté.">
-  <title>ECHO v5 — 8. Le Kernel (System Prompt)</title>
+  <title>ECHO v5 - 8. Le Kernel (System Prompt)</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,7 +14,7 @@
     <h1>8. Le Kernel (System Prompt)</h1>
 
     <p>
-      Le <strong>System Prompt</strong> d'ECHO — désigné Kernel — est le document fondamental
+      Le <strong>System Prompt</strong> d'ECHO - désigné Kernel - est le document fondamental
       qui définit l'identité, les valeurs et les règles opérationnelles du modèle Gemini au sein
       du framework. Il est stocké dans <code>01-config/system-prompt.md</code> et injecté
       automatiquement par <code>config-owui.sh</code> lors du provisioning.
@@ -39,25 +39,25 @@
     </p>
     <ol>
       <li>
-        <strong>Le Kernel (system prompt)</strong> — niveau le plus haut. Règles de souveraineté,
+        <strong>Le Kernel (system prompt)</strong> - niveau le plus haut. Règles de souveraineté,
         d'identité et de sécurité. Ne peut jamais être contredite par l'utilisateur.
       </li>
       <li>
-        <strong>L'AEC (<code>environnement_contexte</code>)</strong> — vérité courante du système.
+        <strong>L'AEC (<code>environnement_contexte</code>)</strong> - vérité courante du système.
         La date, le modèle actif, le Registre des Fichiers (<code>registre_fichiers</code>),
         le Registre des Plans (<code>registre_plan</code>) et le Registre du Codex
         (<code>registre_codex</code>). Le modèle <strong>doit</strong> consulter ces
         informations avant toute action sur une ressource, un plan ou un fichier Codex.
       </li>
       <li>
-        <strong>Les instructions utilisateur</strong> — priorité la plus basse. Elles opèrent
+        <strong>Les instructions utilisateur</strong> - priorité la plus basse. Elles opèrent
         dans le cadre défini par les deux niveaux supérieurs.
       </li>
     </ol>
 
     <h2>Directives Opérationnelles Clés</h2>
 
-    <h3>Règle d'Or — Registre des Fichiers</h3>
+    <h3>Règle d'Or - Registre des Fichiers</h3>
     <p>
       Avant toute manipulation d'une ressource (fichier, slug Qdrant), le modèle doit
       interroger le <code>registre_fichiers</code> dans l'AEC pour connaître l'état exact de
@@ -91,7 +91,7 @@
     <p>
       Le Kernel définit la persona d'ECHO via la section <strong>🎭 Persona</strong> du
       <code>system-prompt.md</code>. Les éléments qui suivent sont extraits <em>directement</em>
-      du texte source — aucune interprétation.
+      du texte source - aucune interprétation.
     </p>
 
     <ul>
@@ -114,7 +114,7 @@
       </li>
       <li>
         <strong>Modes spécialisés :</strong> Rédacteur (<code>!Rédacteur</code>),
-        Coach (<code>!Coach</code>), Professeur (<code>!Prof</code>) — activables
+        Coach (<code>!Coach</code>), Professeur (<code>!Prof</code>) - activables
         automatiquement ou par commande explicite.
       </li>
       <li>
@@ -129,7 +129,7 @@
         Le <code>system-prompt.md</code> ne mentionne ni tutoiement, ni vouvoiement, ni registre
         différencié selon le niveau de familiarité. Ces comportements, parfois observés dans les
         réponses d'ECHO, relèvent de l'inférence du modèle à partir du <em>Profil d'Alignement</em>
-        (principe PACP) — pas d'une instruction explicite du Kernel.
+        (principe PACP) - pas d'une instruction explicite du Kernel.
       </p>
     </div>
 
@@ -161,7 +161,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Librairies partagées du Framework ECHO v5 : echo_utils, echo_auth, echo_protocol, echo_constants — EchoStateManager, EchoGeminiClient, authentification PKCE, protocole API Antigravity.">
-  <title>ECHO v5 — 3. Librairies Partagées (echo_libs)</title>
+  <meta name="description" content="Librairies partagées du Framework ECHO v5 : echo_utils, echo_auth, echo_protocol, echo_constants - EchoStateManager, EchoGeminiClient, authentification PKCE, protocole API Antigravity.">
+  <title>ECHO v5 - 3. Librairies Partagées (echo_libs)</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -16,8 +16,8 @@
     <p>
       Le répertoire <code>14-owui-libs/</code> regroupe les modules Python partagés par l'ensemble
       du framework : Filtres, Pipe, Actions et Admin Manager les importent tous. Cette centralisation
-      garantit un point de vérité unique pour chaque mécanisme critique — authentification, persistance,
-      communication API, interface HUD — et prévient toute duplication de code.
+      garantit un point de vérité unique pour chaque mécanisme critique - authentification, persistance,
+      communication API, interface HUD - et prévient toute duplication de code.
     </p>
 
     <div class="didactic-box">
@@ -30,12 +30,12 @@
       </p>
     </div>
 
-    <h2><code>echo_constants.py</code> — Constantes et Topologie (v5.6)</h2>
+    <h2><code>echo_constants.py</code> - Constantes et Topologie (v5.6)</h2>
 
     <p>
       Registre unique de toutes les vérités immuables du système. Tout composant qui a besoin
       d'un identifiant de modèle, d'un chemin de répertoire, d'un timeout ou d'une limite de tokens
-      doit le lire depuis ce fichier — jamais le coder en dur localement.
+      doit le lire depuis ce fichier - jamais le coder en dur localement.
     </p>
 
     <h3>Identifiants de modèles Gemini</h3>
@@ -48,7 +48,7 @@
           <td><code>MODEL_PRO</code></td>
           <td><code>gemini-3.1-pro-preview</code></td>
           <td><code>gemini-pro-agent</code></td>
-          <td>Expertise — dernier recours uniquement</td>
+          <td>Expertise - dernier recours uniquement</td>
         </tr>
         <tr>
           <td><code>MODEL_FLASH</code></td>
@@ -60,18 +60,18 @@
           <td><code>MODEL_LITE</code></td>
           <td><code>gemini-3.1-flash-lite</code></td>
           <td><code>gemini-3.1-flash-lite</code></td>
-          <td>Réflexe — point d'entrée par défaut</td>
+          <td>Réflexe - point d'entrée par défaut</td>
         </tr>
         <tr>
           <td><code>MODEL_DISTILLATION</code></td>
-          <td><code>gemini-2.5-flash</code></td>
-          <td><code>gemini-2.5-flash</code></td>
+          <td><code>gemini-3.1-flash-lite</code></td>
+          <td><code>gemini-3.1-flash-lite</code></td>
           <td>Moulage et distillation de fichiers</td>
         </tr>
         <tr>
           <td><code>MODEL_EMBEDDING</code></td>
           <td><code>BAAI/bge-m3</code></td>
-          <td>—</td>
+          <td>-</td>
           <td>Vectorisation locale (Embedding Worker)</td>
         </tr>
 
@@ -95,7 +95,7 @@
       </tbody>
     </table>
 
-    <h3>§1.4 ECHO Codex — Constantes</h3>
+    <h3>§1.4 ECHO Codex - Constantes</h3>
 
     <p>Section ajoutée en v5.4. Centralise tous les paramètres de l'éditeur Codex.</p>
 
@@ -111,7 +111,7 @@
       </tbody>
     </table>
 
-    <h3>§1.5 DELEGATE SUB-AGENT — Blacklist et Appendice Système</h3>
+    <h3>§1.5 DELEGATE SUB-AGENT - Blacklist et Appendice Système</h3>
 
     <p>Section ajoutée en v5.6. Centralise les règles de filtrage des outils transmis au sous-agent.</p>
 
@@ -143,7 +143,7 @@
       en suivant une cascade de six niveaux :
     </p>
     <ol>
-      <li>Mappings pré-définis ECHO (<code>MIME_MAPPING_TXT</code>, <code>MIME_MAPPING_BIN</code>) — priorité absolue.</li>
+      <li>Mappings pré-définis ECHO (<code>MIME_MAPPING_TXT</code>, <code>MIME_MAPPING_BIN</code>) - priorité absolue.</li>
       <li>Bibliothèque standard Python <code>mimetypes</code> (extension).</li>
       <li>Détection binaire par Magic Numbers via <code>filetype</code>.</li>
       <li>Liste blanche native Gemini (<code>image/*</code>, <code>video/*</code>, <code>audio/*</code>, <code>text/*</code>, <code>application/pdf</code>, <code>application/json</code>).</li>
@@ -151,28 +151,28 @@
       <li>Fallback sécuritaire : <code>application/octet-stream</code>, non supporté.</li>
     </ol>
 
-    <h2><code>echo_utils.py</code> — Cœur Réactif (v7.21)</h2>
+    <h2><code>echo_utils.py</code> - Moteur Asynchrone et Fonctions Communes (v7.21)</h2>
 
-    <h3>EchoStateManager — Persistance Bit-Perfect</h3>
+    <h3>EchoStateManager - Persistance Bit-Perfect</h3>
     <p>
       La classe <code>EchoStateManager</code> est l'organe de mémoire persistante. Elle gère
       les bases SQLite en mode WAL (Write-Ahead Logging) pour la résistance aux pannes.
       Deux instances coexistent dans chaque tour de traitement :
     </p>
     <ul>
-      <li><strong><code>state_manager</code></strong> : lie à la base de chat <code>{chat_id}.db</code> — Ombres, Suture, Signatures, Journal.</li>
-      <li><strong><code>identity_manager</code></strong> : lie à <code>identity.db</code> — Authentification, Quotas, Configuration utilisateur.</li>
+      <li><strong><code>state_manager</code></strong> : lie à la base de chat <code>{chat_id}.db</code> - Ombres, Suture, Signatures, Journal.</li>
+      <li><strong><code>identity_manager</code></strong> : lie à <code>identity.db</code> - Authentification, Quotas, Configuration utilisateur.</li>
     </ul>
 
     <div class="tech-spec">
       <h4>⚙️ Double hachage SHA-256 (Merkle Core)</h4>
       <p>
         <strong>Invariant Hash :</strong> <code>SHA-256(role + content_sorted + tool_io)</code>
-        — identité pure d'un tour, indépendante de sa position dans l'historique.
+        - identité pure d'un tour, indépendante de sa position dans l'historique.
       </p>
       <p>
         <strong>Cumulative Hash :</strong> <code>SHA-256(invariant_hash + parent_cumulative_hash)</code>
-        — ADN de la conversation. Toute modification dans l'historique invalide les hashes suivants.
+        - ADN de la conversation. Toute modification dans l'historique invalide les hashes suivants.
       </p>
       <p>
         Ce mécanisme permet de détecter les <em>Ghost Messages</em> (messages modifiés dans Open WebUI)
@@ -180,7 +180,7 @@
       </p>
     </div>
 
-    <h3>EchoGeminiClient — Moteur d'Appel API</h3>
+    <h3>EchoGeminiClient - Moteur d'Appel API</h3>
     <p>
       <code>EchoGeminiClient</code> est le <strong>sélecteur de protocole symétrique</strong> :
       il gère de manière transparente les deux backends d'inférence selon la méthode d'authentification
@@ -208,7 +208,7 @@
     </table>
 
     <div class="tech-spec">
-      <h4>⚙️ Stratégie de résilience — Failover Hybride</h4>
+      <h4>⚙️ Stratégie de résilience - Failover Hybride</h4>
       <ul>
         <li>
           <strong>Erreurs 429/500/503 (surcharge) :</strong> backoff exponentiel avec jitter aléatoire
@@ -228,7 +228,7 @@
     </div>
 
     <div class="note-box">
-      <h4>v7.15 — Crédits OAuth2 opt-in</h4>
+      <h4>v7.15 - Crédits OAuth2 opt-in</h4>
       <p>
         Le champ <code>enabled_credit_types</code> dans les requêtes API Antigravity est désormais
         <strong>omis par défaut</strong> (alignement sur le comportement natif d'AGY-IDE).
@@ -246,9 +246,9 @@
         Toutes les réponses d'outils utilisent désormais un status à trois états explicites :
       </p>
       <ul>
-        <li><code>"success"</code> — exécution nominale, modèle utilisé = modèle demandé.</li>
-        <li><code>"warning"</code> — exécution réussie mais avec divergence (clamping politique ou cascade). Le champ <code>reason</code> détaille la cause.</li>
-        <li><code>"error"</code> — échec de l'exécution (cascade épuisée, exception, config invalide).</li>
+        <li><code>"success"</code> - exécution nominale, modèle utilisé = modèle demandé.</li>
+        <li><code>"warning"</code> - exécution réussie mais avec divergence (clamping politique ou cascade). Le champ <code>reason</code> détaille la cause.</li>
+        <li><code>"error"</code> - échec de l'exécution (cascade épuisée, exception, config invalide).</li>
       </ul>
       <p>
         Le champ <code>clamped:true</code> est supprimé : la divergence modèle est signalée
@@ -270,7 +270,7 @@
       </tbody>
     </table>
 
-    <h3>Politique Modèle Centralisée — <code>clamp_model()</code> et <code>resolve_model_policy()</code></h3>
+    <h3>Politique Modèle Centralisée - <code>clamp_model()</code> et <code>resolve_model_policy()</code></h3>
     <p>
       Ces deux fonctions constituent le <strong>verrou de politique</strong> entre le Pipe et
       les outils. Elles garantissent que tout outil respecte la <code>MODEL_SELECTION</code>
@@ -295,19 +295,19 @@
       </tbody>
     </table>
 
-    <h3><code>call_cascade()</code> — Appel LLM centralisé avec cascade</h3>
+    <h3><code>call_cascade()</code> - Appel LLM centralisé avec cascade</h3>
     <p>
       Méthode statique de <code>EchoGeminiClient</code>. Point d'entrée unique recommandé
       pour tous les outils qui appellent un LLM. Elle gère de façon transparente :
     </p>
     <ul>
-      <li><strong>Clamping</strong> — applique <code>clamp_model()</code> avant l'appel.</li>
-      <li><strong>Injection <code>thinkingConfig</code></strong> — niveau adapté au modèle (PRO/FLASH/LITE).</li>
-      <li><strong>Cascade descendante</strong> — si le modèle est indisponible (429/503), repli automatique
+      <li><strong>Clamping</strong> - applique <code>clamp_model()</code> avant l'appel.</li>
+      <li><strong>Injection <code>thinkingConfig</code></strong> - niveau adapté au modèle (PRO/FLASH/LITE).</li>
+      <li><strong>Cascade descendante</strong> - si le modèle est indisponible (429/503), repli automatique
           PRO → FLASH → LITE avec toast et status émis.</li>
-      <li><strong>Crédits opt-in</strong> — <code>enable_paid_credits</code> propagé via <code>__metadata__</code>.</li>
+      <li><strong>Crédits opt-in</strong> - <code>enable_paid_credits</code> propagé via <code>__metadata__</code>.</li>
     </ul>
-    <div class="code-header">Signature — <code>call_cascade()</code></div>
+    <div class="code-header">Signature - <code>call_cascade()</code></div>
     <pre><code>data, model_key, reason = await EchoGeminiClient.call_cascade(
     target_model_key="MODEL_FLASH",  # Clé logique (sera clampée par la politique Pipe)
     payload=payload,
@@ -320,7 +320,7 @@
 # model_key : clé ECHO du modèle effectivement utilisé
 # reason  : None (nominal) ou chaîne expliquant la divergence ("policy", "API error", …)</code></pre>
 
-    <h3>Table <code>echo_settings</code> — Persistance inter-sessions</h3>
+    <h3>Table <code>echo_settings</code> - Persistance inter-sessions</h3>
     <p>
       Table SQLite dans <code>identity.db</code> (gérée par <code>EchoStateManager</code>).
       Elle stocke les préférences Pipe (<code>model_policy</code>,
@@ -335,7 +335,7 @@
       </tbody>
     </table>
 
-    <h3>Table <code>codex_docs</code> — Registre Codex (v7.21)</h3>
+    <h3>Table <code>codex_docs</code> - Registre Codex (v7.21)</h3>
 
     <p>
       Table SQLite ajoutée dans <code>{chat_id}.db</code> pour le suivi des fichiers ECHO Codex.
@@ -353,7 +353,7 @@
       </tbody>
     </table>
 
-    <h2><code>echo_auth.py</code> — Identités d'Accès aux Modèles (v7.3)</h2>
+    <h2><code>echo_auth.py</code> - Identités d'Accès aux Modèles (v7.3)</h2>
 
     <p>
       <code>AuthService</code> gère le cycle complet d'authentification OAuth2 headless via le flux
@@ -361,7 +361,7 @@
       avec un compte Google depuis un conteneur Docker sans navigateur ni intervention humaine répétée.
     </p>
 
-    <h3>Flux PKCE — séquence d'authentification</h3>
+    <h3>Flux PKCE - séquence d'authentification</h3>
     <ol>
       <li><strong><code>initiate_pkce_flow()</code></strong> : génère le code verifier + challenge, ouvre un tunnel SSH éphémère (<code>asyncssh</code>) sur un port dynamique de la plage <code>8020–8024</code>, et renvoie l'URL d'autorisation Google à l'utilisateur.</li>
       <li>L'utilisateur clique sur le lien, autorise ECHO sur son compte Google.</li>
@@ -393,7 +393,7 @@
       </tbody>
     </table>
 
-    <h2><code>echo_protocol.py</code> — Adaptateur API Antigravity (v1.1)</h2>
+    <h2><code>echo_protocol.py</code> - Adaptateur API Antigravity (v1.1)</h2>
 
     <p>
       Module de <strong>fonctions pures</strong> (sans état, sans appel réseau) : point de modification
@@ -418,7 +418,6 @@
         <tr><td><code>gemini-3.1-pro-preview</code></td><td><code>gemini-pro-agent</code></td></tr>
         <tr><td><code>gemini-3.5-flash</code></td><td><code>gemini-3-flash-agent</code></td></tr>
         <tr><td><code>gemini-3.1-flash-lite</code></td><td><code>gemini-3.1-flash-lite</code> (identique)</td></tr>
-        <tr><td><code>gemini-2.5-flash</code></td><td><code>gemini-2.5-flash</code> (identique)</td></tr>
       </tbody>
     </table>
 
@@ -428,17 +427,17 @@
     </p>
     <ul>
       <li>
-        <strong>Cap <code>maxOutputTokens</code> à 65 535</strong> — décision D1 : alignement sur
+        <strong>Cap <code>maxOutputTokens</code> à 65 535</strong> - décision D1 : alignement sur
         le modèle le plus restrictif (Gemini 3.1 Pro AGY).
       </li>
       <li>
-        <strong><code>thinkingConfig</code> passe intégralement</strong> — <code>includeThoughts: true</code>
+        <strong><code>thinkingConfig</code> passe intégralement</strong> - <code>includeThoughts: true</code>
         est requis pour que l'API Antigravity retourne les parts <code>thought: true</code> lisibles
         dans le stream (balises <code>&lt;think&gt;</code>). Sans ce champ, seule la
         <code>thoughtSignature</code> opaque est retournée.
       </li>
       <li>
-        <strong><code>response_mime_type</code> accepté</strong> — confirmé fonctionnel sur tous les
+        <strong><code>response_mime_type</code> accepté</strong> - confirmé fonctionnel sur tous les
         modèles AGY.
       </li>
     </ul>
@@ -452,7 +451,7 @@
       </p>
     </div>
 
-    <h2><code>echo_skills.py</code> — Gestionnaire de Compétences (v1.3)</h2>
+    <h2><code>echo_skills.py</code> - Gestionnaire de Compétences (v1.3)</h2>
 
     <p>
       Ce module gère la lecture et l'écriture des fichiers <code>SKILL.md</code> dans le Vault utilisateur
@@ -471,7 +470,7 @@
       </tbody>
     </table>
 
-    <h2><code>echo_ui.py</code> / <code>echo_visuals.py</code> — Interface HUD</h2>
+    <h2><code>echo_ui.py</code> / <code>echo_visuals.py</code> - Interface HUD</h2>
 
     <p>
       <code>echo_ui.py</code> (v5.20) et <code>echo_visuals.py</code> forment le moteur d'injection
@@ -480,7 +479,7 @@
     </p>
 
     <div class="tech-spec">
-      <h4>⚙️ SQLite — Persistance par chat</h4>
+      <h4>⚙️ SQLite - Persistance par chat</h4>
       <p>
         Toutes les bases SQLite d'ECHO sont gérées par <code>EchoStateManager</code> avec
         un timeout de connexion de 10 secondes pour éviter les blocages sur accès concurrent.
@@ -495,7 +494,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

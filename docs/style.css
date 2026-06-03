@@ -1,5 +1,5 @@
 /* =============================================================================
-   ECHO Framework Documentation — style.css v2.0
+   ECHO Framework Documentation - style.css v2.0
    Séparation stricte structure/présentation. Aucun style inline dans les HTML.
    ============================================================================= */
 
@@ -11,7 +11,7 @@
   --text-color:       #d1d5db;
   --text-muted:       #94a3b8;
   --text-bright:      #f8fafc;
-  --accent-color:     #38bdf8;           /* sky-400 — bleu-cyan, neutre et lisible          */
+  --accent-color:     #38bdf8;           /* sky-400 - bleu-cyan, neutre et lisible          */
   --accent-glow:      rgba(56, 189, 248, 0.18);
   --accent-dark:      rgba(56, 189, 248, 0.08);
   --code-bg:          #1a1f26;
@@ -156,7 +156,7 @@ main > svg, main > .svg-diagram {
 }
 
 /* =============================================================================
-   TABLE OF CONTENTS — TOC (colonne droite)
+   TABLE OF CONTENTS - TOC (colonne droite)
    ============================================================================= */
 #page-toc {
   position: fixed;
@@ -326,7 +326,7 @@ main a:hover { color: var(--accent-color); text-decoration: underline; }
 }
 .tech-spec h4 { color: var(--accent-color); margin-bottom: 0.75rem; font-size: 0.95rem; }
 
-/* Encadré note (bleu — information neutre) */
+/* Encadré note (bleu - information neutre) */
 .note-box {
   background: var(--note-bg);
   border-left: 4px solid var(--note-border);
@@ -336,7 +336,7 @@ main a:hover { color: var(--accent-color); text-decoration: underline; }
 }
 .note-box h4 { color: var(--link-color); margin-bottom: 0.5rem; font-size: 0.9rem; }
 
-/* Encadré audit / exactitude (bleu-cyan — vérité certifiée) */
+/* Encadré audit / exactitude (bleu-cyan - vérité certifiée) */
 .audit-note {
   background: var(--audit-bg);
   border: 1px solid rgba(56, 189, 248, 0.3);
@@ -602,15 +602,15 @@ footer {
 .badge-orange { background: rgba(245,158,11,0.15); color: var(--warning-color); }
 
 /* =============================================================================
-   RESPONSIVE — écrans étroits
+   RESPONSIVE - écrans étroits
    ============================================================================= */
 @media (max-width: 1280px) {
-  /* Le TOC disparaît — le main récupère toute la largeur droite */
+  /* Le TOC disparaît - le main récupère toute la largeur droite */
   #page-toc { display: none; }
   main { margin-right: 24px; }
 }
 @media (max-width: 860px) {
-  /* La sidebar se rétracte — le main prend presque tout l'écran */
+  /* La sidebar se rétracte - le main prend presque tout l'écran */
   .sidebar { transform: translateX(-100%); }
   main {
     margin-left: 16px;
@@ -625,3 +625,62 @@ footer {
     max-width: 100%;
   }
 }
+
+/* =============================================================================
+   TRADUCTION & LANG VALVE (Toggle Open WebUI Style)
+   ============================================================================= */
+.valve-container {
+  display: flex;
+  justify-content: center;
+  margin: 1.5rem 0;
+}
+.valve-toggle {
+  position: relative;
+  display: flex;
+  background: rgba(17, 21, 28, 0.9);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 3px;
+  cursor: pointer;
+  width: 130px;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+}
+.valve-option {
+  flex: 1;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 5px 0;
+  z-index: 2;
+  transition: color 0.3s ease;
+  user-select: none;
+}
+.valve-option.active {
+  color: #fff;
+}
+.valve-slider {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  background: var(--accent-color);
+  border-radius: 16px;
+  z-index: 1;
+  transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+  box-shadow: 0 2px 6px rgba(56, 189, 248, 0.4);
+}
+.valve-toggle.is-en .valve-slider {
+  transform: translateX(100%);
+}
+
+/* HIDE GOOGLE TRANSLATE NATIVE UI AGGRESSIVELY */
+html, body { top: 0px !important; position: static !important; }
+iframe.goog-te-banner-frame { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+.skiptranslate > iframe.goog-te-banner-frame { display: none !important; }
+#goog-gt-tt, .goog-te-balloon-frame { display: none !important; }
+.goog-text-highlight { background-color: transparent !important; box-shadow: none !important; }
+#google_translate_element { display: none !important; }
+body > .skiptranslate { display: none !important; } /* Cible la nouvelle bannière Google */
+.VIpgJd-ZVi9od-aZ2wEe-wOHMyf, .VIpgJd-ZVi9od-aZ2wEe-wOHMyf-ti6hGc { display: none !important; }

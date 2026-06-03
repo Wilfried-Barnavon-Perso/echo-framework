@@ -1,9 +1,10 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 6.1
+version: 6.2
 description: 6.0: Validation analytique (PRAF) par calcul empirique. Capacité graphique retirée (Headless).
              6.1: Alignement du status sur le standard wrap_tool_output ECHO.
+             6.2: Correction d'un bug d'import (ECHO_PYTHON_WORKER_URL) et unbound local error (text_out).
 """
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
@@ -18,7 +19,7 @@ from typing import Optional, Any
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, EchoEvents
-from echo_constants import PYTHON_WORKER_URL
+from echo_constants import ECHO_PYTHON_WORKER_URL
 
 class Tools:
     class Valves(BaseModel):
@@ -47,7 +48,7 @@ class Tools:
 
         try:
             response = requests.post(
-                PYTHON_WORKER_URL,
+                ECHO_PYTHON_WORKER_URL,
                 json={"code": code},
                 timeout=self.valves.TIMEOUT
             )
@@ -75,7 +76,7 @@ class Tools:
             else:
                 err_msg = f"Erreur Worker (HTTP {response.status_code})"
                 await events.status(f"❌ {err_msg}", done=True)
-                return wrap_tool_output(text=text_out, status={"status": "critical_error", "code": response.status_code})
+                return wrap_tool_output(text=err_msg, status={"status": "critical_error", "code": response.status_code})
 
         except requests.exceptions.ConnectionError:
             return wrap_tool_output(text="❌ Service Python Worker injoignable.", status={"status": "error"})

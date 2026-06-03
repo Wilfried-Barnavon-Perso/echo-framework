@@ -1,5 +1,5 @@
 # ECHO TTS WORKER (Kokoro ONNX CPU)
-FROM python:3.14-slim
+FROM python:3.12-slim
 
 LABEL maintainer="Wilfried BARNAVON"
 LABEL version="1.0"
@@ -9,6 +9,7 @@ LABEL description="ECHO TTS Worker (Kokoro ONNX CPU)"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     espeak-ng \
     wget \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -19,7 +20,10 @@ RUN PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) pip install 
     soundfile \
     fastapi \
     uvicorn \
-    pydantic
+    pydantic \
+    langid \
+    pydub \
+    pyspellchecker
 
 # Téléchargement du modèle v1.0 et du profil vocal bin
 RUN wget -q https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx && \

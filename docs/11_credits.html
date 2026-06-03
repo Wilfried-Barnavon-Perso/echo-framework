@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Crédits et remerciements Open Source du framework ECHO.">
+  <title>ECHO v5 - 11. Crédits Open Source</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>11. Crédits Open Source</h1>
+
+    <p>
+      ECHO Framework est une architecture d'orchestration qui se tient sur les épaules de géants. Ce projet ne pourrait exister sans les contributions massives de la communauté Open Source et des équipes de recherche qui publient leurs travaux sous licences permissives.
+    </p>
+
+    <div class="note-box">
+      <h4>💡 Omissions Involontaires</h4>
+      <p>
+        <em>« Et à tous les projets, petits ou grands, qui auraient pu être omis par inadvertance : merci. »</em>
+      </p>
+    </div>
+
+    <h2>1. Les Fondations (Tier 1)</h2>
+    <p>Ces projets constituent la colonne vertébrale absolue du framework ECHO.</p>
+
+    <ul>
+      <li><strong><a href="https://github.com/open-webui/open-webui" target="_blank" rel="noopener">Open WebUI</a></strong> : L'écosystème hôte et l'interface principale, que le Kernel ECHO utilise comme moteur de rendu et système nerveux central. <span class="badge badge-purple">MIT License</span></li>
+      <li><strong><a href="https://ai.google.dev/" target="_blank" rel="noopener">Google Gemini</a></strong> : L'intelligence brute et les modèles de raisonnement profonds (Pro / Flash / Lite) pilotés via l'API Google AI Studio.</li>
+      <li><strong><a href="https://qdrant.tech/" target="_blank" rel="noopener">Qdrant</a></strong> : Le moteur de base de données vectorielle ultra-performant, supportant la "Mémoire Organique V4" et la fusion sémantique. <span class="badge badge-blue">Apache 2.0</span></li>
+      <li><strong><a href="https://www.sqlite.org/" target="_blank" rel="noopener">SQLite</a></strong> : Le moteur de base de données relationnelle embarqué assurant la persistance bit-perfect (les "Ombres Riches"). <span class="badge badge-green">Public Domain</span></li>
+      <li><strong><a href="https://www.docker.com/" target="_blank" rel="noopener">Docker</a> & <a href="https://docs.docker.com/compose/" target="_blank" rel="noopener">Docker Compose</a></strong> : L'infrastructure de conteneurisation qui garantit l'isolation, la souveraineté et la portabilité d'ECHO. <span class="badge badge-blue">Apache 2.0</span></li>
+    </ul>
+
+    <h2>2. Les Composants Périphériques (Tier 2)</h2>
+    <p><em>(Par ordre alphabétique)</em></p>
+
+    <ul>
+      <li><strong><a href="https://huggingface.co/BAAI/bge-m3" target="_blank" rel="noopener">BAAI / bge-m3</a></strong> : Modèle d'embedding multilingue exécuté localement pour vectoriser la mémoire sans perte de confidentialité. <span class="badge badge-purple">MIT License</span></li>
+      <li><strong><a href="https://github.com/bunkerity/bunkerweb" target="_blank" rel="noopener">BunkerWeb</a> / ModSecurity</strong> : Web Application Firewall (WAF) protégeant le trafic entrant de l'infrastructure Docker. <span class="badge badge-orange">AGPL-3.0</span></li>
+      <li><strong><a href="https://www.dulwich.io/" target="_blank" rel="noopener">Dulwich</a></strong> : Implémentation de Git en pur Python, utilisée par ECHO Codex pour le versioning transparent des fichiers modifiés. <span class="badge badge-blue">GPL-2.0 / Apache 2.0</span></li>
+      <li><strong><a href="https://github.com/SYSTRAN/faster-whisper" target="_blank" rel="noopener">Faster-Whisper</a></strong> : Implémentation optimisée (CTranslate2) du modèle Whisper d'OpenAI pour la transcription vocale (STT). <span class="badge badge-purple">MIT License</span></li>
+      <li><strong><a href="https://ffmpeg.org/" target="_blank" rel="noopener">FFmpeg</a></strong> : Le couteau suisse du traitement multimédia, assurant l'encodage et le streaming audio à la volée. <span class="badge badge-blue">GPL / LGPL</span></li>
+      <li><strong><a href="https://gridstackjs.com/" target="_blank" rel="noopener">Gridstack</a></strong> : Moteur de layout dynamique utilisé par le Dashboard interactif de l'Admin Manager. <span class="badge badge-purple">MIT License</span></li>
+      <li><strong><a href="https://www.python-httpx.org/" target="_blank" rel="noopener">httpx</a></strong> : Client HTTP/2 asynchrone hautement performant, utilisé pour les requêtes furtives (Stealth) du Web Engine. <span class="badge badge-blue">BSD-3-Clause</span></li>
+      <li><strong><a href="https://huggingface.co/hexgrad/Kokoro-82M" target="_blank" rel="noopener">Kokoro TTS</a></strong> : Modèle de synthèse vocale (Text-To-Speech) léger et performant intégré aux Audio Workers. <span class="badge badge-blue">Apache 2.0</span></li>
+      <li><strong><a href="https://microsoft.github.io/monaco-editor/" target="_blank" rel="noopener">Monaco Editor</a></strong> : Éditeur de code robuste (propulsant VS Code) intégré au HUD de ECHO Codex pour l'édition de fichiers. <span class="badge badge-purple">MIT License</span></li>
+      <li><strong><a href="https://onnxruntime.ai/" target="_blank" rel="noopener">ONNX Runtime</a></strong> : Moteur d'inférence multi-plateforme utilisé pour propulser le modèle TTS Kokoro. <span class="badge badge-purple">MIT License</span></li>
+      <li><strong><a href="https://playwright.dev/" target="_blank" rel="noopener">Playwright</a></strong> : Framework d'automatisation de navigateur (Headless Chromium) au cœur de l'agent de navigation autonome. <span class="badge badge-blue">Apache 2.0</span></li>
+      <li><strong><a href="https://github.com/jiaaro/pydub" target="_blank" rel="noopener">Pydub</a></strong> : Bibliothèque Python pour la manipulation et la normalisation des tampons audio en temps réel. <span class="badge badge-purple">MIT License</span></li>
+      <li><strong><a href="https://pytorch.org/" target="_blank" rel="noopener">PyTorch</a></strong> : Framework de tenseurs exécutant le Worker Embedding (bge-m3) sur CPU. <span class="badge badge-blue">BSD Style</span></li>
+      <li><strong><a href="https://github.com/searxng/searxng" target="_blank" rel="noopener">SearXNG</a></strong> : Moteur de méta-recherche souverain préservant la confidentialité des recherches web du modèle. <span class="badge badge-orange">AGPL-3.0</span></li>
+      <li><strong><a href="https://github.com/containrrr/watchtower" target="_blank" rel="noopener">Watchtower</a></strong> : Utilitaire gérant la mise à jour automatisée des conteneurs isolés. <span class="badge badge-blue">Apache 2.0</span></li>
+    </ul>
+
+    <footer>
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

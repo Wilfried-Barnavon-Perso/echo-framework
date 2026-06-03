@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="ECHO Web Intelligence v5 : navigation autonome Chromium (Playwright), Browser Agent FastAPI v9.2, port 5002, 14 actions disponibles, SearxNG souverain, Cockpit Replay.">
-  <title>ECHO v5 — 7b. Web Intelligence</title>
+  <title>ECHO v5 - 7b. Web Intelligence</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -21,7 +21,7 @@
       séparé <code>sovereign_web_search.py</code>).
     </p>
 
-    <h2>Architecture — Browser Agent (Playwright)</h2>
+    <h2>Architecture - Browser Agent (Playwright)</h2>
 
     <p>
       Le Browser Agent est un micro-service Docker dédié (<code>browser_api.py</code> v9.2, FastAPI
@@ -117,12 +117,12 @@
     </table>
 
     <div class="tech-spec">
-      <h4>⚙️ ECHO DOM Markers — cartographie visuelle</h4>
+      <h4>⚙️ ECHO DOM Markers - cartographie visuelle</h4>
       <p>
         L'action <code>highlight</code> injecte un script JS (<code>HIGHLIGHT_JS</code>) qui scanne tous
         les éléments interactifs (liens, boutons, inputs, éléments <code>cursor:pointer</code>) et leur
         attache une étiquette numérotée rouge (<code>.echo-marker</code>). Le modèle peut alors cibler
-        un élément précis par son <code>index</code> — plus fiable qu'un sélecteur CSS fragile sur des
+        un élément précis par son <code>index</code> - plus fiable qu'un sélecteur CSS fragile sur des
         pages dynamiques.
       </p>
     </div>
@@ -133,8 +133,8 @@
       (= <code>chat_id</code> ECHO). Deux profils de navigateur sont disponibles :
     </p>
     <ul>
-      <li><strong>mobile</strong> (défaut) : iPad 820×1180, User-Agent Safari iOS 16 — contourne une majorité de protections anti-bot.</li>
-      <li><strong>desktop</strong> : Chrome 120, 1280×800 — pour les sites nécessitant un viewport large.</li>
+      <li><strong>mobile</strong> (défaut) : iPad 820×1180, User-Agent Safari iOS 16 - contourne une majorité de protections anti-bot.</li>
+      <li><strong>desktop</strong> : Chrome 120, 1280×800 - pour les sites nécessitant un viewport large.</li>
     </ul>
 
     <h2>Recherche Web Souveraine</h2>
@@ -146,7 +146,7 @@
     </p>
 
     <div class="note-box">
-      <h4>v9.3-9.4 — Distillation via <code>call_cascade()</code> centralisé</h4>
+      <h4>v9.3-9.4 - Distillation via <code>call_cascade()</code> centralisé</h4>
       <p>
         L'action <code>distill_page</code> utilise désormais <code>EchoGeminiClient.call_cascade()</code>
         (au lieu d'un appel direct) avec <code>MODEL_FLASH</code> clampé par la politique Pipe.
@@ -170,7 +170,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

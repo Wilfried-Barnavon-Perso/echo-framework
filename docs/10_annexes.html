@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Annexes Techniques ECHO v5 : topologie réseau et ports, volumes Docker, schéma SQL complet identity.db et {chat_id}.db, collections Qdrant, valves de configuration, API de référence.">
-  <title>ECHO v5 — 10. Annexes Techniques</title>
+  <title>ECHO v5 - 10. Annexes Techniques</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -22,7 +22,8 @@
     <h2>Topologie Réseau et Ports</h2>
 
     <p>
-      ECHO orchestre un cluster de conteneurs sur un réseau Docker privé (<code>echo-network</code>).
+      ECHO orchestre un cluster de conteneurs sur un réseau Docker privé (<code>echo-network</code>),
+      dont la configuration de référence est définie par l'orchestrateur <code>stack-echo.yml</code> (v9.10).
       La passerelle BunkerWeb est l'unique point d'entrée exposé sur le WAN lorsqu'elle est activée.
       Les services de l'Arsenal (Browser Agent, Python Worker, SearxNG) ne sont jamais exposés
       directement.
@@ -48,8 +49,8 @@
         <tr><td>Browser Agent</td><td><code>echo-browser-agent</code></td><td><strong>5002</strong></td><td>Non</td><td>Non</td></tr>
         <tr><td>Python Worker</td><td><code>echo-python-worker</code></td><td><strong>5000</strong></td><td>Non</td><td>Non</td></tr>
         <tr><td>SearxNG</td><td><code>echo-searxng</code></td><td>8080</td><td>Non</td><td>Non</td></tr>
-        <tr><td>SSH Tunnel Auth</td><td>In-process WebUI</td><td>8020–8024</td><td>8020–8024</td><td>Non — localhost uniquement</td></tr>
-        <tr><td>Callback OAuth2</td><td>In-process WebUI</td><td>8025–8034</td><td>Non</td><td>Non — via tunnel SSH uniquement</td></tr>
+        <tr><td>SSH Tunnel Auth</td><td>In-process WebUI</td><td>8020–8024</td><td>8020–8024</td><td>Non - localhost uniquement</td></tr>
+        <tr><td>Callback OAuth2</td><td>In-process WebUI</td><td>8025–8034</td><td>Non</td><td>Non - via tunnel SSH uniquement</td></tr>
         <tr><td>BunkerWeb (WAF)</td><td><code>echo-bunkerweb</code></td><td>80 / 443</td><td>80 / 443</td><td>Oui</td></tr>
       </tbody>
     </table>
@@ -92,7 +93,7 @@
       </tbody>
     </table>
 
-    <h2>Schéma SQL — <code>identity.db</code></h2>
+    <h2>Schéma SQL - <code>identity.db</code></h2>
 
     <p>
       Base SQLite unique par utilisateur, stockée dans
@@ -122,7 +123,7 @@
       </tbody>
     </table>
 
-    <h2>Schéma SQL — <code>{chat_id}.db</code></h2>
+    <h2>Schéma SQL - <code>{chat_id}.db</code></h2>
 
     <p>
       Base SQLite par session de chat, stockée dans
@@ -135,7 +136,7 @@
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><code>message_id</code></td><td>TEXT PK</td><td>UUID du message fourni par Open WebUI.</td></tr>
-        <tr><td><code>updated_at</code></td><td>INT</td><td>Verrou de Version — timestamp physique de la dernière modification du message.</td></tr>
+        <tr><td><code>updated_at</code></td><td>INT</td><td>Verrou de Version - timestamp physique de la dernière modification du message.</td></tr>
         <tr><td><code>parent_id</code></td><td>TEXT</td><td>UUID du message parent (chaîne de conversation).</td></tr>
         <tr><td><code>cumulative_hash</code></td><td>TEXT FK</td><td>Référence vers <code>suture_index</code>.</td></tr>
         <tr><td><code>parts</code></td><td>TEXT (JSON)</td><td>Structure Gemini complète des <code>parts</code> (texte, inlineData, thoughtSignature, etc.)</td></tr>
@@ -147,10 +148,10 @@
     <table>
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>cumulative_hash</code></td><td>TEXT PK</td><td>SHA-256 cumulatif — ADN de la conversation.</td></tr>
+        <tr><td><code>cumulative_hash</code></td><td>TEXT PK</td><td>SHA-256 cumulatif - ADN de la conversation.</td></tr>
         <tr><td><code>message_id</code></td><td>TEXT FK</td><td>Référence vers <code>message_shadows</code>.</td></tr>
         <tr><td><code>invariant_hash</code></td><td>TEXT</td><td>SHA-256 du contenu seul, indépendant de la position dans l'historique.</td></tr>
-        <tr><td><code>parent_hash</code></td><td>TEXT</td><td>Hash cumulatif du tour précédent — forme la chaîne Merkle.</td></tr>
+        <tr><td><code>parent_hash</code></td><td>TEXT</td><td>Hash cumulatif du tour précédent - forme la chaîne Merkle.</td></tr>
         <tr><td><code>created_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
       </tbody>
     </table>
@@ -160,7 +161,7 @@
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><code>cumulative_hash</code></td><td>TEXT PK</td><td>Lié au tour courant (chaîne Merkle).</td></tr>
-        <tr><td><code>thought_signature</code></td><td>TEXT</td><td>ThoughtSignature Gemini — jeton opaque cryptographique réinjecté au tour suivant.</td></tr>
+        <tr><td><code>thought_signature</code></td><td>TEXT</td><td>ThoughtSignature Gemini - jeton opaque cryptographique réinjecté au tour suivant.</td></tr>
         <tr><td><code>message_id</code></td><td>TEXT</td><td>UUID du message (colonne de migration, nullable).</td></tr>
         <tr><td><code>model_id</code></td><td>TEXT</td><td>Identifiant du modèle ayant généré la pensée.</td></tr>
         <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
@@ -234,7 +235,7 @@
     <table>
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>id</code></td><td>INT PK (=1)</td><td>Ligne unique — singleton.</td></tr>
+        <tr><td><code>id</code></td><td>INT PK (=1)</td><td>Ligne unique - singleton.</td></tr>
         <tr><td><code>data</code></td><td>TEXT (JSON)</td><td>Statistiques de contexte sérialisées (tokens, cache, etc.).</td></tr>
         <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp de la dernière mise à jour.</td></tr>
       </tbody>
@@ -244,7 +245,7 @@
     <table>
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>id</code></td><td>INT PK</td><td>Ligne unique — singleton.</td></tr>
+        <tr><td><code>id</code></td><td>INT PK</td><td>Ligne unique - singleton.</td></tr>
         <tr><td><code>last_model_id</code></td><td>TEXT</td><td>Dernier modèle utilisé dans cette session (pour reprise).</td></tr>
         <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp.</td></tr>
       </tbody>
@@ -269,7 +270,7 @@
           <td>1024 (bge-m3)</td>
           <td>Cosinus</td>
           <td><code>user_id</code></td>
-          <td>Permanent — TTL par niveau (Admin Manager)</td>
+          <td>Permanent - TTL par niveau (Admin Manager)</td>
         </tr>
         <tr>
           <td><code>echo_ephemeral</code></td>
@@ -277,7 +278,7 @@
           <td>1024 (bge-m3)</td>
           <td>Cosinus</td>
           <td><code>user_id + chat_id + slug</code></td>
-          <td>Session — purgé automatiquement en fin de session</td>
+          <td>Session - purgé automatiquement en fin de session</td>
         </tr>
       </tbody>
     </table>
@@ -307,7 +308,7 @@
     </table>
 
     <div class="audit-note">
-      <h4>✅ Source de vérité — Valves</h4>
+      <h4>✅ Source de vérité - Valves</h4>
       <p>
         Les valeurs ci-dessus sont celles déclarées dans les constantes de
         <code>echo_constants.py</code> (v5.2) et dans les constructeurs <code>Valves</code>
@@ -316,9 +317,9 @@
       </p>
     </div>
 
-    <h2>Référence API — Classes Fondamentales</h2>
+    <h2>Référence API - Classes Fondamentales</h2>
 
-    <h3><code>EchoStateManager</code> — Méthodes principales</h3>
+    <h3><code>EchoStateManager</code> - Méthodes principales</h3>
 
     <table>
       <thead><tr><th>Méthode</th><th>Signature</th><th>Description</th></tr></thead>
@@ -334,7 +335,7 @@
       </tbody>
     </table>
 
-    <h3><code>EchoGeminiClient</code> — Méthodes principales</h3>
+    <h3><code>EchoGeminiClient</code> - Méthodes principales</h3>
 
     <table>
       <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
@@ -347,7 +348,7 @@
     </table>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Actions UI ECHO v5 : mécanique des Actions Open WebUI, pattern __event_call__ + Promise, purge mémoire Qdrant, reset OAuth2 PKCE, cockpit de replay web, export PDF avec détection Same-Origin.">
-  <title>ECHO v5 — 7f. Actions UI (HUD)</title>
+  <title>ECHO v5 - 7f. Actions UI (HUD)</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -20,7 +20,7 @@
     </p>
 
     <div class="didactic-box">
-      <h4>💡 Actions vs Outils — Distinction fondamentale</h4>
+      <h4>💡 Actions vs Outils - Distinction fondamentale</h4>
       <p>
         Les <strong>Outils</strong> (<code>12-owui-tools/</code>) sont déclenchés par le modèle
         (Tool Call) au cours de la génération d'une réponse. Les <strong>Actions</strong>
@@ -30,7 +30,7 @@
       </p>
     </div>
 
-    <h2>Mécanique interne — <code>__event_call__</code> et le Pattern Promise</h2>
+    <h2>Mécanique interne - <code>__event_call__</code> et le Pattern Promise</h2>
 
     <p>
       Les Actions ECHO n'utilisent pas de <code>HTMLResponse</code> (iframe). Elles injectent
@@ -126,7 +126,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </tbody>
     </table>
 
-    <h2>Action 1 — Réinitialiser Authentification Gemini (<code>reset_auth_action.py</code>)</h2>
+    <h2>Action 1 - Réinitialiser Authentification Gemini (<code>reset_auth_action.py</code>)</h2>
 
     <p>
       Invalide l'ensemble des tokens OAuth2 et clés API enregistrés dans
@@ -154,7 +154,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 2 — Purge Mémoire Long Terme (<code>purge_memory_action.py</code>, v3.2)</h2>
+    <h2>Action 2 - Purge Mémoire Long Terme (<code>purge_memory_action.py</code>, v3.2)</h2>
 
     <p>
       Supprime des souvenirs ciblés depuis la collection <code>echo_memory</code> dans Qdrant,
@@ -209,7 +209,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 3 — Revue Navigation Web (<code>web_navigation_replay_action.py</code>)</h2>
+    <h2>Action 3 - Revue Navigation Web (<code>web_navigation_replay_action.py</code>)</h2>
 
     <p>
       Ouvre un cockpit visuel plein écran permettant de consulter et de rejouer les captures
@@ -217,7 +217,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       l'outil <code>navigation_engine_tool.py</code>.
     </p>
 
-    <h3>Source de données — Le Vault utilisateur</h3>
+    <h3>Source de données - Le Vault utilisateur</h3>
     <p>
       Les captures sont stockées sous forme de fichiers PNG horodatés dans le Vault de
       l'utilisateur : <code>/opt/ECHO/users/&lt;user_id&gt;/files/U_&lt;uid&gt;_C_&lt;cid&gt;_T_&lt;ts&gt;.png</code>.
@@ -267,7 +267,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </tbody>
     </table>
 
-    <h2>Action 4 — Export PDF (<code>export_pdf_action.py</code>)</h2>
+    <h2>Action 4 - Export PDF (<code>export_pdf_action.py</code>)</h2>
 
     <p>
       Capture l'intégralité de la conversation courante et génère un fichier PDF
@@ -302,7 +302,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       <p>
         Le pipeline « Download as PDF » d'Open WebUI utilise Playwright/Chromium en mode
         headless (<code>page.pdf()</code>). Les <code>&lt;iframe&gt;</code> sandboxées
-        ne sont pas sérialisées dans ce snapshot — leur contenu reste vide. C'est une
+        ne sont pas sérialisées dans ce snapshot - leur contenu reste vide. C'est une
         limite structurelle de Chromium : les iframes sont des documents isolés, non
         aplatis dans le flux d'impression du document parent.
       </p>
@@ -314,7 +314,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h3>Prérequis — Paramètres Interface Open WebUI</h3>
+    <h3>Prérequis - Paramètres Interface Open WebUI</h3>
 
     <div class="warning-box">
       <h4>⚠️ Configuration requise pour le Mode complet</h4>
@@ -324,9 +324,9 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
       <p><strong>Settings → Interface</strong></p>
       <ul>
-        <li><strong>Iframe Same-Origin Access</strong> — permet l'accès à
+        <li><strong>Iframe Same-Origin Access</strong> - permet l'accès à
           <code>iframe.contentDocument</code> depuis le JS de la page parente.</li>
-        <li><strong>Iframe Allow Forms</strong> — requis pour certains éléments
+        <li><strong>Iframe Allow Forms</strong> - requis pour certains éléments
           interactifs des Rich Embeds.</li>
       </ul>
       <p>
@@ -356,12 +356,12 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       <tbody>
         <tr>
           <td>Same-Origin activé <em>ou</em> aucune iframe dans la conversation</td>
-          <td><strong>Mode A — Complet</strong></td>
+          <td><strong>Mode A - Complet</strong></td>
           <td>Capture texte + iframes Rich Embeds → PDF haute résolution</td>
         </tr>
         <tr>
           <td>Same-Origin absent <em>et</em> iframes présentes</td>
-          <td><strong>Mode B — HUD de choix</strong></td>
+          <td><strong>Mode B - HUD de choix</strong></td>
           <td>
             Affichage d'un overlay expliquant le prérequis.<br>
             • <em>Continuer sans schémas</em> → Mode B1 : PDF texte uniquement,
@@ -439,7 +439,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 5 — Sub-Agent Monitor (<code>subagent_monitor_action.py</code>, v1.1)</h2>
+    <h2>Action 5 - Sub-Agent Monitor (<code>subagent_monitor_action.py</code>, v1.1)</h2>
 
     <p>
       Ouvre un HUD interactif (div draggable et redimensionnable) injecté dans le DOM permettant de
@@ -452,7 +452,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       l'état de la réflexion sans saturer l'interface principale de chat.
     </p>
 
-    <h2>Action 6 — ECHO Codex (<code>echo_codex_action.py</code>, v1.8)</h2>
+    <h2>Action 6 - ECHO Codex (<code>echo_codex_action.py</code>, v1.8)</h2>
 
     <p>
       Ouvre un éditeur de code Monaco complet dans un HUD draggable et redimensionnable,
@@ -498,7 +498,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

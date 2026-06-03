@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Admin Manager ECHO v5 (server.py v5.55) : Dashboard Gridstack interactif, monitoring Docker, purge TTL Qdrant, consolidation SQLite, sauvegardes à chaud, surface de sécurité.">
-  <title>ECHO v5 — 9. Admin Manager</title>
+  <title>ECHO v5 - 9a. Admin Manager</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -16,7 +16,7 @@
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>9. Admin Manager (Console de Régulation)</h1>
+    <h1>9a. Admin Manager (Console de Régulation)</h1>
 
     <p>
       L'Admin Manager est le système de gouvernance infrastructure d'ECHO. Il surveille la santé
@@ -64,7 +64,7 @@
       </li>
       <li>
         <strong>Volume Vault :</strong> taille totale occupée par les documents, bases SQLite
-        et fichiers d'identité — exprimée en Mo/Go.
+        et fichiers d'identité - exprimée en Mo/Go.
       </li>
       <li>
         <strong>Santé Docker :</strong> état (Up/Down/Restarting) de chaque conteneur de la
@@ -96,11 +96,11 @@ flowchart TD
     </div>
 
     <p>
-      L'Admin Manager centralise la logique d'<strong>Atrophie Sémantique</strong> — la purge
-      des données devenues obsolètes — pour alléger le traitement en temps réel des filtres.
+      L'Admin Manager centralise la logique d'<strong>Atrophie Sémantique</strong> - la purge
+      des données devenues obsolètes - pour alléger le traitement en temps réel des filtres.
     </p>
 
-    <h3><code>run_semantic_pruning()</code> — Purge TTL</h3>
+    <h3><code>run_semantic_pruning()</code> - Purge TTL</h3>
     <p>
       Cette fonction (<code>server.py</code>) itère sur tous les points de la collection
       <code>echo_memory</code> dans Qdrant et supprime ceux dont l'âge dépasse la durée de
@@ -185,13 +185,12 @@ flowchart TD
     </div>
 
     <div class="transition-text">
-      L'Admin Manager complète l'architecture ECHO. Pour les détails de configuration avancés,
-      consultez les Annexes.
-      <a href="10_annexes.html">Annexes Techniques ➔</a>
+      L'Admin Manager complète l'architecture ECHO. Poursuivez avec l'architecture des moteurs vocaux.
+      <a href="09b_audio_workers.html">9b. Audio Workers ➔</a>
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

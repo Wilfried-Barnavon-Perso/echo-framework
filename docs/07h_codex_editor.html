@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="ECHO Codex v5.170 : éditeur de code Monaco multi-langage avec Git intégré (dulwich), HUD draggable, édition AI assistée, WYSIWYG, navigation historique, 9 fonctions LLM (create, edit, read, search, summarize, list, delete, history, restore).">
-  <title>ECHO v5 — 7h. ECHO Codex (Éditeur)</title>
+  <title>ECHO v5 - 7h. ECHO Codex (Éditeur)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -15,7 +15,7 @@
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7h. ECHO Codex — Éditeur de Code Souverain</h1>
+    <h1>7h. ECHO Codex - Éditeur de Code Souverain</h1>
 
     <p>
       ECHO Codex est un environnement d'édition de code complet, entièrement intégré dans Open WebUI.
@@ -32,15 +32,15 @@
       </p>
       <ul>
         <li>
-          <strong><code>echo_codex_git.py</code></strong> (<code>14-owui-libs/</code>) — Bibliothèque bas niveau :
+          <strong><code>echo_codex_git.py</code></strong> (<code>14-owui-libs/</code>) - Bibliothèque bas niveau :
           classe <code>CodexRepo</code> gérant le dépôt Git dulwich (CRUD fichiers, commits, historique, diff, lecture à un commit donné, renommage).
         </li>
         <li>
-          <strong><code>echo_codex_tool.py</code></strong> (<code>12-owui-tools/</code>) — Outil LLM (Tool Call) :
+          <strong><code>echo_codex_tool.py</code></strong> (<code>12-owui-tools/</code>) - Outil LLM (Tool Call) :
           9 fonctions exposées à Gemini pour créer, lire, modifier, rechercher et gérer les fichiers du Codex depuis le chat.
         </li>
         <li>
-          <strong><code>echo_codex_action.py</code></strong> (<code>13-owui-actions/</code>) — Action HUD :
+          <strong><code>echo_codex_action.py</code></strong> (<code>13-owui-actions/</code>) - Action HUD :
           éditeur Monaco interactif injecté dans le DOM d'Open WebUI, avec édition AI, panneau de prévisualisation WYSIWYG, navigation Git et accès bidirectionnel Python ↔ JS.
         </li>
       </ul>
@@ -71,7 +71,7 @@ flowchart TD
       </div>
     </div>
 
-    <h2>Stockage — Le Vault Codex</h2>
+    <h2>Stockage - Le Vault Codex</h2>
 
     <p>
       Chaque conversation dispose d'un dépôt Git dédié, isolé dans le Vault utilisateur :
@@ -90,7 +90,7 @@ flowchart TD
       un utilisateur ne peut jamais accéder au Codex d'un autre, ni à celui d'une autre conversation.
     </p>
 
-    <h3>Registre SQLite — <code>codex_docs</code></h3>
+    <h3>Registre SQLite - <code>codex_docs</code></h3>
 
     <p>
       Chaque fichier créé ou modifié est enregistré dans la table <code>codex_docs</code> de la base
@@ -113,7 +113,7 @@ flowchart TD
     </table>
 
     <div class="tech-spec">
-      <h4>⚙️ Détection de langage — <code>CodexRepo.detect_language()</code></h4>
+      <h4>⚙️ Détection de langage - <code>CodexRepo.detect_language()</code></h4>
       <p>
         Méthode statique qui mappe l'extension du fichier vers l'identifiant Monaco Editor.
         La table de correspondance <code>CODEX_LANG_MAP</code> (<code>echo_constants.py</code>) couvre
@@ -197,7 +197,7 @@ flowchart TD
       </tbody>
     </table>
 
-    <h2>Outil LLM — <code>echo_codex_tool.py</code> (9 fonctions)</h2>
+    <h2>Outil LLM - <code>echo_codex_tool.py</code> (9 fonctions)</h2>
 
     <p>
       Ces fonctions sont exposées à Gemini comme Tool Calls. Le modèle peut les invoquer
@@ -241,7 +241,7 @@ flowchart TD
         <tr>
           <td><code>list_codex</code></td>
           <td>Inventaire de tous les fichiers (nom, lang, lignes, taille)</td>
-          <td>—</td>
+          <td>-</td>
         </tr>
         <tr>
           <td><code>delete_codex</code></td>
@@ -290,14 +290,14 @@ flowchart TD
       La sortie est limitée à 8192 tokens.
     </p>
 
-    <div class="code-header">Structure du résumé généré — <code>CODEX_SUMMARIZE_PROMPT</code></div>
+    <div class="code-header">Structure du résumé généré - <code>CODEX_SUMMARIZE_PROMPT</code></div>
     <pre><code>1. Objectif et rôle du fichier
 2. Architecture : classes, fonctions, structures principales
 3. Dépendances et imports
 4. Patterns et conventions utilisés
 5. Points d'attention, complexité, dette technique éventuelle</code></pre>
 
-    <h2>Action HUD — <code>echo_codex_action.py</code> (v1.8)</h2>
+    <h2>Action HUD - <code>echo_codex_action.py</code> (v1.8)</h2>
 
     <p>
       L'Action ECHO Codex injecte un <strong>éditeur Monaco complet</strong> directement dans le DOM
@@ -372,7 +372,7 @@ flowchart TD
       </tbody>
     </table>
 
-    <h3>Édition AI — <code>_codex_ai_edit()</code></h3>
+    <h3>Édition AI - <code>_codex_ai_edit()</code></h3>
 
     <p>
       La méthode privée <code>_codex_ai_edit()</code> orchestre un sub-chat dédié (sans historique,
@@ -447,7 +447,7 @@ flowchart TD
       </tbody>
     </table>
 
-    <h2>Proprioception — <code>registre_codex</code></h2>
+    <h2>Proprioception - <code>registre_codex</code></h2>
 
     <p>
       Le Filtre (<code>new_context_filter.py</code> v7.12) injecte automatiquement un registre
@@ -456,7 +456,7 @@ flowchart TD
       sans avoir à appeler <code>list_codex</code>.
     </p>
 
-    <div class="code-header">Extrait YAML — <code>registre_codex</code> dans <code>environnement_contexte</code></div>
+    <div class="code-header">Extrait YAML - <code>registre_codex</code> dans <code>environnement_contexte</code></div>
     <pre><code>registre_codex:
   - id: "mon_script.py"
     lang: "python"
@@ -468,7 +468,7 @@ flowchart TD
     last_commit: "chore: update timeout"</code></pre>
 
     <div class="warning-box">
-      <h4>⚠️ Règle d'Or — Consulter le registre avant toute opération</h4>
+      <h4>⚠️ Règle d'Or - Consulter le registre avant toute opération</h4>
       <p>
         Le modèle <strong>doit</strong> consulter <code>registre_codex</code> pour vérifier
         l'existence d'un fichier avant d'appeler <code>read_codex</code>, <code>edit_codex</code>
@@ -510,7 +510,7 @@ flowchart TD
         <tr>
           <td><code>_generate_codex_js()</code></td>
           <td><code>14-owui-libs/echo_ui.py</code></td>
-          <td>—</td>
+          <td>-</td>
           <td>Générateur du HUD JS Monaco</td>
         </tr>
         <tr>
@@ -535,7 +535,7 @@ flowchart TD
     </table>
 
     <div class="audit-note">
-      <h4>✅ Exactitude — version 5.166.x</h4>
+      <h4>✅ Exactitude - version 5.166.x</h4>
       <p>
         Les informations de cette page sont entièrement extraites du code source :
         <code>echo_codex_git.py</code>, <code>echo_codex_tool.py</code>,
@@ -553,7 +553,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

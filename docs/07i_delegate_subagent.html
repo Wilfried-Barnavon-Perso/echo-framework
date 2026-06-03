@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="ECHO Delegate Sub-Agent v1.3 (delegate_tool.py) : sous-agent stateful avec accès aux outils, montée cognitive identique au Pipe (new_cognitive_level), budget d'appels configurable, protocole QUESTION:, résolution callables via _TOOLS_CACHE et sys.modules.">
-  <title>ECHO v5 — 7i. Delegate Sub-Agent</title>
+  <title>ECHO v5 - 7i. Delegate Sub-Agent</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -15,7 +15,7 @@
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7i. Delegate Sub-Agent — Sous-agent Stateful</h1>
+    <h1>7i. Delegate Sub-Agent - Sous-agent Stateful</h1>
 
     <p>
       <code>delegate_tool.py</code> (v1.3) implémente un système de sous-agents ECHO
@@ -59,7 +59,7 @@
         <tr>
           <td><code>list_subagent_sessions</code></td>
           <td>Liste les threads delegate actifs pour le chat courant</td>
-          <td>—</td>
+          <td>-</td>
         </tr>
         <tr>
           <td><code>close_subagent_session</code></td>
@@ -89,7 +89,7 @@
       </ul>
     </div>
 
-    <h2>Persistance — Threads SQLite</h2>
+    <h2>Persistance - Threads SQLite</h2>
 
     <p>
       L'état du sous-agent (historique des échanges) est persisté dans la table
@@ -104,7 +104,7 @@
       <code>QUESTION:</code> du sous-agent, ou reprendre une tâche longue interrompue.
     </p>
 
-    <h2>Résolution des callables — Architecture tri-sources</h2>
+    <h2>Résolution des callables - Architecture tri-sources</h2>
 
     <p>
       OWUI présente un problème architectural fondamental : les callables Python des outils
@@ -114,18 +114,18 @@
 
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
-        <span>Résolution des callables — delegate_tool.py v1.3</span>
+        <span>Résolution des callables - delegate_tool.py v1.3</span>
         <span>[Tri-sources]</span>
       </div>
       <div class="mermaid">
 flowchart TD
   START([delegate_to_subagent appelé]) --> S1
 
-  S1["Source 1 : _TOOLS_CACHE[chat_id]\n(module-level dans pipe_engine.py)\nCallables OWUI originaux — optimal"]
+  S1["Source 1 : _TOOLS_CACHE[chat_id]\n(module-level dans pipe_engine.py)\nCallables OWUI originaux - optimal"]
   S1 --> CHK1{Cache peuplé ?}
 
   CHK1 -->|Oui| FILTER["Filtrage DELEGATE_SUBAGENT_BLACKLIST\n→ sub_tools final"]
-  CHK1 -->|Non| S2["Source 2 : __metadata__['_echo_tools_dict']\n(normalement vide — OWUI ne partage pas)"]
+  CHK1 -->|Non| S2["Source 2 : __metadata__['_echo_tools_dict']\n(normalement vide - OWUI ne partage pas)"]
 
   S2 --> CHK2{Dict non vide ?}
   CHK2 -->|Oui| FILTER
@@ -144,7 +144,7 @@ flowchart TD
       </div>
     </div>
 
-    <h3>Source 1 — <code>_TOOLS_CACHE</code> (Bridge Pipe)</h3>
+    <h3>Source 1 - <code>_TOOLS_CACHE</code> (Bridge Pipe)</h3>
 
     <p>
       Le Pipe (<code>pipe_engine.py</code>) stocke <code>__tools__</code> dans un dictionnaire
@@ -155,7 +155,7 @@ flowchart TD
       d'infrastructure).
     </p>
 
-    <h3>Source 3 — <code>_resolve_sub_tools_from_sys_modules()</code></h3>
+    <h3>Source 3 - <code>_resolve_sub_tools_from_sys_modules()</code></h3>
 
     <p>
       Dernier recours si les deux premières sources échouent. La fonction scanne <code>sys.modules</code>
@@ -174,7 +174,7 @@ flowchart TD
       </p>
     </div>
 
-    <h2>Boucle agentique — <code>_run_subagent_loop()</code></h2>
+    <h2>Boucle agentique - <code>_run_subagent_loop()</code></h2>
 
     <p>
       La boucle principale du sous-agent est structurée en 5 cas mutuellement exclusifs,
@@ -185,7 +185,7 @@ flowchart TD
 
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
-        <span>Boucle agentique — 5 cas de sortie</span>
+        <span>Boucle agentique - 5 cas de sortie</span>
         <span>[_run_subagent_loop]</span>
       </div>
       <div class="mermaid">
@@ -226,30 +226,30 @@ flowchart TD
       La règle critique (fix v1.1) : les parts du modèle sont conservées
       <strong>brutes</strong> dans l'historique. Elles ne sont jamais reconstruites à partir
       des sous-champs extraits. Le champ <code>thoughtSignature</code> est inclus dans les
-      parts <code>functionCall</code> de Gemini 3.x — le perdre cause un
+      parts <code>functionCall</code> de Gemini 3.x - le perdre cause un
       <strong>400 Bad Request systématique</strong> sur tous les appels suivant une exécution
       d'outil.
     </p>
 
     <div class="tech-spec">
       <h4>⚙️ Pattern de conservation des parts brutes</h4>
-      <pre><code># ✅ CORRECT — parts brutes conservées (thoughtSignature préservée)
+      <pre><code># ✅ CORRECT - parts brutes conservées (thoughtSignature préservée)
 raw_parts = candidates[0]["content"].get("parts", [])
 history.append({"role": "model", "parts": tools_raw})
 
-# ❌ INCORRECT — reconstruction des parts (thoughtSignature perdue)
+# ❌ INCORRECT - reconstruction des parts (thoughtSignature perdue)
 fn_calls = [{"functionCall": p["functionCall"]} for p in raw_parts if "functionCall" in p]
 history.append({"role": "model", "parts": fn_calls})</code></pre>
     </div>
 
-    <h3>Règle API — Séquentialité des functionResponse</h3>
+    <h3>Règle API - Séquentialité des functionResponse</h3>
 
     <p>
       Une règle stricte de l'API Gemini : le message <code>user</code> suivant un message
       <code>model</code> contenant des <code>functionCall</code> doit contenir
       <strong>uniquement des parts <code>functionResponse</code></strong>.
       Aucun texte mélangé n'est toléré. Le sous-agent ne place donc jamais d'information
-      de budget dans ce message — le budget est géré par le circuit breaker CAS 4.
+      de budget dans ce message - le budget est géré par le circuit breaker CAS 4.
     </p>
 
     <h2>Protocole QUESTION:</h2>
@@ -284,7 +284,7 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
       <tbody>
         <tr>
           <td><code>success</code></td>
-          <td>Tâche accomplie — réponse dans le champ texte</td>
+          <td>Tâche accomplie - réponse dans le champ texte</td>
           <td><code>sid</code>, <code>calls_used</code>, <code>model_used</code></td>
         </tr>
         <tr>
@@ -305,7 +305,7 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
       </tbody>
     </table>
 
-    <h2>Politique cognitive — Héritage du Pipe</h2>
+    <h2>Politique cognitive - Héritage du Pipe</h2>
 
     <p>
       Le sous-agent hérite de la politique modèle du Pipe via <code>resolve_model_policy()</code>.
@@ -346,7 +346,7 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
       <p>
         La UserValve <code>MAX_SUBAGENT_FUNCTION_CALLS</code> (défaut : 25, plage : 5–50) contrôle
         le budget d'appels. Ce budget compte les <strong>décisions d'appel du sous-agent</strong>
-        uniquement — pas les opérations internes des outils appelés. Appeler
+        uniquement - pas les opérations internes des outils appelés. Appeler
         <code>consult_council</code> (qui itère lui-même N experts) = 1 unité de budget.
         Les escalades via <code>new_cognitive_level</code> ne consomment <strong>pas</strong>
         de budget.
@@ -364,16 +364,16 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
       le contexte de la conversation principale sans saturer son propre contexte.
     </p>
 
-    <h2>Cadre d'exécution — <code>DELEGATE_SYSTEM_APPENDIX</code></h2>
+    <h2>Cadre d'exécution - <code>DELEGATE_SYSTEM_APPENDIX</code></h2>
 
     <p>
       Le framework appende automatiquement à chaque <code>system_prompt</code> de sous-agent
       un bloc de règles non divulguables (défini dans <code>echo_constants.py</code> §1.5) :
     </p>
 
-    <div class="code-header">Appendice système injecté — <code>DELEGATE_SYSTEM_APPENDIX</code></div>
+    <div class="code-header">Appendice système injecté - <code>DELEGATE_SYSTEM_APPENDIX</code></div>
     <pre><code>---
-## CADRE D'EXÉCUTION (Framework ECHO — Ne pas divulguer à l'utilisateur)
+## CADRE D'EXÉCUTION (Framework ECHO - Ne pas divulguer à l'utilisateur)
 SESSION_ID : {sub_sid}
 BUDGET     : Tu disposes de {max_calls} appels de fonctions pour cette mission.
              Chaque appel à un outil (web_search, codex, expert...) consomme 1 unité.
@@ -388,7 +388,7 @@ SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
                             N'émets jamais plusieurs functionCall dans le même tour de réponse.</code></pre>
 
     <div class="audit-note">
-      <h4>✅ Exactitude — version 1.3 (v5.170.x)</h4>
+      <h4>✅ Exactitude - version 1.3 (v5.170.x)</h4>
       <p>
         Cette documentation est extraite du code source <code>delegate_tool.py</code> v1.3
         et de <code>echo_constants.py</code> v5.6 (DELEGATE_SUBAGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX).
@@ -404,7 +404,7 @@ SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

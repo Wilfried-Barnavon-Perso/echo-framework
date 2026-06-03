@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Les Filtres ECHO v5 : new_context_filter (Smart Context, Moulage, AEC) et conversation_memory_filter (distillation, vectorisation Qdrant, masquage clés API).">
-  <title>ECHO v5 — 5. Les Filtres (Conscience)</title>
+  <title>ECHO v5 - 5. Les Filtres (Conscience)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -37,7 +37,7 @@
       </p>
     </div>
 
-    <h2>Filtre 1 — <code>new_context_filter.py</code> (v7.18)</h2>
+    <h2>Filtre 1 - <code>new_context_filter.py</code> (v7.18)</h2>
 
     <p>
       Ce filtre est la porte d'entrée cognitive d'ECHO. Il opère en deux phases :
@@ -45,7 +45,7 @@
       (après génération) pour masquer les secrets.
     </p>
 
-    <h3>Phase Inlet — Pipeline d'aiguillage multimodal</h3>
+    <h3>Phase Inlet - Pipeline d'aiguillage multimodal</h3>
     <p>
       Pour chaque fichier joint par l'utilisateur, le filtre détermine la stratégie de traitement
       en fonction du type MIME (via <code>get_gemini_mime</code>) et de la taille
@@ -54,7 +54,7 @@
 
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
-        <span>Aiguillage Multimodal — new_context_filter.py</span>
+        <span>Aiguillage Multimodal - new_context_filter.py</span>
         <span>[HOOK INLET]</span>
       </div>
       <div class="mermaid">
@@ -93,7 +93,7 @@ flowchart LR
       de type <strong>liste multipart</strong> au lieu d'une simple chaîne :
     </p>
 
-    <div class="code-header">Format multipart OWUI — content liste</div>
+    <div class="code-header">Format multipart OWUI - content liste</div>
     <pre><code>[{"type": "text", "text": "Voici l'image 1 :"},
  {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
  {"type": "text", "text": "Et l'image 2 :"},
@@ -185,17 +185,17 @@ registre_codex:
 &lt;/smart_context&gt;</code></pre>
 
     <div class="note-box">
-      <h4>Règle d'Or — Registre des Fichiers</h4>
+      <h4>Règle d'Or - Registre des Fichiers</h4>
       <p>
         Le modèle <strong>doit</strong> consulter le <code>registre_fichiers</code> avant toute
         manipulation d'une ressource. Le champ <code>statut</code> indique où se trouve le fichier :
         <code>inline</code> (dans le contexte actif), <code>rag_ephemeral</code> (indexé dans
-        Qdrant — utiliser <code>search_session_context</code>), ou <code>vault</code> (dans
-        l'Espace Personnel — utiliser les outils Vault).
+        Qdrant - utiliser <code>search_session_context</code>), ou <code>vault</code> (dans
+        l'Espace Personnel - utiliser les outils Vault).
       </p>
     </div>
 
-    <h3>Phase Outlet — Masquage chirurgical des secrets</h3>
+    <h3>Phase Outlet - Masquage chirurgical des secrets</h3>
     <p>
       Après la génération, le filtre balaie le texte de la réponse via une expression régulière
       correspondant au format des clés API Google (<code>AIza[0-9A-Za-z_-]{35}</code>).
@@ -204,7 +204,7 @@ registre_codex:
       secret ne « fuit » vers l'interface visuelle quelle que soit la réponse du modèle.
     </p>
 
-    <h2>Filtre 2 — <code>conversation_memory_filter.py</code> (v4.0)</h2>
+    <h2>Filtre 2 - <code>conversation_memory_filter.py</code> (v4.0)</h2>
 
     <p>
       Ce filtre ne traite que la phase <strong>Outlet</strong> (post-génération). Il orchestre la
@@ -300,7 +300,7 @@ registre_codex:
       <p>
         Avant d'envoyer un fichier au Pipe, le filtre vérifie si le fichier provient déjà du Vault
         local de l'utilisateur (champ <code>vault_path</code> dans <code>processed_files</code>).
-        Si c'est le cas, seule la référence est transmise — pas le contenu binaire.
+        Si c'est le cas, seule la référence est transmise - pas le contenu binaire.
         Cette optimisation évite des ré-uploads inutiles pour des fichiers déjà indexés.
       </p>
     </div>
@@ -312,7 +312,7 @@ registre_codex:
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

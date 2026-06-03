@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Fondations philosophiques et techniques du Framework ECHO v5 : origine, évolution depuis V4, les trois piliers de souveraineté et les phénomènes clés.">
-  <title>ECHO v5 — 0. Fondations &amp; Philosophie</title>
+  <title>ECHO v5 - 0. Fondations &amp; Philosophie</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,7 +17,7 @@
       ECHO (<em>Espace Cognitif Heuristique Opérationnel</em>) est un cadre logiciel d'intelligence artificielle
       auto-hébergée. Contrairement à un simple <em>wrapper</em> d'API, ECHO constitue une couche d'abstraction
       souveraine qui prend en charge sa propre mémoire, son propre état et sa propre interface utilisateur
-      par-dessus <strong>Open WebUI</strong>. Le modèle de langage — Gemini — y joue le rôle de moteur
+      par-dessus <strong>Open WebUI</strong>. Le modèle de langage - Gemini - y joue le rôle de moteur
       d'inférence, tandis qu'ECHO assure la cohérence, la persistance et la sécurité de l'ensemble.
     </p>
 
@@ -41,14 +41,14 @@
       <li><strong>Espace</strong> : un domaine opérationnel délimité, isolé du cloud public.</li>
       <li><strong>Cognitif</strong> : un lieu où le modèle peut raisonner avec ses propres outils et sa propre mémoire.</li>
       <li><strong>Heuristique</strong> : la capacité du système à s'adapter, à apprendre de ses sessions passées et à découvrir par lui-même.</li>
-      <li><strong>Opérationnel</strong> : l'aptitude concrète à agir — naviguer sur le web, exécuter du code, indexer des fichiers.</li>
+      <li><strong>Opérationnel</strong> : l'aptitude concrète à agir - naviguer sur le web, exécuter du code, indexer des fichiers.</li>
     </ul>
 
     <h3>Évolution V4 → V5</h3>
     <p>
       La <strong>V4 (Legacy)</strong>, conservée dans le répertoire <code>_v4-legacy-concept/</code>, est un prompt
-      de personnalisation avancé pour Gemini. Elle établit les fondements conceptuels d'ECHO — la Mémoire,
-      la Suture, la Souveraineté — mais s'exécute entièrement dans le contexte de la conversation, sans
+      de personnalisation avancé pour Gemini. Elle établit les fondements conceptuels d'ECHO - la Mémoire,
+      la Suture, la Souveraineté - mais s'exécute entièrement dans le contexte de la conversation, sans
       infrastructure dédiée.
     </p>
     <p>
@@ -114,7 +114,7 @@
         Au-delà de 50 % de remplissage de la fenêtre contextuelle, le Pipe considère qu'une
         escalade vers <strong>MODEL_PRO</strong> est justifiée, quelle que soit la complexité
         apparente de la tâche. En pratique, ce basculement s'effectue via l'outil
-        <code>new_cognitive_level</code> — c'est le modèle actif qui déclare lui-même son
+        <code>new_cognitive_level</code> - c'est le modèle actif qui déclare lui-même son
         insuffisance et déclenche le transfert. Ce n'est pas un switch automatique du Pipe.
         Le RAG éphémère (<code>save_session_context</code>) est la réponse préventive :
         décharger l'information hors du contexte avant saturation.
@@ -159,9 +159,9 @@
         <code>EchoAuth.get_ordered_auth_providers()</code> :
       </p>
       <ol>
-        <li><strong>OAuth2 (API Antigravity)</strong> — prioritaire, accès aux modèles <code>gemini-pro-agent</code> et <code>gemini-3-flash-agent</code>.</li>
-        <li><strong>Clé API primaire</strong> — AI Studio (<code>google_api_key</code>).</li>
-        <li><strong>Clé API secondaire</strong> — fallback de secours (<code>google_api_key_secondary</code>).</li>
+        <li><strong>OAuth2 (API Antigravity)</strong> - prioritaire, accès aux modèles <code>gemini-pro-agent</code> et <code>gemini-3-flash-agent</code>.</li>
+        <li><strong>Clé API primaire</strong> - AI Studio (<code>google_api_key</code>).</li>
+        <li><strong>Clé API secondaire</strong> - fallback de secours (<code>google_api_key_secondary</code>).</li>
       </ol>
     </div>
 
@@ -171,7 +171,7 @@
     </div>
 
     <footer>
-      ECHO Framework — Version 5.173.6 — Copyright &copy; 2025-2026 Wilfried BARNAVON — Licence Apache 2.0
+      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
