@@ -9,3 +9,4 @@ httpx
 mgzip
 orjson
 pybase64
+passlib[argon2]

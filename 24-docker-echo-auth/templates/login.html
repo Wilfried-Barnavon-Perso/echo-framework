@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}ECHO Auth - Connexion{% endblock %}
+
+{% block content %}
+<form method="POST" action="/login">
+    <input type="hidden" name="next" value="{{ next }}">
+    
+    <div class="form-group">
+        <label for="email">Adresse E-mail</label>
+        <input type="email" id="email" name="email" required autofocus placeholder="votre.adresse@email">
+    </div>
+    
+    <div class="form-group">
+        <label for="password">Mot de passe</label>
+        <input type="password" id="password" name="password" required placeholder="****************">
+    </div>
+
+    <div class="form-group">
+        <label for="totp">Code MFA (Optionnel si premier login)</label>
+        <input type="text" id="totp" name="totp" placeholder="000000" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+    </div>
+    
+    <button type="submit" class="btn">Connexion Sécurisée</button>
+</form>
+
+<div class="links">
+    <a href="/recovery">Mot de passe ou MFA perdu ?</a>
+</div>
+{% endblock %}

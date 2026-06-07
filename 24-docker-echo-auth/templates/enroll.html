@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block title %}ECHO Auth - Enrôlement{% endblock %}
+
+{% block content %}
+<div style="text-align: center; margin-bottom: 1.5rem;">
+    <h2 style="margin-top: 0; font-size: 1.2rem; color: #fff;">Finalisation du compte</h2>
+    <p style="font-size: 0.85rem; color: var(--text-muted);">Veuillez configurer vos accès de sécurité définitifs.</p>
+</div>
+
+<form method="POST" action="/enroll">
+    <input type="hidden" name="email" value="{{ email }}">
+    <input type="hidden" name="totp_secret" value="{{ totp_secret }}">
+    
+    <div class="form-group">
+        <label for="new_password">Nouveau mot de passe définitif</label>
+        <div style="position: relative;">
+            <input type="password" id="new_password" name="new_password" required style="width: 100%; padding-right: 40px; box-sizing: border-box;">
+            <span class="password-toggle" onclick="togglePasswordVisibility('new_password', this)" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; color: var(--text-muted);">👁️</span>
+        </div>
+        <div id="password-complexity" style="font-size: 0.8rem; margin-top: 0.5rem; color: var(--text-muted); line-height: 1.4;">
+            <div id="rule-length">❌ Au moins {{ pwd_min_length|default(12) }} caractères</div>
+            {% if pwd_require_upper %}<div id="rule-upper">❌ Au moins une majuscule</div>{% endif %}
+            {% if pwd_require_lower %}<div id="rule-lower">❌ Au moins une minuscule</div>{% endif %}
+            {% if pwd_require_digit %}<div id="rule-digit">❌ Au moins un chiffre</div>{% endif %}
+            {% if pwd_require_special %}<div id="rule-special">❌ Au moins un caractère spécial</div>{% endif %}
+        </div>
+    </div>
+
+    <div class="form-group" style="margin-top: 1rem;">
+        <label for="confirm_password">Confirmer le mot de passe</label>
+        <div style="position: relative;">
+            <input type="password" id="confirm_password" name="confirm_password" required style="width: 100%; padding-right: 40px; box-sizing: border-box;">
+            <span class="password-toggle" onclick="togglePasswordVisibility('confirm_password', this)" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; color: var(--text-muted);">👁️</span>
+        </div>
+        <div id="rule-match" style="font-size: 0.8rem; margin-top: 0.5rem; color: var(--text-muted);">❌ Les mots de passe correspondent</div>
+    </div>
+
+    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
+
+    <div class="form-group">
+        <label>1. Scannez ce QR Code avec Google Authenticator ou Authy</label>
+        <div class="qr-container">
+            <img src="{{ qr_code_b64 }}" alt="QR Code MFA">
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem; color: #333; word-break: break-all;">
+                Clé manuelle : {{ totp_secret }}
+            </p>
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label for="totp_code">2. Saisissez le code généré pour valider</label>
+        <input type="text" id="totp_code" name="totp_code" required inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="off">
+    </div>
+
+    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
+
+    <div class="form-group">
+        <label for="security_question">Question de sécurité (Récupération)</label>
+        <select id="security_question" name="security_question" required style="width: 100%; padding: 0.75rem 1rem; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); font-size: 0.9rem; margin-bottom: 1rem;">
+            <option value="" disabled selected>-- Choisissez une question --</option>
+            <option value="Quel est le nom de votre premier animal de compagnie ?">Quel est le nom de votre premier animal de compagnie ?</option>
+            <option value="Dans quelle ville êtes-vous né(e) ?">Dans quelle ville êtes-vous né(e) ?</option>
+            <option value="Quel est le nom de jeune fille de votre mère ?">Quel est le nom de jeune fille de votre mère ?</option>
+            <option value="Quel était le modèle de votre première voiture ?">Quel était le modèle de votre première voiture ?</option>
+        </select>
+        
+        <label for="security_answer">Réponse secrète</label>
+        <input type="text" id="security_answer" name="security_answer" required placeholder="Votre réponse...">
+    </div>
+    
+    <button type="submit" class="btn" style="transition: opacity 0.3s;" id="submit_btn">Valider mon enrôlement</button>
+</form>
+
+<script>
+    const minLength = {{ pwd_min_length|default(12) }};
+    const reqUpper = {{ 'true' if pwd_require_upper else 'false' }};
+    const reqLower = {{ 'true' if pwd_require_lower else 'false' }};
+    const reqDigit = {{ 'true' if pwd_require_digit else 'false' }};
+    const reqSpecial = {{ 'true' if pwd_require_special else 'false' }};
+
+    const newPwdInput = document.getElementById('new_password');
+    const confirmPwdInput = document.getElementById('confirm_password');
+    const submitBtn = document.getElementById('submit_btn');
+
+    function togglePasswordVisibility(id, iconEl) {
+        const input = document.getElementById(id);
+        if (input.type === 'password') {
+            input.type = 'text';
+            iconEl.innerHTML = '🙈';
+        } else {
+            input.type = 'password';
+            iconEl.innerHTML = '👁️';
+        }
+    }
+
+    function updateRule(elId, isValid) {
+        const el = document.getElementById(elId);
+        if (el) {
+            if (isValid) {
+                el.innerHTML = el.innerHTML.replace('❌', '✅');
+                el.style.color = '#2ecc71';
+            } else {
+                el.innerHTML = el.innerHTML.replace('✅', '❌');
+                el.style.color = 'var(--text-muted)';
+            }
+        }
+    }
+
+    function validatePassword() {
+        const val = newPwdInput.value;
+        const confirmVal = confirmPwdInput.value;
+        
+        const isLen = val.length >= minLength;
+        const isUpper = !reqUpper || /[A-Z]/.test(val);
+        const isLower = !reqLower || /[a-z]/.test(val);
+        const isDigit = !reqDigit || /[0-9]/.test(val);
+        const isSpecial = !reqSpecial || /[^A-Za-z0-9]/.test(val);
+        const isMatch = val !== '' && val === confirmVal;
+
+        updateRule('rule-length', isLen);
+        updateRule('rule-upper', isUpper);
+        updateRule('rule-lower', isLower);
+        updateRule('rule-digit', isDigit);
+        updateRule('rule-special', isSpecial);
+        updateRule('rule-match', isMatch);
+
+        const allValid = isLen && isUpper && isLower && isDigit && isSpecial && isMatch;
+        submitBtn.disabled = !allValid;
+        submitBtn.style.opacity = allValid ? '1' : '0.5';
+    }
+
+    newPwdInput.addEventListener('input', validatePassword);
+    confirmPwdInput.addEventListener('input', validatePassword);
+    validatePassword();
+</script>
+{% endblock %}

@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v5.174.1
+  # 🧠 ECHO Framework v5.175.3
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-5.174.1-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-5.175.3-blue.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framew
 **Sur Hyper-V (Windows) :**
 *(Crée et configure automatiquement une VM Linux dédiée)*
 ```powershell
-.\deploy-hyperv.ps1
+.\install-hyperv.ps1
 ```
 
 *(Note : Les scripts d'installation sont idempotents et gèrent nativement les mises à jour de version).*

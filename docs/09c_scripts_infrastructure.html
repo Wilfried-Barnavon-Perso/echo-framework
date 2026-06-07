@@ -24,9 +24,10 @@
         <tr><th>Script</th><th>Environnement</th><th>Rôle Principal</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>deploy-hyperv.ps1</code></td><td>Windows (Hôte)</td><td>Injection Zip via VHDX et démarrage VM</td></tr>
+        <tr><td><code>install-hyperv.ps1</code></td><td>Windows (Hôte)</td><td>Injection Zip via VHDX et démarrage VM</td></tr>
         <tr><td><code>sync-echo.sh</code></td><td>Ubuntu (VM)</td><td>Extraction, distribution des fichiers et attribution des droits</td></tr>
         <tr><td><code>install-stack.sh</code></td><td>Ubuntu (VM)</td><td>Orchestration globale Docker (stack-echo.yml)</td></tr>
+        <tr><td><code>enable-bunkerweb.sh</code> / <code>disable-bunkerweb.sh</code></td><td>Ubuntu (VM)</td><td>Bascule (toggle) de l'exposition sécurisée via BunkerWeb et lancement d'ECHO Auth</td></tr>
         <tr><td><code>config-owui.sh</code></td><td>Ubuntu (VM)</td><td>Provisionnement de l'API Open WebUI (Arsenal et Configuration)</td></tr>
         <tr><td><code>upgrade-echo.sh</code></td><td>Ubuntu (VM)</td><td>Mise à niveau majeure de l'infrastructure hôte</td></tr>
       </tbody>
@@ -38,7 +39,7 @@
       Le déploiement d'une nouvelle version d'ECHO s'effectue sans connexion réseau entre l'hôte et la machine virtuelle.
     </p>
 
-    <h3><code>deploy-hyperv.ps1</code></h3>
+    <h3><code>install-hyperv.ps1</code></h3>
     <p>
       Ce script PowerShell s'exécute avec des privilèges administrateur sur l'hôte Windows. Il orchestre le transfert physique des données :
     </p>
@@ -62,8 +63,8 @@
     </p>
     <ul>
       <li><strong>Génération du contexte :</strong> Calcul dynamique des <code>ECHO_DETECTED_ORIGINS</code> (CORS) à partir des interfaces réseau actives (Wi-Fi, Ethernet, Tailscale).</li>
-      <li><strong>Injection des secrets :</strong> Consolidation des variables d'environnement dans le fichier <code>/opt/ECHO/.env</code> de production.</li>
-      <li><strong>Lancement de la pile :</strong> Exécution de <code>docker compose -f stack-echo.yml up -d</code>. Ce fichier <code>stack-echo.yml</code> (v9.10) définit la topologie réseau, les volumes de persistance, et les règles WAF BunkerWeb.</li>
+      <li><strong>Injection des secrets :</strong> Génération automatique (si absents) de <code>BW_DB_PASSWORD</code>, <code>SEARXNG_SECRET</code>, et <code>ECHO_SSO_SECRET</code>, et consolidation dans le fichier <code>/opt/ECHO/.env</code> de production.</li>
+      <li><strong>Lancement de la pile :</strong> Exécution conditionnelle avec <code>bunkerweb-stack.yml</code> (si mode SECURE EDGE actif) ou <code>stack-echo.yml</code> standard.</li>
     </ul>
 
     <h3><code>config-owui.sh</code></h3>
@@ -82,7 +83,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.177.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

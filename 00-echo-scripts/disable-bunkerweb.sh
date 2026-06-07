@@ -33,10 +33,10 @@ ENV_FILE="$ECHO_ENV_FILE"
 BW_STACK_FILE="$CONFIG_DIR/bunkerweb-stack.yml"
 ECHO_STACK_FILE="$CONFIG_DIR/stack-echo.yml"
 
-# Détection automatique du moteur Compose (V1 vs V2)
-DOCKER_COMPOSE_CMD="docker-compose"
+# Détection automatique du moteur Compose (V2 prioritaire)
+DOCKER_COMPOSE_CMD="docker compose"
 if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
-    DOCKER_COMPOSE_CMD="docker compose"
+    DOCKER_COMPOSE_CMD="docker-compose"
 fi
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
@@ -45,6 +45,7 @@ echo "=================================================="
 echo "🔓 ECHO SECURITY DISABLE (v2.0)"
 echo "=================================================="
 echo "Ce script va désactiver le WAF et le HTTPS."
+echo "ℹ️  Mode Local : Le portail ECHO Auth (MFA/SSO) ne sera pas actif (pas d'exposition internet)."
 echo "Vos applications seront accessibles uniquement en LOCAL (HTTP)."
 echo ""
 
@@ -85,9 +86,9 @@ if [ -f "$ENV_FILE" ]; then
     echo "📝 Désactivation du domaine dans le fichier d'environnement..."
     sed -i "s|^ECHO_DOMAIN=.*|ECHO_DOMAIN=|" "$ENV_FILE"
     if grep -q "^ECHO_DETECTED_ORIGINS=" "$ENV_FILE"; then
-        sed -i "s|^ECHO_DETECTED_ORIGINS=.*|ECHO_DETECTED_ORIGINS=$ECHO_DETECTED_ORIGINS|" "$ENV_FILE"
+        sed -i "s|^ECHO_DETECTED_ORIGINS=.*|ECHO_DETECTED_ORIGINS=\"$ECHO_DETECTED_ORIGINS\"|" "$ENV_FILE"
     else
-        echo "ECHO_DETECTED_ORIGINS=$ECHO_DETECTED_ORIGINS" >> "$ENV_FILE"
+        echo "ECHO_DETECTED_ORIGINS=\"$ECHO_DETECTED_ORIGINS\"" >> "$ENV_FILE"
     fi
 fi
 
@@ -105,17 +106,13 @@ $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" \
     down --remove-orphans || true
 
 # Nettoyage préventif ciblé : uniquement les conteneurs ECHO restants
-# (filtre strict par label du projet Compose, jamais de rm -f global)
+# (Filtre strict par label du projet Compose)
 ECHO_CONTAINERS=$(docker ps -a \
     --filter "label=com.docker.compose.project=echo" \
     --format "{{.Names}}" 2>/dev/null || true)
 
 if [ -n "$ECHO_CONTAINERS" ]; then
-    echo "🧹 Nettoyage des conteneurs ECHO résiduels..."
-    for container in $ECHO_CONTAINERS; do
-        echo "   ⚠️  Suppression : $container"
-        docker rm -f "$container" > /dev/null 2>&1 || true
-    done
+    echo "   ✅ (Les conteneurs ECHO résiduels seront gérés par le redémarrage)"
 else
     echo "   ✅ Aucun conteneur ECHO résiduel."
 fi
@@ -152,6 +149,7 @@ echo "✅ SÉCURITÉ DÉSACTIVÉE."
 echo "-----------------------------------------------------------"
 echo "🌐 LOCAL UI    : http://IP-LOCALE:3000"
 echo "🔧 LOCAL ADMIN : http://IP-LOCALE:3001"
+echo "ℹ️  AUTH LOCAL  : Bypass (Pas de MFA en local)"
 echo "-----------------------------------------------------------"
 echo "⚠️  L'accès HTTPS est coupé. Le WAF est éteint."
 echo "-----------------------------------------------------------"

@@ -1,8 +1,7 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.23
+# VERSION : 1.24
 # ==============================================================================
-# CHANGELOG 1.23 : Bump BunkerWeb 1.6.9 -> 1.6.11 (correctifs stabilité/sécurité)
 #                  Bump MariaDB 10.11 -> 11.4 (LTS, EOL 2029)
 #                  Ajout healthcheck bw-db + depends_on ordonné
 #                  Suppression directive version (deprecated Compose V2)
@@ -159,6 +158,46 @@ services:
       - "bunkerweb.REDIRECT_TO_STATUS_CODE=301"
       - "bunkerweb.USE_BAD_BEHAVIOR=no"
 
+  # 7. ECHO Auth (SSO & MFA IdP)
+  echo-auth:
+    build:
+      context: /opt/ECHO/docker-echo-auth
+      dockerfile: Dockerfile
+    container_name: echo-auth
+    restart: always
+    networks:
+      - bw-universe
+      - echo-network
+    environment:
+      - TZ=Europe/Paris
+      - ECHO_DOMAIN=${ECHO_DOMAIN:-localhost}
+      - ECHO_SSO_SECRET=${ECHO_SSO_SECRET}
+      - AUTH_DB_PATH=/app/auth-data/auth.db
+    volumes:
+      - echo-auth-data:/app/auth-data
+      - /opt/ECHO/docker-echo-auth/auth_server.py:/app/auth_server.py:ro
+      - /opt/ECHO/docker-echo-auth/static:/app/static:ro
+      - /opt/ECHO/docker-echo-auth/templates:/app/templates:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/login\")' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+      # Exposition via BunkerWeb sous un sous-domaine dédié auth.DOMAINE
+      - "bunkerweb.SERVER_NAME=auth.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-auth:8000"
+      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
+      - "bunkerweb.USE_MODSECURITY=no"
+      - "bunkerweb.USE_BAD_BEHAVIOR=no"
+      - "bunkerweb.CONTENT_SECURITY_POLICY=object-src 'none'; form-action 'self' https://ui.${ECHO_DOMAIN:-localhost} https://am.${ECHO_DOMAIN:-localhost}; frame-ancestors 'self';"
+
 # ==============================================================================
 # Réseaux
 # ==============================================================================
@@ -186,3 +225,5 @@ volumes:
       o: bind
       device: /opt/ECHO/bunkerweb
   bw-db-data:
+  echo-auth-data:
+    external: true

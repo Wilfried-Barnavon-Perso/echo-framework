@@ -535,7 +535,9 @@ sequenceDiagram
       <h4>💡 Lecture d'architecte</h4>
       <p>
         Ce schéma représente la topologie réelle du cluster Docker ECHO. Le trafic WAN est filtré
-        par BunkerWeb (WAF). L'Arsenal (Browser Agent, Python Worker, SearxNG) s'exécute sur un
+        par BunkerWeb (WAF) <strong>si celui-ci est activé</strong> (optionnel, contrôlé via les scripts <code>enable-bunkerweb.sh</code> et <code>disable-bunkerweb.sh</code>).
+        En cas d'activation, BunkerWeb délègue l'authentification (SSO & MFA) au module <strong>ECHO Auth</strong>.
+        L'Arsenal (Browser Agent, Python Worker, SearxNG) s'exécute sur un
         sous-réseau Docker privé sans accès entrant. Les volumes SQLite garantissent la persistance
         des données hors-conteneur. L'Admin Manager accède au Docker Daemon via
         <code>/var/run/docker.sock</code> (socket Unix monté en volume).
@@ -554,11 +556,12 @@ flowchart TB
   end
 
   subgraph DMZ ["🛡️ ZONE 1 : DMZ (Réseau Edge)"]
-    BW{{"🛡️ BunkerWeb WAF<br/>[:80/443]"}}
+    BW{{"🛡️ BunkerWeb WAF (Optionnel)<br/>[:80/443]"}}
   end
 
   subgraph APP ["🖥️ ZONE 2 : APPLICATION & KERNEL TIER"]
     direction TB
+    AUTH["🔑 ECHO Auth (SSO IdP)<br/>[:8000]"]
     OWUI["🖥️ Open WebUI<br/>[:3000]"]
     subgraph Kernel ["🧠 ECHO Kernel (In-Process)"]
       direction LR
@@ -596,6 +599,7 @@ flowchart TB
 
   U == "HTTPS" ==> BW
   BW == "Reverse Proxy" ==> OWUI
+  BW -. "Forward Auth" .-> AUTH
   BW -. "Accès Admin" .-> AM
 
   P == "SQL R/W" ==> SQL
@@ -616,7 +620,7 @@ flowchart TB
   classDef core fill:#172554,stroke:#60a5fa,stroke-width:2px,color:#f8fafc
   classDef tool fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#f8fafc
 
-  class U,BW,OWUI,AM,DOCKER node
+  class U,BW,OWUI,AUTH,AM,DOCKER node
   class SQL,QD,FS,EMB db
   class F,P core
   class BA,PW,SNG,AUD tool
@@ -727,7 +731,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.177.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -302,7 +302,13 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         // Switch to FR
         document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-        document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=" + location.hostname + "; path=/;";
+        if (location.hostname) {
+          document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=" + location.hostname + "; path=/;";
+          document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=." + location.hostname + "; path=/;";
+        }
+        if (window.location.hash.includes('googtrans')) {
+          history.replaceState(null, null, window.location.pathname + window.location.search);
+        }
         window.location.reload();
       }
     });

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}ECHO Auth - Récupération{% endblock %}
+
+{% block content %}
+<div style="text-align: center; margin-bottom: 1.5rem;">
+    <h2 style="margin-top: 0; font-size: 1.2rem; color: #fff;">Récupération de compte</h2>
+    <p style="font-size: 0.85rem; color: var(--text-muted);">Saisissez votre Email pour retrouver votre question de sécurité.</p>
+</div>
+
+{% if not question %}
+<form method="POST" action="/recovery/step1">
+    <div class="form-group">
+        <label for="email">Adresse E-mail</label>
+        <input type="email" id="email" name="email" required autofocus placeholder="admin@echo.local">
+    </div>
+    <button type="submit" class="btn">Continuer</button>
+</form>
+{% else %}
+<form method="POST" action="/recovery/step2">
+    <input type="hidden" name="email" value="{{ email }}">
+    
+    <div class="form-group">
+        <label>Question de sécurité :</label>
+        <div style="padding: 1rem; background: rgba(0,0,0,0.3); border-radius: 8px; margin-bottom: 1rem; font-weight: 500;">
+            {{ question }}
+        </div>
+    </div>
+    
+    <div class="form-group">
+        <label for="security_answer">Votre réponse secrète</label>
+        <input type="text" id="security_answer" name="security_answer" required autofocus>
+    </div>
+
+    <div class="form-group">
+        <label for="totp_code">Code MFA Actuel</label>
+        <input type="text" id="totp_code" name="totp_code" required inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000">
+    </div>
+    
+    <div class="form-group">
+        <label for="new_password">Nouveau mot de passe</label>
+        <input type="password" id="new_password" name="new_password" required minlength="8">
+    </div>
+    
+    <button type="submit" class="btn">Réinitialiser le mot de passe</button>
+</form>
+{% endif %}
+
+<div class="links">
+    <a href="/login">Retour à la connexion</a>
+</div>
+{% endblock %}

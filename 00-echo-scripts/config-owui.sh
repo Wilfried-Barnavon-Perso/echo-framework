@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.56
+# VERSION : 7.59
 # ==============================================================================
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
@@ -29,7 +29,10 @@ SETTINGS_FILE="$CONFIG_DIR/webui-settings.json"
 IMAGE_BASE_DIR="$ECHO_IMAGES"
 
 # Comptes
-SERVICE_EMAIL="install-stack@echo.local"
+if [ -f "$ECHO_ENV_FILE" ]; then 
+    ECHO_DOMAIN=$(grep "^ECHO_DOMAIN=" "$ECHO_ENV_FILE" | cut -d '=' -f2)
+fi
+SERVICE_EMAIL="${ECHO_SERVICE_ACCOUNT:-install-stack@echo.local}"
 SERVICE_NAME="Install Stack Service"
 HUMAN_EMAIL="admin@echo.local"
 HUMAN_NAME="ECHO Architect"
@@ -47,7 +50,7 @@ refresh_token() {
     if [ -f "$SECRET_FILE" ]; then
         SERVICE_PWD=$(cat "$SECRET_FILE" | tr -d '[:space:]')
         LOGIN_RESP=$(curl -s -X POST "$OWUI_URL/api/v1/auths/signin" \
-            -H "Content-Type: application/json" \
+            -H "Content-Type: application/json" $EXTRA_HEADER \
             -d "{\"email\": \"$SERVICE_EMAIL\", \"password\": \"$SERVICE_PWD\"}")
         NEW_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.token // empty')
         
@@ -71,13 +74,20 @@ echo " OK apres $(($COUNT*$SLEEP_TIME)) secondes."
 
 # --- 2. AUTHENTIFICATION INITIALE ---
 TOKEN=""
-refresh_token
+EXTRA_HEADER=""
+AUTH_HEADER=""
 
+if [ -n "$ECHO_DOMAIN" ]; then
+    EXTRA_HEADER="-H X-Webui-User:$SERVICE_EMAIL"
+    echo "   [DEBUG] Mode SSO détecté. Injection de l'entête : $EXTRA_HEADER"
+fi
+
+refresh_token
 if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
     echo "🆕 [AUTH] Création compte service..."
     SERVICE_PWD=$(LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 64)
     SIGNUP_RESP=$(curl -s -X POST "$OWUI_URL/api/v1/auths/signup" \
-        -H "Content-Type: application/json" \
+        -H "Content-Type: application/json" $EXTRA_HEADER \
         -d "{\"name\": \"$SERVICE_NAME\", \"email\": \"$SERVICE_EMAIL\", \"password\": \"$SERVICE_PWD\"}")
     TOKEN=$(echo "$SIGNUP_RESP" | jq -r '.token // empty')
     
@@ -86,44 +96,48 @@ if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
         touch "$SECRET_FILE"; chmod 600 "$SECRET_FILE"; echo "$SERVICE_PWD" > "$SECRET_FILE"; chmod 400 "$SECRET_FILE"
         echo "   ✅ Compte service créé."
     else
-        echo "❌ [FATAL] Echec création service."; exit 1
+        echo "❌ [FATAL] Echec création service."
+        echo "   [DEBUG] Reponse: $SIGNUP_RESP"
+        exit 1
     fi
 fi
 
 if [ ! -s "$ADMIN_SECRET_FILE" ]; then
-    echo "🆕 [AUTH] Création compte admin humain..."
+    echo "🆕 [AUTH] Création/Mise à jour compte admin humain avec mot de passe de secours..."
     ADMIN_PWD=$(LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+=-' </dev/urandom | head -c 16)
     touch "$ADMIN_SECRET_FILE"; echo "$ADMIN_PWD" > "$ADMIN_SECRET_FILE"; chmod 400 "$ADMIN_SECRET_FILE"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/auths/add" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "{\"name\": \"$HUMAN_NAME\", \"email\": \"$HUMAN_EMAIL\", \"password\": \"$ADMIN_PWD\", \"role\": \"admin\"}")
-    [ "$HTTP_CODE" -eq 401 ] && refresh_token && curl -s -X POST "$OWUI_URL/api/v1/auths/add" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "{\"name\": \"$HUMAN_NAME\", \"email\": \"$HUMAN_EMAIL\", \"password\": \"$ADMIN_PWD\", \"role\": \"admin\"}" > /dev/null
-    echo "   ✅ Admin créé."
+    
+    # La création/mise à jour fonctionne indifféremment avec JWT ou SSO grâce à $AUTH_HEADER
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/auths/add" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "{\"name\": \"$HUMAN_NAME\", \"email\": \"$HUMAN_EMAIL\", \"password\": \"$ADMIN_PWD\", \"role\": \"admin\"}")
+    [ "$HTTP_CODE" -eq 401 ] && refresh_token && curl -s -X POST "$OWUI_URL/api/v1/auths/add" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "{\"name\": \"$HUMAN_NAME\", \"email\": \"$HUMAN_EMAIL\", \"password\": \"$ADMIN_PWD\", \"role\": \"admin\"}" > /dev/null
+    echo "   ✅ Admin créé avec clé de secours."
 fi
 
 # --- 3. IMPORT RESSOURCES (STRATÉGIE DISQUE) ---
 api_upsert() {
     local endpoint="$1"; local id="$2"; local payload_file="$3"; local desc="$4"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$payload_file")
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
     
     if [ "$HTTP_CODE" -eq 401 ] && refresh_token; then
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$payload_file")
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
     fi
 
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $desc : $id créé."
     elif [ "$HTTP_CODE" -eq 409 ] || [ "$HTTP_CODE" -eq 400 ]; then
-        UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$payload_file")
-        [ "$UPDATE_CODE" -eq 401 ] && refresh_token && UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$payload_file")
+        UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
+        [ "$UPDATE_CODE" -eq 401 ] && refresh_token && UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
         if [ "$UPDATE_CODE" -eq 200 ]; then echo "   🔄 $desc : $id mis à jour."; else echo "   ❌ Echec $desc $id (HTTP $UPDATE_CODE)."; fi
     fi
 }
 
 toggle_state() {
     local id="$1"
-    RESP=$(curl -s -X GET "$OWUI_URL/api/v1/functions/id/$id" -H "Authorization: Bearer $TOKEN")
-    [[ "$RESP" == *"expired"* ]] && refresh_token && RESP=$(curl -s -X GET "$OWUI_URL/api/v1/functions/id/$id" -H "Authorization: Bearer $TOKEN")
+    RESP=$(curl -s -X GET "$OWUI_URL/api/v1/functions/id/$id" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
+    [[ "$RESP" == *"expired"* ]] && refresh_token && RESP=$(curl -s -X GET "$OWUI_URL/api/v1/functions/id/$id" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
     IS_ACTIVE=$(echo "$RESP" | jq -r '.is_active // empty'); IS_GLOBAL=$(echo "$RESP" | jq -r '.is_global // empty')
-    [ "$IS_GLOBAL" != "true" ] && curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle/global" -H "Authorization: Bearer $TOKEN" > /dev/null
-    [ "$IS_ACTIVE" != "true" ] && curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle" -H "Authorization: Bearer $TOKEN" > /dev/null
+    [ "$IS_GLOBAL" != "true" ] && curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle/global" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
+    [ "$IS_ACTIVE" != "true" ] && curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
 }
 
 for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:functions:Pipe" "functions:functions:Action"; do
@@ -191,8 +205,8 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     fi
 
     # 5. Déploiement (ENDPOINTS STABLES v5.29.0)
-    CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN")
-    [ "$CHECK_CODE" -eq 401 ] && refresh_token && CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN")
+    CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
+    [ "$CHECK_CODE" -eq 401 ] && refresh_token && CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
 
     if [ "$CHECK_CODE" -eq 200 ]; then
         echo "   🚀 Mise à jour du modèle existant (POST /update)..."
@@ -202,10 +216,10 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
         TARGET_URL="$OWUI_URL/api/v1/models/create"
     fi
     
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$TARGET_URL" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$TMP_FINAL")
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$TARGET_URL" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$TMP_FINAL")
     
     if [ "$HTTP_CODE" -eq 401 ] && refresh_token; then
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$TARGET_URL" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$TMP_FINAL")
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$TARGET_URL" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$TMP_FINAL")
     fi
     echo "   ✅ Modèlle $MODEL_ID déployé (HTTP $HTTP_CODE)."
     
@@ -217,13 +231,13 @@ if [ -f "$SETTINGS_FILE" ]; then
     echo "⚙️ [Config] Import des paramètres globaux..."
     TMP_PAYLOAD="/tmp/owui_config_import_$$.json"
     jq -n --slurpfile content "$SETTINGS_FILE" '{config: $content[0]}' > "$TMP_PAYLOAD"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/import" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$TMP_PAYLOAD")
-    [ "$HTTP_CODE" -eq 401 ] && refresh_token && HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/import" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "@$TMP_PAYLOAD")
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/import" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$TMP_PAYLOAD")
+    [ "$HTTP_CODE" -eq 401 ] && refresh_token && HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/import" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$TMP_PAYLOAD")
     rm -f "$TMP_PAYLOAD"
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ Configuration importée."
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN")
-        [ "$HTTP_CODE" -eq 401 ] && refresh_token && curl -s -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN" > /dev/null
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
+        [ "$HTTP_CODE" -eq 401 ] && refresh_token && curl -s -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
         sleep 5
     fi
 fi

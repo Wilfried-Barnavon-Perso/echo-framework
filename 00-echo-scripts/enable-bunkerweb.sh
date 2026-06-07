@@ -29,10 +29,10 @@ ENV_FILE="$ECHO_ENV_FILE"
 BW_STACK_FILE="$CONFIG_DIR/bunkerweb-stack.yml"
 ECHO_STACK_FILE="$CONFIG_DIR/stack-echo.yml"
 
-# Détection automatique du moteur Compose (V1 vs V2)
-DOCKER_COMPOSE_CMD="docker-compose"
+# Détection automatique du moteur Compose (V2 prioritaire)
+DOCKER_COMPOSE_CMD="docker compose"
 if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
-    DOCKER_COMPOSE_CMD="docker compose"
+    DOCKER_COMPOSE_CMD="docker-compose"
 fi
 
 # Vérification root
@@ -40,7 +40,7 @@ if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
 clear
 echo "=================================================="
-echo "🛡️  ECHO SECURE EDGE (Standard Edition v4.0)"
+echo "🛡️  ECHO SECURE EDGE (SSO/MFA - v4.1)"
 echo "=================================================="
 echo ""
 
@@ -63,6 +63,7 @@ if [ -z "$DOMAIN" ]; then
     echo "Architecture cible :"
     echo " - IA    : https://ui.DOMAINE"
     echo " - Admin : https://am.DOMAINE"
+    echo " - Auth  : https://auth.DOMAINE"
     echo ""
     read -r -p "Entrez votre domaine racine [${DEFAULT_DOMAIN:-echo-ai.eu}] : " INPUT_DOMAIN
     DOMAIN="${INPUT_DOMAIN:-${DEFAULT_DOMAIN:-echo-ai.eu}}"
@@ -122,9 +123,9 @@ update_env() {
     local key=$1
     local value=$2
     if grep -q "^$key=" "$ENV_FILE" 2>/dev/null; then
-        sed -i "s|^$key=.*|$key=$value|" "$ENV_FILE"
+        sed -i "s|^$key=.*|$key=\"$value\"|" "$ENV_FILE"
     else
-        echo "$key=$value" >> "$ENV_FILE"
+        echo "$key=\"$value\"" >> "$ENV_FILE"
     fi
 }
 
@@ -199,6 +200,7 @@ echo "✅ INSTALLATION TERMINÉE !"
 echo "-----------------------------------------------------------"
 echo "🤖 UI IA     : https://ui.$DOMAIN"
 echo "🔧 ADMIN     : https://am.$DOMAIN"
+echo "🔐 AUTH      : https://auth.$DOMAIN"
 echo "-----------------------------------------------------------"
 echo "⏳ Le WAF va demander vos certificats SSL (1-2 min)."
 echo "-----------------------------------------------------------"

@@ -1,28 +1,19 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.10
+# Version : 9.37
 # ==============================================================================
-# CHANGELOG 9.10 : Désactivation de ModSecurity pour Open WebUI (standard LLM).
-# CHANGELOG 9.9 : Exclusions ModSecurity (XSS/RCE/PHP) pour les icônes Base64 (SVG)
+#                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
-# CHANGELOG 9.8 : Réactivation de Watchtower pour Open WebUI.
-# CHANGELOG 9.7 : Correction Intégration BunkerWeb & Open WebUI (SSE, 413, OOM, CSRF)
 #                 et correction de l'anti-indexation (Admin Manager).
-# CHANGELOG 9.6 : Ajout du montage de volume pour tts_api.py et override de la 
 #                 commande uvicorn avec --reload pour permettre le hot-reload du TTS.
-# CHANGELOG 9.5 : Fix crash backend `ValueError: Unknown embedding engine: ""` 
 #                 en remplaçant `RAG_EMBEDDING_ENGINE=""` par `"openai"` pour
 #                 éviter le téléchargement de modèles locaux sans faire crasher l'app.
-# CHANGELOG 9.4 : Fix erreur `unhealthy` Open WebUI. Ajout PIP_BREAK_SYSTEM_PACKAGES=1 
 #                 pour contourner PEP 668 sur Debian Bookworm et suppression de jq
 #                 dans le healthcheck.
-# CHANGELOG 9.3 : Tuning WAF ModSecurity - Remplacement ruleEngine=Off par
 #                 exclusions CRS granulaires (SecRuleRemoveById) pour conserver
 #                 le moteur WAF actif tout en eliminant les faux positifs OWUI.
 #                 Ajout PATCH dans ALLOWED_METHODS. Retrait 400 de BAD_BEHAVIOR.
-# CHANGELOG 9.2 : Ajout dulwich (Git pur Python) dans la commande de demarrage
 #                 open-webui pour le module ECHO Codex.
-# CHANGELOG 8.9 : Tunnel SSH ephemere PKCE (asyncssh).
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
 
@@ -41,20 +32,21 @@ services:
       # Ports callback 8025-8034 : internes uniquement - accessibles via tunnel SSH, JAMAIS exposes
     environment:
       - WEBUI_AUTH=True
+      - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=${ECHO_DOMAIN:+X-Webui-User}
       - WEBUI_NAME="ECHO AI"
       # - CSRF_TRUSTED_ORIGINS=https://ui.${ECHO_DOMAIN:-localhost}
       - FORWARDED_ALLOW_IPS=*
       - TZ=Europe/Paris
       # Configuration Reverse Proxy (Doc Officielle)
-      # - "WEBUI_URL=https://ui.${ECHO_DOMAIN:-localhost}"
-      # Configuration vide car multi accès possible (privée, public www/ui ...). Sécurité par CORS_ALLOW_ORIGIN
-      - "WEBUI_URL="
+      - "WEBUI_URL=https://ui.${ECHO_DOMAIN:-localhost}"
+      # 🛡️ ECHO AUTH : Redirection après déconnexion (Bounce local pour purger le Service Worker)
+      - WEBUI_AUTH_SIGNOUT_REDIRECT_URL=https://ui.${ECHO_DOMAIN:-localhost}/sso-logout
       # ATTENTION : Séparateur point-virgule (;) obligatoire pour Open WebUI
       - "CORS_ALLOW_ORIGIN=https://ui.${ECHO_DOMAIN:-localhost};https://www.${ECHO_DOMAIN:-localhost};http://localhost:3000;http://127.0.0.1:3000;https://${ECHO_DOMAIN:-localhost};${ECHO_DETECTED_ORIGINS}"
 
       # Sécurité Cookies (Recommandé Doc Officielle)
-      - "WEBUI_SESSION_COOKIE_SECURE=false"
-      - "WEBUI_AUTH_COOKIE_SECURE=false"
+      - "WEBUI_SESSION_COOKIE_SECURE=true"
+      - "WEBUI_AUTH_COOKIE_SECURE=true"
       - "WEBUI_SESSION_COOKIE_SAME_SITE=lax"
       - "WEBUI_AUTH_COOKIE_SAME_SITE=lax"
 
@@ -78,7 +70,6 @@ services:
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-open-webui:8080"
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
-
       # 1. OPTIMISATIONS STREAMING & UPLOAD
       - "bunkerweb.REVERSE_PROXY_BUFFERING=no"
       - "bunkerweb.REVERSE_PROXY_REQUEST_BUFFERING=no"
@@ -92,30 +83,48 @@ services:
       - "bunkerweb.REVERSE_PROXY_PRESERVE_HOST=yes"
       - "bunkerweb.KEEP_UPSTREAM_HEADERS=*"
 
+      # 🛡️ ECHO AUTH : Forward Auth
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_redirect; location @auth_redirect { default_type application/json; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; }"
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user"
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user"
+
+      # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass)
+      - "bunkerweb.REVERSE_PROXY_HOST_2=http://echo-auth:8000"
+      - "bunkerweb.REVERSE_PROXY_URL_2=/api/verify"
+
+      # (Les intercepteurs /auth ont été supprimés car ils provoquaient une boucle infinie)
+
+      # 💀 SERVICE WORKER KILL-SWITCH : Empêche la PWA de court-circuiter les redirections SSO et force le rafraîchissement (UX Transparent)
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_sw=location = /sw.js { auth_request off; add_header Content-Type application/javascript; return 200 'self.addEventListener(\"install\", e => e.waitUntil(self.skipWaiting())); self.addEventListener(\"activate\", e => e.waitUntil(self.clients.claim().then(() => self.clients.matchAll({type: \"window\"})).then(clients => { clients.forEach(c => c.navigate(c.url)); self.registration.unregister(); })));'; }"
+
+      # 🧹 PURGE SW VIA LOGOUT : Point de chute de la déconnexion pour injecter Clear-Site-Data
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_ssologout=location = /sso-logout { auth_request off; add_header Content-Type text/html; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; return 200 '<html><body><script>window.location.href=\"https://auth.${ECHO_DOMAIN:-localhost}/logout?next=https://ui.${ECHO_DOMAIN:-localhost}\";</script></body></html>'; }"
+
+      # 🔓 EXCLUSION API PUBLIQUES : Permet au frontend de s'initialiser avant de rediriger proprement
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config|v1/audio/) { auth_request off; proxy_pass http://echo-open-webui:8080; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+
+      # 🔓 EXCLUSION FICHIERS STATIQUES : Requis pour la PWA, les assets et la mise à jour du Service Worker
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; proxy_pass http://echo-open-webui:8080; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+
+      # 💀 POISON VERSION.JSON : Purge forcée du Service Worker via HTTP Clear-Site-Data (Kill-Switch ultime)
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_poison=location = /_app/version.json { auth_request off; add_header Content-Type application/json; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; return 200 '{\"version\":\"ECHO_KILL_SW_V5\"}'; }"
+
+      # 🚫 ANTI-CACHE DYNAMIQUE (Pour forcer l'interception SSO sur le HTML)
+      - "bunkerweb.CUSTOM_CONF_HTTP_mapcache=map $$sent_http_content_type $$html_cache_control { default \"\"; \"~*text/html\" \"no-store, no-cache, must-revalidate, max-age=0\"; }"
+      - "bunkerweb.CUSTOM_HEADER_cache=Cache-Control: $$html_cache_control"
+
       # 3. RATE LIMITING (Stratégie SPA Robuste)
       - "bunkerweb.USE_LIMIT_REQ=yes"
-
-      # Règle 1 : Assets Statiques & Websockets (ILLIMITÉ)
-      # Cible tous les dossiers statiques SvelteKit + WS
-      - "bunkerweb.LIMIT_REQ_URL_1=^/(_app|static|assets|favicon|ws|socket.io).*"
-      - "bunkerweb.LIMIT_REQ_RATE_1=1000r/s"
-
-      # Règle 2 : API Backend (Strict)
-      - "bunkerweb.LIMIT_REQ_URL_2=^/(api|auth|ollama|openai).*"
-      - "bunkerweb.LIMIT_REQ_RATE_2=20r/s"
-      - "bunkerweb.LIMIT_REQ_BURST_2=50"
-
-      # Règle 3 : Navigation Frontend (Souple)
-      - "bunkerweb.LIMIT_REQ_URL=/"
       - "bunkerweb.LIMIT_REQ_RATE=50r/s"
       - "bunkerweb.LIMIT_REQ_BURST=100"
 
       # 4. SECURITE (Anti-Ban)
       - "bunkerweb.USE_MODSECURITY=no"
       - "bunkerweb.USE_BAD_BEHAVIOR=yes"
-      # EXCLUSION CRITIQUE : Ne pas bannir sur 404 (Assets manquants) ni 429 (Rate Limit)
+      # EXCLUSION CRITIQUE : Ne pas bannir sur les erreurs 5xx (timeout ou surcharge applicative)
       # 400 retiré : les SPA génèrent légitimement des 400 sur les preflight CORS
-      - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=401 403 405 444 500 502 503 504"
+      - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=405 444"
 
       # Autoriser les verbes HTTP pour l'API (Suppression de chat, édition, etc.)
       - "bunkerweb.ALLOWED_METHODS=GET|POST|HEAD|PUT|DELETE|PATCH|OPTIONS"
@@ -153,6 +162,8 @@ services:
       - echo-network
     environment:
       - TZ=Europe/Paris
+      - ECHO_SSO_SECRET=${ECHO_SSO_SECRET}
+      - ECHO_DOMAIN=${ECHO_DOMAIN}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     
@@ -165,9 +176,16 @@ services:
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
-      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
-      - "bunkerweb.MODSEC_CRS_PARANOIA_LEVEL=2"
+      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=yes"
+      # 🛡️ ECHO AUTH : Forward Auth + SSO Secret (Syntaxe Officielle BunkerWeb 1.6)
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_redirect; location @auth_redirect { default_type application/json; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; if ($$request_uri ~* \\\"^/sw\\\\\\\\.js\\\") { add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; return 401 'Unauthorized'; } if ($$request_uri ~* \\\"^/api/\\\") { add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* \\\"application/json\\\") { add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; }"
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$dummy $$upstream_http_dummy"
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Echo-Sso-Secret ${ECHO_SSO_SECRET}"
       
+      # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass)
+      - "bunkerweb.REVERSE_PROXY_HOST_2=http://echo-auth:8000"
+      - "bunkerweb.REVERSE_PROXY_URL_2=/api/verify"
       # 🛡️ SECURITE ADMIN : Assouplissement WAF pour l'Admin (Burst toléré)
       - "bunkerweb.USE_BAD_BEHAVIOR=yes"
       - "bunkerweb.USE_LIMIT_REQ=yes"
@@ -184,6 +202,7 @@ services:
       - echo-backups:/backups
       - echo-webui-data:/app/backend/data
       - echo-qdrant-data:/qdrant/storage
+      - echo-auth-data:/app/auth-data
       - /opt/ECHO/.secrets:/app/secrets:ro
       - /opt/ECHO/ECHO_VERSION:/app/ECHO_VERSION:ro
     
@@ -397,6 +416,8 @@ services:
       qdrant:
         condition: service_healthy
 
+
+
 # ==============================================================================
 # NETWORKS & VOLUMES
 # ==============================================================================
@@ -418,4 +439,6 @@ volumes:
   echo-qdrant-data:
     external: true
   echo-embedding-cache:
+    external: true
+  echo-auth-data:
     external: true

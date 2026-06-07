@@ -35,14 +35,14 @@
 
     <p>
       Le scénario Hyper-V est le plus abouti. Il utilise le script PowerShell
-      <code>deploy-hyperv.ps1</code> exécuté depuis le poste Windows, lequel
+      <code>install-hyperv.ps1</code> exécuté depuis le poste Windows, lequel
       orchestre la création et le provisioning automatique d'une VM Ubuntu fraîche
       via le mécanisme <strong>cloud-init</strong>.
     </p>
 
     <h3>Phase 1 - Assemblage et injection (hôte Windows)</h3>
     <p>
-      <code>deploy-hyperv.ps1</code> agit comme assembleur. Il crée une archive ZIP du projet
+      <code>install-hyperv.ps1</code> agit comme assembleur. Il crée une archive ZIP du projet
       (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>), génère un
       disque dur virtuel CIDATA de 100 Mo contenant les fichiers <code>user-data</code> et
       <code>meta-data</code> cloud-init, puis crée la VM Hyper-V de Génération 2 avec Secure
@@ -79,6 +79,7 @@
         <tr><td><code>21-docker-python-worker/</code></td><td><code>/opt/ECHO/docker-python-worker/</code></td><td>Sandbox Python</td></tr>
         <tr><td><code>22-docker-browser-agent/</code></td><td><code>/opt/ECHO/docker-browser-agent/</code></td><td>Browser Agent Playwright</td></tr>
         <tr><td><code>23-docker-embedding-worker/</code></td><td><code>/opt/ECHO/docker-embedding-worker/</code></td><td>Inférence bge-m3 locale</td></tr>
+        <tr><td><code>24-docker-echo-auth/</code></td><td><code>/opt/ECHO/docker-echo-auth/</code></td><td>ECHO Auth (Serveur SSO & MFA)</td></tr>
         <tr><td><code>30-docker-stt-worker/</code></td><td><code>/opt/ECHO/docker-stt-worker/</code></td><td>Worker STT (Faster-Whisper)</td></tr>
         <tr><td><code>31-docker-tts-worker/</code></td><td><code>/opt/ECHO/docker-tts-worker/</code></td><td>Worker TTS (Kokoro ONNX)</td></tr>
       </tbody>
@@ -94,7 +95,7 @@
     <p>
       Ce script orchestre le démarrage de la pile applicative via le fichier de configuration
       centralisé <code>stack-echo.yml</code>, qui remplace l'usage implicite de docker-compose.yml.
-      Il centralise les secrets et variables dans <code>/opt/ECHO/.env</code>, calcule dynamiquement 
+      Il centralise les secrets et variables dans <code>/opt/ECHO/.env</code> (incluant la génération automatique de <code>ECHO_SSO_SECRET</code>), calcule dynamiquement 
       les origines CORS autorisées (<code>ECHO_DETECTED_ORIGINS</code>), puis lève les services.
     </p>
     <p>
@@ -227,12 +228,12 @@ systemd=true</code></pre>
       </tbody>
     </table>
 
-    <h2>Bouclier BunkerWeb (WAF)</h2>
+    <h2>Bouclier BunkerWeb (WAF) & ECHO Auth</h2>
 
     <p>
       L'activation de BunkerWeb (<code>enable-bunkerweb</code>) transforme l'infrastructure
       en plateforme sécurisée exposable sur Internet. BunkerWeb agit comme reverse proxy WAF
-      devant Open WebUI et l'Admin Manager.
+      devant Open WebUI et l'Admin Manager. <strong>L'activation de BunkerWeb déclenche également le lancement du module ECHO Auth (SSO IdP)</strong>, qui protège l'ensemble de la pile derrière une authentification forte (MFA, TOTP) via un mécanisme de Forward Auth.
     </p>
     <p>
       Il implémente une stratégie SPA Robuste de limitation de débit (rate limiting) granulaire :
@@ -265,7 +266,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.173.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.177.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

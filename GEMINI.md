@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.174.1
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.177.0
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -9,7 +9,7 @@ ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestratio
 - **Terminal :** PowerShell (Admin requis pour Hyper-V).
 - **Infrastructure Cible :** Machine Virtuelle Ubuntu 24.04 sur Hyper-V.
 - **Orchestration :** Docker Compose (Standardisé version 9.3+ avec WAF ModSecurity granulaire).
-- **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `deploy-hyperv.ps1` (injection ZIP via disque Seed), `sync-echo.sh` (distribution), et `upgrade-echo.sh` (mise à niveau majeure de l'infrastructure).
+- **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `install-hyperv.ps1` (injection ZIP via disque Seed), `sync-echo.sh` (distribution), et `upgrade-echo.sh` (mise à niveau majeure de l'infrastructure).
 
 ## 🏗️ Architecture V5 : Le Triptyque Fondamental
 
@@ -42,8 +42,10 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **ECHO Codex (`echo_codex_tool.py`) :** Éditeur multi-langage avec Git intégré (dulwich). 9 fonctions (create, edit, read, search, summarize, list, delete, history). Édition assistée par sub-chat `MODEL_FLASH` via `call_cascade`. Registre `codex_docs` dans SQLite par chat. Distillation Cloud pour résumé technique.
 
 ### 5. Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
-- **Dashboard Gridstack :** Interface interactive de monitoring du cluster Docker et des ressources système.
-- **Régulation & Consolidation :** Optimisation physique SQLite (Vacuum/WAL) et gestion des sauvegardes à chaud.
+- **ECHO Auth (SSO & MFA) :** IdP autonome (`/opt/ECHO/24-docker-echo-auth/`) gérant l'authentification forte (TOTP). Couplé à BunkerWeb via Forward Auth (`/api/verify`), l'état des sessions et les bannissements IP sont pilotés depuis l'Admin Manager (Révocations granulaires, Kill-Switch).
+- **Dashboard Actif :** Interface interactive (Sidebar asynchrone) de monitoring du cluster Docker, des sessions SSO et des ressources système.
+- **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec un mécanisme de Kill-Switch de Service Worker (PWA) pour forcer les redirections d'authentification.
+- **Régulation & Consolidation :** Optimisation physique SQLite (Vacuum/WAL) et gestion des sauvegardes à chaud (incluant les bases IdP).
 - **Purge Temporelle des Souvenirs (TTL) :** Centralisation du processus d'élagage de la base vectorielle des souvenirs pour optimiser les performances.
 
 ### 6. Actions Interactives (`/opt/ECHO/owui-actions/`)
@@ -100,6 +102,6 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.174.1*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.177.0*
 
 

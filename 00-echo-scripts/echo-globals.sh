@@ -36,3 +36,7 @@ export ECHO_DOCKER_EMBEDDING="$ECHO_ROOT/docker-embedding-worker"
 # Fichiers de contrôle
 export ECHO_BRANCH_FILE="$ECHO_ROOT/ECHO_BRANCH"
 export ECHO_DEPLOY_VER_FILE="$ECHO_ROOT/echo_deploy_script_version"
+
+# Comptes Systèmes
+export ECHO_SERVICE_ACCOUNT="install-stack@echo.local"
+

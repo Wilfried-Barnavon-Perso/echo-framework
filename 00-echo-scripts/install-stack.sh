@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.23
+# VERSION : 6.24
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 6.24 : Génération dynamique de ECHO_SSO_SECRET pour le Forward Auth hybride.
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
 
@@ -121,6 +122,7 @@ generate_secret() {
 
 generate_secret "BW_DB_PASSWORD" 24
 generate_secret "SEARXNG_SECRET" 64
+generate_secret "ECHO_SSO_SECRET" 32
 
 # 2.1 Réseaux Externes
 echo "🔍 Recherche des réseaux externes définis dans $COMPOSE_FILE..."
