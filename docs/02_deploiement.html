@@ -235,6 +235,10 @@ systemd=true</code></pre>
       en plateforme sécurisée exposable sur Internet. BunkerWeb agit comme reverse proxy WAF
       devant Open WebUI et l'Admin Manager. <strong>L'activation de BunkerWeb déclenche également le lancement du module ECHO Auth (SSO IdP)</strong>, qui protège l'ensemble de la pile derrière une authentification forte (MFA, TOTP) via un mécanisme de Forward Auth.
     </p>
+    <ul>
+      <li><strong>SSO & MFA :</strong> Le portail ECHO Auth devient le seul point de passage pour accéder à l'interface.</li>
+      <li><strong>Kill-Switch Service Worker (PWA) :</strong> Le WAF intègre un mécanisme de "poisoning" non-destructif (surcharge de <code>/_app/version.json</code>) pour forcer le rechargement des assets SvelteKit sans utiliser <code>Clear-Site-Data</code>, ce qui garantit la préservation du cookie JWT de session (évitant l'erreur 401 sur les flux audio).</li>
+    </ul>
     <p>
       Il implémente une stratégie SPA Robuste de limitation de débit (rate limiting) granulaire :
       1000 requêtes/s pour les assets statiques, 50 requêtes/s pour la navigation et 20 requêtes/s pour l'API backend.
@@ -266,7 +270,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.177.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.177.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

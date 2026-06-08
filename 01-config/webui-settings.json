@@ -147,7 +147,7 @@
     "tts": {
       "openai": {
         "api_base_url": "http://echo-tts-worker:7996/v1",
-        "api_key": "dummy",
+        "api_key": "sk-dummy",
         "params": {}
       },
       "api_key": "",
@@ -164,7 +164,7 @@
     "stt": {
       "openai": {
         "api_base_url": "http://echo-stt-worker:7995/v1",
-        "api_key": "dummy"
+        "api_key": "sk-dummy"
       },
       "engine": "openai",
       "model": "base",

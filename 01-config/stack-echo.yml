@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.37
+# Version : 9.49
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -72,8 +72,9 @@ services:
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
       # 1. OPTIMISATIONS STREAMING & UPLOAD
       - "bunkerweb.REVERSE_PROXY_BUFFERING=no"
-      - "bunkerweb.REVERSE_PROXY_REQUEST_BUFFERING=no"
+      - "bunkerweb.REVERSE_PROXY_REQUEST_BUFFERING=yes"
       - "bunkerweb.MAX_CLIENT_SIZE=500m"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_buffers=client_body_buffer_size 100m; proxy_buffer_size 128k; proxy_buffers 4 256k; proxy_busy_buffers_size 256k;"
       - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600s"
       - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600s"
       - "bunkerweb.REVERSE_PROXY_CONNECT_TIMEOUT=60s"
@@ -89,9 +90,21 @@ services:
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user"
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user"
 
-      # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass)
-      - "bunkerweb.REVERSE_PROXY_HOST_2=http://echo-auth:8000"
-      - "bunkerweb.REVERSE_PROXY_URL_2=/api/verify"
+      # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass sécurisé contre le transfert de Content-Length)
+      # On crée manuellement la location Nginx sans passer par la macro REVERSE_PROXY_URL_2
+      # pour garantir l'absence de buffering et de Content-Length sur l'appel d'auth.
+      - |
+        bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
+            internal;
+            proxy_pass http://echo-auth:8000;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header X-Original-URI $$request_uri;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
 
       # (Les intercepteurs /auth ont été supprimés car ils provoquaient une boucle infinie)
 
@@ -102,13 +115,15 @@ services:
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_ssologout=location = /sso-logout { auth_request off; add_header Content-Type text/html; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; return 200 '<html><body><script>window.location.href=\"https://auth.${ECHO_DOMAIN:-localhost}/logout?next=https://ui.${ECHO_DOMAIN:-localhost}\";</script></body></html>'; }"
 
       # 🔓 EXCLUSION API PUBLIQUES : Permet au frontend de s'initialiser avant de rediriger proprement
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config|v1/audio/) { auth_request off; proxy_pass http://echo-open-webui:8080; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; proxy_pass http://echo-open-webui:8080; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
       # 🔓 EXCLUSION FICHIERS STATIQUES : Requis pour la PWA, les assets et la mise à jour du Service Worker
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; proxy_pass http://echo-open-webui:8080; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
-      # 💀 POISON VERSION.JSON : Purge forcée du Service Worker via HTTP Clear-Site-Data (Kill-Switch ultime)
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_poison=location = /_app/version.json { auth_request off; add_header Content-Type application/json; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; return 200 '{\"version\":\"ECHO_KILL_SW_V5\"}'; }"
+      # 💀 VERSION.JSON OVERRIDE : Force le rechargement des assets SvelteKit en renvoyant un faux hash.
+      # INTERDIT d'ajouter Clear-Site-Data ici : Open WebUI poll cette URL toutes les ~30s
+      # et cela détruirait le cookie JWT de session (cause racine du bug 401 audio).
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_poison=location = /_app/version.json { auth_request off; add_header Content-Type application/json; return 200 '{\"version\":\"ECHO_KILL_SW_V5\"}'; }"
 
       # 🚫 ANTI-CACHE DYNAMIQUE (Pour forcer l'interception SSO sur le HTML)
       - "bunkerweb.CUSTOM_CONF_HTTP_mapcache=map $$sent_http_content_type $$html_cache_control { default \"\"; \"~*text/html\" \"no-store, no-cache, must-revalidate, max-age=0\"; }"
@@ -125,6 +140,9 @@ services:
       # EXCLUSION CRITIQUE : Ne pas bannir sur les erreurs 5xx (timeout ou surcharge applicative)
       # 400 retiré : les SPA génèrent légitimement des 400 sur les preflight CORS
       - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=405 444"
+      # ⚡ EXCLUSION 401 DE L'INTERCEPTION : Empêche BunkerWeb de générer error_page 401 @bwerror401
+      # qui écrase notre error_page 401 = @auth_redirect (SSO redirect) dans auth-error.conf
+      - "bunkerweb.INTERCEPTED_ERROR_CODES=400 403 404 405 413 429 500 501 502 503 504"
 
       # Autoriser les verbes HTTP pour l'API (Suppression de chat, édition, etc.)
       - "bunkerweb.ALLOWED_METHODS=GET|POST|HEAD|PUT|DELETE|PATCH|OPTIONS"
@@ -183,14 +201,29 @@ services:
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$dummy $$upstream_http_dummy"
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Echo-Sso-Secret ${ECHO_SSO_SECRET}"
       
-      # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass)
-      - "bunkerweb.REVERSE_PROXY_HOST_2=http://echo-auth:8000"
-      - "bunkerweb.REVERSE_PROXY_URL_2=/api/verify"
+      # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass sécurisé contre le transfert de Content-Length)
+      # On crée manuellement la location Nginx sans passer par la macro REVERSE_PROXY_URL_2
+      # pour garantir l'absence de buffering et de Content-Length sur l'appel d'auth.
+      - |
+        bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
+            internal;
+            proxy_pass http://echo-auth:8000;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header X-Original-URI $$request_uri;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
       # 🛡️ SECURITE ADMIN : Assouplissement WAF pour l'Admin (Burst toléré)
       - "bunkerweb.USE_BAD_BEHAVIOR=yes"
       - "bunkerweb.USE_LIMIT_REQ=yes"
       - "bunkerweb.LIMIT_REQ_RATE=20r/s"
       - "bunkerweb.LIMIT_REQ_BURST=100"
+      # ⚡ EXCLUSION 401 DE L'INTERCEPTION : Empêche BunkerWeb de générer error_page 401 @bwerror401
+      # qui écrase notre error_page 401 = @auth_redirect (SSO redirect) dans auth-error.conf
+      - "bunkerweb.INTERCEPTED_ERROR_CODES=400 403 404 405 413 429 500 501 502 503 504"
       
       # 🚫 ANTI-BOTS & INDEXATION
       - "bunkerweb.CUSTOM_HEADER_1=X-Robots-Tag: noindex, nofollow"

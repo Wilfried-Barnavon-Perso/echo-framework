@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.177.0
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.177.13
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -44,7 +44,7 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 ### 5. Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
 - **ECHO Auth (SSO & MFA) :** IdP autonome (`/opt/ECHO/24-docker-echo-auth/`) gérant l'authentification forte (TOTP). Couplé à BunkerWeb via Forward Auth (`/api/verify`), l'état des sessions et les bannissements IP sont pilotés depuis l'Admin Manager (Révocations granulaires, Kill-Switch).
 - **Dashboard Actif :** Interface interactive (Sidebar asynchrone) de monitoring du cluster Docker, des sessions SSO et des ressources système.
-- **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec un mécanisme de Kill-Switch de Service Worker (PWA) pour forcer les redirections d'authentification.
+- **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec un mécanisme de Kill-Switch de Service Worker (PWA) via surcharge de `version.json` de façon non-destructive (préservation du cookie JWT de session).
 - **Régulation & Consolidation :** Optimisation physique SQLite (Vacuum/WAL) et gestion des sauvegardes à chaud (incluant les bases IdP).
 - **Purge Temporelle des Souvenirs (TTL) :** Centralisation du processus d'élagage de la base vectorielle des souvenirs pour optimiser les performances.
 
@@ -102,6 +102,6 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.177.0*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.177.13*
 
 
