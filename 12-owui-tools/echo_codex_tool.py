@@ -1,8 +1,9 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 1.0
-description: 1.0: Éditeur multi-langage avec Git intégré. 9 fonctions Tool pour le LLM :
+version: 1.1
+description: 1.1: Correction docstring summarize_codex (distillation cloud Gemini).
+             1.0: Éditeur multi-langage avec Git intégré. 9 fonctions Tool pour le LLM :
              create, edit (direct + agent), read (plage lignes), search, summarize (distillation),
              list, delete, history. Sub-chat MODEL_FLASH pour édition assistée via call_cascade.
 """
@@ -321,7 +322,7 @@ class Tools:
         __event_call__: Any = None,
     ) -> str:
         """
-        Produit un résumé technique structuré du fichier (≤ 8000 tokens) via distillation locale (Gemma).
+        Produit un résumé technique structuré du fichier (≤ 8000 tokens) via distillation (Gemini).
         Utile pour comprendre un fichier volumineux sans le charger intégralement dans le contexte.
         :param filename: Fichier à résumer.
         """

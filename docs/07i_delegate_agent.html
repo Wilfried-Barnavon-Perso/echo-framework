@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ECHO Delegate Sub-Agent v1.3 (delegate_tool.py) : sous-agent stateful avec accès aux outils, montée cognitive identique au Pipe (new_cognitive_level), budget d'appels configurable, protocole QUESTION:, résolution callables via _TOOLS_CACHE et sys.modules.">
-  <title>ECHO v5 - 7i. Delegate Sub-Agent</title>
+  <meta name="description" content="ECHO Delegate Agent v1.3 (delegate_tool.py) : agent stateful avec accès aux outils, montée cognitive identique au Pipe (new_cognitive_level), budget d'appels configurable, protocole QUESTION:, résolution callables via _TOOLS_CACHE et sys.modules.">
+  <title>ECHO v5 - 7i. Delegate Agent</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -15,23 +15,23 @@
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7i. Delegate Sub-Agent - Sous-agent Stateful</h1>
+    <h1>7i. Delegate Agent - Agent Stateful</h1>
 
     <p>
-      <code>delegate_tool.py</code> (v1.3) implémente un système de sous-agents ECHO
+      <code>delegate_tool.py</code> (v1.3) implémente un système de agents ECHO
       <strong>stateful avec accès aux outils</strong>. Contrairement à l'ancienne
       <code>delegate_reasoning()</code> (supprimée en <code>cognitive_agents.py</code> v5.14),
-      le sous-agent dispose d'une boucle agentique complète identique au Pipe principal,
+      le agent dispose d'une boucle agentique complète identique au Pipe principal,
       d'un budget d'appels de fonctions configurable et d'un mécanisme de reprise via
       identifiant de session (<code>sub_sid</code>). L'état et la cascade de cette boucle 
-      peuvent être visualisés en temps réel via l'action HUD <a href="07f_actions_ui.html">Sub-Agent Monitor</a>.
+      peuvent être visualisés en temps réel via l'action HUD <a href="07f_actions_ui.html">Agent Monitor</a>.
     </p>
 
     <div class="didactic-box">
       <h4>💡 Delegate vs. delegate_reasoning (supprimé)</h4>
       <p>
         L'ancienne <code>delegate_reasoning()</code> était un appel LLM <strong>stateless</strong>
-        (une seule requête sans outil). Le nouveau <code>delegate_to_subagent</code> est
+        (une seule requête sans outil). Le nouveau <code>delegate_to_agent</code> est
         <strong>stateful</strong> : il maintient un historique de conversation persisté en SQLite
         (<code>cognitive_threads</code>), peut appeler des outils réels, changer de niveau cognitif
         (LITE → FLASH → PRO) et poser des questions à l'orchestrateur via le protocole
@@ -52,22 +52,22 @@
       </thead>
       <tbody>
         <tr>
-          <td><strong><code>delegate_to_subagent</code></strong></td>
-          <td>Délégation principale : crée ou reprend un thread de sous-agent</td>
+          <td><strong><code>delegate_to_agent</code></strong></td>
+          <td>Délégation principale : crée ou reprend un thread de agent</td>
           <td><code>task</code>, <code>system_prompt</code>, <code>sub_sid</code> (opt.), <code>with_context_distillate</code> (opt.)</td>
         </tr>
         <tr>
-          <td><code>list_subagent_sessions</code></td>
+          <td><code>list_agent_sessions</code></td>
           <td>Liste les threads delegate actifs pour le chat courant</td>
           <td>-</td>
         </tr>
         <tr>
-          <td><code>close_subagent_session</code></td>
+          <td><code>close_agent_session</code></td>
           <td>Ferme et purge définitivement un thread (irréversible)</td>
           <td><code>sub_sid</code></td>
         </tr>
         <tr>
-          <td><code>summarize_subagent_session</code></td>
+          <td><code>summarize_agent_session</code></td>
           <td>Résumé structuré d'un thread via distillation LLM (≤ 8192 tokens)</td>
           <td><code>sub_sid</code></td>
         </tr>
@@ -75,24 +75,25 @@
     </table>
 
     <div class="warning-box">
-      <h4>⚠️ Fonctions hors portée du sous-agent (<code>DELEGATE_SUBAGENT_BLACKLIST</code>)</h4>
+      <h4>⚠️ Fonctions hors portée du agent (<code>DELEGATE_AGENT_BLACKLIST</code>)</h4>
       <p>
-        Certains outils sont <strong>exclus</strong> de la liste transmise au sous-agent, pour
+        Certains outils sont <strong>exclus</strong> de la liste transmise au agent, pour
         prévenir les récursions infinies, la corruption de la mémoire long terme et les erreurs
         d'état. La blacklist est définie dans <code>echo_constants.py</code> (§1.5) :
       </p>
       <ul>
-        <li><strong>Récursion</strong> : <code>delegate_to_subagent</code> (guard absolu depth=1)</li>
+        <li><strong>Récursion</strong> : <code>delegate_to_agent</code> (guard absolu depth=1)</li>
+        <li><strong>Orchestration cognitive</strong> : <code>consult_council</code>, <code>consult_supervised_workers</code></li>
         <li><strong>Écriture RAG</strong> : <code>save_memory</code>, <code>forget_memory</code>, <code>save_session_context</code></li>
         <li><strong>Rendu UI</strong> : <code>generate_rich_visualization</code></li>
-        <li><strong>Méta-session</strong> : <code>list_subagent_sessions</code>, <code>close_subagent_session</code>, <code>summarize_subagent_session</code>, <code>context_gauge</code></li>
+        <li><strong>Méta-session</strong> : <code>list_agent_sessions</code>, <code>close_agent_session</code>, <code>summarize_agent_session</code>, <code>list_councils</code>, <code>close_council</code>, <code>list_supervised_tasks</code>, <code>close_supervised_task</code>, <code>context_gauge</code></li>
       </ul>
     </div>
 
     <h2>Persistance - Threads SQLite</h2>
 
     <p>
-      L'état du sous-agent (historique des échanges) est persisté dans la table
+      L'état du agent (historique des échanges) est persisté dans la table
       <code>cognitive_threads</code> de la base <code>{chat_id}.db</code>
       via <code>EchoStateManager</code>. Chaque thread est identifié par un
       <code>sub_sid</code> au format <code>dlg_{10 chars hexadécimaux}</code> (ex: <code>dlg_a3f9b2c1d0</code>).
@@ -100,8 +101,8 @@
 
     <p>
       Un thread peut être repris à tout moment en passant <code>sub_sid</code> à
-      <code>delegate_to_subagent</code>. L'orchestrateur peut ainsi répondre à une
-      <code>QUESTION:</code> du sous-agent, ou reprendre une tâche longue interrompue.
+      <code>delegate_to_agent</code>. L'orchestrateur peut ainsi répondre à une
+      <code>QUESTION:</code> du agent, ou reprendre une tâche longue interrompue.
     </p>
 
     <h2>Résolution des callables - Architecture tri-sources</h2>
@@ -119,12 +120,12 @@
       </div>
       <div class="mermaid">
 flowchart TD
-  START([delegate_to_subagent appelé]) --> S1
+  START([delegate_to_agent appelé]) --> S1
 
   S1["Source 1 : _TOOLS_CACHE[chat_id]\n(module-level dans pipe_engine.py)\nCallables OWUI originaux - optimal"]
   S1 --> CHK1{Cache peuplé ?}
 
-  CHK1 -->|Oui| FILTER["Filtrage DELEGATE_SUBAGENT_BLACKLIST\n→ sub_tools final"]
+  CHK1 -->|Oui| FILTER["Filtrage DELEGATE_AGENT_BLACKLIST\n→ sub_tools final"]
   CHK1 -->|Non| S2["Source 2 : __metadata__['_echo_tools_dict']\n(normalement vide - OWUI ne partage pas)"]
 
   S2 --> CHK2{Dict non vide ?}
@@ -177,10 +178,10 @@ flowchart TD
     <h2>Boucle agentique - <code>_run_subagent_loop()</code></h2>
 
     <p>
-      La boucle principale du sous-agent est structurée en 5 cas mutuellement exclusifs,
+      La boucle principale du agent est structurée en 5 cas mutuellement exclusifs,
       traités à chaque itération selon le contenu de la réponse Gemini. L'état courant de
       l'escalade cognitive est systématiquement persisté et peut être observé via
-      l'action UI <strong>Sub-Agent Monitor</strong>.
+      l'action UI <strong>Agent Monitor</strong>.
     </p>
 
     <div class="mermaid-wrapper">
@@ -190,7 +191,7 @@ flowchart TD
       </div>
       <div class="mermaid">
 flowchart TD
-  ITER([Itération]) --> STATUS["Mise à jour SQLite\n(Sub-Agent Monitor)"]
+  ITER([Itération]) --> STATUS["Mise à jour SQLite\n(Agent Monitor)"]
   STATUS --> CALL["call_cascade()\ncurrent_model_key"]
   CALL --> PARSE["Parse parts brutes\n(thoughtSignature préservée)"]
 
@@ -248,26 +249,26 @@ history.append({"role": "model", "parts": fn_calls})</code></pre>
       Une règle stricte de l'API Gemini : le message <code>user</code> suivant un message
       <code>model</code> contenant des <code>functionCall</code> doit contenir
       <strong>uniquement des parts <code>functionResponse</code></strong>.
-      Aucun texte mélangé n'est toléré. Le sous-agent ne place donc jamais d'information
+      Aucun texte mélangé n'est toléré. Le agent ne place donc jamais d'information
       de budget dans ce message - le budget est géré par le circuit breaker CAS 4.
     </p>
 
     <h2>Protocole QUESTION:</h2>
 
     <p>
-      Lorsque le sous-agent rencontre une ambiguïté irrésoluble par les outils disponibles,
+      Lorsque le agent rencontre une ambiguïté irrésoluble par les outils disponibles,
       il peut demander une clarification à l'orchestrateur principal en terminant sa réponse par :
     </p>
 
     <div class="code-header">Protocole QUESTION: (format strict)</div>
-    <pre><code># Réponse du sous-agent (texte libre + ligne finale obligatoire)
+    <pre><code># Réponse du agent (texte libre + ligne finale obligatoire)
 J'ai analysé les fichiers disponibles. J'ai besoin d'une précision avant de continuer.
 QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le code source ?</code></pre>
 
     <p>
       Python détecte ce pattern avec <code>re.search(r"QUESTION:\s*(.+?)$", text, re.MULTILINE)</code>
       et retourne <code>status = "pending_question"</code> avec le <code>sub_sid</code>.
-      L'orchestrateur rappelle alors <code>delegate_to_subagent</code> avec le même
+      L'orchestrateur rappelle alors <code>delegate_to_agent</code> avec le même
       <code>sub_sid</code> et la réponse dans <code>task</code>.
     </p>
 
@@ -294,7 +295,7 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
         </tr>
         <tr>
           <td><code>pending_question</code></td>
-          <td>Le sous-agent attend une clarification de l'orchestrateur</td>
+          <td>Le agent attend une clarification de l'orchestrateur</td>
           <td><code>sid</code>, <code>question</code>, <code>progress</code>, <code>calls_used</code></td>
         </tr>
         <tr>
@@ -308,7 +309,7 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
     <h2>Politique cognitive - Héritage du Pipe</h2>
 
     <p>
-      Le sous-agent hérite de la politique modèle du Pipe via <code>resolve_model_policy()</code>.
+      Le agent hérite de la politique modèle du Pipe via <code>resolve_model_policy()</code>.
       En mode <code>AUTO</code> ou <code>AUTO_PRO</code>, il démarre en <code>MODEL_LITE</code>
       et peut escalader (ou redescendre) via l'outil <code>new_cognitive_level</code> fantôme,
       injecté dynamiquement dans ses <code>function_declarations</code> à chaque itération.
@@ -344,8 +345,8 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
     <div class="note-box">
       <h4>Comptage du budget</h4>
       <p>
-        La UserValve <code>MAX_SUBAGENT_FUNCTION_CALLS</code> (défaut : 25, plage : 5–50) contrôle
-        le budget d'appels. Ce budget compte les <strong>décisions d'appel du sous-agent</strong>
+        La UserValve <code>MAX_AGENT_FUNCTION_CALLS</code> (défaut : 25, plage : 5–50) contrôle
+        le budget d'appels. Ce budget compte les <strong>décisions d'appel du agent</strong>
         uniquement - pas les opérations internes des outils appelés. Appeler
         <code>consult_council</code> (qui itère lui-même N experts) = 1 unité de budget.
         Les escalades via <code>new_cognitive_level</code> ne consomment <strong>pas</strong>
@@ -357,17 +358,17 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
 
     <p>
       Si l'orchestrateur passe <code>with_context_distillate=True</code> lors de la création
-      du thread (non reprise), le sous-agent appelle <code>_distill_main_context()</code> :
+      du thread (non reprise), le agent appelle <code>_distill_main_context()</code> :
       récupération des 10 derniers messages de la branche active via
       <code>get_active_branch_shadows()</code>, puis distillation locale en 5 points clés.
-      Ce résumé est injecté dans le <code>system_prompt</code> final du sous-agent, lui donnant
+      Ce résumé est injecté dans le <code>system_prompt</code> final du agent, lui donnant
       le contexte de la conversation principale sans saturer son propre contexte.
     </p>
 
     <h2>Cadre d'exécution - <code>DELEGATE_SYSTEM_APPENDIX</code></h2>
 
     <p>
-      Le framework appende automatiquement à chaque <code>system_prompt</code> de sous-agent
+      Le framework appende automatiquement à chaque <code>system_prompt</code> de agent
       un bloc de règles non divulguables (défini dans <code>echo_constants.py</code> §1.5) :
     </p>
 
@@ -377,8 +378,11 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
 SESSION_ID : {sub_sid}
 BUDGET     : Tu disposes de {max_calls} appels de fonctions pour cette mission.
              Chaque appel à un outil (web_search, codex, expert...) consomme 1 unité.
-             Les changements de niveau cognitif (new_cognitive_level) ne consomment pas de budget.
              Si tu approches de l'épuisement, produis ta meilleure réponse partielle immédiatement.
+
+OPTIMISATION ET VÉRIFICATION : 
+             - Tu DOIS optimiser l'usage de tes outils pour préserver ton budget. Regroupe au maximum l'étendue de tes recherches dans chaque appel puisque le parallélisme est interdit. Évite toute redondance.
+             - Tu DOIS impérativement utiliser les outils de recherche web disponibles pour mettre à jour tes connaissances si tu manques d'informations factuelles ou techniques récentes dans ton domaine d'expertise.
 
 CLARIFICATION : Si tu bloques sur une ambiguïté irrésoluble par toi-même,
                 termine ta réponse par cette ligne exacte :
@@ -391,7 +395,7 @@ SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
       <h4>✅ Exactitude - version 1.3 (v5.170.x)</h4>
       <p>
         Cette documentation est extraite du code source <code>delegate_tool.py</code> v1.3
-        et de <code>echo_constants.py</code> v5.6 (DELEGATE_SUBAGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX).
+        et de <code>echo_constants.py</code> v5.6 (DELEGATE_AGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX).
         La suppression de <code>delegate_reasoning</code> est effective depuis
         <code>cognitive_agents.py</code> v5.14.
       </p>
@@ -400,11 +404,11 @@ SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
     <div class="transition-text">
       <a href="07h_codex_editor.html">← ECHO Codex</a>
       &nbsp;&nbsp;
-      <a href="08_system_prompt.html">System Prompt ➔</a>
+      <a href="07j_agent_orchestration.html">7j. Orchestration Multi-Agents ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.177.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.178.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

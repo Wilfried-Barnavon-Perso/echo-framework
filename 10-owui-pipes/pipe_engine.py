@@ -504,12 +504,12 @@ class StreamProcessor:
 #   callables Python réels prêts à être appelés.
 #
 #   En revanche, OWUI NE propage PAS ces callables aux tool callables (ex:
-#   delegate_to_subagent). Chaque outil reçoit un __metadata__ vierge, déconnecté
+#   delegate_to_agent). Chaque outil reçoit un __metadata__ vierge, déconnecté
 #   des modifications faites par le Pipe.
 #
 # Solution : le Pipe stocke __tools__[chat_id] dans ce dict module-level.
 #   Comme le Pipe et tous les outils s'exécutent dans le même processus Python,
-#   delegate_tool peut accéder à ce cache via sys.modules["function_pipe_engine"].
+#   agent_engine_tool peut accéder à ce cache via sys.modules["function_pipe_engine"].
 #
 # Durée de vie : le cache persiste tant que le processus uvicorn tourne.
 #   En cas de redémarrage, il est reconstitué au premier message de chaque chat.
@@ -556,9 +556,9 @@ class Pipe:
         #      Contient les specs OpenAI mais PAS les callables.
         #
         # Dans le cas 1 (dict), on stocke dans _TOOLS_CACHE[chat_id] pour que
-        # delegate_tool puisse y accéder sans passer par __metadata__.
+        # agent_engine_tool puisse y accéder sans passer par __metadata__.
         # Dans le cas 2 (list), on extrait les specs pour construire _echo_body_tools,
-        # mais les callables devront être reconstruits via sys.modules dans delegate_tool.
+        # mais les callables devront être reconstruits via sys.modules dans agent_engine_tool.
         import logging as _plog
         _log_pipe = _plog.getLogger("echo.pipe")
 

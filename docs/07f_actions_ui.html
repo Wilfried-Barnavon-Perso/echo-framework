@@ -111,8 +111,8 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
         </tr>
         <tr>
           <td>5</td>
-          <td><code>subagent_monitor_action.py</code></td>
-          <td>Sub-Agent Monitor</td>
+          <td><code>agent_monitor_action.py</code></td>
+          <td>Agent Monitor</td>
           <td><code>4</code></td>
           <td>HUD de visualisation arborescente des threads cognitifs en temps réel</td>
         </tr>
@@ -439,18 +439,28 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 5 - Sub-Agent Monitor (<code>subagent_monitor_action.py</code>, v1.1)</h2>
+    <h2>Action 5 - Agent Monitor (<code>agent_monitor_action.py</code>, v1.4)</h2>
 
     <p>
       Ouvre un HUD interactif (div draggable et redimensionnable) injecté dans le DOM permettant de
-      visualiser l'arborescence des threads des sub-agents cognitifs en temps réel.
+      visualiser l'arborescence des threads des agents cognitifs en temps réel. Ce module est propulsé par
+      le moteur de rendu natif <strong>EchoUI</strong>.
     </p>
     <p>
       Basé sur une boucle d'événements bidirectionnelle avec le frontend (Pattern Promise), ce cockpit
-      interroge le statut des agents pour afficher l'état courant de l'escalade cognitive. L'interface 
-      présente sous forme d'arbre hiérarchique les délégations en cours, les modèles sollicités et
-      l'état de la réflexion sans saturer l'interface principale de chat.
+      interroge le statut des agents pour afficher l'état courant de l'escalade cognitive.
     </p>
+    
+    <h3>Taxonomie visuelle et Orchestration Multi-Agentique</h3>
+    <p>
+      L'interface classifie et regroupe les threads de réflexion de l'orchestrateur selon une taxonomie stricte :
+    </p>
+    <ul>
+      <li>🤖 <strong>Agent</strong> : Agent stateful classique.</li>
+      <li>🎓 <strong>Expert</strong> : Agent expert qualifié selon un rôle métier défini.</li>
+      <li>🏛️ <strong>Conseil (Council)</strong> : Stratégie de Table Ronde Delphi. L'interface fusionne <em>chronologiquement</em> tous les threads des membres du conseil en une vue unifiée.</li>
+      <li>📋 <strong>Superviseur (Supervisor)</strong> : Orchestration hiérarchique. L'interface affiche l'agent superviseur avec le regroupement arborescent des <em>workers</em> sous sa tutelle.</li>
+    </ul>
 
     <h2>Action 6 - ECHO Codex (<code>echo_codex_action.py</code>, v1.8)</h2>
 
@@ -498,7 +508,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
     </div>
 
     <footer>
-      ECHO Framework - Version 5.177.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.178.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

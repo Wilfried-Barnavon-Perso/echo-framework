@@ -1,104 +1,104 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Python Worker ECHO v5 (worker_api.py v1.4, Flask, port 5000) : exécution de code Python isolée par processus OS, bibliothèques réelles, timeout configurable, sorties stdout.">
-  <title>ECHO v5 - 7e. Exécution &amp; Pilotage</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
-  <main>
-    <h1>7e. Exécution &amp; Pilotage</h1>
-
-    <p>
-      L'outil d'exécution Python (<code>python_code_executor.py</code>) soumet du code au
-      <strong>Python Worker</strong> - un micro-service Docker isolé. L'isolation est garantie par
-      un <strong>processus OS distinct</strong> (<code>multiprocessing.Process</code>) pour chaque
-      requête, avec son propre répertoire temporaire. Une fois le processus terminé ou expiré, il
-      n'existe plus aucune trace en mémoire.
-    </p>
-
-    <h2>Python Worker (Sandbox)</h2>
-
-    <table>
-      <thead><tr><th>Attribut</th><th>Valeur vérifiée</th></tr></thead>
-      <tbody>
-        <tr><td><strong>Conteneur</strong></td><td><code>echo-python-worker</code></td></tr>
-        <tr><td><strong>Port interne</strong></td><td><strong>5000</strong> (Flask, <code>app.run(host='0.0.0.0', port=5000)</code>)</td></tr>
-        <tr><td><strong>Source</strong></td><td><code>21-docker-python-worker/worker_api.py</code></td></tr>
-        <tr><td><strong>Version</strong></td><td>1.4 (HEALTHCHECK)</td></tr>
-        <tr><td><strong>Framework</strong></td><td>Flask (mode <code>threaded=True</code>) - <em>pas</em> FastAPI</td></tr>
-        <tr><td><strong>Image de base</strong></td><td><code>python:3.14-slim</code></td></tr>
-        <tr>
-          <td><strong>Bibliothèques disponibles</strong></td>
-          <td>
-            <code>pandas</code>, <code>numpy</code>, <code>scipy</code>, <code>scikit-learn</code>,
-            <code>yfinance</code>, <code>beautifulsoup4</code>, <code>openpyxl</code>,
-            <code>regex</code>, <code>sympy</code>, <code>mgzip</code>, <code>orjson</code>,
-            <code>pybase64</code>, <code>networkx</code> + bibliothèque standard Python 3.14
-          </td>
-        </tr>
-        <tr><td><strong>Bibliothèques absentes</strong></td><td><code>matplotlib</code> et <code>requests</code> ne sont <strong>pas</strong> dans <code>requirements.txt</code></td></tr>
-        <tr><td><strong>Timeout</strong></td><td>30 s par défaut (paramètre <code>timeout</code> de la requête, configurable par l'appelant)</td></tr>
-        <tr><td><strong>Isolation</strong></td><td>Processus OS distinct (<code>multiprocessing.Process</code>) + répertoire temporaire dédié (<code>tempfile.TemporaryDirectory</code>)</td></tr>
-        <tr><td><strong>Sortie</strong></td><td>stdout et stderr capturés séparément (<code>contextlib.redirect_stdout/stderr</code>)</td></tr>
-      </tbody>
-    </table>
-
-    <h2>Outil <code>python_code_executor.py</code></h2>
-
-    <p>
-      L'outil soumet un bloc de code Python au Worker via <code>POST /execute</code>.
-      La réponse contient :
-    </p>
-    <ul>
-      <li><code>output</code> : contenu de stdout (chaîne de texte).</li>
-      <li><code>error</code> : contenu de stderr (vide si succès).</li>
-      <li><code>status</code> : <code>success</code>, <code>error</code> (stderr non vide) ou <code>critical_error</code> (exception non rattrapée / crash silencieux).</li>
-    </ul>
-
-    <div class="didactic-box">
-      <h4>?? Absence de matplotlib - alternative</h4>
-      <p>
-        <code>matplotlib</code> n'est pas installé dans le Worker. Pour produire des graphiques,
-        ECHO utilise l'outil <strong>Visual Intelligence</strong> (<code>universal_visual_generator.py</code>)
-        qui génère des interfaces interactives ECharts, Vega ou Mermaid côté navigateur - sans
-        bibliothèque de rendu serveur.
-      </p>
-    </div>
-
-    <div class="tech-spec">
-      <h4>?? Isolation par processus OS - mécanisme exact</h4>
-      <p>
-        Contrairement à un simple <code>exec()</code> dans un thread Python, le Worker crée un
-        <code>multiprocessing.Process</code> pour chaque exécution. Cela garantit une vraie isolation
-        mémoire (adress space séparé) et empêche les effets de bord entre requêtes concurrentes.
-        Flask en mode <code>threaded=True</code> permet de servir plusieurs requêtes HTTP en parallèle,
-        chacune lançant son propre sous-processus.
-      </p>
-    </div>
-
-    <div class="warning-box">
-      <h4>?? Sécurité de l'exécution</h4>
-      <p>
-        Le Worker n'est pas une sandbox hermétique contre du code malveillant intentionnel :
-        le sous-processus a accès au réseau Docker interne. Il est conçu pour exécuter du code
-        de confiance généré par le modèle, pas du code provenant de sources tierces non vérifiées.
-      </p>
-    </div>
-
-    <div class="transition-text">
-      <a href="07d_memory_cognition.html">? Mémoire &amp; Cognition</a>
-      &nbsp;&nbsp;
-      <a href="07f_actions_ui.html">Actions UI (HUD) ?</a>
-    </div>
-
-    <footer>
-      ECHO Framework - Version 5.177.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-    </footer>
-  </main>
-  <script src="nav.js"></script>
-</body>
-</html>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Python Worker ECHO v5 (worker_api.py v1.4, Flask, port 5000) : exÃ©cution de code Python isolÃ©e par processus OS, bibliothÃ¨ques rÃ©elles, timeout configurable, sorties stdout.">
+  <title>ECHO v5 - 7e. ExÃ©cution &amp; Pilotage</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <main>
+    <h1>7e. ExÃ©cution &amp; Pilotage</h1>
+
+    <p>
+      L'outil d'exÃ©cution Python (<code>python_code_executor.py</code>) soumet du code au
+      <strong>Python Worker</strong> - un micro-service Docker isolÃ©. L'isolation est garantie par
+      un <strong>processus OS distinct</strong> (<code>multiprocessing.Process</code>) pour chaque
+      requÃªte, avec son propre rÃ©pertoire temporaire. Une fois le processus terminÃ© ou expirÃ©, il
+      n'existe plus aucune trace en mÃ©moire.
+    </p>
+
+    <h2>Python Worker (Sandbox)</h2>
+
+    <table>
+      <thead><tr><th>Attribut</th><th>Valeur vÃ©rifiÃ©e</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Conteneur</strong></td><td><code>echo-python-worker</code></td></tr>
+        <tr><td><strong>Port interne</strong></td><td><strong>5000</strong> (Flask, <code>app.run(host='0.0.0.0', port=5000)</code>)</td></tr>
+        <tr><td><strong>Source</strong></td><td><code>21-docker-python-worker/worker_api.py</code></td></tr>
+        <tr><td><strong>Version</strong></td><td>1.4 (HEALTHCHECK)</td></tr>
+        <tr><td><strong>Framework</strong></td><td>Flask (mode <code>threaded=True</code>) - <em>pas</em> FastAPI</td></tr>
+        <tr><td><strong>Image de base</strong></td><td><code>python:3.14-slim</code></td></tr>
+        <tr>
+          <td><strong>BibliothÃ¨ques disponibles</strong></td>
+          <td>
+            <code>pandas</code>, <code>numpy</code>, <code>scipy</code>, <code>scikit-learn</code>,
+            <code>yfinance</code>, <code>beautifulsoup4</code>, <code>openpyxl</code>,
+            <code>regex</code>, <code>sympy</code>, <code>mgzip</code>, <code>orjson</code>,
+            <code>pybase64</code>, <code>networkx</code> + bibliothÃ¨que standard Python 3.14
+          </td>
+        </tr>
+        <tr><td><strong>BibliothÃ¨ques absentes</strong></td><td><code>matplotlib</code> et <code>requests</code> ne sont <strong>pas</strong> dans <code>requirements.txt</code></td></tr>
+        <tr><td><strong>Timeout</strong></td><td>30 s par dÃ©faut (paramÃ¨tre <code>timeout</code> de la requÃªte, configurable par l'appelant)</td></tr>
+        <tr><td><strong>Isolation</strong></td><td>Processus OS distinct (<code>multiprocessing.Process</code>) + rÃ©pertoire temporaire dÃ©diÃ© (<code>tempfile.TemporaryDirectory</code>)</td></tr>
+        <tr><td><strong>Sortie</strong></td><td>stdout et stderr capturÃ©s sÃ©parÃ©ment (<code>contextlib.redirect_stdout/stderr</code>)</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Outil <code>python_code_executor.py</code></h2>
+
+    <p>
+      L'outil soumet un bloc de code Python au Worker via <code>POST /execute</code>.
+      La rÃ©ponse contient :
+    </p>
+    <ul>
+      <li><code>output</code> : contenu de stdout (chaÃ®ne de texte).</li>
+      <li><code>error</code> : contenu de stderr (vide si succÃ¨s).</li>
+      <li><code>status</code> : <code>success</code>, <code>error</code> (stderr non vide) ou <code>critical_error</code> (exception non rattrapÃ©e / crash silencieux).</li>
+    </ul>
+
+    <div class="didactic-box">
+      <h4>?? Absence de matplotlib - alternative</h4>
+      <p>
+        <code>matplotlib</code> n'est pas installÃ© dans le Worker. Pour produire des graphiques,
+        ECHO utilise l'outil <strong>Visual Intelligence</strong> (<code>universal_visual_generator.py</code>)
+        qui gÃ©nÃ¨re des interfaces interactives ECharts, Vega ou Mermaid cÃ´tÃ© navigateur - sans
+        bibliothÃ¨que de rendu serveur.
+      </p>
+    </div>
+
+    <div class="tech-spec">
+      <h4>?? Isolation par processus OS - mÃ©canisme exact</h4>
+      <p>
+        Contrairement Ã  un simple <code>exec()</code> dans un thread Python, le Worker crÃ©e un
+        <code>multiprocessing.Process</code> pour chaque exÃ©cution. Cela garantit une vraie isolation
+        mÃ©moire (adress space sÃ©parÃ©) et empÃªche les effets de bord entre requÃªtes concurrentes.
+        Flask en mode <code>threaded=True</code> permet de servir plusieurs requÃªtes HTTP en parallÃ¨le,
+        chacune lanÃ§ant son propre sous-processus.
+      </p>
+    </div>
+
+    <div class="warning-box">
+      <h4>?? SÃ©curitÃ© de l'exÃ©cution</h4>
+      <p>
+        Le Worker n'est pas une sandbox hermÃ©tique contre du code malveillant intentionnel :
+        le sous-processus a accÃ¨s au rÃ©seau Docker interne. Il est conÃ§u pour exÃ©cuter du code
+        de confiance gÃ©nÃ©rÃ© par le modÃ¨le, pas du code provenant de sources tierces non vÃ©rifiÃ©es.
+      </p>
+    </div>
+
+    <div class="transition-text">
+      <a href="07d_memory_cognition.html">? MÃ©moire &amp; Cognition</a>
+      &nbsp;&nbsp;
+      <a href="07f_actions_ui.html">Actions UI (HUD) ?</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.178.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+  <script src="nav.js"></script>
+</body>
+</html>

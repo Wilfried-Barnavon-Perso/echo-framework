@@ -1,130 +1,130 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Explorateur de l'Espace Personnel ECHO v5 (file_content_explorer.py v5.109.10) : read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, download_from_url, get_file_metadata, calculate_file_hashes.">
-  <title>ECHO v5 - 7c. Explorateur de l'Espace Personnel</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
-  <main>
-    <h1>7c. Explorateur de l'Espace Personnel</h1>
-
-    <p>
-      L'Explorateur de l'Espace Personnel (<code>file_content_explorer.py</code> v5.109.10) permet à ECHO
-      d'analyser, de sonder sémantiquement, d'afficher et de télécharger des fichiers depuis le Vault de
-      l'utilisateur (<code>/app/backend/data/users/{uid}/files/</code>).
-      Il supporte la lecture paginée de texte, l'analyse multimodale (images, PDF, audio) et le
-      téléchargement Stealth depuis des URLs distantes.
-    </p>
-
-    <h2>Fonctions disponibles</h2>
-
-    <div class="didactic-box">
-      <h4>?? Noms réels des fonctions</h4>
-      <p>
-        Les noms ci-dessous sont les noms exacts des méthodes Python dans le code source.
-        C'est sous ces noms que Gemini les voit et les invoque via Tool Call.
-      </p>
-    </div>
-
-    <table>
-      <thead>
-        <tr><th>Fonction</th><th>Description</th><th>Paramètres clés</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><code>read_raw_file_content</code></td>
-          <td>
-            Lecture paginée d'un fichier par son <code>file_id</code>. Trois modes de sortie :
-            <code>text</code> (lignes numérotées), <code>base64</code> (12 Ko par chunk), <code>hex</code> (8 Ko par chunk).
-            Limité à 16 Ko par appel (<code>MAX_READ_SIZE_KB</code>).
-          </td>
-          <td><code>file_id</code>, <code>start_line</code>, <code>end_line</code>, <code>output_mode</code>, <code>byte_offset</code></td>
-        </tr>
-        <tr>
-          <td><code>semantic_probe</code></td>
-          <td>
-            Sonde sémantiquement un fichier via le modèle configuré (<code>ANALYSE_MODEL</code> - valve utilisateur, défaut <code>MODEL_FLASH</code>).
-            Injecte le fichier entier en <code>inlineData</code> Base64 + une question. Retourne la réponse + la pensée (CoT) séparée.
-          </td>
-          <td><code>file_id</code>, <code>query</code></td>
-        </tr>
-        <tr>
-          <td><code>read_multimedia_file</code></td>
-          <td>
-            Transmet un fichier multimédia supporté par Gemini (image, audio, vidéo, PDF) au moteur d'inférence
-            via <code>inlineData</code>. Vérifie le MIME via <code>get_gemini_mime()</code> avant l'injection.
-          </td>
-          <td><code>file_id</code></td>
-        </tr>
-        <tr>
-          <td><code>show_image_to_user</code></td>
-          <td>
-            Affiche une image dans le HUD interactif ECHO (même moteur que le navigateur web :
-            zoom, pan, drag, resize, minimisation).
-            Accepte un <code>file_id</code> local (Base64 inline) ou une URL distante.
-            Fallback gracieux si le serveur ne peut pas valider l'URL (CDN restrictifs type Wikimedia) -
-            l'image est quand même injectée côté client.
-          </td>
-          <td><code>target</code> (file_id ou URL)</td>
-        </tr>
-        <tr>
-          <td><code>download_from_url</code></td>
-          <td>
-            Télécharge un fichier depuis une URL distante avec le <strong>Stealth Engine</strong> (User-Agent mimic navigateur,
-            gestion des redirections 302, anti-403). Le fichier est sauvegardé dans le Vault et enregistré dans <code>processed_files</code>.
-          </td>
-          <td><code>url</code>, <code>filename</code> (optionnel)</td>
-        </tr>
-        <tr>
-          <td><code>get_file_metadata</code></td>
-          <td>
-            Retourne les métadonnées physiques d'un fichier : nom, taille en octets, type MIME détecté via <code>get_gemini_mime()</code>.
-          </td>
-          <td><code>file_id</code></td>
-        </tr>
-        <tr>
-          <td><code>calculate_file_hashes</code></td>
-          <td>
-            Calcule les empreintes SHA-256 d'une liste de fichiers. Utile pour vérifier l'intégrité
-            ou détecter les doublons dans le Vault.
-          </td>
-          <td><code>file_ids</code> (liste)</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <h2>Détection MIME robuste</h2>
-
-    <p>
-      Toutes les fonctions qui manipulent des binaires utilisent <code>get_gemini_mime(fpath)</code>
-      (<code>echo_constants.py</code>) pour détecter le type réel du fichier selon six niveaux de
-      fiabilité croissante (mappings ECHO ? <code>mimetypes</code> ? Magic Numbers ?
-      liste blanche Gemini ? Null-Byte Sniffing ? fallback <code>application/octet-stream</code>).
-    </p>
-
-    <h2>Isolation Utilisateur</h2>
-
-    <p>
-      La résolution des chemins passe systématiquement par <code>resolve_upload_file_path(uid, file_id, uploads_dir)</code>.
-      Cette fonction valide que le <code>file_id</code> appartient bien à l'utilisateur courant.
-      Un modèle ne peut jamais accéder aux fichiers d'un autre utilisateur, même s'il connaît
-      son <code>file_id</code>.
-    </p>
-
-    <div class="transition-text">
-      <a href="07b_web_intelligence.html">? Web Intelligence</a>
-      &nbsp;&nbsp;
-      <a href="07d_memory_cognition.html">Mémoire &amp; Cognition ?</a>
-    </div>
-
-    <footer>
-      ECHO Framework - Version 5.177.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-    </footer>
-  </main>
-  <script src="nav.js"></script>
-</body>
-</html>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Explorateur de l'Espace Personnel ECHO v5 (file_content_explorer.py v5.109.10) : read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, download_from_url, get_file_metadata, calculate_file_hashes.">
+  <title>ECHO v5 - 7c. Explorateur de l'Espace Personnel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <main>
+    <h1>7c. Explorateur de l'Espace Personnel</h1>
+
+    <p>
+      L'Explorateur de l'Espace Personnel (<code>file_content_explorer.py</code> v5.109.10) permet Ã  ECHO
+      d'analyser, de sonder sÃ©mantiquement, d'afficher et de tÃ©lÃ©charger des fichiers depuis le Vault de
+      l'utilisateur (<code>/app/backend/data/users/{uid}/files/</code>).
+      Il supporte la lecture paginÃ©e de texte, l'analyse multimodale (images, PDF, audio) et le
+      tÃ©lÃ©chargement Stealth depuis des URLs distantes.
+    </p>
+
+    <h2>Fonctions disponibles</h2>
+
+    <div class="didactic-box">
+      <h4>?? Noms rÃ©els des fonctions</h4>
+      <p>
+        Les noms ci-dessous sont les noms exacts des mÃ©thodes Python dans le code source.
+        C'est sous ces noms que Gemini les voit et les invoque via Tool Call.
+      </p>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>Fonction</th><th>Description</th><th>ParamÃ¨tres clÃ©s</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>read_raw_file_content</code></td>
+          <td>
+            Lecture paginÃ©e d'un fichier par son <code>file_id</code>. Trois modes de sortie :
+            <code>text</code> (lignes numÃ©rotÃ©es), <code>base64</code> (12 Ko par chunk), <code>hex</code> (8 Ko par chunk).
+            LimitÃ© Ã  16 Ko par appel (<code>MAX_READ_SIZE_KB</code>).
+          </td>
+          <td><code>file_id</code>, <code>start_line</code>, <code>end_line</code>, <code>output_mode</code>, <code>byte_offset</code></td>
+        </tr>
+        <tr>
+          <td><code>semantic_probe</code></td>
+          <td>
+            Sonde sÃ©mantiquement un fichier via le modÃ¨le configurÃ© (<code>ANALYSE_MODEL</code> - valve utilisateur, dÃ©faut <code>MODEL_FLASH</code>).
+            Injecte le fichier entier en <code>inlineData</code> Base64 + une question. Retourne la rÃ©ponse + la pensÃ©e (CoT) sÃ©parÃ©e.
+          </td>
+          <td><code>file_id</code>, <code>query</code></td>
+        </tr>
+        <tr>
+          <td><code>read_multimedia_file</code></td>
+          <td>
+            Transmet un fichier multimÃ©dia supportÃ© par Gemini (image, audio, vidÃ©o, PDF) au moteur d'infÃ©rence
+            via <code>inlineData</code>. VÃ©rifie le MIME via <code>get_gemini_mime()</code> avant l'injection.
+          </td>
+          <td><code>file_id</code></td>
+        </tr>
+        <tr>
+          <td><code>show_image_to_user</code></td>
+          <td>
+            Affiche une image dans le HUD interactif ECHO (mÃªme moteur que le navigateur web :
+            zoom, pan, drag, resize, minimisation).
+            Accepte un <code>file_id</code> local (Base64 inline) ou une URL distante.
+            Fallback gracieux si le serveur ne peut pas valider l'URL (CDN restrictifs type Wikimedia) -
+            l'image est quand mÃªme injectÃ©e cÃ´tÃ© client.
+          </td>
+          <td><code>target</code> (file_id ou URL)</td>
+        </tr>
+        <tr>
+          <td><code>download_from_url</code></td>
+          <td>
+            TÃ©lÃ©charge un fichier depuis une URL distante avec le <strong>Stealth Engine</strong> (User-Agent mimic navigateur,
+            gestion des redirections 302, anti-403). Le fichier est sauvegardÃ© dans le Vault et enregistrÃ© dans <code>processed_files</code>.
+          </td>
+          <td><code>url</code>, <code>filename</code> (optionnel)</td>
+        </tr>
+        <tr>
+          <td><code>get_file_metadata</code></td>
+          <td>
+            Retourne les mÃ©tadonnÃ©es physiques d'un fichier : nom, taille en octets, type MIME dÃ©tectÃ© via <code>get_gemini_mime()</code>.
+          </td>
+          <td><code>file_id</code></td>
+        </tr>
+        <tr>
+          <td><code>calculate_file_hashes</code></td>
+          <td>
+            Calcule les empreintes SHA-256 d'une liste de fichiers. Utile pour vÃ©rifier l'intÃ©gritÃ©
+            ou dÃ©tecter les doublons dans le Vault.
+          </td>
+          <td><code>file_ids</code> (liste)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>DÃ©tection MIME robuste</h2>
+
+    <p>
+      Toutes les fonctions qui manipulent des binaires utilisent <code>get_gemini_mime(fpath)</code>
+      (<code>echo_constants.py</code>) pour dÃ©tecter le type rÃ©el du fichier selon six niveaux de
+      fiabilitÃ© croissante (mappings ECHO ? <code>mimetypes</code> ? Magic Numbers ?
+      liste blanche Gemini ? Null-Byte Sniffing ? fallback <code>application/octet-stream</code>).
+    </p>
+
+    <h2>Isolation Utilisateur</h2>
+
+    <p>
+      La rÃ©solution des chemins passe systÃ©matiquement par <code>resolve_upload_file_path(uid, file_id, uploads_dir)</code>.
+      Cette fonction valide que le <code>file_id</code> appartient bien Ã  l'utilisateur courant.
+      Un modÃ¨le ne peut jamais accÃ©der aux fichiers d'un autre utilisateur, mÃªme s'il connaÃ®t
+      son <code>file_id</code>.
+    </p>
+
+    <div class="transition-text">
+      <a href="07b_web_intelligence.html">? Web Intelligence</a>
+      &nbsp;&nbsp;
+      <a href="07d_memory_cognition.html">MÃ©moire &amp; Cognition ?</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.178.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+  <script src="nav.js"></script>
+</body>
+</html>

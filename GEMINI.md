@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.177.13
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.178.4
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -13,13 +13,16 @@ ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestratio
 
 ## 🏗️ Architecture V5 : Le Triptyque Fondamental
 
-L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véracité, Autonomie) articulés autour du Kernel ECHO situé dans `/opt/ECHO` :
+L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véracité, Autonomie) articulés autour du Kernel ECHO (dont la partie statique est définie dans `01-config/system-prompt.md`) :
+
+### 0. Le Kernel Statique (`01-config/system-prompt.md`)
+- **Méta-Principes et Identité :** Définit les conditions d'exécution indépassables du Modèle, son persona, ses outils, et les Artéfacts Environnementaux Contextuels (AEC) pour assurer la cohésion globale.
 
 ### 1. Le Cortex (`/opt/ECHO/owui-pipes/pipe_engine.py`)
 - **Suture Bit-Perfect des Métadonnées Gemini :** Reconstruction de l'historique via SQLite (`message_shadows`, table conservée pour compatibilité production) pour une continuité absolue. Garantit une reprise de session identique au bit près via l'ID de message et le timestamp (Verrou de Version). Le suivi de la branche active et de l'état de la session est garanti par un calcul de hash cumulatif (Cumulative Hash) via `EchoStateManager`.
 - **Ajustement du niveau cognitif :** Routage dynamique intelligent (LITE -> FLASH -> PRO).
 - **Délégation Cognitive :** Utilisation de l'outil `new_cognitive_level` pour déléguer les tâches complexes au modèle PRO lors de la traversée de la "Vallée de la Mort Contextuelle" (saturation contextuelle > 50%).
-- **Expertise Conseil (`/opt/ECHO/owui-tools/cognitive_agents.py`) :** Orchestration d'agents spécialisés via une délégation cognitive récursive sans état. Utilise Gemini 3.1 avec `includeThoughts: False` (conservation uniquement des `thoughtSignatures`) pour une boucle itérative efficiente. Inclut `consult_council` : Table Ronde Multi-Experts (protocole Delphi) avec N participants en tours parallélisés et synthèse finale par modèle dédié.
+- **Orchestration Multi-Agents (`agent_orchestration_tool.py`) :** `consult_council` (Table Ronde Delphi, N experts agentiques avec outils, tours parallélisés) et `consult_supervised_workers` (boucle critique/correction récursive). Gestion des Skills via `forge_skill`/`list_skills`. Conservation des `thoughtSignatures` Gemini 3.x.
 - **HTTP/2 Stealth Headers :** Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité (`get_stealth_headers`) pour simuler un navigateur réel.
 
 ### 2. La Conscience (`/opt/ECHO/owui-filters/`)
@@ -37,7 +40,7 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites de gestion mémoire : `save_memory` (long terme, importance 1→5), `search_memory` (reranking pondéré), `save_session_context` / `search_session_context` (RAG éphémère par session), `forget_memory`, `list_memory_topics`.
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes) via `universal_visual_generator.py` et `echo_visuals.py` (Pattern 'Data Island' pour isoler le JS).
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) avec distillation de page (`distill_page`) et indexation RAG éphémère automatique.
-- **Delegate Sub-Agent (`delegate_tool.py`) :** Délégation asynchrone sécurisée. Contraintes pour l'agent de codage : pas de récursion (`depth=1`), pas d'écriture RAG (`save_memory` interdit), et appendice système injecté dynamiquement.
+- **Agent Engine (`agent_engine_tool.py`) :** Moteur d'exécution d'un agent unique via `delegate_to_agent` (± Skill via `role_name`). Boucle agentique avec outils, escalade cognitive, budget configurable. Depth=1 (pas de récursion), pas d'écriture RAG.
 - **Explorateur de l'Espace Personnel :** Analyse sécurisée et indexation des documents locaux de l'utilisateur.
 - **ECHO Codex (`echo_codex_tool.py`) :** Éditeur multi-langage avec Git intégré (dulwich). 9 fonctions (create, edit, read, search, summarize, list, delete, history). Édition assistée par sub-chat `MODEL_FLASH` via `call_cascade`. Registre `codex_docs` dans SQLite par chat. Distillation Cloud pour résumé technique.
 
@@ -52,7 +55,7 @@ Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté s
 - **Cockpit de Rejeu :** Interface de contrôle pour la navigation web (`web_navigation_replay_action.py`).
 - **Export PDF :** Export de conversations en PDF via `export_pdf_action.py`.
 - **Purge Mémoire :** Interface scrollable de suppression sélective de la base vectorielle (`purge_memory_action.py`) avec filtrage par tags, sélection par plage et confirmation.
-- **Sub-Agent Monitor :** Action HUD (`subagent_monitor_action.py`) offrant une vue arborescente des threads cognitifs en temps réel via lecture SQLite.
+- **Agent Monitor :** Action HUD (`agent_monitor_action.py`) offrant une vue arborescente des agents (agents, experts, conseils, superviseurs) en temps réel via lecture SQLite.
 - **Réinitialisation Auth :** Purge des tokens Google OAuth2 de l'Espace Personnel (`reset_auth_action.py`).
 - **ECHO Codex (`echo_codex_action.py`) :** HUD Monaco Editor draggable avec file tree, mini-chat AI (quick actions), diff view (accept/reject), import/export PC, navigation historique Git (◀ ▶ avec mode read-only), restauration de version.
 
@@ -102,6 +105,6 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.177.13*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.178.4*
 
 

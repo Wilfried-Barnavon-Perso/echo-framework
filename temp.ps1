@@ -1,7 +1,7 @@
 # ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.147.12
+# VERSION : 5.147.13
 # DATE    : 2026-05-29
 
 # AUTHOR         : Wilfried BARNAVON
@@ -47,8 +47,8 @@ $GATEWAY_IP = "192.168.147.254"
 $DNS_SERVERS = "[86.54.11.100, 1.1.1.1, 8.8.8.8]"
 
 # --- CONFIGURATION BRANCHE ---
-$BRANCHE = "dev"
-#$BRANCHE = "main"
+#$BRANCHE = "dev"
+$BRANCHE = "main"
 
 function Pause-OnError {
   param([string]$Message)
@@ -59,7 +59,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.147.12"
+$SCRIPT_VERSION = "5.147.13"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"

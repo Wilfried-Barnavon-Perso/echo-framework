@@ -32,7 +32,8 @@ document.addEventListener('DOMContentLoaded', () => {
           { href: '07f_actions_ui.html',        text: '7f. Actions UI (HUD)' },
           { href: '07g_visual_intelligence.html', text: '7g. Visual Intelligence' },
           { href: '07h_codex_editor.html',      text: '7h. ECHO Codex (Éditeur)' },
-          { href: '07i_delegate_subagent.html', text: '7i. Delegate Sub-Agent' }
+          { href: '07i_delegate_agent.html', text: '7i. Delegate Agent' },
+          { href: '07j_agent_orchestration.html', text: '7j. Orchestration Multi-Agents' }
         ]
       },
       { href: '08_system_prompt.html',   text: '8. Le Kernel (System Prompt)' },
@@ -285,7 +286,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const optEn = document.getElementById('opt-en');
 
   if (langToggle) {
-    const isEn = document.cookie.includes('googtrans=/fr/en') || window.location.hash === '#googtrans(fr|en)';
+    const isEn = document.cookie.includes('googtrans=/fr/en') || window.location.hash.includes('googtrans');
     if (isEn) {
       langToggle.classList.add('is-en');
       optFr.classList.remove('active');
@@ -297,19 +298,21 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!currentlyEn) {
         // Switch to EN
         document.cookie = "googtrans=/fr/en; path=/";
-        document.cookie = "googtrans=/fr/en; domain=" + location.hostname + "; path=/";
+        if (location.hostname) {
+          document.cookie = "googtrans=/fr/en; domain=" + location.hostname + "; path=/";
+        }
+        window.location.hash = "#googtrans(fr|en)";
         window.location.reload();
       } else {
         // Switch to FR
         document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC;";
         if (location.hostname) {
           document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=" + location.hostname + "; path=/;";
           document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=." + location.hostname + "; path=/;";
         }
-        if (window.location.hash.includes('googtrans')) {
-          history.replaceState(null, null, window.location.pathname + window.location.search);
-        }
-        window.location.reload();
+        // Force URL without hash to clear Google Translate state completely
+        window.location.href = window.location.pathname + window.location.search;
       }
     });
   }

@@ -1,17 +1,16 @@
 """
-title: ECHO Delegate Sub-Agent
+title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.3
-description: 1.0: Sous-agent ECHO stateful avec accès aux outils et montée cognitive
-             identique au Pipe (new_cognitive_level fantôme en mode AUTO/AUTO_PRO).
+version: 1.4
+description: 1.0: Agent ECHO stateful avec accès aux outils et montée cognitive.
+             Le modèle est choisi par l'orchestrateur via target_model_key.
              Budget d'appels de fonctions configurable par UserValve (par invocation).
-             Stateful via EchoStateManager (cognitive_threads). Remplace delegate_reasoning
-             (cognitive_agents.py ≤ 5.13, supprimé en 5.14).
+             Stateful via EchoStateManager (cognitive_threads).
              4 functions calls :
-               - delegate_to_subagent    : délégation principale
-               - list_subagent_sessions  : liste des threads actifs du chat courant
-               - close_subagent_session  : fermeture définitive d'un thread
-               - summarize_subagent_session : résumé distillé (≤ 8192 tokens)
+               - delegate_to_agent       : délégation principale (± Skill)
+               - list_agent_sessions     : liste des threads actifs du chat courant
+               - close_agent_session     : fermeture définitive d'un thread
+               - summarize_agent_session : résumé distillé (≤ 8192 tokens)
              1.1: Fix critique — préservation des thoughtSignatures Gemini 3.x.
              Les parts du modèle sont désormais conservées BRUTES (pattern _iterative_loop)
              au lieu d'être reconstruites, ce qui perdait le champ thoughtSignature
@@ -19,7 +18,7 @@ description: 1.0: Sous-agent ECHO stateful avec accès aux outils et montée cog
              sur tous les appels post-tool-execution.
              Fix secondaire : suppression du budget_info (text) du message user contenant
              les functionResponse — mélange interdit par l'API Gemini.
-             1.2: Fix injection outils sous-agent.
+             1.2: Fix injection outils agent.
              __tools__ est None dans le contexte Pipe (OWUI ne l'injecte pas dans ce path).
              Solution dual-source : specs via __metadata__['_echo_body_tools'] (injecté par Pipe,
              format OpenAI, fiable), callables via __tools__ quand disponible. Diagnostic log
@@ -32,6 +31,18 @@ description: 1.0: Sous-agent ECHO stateful avec accès aux outils et montée cog
              chaque classe Tools avec user_valves injectées depuis __user__, et récupère les
              méthodes async. Résultat : sub_tools peuplé avec specs (OpenAI→RAW) + callables
              réels. Exécution directe possible sans QUESTION: ni dépendance OWUI interne.
+             1.4: Fusion expert-consultant / sous-agent. Renommage subagent→agent.
+             Ajout role_name optionnel (Skill via echo_skills) sur delegate_to_agent :
+             sans Skill = agent générique, avec Skill = expert qualifié.
+             Ajout max_calls_override (interne, non exposé au LLM) pour budget bridé
+             dans le conseil et le superviseur. Suppression filtre dlg_ sur list/close
+             (tous préfixes de session supportés : dlg_, thread_, thread_council_,
+             thread_supervisor_).
+             1.5: Renommage fichier → agent_engine_tool.py.
+             1.6: Suppression new_cognitive_level de l'agent engine.
+             L'orchestrateur choisit le modèle via target_model_key.
+             Résolution centralisée via clamp_model() (echo_utils).
+             Cascade descendante préservée via call_cascade().
 """
 
 import sys
@@ -48,41 +59,20 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import (
     wrap_tool_output, wrap_cascade_output,
     EchoEvents, EchoGeminiClient, EchoStateManager,
-    resolve_model_policy,
+    clamp_model,
 )
 from echo_constants import (
-    MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING, MODEL_HIERARCHY,
+    MODEL_LITE, MODEL_FLASH, MODEL_PRO,
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
     TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
     TEMP_DISTILLATION, TOP_P_DISTILLATION,
-    DELEGATE_SUBAGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX,
+    DELEGATE_AGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX,
 )
+from echo_skills import get_skill_content
 
 # Identifiant de rôle pour les threads delegate dans cognitive_threads
 _DELEGATE_ROLE_ID = "delegate"
 
-# Description de new_cognitive_level — identique au Pipe (pipe_engine.py)
-_NCL_DESCRIPTION = (
-    "Ajuste le niveau cognitif d'ECHO. Tu DOIS appeler cet outil AVANT "
-    "toute tâche non-triviale pour garantir la qualité de la réponse.\n\n"
-    "## Règles de sélection\n"
-    "- **MODEL_LITE** (Réflexe — défaut) : Salutations, remerciements, extractions simples, "
-    "traduction courte, questions factuelles basiques.\n"
-    "- **MODEL_FLASH** (Exécution — moteur agentique) : OBLIGATOIRE pour toute "
-    "tâche non-triviale. Recherche web, écriture de code, analyse sémantique, "
-    "synthèse de documents, orchestration d'outils, planification, réponses "
-    "structurées, raisonnement multi-étapes.\n"
-    "  → Escalader vers FLASH SYSTÉMATIQUEMENT dès que la tâche "
-    "dépasse le simple réflexe. Ne pas rester en LITE par inertie.\n"
-    "- **MODEL_PRO** (Expertise) : Pour les tâches de haute complexité où "
-    "FLASH a échoué ou serait insuffisant. Architectures systèmes complexes, "
-    "refactoring multi-fichiers avec contraintes imbriquées, logique formelle.\n"
-    "  → Justifier le besoin de PRO. Redescendre vers FLASH ou LITE "
-    "une fois la tâche complexe accomplie.\n\n"
-    "## Corrélation contextuelle\n"
-    "La saturation contextuelle est atténuée par le RAG éphémère. Vigilance "
-    "accrue à haute charge (> 50%) — préférer alors FLASH ou PRO."
-)
 
 
 class Tools:
@@ -97,12 +87,12 @@ class Tools:
         )
 
     class UserValves(BaseModel):
-        MAX_SUBAGENT_FUNCTION_CALLS: int = Field(
+        MAX_AGENT_FUNCTION_CALLS: int = Field(
             default=25, ge=5, le=50,
             description=(
-                "Budget d'appels de fonctions par invocation de sous-agent. "
-                "Compte les décisions d'appel du sous-agent uniquement — "
-                "les opérations internes des outils appelés (ex: itérations d'un expert) "
+                "Budget d'appels de fonctions par invocation d'agent. "
+                "Compte les décisions d'appel de l'agent uniquement — "
+                "les opérations internes des outils appelés (ex: itérations d'un conseil) "
                 "ne sont pas comptées."
             )
         )
@@ -115,12 +105,16 @@ class Tools:
     # 1. DÉLÉGATION PRINCIPALE
     # ==========================================================================
 
-    async def delegate_to_subagent(
+    async def delegate_to_agent(
         self,
         task: str,
         system_prompt: str,
+        role_name: Optional[str] = None,
         sub_sid: Optional[str] = None,
         with_context_distillate: bool = False,
+        target_model_key: Optional[str] = None,
+        # --- Paramètres internes (non exposés au LLM) ---
+        max_calls_override: Optional[int] = None,
         __tools__: Optional[list] = None,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
@@ -129,32 +123,45 @@ class Tools:
         __event_call__: Any = None,
     ) -> str:
         """
-        Délègue une tâche à un sous-agent ECHO autonome avec accès aux outils.
+        Délègue une tâche à un agent ECHO autonome avec accès aux outils.
 
-        Le sous-agent est stateful : son historique est persisté via sub_sid.
+        L'agent peut être générique (system_prompt seul) ou qualifié par un Skill
+        (role_name). Un Skill injecte une persona d'expert persistante qui est
+        préfixée au system_prompt.
+
+        L'agent est stateful : son historique est persisté via sub_sid.
         Rappeler avec le même sub_sid pour reprendre ou répondre à une QUESTION.
 
-        Le sous-agent hérite de la politique cognitive du Pipe (AUTO/AUTO_PRO/MODEL_*).
-        En mode AUTO/AUTO_PRO, il démarre en MODEL_LITE et peut escalader via
-        new_cognitive_level — identiquement au Pipe principal.
+        Le modèle de l'agent est choisi par l'orchestrateur via target_model_key.
+        Si non fourni, l'agent utilise le plafond de la politique utilisateur.
+        Le modèle est soumis au clamping centralisé (clamp_model) et à la
+        cascade descendante en cas d'échec API (call_cascade).
 
         Retours possibles :
           status "success"          → "result" contient la réponse finale
-          status "pending_question" → "question" du sous-agent, relancer avec sub_sid + réponse dans task
+          status "pending_question" → "question" de l'agent, relancer avec sub_sid + réponse dans task
           status "error"            → "message" d'erreur technique
 
         :param task: Mission initiale, ou réponse à une QUESTION (si reprise via sub_sid).
-        :param system_prompt: Persona et règles du sous-agent (rédigés par l'orchestrateur).
+        :param system_prompt: Persona et règles de l'agent (rédigés par l'orchestrateur).
                               Le framework ajoute automatiquement le cadre d'exécution (budget, SESSION_ID).
+        :param role_name: (Optionnel) Identifiant d'un Skill qualifiant l'agent en expert
+                          (ex: 'lead_dev', 'expert_secu'). Si fourni, le contenu du Skill
+                          est chargé et préfixé au system_prompt. Utilisez forge_skill pour
+                          créer des Skills.
         :param sub_sid: None = nouveau thread (SID retourné dans status.sid).
                         Fourni = reprise du thread existant.
         :param with_context_distillate: Si True, injecter un résumé de la branche active du chat
                                          principal dans le system_prompt initial. Désactivé par défaut.
+        :param target_model_key: (Optionnel) Modèle pour l'agent
+                                 ("MODEL_LITE", "MODEL_FLASH", "MODEL_PRO").
+                                 Soumis au clamping de la politique utilisateur.
+                                 Défaut: plafond de la politique (MODEL_SELECTION).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or ""
-        max_calls = self.user_valves.MAX_SUBAGENT_FUNCTION_CALLS
+        max_calls = max_calls_override or self.user_valves.MAX_AGENT_FUNCTION_CALLS
 
         if not user_id or user_id == "system":
             return wrap_tool_output(
@@ -162,30 +169,46 @@ class Tools:
                 status={"status": "error", "message": "user_id requis"}
             )
 
-        # 1. Résolution du sub_sid
-        sid = sub_sid if sub_sid else f"dlg_{uuid.uuid4().hex[:10]}"
+        # 1. Résolution de la persona (Skill optionnel)
+        if role_name:
+            skill_content = get_skill_content(user_id, role_name)
+            if not skill_content:
+                return wrap_tool_output(
+                    text=f"❌ Skill '{role_name}' introuvable. Utilisez forge_skill pour en créer un.",
+                    status={"status": "error", "message": f"Skill '{role_name}' not found"}
+                )
+            # Le Skill définit la persona, le system_prompt l'enrichit contextuellement
+            base_system = f"{skill_content}\n\n{system_prompt}"
+        else:
+            base_system = system_prompt
+
+        # 2. Résolution du sub_sid
+        if sub_sid:
+            sid = sub_sid
+        elif role_name:
+            sid = f"thread_{role_name}_{uuid.uuid4().hex[:8]}"
+        else:
+            sid = f"dlg_{uuid.uuid4().hex[:10]}"
         is_resume = sub_sid is not None
 
-        # 2. Politique cognitive (identique au Pipe via resolve_model_policy)
-        policy_mode, policy_ceiling = resolve_model_policy(__metadata__, user_id=user_id)
-        is_auto = policy_mode in ("auto", "auto_pro")
-
-        # Modèle de départ selon la politique
-        current_model_key = "MODEL_LITE" if is_auto else policy_ceiling
+        # 3. Résolution du modèle — orchestrateur > politique par défaut
+        #    clamp_model = min(demandé, plafond_politique), centralisé dans echo_utils
+        requested = target_model_key or "MODEL_FLASH"
+        current_model_key = clamp_model(requested, __metadata__ or {}, user_id)
 
         # -----------------------------------------------------------------------
         # 3. Résolution des outils disponibles pour le sous-agent
         # -----------------------------------------------------------------------
         # Contrainte architecturale OWUI :
         #   OWUI injecte __tools__ (le dict des outils avec callables) uniquement
-        #   dans le Pipe principal. Les tool callables (comme delegate_to_subagent)
+        #   dans le Pipe principal. Les tool callables (comme delegate_to_agent)
         #   ne reçoivent PAS __tools__ et ne peuvent PAS modifier __metadata__ de
         #   façon visible par les autres outils (chaque outil reçoit un __metadata__
         #   indépendant).
         #
         # Solution (ECHO v5.166.2) :
         #   Le Pipe stocke __tools__ dans _TOOLS_CACHE[chat_id] (module-level).
-        #   delegate_tool lit ce cache via sys.modules["function_pipe_engine"].
+        #   agent_engine_tool lit ce cache via sys.modules["function_pipe_engine"].
         #   Cette lecture est un accès direct à un attribut de module, PAS un scan.
         #
         # Priorité des sources :
@@ -212,10 +235,10 @@ class Tools:
         sub_tools: dict = {}
         if _tools_dict:
             # Filtrage de la blacklist : certains outils ne doivent pas être délégués
-            # (ex: delegate_to_subagent lui-même pour éviter les récursions infinies)
+            # (ex: delegate_to_agent lui-même pour éviter les récursions infinies)
             sub_tools = {
                 k: v for k, v in _tools_dict.items()
-                if k not in DELEGATE_SUBAGENT_BLACKLIST
+                if k not in DELEGATE_AGENT_BLACKLIST
             }
         elif _body_tools_specs:
             # Source 3 : reconstruction depuis sys.modules (valves par défaut)
@@ -228,7 +251,7 @@ class Tools:
         )
 
         # 4. System prompt final (appendice cadre d'exécution)
-        final_system = system_prompt + DELEGATE_SYSTEM_APPENDIX.format(
+        final_system = base_system + DELEGATE_SYSTEM_APPENDIX.format(
             sub_sid=sid, max_calls=max_calls
         )
 
@@ -253,10 +276,11 @@ class Tools:
         history.append({"role": "user", "parts": task_parts})
         state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_index, "user", task_parts)
 
-        await events.status(f"🤖 Sous-agent [{sid}] démarré ({current_model_key})...")
+        label = f"🎓 Expert [{role_name}]" if role_name else f"🤖 Agent [{sid}]"
+        await events.status(f"{label} démarré ({current_model_key})...")
 
         # 8. Boucle agentique
-        return await _run_subagent_loop(
+        return await _run_agent_loop(
             sid=sid,
             chat_id=chat_id,
             user_id=user_id,
@@ -266,9 +290,6 @@ class Tools:
             body_tools_specs=_body_tools_specs,
             final_system=final_system,
             current_model_key=current_model_key,
-            policy_mode=policy_mode,
-            policy_ceiling=policy_ceiling,
-            is_auto=is_auto,
             max_calls=max_calls,
             events=events,
             valves=self.valves,
@@ -283,17 +304,17 @@ class Tools:
     # 2. LISTE DES SESSIONS
     # ==========================================================================
 
-    async def list_subagent_sessions(
+    async def list_agent_sessions(
         self,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
         __event_emitter__: Any = None,
     ) -> str:
         """
-        Liste les sous-sessions delegate actives pour ce chat.
+        Liste les sessions d'agents actives pour ce chat.
         Permet à l'orchestrateur de retrouver un sub_sid pour reprendre une tâche.
 
-        :return: Markdown listant sub_sid, nombre d'étapes et résumé de chaque session.
+        :return: Markdown listant sub_sid, type, nombre d'étapes et résumé de chaque session.
         """
         user_id = (__user__ or {}).get("id", "system")
         if not __chat_id__:
@@ -302,34 +323,41 @@ class Tools:
         state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
         threads = state.list_threads(__chat_id__)
 
-        # Filtrer uniquement les threads delegate (préfixe dlg_)
-        delegate_threads = [t for t in threads if t["sub_sid"].startswith("dlg_")]
-
-        if not delegate_threads:
+        if not threads:
             return wrap_tool_output(
-                text="ℹ️ Aucune sous-session delegate active pour cette conversation.",
+                text="ℹ️ Aucune session d'agent active pour cette conversation.",
                 status={"status": "success", "sessions": []}
             )
 
-        md = "### 🤖 SOUS-SESSIONS DELEGATE ACTIVES\n\n"
-        for t in delegate_threads:
+        md = "### 🤖 SESSIONS D'AGENTS ACTIVES\n\n"
+        for t in threads:
+            sid = t["sub_sid"]
+            # Classification par préfixe
+            if sid.startswith("thread_council_"):
+                t_type, t_icon = "council", "🏛️"
+            elif sid.startswith("thread_supervisor_"):
+                t_type, t_icon = "supervisor", "📋"
+            elif sid.startswith("thread_"):
+                t_type, t_icon = "expert", "🎓"
+            else:
+                t_type, t_icon = "agent", "🤖"
             ts = time.strftime("%H:%M:%S", time.localtime(t.get("updated_at", 0)))
             md += (
-                f"- **SID:** `{t['sub_sid']}` | **Étapes:** {t['last_step'] + 1} | "
-                f"**Modifié:** {ts}\n"
+                f"- {t_icon} **SID:** `{sid}` | **Type:** {t_type} | "
+                f"**Étapes:** {t['last_step'] + 1} | **Modifié:** {ts}\n"
                 f"  > *{t['summary']}*\n\n"
             )
 
         return wrap_tool_output(
             text=md,
-            status={"status": "success", "sessions": [t["sub_sid"] for t in delegate_threads]}
+            status={"status": "success", "sessions": [t["sub_sid"] for t in threads]}
         )
 
     # ==========================================================================
     # 3. FERMETURE DE SESSION
     # ==========================================================================
 
-    async def close_subagent_session(
+    async def close_agent_session(
         self,
         sub_sid: str,
         __user__: Optional[dict] = None,
@@ -337,20 +365,14 @@ class Tools:
         __event_emitter__: Any = None,
     ) -> str:
         """
-        Ferme définitivement une sous-session delegate et purge son historique (irréversible).
-        Utiliser list_subagent_sessions pour retrouver le sub_sid.
+        Ferme définitivement une session d'agent et purge son historique (irréversible).
+        Utiliser list_agent_sessions pour retrouver le sub_sid.
 
-        :param sub_sid: ID de la sous-session à fermer (format dlg_*).
+        :param sub_sid: ID de la session à fermer.
         """
         user_id = (__user__ or {}).get("id", "system")
         if not __chat_id__:
             return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"})
-
-        if not sub_sid.startswith("dlg_"):
-            return wrap_tool_output(
-                text=f"❌ `{sub_sid}` n'est pas une session delegate (préfixe `dlg_` requis).",
-                status={"status": "error"}
-            )
 
         # Garde-fou : vérifier que le thread appartient au chat courant
         state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
@@ -365,7 +387,7 @@ class Tools:
 
         state.delete_thread(sub_sid)
         return wrap_tool_output(
-            text=f"✅ Sous-session `{sub_sid}` fermée et purgée.",
+            text=f"✅ Session `{sub_sid}` fermée et purgée.",
             status={"status": "success", "sid": sub_sid}
         )
 
@@ -373,7 +395,7 @@ class Tools:
     # 4. RÉSUMÉ DE SESSION
     # ==========================================================================
 
-    async def summarize_subagent_session(
+    async def summarize_agent_session(
         self,
         sub_sid: str,
         __user__: Optional[dict] = None,
@@ -382,12 +404,12 @@ class Tools:
         __event_emitter__: Any = None,
     ) -> str:
         """
-        Génère un résumé structuré d'une sous-session delegate (≤ 8192 tokens).
+        Génère un résumé structuré d'une session d'agent (≤ 8192 tokens).
         Limité aux sessions du chat courant.
 
         Structure du résumé : tâche initiale, outils utilisés, résultats clés, conclusion.
 
-        :param sub_sid: ID de la sous-session à résumer (format dlg_*).
+        :param sub_sid: ID de la session à résumer.
         """
         events = EchoEvents(__event_emitter__)
         user_id = (__user__ or {}).get("id", "system")
@@ -430,7 +452,7 @@ class Tools:
                     raw += f"{role} [←OUTIL]: {fr.get('name', '?')} → {resp}\n---\n"
 
         distill_prompt = (
-            "Résume cette sous-session de sous-agent ECHO en 4 sections :\n"
+            "Résume cette session d'agent ECHO en 4 sections :\n"
             "1. **Tâche initiale** — Quelle était la mission ?\n"
             "2. **Outils utilisés** — Lesquels et dans quel ordre ?\n"
             "3. **Résultats clés** — Qu'a-t-on découvert ou produit ?\n"
@@ -480,7 +502,7 @@ class Tools:
 # HELPERS PRIVÉS (fonctions module-level pour clarté)
 # ==============================================================================
 
-async def _run_subagent_loop(
+async def _run_agent_loop(
     sid: str,
     chat_id: str,
     user_id: str,
@@ -490,27 +512,19 @@ async def _run_subagent_loop(
     body_tools_specs: list,
     final_system: str,
     current_model_key: str,
-    policy_mode: str,
-    policy_ceiling: str,
-    is_auto: bool,
     max_calls: int,
     events: EchoEvents,
     valves,
     __user__, __chat_id__, __metadata__,
     __event_emitter__, __event_call__,
 ) -> str:
-    """Boucle agentique principale du sous-agent."""
+    """Boucle agentique principale de l'agent."""
     calls_used = 0
 
     while True:
         # 1. Construction des function_declarations (source A : sub_tools, B : body_tools_specs)
         fn_decls = _build_function_declarations(sub_tools, body_tools_specs)
 
-        # Injection new_cognitive_level fantôme si mode AUTO/AUTO_PRO
-        if is_auto:
-            ncl_tool = _build_escalation_tool(current_model_key, policy_mode)
-            if ncl_tool:
-                fn_decls.append(ncl_tool)
 
         # 2. Payload Gemini complet
         payload: dict = {
@@ -541,40 +555,35 @@ async def _run_subagent_loop(
             )
         except Exception as e:
             return wrap_tool_output(
-                text=f"❌ Erreur API dans le sous-agent [{sid}] : {str(e)}",
+                text=f"❌ Erreur API dans l'agent [{sid}] : {str(e)}",
                 status={"status": "error", "sid": sid, "message": str(e)}
             )
 
         if not data:
             return wrap_tool_output(
-                text=f"❌ Cascade épuisée pour le sous-agent [{sid}].",
+                text=f"❌ Cascade épuisée pour l'agent [{sid}].",
                 status={"status": "error", "sid": sid, "message": "cascade exhausted"}
             )
 
         # 4. Extraction des parts BRUTES de la réponse
-        # Pattern identique à _iterative_loop (cognitive_agents.py) :
+        # Conservation des parts BRUTES (thoughtSignature Gemini 3.x) :
         # on ne reconstruit PAS les parts — les parts brutes conservent le
         # thoughtSignature Gemini 3.x. Le perdre cause un 400 Bad Request
         # systématique sur TOUS les appels suivant une exécution d'outil.
         candidates = data.get("candidates", [])
         if not candidates or not candidates[0].get("content"):
             return wrap_tool_output(
-                text=f"❌ Réponse vide du modèle pour le sous-agent [{sid}].",
+                text=f"❌ Réponse vide du modèle pour l'agent [{sid}].",
                 status={"status": "error", "sid": sid}
             )
 
         # Parts brutes — NE PAS EXTRAIRE de sous-dict, conserver intégralement
         raw_parts = candidates[0]["content"].get("parts", [])
 
-        # Tri des parts par type (inspection du contenu, pas extraction)
-        ncl_raw   = [p for p in raw_parts if "functionCall" in p
-                      and p["functionCall"].get("name") == "new_cognitive_level"]
-        tools_raw = [p for p in raw_parts if "functionCall" in p
-                      and p["functionCall"].get("name") != "new_cognitive_level"]
+        # Tri des parts par type
+        tools_raw = [p for p in raw_parts if "functionCall" in p]
         text_raw  = [p for p in raw_parts if "text" in p and not p.get("thought")]
 
-        # Dicts pour la logique métier (extraits une seule fois depuis les raw parts)
-        ncl_calls = [p["functionCall"] for p in ncl_raw]
         real_fc   = [p["functionCall"] for p in tools_raw]
         text      = "".join(p.get("text", "") for p in text_raw).strip()
 
@@ -584,54 +593,6 @@ async def _run_subagent_loop(
         def _sig(raw_list):
             return next((p["thoughtSignature"] for p in raw_list if "thoughtSignature" in p), None)
 
-        # =====================================================================
-        # CAS 1 : Escalade cognitive (new_cognitive_level)
-        # =====================================================================
-        if ncl_calls and not real_fc:
-            ncl_args = ncl_calls[0].get("args", {})
-            target_req = ncl_args.get("niveau_requis", "")
-
-            # Parts BRUTES du modèle — thoughtSignature préservée
-            history.append({"role": "model", "parts": ncl_raw})
-            state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", ncl_raw, _sig(ncl_raw))
-
-            # Validation du niveau demandé
-            if target_req not in MODEL_HIERARCHY:
-                resp_parts = [{"functionResponse": {
-                    "name": "new_cognitive_level",
-                    "response": {
-                        "status": "error",
-                        "message": f"Niveau '{target_req}' inconnu. Choisissez parmi MODEL_LITE, MODEL_FLASH, MODEL_PRO."
-                    }
-                }}]
-                history.append({"role": "user", "parts": resp_parts})
-                state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx + 1, "user", resp_parts)
-                continue
-
-            # Vérification des droits (policy AUTO ≠ AUTO_PRO)
-            if policy_mode == "auto" and target_req == "MODEL_PRO":
-                resp_parts = [{"functionResponse": {
-                    "name": "new_cognitive_level",
-                    "response": {
-                        "status": "error",
-                        "message": "Transfert vers MODEL_PRO refusé (policy AUTO). Traitez avec MODEL_FLASH."
-                    }
-                }}]
-                history.append({"role": "user", "parts": resp_parts})
-                state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx + 1, "user", resp_parts)
-                continue  # Reboucle sans changer de modèle
-
-            # Mutation du modèle courant (montée ou descente)
-            current_model_key = target_req
-            await events.status(f"🚀 Sous-agent [{sid}] → {target_req}")
-
-            resp_parts = [{"functionResponse": {
-                "name": "new_cognitive_level",
-                "response": {"status": "ok", "model_now": target_req}
-            }}]
-            history.append({"role": "user", "parts": resp_parts})
-            state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx + 1, "user", resp_parts)
-            continue  # calls_used INCHANGÉ
 
         # =====================================================================
         # CAS 2 : Question de clarification (QUESTION: en dernière ligne)
@@ -648,7 +609,7 @@ async def _run_subagent_loop(
                 state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
 
                 return wrap_tool_output(
-                    text=f"Le sous-agent [{sid}] a besoin d'une clarification avant de continuer.",
+                    text=f"L'agent [{sid}] a besoin d'une clarification avant de continuer.",
                     status={
                         "status": "pending_question",
                         "sid": sid,
@@ -668,7 +629,7 @@ async def _run_subagent_loop(
 
             final_text = text or "(Réponse vide)"
             await events.status(
-                f"✅ Sous-agent [{sid}] terminé ({calls_used}/{max_calls} appels).",
+                f"✅ Agent [{sid}] terminé ({calls_used}/{max_calls} appels).",
                 done=True
             )
             return wrap_tool_output(
@@ -727,7 +688,7 @@ async def _run_subagent_loop(
                 pass
 
             await events.status(
-                f"⚠️ Sous-agent [{sid}] — budget épuisé ({max_calls}/{max_calls} appels).",
+                f"⚠️ Agent [{sid}] — budget épuisé ({max_calls}/{max_calls} appels).",
                 done=True
             )
             return wrap_tool_output(
@@ -755,7 +716,7 @@ async def _run_subagent_loop(
             fn_name = fc.get("name", "")
             fn_args = fc.get("args", {})
             # L'ID Gemini identifie chaque appel outil individuel — INDISPENSABLE pour les
-            # appels parallèles au même outil (ex: 2× consult_expert_consultant).
+            # appels parallèles au même outil (ex: 2× consult_council).
             # Sans ID correspondant dans functionResponse, l'API retourne 400.
             fn_id = fc.get("id")  # Peut être None pour les appels non-parallèles
 
@@ -890,7 +851,7 @@ def _resolve_sub_tools_from_sys_modules(body_tools_specs: list, __user__: Option
             continue
         f = t.get("function", {})
         fn_name = f.get("name", "")
-        if not fn_name or fn_name in DELEGATE_SUBAGENT_BLACKLIST:
+        if not fn_name or fn_name in DELEGATE_AGENT_BLACKLIST:
             continue
         sub_tools[fn_name] = {
             "spec": {
@@ -916,7 +877,7 @@ def _build_function_declarations(sub_tools: dict, body_tools_specs: list = None)
       → Fallback quand sub_tools est vide (__tools__ non injecté dans le contexte Pipe).
       → Specs seules, pas de callable → exécution via QUESTION: si le sous-agent en a besoin.
 
-    Le filtrage DELEGATE_SUBAGENT_BLACKLIST est appliqué dans les deux cas.
+    Le filtrage DELEGATE_AGENT_BLACKLIST est appliqué dans les deux cas.
     """
     decls = []
 
@@ -940,7 +901,7 @@ def _build_function_declarations(sub_tools: dict, body_tools_specs: list = None)
                 continue
             f = t.get("function", {})
             fn_name = f.get("name", "")
-            if not fn_name or fn_name in DELEGATE_SUBAGENT_BLACKLIST:
+            if not fn_name or fn_name in DELEGATE_AGENT_BLACKLIST:
                 continue
             decl = {
                 "name": fn_name,
@@ -952,50 +913,6 @@ def _build_function_declarations(sub_tools: dict, body_tools_specs: list = None)
     return decls
 
 
-def _build_escalation_tool(current_model_key: str, policy_mode: str) -> Optional[dict]:
-    """
-    Construit le spec new_cognitive_level fantôme (identique au Pipe, pipe_engine.py).
-    Menu bidirectionnel : le sous-agent peut monter ET descendre.
-    Retourne None si aucune escalade possible (ex: MODEL_LITE en mode 'auto' → seul FLASH).
-    """
-    menu = []
-    if current_model_key == "MODEL_LITE":
-        menu = ["MODEL_FLASH"]
-        if policy_mode == "auto_pro":
-            menu.append("MODEL_PRO")
-    elif current_model_key == "MODEL_FLASH":
-        menu = ["MODEL_LITE"]
-        if policy_mode == "auto_pro":
-            menu.append("MODEL_PRO")
-    elif current_model_key == "MODEL_PRO":
-        menu = ["MODEL_LITE", "MODEL_FLASH"]
-
-    if not menu:
-        return None
-
-    return {
-        "name": "new_cognitive_level",
-        "description": _NCL_DESCRIPTION,
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "niveau_requis": {
-                    "type": "string",
-                    "enum": menu,
-                    "description": "Le niveau cognitif cible."
-                },
-                "plan_de_transfert": {
-                    "type": "string",
-                    "description": "Plan Markdown structuré (Objectif, Analyse, Stratégie, Contraintes)."
-                },
-                "raison": {
-                    "type": "string",
-                    "description": "Justification du changement de niveau."
-                }
-            },
-            "required": ["niveau_requis", "plan_de_transfert"]
-        }
-    }
 
 
 async def _distill_main_context(
@@ -1016,7 +933,7 @@ async def _distill_main_context(
         if not raw:
             return ""
         result = await EchoGeminiClient.call_distillation(
-            f"Résume factuellement cet historique en 5 points clés pour un sous-agent :\n\n{raw}",
+            f"Résume factuellement cet historique en 5 points clés pour un agent :\n\n{raw}",
             {"id": user_id},
             {},
         )

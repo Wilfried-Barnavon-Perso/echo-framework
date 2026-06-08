@@ -262,8 +262,32 @@
       </ul>
     </div>
 
+    <h2><code>_generate_agent_monitor_js()</code> - HUD Cognitive Monitor (v5.28+)</h2>
+    
+    <p>
+      Introduit en v5.28 et peaufiné en v5.32, <code>_generate_agent_monitor_js()</code> propulse 
+      le HUD interactif permettant de visualiser l'architecture d'orchestration multi-agentique.
+    </p>
+
+    <table>
+      <thead><tr><th>Paramètre</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>threads_json</code></td><td><code>str</code></td><td>JSON reconstruit des threads d'agents actifs, avec le détail des étapes de réflexion.</td></tr>
+        <tr><td><code>chat_id</code></td><td><code>str</code></td><td>Identifiant du chat courant - clé <code>localStorage</code> de persistance.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="tech-spec">
+      <h4>⚙️ Caractéristiques spécifiques au HUD Multi-Agent</h4>
+      <ul>
+        <li><strong>Support multi-agentique (v5.32)</strong> : Fusion chronologique des threads membres d'un même conseil, et rendu arborescent hiérarchique pour les superviseurs (via <code>worker_branch</code> et <code>indent_override</code>).</li>
+        <li><strong>Rafraîchissement live</strong> : La boucle événementielle permet un rafraîchissement manuel ou automatique (via un composant Promise récursif).</li>
+        <li><strong>Clamp Viewport</strong> : Mécanisme <code>clampHud</code> pour s'assurer que le HUD reste toujours accessible dans la fenêtre du navigateur.</li>
+      </ul>
+    </div>
+
     <footer>
-      ECHO Framework - Version 5.177.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.178.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,7 +1,7 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.31
+version: 5.32
 description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro. 5.17: Ajout show_image_js (injection JS sans HTMLResponse).
              5.18: Tooltip AUTHENTIFICATION refondu : section QUOTAS détaillée (Crédits, Quota modèle, Reset, Type).
              5.19: Nouveaux paramètres quota (quota_model, RPD, RPM) dans la signature et le tooltip.
@@ -20,9 +20,11 @@ description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-he
              5.28: Preview Panel WYSIWYG — Panneau latéral droit déployable (toggle 🤖).
              Rendu temps réel debounced pour Markdown (marked.js), HTML (iframe srcdoc),
              CSS (iframe + template), SVG (DOM inline). Splitter draggable.
-             Ajout _generate_subagent_monitor_js() — HUD Cognitive Monitor.
+             Ajout _generate_agent_monitor_js() — HUD Cognitive Monitor.
              Visualisation arborescente des agents cognitifs, onglets verticaux,
              refresh manuel + auto-refresh slider 2-15s, clampHud viewport.
+             5.32: Rendu multi-agentique : fusion chronologique (alias d'experts) 
+             et arborescence de superviseur (worker_branch et indent_override).
 """
 
 from fastapi.responses import HTMLResponse
@@ -1506,7 +1508,7 @@ class EchoUI(EchoRichUI):
   # =====================================================================
 
   @staticmethod
-  def _generate_subagent_monitor_js(threads_json: str, chat_id: str) -> str:
+  def _generate_agent_monitor_js(threads_json: str, chat_id: str) -> str:
     """Génère le script JS complet du HUD Cognitive Monitor.
     Injection via __event_call__(type: 'execute', data: code: ...).
     
@@ -1634,8 +1636,14 @@ class EchoUI(EchoRichUI):
       "\n"
       "        if (node.type === 'text') {\n"
       "          if (node.role === 'user' && ni === 0) { icon = '\\ud83d\\udccb'; label = 'T\\u00e2che'; color = C.accent; }\n"
-      "          else if (node.role === 'model') { icon = '\\ud83d\\udcac'; label = 'R\\u00e9ponse'; color = C.success; }\n"
-      "          else { icon = '\\ud83d\\udcad'; label = node.role === 'user' ? 'User' : 'Model'; color = C.textMuted; }\n"
+      "          else if (node.role === 'model') {\n"
+      "            icon = '\\ud83d\\udcac';\n"
+      "            label = node.expert_alias ? node.expert_alias : 'R\\u00e9ponse';\n"
+      "            color = node.expert_alias ? '#a78bfa' : C.success;\n"
+      "          } else { icon = '\\ud83d\\udcad'; label = node.role === 'user' ? 'User' : 'Model'; color = C.textMuted; }\n"
+      "          detail = esc(node.content || '');\n"
+      "        } else if (node.type === 'worker_branch') {\n"
+      "          icon = '\\ud83d\\udc77'; label = 'Worker'; color = C.cyan;\n"
       "          detail = esc(node.content || '');\n"
       "        } else if (node.type === 'functionCall') {\n"
       "          icon = '\\ud83d\\udd27'; label = node.fn_name || '?'; color = C.cyan; indent = 1;\n"
@@ -1644,7 +1652,7 @@ class EchoUI(EchoRichUI):
       "          for (var k in args) { if (args.hasOwnProperty(k)) argParts.push(k + ': ' + esc(trunc(args[k], 80))); }\n"
       "          detail = argParts.join(' \\u00b7 ');\n"
       "        } else if (node.type === 'functionResponse') {\n"
-      "          var isOk = (node.status === 'ok' || node.status === 'success');\n"
+      "          var isOk = (node.status === 'ok' || node.status === 'success' || node.status === true);\n"
       "          icon = isOk ? '\\u2705' : '\\u274c'; label = node.fn_name || '?'; indent = 2;\n"
       "          color = isOk ? C.success : C.error;\n"
       "          detail = esc(trunc(node.content || '', 200));\n"
@@ -1658,6 +1666,7 @@ class EchoUI(EchoRichUI):
       "          icon = '\\u00b7'; label = node.type || '?'; detail = '';\n"
       "        }\n"
       "\n"
+      "        if (node.indent_override !== undefined) indent = node.indent_override;\n"
       "        var marginLeft = indent * 20;\n"
       "        var connector = indent > 0 ? '<span style=\"color:' + C.border + '; margin-right:4px;\">' + (indent > 1 ? '\\u2514\\u2500' : '\\u251c\\u2500\\u2500') + '</span>' : '';\n"
       "        var expandable = detail.length > 60;\n"
@@ -1781,8 +1790,8 @@ class EchoUI(EchoRichUI):
       "\n"
       "  // Refresh\n"
       "  document.getElementById(HUD_ID + '-refresh').onclick = function() {\n"
-      "    if (window.echoSubagentResolve) {\n"
-      "      window.echoSubagentResolve({action: 'refresh'});\n"
+      "    if (window.echoAgentResolve) {\n"
+      "      window.echoAgentResolve({action: 'refresh'});\n"
       "    } else {\n"
       "      var btn = document.getElementById(HUD_ID + '-refresh');\n"
       "      if (btn) { btn.textContent = '\\u23f3'; setTimeout(function() { if (btn) btn.textContent = '\\ud83d\\udd04'; }, 1000); }\n"
@@ -1806,7 +1815,7 @@ class EchoUI(EchoRichUI):
       "    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }\n"
       "    if (autoEnabled) {\n"
       "      autoRefreshTimer = setInterval(function() {\n"
-      "        if (window.echoSubagentResolve) window.echoSubagentResolve({action: 'refresh'});\n"
+      "        if (window.echoAgentResolve) window.echoAgentResolve({action: 'refresh'});\n"
       "      }, autoInterval * 1000);\n"
       "    }\n"
       "    saveState();\n"
@@ -1835,7 +1844,7 @@ class EchoUI(EchoRichUI):
       "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
       "    if (autoRefreshTimer) clearInterval(autoRefreshTimer);\n"
       "    hud.remove();\n"
-      "    if (window.echoSubagentResolve) window.echoSubagentResolve({action: 'close'});\n"
+      "    if (window.echoAgentResolve) window.echoAgentResolve({action: 'close'});\n"
       "  };\n"
       "\n"
       "  // Resize persistence\n"

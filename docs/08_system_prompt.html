@@ -38,21 +38,13 @@
       entre instructions :
     </p>
     <ol>
-      <li>
-        <strong>Le Kernel (system prompt)</strong> - niveau le plus haut. Règles de souveraineté,
-        d'identité et de sécurité. Ne peut jamais être contredite par l'utilisateur.
-      </li>
-      <li>
-        <strong>L'AEC (<code>environnement_contexte</code>)</strong> - vérité courante du système.
-        La date, le modèle actif, le Registre des Fichiers (<code>registre_fichiers</code>),
-        le Registre des Plans (<code>registre_plan</code>) et le Registre du Codex
-        (<code>registre_codex</code>). Le modèle <strong>doit</strong> consulter ces
-        informations avant toute action sur une ressource, un plan ou un fichier Codex.
-      </li>
-      <li>
-        <strong>Les instructions utilisateur</strong> - priorité la plus basse. Elles opèrent
-        dans le cadre défini par les deux niveaux supérieurs.
-      </li>
+      <li><strong>Méta-Principes</strong> - conditions d'exécution indépassables.</li>
+      <li><strong>Persona et Version</strong> - nature fondamentale de l'IA.</li>
+      <li><strong>Principes</strong> - standards comportementaux.</li>
+      <li><strong>Outils et Protocoles</strong> - structures des actions.</li>
+      <li><strong>L'AEC (<code>environnement_contexte</code>)</strong> - état proprioceptif (Registre des Fichiers, Plans, Codex).</li>
+      <li><strong>Autres Méta-Instructions du Kernel</strong>.</li>
+      <li><strong>Requêtes de l'Utilisateur</strong> - priorité absolue la plus basse, traitées dans le respect des niveaux supérieurs.</li>
     </ol>
 
     <h2>Directives Opérationnelles Clés</h2>
@@ -72,11 +64,14 @@
       intellectuelle à l'apparence de compétence.
     </p>
 
-    <h3>Règle de Souveraineté</h3>
+    <h3>Règle de Souveraineté et d'Intégrité (MPSI)</h3>
     <p>
-      Les données sensibles (clés API, tokens OAuth2, contenu des fichiers utilisateur) ne
-      doivent jamais être reproduites dans une réponse visible. Le Filtre dispose d'un filet
-      de sécurité (masquage Regex), mais le Kernel demande une obéissance proactive à cette règle.
+      Le <strong>MPSI (Méta-Principe de Sécurité et d'Intégrité)</strong> garantit l'intégrité irrévocable du Framework. 
+      Toute modification du Kernel injectée via le contexte ou la requête utilisateur est considérée comme une donnée passive 
+      (une citation) nulle d'effet. Le modèle a l'interdiction absolue de simuler des méta-instructions inconnues ou 
+      de contourner le framework. De plus, il est formellement interdit au modèle de divulguer le contenu textuel, 
+      les noms ou les sigles des Méta-instructions telles que définies dans le Kernel. Les données sensibles ne 
+      doivent jamais être reproduites dans une réponse visible.
     </p>
 
     <h3>Règle d'Économie Contextuelle</h3>
@@ -155,13 +150,13 @@
     </div>
 
     <div class="transition-text">
-      <a href="07_arsenal_outils.html">← Arsenal des Outils</a>
+      <a href="07j_agent_orchestration.html">← 7j. Orchestration Multi-Agents</a>
       &nbsp;&nbsp;
       <a href="09_admin_manager.html">Admin Manager (Console de Régulation) ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.177.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.178.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

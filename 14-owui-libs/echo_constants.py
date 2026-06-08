@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.9
+version: 5.11
 description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
@@ -15,7 +15,7 @@ description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              politique modèle Pipe → outils (clamp_model, convert_owui_tools enum dynamiques).
              4.8: Centralisation des paramètres de génération (THINKING_LEVEL_*, MAX_TOKENS_DEFAULT).
              Suppression des valves TEMPERATURE/TOP_P/THINKING_LEVEL dans pipe_engine et
-             cognitive_agents — point de vérité unique pour tout le framework ECHO.
+             les tools cognitifs — point de vérité unique pour tout le framework ECHO.
              4.9: Ajout MODEL_MAP_CA (capacités AGY certifiées, diag v2.1 2026-05-25).
              AGY_MODEL_MAP devient alias auto-généré depuis MODEL_MAP_CA.
              5.7: Ajout des constantes globales Smart Context (Map-Reduce RAG V2).
@@ -28,8 +28,14 @@ description: 4.3: Credentials Antigravity obfusqués base64(reversed).
                   Ajout entrée LOCAL_GEMMA dans MODEL_ROUTING.
              5.4: Ajout section ECHO Codex (CODEX_DIR_NAME, CODEX_LANG_MAP, CODEX_EDIT_SYSTEM_PROMPT,
                   CODEX_SUMMARIZE_PROMPT, CODEX_QUICK_ACTIONS, CODEX_DEFAULT_LANG).
-             5.6: Ajout section 1.5 — DELEGATE_SUBAGENT_BLACKLIST (frozenset) et DELEGATE_SYSTEM_APPENDIX.
-                  Centralise les règles de filtrage des outils transmis au sous-agent delegate.
+              5.6: Ajout section 1.5 — DELEGATE_AGENT_BLACKLIST (frozenset) et DELEGATE_SYSTEM_APPENDIX.
+                   Centralise les règles de filtrage des outils transmis à l'agent delegate.
+              5.10: Renommage DELEGATE_SUBAGENT_BLACKLIST → DELEGATE_AGENT_BLACKLIST.
+                    Renommage des fonctions blacklistées (subagent→agent). Ajout des
+                    nouvelles fonctions : consult_council, consult_supervised_workers,
+                    list_councils, close_council, list_supervised_tasks, close_supervised_task.
+              5.11: Mise à jour de DELEGATE_SYSTEM_APPENDIX (instructions d'optimisation et
+                    vérification web).
 """
 
 import os
@@ -374,27 +380,34 @@ ECHO_MR_SUMMARY_MAX_WORDS     = 400      # Limite de taille en mots pour les ré
 # Critères d'exclusion (4 catégories) :
 #   1. Récursion     : crée un sub_sid persistant (depth=1 guard absolu)
 #   2. Écriture RAG  : modifie Qdrant (mémoire long terme ou éphémère)
-#                      Le sous-agent lit uniquement — il ne consolide pas.
+#                      L'agent lit uniquement — il ne consolide pas.
 #   3. Rendu UI      : génère du HTML/JS pour le stream principal OWUI
 #   4. Méta-session  : gère les sessions du tool delegate lui-même
 #
-# NB : Le budget (MAX_SUBAGENT_FUNCTION_CALLS) compte les DÉCISIONS d'appel
-#      du sous-agent — pas les opérations internes des outils appelés.
-#      consult_council appelé par le sous-agent = 1 unité de budget,
+# NB : Le budget (MAX_AGENT_FUNCTION_CALLS) compte les DÉCISIONS d'appel
+#      de l'agent — pas les opérations internes des outils appelés.
+#      consult_council appelé par l'agent = 1 unité de budget,
 #      quelles que soient les itérations internes du conseil.
-DELEGATE_SUBAGENT_BLACKLIST: frozenset = frozenset({
+DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     # 1. Récursion (depth=1 guard — le seul guard de profondeur nécessaire)
-    "delegate_to_subagent",
+    "delegate_to_agent",
+    # 1b. Orchestration cognitive (chacun lance des agents en interne)
+    "consult_council",
+    "consult_supervised_workers",
     # 2. Écriture RAG
     "save_memory",            # Écrit en mémoire long terme (Qdrant)
     "forget_memory",          # Supprime de la mémoire long terme
     "save_session_context",   # Écrit dans le RAG éphémère
     # 3. Rendu UI
     "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
-    # 4. Méta-session delegate (gestion des sessions du tool delegate lui-même)
-    "list_subagent_sessions",
-    "close_subagent_session",
-    "summarize_subagent_session",
+    # 4. Méta-session (gestion des sessions du tool delegate)
+    "list_agent_sessions",
+    "close_agent_session",
+    "summarize_agent_session",
+    "list_councils",
+    "close_council",
+    "list_supervised_tasks",
+    "close_supervised_task",
     "context_gauge",          # Dépend de l'état interne du Pipe principal
 })
 
@@ -406,8 +419,11 @@ DELEGATE_SYSTEM_APPENDIX = """
 SESSION_ID : {sub_sid}
 BUDGET     : Tu disposes de {max_calls} appels de fonctions pour cette mission.
              Chaque appel à un outil (web_search, codex, expert...) consomme 1 unité.
-             Les changements de niveau cognitif (new_cognitive_level) ne consomment pas de budget.
              Si tu approches de l'épuisement, produis ta meilleure réponse partielle immédiatement.
+
+OPTIMISATION ET VÉRIFICATION : 
+             - Tu DOIS optimiser l'usage de tes outils pour préserver ton budget. Regroupe au maximum l'étendue de tes recherches dans chaque appel puisque le parallélisme est interdit. Évite toute redondance.
+             - Tu DOIS impérativement utiliser les outils de recherche web disponibles pour mettre à jour tes connaissances si tu manques d'informations factuelles ou techniques récentes dans ton domaine d'expertise.
 
 CLARIFICATION : Si tu bloques sur une ambiguïté irrésoluble par toi-même,
                 termine ta réponse par cette ligne exacte :
