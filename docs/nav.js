@@ -1,5 +1,5 @@
 /**
- * ECHO Documentation - nav.js v2.0
+ * ECHO Documentation - nav.js v2.1
  * Génération sidebar + TOC dynamique imbriqué.
  * Aucun style inline - pilotage exclusif par classes CSS (style.css).
  */
@@ -316,11 +316,16 @@ document.addEventListener('DOMContentLoaded', () => {
         document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
         document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC;";
         if (location.hostname) {
-          document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=" + location.hostname + "; path=/;";
-          document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=." + location.hostname + "; path=/;";
+          const hostParts = location.hostname.split('.');
+          for (let i = 0; i < hostParts.length; i++) {
+            const domain = hostParts.slice(i).join('.');
+            document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=" + domain + "; path=/;";
+            document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=." + domain + "; path=/;";
+          }
         }
         // Force URL without hash to clear Google Translate state completely
-        window.location.href = window.location.pathname + window.location.search;
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+        window.location.reload();
       }
     });
   }
