@@ -457,7 +457,17 @@ flowchart TD
       </p>
     </div>
 
-    <h2>Pipeline de Suture - Séquence temporelle</h2>
+    <h2>2. Mécanismes d'Authentification : Antigravity 2.1</h2>
+
+    <p>La sécurisation des échanges et l'identification des utilisateurs reposent sur le standard <strong>ECHO Auth (SSO IdP)</strong> couplé à la nouvelle couche <strong>Antigravity 2.1</strong>. Cette architecture multi-provider garantit la sécurité tout en facilitant l'intégration hybride Cloud/Local.</p>
+
+    <ul>
+      <li><strong>Résolution Multi-Provider :</strong> L'authentification est priorisée (OAuth2 > Clé Primaire > Clé Secondaire) au sein du module <code>EchoAuth.get_ordered_auth_providers()</code>.</li>
+      <li><strong>Flux OAuth2 PKCE via Tunnel SSH :</strong> Pour sécuriser le flux d'autorisation (Authorization Code + PKCE RFC 7636) depuis l'IDE de l'utilisateur, un tunnel SSH éphémère (piloté par <code>echo_ssh_tunnel.py</code> et <code>echo_pkce_server.py</code>) est provisionné dynamiquement sur les ports exposés <strong>8020 à 8024</strong>. Les jetons de rafraîchissement (TTL 55 min) sont générés automatiquement.</li>
+      <li><strong>Protocole Symétrique :</strong> Le module <code>echo_protocol.py</code> traduit les payloads entre les modèles AI Studio et les instances Code Assist, garantissant une compatibilité descendante (API Key pour AI Studio, Bearer + Project pour Antigravity).</li>
+    </ul>
+
+    <h2>3. Anatomie Détaillée d'une Requête (Le Chemin de la Donnée)</h2>
 
     <p>
       Ce diagramme de séquence retrace le cycle complet d'un tour de parole, des quatre phases
@@ -562,6 +572,7 @@ flowchart TB
   subgraph APP ["🖥️ ZONE 2 : APPLICATION & KERNEL TIER"]
     direction TB
     AUTH["🔑 ECHO Auth (SSO IdP)<br/>[:8000 Interne]"]
+    SSH["🚇 ECHO SSH Tunnel (Antigravity)<br/>[:8020-8024]"]
     OWUI["🖥️ Open WebUI<br/>[:3000]"]
     subgraph Kernel ["🧠 ECHO Kernel (In-Process)"]
       direction LR
@@ -598,8 +609,10 @@ flowchart TB
   end
 
   U == "HTTPS" ==> BW
-  BW == "Reverse Proxy" ==> OWUI
+  U -. "OAuth2 PKCE" .-> SSH
+  BW -. "Reverse Proxy" .-> OWUI
   BW -. "Forward Auth" .-> AUTH
+  SSH -. "Validation Callback" .-> AUTH
   BW -. "Accès Admin" .-> AM
 
   P == "SQL R/W" ==> SQL
@@ -731,7 +744,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.178.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.179.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

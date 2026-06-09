@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.11
+version: 5.12
 description: 4.3: Credentials Antigravity obfusqués base64(reversed).
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
@@ -36,6 +36,8 @@ description: 4.3: Credentials Antigravity obfusqués base64(reversed).
                     list_councils, close_council, list_supervised_tasks, close_supervised_task.
               5.11: Mise à jour de DELEGATE_SYSTEM_APPENDIX (instructions d'optimisation et
                     vérification web).
+              5.12: Suppression de MODEL_DISTILLATION dans MODEL_MAP_CA pour résoudre la
+                    collision de clés avec MODEL_LITE (les deux valaient "gemini-3.1-flash-lite").
 """
 
 import os
@@ -212,13 +214,6 @@ MODEL_MAP_CA: dict = {
         "model_id":          "gemini-3.1-flash-lite", # Identique sur les deux APIs
         "max_output_tokens": 65535,                   # Certifié : 400 si 65536 (diag C-quart v2.0)
         "supports_thinking": False,                   # supportsThinking absent (diag section 6c v2.0)
-    },
-    MODEL_DISTILLATION: {
-        "model_id":          "gemini-2.5-flash",      # Identique sur les deux APIs
-        "max_output_tokens": 65535,                   # Infere : section 6 CA affiche "Gemini 3.1 Flash Lite"
-                                                       # — non mesure directement par section 6c.
-                                                       # Sans impact prod : cap universel MIN(val, 65535).
-        "supports_thinking": False,
     },
 }
 

@@ -238,6 +238,7 @@ systemd=true</code></pre>
     <ul>
       <li><strong>SSO & MFA :</strong> Le portail ECHO Auth devient le seul point de passage pour accéder à l'interface.</li>
       <li><strong>Kill-Switch Service Worker (PWA) :</strong> Le WAF intègre un mécanisme de "poisoning" non-destructif (surcharge de <code>/_app/version.json</code>) pour forcer le rechargement des assets SvelteKit sans utiliser <code>Clear-Site-Data</code>, ce qui garantit la préservation du cookie JWT de session (évitant l'erreur 401 sur les flux audio).</li>
+      <li><strong>Tunnel SSH Antigravity (PKCE) :</strong> Pour sécuriser la connexion avec les environnements de développement locaux (IDE), un serveur SSH éphémère expose dynamiquement les ports <strong>8020 à 8024</strong>. Il est indispensable d'autoriser ces ports dans le pare-feu si vous utilisez Antigravity 2.1.</li>
     </ul>
     <p>
       Il implémente une stratégie SPA Robuste de limitation de débit (rate limiting) granulaire :
@@ -270,7 +271,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.178.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.179.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

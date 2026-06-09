@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>ECHO v5 - 12. Manuel Utilisateur Intégré</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="sidebar"></div>
+
+  <main>
+    <h1>12. Manuel Utilisateur Intégré</h1>
+
+    <p>Ce manuel documente l'utilisation de l'interface conversationnelle (Open WebUI) et de la console d'administration (Admin Manager) du framework ECHO. Il est destiné aux utilisateurs et aux administrateurs de l'infrastructure.</p>
+
+    <hr>
+
+    <h2>1. Connexion et Authentification Forte (SSO)</h2>
+
+    <p>L'accès à l'ensemble de la plateforme ECHO est protégé par le module <strong>ECHO Auth (Antigravity 2.1)</strong> via BunkerWeb. L'utilisateur doit s'authentifier par adresse e-mail et mot de passe, suivis obligatoirement d'un code OTP (Time-based One-Time Password).</p>
+
+    <div class="note-box">
+      <h4>Comportement du Single Sign-On (SSO)</h4>
+      <p>Une fois l'authentification validée sur <code>auth.votre-domaine.public</code>, le jeton JWT est propagé. La navigation transversale vers les autres sous-domaines (comme <code>am.votre-domaine.public</code>) s'effectue sans demande de reconnexion.</p>
+    </div>
+
+    <hr>
+
+    <h2>2. Interface Conversationnelle (Open WebUI)</h2>
+
+    <p>Le point d'entrée principal est l'UI hébergée sur <code>ui.votre-domaine.public</code>. Cette interface permet d'interagir avec les modèles cognitifs selon les Méta-Principes dictés par le Kernel.</p>
+
+    <h3>2.1 Chat Principal</h3>
+    <img src="./assets/manuel/main_chat_interface_1781007652196.png" alt="Interface Principale du Chat" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
+    <p>La fenêtre de chat permet de dialoguer avec le Modèle. Les commandes (ex: <code>!help</code>, <code>!status</code>) y sont saisies. L'interface offre un accès direct aux contrôles contextuels via la barre latérale escamotable, où s'affiche notamment l'historique asynchrone des threads et l'activation des outils (Valves).</p>
+
+    <h3>2.2 L'Espace de Travail (Workspace)</h3>
+    <img src="./assets/manuel/workspace_page_1781007671082.png" alt="Workspace - Modèles" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
+    <p>L'Espace de Travail permet la gestion des connaissances et des configurations. La section "Modèles" permet de visualiser et de paramétrer les modèles actifs (ex: Gemini Flash, Pro). C'est ici que l'utilisateur peut configurer ses bases documentaires RAG (Qdrant).</p>
+
+    <img src="./assets/manuel/workspace_tools_page_1781007689685.png" alt="Workspace - Outils" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
+    <p>La section "Outils" recense l'<strong>Arsenal</strong>. Au déploiement de la version 5.179.4, l'interface affiche 13 outils pré-intégrés (notamment le Codex, le Web Navigator, et le système Delphi Council) prêts à être injectés dans le <code>pipe_engine</code>.</p>
+
+    <h3>2.3 Panneau d'Administration (Open WebUI)</h3>
+    <img src="./assets/manuel/admin_panel_overview_1781007758044.png" alt="Panneau d'Administration OWUI" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
+    <p>Accessible via le menu utilisateur, ce panneau est réservé aux réglages de base de l'interface (gestion des groupes d'utilisateurs WebUI, personnalisation UI/UX). Il ne doit pas être confondu avec l'Admin Manager (infrastructure).</p>
+
+    <hr>
+
+    <h2>3. Console d'Infrastructure (Admin Manager)</h2>
+
+    <p>Accessible sur <code>am.votre-domaine.public</code>, l'Admin Manager est le centre névralgique de la supervision physique de la grappe Docker et de la gestion avancée de la sécurité. Son accès requiert les droits d'administration de plus haut niveau.</p>
+
+    <h3>3.1 Tableau de Bord et Métriques</h3>
+    <img src="./assets/manuel/admin_manager_dashboard_1781007789340.png" alt="Tableau de Bord Admin Manager" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
+    <p>Le tableau de bord centralise la charge CPU/RAM du système hôte, l'espace disque disponible, et l'état global du cluster. Il permet d'anticiper les saturations matérielles dues aux opérations lourdes (comme l'embedding local).</p>
+
+    <h3>3.2 Docker & Conteneurs</h3>
+    <img src="./assets/manuel/admin_manager_docker_containers_1781007850899.png" alt="Admin Manager - Conteneurs Docker" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
+    <p>Cette section offre une vue temps réel sur l'orchestration Docker (via lecture du socket <code>/var/run/docker.sock</code>). En régime nominal de la stack v9.3+, l'interface liste l'ensemble des conteneurs en état <code>Running</code> (généralement 17 conteneurs incluant SearXNG, Qdrant, les Workers et BunkerWeb). Le redémarrage ciblé des services s'effectue depuis cet écran.</p>
+
+    <h3>3.3 Sauvegardes et Purge (Système & Maintenance)</h3>
+    <img src="./assets/manuel/admin_manager_system_maintenance_1781007810997.png" alt="Admin Manager - Système et Maintenance" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
+    <img src="./assets/manuel/admin_manager_backups_1781007824569.png" alt="Admin Manager - Sauvegardes" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
+    <p>L'interface de maintenance autorise les opérations asynchrones de nettoyage (Vacuum SQLite, Purge du WAL) pour régénérer les performances des bases identité et conversationnelles. L'outil de sauvegarde à chaud garantit l'intégrité de <code>identity.db</code> sans interrompre l'expérience utilisateur.</p>
+
+    <h3>3.4 Sécurité, Accès et Révocation</h3>
+    <img src="./assets/manuel/admin_manager_security_access_1781007837183.png" alt="Admin Manager - Sécurité et Accès" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
+    <p>Cette page gère l'IdP. L'administrateur peut y forcer la déconnexion des sessions actives (revocation de JWT), imposer des resets de clés TOTP, et configurer le bannissement IP par interaction avec BunkerWeb.</p>
+
+    <div class="transition-text">
+      <a href="11_annexes.html">← 11. Annexes</a>
+      &nbsp;&nbsp;
+      <a href="13_registre_audit.html">13. Registre d'Audit ➔</a>
+    </div>
+
+    <footer>
+      ECHO v5 Documentation - Version <span class="version-badge">5.179.4</span>
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

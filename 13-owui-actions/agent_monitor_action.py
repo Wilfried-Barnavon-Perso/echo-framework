@@ -1,7 +1,7 @@
 """
 title: ECHO Agent Monitor
 author: Wilfried BARNAVON
-version: 1.4
+version: 1.5
 description: 1.0: HUD de visualisation arborescente des agents cognitifs ECHO.
              1.1: Boucle événementielle bidirectionnelle (pattern Codex).
              Suppression des troncatures Python. Refresh live via Promise.
@@ -12,6 +12,7 @@ description: 1.0: HUD de visualisation arborescente des agents cognitifs ECHO.
              1.3: Stratégie multi-agentique : fusion chronologique des conseils (chat)
              et regroupement arborescent des workers sous le superviseur.
              1.4: Optimisation du rendu HUD multi-agent et intégration du nouveau moteur EchoUI.
+             1.5: Classification spécifique Navigateur Web et filtrage HUD de la carte DOM.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxjaXJjbGUgY3g9IjEyIiBjeT0iNCIgcj0iMiIvPjxsaW5lIHgxPSIxMiIgeTE9IjYiIHgyPSIxMiIgeTI9IjkiLz48bGluZSB4MT0iMTIiIHkxPSI5IiB4Mj0iNiIgeTI9IjEzIi8+PGxpbmUgeDE9IjEyIiB5MT0iOSIgeDI9IjE4IiB5Mj0iMTgiLz48Y2lyY2xlIGN4PSI2IiBjeT0iMTUiIHI9IjIiLz48Y2lyY2xlIGN4PSIxOCIgY3k9IjE1IiByPSIyIi8+PGxpbmUgeDE9IjYiIHkxPSIxNyIgeDI9IjYiIHkyPSIyMCIvPjxsaW5lIHgxPSIxOCIgeTE9IjE3IiB4Mj0iMTgiIHkyPSIyMCIvPjxjaXJjbGUgY3g9IjYiIGN5PSIyMSIgcj0iMSIvPjxjaXJjbGUgY3g9IjE4IiBjeT0iMjEiIHI9IjEiLz48L3N2Zz4=
 """
 
@@ -36,7 +37,9 @@ class Action:
 
     def _classify_thread(self, sub_sid: str, role_id: str) -> dict:
         """Classifie un thread par son préfixe et retourne type/icône/couleur."""
-        if sub_sid.startswith("thread_council_"):
+        if sub_sid.startswith("thread_web_"):
+            return {"type": "navigator", "icon": "🌐", "color": "#0ea5e9", "label": "Navigateur Web"}
+        elif sub_sid.startswith("thread_council_"):
             return {"type": "council", "icon": "🏛️", "color": "#f59e0b", "label": "Conseil"}
         elif sub_sid.startswith("thread_supervisor_"):
             return {"type": "supervisor", "icon": "📋", "color": "#8b5cf6", "label": "Superviseur"}
@@ -93,7 +96,12 @@ class Action:
                         status = "ok"
                     text = response.get("text", response.get("message", ""))
                     if not text:
-                        text = str(response)
+                        if "dom_map" in response:
+                            clean_resp = {k: v for k, v in response.items() if k != "dom_map"}
+                            clean_resp["dom_map"] = f"[Carte DOM : {len(response['dom_map'])} éléments]"
+                            text = str(clean_resp)
+                        else:
+                            text = str(response)
                 else:
                     status = "ok"
                     text = str(response)

@@ -62,6 +62,16 @@ state = GlobalState()
 HIGHLIGHT_JS = """
 (function() {
     try {
+        if (!document.getElementById('echo-cursor')) {
+            const cursor = document.createElement('div');
+            cursor.id = 'echo-cursor';
+            cursor.style.cssText = 'position: absolute; width: 16px; height: 16px; background-color: #ff0044; border: 2px solid white; border-radius: 50%; z-index: 2147483647; pointer-events: none; transition: none;';
+            document.body.appendChild(cursor);
+            document.addEventListener('mousemove', e => {
+                cursor.style.left = e.pageX + 'px';
+                cursor.style.top = e.pageY + 'px';
+            });
+        }
         document.querySelectorAll('.echo-marker').forEach(e => e.remove());
         const selectors = 'a, button, input, textarea, select, [role="button"], [role="link"], [onclick]';
         let items = Array.from(document.querySelectorAll(selectors));
@@ -84,7 +94,7 @@ HIGHLIGHT_JS = """
                 marker.innerText = count;
                 marker.style.cssText = `
                     position: absolute; left: ${rect.left + window.scrollX}px; top: ${rect.top + window.scrollY}px;
-                    z-index: 2147483647; background-color: #ff0000; color: #ffffff; font-weight: bold;
+                    z-index: 2147483646; background-color: #ff0000; color: #ffffff; font-weight: bold;
                     font-size: 10px; padding: 1px 2px; border: 1px solid white; border-radius: 2px;
                     pointer-events: none;
                 `;
@@ -131,14 +141,49 @@ class BrowserSession:
             
         return target
 
-    async def mouse_shake(self, page):
-        """Macro de presence."""
+    async def bezier_mouse_move(self, page, target_x, target_y):
+        """Déplacement de souris fluide (Bézier quadratique)."""
         try:
-            for _ in range(3):
-                x, y = random.randint(100, 700), random.randint(100, 1000)
-                await page.mouse.move(x, y, steps=5)
-                await asyncio.sleep(0.05)
-        except: pass
+            start_x = getattr(self, 'mouse_x', 400)
+            start_y = getattr(self, 'mouse_y', 400)
+            
+            cp_x = (start_x + target_x) / 2 + random.uniform(-100, 100)
+            cp_y = (start_y + target_y) / 2 + random.uniform(-100, 100)
+            
+            steps = random.randint(15, 25)
+            for i in range(1, steps + 1):
+                t = i / steps
+                x = (1 - t)**2 * start_x + 2 * (1 - t) * t * cp_x + t**2 * target_x
+                y = (1 - t)**2 * start_y + 2 * (1 - t) * t * cp_y + t**2 * target_y
+                await page.mouse.move(x, y)
+                
+                # Accélération/Décélération
+                if t < 0.2 or t > 0.8:
+                    await asyncio.sleep(random.uniform(0.02, 0.04))
+                else:
+                    await asyncio.sleep(random.uniform(0.005, 0.015))
+                    
+            self.mouse_x = target_x
+            self.mouse_y = target_y
+        except Exception as e:
+            logger.warning(f"[{self.sid}] Bezier Fallback: {e}")
+            await page.mouse.move(target_x, target_y)
+            self.mouse_x = target_x
+            self.mouse_y = target_y
+
+    async def move_mouse_to_locator(self, page, locator):
+        """Récupère la bounding box et déclenche le mouvement Bézier."""
+        try:
+            box = await locator.first.bounding_box()
+            if box:
+                # Calculer le centre avec une légère marge d'erreur humaine
+                t_x = box["x"] + box["width"] / 2 + random.uniform(-2, 2)
+                t_y = box["y"] + box["height"] / 2 + random.uniform(-2, 2)
+                await self.bezier_mouse_move(page, t_x, t_y)
+            else:
+                await self.bezier_mouse_move(page, random.randint(100, 800), random.randint(100, 600))
+        except Exception as e:
+            logger.warning(f"[{self.sid}] Unable to compute bounding box: {e}")
 
     async def close(self):
         try:
@@ -252,7 +297,7 @@ async def browser_action(request: Request):
             logger.info(f"[{sid}] 🖱️ Click Target: {real_selector}")
             
             try:
-                await session.mouse_shake(page)
+                await session.move_mouse_to_locator(page, page.locator(real_selector))
                 await page.locator(real_selector).first.dispatch_event("click")
             except:
                 await page.click(real_selector, timeout=10000)
@@ -283,6 +328,7 @@ async def browser_action(request: Request):
             
             real_selector = f'[data-echo-index="{idx}"]' if idx is not None else sel
             logger.info(f"[{sid}] 🖱️ Hover Target: {real_selector}")
+            await session.move_mouse_to_locator(page, page.locator(real_selector))
             await page.hover(real_selector, timeout=10000)
             result["url"] = page.url
 
@@ -356,7 +402,6 @@ async def browser_action(request: Request):
         elif action == "highlight":
             logger.info(f"[{sid}] 📸 Visual Highlight Flow (Tab {session.active_page_index})")
             await page.bring_to_front()
-            await session.mouse_shake(page)
             vision_data = await page.evaluate(HIGHLIGHT_JS)
             result.update({"metadata": vision_data.get("elements", []), "count": vision_data.get("count", 0), "url": page.url, "tab_index": session.active_page_index, "tab_count": len(session.pages)})
             

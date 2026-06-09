@@ -53,6 +53,14 @@ document.addEventListener('DOMContentLoaded', () => {
       {
         href: '11_credits.html',
         text: '11. Crédits Open Source'
+      },
+      {
+        href: '12_manuel_utilisateur.html',
+        text: '12. Manuel Utilisateur'
+      },
+      {
+        href: '13_registre_audit.html',
+        text: "13. Registre d'Audit"
       }
     ];
 
