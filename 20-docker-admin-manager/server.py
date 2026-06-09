@@ -2,7 +2,9 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.96 (Refonte UI Complète avec Sidebar Bootstrap)
+VERSION : 5.97 (Purge Dynamique Utilisateur)
+--- CHANGELOG 5.97 ---
+- Sécurité : Purge utilisateur totale et dynamique par introspection SQLite (supprime tous les orphelins dans OWUI).
 --- CHANGELOG 5.96 ---
 - Feature : Amélioration de la constante "Sessions Actives". Affiche désormais le ratio "OWUI DB / Fichiers Physiques".
 --- CHANGELOG 5.95 ---
@@ -1438,6 +1440,7 @@ def auth_reset_mfa():
             try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
             except: pass
             conn.execute("UPDATE users SET pass_hash=?, totp_secret=NULL, security_question=NULL, security_answer_hash=NULL, must_enroll=1, temp_pass_expires=?, last_enrollment=0 WHERE email=?", (pass_hash, expire_timestamp, email))
+            conn.execute("DELETE FROM sessions WHERE email=?", (email,))
             conn.commit()
         expire_str = datetime.datetime.fromtimestamp(expire_timestamp).strftime('%d/%m/%Y à %H:%M')
         flash(f"MFA aboli pour {email}. Nouveau mot de passe temporaire (valable {settings.get('temp_pass_hours', 24)} heures, jusqu'au {expire_str}) : <b>{temp_pwd}</b>", "warning")
@@ -1473,6 +1476,7 @@ def auth_disable_user():
     try:
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
             conn.execute("DELETE FROM users WHERE email=?", (email,))
+            conn.execute("DELETE FROM sessions WHERE email=?", (email,))
             conn.commit()
         if email == SYSTEM_ADMIN_EMAIL:
             flash(f"Accès externe (SSO) désactivé pour {email}. Les données internes sont conservées. Rappel : Vous devez utiliser l'accès local de secours (Port 3001) pour réactiver ce compte.", "warning")
@@ -1538,21 +1542,31 @@ def auth_delete_user():
 
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
             conn.execute("DELETE FROM users WHERE email=?", (email,))
+            conn.execute("DELETE FROM sessions WHERE email=?", (email,))
             conn.commit()
         
-        # Supprimer aussi de Open WebUI (on cherche l'ID par email, puis on lance run_semantic_pruning ou api delete)
-        # Comme l'API OWUI /api/v1/users/ peut être compliquée, on supprime directement en base SQLite
+        # Supprimer aussi de Open WebUI par introspection dynamique
         with sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True) as conn2:
             user_row = conn2.execute("SELECT id FROM user WHERE email=?", (email,)).fetchone()
             if user_row:
                 uid = user_row[0]
+                
+                tables = [row[0] for row in conn2.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+                for table in tables:
+                    if table == "user": continue
+                    try:
+                        columns = [col[1] for col in conn2.execute(f"PRAGMA table_info({table})").fetchall()]
+                        if "user_id" in columns:
+                            conn2.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
+                    except Exception as e:
+                        print(f"Erreur purge table {table}: {e}")
+                
                 conn2.execute("DELETE FROM user WHERE id=?", (uid,))
-                conn2.execute("DELETE FROM chat WHERE user_id=?", (uid,))
                 conn2.commit()
                 # On efface aussi le dossier sur disque
                 user_dir = os.path.join(ECHO_USERS_ROOT, str(uid))
                 if os.path.exists(user_dir): shutil.rmtree(user_dir, ignore_errors=True)
-                flash(f"Utilisateur {email} supprimé de l'Auth et de l'Espace ECHO.", "success")
+                flash(f"Utilisateur {email} supprimé de l'Auth et de l'Espace ECHO (purge DB exhaustive).", "success")
             else:
                 flash(f"Utilisateur {email} supprimé de l'Auth (non trouvé dans ECHO).", "success")
     except Exception as e: flash(f"Erreur: {e}", "danger")

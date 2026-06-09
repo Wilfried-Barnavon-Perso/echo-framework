@@ -49,6 +49,22 @@
       <li><strong>Injection :</strong> Copie l'archive et le script d'amorçage dans le disque virtuel, puis le démonte.</li>
       <li><strong>Démarrage :</strong> Démarre (ou redémarre) la machine virtuelle Hyper-V.</li>
     </ul>
+    <p>
+      L'orchestration interne est assurée par le déploiement de <code>stack-echo.yml</code> (Docker Compose). Une fois les services en ligne, la sécurisation réseau (BunkerWeb) est initialisée ou arrêtée dynamiquement via <code>enable-bunkerweb.sh</code>.
+    </p>
+
+    <h3><code>config-owui.sh</code> (Configuration Automatique)</h3>
+    <p>
+      Ce script d'orchestration post-déploiement est exécuté par la grappe pour configurer automatiquement l'interface et le modèle.
+    </p>
+    <ul>
+      <li><strong>Boot API :</strong> Le script attend (jusqu'à 20 min) que l'API Open WebUI (<code>http://localhost:3000/health</code>) soit opérationnelle.</li>
+      <li><strong>Authentification de Service :</strong> Il génère un mot de passe unique aléatoire (64 caractères) et enregistre le compte administrateur racine (ex: <code>install-stack@echo.local</code>) pour obtenir un jeton JWT d'administration.</li>
+      <li><strong>Configuration Dynamique :</strong> À l'aide de l'API, il injecte toutes les directives d'environnement (modèle par défaut, restrictions d'accès, permissions, désactivation d'OpenAI/Ollama au profit d'ECHO) définies dans le template statique de vérité <code>01-config/webui-settings.json</code>.</li>
+      <li><strong>Finalisation :</strong> Les ressources additionnelles de l'Arsenal sont synchronisées, assurant une conformité stricte dès le premier démarrage, sans aucune intervention manuelle.</li>
+    </ul>
+
+    <h2>Mise à Niveau Majeure</h2>
 
     <h2>Orchestration Interne (VM)</h2>
 
@@ -83,7 +99,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.179.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.179.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

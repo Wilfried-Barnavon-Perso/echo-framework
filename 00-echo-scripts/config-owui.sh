@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.59
+# VERSION : 7.61
 # ==============================================================================
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
@@ -158,7 +158,17 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
             fi
             
             api_upsert "$API_ENDPOINT" "$ID" "$TMP_JSON" "$DESC"
-            [ "$API_ENDPOINT" != "tools" ] && toggle_state "$ID"
+            if [ "$API_ENDPOINT" != "tools" ]; then
+                toggle_state "$ID"
+            else
+                TMP_ACCESS="/tmp/owui_access_payload_$$.json"
+                echo '{"access_grants":[{"principal_type":"user","principal_id":"*","permission":"read"}]}' > "$TMP_ACCESS"
+                curl -s -X POST "$OWUI_URL/api/v1/tools/id/$ID/access/update" \
+                    -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER \
+                    -H "Content-Type: application/json" -d "@$TMP_ACCESS" > /dev/null
+                echo "   🌍 $DESC : $ID configuré en accès public."
+                rm -f "$TMP_ACCESS"
+            fi
             rm -f "$TMP_JSON"
         done
     fi

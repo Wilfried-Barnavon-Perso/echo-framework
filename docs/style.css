@@ -602,6 +602,49 @@ footer {
 .badge-orange { background: rgba(245,158,11,0.15); color: var(--warning-color); }
 
 /* =============================================================================
+   MOBILE NAVIGATION
+   ============================================================================= */
+.mobile-header {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 60px;
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--border-color);
+  z-index: 101;
+  align-items: center;
+  padding: 0 1.5rem;
+  backdrop-filter: blur(10px);
+}
+.mobile-header span {
+  margin-left: 1rem;
+  color: var(--accent-color);
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.menu-toggle {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-bright);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+.menu-toggle:hover { background: var(--accent-dark); }
+
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  z-index: 99;
+}
+.sidebar-overlay.active { display: block; }
+
+/* =============================================================================
    RESPONSIVE - écrans étroits
    ============================================================================= */
 @media (max-width: 1280px) {
@@ -610,12 +653,17 @@ footer {
   main { margin-right: 24px; }
 }
 @media (max-width: 860px) {
+  .mobile-header { display: flex; }
   /* La sidebar se rétracte - le main prend presque tout l'écran */
-  .sidebar { transform: translateX(-100%); }
+  .sidebar { 
+    transform: translateX(-100%); 
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .sidebar.open { transform: translateX(0); }
   main {
     margin-left: 16px;
     margin-right: 16px;
-    padding: 1.5rem;
+    padding: 5.5rem 1.5rem 1.5rem;
     border-radius: 8px;
   }
   main > p, main > ul, main > ol,

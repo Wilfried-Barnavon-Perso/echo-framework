@@ -2,7 +2,7 @@
   "version": 0,
   "ui": {
     "enable_signup": false,
-    "default_user_role": "pending",
+    "default_user_role": "user",
     "default_group_id": "",
     "enable_community_sharing": false,
     "enable_message_rating": false,
@@ -328,5 +328,79 @@
   },
   "onedrive": {
     "enable": false
+  },
+  "user": {
+    "permissions": {
+      "workspace": {
+        "models": false,
+        "knowledge": false,
+        "prompts": true,
+        "tools": false,
+        "skills": false,
+        "models_import": false,
+        "models_export": false,
+        "prompts_import": true,
+        "prompts_export": true,
+        "tools_import": false,
+        "tools_export": false
+      },
+      "sharing": {
+        "models": false,
+        "public_models": false,
+        "knowledge": false,
+        "public_knowledge": false,
+        "prompts": false,
+        "public_prompts": false,
+        "tools": false,
+        "public_tools": false,
+        "skills": false,
+        "public_skills": false,
+        "notes": false,
+        "public_notes": false,
+        "public_chats": false,
+        "public_calendars": false
+      },
+      "access_grants": {
+        "allow_users": false
+      },
+      "chat": {
+        "controls": true,
+        "valves": true,
+        "system_prompt": true,
+        "params": true,
+        "file_upload": true,
+        "web_upload": true,
+        "delete": true,
+        "delete_message": true,
+        "continue_response": true,
+        "regenerate_response": true,
+        "rate_response": false,
+        "edit": true,
+        "share": true,
+        "export": true,
+        "stt": true,
+        "tts": true,
+        "call": true,
+        "multiple_models": true,
+        "temporary": true,
+        "temporary_enforced": false
+      },
+      "features": {
+        "api_keys": false,
+        "notes": false,
+        "channels": true,
+        "folders": true,
+        "direct_tool_servers": true,
+        "web_search": false,
+        "image_generation": false,
+        "code_interpreter": false,
+        "memories": false,
+        "automations": true,
+        "calendar": true
+      },
+      "settings": {
+        "interface": true
+      }
+    }
   }
 }

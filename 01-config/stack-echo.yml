@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.49
+# Version : 9.51
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -131,8 +131,8 @@ services:
 
       # 3. RATE LIMITING (Stratégie SPA Robuste)
       - "bunkerweb.USE_LIMIT_REQ=yes"
-      - "bunkerweb.LIMIT_REQ_RATE=50r/s"
-      - "bunkerweb.LIMIT_REQ_BURST=100"
+      - "bunkerweb.LIMIT_REQ_RATE=100r/s"
+      - "bunkerweb.LIMIT_REQ_BURST=300"
 
       # 4. SECURITE (Anti-Ban)
       - "bunkerweb.USE_MODSECURITY=no"
@@ -219,8 +219,8 @@ services:
       # 🛡️ SECURITE ADMIN : Assouplissement WAF pour l'Admin (Burst toléré)
       - "bunkerweb.USE_BAD_BEHAVIOR=yes"
       - "bunkerweb.USE_LIMIT_REQ=yes"
-      - "bunkerweb.LIMIT_REQ_RATE=20r/s"
-      - "bunkerweb.LIMIT_REQ_BURST=100"
+      - "bunkerweb.LIMIT_REQ_RATE=50r/s"
+      - "bunkerweb.LIMIT_REQ_BURST=150"
       # ⚡ EXCLUSION 401 DE L'INTERCEPTION : Empêche BunkerWeb de générer error_page 401 @bwerror401
       # qui écrase notre error_page 401 = @auth_redirect (SSO redirect) dans auth-error.conf
       - "bunkerweb.INTERCEPTED_ERROR_CODES=400 403 404 405 413 429 500 501 502 503 504"

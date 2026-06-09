@@ -140,7 +140,21 @@ flowchart TD
       d'accès. L'Admin Manager exécute également une consolidation des fragments de bases en mode WAL.
     </p>
 
-    <h2>3. Sauvegardes et Restauration à Chaud</h2>
+    <h2>3. Sécurité SSO et Purge Dynamique</h2>
+    
+    <p>
+      L'Admin Manager possède une intégration forte avec ECHO Auth (IdP local). Les actions d'administration déclenchent des répercussions immédiates sur l'ensemble du système :
+    </p>
+    <ul>
+      <li>
+        <strong>Révocation Dynamique des Sessions :</strong> La désactivation d'un compte, la réinitialisation de son MFA ou sa suppression entraînent instantanément la destruction de ses jetons de session actifs en mémoire (IdP), forçant une reconnexion.
+      </li>
+      <li>
+        <strong>Purge de Base de Données Exhaustive :</strong> Lorsqu'un utilisateur est supprimé du système, l'Admin Manager n'efface pas uniquement la table <code>user</code> ou <code>chat</code>. Par une introspection dynamique (<em>sqlite_master</em> et <em>PRAGMA table_info</em>), il scrute <strong>toutes les tables</strong> du moteur Open WebUI possédant une colonne <code>user_id</code> et supprime les enregistrements orphelins (fichiers, outils personnalisés, modèles, mémoires). Cette purge chirurgicale garantit zéro fuite de données (Data Leak) en base.
+      </li>
+    </ul>
+
+    <h2>4. Sauvegardes et Restauration à Chaud</h2>
 
     <p>
       Le module de backup garantit une reprise d'activité après sinistre :
@@ -192,7 +206,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.179.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.179.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

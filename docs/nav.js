@@ -6,6 +6,29 @@
 document.addEventListener('DOMContentLoaded', () => {
 
   /* ============================================================
+     0. MOBILE HEADER & OVERLAY
+     ============================================================ */
+  const mobileHeader = document.createElement('div');
+  mobileHeader.className = 'mobile-header';
+  mobileHeader.innerHTML = '<button class="menu-toggle">☰</button><span>ECHO v5 Docs</span>';
+  document.body.prepend(mobileHeader);
+
+  const sidebarOverlay = document.createElement('div');
+  sidebarOverlay.className = 'sidebar-overlay';
+  document.body.appendChild(sidebarOverlay);
+
+  const menuBtn = mobileHeader.querySelector('.menu-toggle');
+  menuBtn.addEventListener('click', () => {
+    document.querySelector('.sidebar')?.classList.add('open');
+    sidebarOverlay.classList.add('active');
+  });
+
+  sidebarOverlay.addEventListener('click', () => {
+    document.querySelector('.sidebar')?.classList.remove('open');
+    sidebarOverlay.classList.remove('active');
+  });
+
+  /* ============================================================
      1. GÉNÉRATION DE LA SIDEBAR
      ============================================================ */
   const sidebar = document.querySelector('.sidebar');
