@@ -119,6 +119,13 @@ flowchart TD
       </tbody>
     </table>
 
+    <div class="audit-note">
+      <h4>🛡️ Garde-fous API & Base de données</h4>
+      <p>
+        Avant d'initier la purge, le système s'authentifie formellement auprès de l'API (obtention d'un jeton JWT) et vérifie la lisibilité et la non-vacuité de la base de données SQLite d'Open WebUI. Si la base est corrompue, inaccessible ou vide, la purge est purement et simplement annulée pour empêcher toute destruction accidentelle de la mémoire vectorielle.
+      </p>
+    </div>
+
     <h3>Sync Qdrant</h3>
     <p>
       Élimination des points vectoriels <em>orphelins</em> : points liés à des
@@ -206,7 +213,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.179.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

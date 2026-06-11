@@ -374,7 +374,7 @@ flowchart TD
       <div class="card">
         <h3>📡 L'AEC</h3>
         <p><strong>Nature :</strong> Bloc YAML proprioceptif injecté par le Filtre.</p>
-        <p>Contient <code>&lt;environnement_contexte&gt;</code> (identité, date, Registre Fichiers) et <code>&lt;smart_context&gt;</code> (RAG éphémère : résumé ≤ 300 mots + <code>source_id</code> Qdrant).</p>
+        <p>Contient <code>&lt;environnement_contexte&gt;</code> (identité, date) avec les évènements <code>&lt;evenement_systeme&gt;</code> et <code>&lt;smart_context&gt;</code> (Mémoire Vectorisée de Session : résumé ≤ 300 mots + <code>source_id</code> Qdrant).</p>
       </div>
       <div class="card">
         <h3>🧱 Le Moulage (Semantic Molding)</h3>
@@ -437,7 +437,7 @@ flowchart TD
         <p><strong>Purge TTL :</strong> De 30 jours (Trivial) à 540 jours (Axiome), orchestrée par l'Admin Manager.</p>
       </div>
       <div class="card">
-        <h3>⏱️ RAG Éphémère (<code>echo_ephemeral</code>)</h3>
+        <h3>⏱️ Mémoire Vectorisée de Session (<code>echo_ephemeral</code>)</h3>
         <p><strong>Outils :</strong> <code>save_session_context</code>, <code>search_session_context</code></p>
         <p><strong>Scope :</strong> <code>user_id + chat_id + source_id</code> - session courante uniquement.</p>
         <p><strong>Usage :</strong> Distillats de fichiers volumineux, résultats de navigation web, données intermédiaires d'analyse.</p>
@@ -702,7 +702,7 @@ erDiagram
     string user_id
     string mime_type
     string vault_path "Chemin dans l'Espace Personnel"
-    string status "inline | rag_ephemeral | vault"
+    string status "inline | vectorized_sum_up | vault"
   }
 
   MESSAGE_SHADOWS ||--o| SUTURE_INDEX : "indexé par"
@@ -744,7 +744,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.179.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,8 +1,8 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.12
-description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade(). 5.109.12: Injection __metadata__ et chat_id pour respect isolation fichiers par session.
+version: 5.109.14
+description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade(). 5.109.12: Injection __metadata__ et chat_id pour respect isolation fichiers par session. 5.109.13: Fix hallucination ID fichiers via docstring explicite et résolution résiliente. 5.109.14: Registre Unifié V2 — mark_processed → save_resource.
 """
 
 import os
@@ -28,7 +28,7 @@ from echo_ui import EchoUI
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, MODEL_FLASH,
     MODEL_ROUTING, ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    TEMP_DEFAULT, TOP_P_DEFAULT
+    TEMP_DEFAULT, TOP_P_DEFAULT, FILE_INGESTION_STATUS
 )
 
 class Tools:
@@ -57,8 +57,12 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Lit le contenu brut d'un fichier en mode pagination (offset).
+        """Lit et retourne le contenu brut d'un fichier extrait (PDF, DOCX, CSV, etc.).
+        
+        :param file_id: L'identifiant strict du fichier (doit obligatoirement être un `id` existant listé dans la section registre_fichiers du contexte, ne jamais l'inventer).
+        :param offset: La position de départ pour la lecture (0 par défaut).
+        :param limit: Le nombre maximum de caractères à lire.
+        
         Note : La sortie est strictement limitée à 16 Ko pour conformité API Gemini.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
@@ -113,7 +117,11 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Sonde sémantiquement un fichier volumineux ou complexe via call_cascade centralisé."""
+        """Sonde sémantiquement un fichier volumineux ou complexe via call_cascade centralisé.
+        
+        :param file_id: L'identifiant strict du fichier (doit obligatoirement être un `id` existant listé dans la section registre_fichiers du contexte, ne jamais l'inventer).
+        :param query: La question ou l'instruction d'analyse à appliquer au fichier.
+        """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
         fpath = resolve_upload_file_path(user_id, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
@@ -282,8 +290,12 @@ class Tools:
                     with open(fpath, 'wb') as f:
                         async for chunk in resp.aiter_bytes(): f.write(chunk)
             
-            EchoStateManager(user_id=uid, chat_id=cid).mark_processed(cid, file_id, orig_name, mime, "transmitted")
-            EchoStateManager(user_id=uid, chat_id=cid).move_to_vault(file_id, orig_name) # move_to_vault : déplace dans l'Espace Personnel
+            state = EchoStateManager(user_id=uid, chat_id=cid)
+            state.save_resource(
+                id=file_id, name=orig_name, resource_type='media',
+                status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'], mime=mime, storage_path=fpath,
+            )
+            state.move_to_vault(file_id, orig_name)
 
             return wrap_tool_output(
                 text=f"✅ Téléchargement réussi (ID: {file_id}).\nSource: {url}\nDestination finale: {furl}", 

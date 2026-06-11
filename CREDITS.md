@@ -28,6 +28,7 @@ Ces projets constituent la colonne vertébrale absolue du framework ECHO.
 * **[Gridstack](https://gridstackjs.com/)** : Moteur de layout dynamique utilisé par le Dashboard interactif de l'Admin Manager. (MIT License)
 * **[httpx](https://www.python-httpx.org/)** : Client HTTP/2 asynchrone hautement performant, utilisé pour les requêtes furtives (Stealth) du Web Engine. (BSD-3-Clause License)
 * **[Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M)** : Modèle de synthèse vocale (Text-To-Speech) léger et performant intégré aux Audio Workers. (Apache License 2.0)
+* **[MarkItDown](https://github.com/microsoft/markitdown)** : Bibliothèque Microsoft de conversion de fichiers Office (Word, Excel, PowerPoint) en Markdown structuré pour l'injection contextuelle. (MIT License)
 * **[Monaco Editor](https://microsoft.github.io/monaco-editor/)** : Éditeur de code robuste (propulsant VS Code) intégré au HUD de ECHO Codex pour l'édition de fichiers. (MIT License)
 * **[ONNX Runtime](https://onnxruntime.ai/)** : Moteur d'inférence multi-plateforme utilisé pour propulser le modèle TTS Kokoro. (MIT License)
 * **[Playwright](https://playwright.dev/)** : Framework d'automatisation de navigateur (Headless Chromium) au cœur de l'agent de navigation autonome. (Apache License 2.0)

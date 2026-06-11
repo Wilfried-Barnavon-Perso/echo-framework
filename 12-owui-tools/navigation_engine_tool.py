@@ -1,11 +1,13 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 10.3
+version: 10.4
 description: 10.0: Architecture multi-agentique. Remplacement de l'interaction manuelle par la boucle OODA autonome (delegate_web_browsing). Intégration Native Gemini Tool Calling et vision multimodale (Base64). Déportation de la logique mécanique dans echo_browser_lib.
              10.1: Persistance ThoughtSignatures Gemini 3.x — save_thread_step sur chaque tour (model + user) avec extraction de la signature. SID exposé dans le retour.
              10.2: Ajout close_web_thread et purge automatique de session en fin de mission.
              10.3: Intégration de la vision multimodale (Base64) native et exposition de la carte DOM à l'agent.
+             10.4: Registre Unifié V2 — mark_processed → save_resource,
+             requête processed_files → get_resources.
 """
 
 import os
@@ -21,6 +23,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, clamp_model, get_echo_session_path
 from echo_ui import EchoUI
 from echo_browser_lib import EchoBrowserLib, BROWSER_TOOLS_SCHEMA, req_to_browser
+from echo_constants import FILE_INGESTION_STATUS
 
 async def _verify_engine_status(timeout: int, chat_id: str, user_id: str, u_valves: Any, events: EchoEvents) -> bool:
     res = await req_to_browser(timeout, "/action", {"session_id": chat_id, "action": "ping"}, user_id)
@@ -52,7 +55,11 @@ async def _deploy_navigation_monitor(res_view: dict, chat_id: str, uid: str, u_v
             with open(os.path.join(vault_path, filename), "wb") as f: 
                 f.write(img_data)
             
-            state_manager.mark_processed(chat_id, file_id, filename, "image/png", "indexed")
+            state_manager.save_resource(
+                id=file_id, name=filename, resource_type='media',
+                status=FILE_INGESTION_STATUS['INDEXED'], mime='image/png',
+                storage_path=os.path.join(vault_path, filename),
+            )
         except Exception as e:
             print(f"[Navigation] Erreur archivage Vault: {e}")
 
@@ -279,7 +286,7 @@ class Tools:
             nb_points, err = await EchoGeminiClient.index_text_in_ephemeral_rag(distillate, source_id, uid, chat_id, __user__, __metadata__)
             if nb_points == 0: return wrap_tool_output(text=f"❌ Vectorisation échouée. {err}", status={"status": "error"})
 
-            await events.status(f"✅ Page indexée dans le RAG éphémère ({nb_points} vecteurs).", done=True)
+            await events.status(f"✅ Page indexée dans la Mémoire Vectorisée de Session ({nb_points} vecteurs).", done=True)
             return wrap_tool_output(text=f"✅ Page `{url}` indexée ({nb_points} vecteurs).\nSource ID: `{source_id}`\nUtilisez `search_session_context` pour l'interroger.", status={"status": "success"})
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur distillation: {str(e)}", status={"status": "error"})
@@ -334,17 +341,16 @@ class Tools:
         try:
             conn = state_manager._get_connection()
             cursor = conn.cursor()
-            query = "SELECT file_id, filename, mime, timestamp FROM processed_files WHERE chat_id = ? AND file_id LIKE 'U_%_C_%_T_%' ORDER BY timestamp DESC LIMIT ?"   
-            cursor.execute(query, (chat_id, depth))
-            rows = cursor.fetchall()
-            conn.close()
+            resources = state_manager.get_resources(resource_type='media')
+            # Filtrer uniquement les captures de navigation web (ID pattern U_*_C_*_T_*)
+            nav_resources = [r for r in resources if r['id'].startswith('U_') and '_C_' in r['id'] and '_T_' in r['id']]
+            nav_resources = nav_resources[:depth]
 
             history, nouveaux = [],[]
-            for row in rows:
-                fid, fname, fmime, ts = row[0], row[1], row[2] or "image/png", row[3]
-                dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
-                history.append({"file_id": fid, "date": dt, "frame": fname})
-                nouveaux.append({"nom": fname, "id": fid, "mime": fmime, "statut": "indexed"})
+            for r in nav_resources:
+                dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.get('created_at', 0)))
+                history.append({"file_id": r['id'], "date": dt, "frame": r['name']})
+                nouveaux.append({"nom": r['name'], "id": r['id'], "mime": r.get('mime') or 'image/png', "statut": r['status']})
 
             return wrap_tool_output(text=json.dumps(history, option=json.OPT_INDENT_2).decode('utf-8'), status={"status": "success"}, nouveaux_fichiers=nouveaux)
         except Exception as e:

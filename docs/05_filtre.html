@@ -65,9 +65,15 @@ flowchart LR
   F --> AN{Analyse<br/>MIME + Taille}
 
   AN -->|"Image/Audio/PDF/Vidéo<br/>≤ 256 Ko"| B64["📎 Encapsulation Base64<br/>(inlineData)"]
-  AN -->|"Texte/Code<br/>≤ 256 Ko"| TXT["📝 Injection Texte Brut"]
-  AN -->|"Tout fichier<br/>> 256 Ko"| EXTR["🔍 Extraction Transmodale<br/>(API ou Lecture Locale)"]
-  EXTR -->|"Texte unifié"| RAG["🧱 RAG Éphémère & Map-Reduce<br/>(Qdrant echo_ephemeral)"]
+  AN -->|"Fichiers Office<br/>(Word/Excel/PPT)"| MID["📄 Conversion MarkItDown<br/>+ LITE Vision"]
+  AN -->|"Texte/Code<br/>(Zéro-RAM)"| CODEX["📝 Déplacement Vault<br/>+ Copie Codex Git"]
+  
+  MID -->|"Texte Markdown"| EXTR
+  CODEX -->|"Si ≤ 256 Ko"| TXT["📝 Injection Texte Brut"]
+  CODEX -->|"Si > 256 Ko"| EXTR["🔍 Extraction Transmodale<br/>(API ou Lecture Locale)"]
+  AN -->|"Multimédia > 256 Ko"| EXTR
+  
+  EXTR -->|"Texte unifié"| RAG["🧱 Mémoire Vectorisée de Session & Map-Reduce<br/>(Qdrant echo_ephemeral)"]
   AN -->|"Déjà dans le Vault<br/>(file_id détecté)"| VAULT["📂 Référence Vault"]
 
   OWUI -->|"Images inline<br/>(drag/paste)"| INLINE["🖼️ Extraction Ordonnée<br/>(texte + images entrelacés)"]
@@ -119,12 +125,11 @@ flowchart LR
       </p>
     </div>
 
-    <h3>RAG Éphémère Transmodal et Map-Reduce</h3>
+    <h3>Mémoire Vectorisée de Session Transmodale et Map-Reduce</h3>
     <p>
-      Lorsqu'un fichier dépasse <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko), le filtre déclenche
-      un processus de traitement approfondi en arrière-plan : le <strong>RAG Éphémère</strong>. 
-      La première phase est l'<strong>Extraction Transmodale</strong> : les fichiers textuels sont lus localement, 
-      tandis que les fichiers multimédias complexes (images, vidéos) sont transcrits textuellement.
+      Lorsqu'un fichier dépasse <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko) ou nécessite un traitement complexe, le filtre déclenche
+      un processus approfondi en arrière-plan : la <strong>Mémoire Vectorisée de Session</strong>. 
+      La première phase est l'<strong>Extraction Transmodale</strong> : les fichiers textuels sont lus localement. Les fichiers Office (Word, Excel, PowerPoint) sont automatiquement convertis en Markdown via <strong>MarkItDown</strong> (avec description textuelle des images extraites par le modèle LITE). Les fichiers multimédias complexes (vidéos) sont transcrits textuellement via API.
     </p>
     <p>
       Le texte brut unifié est immédiatement vectorisé par <code>bge-m3</code> (1024d) et stocké dans 
@@ -134,9 +139,14 @@ flowchart LR
       évitant une distillation inutile.
     </p>
     <p>
-      Le modèle principal reçoit uniquement le résumé et le <code>source_id</code> (identifiant de fichier natif), 
-      lui permettant d'interroger la donnée brute avec précision via <code>search_session_context(source_id, query)</code> 
-      sans saturer sa fenêtre de contexte. Le concept obsolète de "slug" a été définitivement supprimé.
+      Le modèle principal reçoit uniquement le résumé et le <code>source_id</code>, son statut devenant <code>vectorized_sum_up</code>.
+      Il peut interroger la donnée brute avec précision via l'outil <code>search_session_context(source_id, query)</code> 
+      sans saturer sa fenêtre de contexte.
+    </p>
+
+    <h3>Ingestion Codex (Zéro-RAM)</h3>
+    <p>
+      Les fichiers code et texte pris en charge par le Codex ne sont plus conservés en mémoire vive. Ils sont instantanément déplacés (snapshot immutable) dans un espace Vault sécurisé puis copiés dans le dépôt Git local du Codex pour édition directe.
     </p>
 
     <h3>Le bloc AEC (<code>environnement_contexte</code>)</h3>
@@ -146,52 +156,35 @@ flowchart LR
       <em>proprioception</em> du modèle pour le tour courant.
     </p>
 
-    <div class="code-header">Structure du bloc <code>environnement_contexte</code> (v7.18)</div>
+    <div class="code-header">Structure du bloc AEC V2 (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.173.6"
-modèle_actuel:   "##MODEL_ID##"              # Résolu par le Pipe (ex: MODEL_FLASH)
-modèle_origine:  "##MODEL_ORIGIN##"          # Modèle ayant initié le tour
+version_framework_echo: "5.180.23"
+modèle_actuel:   "##MODEL_ID##"
+modèle_origine:  "##MODEL_ORIGIN##"
 nom_utilisateur: "anonyme"
 date_et_heure:   "2026-05-31 14:00"
 localisation:    "Paris, France"
 timezone:        "Europe/Paris"
-registre_fichiers:
-  rapport.pdf:
-    id:     "U_abc123_C_xyz789_T_1748246400"
-    mime:   "application/pdf"
-    statut: "rag_ephemeral"
-    source_id: "U_abc123_C_xyz789_T_1748246400"
-registre_plan:
-  - id: "plan_abc"
-    goal: "Refactorer le module d'auth"
-    status: "in_progress"
-    modele: "MODEL_PRO"
-registre_codex:
-  - id: "mon_script.py"
-    lang: "python"
-    lines: 142
-    last_commit: "feat: add error handler"
-  - id: "config.yaml"
-    lang: "yaml"
-    lines: 38
-    last_commit: "chore: update timeout"
 &lt;/environnement_contexte&gt;
 
-&lt;smart_context filename="rapport.pdf" mime_type="application/pdf" mode="rag_ephemeral" source_id="U_abc123_C_xyz789_T_1748246400"&gt;
+&lt;evenement_systeme&gt;
+- type: "vectorized_sum_up"
+  name: "rapport.pdf"
+  mime: "application/pdf"
+  source_id: "U_abc123_C_xyz789_T_1748246400"
+> Utilisez `query_registry` pour consulter l'état complet des ressources.
+&lt;/evenement_systeme&gt;
+
+&lt;smart_context filename="rapport.pdf" mime_type="application/pdf" mode="vectorized_sum_up" source_id="U_abc123_C_xyz789_T_1748246400"&gt;
 [Résumé ≤ 300 mots généré par Map-Reduce local]
 
-> ⚙️ DIRECTIVE SYSTÈME : Les détails exhaustifs du fichier sont stockés dans le RAG éphémère.
-> Pour analyser le contenu brut ou répondre à l'utilisateur, vous DEVEZ utiliser l'outil `search_session_context` avec le paramètre source_id="U_abc123_C_xyz789_T_1748246400" et une `query` précise.
+> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_session_context`
 &lt;/smart_context&gt;</code></pre>
 
     <div class="note-box">
-      <h4>Règle d'Or - Registre des Fichiers</h4>
+      <h4>Règle d'Or - Registre Unifié V2</h4>
       <p>
-        Le modèle <strong>doit</strong> consulter le <code>registre_fichiers</code> avant toute
-        manipulation d'une ressource. Le champ <code>statut</code> indique où se trouve le fichier :
-        <code>inline</code> (dans le contexte actif), <code>rag_ephemeral</code> (indexé dans
-        Qdrant - utiliser <code>search_session_context</code>), ou <code>vault</code> (dans
-        l'Espace Personnel - utiliser les outils Vault).
+        Les registres massifs (`registre_fichiers`, etc.) ayant été supprimés du contexte permanent pour économiser des tokens, le modèle <strong>doit</strong> utiliser dynamiquement l'outil <code>query_registry</code> pour connaître l'état du système et de ses ressources (Codex, fichiers, plans). Seul un delta évènementiel (<code>&lt;evenement_systeme&gt;</code>) le prévient des actions asynchrones ou des fichiers du tour courant.
       </p>
     </div>
 
@@ -312,7 +305,7 @@ registre_codex:
     </div>
 
     <footer>
-      ECHO Framework - Version 5.179.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

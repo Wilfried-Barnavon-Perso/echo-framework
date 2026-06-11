@@ -1,8 +1,9 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.12
-description: 4.3: Credentials Antigravity obfusqués base64(reversed).
+version: 5.17
+description: 5.17: Ajout du dictionnaire FILE_INGESTION_STATUS pour centraliser les états d'ingestion.
+             5.16: Réduction de MAX_DIRECT_MMEDIA_INJECT_SIZE de 5Mo à 1Mo pour optimisation de contexte.
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
              echo_ssh_tunnel.py. Ajout constantes SSH Tunnel éphémère PKCE
@@ -38,6 +39,11 @@ description: 4.3: Credentials Antigravity obfusqués base64(reversed).
                     vérification web).
               5.12: Suppression de MODEL_DISTILLATION dans MODEL_MAP_CA pour résoudre la
                     collision de clés avec MODEL_LITE (les deux valaient "gemini-3.1-flash-lite").
+              5.13: Ajout section 1.7 — CONVERTIBLE_OFFICE_EXTENSIONS, OOXML_IMAGE_EXTENSIONS,
+                    DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB pour conversion Office → Markdown (MarkItDown).
+              5.14: Registre Unifié V2 — Ajout RESOURCE_TYPES (types de ressources echo_resources).
+                    Ajout étape 1b dans get_gemini_mime() pour attribution MIME accélérée
+                    des fichiers Office convertibles (court-circuite le crible binaire).
 """
 
 import os
@@ -61,7 +67,7 @@ ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
-ECHO_SESSION_DOMAINS = ["plans", "codex", "files", "db"]
+ECHO_SESSION_DOMAINS = ["codex", "files", "db"]
 ECHO_GLOBAL_DOMAINS = ["skills"]
 
 # Identité Réseau (Antigravity 2.1)
@@ -276,6 +282,25 @@ PLAN_TASK_STATUS = {
 # Statuts autorisant l'exécution des tâches d'un plan
 PLAN_EXECUTABLE_STATUSES = {"ready", "executing"}
 
+# Types de ressources du Registre Unifié V2 (echo_resources)
+RESOURCE_TYPES = {
+    "codex":  "codex",   # Fichiers texte/code (Git)
+    "plan":   "plan",    # Plans stratégiques
+    "media":  "media",   # Images, vidéos, PDF
+    "binary": "binary",  # Fichiers non assimilables
+    "weburl": "weburl",  # Pages web distillées
+}
+
+# ==============================================================================
+# 1.8 STATUTS D'INGESTION DES FICHIERS
+# ==============================================================================
+# Définit l'état cognitif d'un fichier tel que perçu par le modèle.
+FILE_INGESTION_STATUS = {
+    "PUT_IN_CONTEXT":    "put_in_context",    # Injection directe dans le prompt (brut ou base64)
+    "VECTORIZED_SUM_UP": "vectorized_sum_up", # Résumé via Smart Context (RAG)
+    "INDEXED":           "indexed",           # Stockage SQLite seul (Fallback ou Image Web)
+}
+
 # ==============================================================================
 # 1.4 ECHO CODEX — CONSTANTES
 # ==============================================================================
@@ -354,9 +379,9 @@ MAX_TOKENS_DEFAULT = 65535  # Limite universelle — tous modèles, toutes APIs 
                              # Gemini 3 Flash CA supporte 65536 mais on aligne sur le plus restrictif.
                              # Utilisé par : pipe_engine (stream), call_distillation, echo_protocol.
 
-# --- INJECTION ET SMART CONTEXT (RAG ÉPHÉMÈRE) ---
+# --- INJECTION ET SMART CONTEXT (MÉMOIRE VECTORISÉE DE SESSION) ---
 MAX_DIRECT_TEXT_INJECT_SIZE   = 32768    # 32 Ko : Plafond d'injection directe pour le texte
-MAX_DIRECT_MMEDIA_INJECT_SIZE = 5242880  # 5 Mo  : Plafond d'injection directe base64 multimédia
+MAX_DIRECT_MMEDIA_INJECT_SIZE = 1048576  # 1 Mo  : Plafond d'injection directe base64 multimédia
 ECHO_MR_CHUNK_SIZE            = 182858   # 178 Ko : Taille d'un chunk Map-Reduce texte
 ECHO_MR_OVERLAP_SIZE          = 1024     # 1 Ko   : Recouvrement (overlap) entre chunks
 ECHO_MR_MAX_TOKENS            = 1600     # Limite de sortie (tokens) pour les distillations du Map-Reduce
@@ -392,7 +417,7 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     # 2. Écriture RAG
     "save_memory",            # Écrit en mémoire long terme (Qdrant)
     "forget_memory",          # Supprime de la mémoire long terme
-    "save_session_context",   # Écrit dans le RAG éphémère
+    "save_session_context",   # Écrit dans la Mémoire Vectorisée de Session
     # 3. Rendu UI
     "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
     # 4. Méta-session (gestion des sessions du tool delegate)
@@ -503,6 +528,29 @@ ECHO_HTTP_KEEPALIVE_EXPIRY = 300     # Expiration des connexions Keep-Alive (en 
 ECHO_MAX_CONTEXT_SIZE = 1048576
 
 # ==============================================================================
+# 1.7 CONVERSION DE FICHIERS NON SUPPORTÉS
+# ==============================================================================
+
+# Extensions convertibles en texte Markdown par MarkItDown.
+# Mapping ext → MIME réel (utilisé par get_gemini_mime pour attribution rapide
+# et par le filtre pour le logging/registre).
+CONVERTIBLE_OFFICE_EXTENSIONS: dict[str, str] = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".docm": "application/vnd.ms-word.document.macroEnabled.12",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+# Extensions OOXML contenant potentiellement des images embarquées
+# (archives ZIP avec dossier */media/)
+OOXML_IMAGE_EXTENSIONS: frozenset = frozenset({".docx", ".docm", ".pptx"})
+
+# Plafond par défaut pour la taille du fichier source (en Mo)
+# Surchargeable par UserValve MAX_OFFICE_FILE_SIZE_MB
+DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB = 100
+
+# ==============================================================================
 # 2. MAPPING MIME TYPES
 # ==============================================================================
 
@@ -550,6 +598,11 @@ def get_gemini_mime(file_path: str) -> tuple[str, bool]:
 
     for mime, extensions in MIME_MAPPING_BIN.items():
         if ext in extensions: return mime, True
+
+    # 1b. Fichiers Office convertibles — MIME réel mais non supporté nativement par Gemini
+    #     Court-circuite le crible binaire et fournit un MIME correct au registre.
+    if ext in CONVERTIBLE_OFFICE_EXTENSIONS:
+        return CONVERTIBLE_OFFICE_EXTENSIONS[ext], False
 
     # 2. Vérification par bibliothèque standard (basée sur l'extension)
     raw_mime, _ = mimetypes.guess_type(file_path)

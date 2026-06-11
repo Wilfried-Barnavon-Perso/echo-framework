@@ -2,7 +2,18 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.97 (Purge Dynamique Utilisateur)
+VERSION : 5.101 (Persistance Menu)
+--- CHANGELOG 5.101 ---
+- UX : Persistance dynamique de la navigation (Sidebar et Sous-onglets) lors des rechargements de page (actions POST) via `localStorage`.
+--- CHANGELOG 5.100 ---
+- Sécurité : Ajout du support natif du SSO (`X-Webui-User`) dans l'API Safeguard. Contourne l'erreur HTTP 401 si le backend Open WebUI rejette les requêtes JWT pures en mode SSO.
+--- CHANGELOG 5.99 ---
+- Fix : L'élagage (pruning) échouait silencieusement avec un code HTTP 307 dû à la présence d'un trailing slash sur l'API `/api/v1/users/`.
+- Sécurité (Critique) : La purge des chats orphelins (Qdrant) utilisait l'arborescence physique, supprimant par erreur la mémoire des chats sans fichiers joints. Elle interroge désormais directement la base SQLite `db_valid_chats`.
+--- CHANGELOG 5.98 ---
+- Sécurité : Ajout de garde-fous stricts annulant le pruning si la base SQLite d'Open WebUI est inaccessible, corrompue ou vide.
+- Fix : Restauration de la logique de purge par répertoire (chats structurés par chat_id sous forme de sous-dossiers).
+- Fix : Résolution du blocage API Safeguard en obtenant un vrai jeton JWT via signin (le fichier secret contient le mot de passe en clair, pas un token Bearer).
 --- CHANGELOG 5.97 ---
 - Sécurité : Purge utilisateur totale et dynamique par introspection SQLite (supprime tous les orphelins dans OWUI).
 --- CHANGELOG 5.96 ---
@@ -449,12 +460,41 @@ def run_semantic_pruning():
     # 1. API Safeguard (Garde-fou)
     if HAS_HTTPX:
         try:
-            admin_token = ""
+            admin_pwd = ""
             if os.path.exists(OWUI_ADMIN_SECRET_PATH):
                 with open(OWUI_ADMIN_SECRET_PATH, "r") as f:
-                    admin_token = f.read().strip()
+                    admin_pwd = f.read().strip()
+            
+            # Authentification de secours/admin pour obtenir un vrai jeton JWT
             owui_url = WEBUI_URL
-            r_auth = httpx.get(f"{owui_url}/api/v1/users/", headers={"Authorization": f"Bearer {admin_token}"}, timeout=5)
+            
+            # Injection de l'en-tête SSO si le domaine est configuré (cf. config-owui.sh)
+            extra_headers = {}
+            if os.environ.get("ECHO_DOMAIN"):
+                extra_headers["X-Webui-User"] = SYSTEM_ADMIN_EMAIL
+                
+            r_signin = httpx.post(f"{owui_url}/api/v1/auths/signin", json={
+                "email": SYSTEM_ADMIN_EMAIL,
+                "password": admin_pwd
+            }, headers=extra_headers, timeout=10)
+            
+            if r_signin.status_code != 200:
+                err_msg = f"API Safeguard: Connexion OWUI échouée (HTTP {r_signin.status_code}). Pruning annulé."
+                print(f"❌ {err_msg}")
+                save_maint_report(err_msg)
+                return err_msg
+                
+            admin_token = r_signin.json().get("token")
+            if not admin_token:
+                err_msg = "API Safeguard: Aucun jeton JWT reçu. Pruning annulé."
+                print(f"❌ {err_msg}")
+                save_maint_report(err_msg)
+                return err_msg
+
+            auth_headers = {"Authorization": f"Bearer {admin_token}"}
+            auth_headers.update(extra_headers)
+            
+            r_auth = httpx.get(f"{owui_url}/api/v1/users", headers=auth_headers, timeout=10)
             if r_auth.status_code != 200:
                 err_msg = f"API Safeguard: Auth OWUI échouée (HTTP {r_auth.status_code}). Pruning annulé."
                 print(f"❌ {err_msg}")
@@ -466,16 +506,33 @@ def run_semantic_pruning():
             save_maint_report(err_msg)
             return err_msg
 
-    # 2. Orphelins (Dossiers Utilisateurs et Mémoire Qdrant)
+    # 2. Garde-fous BDD SQLite & Orphelins (Dossiers Utilisateurs et Mémoire Qdrant)
     orphans = 0
     qdrant_synced = False
+    
+    # Vérification d'existence du fichier de base de données
+    if not os.path.exists(WEBUI_DB_PATH):
+        err_msg = f"BDD Safeguard: Fichier de base de données introuvable ({WEBUI_DB_PATH}). Pruning annulé."
+        print(f"❌ {err_msg}")
+        save_maint_report(err_msg)
+        return err_msg
+
     if os.path.exists(ECHO_USERS_ROOT):
         try:
+            # Essai de connexion à la base
             conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True)
-            valid_ids = {str(row[0]) for row in conn.execute("SELECT id FROM user").fetchall()}
-            try: db_valid_chats = {str(row[0]) for row in conn.execute("SELECT id FROM chat").fetchall()}
-            except Exception: db_valid_chats = set()
-            conn.close()
+            try:
+                valid_ids = {str(row[0]) for row in conn.execute("SELECT id FROM user").fetchall()}
+                db_valid_chats = {str(row[0]) for row in conn.execute("SELECT id FROM chat").fetchall()}
+            finally:
+                conn.close()
+            
+            # Si la base de données est vide ou illisible
+            if not valid_ids:
+                err_msg = "BDD Safeguard: Aucun utilisateur valide trouvé dans OWUI. Pruning annulé par sécurité."
+                print(f"❌ {err_msg}")
+                save_maint_report(err_msg)
+                return err_msg
             
             # --- A. Purge des dossiers de l'Espace Personnel ---
             if config.get("purge_orphaned_users", False):
@@ -524,21 +581,14 @@ def run_semantic_pruning():
                         for uid in valid_ids:
                             str_uid = str(uid)
                             # Purge Chats
-                            user_chats_dir = os.path.join(ECHO_USERS_ROOT, str_uid, "chats")
-                            physical_chats = []
-                            if os.path.exists(user_chats_dir):
-                                physical_chats = [f for f in os.listdir(user_chats_dir) if os.path.isdir(os.path.join(user_chats_dir, f))]
-                            
                             if config.get("purge_orphaned_chats", False):
-                                if not physical_chats:
-                                    payload = {"filter": {"must": [{"key": "user_id", "match": {"value": str_uid}}]}}
-                                else:
-                                    payload = {
-                                        "filter": {
-                                            "must": [{"key": "user_id", "match": {"value": str_uid}}],
-                                            "must_not": [{"key": "chat_id", "match": {"any": physical_chats}}]
-                                        }
+                                valid_chat_ids_for_qdrant = list(db_valid_chats) + ["consolidated"]
+                                payload = {
+                                    "filter": {
+                                        "must": [{"key": "user_id", "match": {"value": str_uid}}],
+                                        "must_not": [{"key": "chat_id", "match": {"any": valid_chat_ids_for_qdrant}}]
                                     }
+                                }
                                 httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", json=payload, timeout=30)
                                 httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_EPHEMERAL}/points/delete", json=payload, timeout=30)
                             
@@ -563,7 +613,7 @@ def run_semantic_pruning():
         
     report_str = f"Orphelins: {orphans}"
     if qdrant_synced:
-        report_str += " | Qdrant: Synchro (Chats/Users/Purge Temporelle) | RAG Éphémère Purgé"
+        report_str += " | Qdrant: Synchro (Chats/Users/Purge Temporelle) | Mémoire Vectorisée de Session Purgée"
     report.append(report_str)
 
     # 2. Atrophie
@@ -1869,7 +1919,7 @@ HTML_DASHBOARD = """
 
         <!-- Modal BunkerWeb -->
         <div class="modal fade" id="bunkerwebModal" tabindex="-1"><div class="modal-dialog modal-xl"><div class="modal-content bg-dark text-light"><div class="modal-header border-secondary"><h5 class="modal-title text-danger"><i class="bi bi-shield-lock-fill"></i> Gestion BunkerWeb (WAF)</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body">
-            <ul class="nav nav-tabs border-secondary mb-3" role="tablist">
+            <ul class="nav nav-tabs border-secondary mb-3" id="bwTabs" role="tablist">
                 <li class="nav-item" role="presentation"><button class="nav-link active py-1 small" data-bs-toggle="tab" data-bs-target="#bwBan" type="button" role="tab" onclick="refreshBwListBans()">Bannissement</button></li>
                 <li class="nav-item" role="presentation"><button class="nav-link py-1 small" data-bs-toggle="tab" data-bs-target="#bwLogs" type="button" role="tab" onclick="refreshBwLogs()">Logs d'Attaques</button></li>
             </ul>
@@ -2019,6 +2069,21 @@ const d=await r.json();document.getElementById('cpu').innerText=d.cpu_percent;do
         async function refreshBwListBans() { const el = document.getElementById('bwBansContent'); el.innerHTML = 'Chargement...'; try { const r = await fetch('/api/bunkerweb/list_bans'); const d = await r.json(); if(d.error) { el.innerHTML = `<span class="text-danger">Erreur: ${d.error}</span>`; return; } if(d.bans.length === 0) { el.innerHTML = '<span class="text-success">Aucune IP bannie actuellement.</span>'; return; } el.innerHTML = '<table class="table table-dark table-sm table-hover"><thead><tr><th>IP / Infos</th><th class="text-end">Action</th></tr></thead><tbody>' + d.bans.map(b => `<tr><td class="align-middle"><strong class="text-danger fs-5">${b.ip}</strong> <span class="badge bg-secondary">${b.country}</span> ${b.as_info ? `<span class="badge border border-info text-info ms-2"><i class="bi bi-hdd-network"></i> ${b.as_info}</span>` : ''}<br><small class="text-muted">${b.type}</small><br><small class="text-info">${b.details}</small></td><td class="text-end align-middle"><button class="btn btn-sm btn-success py-0" onclick="document.getElementById('bwIp').value='${b.ip}'; bwAction('unban');">Débannir</button></td></tr>`).join('') + '</tbody></table>'; } catch(e) { el.innerHTML = 'Erreur de chargement.'; } }
         checkBunkerWeb();
         document.getElementById('bunkerwebModal').addEventListener('shown.bs.modal', function() { refreshBwListBans(); });
+
+        // Persistance des onglets (Sidebar + Sous-menus)
+        document.addEventListener('shown.bs.tab', function (e) {
+            const listId = e.target.closest('[role="tablist"]')?.id;
+            if (listId) {
+                const tabs = JSON.parse(localStorage.getItem('echoAdminTabs') || '{}');
+                tabs[listId] = e.target.getAttribute('data-bs-target');
+                localStorage.setItem('echoAdminTabs', JSON.stringify(tabs));
+            }
+        });
+        const activeTabs = JSON.parse(localStorage.getItem('echoAdminTabs') || '{}');
+        for (const [listId, target] of Object.entries(activeTabs)) {
+            const btn = document.querySelector(`[data-bs-target="${target}"]`);
+            if (btn) { try { new bootstrap.Tab(btn).show(); } catch(e) {} }
+        }
 
         var tList=[].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]')).map(function(el){return new bootstrap.Tooltip(el)})
     </script>

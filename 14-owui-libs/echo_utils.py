@@ -1,7 +1,7 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 7.26
+version: 8.0
 description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
              Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
@@ -43,6 +43,11 @@ description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migra
                7.22: Fix OSError dans move_to_vault (création du dossier session manquante).
                7.25: Retrait définitif de l'import obsolète ECHO_GEMMA_URL suite à la dépréciation
                du distiller local. Corrige les HTTP 400/401 lors de l'import des libs partagées.
+               8.0: Registre Unifié V2 — Ajout table echo_resources et méthodes CRUD
+               (save_resource, get_resource, get_resources, update_resource_status,
+               update_resource_fields, delete_resource, clear_resources_by_type,
+               get_next_codex_name). Remplacement futur des tables processed_files,
+               plans, codex_docs par une source unique.
 """
 
 import copy
@@ -224,6 +229,7 @@ def generate_echo_file_id(user_id: str, chat_id: str) -> str:
 
 def resolve_upload_file_path(user_id: str, file_id: str, uploads_dir: str = ECHO_UPLOADS_TRANSIT_DIR, chat_id: Optional[str] = None) -> Optional[str]:
     if not file_id: return None
+    file_id = file_id.strip()
     if user_id and user_id != "anonymous" and "/" not in str(user_id):
         safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
         if chat_id:
@@ -699,7 +705,7 @@ class EchoGeminiClient:
         timeout: int = 180
     ) -> tuple:
         """
-        Factorise le pipeline chunk → embed → upsert Qdrant pour le RAG éphémère.
+        Factorise le pipeline chunk → embed → upsert Qdrant pour la Mémoire Vectorisée de Session.
 
         Découpe `distillate` (markdown structuré) en chunks sémantiques (~400 tokens bge-m3)
         basés sur les séparateurs de paragraphes \\n\\n, avec recouvrement entre chunks contigus
@@ -1217,6 +1223,29 @@ class EchoStateManager:
                     updated_at   INTEGER NOT NULL
                 )""")
 
+                # Registre Unifié V2 (v8.0) — Remplace à terme processed_files, plans, codex_docs
+                conn.execute("""CREATE TABLE IF NOT EXISTS echo_resources (
+                    id            TEXT PRIMARY KEY,
+                    name          TEXT NOT NULL,
+                    resource_type TEXT NOT NULL,
+                    mime          TEXT,
+                    status        TEXT NOT NULL,
+                    summary       TEXT,
+                    storage_path  TEXT,
+                    git_tracked   INTEGER DEFAULT 0,
+                    message_id    TEXT,
+                    plan_goal     TEXT,
+                    author_model  TEXT,
+                    language      TEXT,
+                    lines         INTEGER,
+                    last_commit   TEXT,
+                    commit_msg    TEXT,
+                    created_at    INTEGER NOT NULL,
+                    updated_at    INTEGER NOT NULL
+                )""")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_res_type ON echo_resources (resource_type)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_res_updated ON echo_resources (updated_at)")
+
                 # MIGRATION : Ajout des colonnes manquantes si nécessaire
                 try: conn.execute("ALTER TABLE rich_payloads ADD COLUMN message_id TEXT")
                 except: pass
@@ -1611,6 +1640,198 @@ class EchoStateManager:
                 conn.execute("DELETE FROM codex_docs")
                 conn.commit()
         except: pass
+
+    # ==========================================================================
+    # REGISTRE UNIFIÉ V2 — echo_resources (v8.0)
+    # ==========================================================================
+
+    def save_resource(self, id: str, name: str, resource_type: str, status: str,
+                      mime: str = None, summary: str = None, storage_path: str = None,
+                      git_tracked: bool = False, message_id: str = None,
+                      plan_goal: str = None, author_model: str = None,
+                      language: str = None, lines: int = None,
+                      last_commit: str = None, commit_msg: str = None):
+        """Crée ou met à jour une ressource dans le registre unifié.
+        Utilise INSERT ... ON CONFLICT pour préserver created_at lors des mises à jour.
+        """
+        ts = int(time.time())
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO echo_resources "
+                    "(id, name, resource_type, mime, status, summary, storage_path, "
+                    "git_tracked, message_id, plan_goal, author_model, language, lines, "
+                    "last_commit, commit_msg, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "name=excluded.name, resource_type=excluded.resource_type, "
+                    "mime=excluded.mime, status=excluded.status, summary=excluded.summary, "
+                    "storage_path=excluded.storage_path, git_tracked=excluded.git_tracked, "
+                    "message_id=COALESCE(excluded.message_id, echo_resources.message_id), "
+                    "plan_goal=excluded.plan_goal, author_model=excluded.author_model, "
+                    "language=excluded.language, lines=excluded.lines, "
+                    "last_commit=excluded.last_commit, commit_msg=excluded.commit_msg, "
+                    "updated_at=excluded.updated_at",
+                    (id, name, resource_type, mime, status, summary, storage_path,
+                     1 if git_tracked else 0, message_id, plan_goal, author_model,
+                     language, lines, last_commit, commit_msg, ts, ts)
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"[EchoStateManager] save_resource error: {e}")
+
+    def update_resource_status(self, id: str, status: str):
+        """Met à jour le statut d'une ressource (préserve les autres champs)."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE echo_resources SET status = ?, updated_at = ? WHERE id = ?",
+                    (status, int(time.time()), id)
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"[EchoStateManager] update_resource_status error: {e}")
+
+    def update_resource_fields(self, id: str, **fields):
+        """Met à jour un ou plusieurs champs d'une ressource.
+        Les colonnes autorisées sont filtrées pour éviter l'injection SQL.
+        """
+        allowed = {"name", "status", "mime", "summary", "storage_path", "git_tracked",
+                   "message_id", "plan_goal", "author_model", "language", "lines",
+                   "last_commit", "commit_msg"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        updates["updated_at"] = int(time.time())
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [id]
+        try:
+            with self._get_connection() as conn:
+                conn.execute(f"UPDATE echo_resources SET {set_clause} WHERE id = ?", values)
+                conn.commit()
+        except Exception as e:
+            print(f"[EchoStateManager] update_resource_fields error: {e}")
+
+    def delete_resource(self, id: str):
+        """Supprime une ressource par ID."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM echo_resources WHERE id = ?", (id,))
+                conn.commit()
+        except Exception as e:
+            print(f"[EchoStateManager] delete_resource error: {e}")
+
+    def get_resource(self, id: str) -> Optional[dict]:
+        """Retourne une ressource par ID, ou None si inexistante."""
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute(
+                    "SELECT id, name, resource_type, mime, status, summary, storage_path, "
+                    "git_tracked, message_id, plan_goal, author_model, language, lines, "
+                    "last_commit, commit_msg, created_at, updated_at "
+                    "FROM echo_resources WHERE id = ?", (id,)
+                ).fetchone()
+                if row:
+                    return self._row_to_resource(row)
+        except Exception as e:
+            print(f"[EchoStateManager] get_resource error: {e}")
+        return None
+
+    def get_resources(self, resource_type: str = None, status: str = None,
+                      search: str = None, created_after: int = None,
+                      message_ids: List[str] = None) -> List[dict]:
+        """Liste les ressources avec filtres combinés (AND).
+        
+        Args:
+            resource_type: Filtre par type ('codex', 'plan', 'media', 'binary', 'weburl').
+            status: Filtre par statut.
+            search: Recherche LIKE sur le champ name.
+            created_after: Timestamp minimum (pour le mécanisme de watermark/delta).
+            message_ids: Liste de message_id pour le filtrage par messages actifs.
+        """
+        conditions = []
+        params = []
+        if resource_type:
+            conditions.append("resource_type = ?")
+            params.append(resource_type)
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        if search:
+            conditions.append("name LIKE ?")
+            params.append(f"%{search}%")
+        if created_after is not None:
+            conditions.append("created_at > ?")
+            params.append(created_after)
+        if message_ids:
+            placeholders = ','.join('?' for _ in message_ids)
+            conditions.append(f"message_id IN ({placeholders})")
+            params.extend(message_ids)
+
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        resources = []
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    f"SELECT id, name, resource_type, mime, status, summary, storage_path, "
+                    f"git_tracked, message_id, plan_goal, author_model, language, lines, "
+                    f"last_commit, commit_msg, created_at, updated_at "
+                    f"FROM echo_resources{where} ORDER BY updated_at DESC", params
+                ).fetchall()
+                for row in rows:
+                    resources.append(self._row_to_resource(row))
+        except Exception as e:
+            print(f"[EchoStateManager] get_resources error: {e}")
+        return resources
+
+    def clear_resources_by_type(self, resource_type: str):
+        """Supprime toutes les ressources d'un type donné."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM echo_resources WHERE resource_type = ?", (resource_type,))
+                conn.commit()
+        except Exception as e:
+            print(f"[EchoStateManager] clear_resources_by_type error: {e}")
+
+    def get_next_codex_name(self, name: str) -> str:
+        """Retourne un nom unique pour le Codex. Si `name` existe déjà, ajoute un suffixe incrémental.
+        Ex: script.py → script_1.py → script_2.py
+        """
+        try:
+            with self._get_connection() as conn:
+                # Vérifie si le nom exact existe
+                existing = conn.execute(
+                    "SELECT id FROM echo_resources WHERE id = ? AND resource_type = 'codex'", (name,)
+                ).fetchone()
+                if not existing:
+                    return name
+
+                # Collision : chercher le prochain suffixe libre
+                base, ext = os.path.splitext(name)
+                idx = 1
+                while True:
+                    candidate = f"{base}_{idx}{ext}"
+                    exists = conn.execute(
+                        "SELECT id FROM echo_resources WHERE id = ? AND resource_type = 'codex'", (candidate,)
+                    ).fetchone()
+                    if not exists:
+                        return candidate
+                    idx += 1
+        except Exception as e:
+            print(f"[EchoStateManager] get_next_codex_name error: {e}")
+        return name
+
+    @staticmethod
+    def _row_to_resource(row) -> dict:
+        """Convertit un tuple SQLite en dict ressource."""
+        return {
+            "id": row[0], "name": row[1], "resource_type": row[2],
+            "mime": row[3], "status": row[4], "summary": row[5],
+            "storage_path": row[6], "git_tracked": bool(row[7]),
+            "message_id": row[8], "plan_goal": row[9], "author_model": row[10],
+            "language": row[11], "lines": row[12], "last_commit": row[13],
+            "commit_msg": row[14], "created_at": row[15], "updated_at": row[16]
+        }
 
     def get_active_branch_shadows(self, chat_id: str, limit: int = 20) -> List[dict]:
         """Remonte la généalogie de la branche active via suture_index pour une distillation bit-perfect."""

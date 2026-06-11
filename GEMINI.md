@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.179.9
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.180.23
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -17,6 +17,7 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 
 ### 0. Le Kernel Statique (`01-config/system-prompt.md`)
 - **Méta-Principes et Identité :** Définit les conditions d'exécution indépassables du Modèle, son persona, ses outils, et les Artéfacts Environnementaux Contextuels (AEC) pour assurer la cohésion globale.
+- **Principe de Cognition Interne et Réflexion (PCIR) :** Impose au modèle une réflexion verbale interne exhaustive et critique avant toute interaction ou déclenchement d'outil, pour maximiser le raisonnement.
 
 ### 1. Le Cortex (`/opt/ECHO/owui-pipes/pipe_engine.py`)
 - **Suture Bit-Perfect des Métadonnées Gemini :** Reconstruction de l'historique via SQLite (`message_shadows`, table conservée pour compatibilité production) pour une continuité absolue. Garantit une reprise de session identique au bit près via l'ID de message et le timestamp (Verrou de Version). Le suivi de la branche active et de l'état de la session est garanti par un calcul de hash cumulatif (Cumulative Hash) via `EchoStateManager`.
@@ -28,25 +29,28 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 ### 2. La Conscience (`/opt/ECHO/owui-filters/`)
 - **Base vectorielle des souvenirs :** Système RAG vectoriel (Qdrant) avec Distillation Contextuelle automatique par **fenêtre glissante déterministe** (`WINDOW_SIZE`=5 + `WINDOW_OVERLAP`=2, configurable). Nettoyage des messages (role+content+fichiers) pour optimiser le budget tokens de la distillation Cloud.
 - **Gestion de l'importance des souvenirs :** Algorithme de fusion sémantique préservant le score `memory_importance` maximal des souvenirs.
-- **Smart Context :** Injection de faits via des balises XML structurelles (`<smart_context>`) et utilisation de `source_id` natifs (au lieu de slugs) pour le RAG éphémère.
+- **Smart Context :** Injection de faits via des balises XML structurelles (`<smart_context>`) et utilisation de `source_id` natifs (au lieu de slugs) pour la Mémoire Vectorisée de Session.
+- **Pipeline d'Ingestion Zéro-RAM :** Conversion native des documents Office en Markdown (MarkItDown) et traitement hybride transparent (Mémoire Vectorisée, Codex Git, Fallback SQLite) géré dynamiquement par le filtre.
 
-### 3. Contexte Proprioceptif : `environnement_contexte`
-Le vecteur d'état global `<environnement_contexte>` est un bloc YAML injecté systématiquement par le filtre `new_context_filter.py`.
-- **Contenu :** Identité (`modèle_actuel`, `modèle_origine`), grounding géo-temporel, le **Registre Conversationnel des Fichiers** (`registre_fichiers`), le **Registre des Plans** (`registre_plan`) et le **Registre Codex** (`registre_codex`).
-- **Règle d'Or :** Le modèle **DOIT** consulter ces registres pour valider l'existence et l'état d'une ressource, d'un plan ou d'un fichier Codex avant toute manipulation.
+### 3. Contexte Proprioceptif : `environnement_contexte` & `evenement_systeme`
+Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre `new_context_filter.py`.
+- **Contenu Statique (`<environnement_contexte>`) :** Identité (`modèle_actuel`, `modèle_origine`) et grounding géo-temporel.
+- **Évènements Système (`<evenement_systeme>`) :** Bloc XML évènementiel notifiant le Modèle des ressources créées au tour courant ou détectées en asynchrone via le Watermark Delta.
+- **Règle d'Or :** Le modèle **DOIT** utiliser l'outil `query_registry` pour consulter le Registre Unifié V2 (Codex, Plans, Médias, URLs) et valider l'existence ou l'état d'une ressource avant toute manipulation.
 
 ### 4. L'Arsenal (`/opt/ECHO/owui-tools/`)
 - **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Cascade cognitive centralisée via `call_cascade()`, persistance Markdown dans le Vault, registre SQLite par chat, injection proprioceptive dans `registre_plan`.
-- **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites de gestion mémoire : `save_memory` (long terme, importance 1→5), `search_memory` (reranking pondéré), `save_session_context` / `search_session_context` (RAG éphémère par session), `forget_memory`, `list_memory_topics`.
+- **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites de gestion mémoire : `save_memory` (long terme, importance 1→5), `search_memory` (reranking pondéré), `save_session_context` / `search_session_context` (Mémoire Vectorisée de Session), `forget_memory`, `list_memory_topics`.
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes) via `universal_visual_generator.py` et `echo_visuals.py` (Pattern 'Data Island' pour isoler le JS).
-- **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) pilotée par **boucle OODA autonome** avec **vision multimodale** (Gemini 3.x), distillation de page (`distill_page`) et indexation RAG éphémère automatique.
+- **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) pilotée par **boucle OODA autonome** avec **vision multimodale** (Gemini 3.x), distillation de page (`distill_page`) et indexation automatique dans la Mémoire Vectorisée de Session.
 - **Agent Engine (`agent_engine_tool.py`) :** Moteur d'exécution d'un agent unique via `delegate_to_agent` (± Skill via `role_name`). Boucle agentique avec outils, escalade cognitive, budget configurable. Depth=1 (pas de récursion), pas d'écriture RAG.
 - **Explorateur de l'Espace Personnel :** Analyse sécurisée et indexation des documents locaux de l'utilisateur.
+- **Registre Unifié V2 (`query_registry_tool.py`) :** Outil de consultation de l'état cognitif des ressources centralisées (`FILE_INGESTION_STATUS`) indexées par le système.
 - **ECHO Codex (`echo_codex_tool.py`) :** Éditeur multi-langage avec Git intégré (dulwich). 9 fonctions (create, edit, read, search, summarize, list, delete, history). Édition assistée par sub-chat `MODEL_FLASH` via `call_cascade`. Registre `codex_docs` dans SQLite par chat. Distillation Cloud pour résumé technique.
 
 ### 5. Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
 - **ECHO Auth (SSO & MFA) :** IdP autonome (`/opt/ECHO/24-docker-echo-auth/`) gérant l'authentification forte (TOTP). Couplé à BunkerWeb via Forward Auth (`/api/verify`), l'état des sessions et les bannissements IP sont pilotés depuis l'Admin Manager (Révocations granulaires, Kill-Switch).
-- **Dashboard Actif :** Interface interactive (Sidebar asynchrone) de monitoring du cluster Docker, gestion renforcée du SSO (révocation, purge dynamique des utilisateurs) et supervision des ressources système.
+- **Dashboard Actif :** Interface interactive (Sidebar asynchrone) de monitoring du cluster Docker, gestion renforcée du SSO (révocation, purge dynamique sécurisée des utilisateurs via garde-fous API) et supervision des ressources système.
 - **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec un mécanisme de Kill-Switch de Service Worker (PWA) via surcharge de `version.json` de façon non-destructive (préservation du cookie JWT de session).
 - **Régulation & Consolidation :** Optimisation physique SQLite (Vacuum/WAL) et gestion des sauvegardes à chaud (incluant les bases IdP).
 - **Purge Temporelle des Souvenirs (TTL) :** Centralisation du processus d'élagage de la base vectorielle des souvenirs pour optimiser les performances.
@@ -110,6 +114,6 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.179.9*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.180.23*
 
 

@@ -1,7 +1,7 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 1.7
+version: 2.0
 description: 1.0: Action HUD Codex — Éditeur Monaco multi-langage avec Git intégré.
              Boucle événementielle bidirectionnelle (save, ai_edit, accept/reject diff,
              upload, download, historique ◀ ▶, reset). Sub-chat MODEL_FLASH via call_cascade.
@@ -14,6 +14,9 @@ description: 1.0: Action HUD Codex — Éditeur Monaco multi-langage avec Git in
              Rendu Markdown/HTML/CSS/SVG temps réel. Splitter draggable.
              1.7: Bouton Sauver explicite. Rename fichier via changement de langage.
              1.8: Rename fichier via handler dédié.
+             2.0: Registre Unifié V2 — save_codex_record → save_resource,
+             delete_codex_record → delete_resource, clear_codex_records →
+             clear_resources_by_type.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNCAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWOHoiLz48cG9seWxpbmUgcG9pbnRzPSIxNCAyIDE0IDggMjAgOCIvPjxwYXRoIGQ9Ik04IDEzaDgiLz48cGF0aCBkPSJNOCAxN2g4Ii8+PHBhdGggZD0iTTEwIDloLTIiLz48L3N2Zz4=
 """
 
@@ -28,6 +31,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_constants import (
     TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
     CODEX_EDIT_SYSTEM_PROMPT, CODEX_QUICK_ACTIONS,
+    FILE_INGESTION_STATUS
 )
 from echo_utils import EchoEvents, EchoGeminiClient, EchoStateManager
 from echo_codex_git import CodexRepo
@@ -110,7 +114,11 @@ class Action:
                 msg = f"Edit {filename}"
                 commit_hash = repo.commit_file(filename, content, msg)
                 line_count = content.count("\n") + 1
-                state.save_codex_record(filename, lang, line_count, commit_hash[:12], msg)
+                state.save_resource(
+                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                    git_tracked=True, language=lang, lines=line_count,
+                    last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
+                )
 
                 # Notification dans le HUD
                 notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('saved', '{commit_hash[:7]}');"
@@ -163,7 +171,11 @@ class Action:
                 msg = f"AI: {instruction[:60]}"
                 commit_hash = repo.commit_file(filename, content, msg)
                 line_count = content.count("\n") + 1
-                state.save_codex_record(filename, lang, line_count, commit_hash[:12], msg)
+                state.save_resource(
+                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                    git_tracked=True, language=lang, lines=line_count,
+                    last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
+                )
 
                 notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('committed', '{commit_hash[:7]}');"
                 await __event_call__({"type": "execute", "data": {"code": notify_code}})
@@ -218,7 +230,11 @@ class Action:
                 lang = CodexRepo.detect_language(filename)
                 commit_hash = repo.commit_file(filename, content, f"Import {filename}")
                 line_count = content.count("\n") + 1
-                state.save_codex_record(filename, lang, line_count, commit_hash[:12], f"Import {filename}")
+                state.save_resource(
+                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                    git_tracked=True, language=lang, lines=line_count,
+                    last_commit=commit_hash[:12], commit_msg=f"Import {filename}", storage_path=f"codex/{filename}",
+                )
 
                 # Refresh file tree
                 updated_files = repo.list_files()
@@ -305,7 +321,11 @@ class Action:
                 msg = f"Restore from {source_hash}"
                 commit_hash = repo.commit_file(filename, content, msg)
                 line_count = content.count("\n") + 1
-                state.save_codex_record(filename, lang, line_count, commit_hash[:12], msg)
+                state.save_resource(
+                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                    git_tracked=True, language=lang, lines=line_count,
+                    last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
+                )
 
                 # Purge navigation historique
                 history_nav.pop(filename, None)
@@ -326,7 +346,7 @@ class Action:
                 file_count = len(repo.list_files())
                 # La confirmation est gérée côté JS (confirm dialog)
                 repo.reset_all()
-                state.clear_codex_records()
+                state.clear_resources_by_type('codex')
                 history_nav.clear()
 
                 reset_code = "if(window.echoCodexReset) window.echoCodexReset();"
@@ -342,7 +362,11 @@ class Action:
 
                 lang = CodexRepo.detect_language(filename)
                 commit_hash = repo.commit_file(filename, "", f"Create {filename}")
-                state.save_codex_record(filename, lang, 0, commit_hash[:12], f"Create {filename}")
+                state.save_resource(
+                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                    git_tracked=True, language=lang, lines=0,
+                    last_commit=commit_hash[:12], commit_msg=f"Create {filename}", storage_path=f"codex/{filename}",
+                )
 
                 updated_files = repo.list_files()
                 files_json = json.dumps(updated_files).decode("utf-8")
@@ -370,7 +394,7 @@ class Action:
 
                 commit_hash = repo.delete_file(filename, f"Delete {filename}")
                 if commit_hash:
-                    state.delete_codex_record(filename)
+                    state.delete_resource(filename)
 
                 updated_files = repo.list_files()
                 files_json = json.dumps(updated_files).decode("utf-8")
@@ -397,11 +421,16 @@ class Action:
                 commit_hash = repo.rename_file(old_name, new_name, f"Rename {old_name} → {new_name}")
                 if commit_hash:
                     # Mettre à jour le registre codex (supprimer ancien, créer nouveau)
-                    state.delete_codex_record(old_name)
+                    state.delete_resource(old_name)
                     new_lang = CodexRepo.detect_language(new_name)
                     result = repo.read_file(new_name)
                     line_count = result["total_lines"] if result else 0
-                    state.save_codex_record(new_name, new_lang, line_count, commit_hash[:12], f"Rename {old_name} → {new_name}")
+                    state.save_resource(
+                        id=new_name, name=new_name, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                        git_tracked=True, language=new_lang, lines=line_count,
+                        last_commit=commit_hash[:12], commit_msg=f"Rename {old_name} → {new_name}",
+                        storage_path=f"codex/{new_name}",
+                    )
 
                     # Refresh tree + charger le fichier renommé
                     updated_files = repo.list_files()

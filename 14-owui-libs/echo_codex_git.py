@@ -41,6 +41,7 @@ class CodexRepo:
         """Initialise le dépôt s'il n'existe pas, sinon l'ouvre."""
         if os.path.exists(os.path.join(self.repo_path, ".git")):
             return Repo(self.repo_path)
+        os.makedirs(self.repo_path, exist_ok=True)
         return Repo.init(self.repo_path)
 
     # =========================================================================

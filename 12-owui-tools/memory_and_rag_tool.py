@@ -2,12 +2,12 @@
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
 version: 2.5
-description: 1.2: Ajout forget_memory. 1.3: RAG éphémère. 1.4: Mise à jour version. 1.5: Reranking par importance (MEMORY_IMPORTANCE_WEIGHTS) dans recall_memories.
+description: 1.2: Ajout forget_memory. 1.3: Mémoire Vectorisée de Session. 1.4: Mise à jour version. 1.5: Reranking par importance (MEMORY_IMPORTANCE_WEIGHTS) dans recall_memories.
              1.6: Docstrings proactifs memorize_that + recall_memories. Fix double-docstring (bug Python L82-83).
              1.7: Docstring proactif query_distilled_data + distinction claire RAG organique vs éphémère.
              1.8: Renommage sémantique : memorize_that→save_memory, recall_memories→search_memory,
              query_distilled_data→search_session_context.
-             1.9: Ajout save_session_context (outil d'écriture RAG éphémère, symétrique de search_session_context).
+             1.9: Ajout save_session_context (outil d'écriture Mémoire Vectorisée de Session, symétrique de search_session_context).
              2.0: Réécriture complète des 6 docstrings — format orienté-modèle (résumé/Quand/Paramètres).
              2.1: Mention Vallée de la Mort dans les 4 docstrings pertinents.
              2.2: Directives de reformulation search_memory et list_memory_topics (contenu
@@ -332,7 +332,7 @@ class Tools:
         """
         Supprime définitivement un souvenir de la mémoire long terme.
 
-        **ATTENTION :** Irréversible. Ne supprime que la mémoire long terme (pas le RAG éphémère).
+        **ATTENTION :** Irréversible. Ne supprime que la mémoire long terme (pas la Mémoire Vectorisée de Session).
         **Règle :** Le memory_id exact est requis.
         Si inconnu → utiliser d'abord list_memory_topics ou search_memory pour le retrouver.
         """
@@ -365,7 +365,7 @@ class Tools:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
 
     # ==========================================================================
-    # RAG ÉPHÉMÈRE : Écriture + Lecture documentaire sur la session
+    # MÉMOIRE VECTORISÉE DE SESSION : Écriture + Lecture documentaire sur la session
     # ==========================================================================
 
     async def save_session_context(
@@ -377,7 +377,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None
     ) -> dict:
         """
-        Indexe du texte dans le RAG éphémère — mémoire de travail valable uniquement pour cette session.
+        Indexe du texte dans la Mémoire Vectorisée de Session — mémoire de travail valable uniquement pour cette session.
 
         **Quand l'utiliser :**
         - Conclusion d'une analyse longue à retrouver plus tard dans la session
@@ -402,7 +402,7 @@ class Tools:
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
-        await events.status(f"🧠 Indexation dans le RAG éphémère ({source_id})...", done=False)
+        await events.status(f"🧠 Indexation dans la Mémoire Vectorisée de Session ({source_id})...", done=False)
 
         try:
             nb_points, err = await EchoGeminiClient.index_text_in_ephemeral_rag(
@@ -415,12 +415,12 @@ class Tools:
             )
             if nb_points == 0:
                 return wrap_tool_output(
-                    text=f"❌ Échec indexation RAG éphémère ({source_id}) : {err}",
+                    text=f"❌ Échec indexation Mémoire Vectorisée de Session ({source_id}) : {err}",
                     status={"status": "error"}
                 )
             await events.status("🧠 Indexation terminée.", done=True)
             return wrap_tool_output(
-                text=f"✅ `{source_id}` indexé dans le RAG éphémère ({nb_points} vecteurs). "
+                text=f"✅ `{source_id}` indexé dans la Mémoire Vectorisée de Session ({nb_points} vecteurs). "
                      f"Utilisez search_session_context(source_id=\"{source_id}\", ...) pour l'interroger.",
                 status={"status": "success", "source_id": source_id, "vectors": nb_points}
             )
@@ -436,7 +436,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None
     ) -> dict:
         """
-        Recherche dans le RAG éphémère — retrouve du contenu indexé plus tôt dans la session courante.
+        Recherche dans la Mémoire Vectorisée de Session — retrouve du contenu indexé plus tôt dans la session courante.
 
         **Quand l'utiliser :**
         - Après navigation web : le contenu de la page est indexé (source_id = domaine ou nom court)
@@ -457,7 +457,7 @@ class Tools:
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
-        await events.status(f"🧠 Recherche dans le RAG éphémère ({source_id})...")
+        await events.status(f"🧠 Recherche dans la Mémoire Vectorisée de Session ({source_id})...")
 
         try:
             vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)

@@ -1,7 +1,7 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.2
+version: 1.3
 description: 1.0: Outil de planification stratégique — construction, modification et gestion
              de plans d'action via un agent planificateur LLM (cascade PRO→FLASH→LITE).
              Plans persistés en Markdown dans le vault, registre de contrôle SQLite par chat,
@@ -11,6 +11,9 @@ description: 1.0: Outil de planification stratégique — construction, modifica
              log diagnostic __tools__.
              1.2: Centralisation politique modèle Pipe. Suppression _cascade_call() et
              _get_thinking_level() locaux → call_cascade() centralisé.
+             1.3: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du
+             dossier plans/. save_plan_record → save_resource. Suppression _get_plan_dir
+             et _get_plan_path.
 """
 
 import sys
@@ -26,6 +29,7 @@ from typing import Optional, Any, Literal
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager, clamp_model
+from echo_codex_git import CodexRepo
 from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING,
     TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
@@ -132,19 +136,14 @@ class Tools:
         return text[:max_length] if text else "plan"
 
     @staticmethod
-    def _get_plan_dir(uid: str, chat_id: str) -> str:
-        """Retourne le répertoire des plans pour un chat donné."""
-        from echo_utils import get_echo_session_path
-        plan_dir = get_echo_session_path(uid, chat_id, "plans")
-        return plan_dir
-
-    @staticmethod
-    def _get_plan_path(uid: str, chat_id: str, plan_id: str) -> Optional[str]:
-        """Résout le chemin physique d'un plan via glob sur {plan_id}_*.md."""
-        from echo_utils import get_echo_session_path
-        plan_dir = get_echo_session_path(uid, chat_id, "plans")
-        matches = glob.glob(os.path.join(plan_dir, f"{plan_id}_*.md"))
-        return matches[0] if matches else None
+    def _read_plan_from_codex(uid: str, chat_id: str, plan_id: str) -> Optional[dict]:
+        """Lit un plan depuis le Codex via glob sur {plan_id}_*.md dans le repo Git."""
+        repo = CodexRepo(uid, chat_id)
+        files = repo.list_files()
+        for f in files:
+            if f.startswith(f"{plan_id}_") and f.endswith(".md"):
+                return repo.read_file(f)
+        return None
 
     @staticmethod
     def _build_tools_summary(tools_dict: Optional[dict]) -> str:
@@ -302,20 +301,16 @@ class Tools:
         actual_model = MODEL_ROUTING.get(model_key_used, model_key_used)
         plan_content = plan_content.replace("{author_model}", actual_model)
 
-        # Persistance fichier
-        plan_dir = self._get_plan_dir(user_id, chat_id)
-        plan_path = os.path.join(plan_dir, filename)
-        with open(plan_path, "w", encoding="utf-8") as f:
-            f.write(plan_content)
+        # Persistance dans le Codex (Git)
+        repo = CodexRepo(user_id, chat_id)
+        repo.commit_file(filename, plan_content, f"Plan {plan_id}: {goal[:60]}")
 
-        # Enregistrement dans le registre SQLite
+        # Enregistrement dans le registre unifié
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        state.save_plan_record(
-            plan_id=plan_id,
-            filename=filename,
-            goal=goal[:200],
-            status="draft",
-            author_model=actual_model,
+        state.save_resource(
+            id=plan_id, name=goal[:80], resource_type='plan', status='draft',
+            mime='text/markdown', plan_goal=goal[:200], author_model=actual_model,
+            git_tracked=True, storage_path=f"codex/{filename}",
         )
 
         await events.status(f"✅ Plan `{plan_id}` créé (draft) par {model_key_used}.", done=True)
@@ -358,12 +353,11 @@ class Tools:
         if not chat_id:
             return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.")
 
-        plan_path = self._get_plan_path(user_id, chat_id, plan_id)
-        if not plan_path or not os.path.exists(plan_path):
-            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable.")
+        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        if not result:
+            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.")
 
-        with open(plan_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = result["content"]
 
         await events.status(f"📖 Plan `{plan_id}` lu.", done=True)
         return wrap_tool_output(text=content)
@@ -405,13 +399,13 @@ class Tools:
         if not chat_id:
             return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.")
 
-        plan_path = self._get_plan_path(user_id, chat_id, plan_id)
-        if not plan_path or not os.path.exists(plan_path):
-            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable.")
+        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        if not result:
+            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.")
 
         # 1. Lecture du plan actuel
-        with open(plan_path, "r", encoding="utf-8") as f:
-            current_content = f.read()
+        current_content = result["content"]
+        plan_filename = result["filename"]
 
         await events.status(f"📝 Modification du plan `{plan_id}`...")
 
@@ -452,15 +446,15 @@ class Tools:
             await events.status("❌ Réponse vide du planificateur.", done=True)
             return wrap_tool_output(text="❌ Erreur : le planificateur n'a produit aucun contenu.")
 
-        # 4. Écriture du fichier mis à jour
-        with open(plan_path, "w", encoding="utf-8") as f:
-            f.write(new_content)
+        # 4. Écriture dans le Codex (Git)
+        repo = CodexRepo(user_id, chat_id)
+        repo.commit_file(plan_filename, new_content, f"Update plan {plan_id}")
 
-        # 5. Synchronisation du statut SQLite si changé
+        # 5. Synchronisation du statut dans le registre unifié
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         new_status = self._extract_frontmatter_status(new_content)
         if new_status and new_status in PLAN_STATUS:
-            state.update_plan_record_status(plan_id, new_status)
+            state.update_resource_status(plan_id, new_status)
 
         await events.status(
             f"✅ Plan `{plan_id}` modifié par {model_key_used}.",
@@ -506,21 +500,22 @@ class Tools:
         if not chat_id:
             return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.")
 
-        plan_path = self._get_plan_path(user_id, chat_id, plan_id)
-        if not plan_path or not os.path.exists(plan_path):
-            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable.")
+        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        if not result:
+            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.")
 
-        filename = os.path.basename(plan_path)
+        plan_filename = result["filename"]
 
-        # 1. Suppression du fichier
-        os.remove(plan_path)
+        # 1. Suppression dans le Codex (Git)
+        repo = CodexRepo(user_id, chat_id)
+        repo.delete_file(plan_filename, f"Delete plan {plan_id}")
 
-        # 2. Nettoyage du registre SQLite
+        # 2. Nettoyage du registre unifié
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        state.delete_plan_record(plan_id)
+        state.delete_resource(plan_id)
 
         await events.status(f"🗑️ Plan `{plan_id}` supprimé.", done=True)
 
         return wrap_tool_output(
-            text=f"✅ Plan `{plan_id}` (`{filename}`) supprimé définitivement."
+            text=f"✅ Plan `{plan_id}` (`{plan_filename}`) supprimé définitivement."
         )

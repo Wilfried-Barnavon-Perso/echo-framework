@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.51
+# Version : 9.52
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -154,7 +154,7 @@ services:
       # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
     command: >
-      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc) pip install mgzip dulwich && ./start.sh"
+      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc) pip install mgzip dulwich 'markitdown[all]' && ./start.sh"
     healthcheck:
       test: ["CMD-SHELL", "curl --silent --fail http://localhost:8080/health || exit 1"]
       interval: 15s

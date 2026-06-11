@@ -70,7 +70,7 @@
 
         <tr><td><strong>Registre de Contrôle</strong></td><td>Base SQLite par chat (<code>identity.db</code> / <code>{chat_id}.db</code> via <code>EchoStateManager</code>)</td></tr>
 
-        <tr><td><strong>Proprioception</strong></td><td>Injection automatique du statut des plans dans le Registre <code>registre_plan</code> de <code><environnement_contexte></code></td></tr>
+        <tr><td><strong>Proprioception</strong></td><td>Consultation dynamique via l'outil <code>query_registry</code> (Registre Unifié V2)</td></tr>
 
         <tr><td><strong>Algorithme LLM</strong></td><td>Cascade cognitive descendante résiliente (PRO ? FLASH ? LITE)</td></tr>
 
@@ -334,17 +334,11 @@ status: draft
 
     <div class="audit-note">
 
-      <h4>?? Intégration proprioceptive (registre_plan)</h4>
+      <h4>🧠 Intégration proprioceptive (Registre Unifié V2)</h4>
 
       <p>
 
-        À chaque nouveau tour de discussion, le filtre de contexte d'ECHO interroge le registre SQLite pour ce chat spécifique.
-
-        Les métadonnées actives de tous les plans existants sont injectées de manière transparente dans le bloc proprioceptif 
-
-        <code>&lt;environnement_contexte&gt;</code> sous la structure <code>registre_plan</code>. Cela garantit que le modèle a toujours 
-
-        conscience des plans en cours, de leur statut global et de leur identifiant unique sans avoir besoin de lire les fichiers physiques.
+        Le modèle n'est plus notifié passivement des plans existants à chaque tour de discussion, ceci afin d'économiser l'espace contextuel. Le modèle a la responsabilité d'utiliser l'outil <code>query_registry</code> pour interroger activement la base de données (Registre Unifié V2) afin de prendre connaissance de la liste des plans, de leur statut global et de leur identifiant unique sans avoir besoin de lire les fichiers physiques.
 
       </p>
 
@@ -366,7 +360,7 @@ status: draft
 
     <footer>
 
-      ECHO Framework - Version 5.179.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
 
     </footer>
 

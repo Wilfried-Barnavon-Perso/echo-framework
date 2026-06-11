@@ -1,8 +1,10 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 1.1
-description: 1.1: Correction docstring summarize_codex (distillation cloud Gemini).
+version: 1.2
+description: 1.2: Registre Unifié V2 — save_codex_record → save_resource,
+             delete_codex_record → delete_resource.
+             1.1: Correction docstring summarize_codex (distillation cloud Gemini).
              1.0: Éditeur multi-langage avec Git intégré. 9 fonctions Tool pour le LLM :
              create, edit (direct + agent), read (plage lignes), search, summarize (distillation),
              list, delete, history. Sub-chat MODEL_FLASH pour édition assistée via call_cascade.
@@ -24,6 +26,7 @@ from echo_constants import (
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
     TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
     CODEX_EDIT_SYSTEM_PROMPT, CODEX_SUMMARIZE_PROMPT, CODEX_DEFAULT_LANG,
+    FILE_INGESTION_STATUS
 )
 from echo_codex_git import CodexRepo
 
@@ -108,7 +111,11 @@ class Tools:
         line_count = content.count("\n") + 1
 
         commit_hash = repo.commit_file(filename, content, msg)
-        state.save_codex_record(filename, lang, line_count, commit_hash[:12], msg)
+        state.save_resource(
+            id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+            git_tracked=True, language=lang, lines=line_count,
+            last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
+        )
 
         await events.status(f"✅ {filename} créé ({line_count} lignes, commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(
@@ -153,7 +160,11 @@ class Tools:
             msg = commit_message or f"Edit {filename}"
             line_count = new_content.count("\n") + 1
             commit_hash = repo.commit_file(filename, new_content, msg)
-            state.save_codex_record(filename, lang, line_count, commit_hash[:12], msg)
+            state.save_resource(
+                id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                git_tracked=True, language=lang, lines=line_count,
+                last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
+            )
 
             await events.status(f"✅ {filename} modifié (commit {commit_hash[:7]}).", done=True)
             return wrap_tool_output(
@@ -202,7 +213,11 @@ class Tools:
             msg = commit_message or f"AI edit: {instructions[:60]}"
             line_count = modified.count("\n") + 1
             commit_hash = repo.commit_file(filename, modified, msg)
-            state.save_codex_record(filename, lang, line_count, commit_hash[:12], msg)
+            state.save_resource(
+                id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                git_tracked=True, language=lang, lines=line_count,
+                last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
+            )
 
             await events.status(f"✅ Édition assistée terminée (commit {commit_hash[:7]}).", done=True)
             return wrap_cascade_output(
@@ -235,7 +250,7 @@ class Tools:
         if not commit_hash:
             return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"})
 
-        state.delete_codex_record(filename)
+        state.delete_resource(filename)
         await events.status(f"🗑️ {filename} supprimé (commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(text=f"Fichier `{filename}` supprimé.\n- Commit : `{commit_hash[:12]}`")
 

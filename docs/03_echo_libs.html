@@ -266,7 +266,7 @@
         <tr><td><code>wrap_tool_output(text, status, multiparts, nouveaux_fichiers)</code></td><td>Construit le dictionnaire multipart standardisé retourné par chaque outil au Pipe. Status par défaut : <code>{"status": "success"}</code>.</td></tr>
         <tr><td><code>wrap_cascade_output(text, model_requested, model_used, status, reason)</code></td><td>Enrichit <code>wrap_tool_output</code> avec les métadonnées de cascade. Si <code>model_used ≠ model_requested</code>, le status passe en <code>warning</code> et le champ <code>reason</code> explique la divergence. Le modèle effectif est également préfixé dans le texte.</td></tr>
         <tr><td><code>get_echo_version()</code></td><td>Lit la version depuis <code>/app/backend/data/ECHO_VERSION</code> (copié depuis le fichier <code>VERSION</code> du dépôt).</td></tr>
-        <tr><td><code>index_text_in_ephemeral_rag()</code></td><td>Pipeline complet chunk → embed → upsert Qdrant pour le RAG éphémère. Recouvrement inter-chunks pour préserver le contexte aux jointures.</td></tr>
+        <tr><td><code>index_text_in_ephemeral_rag()</code></td><td>Pipeline complet chunk → embed → upsert Qdrant pour la Mémoire Vectorisée de Session. Recouvrement inter-chunks pour préserver le contexte aux jointures.</td></tr>
       </tbody>
     </table>
 
@@ -339,8 +339,8 @@
 
     <p>
       Table SQLite ajoutée dans <code>{chat_id}.db</code> pour le suivi des fichiers ECHO Codex.
-      Elle permet l'injection dans le vecteur proprioceptif (<code>registre_codex</code>)
-      et des statistiques rapides sans accès disque.
+      Elle permet la consultation de l'état Codex à la volée. Contrairement aux autres registres,
+      un utilisateur ne peut jamais accéder au Codex d'un autre, ni à celui d'une autre conversation.
     </p>
 
     <table>
@@ -348,7 +348,7 @@
       <tbody>
         <tr><td><code>save_codex_record(filename, language, lines, last_commit, commit_msg)</code></td><td>INSERT OR UPDATE dans <code>codex_docs</code>. Appelé après chaque commit Codex.</td></tr>
         <tr><td><code>delete_codex_record(filename)</code></td><td>Supprime une entrée du registre (appelé lors de la suppression d'un fichier).</td></tr>
-        <tr><td><code>get_codex_docs()</code></td><td>Retourne tous les fichiers Codex du chat (pour injection dans <code>registre_codex</code> par le Filtre).</td></tr>
+        <tr><td><code>get_codex_docs()</code></td><td>Retourne tous les fichiers Codex du chat (pour consultation globale de l'état via query_registry).</td></tr>
         <tr><td><code>clear_codex_records()</code></td><td>Purge intégrale du registre (appelé par l'action Reset du HUD).</td></tr>
       </tbody>
     </table>
@@ -494,7 +494,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.179.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

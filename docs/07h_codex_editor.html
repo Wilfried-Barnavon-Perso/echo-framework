@@ -93,10 +93,10 @@ flowchart TD
     <h3>Registre SQLite - <code>codex_docs</code></h3>
 
     <p>
-      Chaque fichier créé ou modifié est enregistré dans la table <code>codex_docs</code> de la base
-      <code>{chat_id}.db</code> (<code>EchoStateManager</code>). Ce registre sert à deux fins :
-      injection dans le vecteur proprioceptif (<code>registre_codex</code>) et statistiques rapides
-      sans accès disque.
+      Chaque fichier créé ou modifié est enregistré dans la base SQLite unifiée (Registre V2) de la base
+      <code>{chat_id}.db</code> (<code>EchoStateManager</code>). Ce registre permet au modèle 
+      de consulter la liste de ses fichiers à tout moment via l'outil <code>query_registry</code> 
+      et d'obtenir des statistiques rapides sans accès disque.
     </p>
 
     <table>
@@ -447,33 +447,20 @@ flowchart TD
       </tbody>
     </table>
 
-    <h2>Proprioception - <code>registre_codex</code></h2>
+    <h2>Proprioception - Registre Unifié V2</h2>
 
     <p>
-      Le Filtre (<code>new_context_filter.py</code> v7.12) injecte automatiquement un registre
-      des fichiers Codex dans le vecteur d'état <code>environnement_contexte</code> (AEC) à
-      chaque tour de conversation. Gemini dispose ainsi d'une vue à jour de l'état du Codex
-      sans avoir à appeler <code>list_codex</code>.
+      L'ancien système d'injection passive (registre_codex) ayant été déprécié (AEC V2) pour économiser des tokens,
+      Gemini doit désormais interroger l'état du Codex de manière active.
     </p>
-
-    <div class="code-header">Extrait YAML - <code>registre_codex</code> dans <code>environnement_contexte</code></div>
-    <pre><code>registre_codex:
-  - id: "mon_script.py"
-    lang: "python"
-    lines: 142
-    last_commit: "feat: add error handler"
-  - id: "config.yaml"
-    lang: "yaml"
-    lines: 38
-    last_commit: "chore: update timeout"</code></pre>
 
     <div class="warning-box">
       <h4>⚠️ Règle d'Or - Consulter le registre avant toute opération</h4>
       <p>
-        Le modèle <strong>doit</strong> consulter <code>registre_codex</code> pour vérifier
-        l'existence d'un fichier avant d'appeler <code>read_codex</code>, <code>edit_codex</code>
+        Le modèle <strong>doit</strong> consulter l'état de ses ressources via l'outil <code>query_registry</code> pour vérifier
+        l'existence d'un fichier Codex avant d'appeler <code>read_codex</code>, <code>edit_codex</code>
         ou <code>delete_codex</code>. Cette règle évite les erreurs 404 inutiles et les tentatives
-        de création de doublons.
+        de création de doublons. Seuls les fichiers nouvellement intégrés au tour courant lui sont notifiés via le bloc <code>&lt;evenement_systeme&gt;</code>.
       </p>
     </div>
 
@@ -523,13 +510,13 @@ flowchart TD
           <td>Table <code>codex_docs</code></td>
           <td><code>14-owui-libs/echo_utils.py</code></td>
           <td>7.21</td>
-          <td>Registre SQLite par conversation (CRUD + injection AEC)</td>
+          <td>Registre SQLite par conversation (Consultable via <code>query_registry</code>)</td>
         </tr>
         <tr>
-          <td><code>registre_codex</code></td>
+          <td><code>&lt;evenement_systeme&gt;</code></td>
           <td><code>11-owui-filters/new_context_filter.py</code></td>
-          <td>7.18</td>
-          <td>Injection proprioceptive dans <code>environnement_contexte</code></td>
+          <td>7.36</td>
+          <td>Notification proprioceptive des modifications Codex hors-tour (Delta)</td>
         </tr>
       </tbody>
     </table>
@@ -553,7 +540,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.179.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

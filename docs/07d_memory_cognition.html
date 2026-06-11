@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Mémoire et Cognition ECHO v5 : RAG organique echo_memory, RAG éphémère echo_ephemeral, système d'importance mémorielle, routage cognitif new_cognitive_level, Agents Cognitifs (Conseil d'Experts) cognitive_agents.py.">
+  <meta name="description" content="Mémoire et Cognition ECHO v5 : RAG organique echo_memory, Mémoire Vectorisée de Session echo_ephemeral, système d'importance mémorielle, routage cognitif new_cognitive_level, Agents Cognitifs (Conseil d'Experts) cognitive_agents.py.">
   <title>ECHO v5 - 7d. Mémoire &amp; Cognition</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -20,7 +20,7 @@
     <p>
       Cette famille d'outils est le cœur cognitif de l'Arsenal. Elle permet à ECHO de maintenir
       une mémoire persistante entre les sessions (<em>RAG organique</em>), de gérer les données
-      de travail à l'intérieur d'une session (<em>RAG éphémère</em>), et de déléguer des tâches
+      de travail à l'intérieur d'une session (<em>Mémoire Vectorisée de Session</em>), et de déléguer des tâches
       complexes à un niveau cognitif supérieur (<em>routage dynamique</em>).
     </p>
 
@@ -54,7 +54,7 @@
       </tbody>
     </table>
 
-    <h2>RAG Éphémère - <code>echo_ephemeral</code></h2>
+    <h2>Mémoire Vectorisée de Session - <code>echo_ephemeral</code></h2>
 
     <p>
       La mémoire éphémère est la <strong>mémoire de travail</strong> d'une session. Elle stocke
@@ -78,11 +78,11 @@
     </table>
 
     <div class="note-box">
-      <h4>Usage canonique du RAG éphémère</h4>
+      <h4>Usage canonique de la Mémoire Vectorisée de Session</h4>
       <p>
         Lorsque le Filtre effectue l'extraction transmodale et le Map-Reduce d'un fichier volumineux, il utilise le
         <code>source_id</code> natif (ex. <code>U_abc123_C_xyz789_T_1748246400</code>) et indexe les chunks bruts
-        dans <code>echo_ephemeral</code>. Le modèle reçoit ce <code>source_id</code> dans l'AEC (registre_fichiers) et l'utilise pour
+        dans <code>echo_ephemeral</code>. Le modèle reçoit ce <code>source_id</code> dans l'AEC (via <code>evenement_systeme</code> s'il vient d'être soumis, ou via l'outil <code>query_registry</code>) et l'utilise pour
         interroger les détails précis de la source brute : <code>search_session_context("U_abc123_C_xyz789...", "...")</code>.
         Ce mécanisme remplace avantageusement l'injection du fichier complet dans le contexte,
         qui serait prohibitive en tokens.
@@ -243,7 +243,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.179.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

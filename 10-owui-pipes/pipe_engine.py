@@ -1,10 +1,10 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.15
+version: 192.18
 requirements: asyncssh
-description: 190.8: Migration type 'summarized' -> 'rag_ephemeral'.
-             191.0: Remplacement Device Flow par PKCE + Authorization Code.
+description: 192.18: Utilisation de FILE_INGESTION_STATUS pour la sauvegarde des fichiers.
+             192.17: Antigravity 2.1 — Refonte architecture Auth via EchoAuth (OAuth2 PKCE multi-user).
              191.1: Fix regression auth - callback PKCE background task.
              192.0: Tunnel SSH ephemere asyncssh pour callback OAuth2 PKCE.
              Ports dynamiques multi-user. __request__ injecte pour detection IP.
@@ -14,7 +14,7 @@ description: 190.8: Migration type 'summarized' -> 'rag_ephemeral'.
              192.3: HUD : RPD, RPM et modèle CA ajoutés au tooltip quota. Extraction RPD, RPM et modèle CA depuis model_quota, passage à deploy_context_gauge.
              192.5: Fix docstring new_cognitive_level : escalade FLASH systématique pour tâches
              agentiques, reference save_memory/save_session_context, PRO assoupli.
-             Valence de la Mort atténuée par RAG éphémère (save_session_context).
+             Valence de la Mort atténuée par la Mémoire Vectorisée de Session (save_session_context).
              192.6: UserValve ENABLE_PAID_CREDITS (défaut False) — crédits Google One AI
              désactivés par défaut. Persistance write-on-change dans identity.db.
              192.7: Fix multimodal — guard isinstance sur content liste. Sécurisation scellement shadow.
@@ -67,7 +67,7 @@ from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING, MODEL_IDENTITY,
     TEMP_DEFAULT, TOP_P_DEFAULT,
     THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
-    MAX_TOKENS_DEFAULT
+    MAX_TOKENS_DEFAULT, FILE_INGESTION_STATUS
 )
 from echo_auth import AuthService
 
@@ -316,7 +316,8 @@ class Orchestrator:
 
     async def prepare_context(self, body: Dict, chat_id: str, target_model: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
         """RESTAURATION Bit-Perfect avec Contrôle Temporel Strict (Anti-Ghosting)."""
-        messages = body.get("messages", []); meta = __metadata__ or body.get("metadata", {})
+        messages = body.get("messages", [])
+        meta = {**(__metadata__ or {}), **body.get("metadata", {})}
         model_id = target_model
         final_contents = []; last_cumul = None
         i = 0
@@ -789,7 +790,7 @@ class Pipe:
                             "  \u2192 Justifier le besoin de PRO. Redescendre vers FLASH ou LITE "
                             "une fois la tâche complexe accomplie.\n\n"
                             "## Corrélation contextuelle\n"
-                            "La saturation contextuelle est atténuée par le RAG éphémère (save_memory "
+                            "La saturation contextuelle est atténuée par la Mémoire Vectorisée de Session (save_memory "
                             "et save_session_context stockent les éléments critiques). Vigilance "
                             "accrue à haute charge (> 50%) — préférer alors FLASH ou PRO."
                         ),
@@ -967,7 +968,7 @@ class Pipe:
         # --- SCELLEMENT FINAL (SUTURE DÉFINITIVE) ---
 
         if chat_id:
-            meta = __metadata__ or body.get("metadata", {})
+            meta = {**(__metadata__ or {}), **body.get("metadata", {})}
             
             # 1. Scellement message Utilisateur (Le Draft complet)
             user_updated_at = meta.get("_echo_user_msg_updated_at")
@@ -981,15 +982,30 @@ class Pipe:
                     full_user_parts.append({"text": orch._resolve_placeholders(user_text, target_model)})
                 orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
 
-            # 2. Scellement du Registre des Fichiers et Rangement
+            # 2. Scellement du Registre Unifié V2 et Rangement
             files_to_seal = meta.get("_echo_files_to_seal", [])
             for f in files_to_seal:
                 if f.get("status") == "success":
                     content_to_save = None
-                    if f.get("type") == "rag_ephemeral": content_to_save = f.get("content")
-                    elif f.get("type") == "transmitted" and f.get("sub_type") == "text": content_to_save = f.get("content")
-                    orch.user_data_manager.state_manager.mark_processed(chat_id, f['fid'], f['name'], f['mime'], f['type'], content_to_save, user_msg_id)
-                    orch.user_data_manager.state_manager.move_to_vault(f['fid'], f['name'])
+                    if f.get("type") == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]: content_to_save = f.get("content")
+                    elif f.get("type") == FILE_INGESTION_STATUS["PUT_IN_CONTEXT"] and f.get("sub_type") == "text": content_to_save = f.get("content")
+                    # Résolution du resource_type depuis le MIME et le type de traitement
+                    mime = f.get('mime', '')
+                    if f.get('sub_type') == 'text' or 'text/' in mime or 'json' in mime:
+                        res_type = 'codex'
+                    elif f.get('type') == 'indexed':
+                        res_type = 'binary'
+                    else:
+                        res_type = 'media'
+                    orch.user_data_manager.state_manager.save_resource(
+                        id=f['fid'], name=f['name'], resource_type=res_type,
+                        status=f['type'], mime=f['mime'], summary=content_to_save,
+                        storage_path=f.get('storage_path'), git_tracked=(res_type == 'codex'),
+                        message_id=user_msg_id
+                    )
+                    # Déplacement dans le Vault uniquement pour les non-Codex
+                    if res_type != 'codex':
+                        orch.user_data_manager.state_manager.move_to_vault(f['fid'], f['name'])
 
             # 3. Scellement Ombre de l'Assistant (Multi-Messages Cascade)
             # On utilise le message_id de l'assistant (qui sera créé par Open WebUI au retour)
