@@ -1,8 +1,9 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.32
-description: 5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro. 5.17: Ajout show_image_js (injection JS sans HTMLResponse).
+version: 5.33
+description: 5.33: Bascule de monitor_ECHO vers events.emit pour compatibilité universelle avec les Outils.
+             5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro. 5.17: Ajout show_image_js (injection JS sans HTMLResponse).
              5.18: Tooltip AUTHENTIFICATION refondu : section QUOTAS détaillée (Crédits, Quota modèle, Reset, Type).
              5.19: Nouveaux paramètres quota (quota_model, RPD, RPM) dans la signature et le tooltip.
              5.20: Refonte show_image_js — réutilise le moteur WebPlayer (HUD navigateur) avec
@@ -177,6 +178,16 @@ class EchoUI(EchoRichUI):
   """Moteur de pilotage HUD pour ECHO."""
 
   @staticmethod
+  def get_mobile_guard_js(hud_id: str, block_execution: bool = False, error_msg: str = "Incompatible sur mobile.") -> str:
+      """Génère le garde-fou JS centralisé pour l'adaptation ou le blocage sur mobile."""
+      return f"""
+      const isMobile = window.matchMedia('(max-width: 768px)').matches || /Mobi|Android/i.test(navigator.userAgent);
+      if (isMobile) {{
+          {f"window.parent.postMessage({{ type: 'toast', message: `{error_msg}`, level: 'warning' }}, '*'); return;" if block_execution else f"const styleId = '{hud_id}-mobile-style'; if (!document.getElementById(styleId)) {{ const styleEl = document.createElement('style'); styleEl.id = styleId; styleEl.innerHTML = `#{hud_id} {{ position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100dvh !important; max-width: none !important; max-height: none !important; min-width: 0 !important; min-height: 0 !important; border-radius: 0 !important; z-index: 10005 !important; transform: none !important; }} #{hud_id}-resizer, .cp {{ display: none !important; }}`; document.head.appendChild(styleEl); }}"}
+      }}
+      """
+
+  @staticmethod
   async def safe_deploy(events: Any, monitor_func: Any, **kwargs):
       """Déploiement sécurisé du HUD (Anti-Crash si events/caller absent)."""
       if not events or (not events.emitter and not events.caller):
@@ -189,24 +200,23 @@ class EchoUI(EchoRichUI):
           return False
 
   @staticmethod
-  def _generate_webplayer_js(b64: str, mime: str, metadata: list, current_url: str, hud_id: str, state_key: str, direct_url: str = None, icon: str = "👁️") -> str:
+  def _generate_webplayer_js(b64: str, mime: str, metadata: list, current_url: str, hud_id: str, state_key: str, icon: str = "👁️") -> str:
     """Génère le moteur de pilotage ECHO WEBPLAYER (v5.20 Équilibre Souverain Pro)."""
     meta_j = std_json.dumps(metadata).decode('utf-8')
     b64_j = std_json.dumps(b64).decode('utf-8')
     url_j = std_json.dumps(current_url).decode('utf-8')
     mime_j = std_json.dumps(mime).decode('utf-8')
-    direct_url_j = std_json.dumps(direct_url or "").decode('utf-8')
 
     return f"""
   (function() {{
     const HUD_ID = '{hud_id}';
+    {EchoUI.get_mobile_guard_js(hud_id, block_execution=True, error_msg="Le WebPlayer est indisponible sur mobile.")}
     const STATE_KEY = '{state_key}';
     const ENGINE_KEY = 'echoWebPlayer_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_');
 
     const payload = {{
       b64: {b64_j}, mime: {mime_j}, metadata: {meta_j},
-      url: {url_j},
-      directUrl: {direct_url_j}
+      url: {url_j}
     }};
 
     if (!window[ENGINE_KEY]) {{
@@ -242,10 +252,6 @@ class EchoUI(EchoRichUI):
           if (!img || !img.naturalWidth) return;
 
           const vw = window.innerWidth, vh = window.innerHeight;
-          
-          if (fromResize) {{
-            this.imgScale = this.hud.offsetWidth / img.naturalWidth;
-          }}
 
           let targetW = img.naturalWidth * this.imgScale;
           let targetH = img.naturalHeight * this.imgScale;
@@ -361,19 +367,40 @@ class EchoUI(EchoRichUI):
 
           document.getElementById(HUD_ID + "-btn-close").onclick = () => this.hud.remove();
 
-          new ResizeObserver(entries => {{
-            if (this.isDragging) return;
-            for (let entry of entries) {{
-                if (entry.contentRect.width > 0) this.syncLayout(true);
-            }}
-          }}).observe(this.hud);
+          const resizer = document.getElementById(HUD_ID + "-resizer");
+          if (resizer) {{
+             resizer.onmousedown = (e) => {{
+                e.preventDefault(); e.stopPropagation();
+                const startX = e.clientX;
+                const startScale = this.imgScale;
+                const img = document.getElementById(HUD_ID + "-img");
+                if (!img || !img.naturalWidth) return;
+                
+                const doDrag = (me) => {{
+                   const deltaX = me.clientX - startX;
+                   this.imgScale = Math.max(0.05, startScale + (deltaX / img.naturalWidth));
+                   this.syncLayout(false);
+                }};
+                const stopDrag = () => {{
+                   document.removeEventListener('mousemove', doDrag);
+                   document.removeEventListener('mouseup', stopDrag);
+                   this.saveState();
+                }};
+                document.addEventListener('mousemove', doDrag);
+                document.addEventListener('mouseup', stopDrag);
+             }};
+          }}
+          
+          window.addEventListener('resize', () => {{
+             this.syncLayout(false);
+          }});
         }},
 
         create: function(data) {{
           const old = document.getElementById(HUD_ID); if(old) old.remove();
           this.hud = document.createElement('div');
           this.hud.id = HUD_ID;
-          this.hud.style.cssText = 'position:fixed; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:sans-serif; display:flex; flex-direction:column; overflow:hidden; resize:both; min-width:200px; min-height:100px;';
+          this.hud.style.cssText = 'position:fixed; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:200px; min-height:100px;';
           
           this.hud.innerHTML = `
             <div id="${{HUD_ID}}-header" style="height:${{this.headerH}}px; padding:0 15px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:12px; border-bottom:1px solid #222; cursor:move; user-select:none; box-sizing:border-box;">
@@ -391,6 +418,7 @@ class EchoUI(EchoRichUI):
                 <img id="${{HUD_ID}}-img" style="display:block; user-select:none; pointer-events:none; width:100%; height:100%; max-width:none !important;" draggable="false" />
                 <div id="${{HUD_ID}}-hitboxes" style="position:absolute; inset:0; pointer-events:none;"></div>
               </div>
+              <div id="${{HUD_ID}}-resizer" style="position:absolute; bottom:0; right:0; width:16px; height:16px; cursor:nwse-resize; z-index:101; background:linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.4) 50%); border-bottom-right-radius: 12px;"></div>
             </div>
           `;
           document.body.appendChild(this.hud);
@@ -434,7 +462,7 @@ class EchoUI(EchoRichUI):
             }});
             this.syncLayout();
           }};
-          img.src = data.directUrl || ("data:" + data.mime + ";base64," + data.b64);
+          img.src = "data:" + data.mime + ";base64," + data.b64;
         }}
       }};
     }}
@@ -446,7 +474,7 @@ class EchoUI(EchoRichUI):
   async def monitor_ECHO(events: Any, b64: str, metadata: List[Dict] = None, hud_id: str = "echo-webplayer", state_key: str = "echo_webplayer_state", current_url: str = ""):
     """Déploie le moniteur visuel interactif (HUD) haute performance."""
     js_code = EchoUI._generate_webplayer_js(b64, "image/png", metadata or [], current_url, hud_id, state_key, icon="🌐")
-    await events.call("execute", {"code": js_code})
+    await events.emit("execute", {"code": js_code})
 
   @staticmethod
   async def deploy_context_gauge(
@@ -496,12 +524,13 @@ class EchoUI(EchoRichUI):
           .tooltip-title {{ color: #00d4ff; font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid rgba(0, 212, 255, 0.2); padding-bottom: 4px; text-transform: uppercase; }}
           .tooltip-row {{ display: flex; justify-content: space-between; margin-bottom: 4px; }}
           .dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }}
+          @media (max-width: 768px) {{ .tooltip-box {{ width: 90vw !important; left: 50% !important; transform: translateX(-50%) translateY(-5px) !important; white-space: normal !important; }} }}
         `;
         document.head.appendChild(style);
       }}
       hudWrapper = document.createElement('div');
       hudWrapper.id = 'echo-nav-context-hud-wrapper';
-      hudWrapper.style.cssText = 'position:absolute;left:50%;top:22px;transform:translateX(-50%);width:auto;min-width:300px;display:flex;justify-content:center;align-items:center;z-index:60;pointer-events:none;';
+      hudWrapper.style.cssText = 'position:fixed;left:50%;top:22px;transform:translateX(-50%);width:auto;min-width:300px;display:flex;justify-content:center;align-items:center;z-index:9999;pointer-events:none;';
       var hud = document.createElement('div');
       hud.id = 'echo-nav-context-hud';
       hud.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:12px;pointer-events:auto;background:rgba(0,0,0,0.2);padding:4px 12px;border-radius:20px;backdrop-filter:blur(4px);';
@@ -509,23 +538,18 @@ class EchoUI(EchoRichUI):
       var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:{cache_pct}%;background:#8b5cf6;"></div><div style="width:{prompt_pct}%;background:#10b981;"></div><div style="width:{gen_pct}%;background:#f59e0b;"></div></div><div class="tooltip-box" style="width:240px;"><div class="tooltip-title">CONTEXTE</div><div class="tooltip-row"><span>Cache:</span> <span>{c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>{active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>{g_t}</span></div><div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>{total_t} / {max_t}</span></div></div></div>`;
       hud.innerHTML = iconHtml + barHtml;
       hudWrapper.appendChild(hud);
-      var nav = container.closest('nav');
-      if (nav) nav.appendChild(hudWrapper);
+      document.body.appendChild(hudWrapper);
     }})();
     """
     await events.emit("execute", {"code": js_code})
-
   @staticmethod
   def show_image_js(img_url: str, title: str = "Aperçu Image") -> str:
     """Réutilise le moteur WebPlayer (HUD navigateur) pour afficher une image.
     Utiliser via events.call('execute', {'code': ...}).
     N'utilise pas HTMLResponse — retour 100% propre, sans pollution du contexte Gemini."""
     return EchoUI._generate_webplayer_js(
-        b64="", mime="", metadata=[],
-        current_url=title,
-        hud_id="echo-img-viewer",
-        state_key="echo_img_viewer_state",
-        direct_url=img_url
+      b64="", mime="image/png", metadata=[], current_url=title, 
+      hud_id="echo-preview", state_key="echo_preview_state", icon="🖼️"
     )
 
   @classmethod
@@ -593,6 +617,99 @@ class EchoUI(EchoRichUI):
     response = HTMLResponse(content=html, headers={"Content-Disposition": "inline"})
     return response, {"status": "success", "message": f"Visualisation {moteur} générée."}
 
+  @staticmethod
+  def get_print_isolation_js(target_selectors: str) -> str:
+    """Génère le script JS d'isolation CSS Path-Marking + window.print() natif."""
+    return f"""
+return new Promise(function(resolve) {{
+    var STYLE_ID = 'echo-print-isolation-css';
+    var chatContainer = document.querySelector('{target_selectors}');
+
+    if (!chatContainer) {{
+        resolve({{ success: false, error: 'Conteneur cible introuvable' }});
+        return;
+    }}
+
+    var printStyle = document.createElement('style');
+    printStyle.id = STYLE_ID;
+    printStyle.textContent =
+        '@media print {{\\n' +
+        '  body.echo-printing > *:not(.echo-print-ancestor):not(.echo-print-target) {{\\n' +
+        '    display: none !important;\\n' +
+        '  }}\\n' +
+        '  .echo-print-ancestor > *:not(.echo-print-ancestor):not(.echo-print-target) {{\\n' +
+        '    display: none !important;\\n' +
+        '  }}\\n' +
+        '  .echo-print-ancestor {{\\n' +
+        '    display: block !important;\\n' +
+        '    position: static !important;\\n' +
+        '    overflow: visible !important;\\n' +
+        '    height: auto !important;\\n' +
+        '    max-height: none !important;\\n' +
+        '    width: 100% !important;\\n' +
+        '    background: transparent !important;\\n' +
+        '    padding: 0 !important;\\n' +
+        '    margin: 0 !important;\\n' +
+        '    border: none !important;\\n' +
+        '    box-shadow: none !important;\\n' +
+        '  }}\\n' +
+        '  .echo-print-target {{\\n' +
+        '    display: block !important;\\n' +
+        '    position: static !important;\\n' +
+        '    width: 100% !important;\\n' +
+        '    height: auto !important;\\n' +
+        '    max-height: none !important;\\n' +
+        '    overflow: visible !important;\\n' +
+        '    padding: 0 !important;\\n' +
+        '    margin: 0 !important;\\n' +
+        '  }}\\n' +
+        '  .echo-print-target * {{\\n' +
+        '    overflow: visible !important;\\n' +
+        '    max-height: none !important;\\n' +
+        '  }}\\n' +
+        '  .echo-print-target iframe {{\\n' +
+        '    overflow: visible !important;\\n' +
+        '    max-height: none !important;\\n' +
+        '  }}\\n' +
+        '  @page {{ margin: 15mm; }}\\n' +
+        '}}';
+    document.head.appendChild(printStyle);
+
+    var ancestors = [];
+    var ancestor = chatContainer.parentElement;
+    while (ancestor && ancestor !== document.body) {{
+        ancestor.classList.add('echo-print-ancestor');
+        ancestors.push(ancestor);
+        ancestor = ancestor.parentElement;
+    }}
+    document.body.classList.add('echo-printing');
+    chatContainer.classList.add('echo-print-target');
+
+    var resolved = false;
+    function cleanup(outcome) {{
+        if (resolved) return;
+        resolved = true;
+        document.body.classList.remove('echo-printing');
+        chatContainer.classList.remove('echo-print-target');
+        ancestors.forEach(function(a) {{ a.classList.remove('echo-print-ancestor'); }});
+        var styleEl = document.getElementById(STYLE_ID);
+        if (styleEl) styleEl.remove();
+        resolve(outcome);
+    }}
+
+    window.addEventListener('afterprint', function onAfterPrint() {{
+        window.removeEventListener('afterprint', onAfterPrint);
+        cleanup({{ success: true }});
+    }});
+
+    setTimeout(function() {{
+        cleanup({{ success: true, timeout: true }});
+    }}, 60000);
+
+    window.print();
+}});
+"""
+
   # =====================================================================
   # ECHO CODEX — HUD Monaco Editor
   # =====================================================================
@@ -604,6 +721,7 @@ class EchoUI(EchoRichUI):
     return f"""
     (function() {{
       const CODEX_ID = 'echo-codex-hud';
+      {EchoUI.get_mobile_guard_js("echo-codex-hud", block_execution=True, error_msg="Le Codex ECHO requiert un navigateur de bureau.")}
       const CID = '{chat_id}';
       const STATE_KEY = 'echo_codex_' + CID;
       const MONACO_CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min';
@@ -716,8 +834,11 @@ class EchoUI(EchoRichUI):
       previewPanel.id = CODEX_ID + '-preview';
       previewPanel.style.cssText = `width:${{previewWidth}}px; display:none; flex-shrink:0; flex-direction:column; overflow:hidden; background:${{bgColor}};`;
       previewPanel.innerHTML = `
-        <div style="padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0;">
-          <span id="${{CODEX_ID}}-preview-label">Preview</span>
+        <div style="padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0; display:flex; align-items:center;">
+          <span id="${{CODEX_ID}}-preview-label" style="flex:1;">Preview</span>
+          <button id="${{CODEX_ID}}-preview-print" title="Print / PDF" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><polyline points="9 15 12 18 15 15"/></svg>
+          </button>
         </div>
         <div id="${{CODEX_ID}}-preview-content" style="flex:1; padding:12px; overflow:auto; font-size:14px; line-height:1.6;"></div>
       `;
@@ -1294,7 +1415,10 @@ class EchoUI(EchoRichUI):
         const content = editor ? editor.getValue() : '';
         const container = document.getElementById(CODEX_ID + '-preview-content');
         const label = document.getElementById(CODEX_ID + '-preview-label');
+        const printBtn = document.getElementById(CODEX_ID + '-preview-print');
         if (!container) return;
+
+        if (printBtn) printBtn.style.display = (lang === 'markdown' || lang === 'html') ? 'flex' : 'none';
 
         if (lang === 'markdown') {{
           if (label) label.textContent = 'Markdown Preview';
@@ -1392,6 +1516,14 @@ class EchoUI(EchoRichUI):
       // Toggle preview
       document.getElementById(CODEX_ID + '-preview-toggle').onclick = () => {{
         togglePreview();
+      }};
+
+      // Print Preview
+      document.getElementById(CODEX_ID + '-preview-print').onclick = () => {{
+        const isolationFn = function() {{
+          {EchoUI.get_print_isolation_js('#echo-codex-hud-preview-content')}
+        }};
+        isolationFn();
       }};
 
       // Splitter drag logic
@@ -1519,6 +1651,7 @@ class EchoUI(EchoRichUI):
     return (
       "(function() {\n"
       "  const HUD_ID = 'echo-cognitive-monitor';\n"
+      + EchoUI.get_mobile_guard_js('echo-cognitive-monitor', block_execution=True, error_msg="Agent Monitor requiert un navigateur de bureau.") + "\n"
       "  const CID = '" + chat_id + "';\n"
       "  const STATE_KEY = 'echo_cogmon_' + CID;\n"
       "\n"

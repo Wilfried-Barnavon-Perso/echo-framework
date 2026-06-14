@@ -372,9 +372,18 @@ flowchart TD
         </p>
       </div>
       <div class="card">
-        <h3>📡 L'AEC</h3>
+        <h3>📡 L'AEC (Artéfacts Environnementaux et Contextuels)</h3>
         <p><strong>Nature :</strong> Bloc YAML proprioceptif injecté par le Filtre.</p>
-        <p>Contient <code>&lt;environnement_contexte&gt;</code> (identité, date) avec les évènements <code>&lt;evenement_systeme&gt;</code> et <code>&lt;smart_context&gt;</code> (Mémoire Vectorisée de Session : résumé ≤ 300 mots + <code>source_id</code> Qdrant).</p>
+        <p>
+          À chaque tour de conversation, le Filtre injecte un bloc YAML structurel délimité par la balise 
+          <code>&lt;environnement_contexte&gt;</code>. Il fournit au modèle sa <em>proprioception</em> : 
+          identité du modèle actif, date et heure, et surtout le <strong>Registre des Fichiers</strong> 
+          de la session. L'AEC inclut aussi des évènements asynchrones <code>&lt;evenement_systeme&gt;</code>.
+        </p>
+        <p>
+          Il regroupe également la balise <code>&lt;smart_context&gt;</code>, contenant le résumé distillé 
+          (≤ 300 mots) des fichiers volumineux traités par le Moulage, accompagné du <code>source_id</code> Qdrant.
+        </p>
       </div>
       <div class="card">
         <h3>🧱 Le Moulage (Semantic Molding)</h3>
@@ -457,17 +466,7 @@ flowchart TD
       </p>
     </div>
 
-    <h2>2. Mécanismes d'Authentification : Antigravity 2.1</h2>
-
-    <p>La sécurisation des échanges et l'identification des utilisateurs reposent sur le standard <strong>ECHO Auth (SSO IdP)</strong> couplé à la nouvelle couche <strong>Antigravity 2.1</strong>. Cette architecture multi-provider garantit la sécurité tout en facilitant l'intégration hybride Cloud/Local.</p>
-
-    <ul>
-      <li><strong>Résolution Multi-Provider :</strong> L'authentification est priorisée (OAuth2 > Clé Primaire > Clé Secondaire) au sein du module <code>EchoAuth.get_ordered_auth_providers()</code>.</li>
-      <li><strong>Flux OAuth2 PKCE via Tunnel SSH :</strong> Pour sécuriser le flux d'autorisation (Authorization Code + PKCE RFC 7636) depuis l'IDE de l'utilisateur, un tunnel SSH éphémère (piloté par <code>echo_ssh_tunnel.py</code> et <code>echo_pkce_server.py</code>) est provisionné dynamiquement sur les ports exposés <strong>8020 à 8024</strong>. Les jetons de rafraîchissement (TTL 55 min) sont générés automatiquement.</li>
-      <li><strong>Protocole Symétrique :</strong> Le module <code>echo_protocol.py</code> traduit les payloads entre les modèles AI Studio et les instances Code Assist, garantissant une compatibilité descendante (API Key pour AI Studio, Bearer + Project pour Antigravity).</li>
-    </ul>
-
-    <h2>3. Anatomie Détaillée d'une Requête (Le Chemin de la Donnée)</h2>
+    <h2>Anatomie Détaillée d'une Requête (Le Chemin de la Donnée)</h2>
 
     <p>
       Ce diagramme de séquence retrace le cycle complet d'un tour de parole, des quatre phases
@@ -740,11 +739,11 @@ erDiagram
 
     <div class="transition-text">
       Cette architecture requiert une infrastructure précise pour s'exécuter de manière fiable.
-      <a href="02_deploiement.html">Passer à la stratégie de déploiement ➔</a>
+      <a href="03_deploiement.html">Passer à la stratégie de déploiement ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -14,7 +14,7 @@
 
     <p>
       Les outils de Web Intelligence confèrent à ECHO la capacité de naviguer sur le Web de manière
-      autonome, de lire et d'interagir avec des pages dynamiques, d'en extraire le contenu sémantique,
+      autonome, de lire et d'interagir avec des pages dynamiques via une boucle OODA (Observation, Orientation, Décision, Action), d'en extraire le contenu sémantique,
       et d'effectuer des recherches via un moteur souverain. Ces capacités reposent sur deux
       composants complémentaires : le <strong>Browser Agent</strong> (micro-service Docker FastAPI +
       Playwright) et le <strong>SearxNG Proxy</strong> (moteur de recherche méta souverain, outil
@@ -44,7 +44,28 @@
       </tbody>
     </table>
 
-    <h2>Actions disponibles (API <code>/action</code>)</h2>
+    <h2>Agent Navigateur : Boucle OODA et API à 4 Piliers</h2>
+
+    <p>
+      La navigation n'est plus manuelle : elle est déléguée à un agent autonome via <code>delegate_web_browsing</code>.
+      Cet agent opère selon une boucle OODA et interagit avec la page via une API structurée en 4 piliers :
+    </p>
+
+    <ul>
+      <li><strong>Inspect (<code>action_inspect_page</code>)</strong> : Perception séquentielle de la page (A11y tree, lecture texte brut, HTML).</li>
+      <li><strong>A11y (<code>action_interact_a11y</code>)</strong> : Interaction prioritaire basée sur l'arbre d'accessibilité (rôle, nom textuel).</li>
+      <li><strong>DOM (<code>action_interact_dom</code>)</strong> : Interaction par index DOM strict ou sélecteur (clics, saisies).</li>
+      <li><strong>Control (<code>action_browser_control</code>)</strong> : Manipulation du navigateur (navigation, scroll, gestion des onglets, touches clavier).</li>
+    </ul>
+
+    <div class="note-box">
+      <h4>Vision-On-Demand et Mode Lidar</h4>
+      <p>
+        Pour limiter l'explosion du contexte, la vision multimodale n'est plus systématique. L'agent utilise le <strong>Vision-On-Demand</strong> : il doit explicitement demander une capture d'écran s'il est bloqué (ex: bouton sans texte). Il dispose également d'un mode hybride <strong>Lidar/Vision</strong> générant une grille de coordonnées (<code>VISION_GRID_STEP</code>, défaut 100px) pour cibler spatialement les éléments récalcitrants.
+      </p>
+    </div>
+
+    <h2>Actions internes disponibles (API <code>/action</code>)</h2>
 
     <p>
       Toutes les actions transitent par le endpoint <code>POST /action</code> avec un champ
@@ -148,7 +169,7 @@
     <div class="note-box">
       <h4>v9.3-9.4 - Distillation via <code>call_cascade()</code> centralisé</h4>
       <p>
-        L'action <code>distill_page</code> utilise désormais <code>EchoGeminiClient.call_cascade()</code>
+        L'action <code>distill_page</code> utilise <code>EchoGeminiClient.call_cascade()</code>
         (au lieu d'un appel direct) avec <code>MODEL_FLASH</code> clampé par la politique Pipe.
         La propagation du <code>user_id</code> vers <code>clamp_model</code> garantit que le fallback
         SQLite <code>echo_settings</code> est lu correctement même si OWUI ne propage pas les
@@ -164,13 +185,13 @@
     </p>
 
     <div class="transition-text">
-      <a href="07_arsenal_outils.html">← Retour à l'Arsenal</a>
+      <a href="08_arsenal_outils.html">← Retour à l'Arsenal</a>
       &nbsp;&nbsp;
-      <a href="07c_vault_explorer.html">Explorateur de l'Espace Personnel ➔</a>
+      <a href="08c_vault_explorer.html">Explorateur de l'Espace Personnel ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

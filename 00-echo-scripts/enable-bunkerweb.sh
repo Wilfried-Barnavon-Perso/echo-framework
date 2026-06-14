@@ -65,14 +65,14 @@ if [ -z "$DOMAIN" ]; then
     echo " - Admin : https://am.DOMAINE"
     echo " - Auth  : https://auth.DOMAINE"
     echo ""
-    read -r -p "Entrez votre domaine racine [${DEFAULT_DOMAIN:-echo-ai.eu}] : " INPUT_DOMAIN
-    DOMAIN="${INPUT_DOMAIN:-${DEFAULT_DOMAIN:-echo-ai.eu}}"
+    read -r -p "Entrez votre domaine racine [${DEFAULT_DOMAIN:-votre-domaine.public}] : " INPUT_DOMAIN
+    DOMAIN="${INPUT_DOMAIN:-${DEFAULT_DOMAIN:-votre-domaine.public}}"
 fi
 
 # Validation basique du format du domaine (évite les injections dans .env)
 if ! echo "$DOMAIN" | grep -qE '^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$'; then
     echo "❌ Format de domaine invalide : '$DOMAIN'"
-    echo "   Attendu : ex. echo-ai.eu, mon-domaine.com"
+    echo "   Attendu : ex. votre-domaine.public, mon-domaine.com"
     exit 1
 fi
 

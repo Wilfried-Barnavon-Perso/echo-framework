@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.24
+# VERSION : 6.25
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 6.25 : Ajout de ensure_docker_autosafety() pour rotation logs globale (idempotent).
 # CHANGELOG 6.24 : Génération dynamique de ECHO_SSO_SECRET pour le Forward Auth hybride.
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
@@ -90,8 +91,43 @@ ensure_network() {
     fi
 }
 
+ensure_docker_autosafety() {
+    echo "🛡️  Vérification de l'Autosafety Docker (Rotation des logs)..."
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "   ⚠️  jq non trouvé, configuration ignorée."
+        return
+    fi
+
+    local daemon_file="/etc/docker/daemon.json"
+    mkdir -p /etc/docker
+    
+    if [ ! -f "$daemon_file" ]; then
+        echo '{}' > "$daemon_file"
+    fi
+
+    # Injection idempotente avec jq (préserve le reste, force les logs)
+    local temp_file=$(mktemp)
+    if jq '. + { "log-driver": "json-file", "log-opts": ((.["log-opts"] // {}) + { "max-size": "50m", "max-file": "3" }) }' "$daemon_file" > "$temp_file"; then
+        if ! cmp -s "$daemon_file" "$temp_file"; then
+            echo "   🔄 Mise à jour de la politique de logs Docker..."
+            cat "$temp_file" > "$daemon_file"
+            if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet docker; then
+                systemctl restart docker
+            elif command -v service >/dev/null 2>&1; then
+                service docker restart || true
+            fi
+        else
+            echo "   ✅ Politique de logs déjà conforme."
+        fi
+    else
+        echo "   ⚠️  Erreur jq lors de l'application de l'Autosafety."
+    fi
+    rm -f "$temp_file"
+}
+
 # --- 1. PRE-FLIGHT CHECKS ---
 wait_for_docker
+ensure_docker_autosafety
 chmod +x "$ECHO_SCRIPTS"/*.sh 2>/dev/null || true
 
 if [ ! -f "$COMPOSE_FILE" ]; then

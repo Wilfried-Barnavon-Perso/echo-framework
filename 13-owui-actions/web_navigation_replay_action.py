@@ -1,8 +1,9 @@
 """
 title: Revue Navigation Web
 author: Wilfried BARNAVON
-version: 4.6
-description: 4.6: Renommage sémantique du titre UX (revert self.actions incompatible OWUI simple-action).
+version: 4.7
+description: 4.7: Hotfix - Lecture des frames via le Registre Unifié V2 (echo_resources) au lieu du scan disque.
+             4.6: Renommage sémantique du titre UX (revert self.actions incompatible OWUI simple-action).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIyOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTEyIDN2MTgiLz48cGF0aCBkPSJNMTcgM3YxOCIvPjxwYXRoIGQ9Ik0zIDdoMTgiLz48cGF0aCBkPSJNMyAxMmgyMSIvPjxwYXRoIGQ9Ik0zIDE3aDE4Ii8+PC9zdmc+
 """
 
@@ -33,6 +34,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
         try {{
             const data = {{ timestamps: {ts_json}, cid: "{chat_id}" }};
             const REPLAY_ID = 'echo-browser-replay';
+            {EchoUI.get_mobile_guard_js('echo-browser-replay')}
             let replay = document.getElementById(REPLAY_ID);
 
             if (replay && replay.getAttribute('data-chat-id') !== data.cid) {{
@@ -56,7 +58,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
 
                     <div id="${{REPLAY_ID}}-viewport" style="flex:1; width:100%; display:flex; justify-content:center; overflow:auto; padding:40px 0; scrollbar-width: thin; scrollbar-color: #4ade80 transparent;">
                         <div id="${{REPLAY_ID}}-canvas" style="position:relative; width:600px; height:800px; background:#111; box-shadow:0 0 100px rgba(0,0,0,1); border:1px solid #333; border-radius:4px; cursor:crosshair; transition: width 0.3s, height 0.3s;">
-                            <img id="${{REPLAY_ID}}-img" style="position:absolute; top:0; left:0; width:100%; height:100%; display:block; border-radius:4px; opacity:0; transition:opacity 0.2s; pointer-events:none; z-index:1;" />
+                            <img id="${{REPLAY_ID}}-img" style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain !important; display:block; border-radius:4px; opacity:0; transition:opacity 0.2s; pointer-events:none; z-index:1;" />
                             <div id="${{REPLAY_ID}}-crop-box" style="position:absolute; top:0; left:0; border:2px dashed #fff; display:none; box-sizing:border-box; z-index:101; cursor:move; box-shadow: 0 0 0 1px #000; will-change: transform;">
                                 <div class="cp tl" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; left:-5px; top:-5px; cursor:nwse-resize;"></div>
                                 <div class="cp tr" style="position:absolute; width:10px; height:10px; background:#fff; border:1px solid #000; right:-5px; top:-5px; cursor:nesw-resize;"></div>
@@ -136,8 +138,10 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                         img.style.opacity = '1';
                         const r = img.naturalHeight / img.naturalWidth;
                         const targetH = Math.min(window.innerHeight * 0.75, img.naturalHeight);
-                        canvas.style.height = (targetH * currentZoom) + "px";
-                        canvas.style.width = ((targetH / r) * currentZoom) + "px";
+                        const targetW = targetH / r;
+                        const scaleW = targetW > (window.innerWidth * 0.95) ? (window.innerWidth * 0.95) / targetW : 1;
+                        canvas.style.height = (targetH * currentZoom * scaleW) + "px";
+                        canvas.style.width = (targetW * currentZoom * scaleW) + "px";
                         if (isCropping) {{
                             cropBox.style.width = canvas.offsetWidth + "px";
                             cropBox.style.height = canvas.offsetHeight + "px";
@@ -231,8 +235,10 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                         if (imgEl && imgEl.naturalHeight) {{
                             const r = imgEl.naturalHeight / imgEl.naturalWidth;
                             const targetH = Math.min(window.innerHeight * 0.75, imgEl.naturalHeight);
-                            canvas.style.height = (targetH * currentZoom) + "px";
-                            canvas.style.width = ((targetH / r) * currentZoom) + "px";
+                            const targetW = targetH / r;
+                            const scaleW = targetW > (window.innerWidth * 0.95) ? (window.innerWidth * 0.95) / targetW : 1;
+                            canvas.style.height = (targetH * currentZoom * scaleW) + "px";
+                            canvas.style.width = (targetW * currentZoom * scaleW) + "px";
 
                             if (isCropping) {{
                                 cropBox.style.width = canvas.offsetWidth + "px";
@@ -249,8 +255,10 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                     if (imgEl && imgEl.naturalHeight) {{
                         const r = imgEl.naturalHeight / imgEl.naturalWidth;
                         const targetH = Math.min(window.innerHeight * 0.75, imgEl.naturalHeight);
-                        canvas.style.height = targetH + "px";
-                        canvas.style.width = (targetH / r) + "px";
+                        const targetW = targetH / r;
+                        const scaleW = targetW > (window.innerWidth * 0.95) ? (window.innerWidth * 0.95) / targetW : 1;
+                        canvas.style.height = (targetH * scaleW) + "px";
+                        canvas.style.width = (targetW * scaleW) + "px";
                         if (isCropping) {{
                             cropBox.style.width = canvas.offsetWidth + "px";
                             cropBox.style.height = canvas.offsetHeight + "px";
@@ -365,35 +373,32 @@ class Action:
         cid = body.get("chat_id") or __metadata__.get("chat_id")
         if not cid: return None
 
-        # Redirection vers le Vault (v3.0)
-        from echo_utils import get_echo_session_path
-        vault_path = get_echo_session_path(uid, cid, "files")
-
+        # Redirection vers le Registre V2
+        from echo_utils import EchoStateManager
+        
+        state_manager = EchoStateManager(user_id=uid, chat_id=cid)
+        resources = state_manager.get_resources(resource_type='media')
+        
         prefix = f"U_{uid}_C_{cid}_T_"
         files = []
         try:
-            if not os.path.exists(vault_path):
-                await events.status("📭 Aucun Vault détecté pour cet utilisateur.", done=True)
-                return None
-
-            # Récupération et parsing universel depuis le Vault
-            all_entries = os.listdir(vault_path)
-            for f_name in all_entries:
-                if f_name.startswith(prefix) and f_name.endswith(".png"):
+            for r in resources:
+                if r.get('id', '').startswith(prefix):
                     try:
-                        ts_str = f_name.split("_T_")[-1].split("_")[0].split(".")[0]
-                        files.append({"ts": int(ts_str), "name": f_name})
+                        ts_str = r['id'].split("_T_")[-1].split("_")[0].split(".")[0]
+                        if r.get('storage_path'):
+                            files.append({"ts": int(ts_str), "storage_path": r['storage_path']})
                     except: continue
 
             # Tri CHRONOLOGIQUE STRICT
             files.sort(key=lambda x: x["ts"])
 
         except Exception as e:
-            await events.toast(f"Erreur scan Vault : {e}", "error")
+            await events.toast(f"Erreur scan Registre : {e}", "error")
             return None
 
         if not files:
-            await events.status("📭 Aucune archive visuelle dans le Vault.", done=True)
+            await events.status("📭 Aucune archive visuelle dans le Registre.", done=True)
             return None
 
         # 1. Installation de la Console
@@ -404,8 +409,7 @@ class Action:
         current_idx = 0
         while True:
             # a. PUSH: Envoi de la frame actuelle (Atomic Update)
-            f_name = files[current_idx]["name"]
-            path = os.path.join(vault_path, f_name)
+            path = files[current_idx]["storage_path"]
             try:
                 with open(path, "rb") as f:
                     b64 = base64.b64encode(f.read()).decode()

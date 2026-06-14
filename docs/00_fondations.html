@@ -121,49 +121,8 @@
       </p>
     </div>
 
-    <h3>L'AEC (Artéfacts Environnementaux et Contextuels)</h3>
-    <p>
-      À chaque tour de conversation, le Filtre injecte un bloc YAML structurel dans le message utilisateur.
-      Ce bloc, délimité par la balise <code>&lt;environnement_contexte&gt;</code>, fournit au modèle sa
-      <em>proprioception</em> : identité du modèle actif, date et heure, localisation, et surtout le
-      <strong>Registre des Fichiers</strong> de la session. Le modèle doit consulter ce registre avant
-      toute manipulation de ressource.
-    </p>
-    <p>
-      L'AEC regroupe également la balise <code>&lt;smart_context&gt;</code>, qui contient le résumé distillé
-      (≤ 300 mots) des fichiers volumineux traités par le Moulage, accompagné du <code>source_id</code> Qdrant
-      permettant d'interroger les détails précis via <code>search_session_context</code>.
-    </p>
 
-    <h3>Le protocole d'authentification PKCE</h3>
-    <p>
-      ECHO utilise le flux <strong>Authorization Code + PKCE (RFC 7636)</strong> pour l'authentification
-      OAuth2 headless dans Docker. PKCE (<em>Proof Key for Code Exchange</em>) est une extension du flux
-      OAuth2 standard qui empêche l'interception du code d'autorisation par un tiers, même si la
-      communication n'est pas parfaitement sécurisée. Il génère une paire de secrets éphémères
-      (<em>code_verifier</em> et <em>code_challenge</em>) à usage unique pour chaque session d'authentification.
-    </p>
-    <p>
-      En pratique : lorsqu'aucun fournisseur d'accès n'est configuré, le Pipe déclenche ce flux
-      automatiquement au premier message. Un tunnel SSH éphémère (<code>asyncssh</code>) est ouvert sur un
-      port dynamique de la plage <code>8020–8024</code>, et le callback OAuth2 est reçu sur un port interne
-      (<code>8025–8034</code>). L'utilisateur reçoit un lien cliquable dans l'interface et n'a qu'à
-      autoriser ECHO sur son compte Google. Les clés API AI Studio (<code>AIza…</code>) restent acceptées
-      comme méthode de secours.
-    </p>
 
-    <div class="tech-spec">
-      <h4>⚙️ Priorité des identités d'accès</h4>
-      <p>
-        Le registre des fournisseurs d'accès aux modèles est résolu dans cet ordre par
-        <code>EchoAuth.get_ordered_auth_providers()</code> :
-      </p>
-      <ol>
-        <li><strong>OAuth2 (API Antigravity)</strong> - prioritaire, accès aux modèles <code>gemini-pro-agent</code> et <code>gemini-3-flash-agent</code>.</li>
-        <li><strong>Clé API primaire</strong> - AI Studio (<code>google_api_key</code>).</li>
-        <li><strong>Clé API secondaire</strong> - fallback de secours (<code>google_api_key_secondary</code>).</li>
-      </ol>
-    </div>
 
     <div class="transition-text">
       Ces fondements philosophiques et techniques se concrétisent dans une architecture modulaire précise.
@@ -171,7 +130,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

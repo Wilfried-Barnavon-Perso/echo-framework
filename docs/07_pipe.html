@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py) : Suture Bit-Perfect, routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modèle centralisée Pipe → outils, bridge _TOOLS_CACHE pour délégation sous-agent.">
-  <title>ECHO v5 - 6. Le Pipe (Cortex)</title>
+  <title>ECHO v5 - 7. Le Pipe (Cortex)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -16,7 +16,7 @@
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>6. Le Pipe (Cortex Moteur)</h1>
+    <h1>7. Le Pipe (Cortex Moteur)</h1>
 
 
     <p>
@@ -225,7 +225,7 @@ flowchart TD
       <ol>
         <li>Un appel stream au modèle cible lève une exception (erreur réseau ou quota).</li>
         <li>Le Pipe identifie les modèles inférieurs disponibles via <code>MODEL_HIERARCHY</code>.</li>
-        <li><code>_mutate_context_identity()</code> met à jour l'AEC avec le nouveau modèle.</li>
+        <li><code>_mutate_context_identity()</code> met à jour l'AEC avec le modèle cible.</li>
         <li>Un toast <code>⚡ Cascade : PRO → FLASH</code> est émis vers l'interface.</li>
         <li>La boucle reprend immédiatement sur le modèle de repli.</li>
         <li>Si plus aucun modèle n'est disponible : message d'erreur terminal et sortie.</li>
@@ -459,29 +459,14 @@ asyncio.ensure_future(refresh_quota_if_needed())
 await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     quota_rpd_rem=quota_rpd_rem, quota_rpd_lim=quota_rpd_lim, ...)</code></pre>
 
-    <div class="audit-note">
-      <h4>✅ Exactitude - Version 192.15</h4>
-      <p>
-        La version 192.15 finalise le refactoring du status tri-état
-        (<code>success</code> / <code>warning</code> / <code>error</code>) : suppression de
-        <code>clamped:true</code>, ajout du champ <code>reason</code> dans
-        <code>wrap_cascade_output()</code>. La <code>functionResponse</code> de
-        <code>new_cognitive_level</code> est désormais structurée avec un status dict
-        aligné sur ce format (<code>model_requested</code> / <code>model_used</code>).
-        La cascade descendante technique (192.11) gère PRO→FLASH→LITE en cas d'erreur API,
-        avec mutation AEC cohérente (192.13). La politique modèle Pipe → outils est
-        propagée via <code>__metadata__</code> et persistée dans <code>echo_settings</code>
-        (SQLite fallback, 192.9). Toutes les valeurs sont vérifiées contre le code source.
-      </p>
-    </div>
 
     <div class="transition-text">
       Pour accomplir ses missions, le Pipe s'appuie sur un Arsenal d'outils spécialisés.
-      <a href="07_arsenal_outils.html">Découvrir l'Arsenal des Outils ➔</a>
+      <a href="08_arsenal_outils.html">Découvrir l'Arsenal des Outils ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

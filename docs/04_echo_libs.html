@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Librairies partagées du Framework ECHO v5 : echo_utils, echo_auth, echo_protocol, echo_constants - EchoStateManager, EchoGeminiClient, authentification PKCE, protocole API Antigravity.">
-  <title>ECHO v5 - 3. Librairies Partagées (echo_libs)</title>
+  <title>ECHO v5 - 4. Librairies Partagées</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>3. Les Librairies Partagées (<code>echo_libs</code>)</h1>
+    <h1>4. Les Librairies Partagées (echo_libs)</h1>
 
     <p>
       Le répertoire <code>14-owui-libs/</code> regroupe les modules Python partagés par l'ensemble
@@ -91,7 +91,7 @@
         <tr><td><code>THINKING_LEVEL_TOOLS</code></td><td><code>"MINIMAL"</code></td><td>Outils stateless (maps, grounding, distillation rapide).</td></tr>
         <tr><td><code>TEMP_DEFAULT</code></td><td>1,0</td><td>Température de génération principale.</td></tr>
         <tr><td><code>TOP_P_DEFAULT</code></td><td>0,90</td><td>Nucleus sampling.</td></tr>
-        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.166.6)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
+        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.182.17)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
       </tbody>
     </table>
 
@@ -230,7 +230,7 @@
     <div class="note-box">
       <h4>v7.15 - Crédits OAuth2 opt-in</h4>
       <p>
-        Le champ <code>enabled_credit_types</code> dans les requêtes API Antigravity est désormais
+        Le champ <code>enabled_credit_types</code> dans les requêtes API Antigravity est
         <strong>omis par défaut</strong> (alignement sur le comportement natif d'AGY-IDE).
         Sans ce champ, le serveur utilise les quotas gratuits sans consommer de crédits payants Google One AI.
         L'activation est possible via la UserValve <code>ENABLE_PAID_CREDITS</code> du Pipe,
@@ -243,7 +243,7 @@
     <div class="tech-spec">
       <h4>⚙️ Status tri-état (v7.20)</h4>
       <p>
-        Toutes les réponses d'outils utilisent désormais un status à trois états explicites :
+        Toutes les réponses d'outils utilisent un status à trois états explicites :
       </p>
       <ul>
         <li><code>"success"</code> - exécution nominale, modèle utilisé = modèle demandé.</li>
@@ -374,7 +374,7 @@
       <p>
         <code>EchoAuth.refresh_google_oauth_token()</code> vérifie proactivement si le token a plus
         de 3 300 secondes (55 minutes).
-        Si c'est le cas, il demande silencieusement un nouveau token via <code>refresh_token</code>
+        Si c'est le cas, il demande silencieusement un token frais via <code>refresh_token</code>
         et l'enregistre dans <code>identity.db</code>. Ce processus est complètement transparent
         pour l'utilisateur.
       </p>
@@ -442,14 +442,7 @@
       </li>
     </ul>
 
-    <div class="audit-note">
-      <h4>✅ Champ <code>CA_EXCLUDED_GEN_CONF_FIELDS</code></h4>
-      <p>
-        Actuellement un <code>frozenset</code> vide : tous les champs du <code>generationConfig</code>
-        passent intégralement vers l'API Antigravity. Ce point de contrôle centralisé permet d'exclure
-        rapidement un champ devenu incompatible sans modifier le code du Pipe.
-      </p>
-    </div>
+
 
     <h2><code>echo_skills.py</code> - Gestionnaire de Compétences (v1.3)</h2>
 
@@ -475,7 +468,7 @@
     <p>
       <code>echo_ui.py</code> (v5.20) et <code>echo_visuals.py</code> forment le moteur d'injection
       dynamique de l'interface HUD dans Open WebUI. Ils sont détaillés dans la section
-      <a href="04_hud_ui.html">HUD &amp; UI</a>.
+      <a href="05_hud_ui.html">HUD &amp; UI</a>.
     </p>
 
     <div class="tech-spec">
@@ -490,11 +483,11 @@
 
     <div class="transition-text">
       Ces moteurs logiciels nécessitent une interface de supervision pour être pilotés en temps réel.
-      <a href="04_hud_ui.html">Découvrir l'écosystème HUD &amp; UI ➔</a>
+      <a href="05_hud_ui.html">Découvrir l'écosystème HUD &amp; UI ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

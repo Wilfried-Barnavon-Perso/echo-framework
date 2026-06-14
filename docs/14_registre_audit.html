@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>ECHO v5 - 14. Registre d'Audit et Domaine de Confidentialité</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .audit-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      margin-bottom: 30px;
+    }
+    .audit-table th, .audit-table td {
+      border: 1px solid #38bdf8;
+      padding: 12px;
+      text-align: left;
+    }
+    .audit-table th {
+      background-color: #1e293b;
+      color: #cdd9e5;
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar"></div>
+
+  <main>
+    <h1>14. Registre d'Audit Documentaire et Domaine de Confidentialité</h1>
+
+    <p>Ce document est destiné aux auditeurs et aux parties prenantes évaluant l'intégrité, la sécurité et la classification des données manipulées par l'architecture ECHO Framework. Il consigne les informations de traçabilité, de rédaction et de validation de la documentation, conformément aux exigences d'audit qualité.</p>
+
+    <hr>
+
+    <h2>Classification des Données</h2>
+    <div class="note-box">
+      <p><strong>Niveau de Classification : PUBLIC</strong></p>
+      <p>Le Framework ECHO est un projet Open Source intégralement distribué sous licence <strong>Apache 2.0</strong>. La présente documentation technique, ainsi que le code source, ne contiennent aucune donnée personnelle (PII). Il est à noter que le code source embarque publiquement les identifiants OAuth2 du client lourd Google (obtenus par rétro-ingénierie à des fins d'interopérabilité stricte avec le protocole Antigravity). À l'exception de ces métadonnées d'API techniques, aucun jeton d'authentification utilisateur, secret industriel ou clé d'API personnelle de production n'est exposé.</p>
+    </div>
+
+    <h2>Règles de Transparence</h2>
+    <p>Conformément aux standards de développement ouvert :</p>
+    <ul>
+      <li>Les identifiants et mots de passe mentionnés dans ce document sont générés à titre d'exemple et n'ont aucune validité sur des systèmes en production.</li>
+      <li>Les noms de domaine utilisés (tels que <code>ui.votre-domaine.public</code> ou <code>am.votre-domaine.public</code>) sont des espaces de noms documentaires fictifs.</li>
+      <li>Le code embarqué dans l'architecture locale de l'utilisateur (Vault) demeure dans un périmètre réseau strictement isolé, garantissant l'auto-hébergement souverain.</li>
+    </ul>
+
+    <h2>Registre des Signatures</h2>
+
+    <table class="audit-table">
+      <thead>
+        <tr>
+          <th>Étape</th>
+          <th>Responsable</th>
+          <th>Date</th>
+          <th>Statut</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Rédaction</strong></td>
+          <td>Wilfried BARNAVON (via agent IA)</td>
+          <td>2026-06-12</td>
+          <td><span class="badge badge-green">Approuvé</span></td>
+        </tr>
+        <tr>
+          <td><strong>Relecture</strong></td>
+          <td>Wilfried BARNAVON</td>
+          <td>2026-06-12</td>
+          <td><span class="badge badge-green">Approuvé</span></td>
+        </tr>
+        <tr>
+          <td><strong>Validation</strong></td>
+          <td>Wilfried BARNAVON</td>
+          <td>2026-06-12</td>
+          <td><span class="badge badge-green">Approuvé</span></td>
+        </tr>
+        <tr>
+          <td><strong>Modification Documentaire (Refonte & Réétagement)</strong></td>
+          <td>Agent ECHO</td>
+          <td>2026-06-14</td>
+          <td><span class="badge badge-green">Approuvé</span></td>
+        </tr>
+        <tr>
+          <td><strong>Revue et Validation</strong></td>
+          <td>Wilfried BARNAVON</td>
+          <td>2026-06-14</td>
+          <td><span class="badge badge-green">Approuvé</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="transition-text">
+      <a href="13_manuel_utilisateur.html">← 13. Manuel Utilisateur</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

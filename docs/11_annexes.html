@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Annexes Techniques ECHO v5 : topologie réseau et ports, volumes Docker, schéma SQL complet identity.db et {chat_id}.db, collections Qdrant, valves de configuration, API de référence.">
-  <title>ECHO v5 - 10. Annexes Techniques</title>
+  <title>ECHO v5 - 11. Annexes Techniques</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>10. Annexes Techniques</h1>
+    <h1>11. Annexes Techniques</h1>
 
     <p>
       Cette section constitue la référence de bas niveau du framework ECHO v5 :
@@ -227,7 +227,7 @@
 
     <h3>Table <code>plans</code></h3>
     <p>
-      Table utilisée par le <a href="07a_strategic_planner.html">Planificateur Stratégique</a>
+      Table utilisée par le <a href="08a_strategic_planner.html">Planificateur Stratégique</a>
       pour persister les plans d'action de chaque chat. Gérée par l'outil <code>strategic_planner.py</code>.
     </p>
 
@@ -254,7 +254,7 @@
     <h3>Table <code>cognitive_threads</code></h3>
     <p>
       Table de support pour les délégations cognitives récursives
-      (<a href="07d_memory_cognition.html">Conseil d'Experts</a>). Stocke les échanges
+      (<a href="08d_memory_cognition.html">Conseil d'Experts</a>). Stocke les échanges
       par sous-session (<code>sub_sid</code>) et rôle (<code>role_id</code>).
     </p>
 
@@ -307,15 +307,7 @@
       </tbody>
     </table>
 
-    <div class="audit-note">
-      <h4>✅ Source de vérité - Valves</h4>
-      <p>
-        Les valeurs ci-dessus sont celles déclarées dans les constantes de
-        <code>echo_constants.py</code> (v5.2) et dans les constructeurs <code>Valves</code>
-        de chaque composant. En cas de divergence entre cette documentation et le code source,
-        le code source fait foi.
-      </p>
-    </div>
+
 
     <h2>Référence API - Classes Fondamentales</h2>
 
@@ -348,7 +340,7 @@
     </table>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

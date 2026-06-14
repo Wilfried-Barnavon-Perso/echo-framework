@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.52
+# Version : 9.53
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -296,7 +296,7 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
     command: >
-      /bin/bash -c "CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc) pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002"
+      /bin/bash -c "CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc) pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 httpx && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002"
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5002/health\")' 2>/dev/null || exit 1"]
       interval: 15s

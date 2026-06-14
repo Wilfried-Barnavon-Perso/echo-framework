@@ -45,7 +45,8 @@
     </p>
     <ul>
       <li><strong>Archivage :</strong> Compresse le dépôt courant (branche <code>dev</code>) en un fichier <code>echo-update.zip</code>.</li>
-      <li><strong>Montage VHDX :</strong> Monte le disque virtuel <code>echo-seed.vhdx</code> de la machine virtuelle Hyper-V de destination.</li>
+      <li><strong>Configuration VM :</strong> Allocation de 8 Go de RAM pour respecter les exigences système (ex: Ubuntu 26.04) et création d'une VM Hyper-V de Génération 2.</li>
+      <li><strong>Montage VHDX :</strong> Monte le disque virtuel <code>echo-seed.vhdx</code> de la machine virtuelle de destination.</li>
       <li><strong>Injection :</strong> Copie l'archive et le script d'amorçage dans le disque virtuel, puis le démonte.</li>
       <li><strong>Démarrage :</strong> Démarre (ou redémarre) la machine virtuelle Hyper-V.</li>
     </ul>
@@ -78,6 +79,7 @@
       Il s'agit de l'ordonnanceur principal de la grappe Docker. Ses responsabilités incluent :
     </p>
     <ul>
+      <li><strong>Autosafety Docker :</strong> Configuration idempotente (via <code>jq</code>) de la politique de rotation des logs globaux (<code>max-size: 50m</code>, <code>max-file: 3</code>) dans <code>/etc/docker/daemon.json</code> pour garantir la stabilité de l'hôte.</li>
       <li><strong>Génération du contexte :</strong> Calcul dynamique des <code>ECHO_DETECTED_ORIGINS</code> (CORS) à partir des interfaces réseau actives (Wi-Fi, Ethernet, Tailscale).</li>
       <li><strong>Injection des secrets :</strong> Génération automatique (si absents) de <code>BW_DB_PASSWORD</code>, <code>SEARXNG_SECRET</code>, et <code>ECHO_SSO_SECRET</code>, et consolidation dans le fichier <code>/opt/ECHO/.env</code> de production.</li>
       <li><strong>Lancement de la pile :</strong> Exécution conditionnelle avec <code>bunkerweb-stack.yml</code> (si mode SECURE EDGE actif) ou <code>stack-echo.yml</code> standard.</li>
@@ -95,11 +97,11 @@
 
     <div class="transition-text">
       L'ensemble des schémas SQL, des attributions de ports et des règles de pare-feu associés à ces scripts sont compilés dans les annexes.
-      <a href="10_annexes.html">10. Annexes Techniques ➔</a>
+      <a href="11_annexes.html">11. Annexes Techniques ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

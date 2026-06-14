@@ -1,13 +1,19 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 10.4
-description: 10.0: Architecture multi-agentique. Remplacement de l'interaction manuelle par la boucle OODA autonome (delegate_web_browsing). Intégration Native Gemini Tool Calling et vision multimodale (Base64). Déportation de la logique mécanique dans echo_browser_lib.
-             10.1: Persistance ThoughtSignatures Gemini 3.x — save_thread_step sur chaque tour (model + user) avec extraction de la signature. SID exposé dans le retour.
-             10.2: Ajout close_web_thread et purge automatique de session en fin de mission.
-             10.3: Intégration de la vision multimodale (Base64) native et exposition de la carte DOM à l'agent.
+version: 11.4
+description: 11.4: Hotfix - Restauration de la persistance Vault et SQLite (echo_resources) des captures de navigation.
+             11.3: Hotfix - Restitution du payload (content/value) pour a11y_tree, read_text et url dans l'orchestrateur.
+             11.2: Refonte Full-Stack API à 4 piliers, Mode Lot Modéré, Hiérarchie A11y.
+             11.1: Mode hybride Lidar/Vision (ajout des coordonnées x,y en fallback) et renforcement de la règle Vision-On-Demand.
+             11.0: Vision-On-Demand (retrait de la vision systématique, ajout de action_request_vision), retrait du hard-limit DOM, intégration du Code de Comportement étendu.
+             10.9: Mise à jour de la docstring de delegate_web_browsing pour exiger la transmission du contexte spatio-temporel (date, heure, lieu) dans l'objectif de la mission.
              10.4: Registre Unifié V2 — mark_processed → save_resource,
              requête processed_files → get_resources.
+             10.3: Intégration de la vision multimodale (Base64) native et exposition de la carte DOM à l'agent.
+             10.2: Ajout close_web_thread et purge automatique de session en fin de mission.
+             10.1: Persistance ThoughtSignatures Gemini 3.x — save_thread_step sur chaque tour (model + user) avec extraction de la signature. SID exposé dans le retour.
+             10.0: Architecture multi-agentique. Remplacement de l'interaction manuelle par la boucle OODA autonome (delegate_web_browsing). Intégration Native Gemini Tool Calling et vision multimodale (Base64). Déportation de la logique mécanique dans echo_browser_lib.
 """
 
 import os
@@ -38,40 +44,42 @@ async def _verify_engine_status(timeout: int, chat_id: str, user_id: str, u_valv
     return True
 
 async def _deploy_navigation_monitor(res_view: dict, chat_id: str, uid: str, u_valves: Any, events: EchoEvents):
-    if not getattr(u_valves, 'SHOW_BROWSER_HUD', True) or not events:
-        return
-
     b64 = res_view.get("screenshot_b64", "")
-    metadata = res_view.get("metadata", [])
     
     if b64:
         try:
             file_id = generate_echo_file_id(uid, chat_id)
             filename = f"{file_id}_frame.png"
-            state_manager = EchoStateManager(user_id=uid)
+            state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
             vault_path = get_echo_session_path(uid, chat_id, "files")
             
             img_data = base64.b64decode(b64)
-            with open(os.path.join(vault_path, filename), "wb") as f: 
+            filepath = os.path.join(vault_path, filename)
+            with open(filepath, "wb") as f: 
                 f.write(img_data)
             
             state_manager.save_resource(
                 id=file_id, name=filename, resource_type='media',
                 status=FILE_INGESTION_STATUS['INDEXED'], mime='image/png',
-                storage_path=os.path.join(vault_path, filename),
+                storage_path=filepath
             )
         except Exception as e:
-            print(f"[Navigation] Erreur archivage Vault: {e}")
+            pass
 
-        await EchoUI.safe_deploy(
-            events=events,
-            monitor_func=EchoUI.monitor_ECHO,
-            b64=b64,
-            metadata=metadata,
-            hud_id=f"nav-{chat_id[:8]}",
-            state_key=f"nav_state_{chat_id}",
-            current_url=res_view.get("url", "")
-        )
+    if not getattr(u_valves, 'SHOW_BROWSER_HUD', True) or not events:
+        return
+
+    metadata = res_view.get("metadata", [])
+    
+    await EchoUI.safe_deploy(
+        events=events,
+        monitor_func=EchoUI.monitor_ECHO,
+        b64=b64,
+        metadata=metadata,
+        hud_id=f"nav-{chat_id[:8]}",
+        state_key=f"nav_state_{chat_id}",
+        current_url=res_view.get("url", "")
+    )
 
 class Tools:
     class Valves(BaseModel):
@@ -81,6 +89,7 @@ class Tools:
         BROWSER_MODE: Literal["mobile", "desktop"] = Field(default="desktop", description="Mode de navigation")
         SHOW_BROWSER_HUD: bool = Field(default=True, description="Afficher le moniteur de navigation (HUD)")
         USE_MULTIMODAL_VISION: bool = Field(default=True, description="Fournir les captures d'écran à l'agent")
+        VISION_GRID_STEP: int = Field(default=100, description="Pas de la grille de vision en pixels (ex: 50, 100).")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -88,20 +97,23 @@ class Tools:
     async def delegate_web_browsing(
         self, task_objective: str, start_url: Optional[str] = None, 
         target_model_key: Literal["MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH", 
+        max_iterations: int = Field(default=30, description="Nombre max d'itérations. À augmenter pour les tâches longues (ex: 60 questions). Max: 100."),
         __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None
     ) -> dict:
-        """Lance l'Agent Navigateur autonome pour accomplir une mission web complexe."""
+        """Lance l'Agent Navigateur autonome pour accomplir une mission web complexe.
+        IMPORTANT : Tu DOIS inclure la date, l'heure et le lieu actuels dans la description de `task_objective` pour que l'agent navigateur ait conscience de son contexte temporel et géographique lors de ses recherches.
+        """
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = __metadata__.get("chat_id", "default_session")
         uid = __user__.get("id", "anonymous")
         u_valves = __user__.get("valves", self.UserValves())
         use_vision = getattr(u_valves, 'USE_MULTIMODAL_VISION', True)
 
-        await events.status("🚀 Agent Navigateur: Prise de contrôle...")
+        await events.status("📡 Agent Navigateur: Prise de contrôle...")
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
             return wrap_tool_output(text="❌ Navigateur indisponible.", status={"status": "error"})
 
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid, vision_grid_step=getattr(u_valves, 'VISION_GRID_STEP', 100))
         registry = browser.get_registry()
         
         sid = f"thread_web_{uuid.uuid4().hex[:8]}"
@@ -109,21 +121,24 @@ class Tools:
 
         if start_url:
             await events.status(f"🌐 Navigation vers {start_url}...")
-            await browser.action_navigate(start_url)
+            await browser.action_browser_control(command="navigate", value=start_url)
         
         res_view = await browser.highlight()
         await _deploy_navigation_monitor(res_view, chat_id, uid, u_valves, events)
 
+        vision_requested = False
+
         sys_prompt = (
-            f"Tu es l'Agent Navigateur Autonome d'ECHO.\nMISSION : {task_objective}\n"
-            f"Tu as accès à des outils pour cliquer, taper, scroller et lire la page.\n"
-            f"Analyse la structure DOM fournie. Une capture d'écran t'est également "
-            f"fournie : utilise tes capacités de vision pour mieux comprendre "
-            f"l'interface visuelle, repérer les éléments graphiques (icônes, boutons "
-            f"sans texte) et valider le résultat de tes actions.\n"
-            f"Appelle tes outils de manière itérative jusqu'à accomplir la mission.\n"
-            f"Quand tu as terminé (ou si c'est impossible), ne renvoie aucun outil, "
-            f"donne simplement ta synthèse finale en texte."
+            f"Tu es l'Agent Navigateur Autonome d'ECHO.\nMISSION : {task_objective}\n\n"
+            f"=== MANUEL D'EXPLOITATION COGNITIVE ===\n"
+            f"Règle 1 (Perception Séquentielle) : Tu dois inspecter la page dans cet ordre strict selon ton besoin de compréhension : `action_inspect_page(target='a11y_tree')` (Priorité absolue pour lire) -> `dom_map` -> `vision` -> `read_text`/`read_html`.\n"
+            f"Règle 2 (Hiérarchie d'Interaction) : 1) Tente d'abord `action_interact_a11y` sur l'arbre A11y. Pour un élément interactif (button, link, textbox), utilise `method='role'` ET le paramètre `name` pour cibler précisément l'élément. Si l'élément est du texte simple, utilise `method='text'`. 2) Si complexe, utilise l'index de la `dom_map` avec `action_interact_dom`. 3) En dernier recours, utilise les coordonnées x, y issues d'une inspection vision.\n"
+            f"Règle 3 (Mode Lot Modéré) : Tu PEUX grouper plusieurs actions non-mutantes dans le même tour pour aller très vite (ex: remplir plusieurs champs). Cependant, tu NE DOIS PAS enchaîner une action si la précédente risque de modifier drastiquement la page (ex: cliquer sur 'Soumettre', ouvrir une modale, changer de page). Si une action est mutante, elle DOIT être la dernière de ton lot.\n"
+            f"Règle 4 (Bannières & Pop-ups) : Si un overlay, un bouton 'Accepter les cookies' ou 'Fermer' bloque la navigation, ta priorité absolue est d'utiliser `action_interact_dom(action_type='click')` ou `action_interact_a11y` pour t'en débarrasser.\n"
+            f"Règle 5 (Formulaires) : Remplis les champs avec `action_interact_dom(action_type='type')`. Fais un `action_browser_control(command='pause')` si tu attends une liste d'autocomplétion. Si la liste apparaît ensuite, clique dessus. Sinon, valide avec `action_browser_control(command='press_key', value='Enter')`.\n"
+            f"Règle 6 (Scroll & Pagination) : Si une information est absente du DOM, scrolle vers le bas via `action_browser_control(command='scroll', value='down')` avant d'abandonner.\n"
+            f"Règle 7 (Erreurs & Repli) : Si `action_browser_control(command='press_key')` échoue, cherche et clique sur le bouton de soumission. Si une action ne produit aucun effet, change d'approche.\n"
+            f"Règle 8 (Synthèse Obligatoire) : Ta synthèse finale DOIT être une phrase complète. Il est STRICTEMENT INTERDIT de renvoyer uniquement un nombre ou un mot isolé.\n"
         )
 
         history = [{"role": "user", "parts": [{"text": sys_prompt}]}]
@@ -140,7 +155,7 @@ class Tools:
                         "name": fn_name,
                         "response": {
                             "status": "success",
-                            "dom_map": dom_data[:300] # Limite arbitraire en nb d'éléments pour la sécurité
+                            "dom_map": dom_data
                         }
                     }
                 })
@@ -148,8 +163,11 @@ class Tools:
                 dom_text = str(dom_data)[:30000]
                 parts.append({"text": f"Voici les éléments interactifs actuels (Carte DOM) :\n{dom_text}"})
                 
-            if use_vision and res_view_dict.get("screenshot_b64"):
+            nonlocal vision_requested
+            if use_vision and vision_requested and res_view_dict.get("screenshot_b64"):
+                parts.append({"text": "Voici la capture d'écran demandée. Analyse-la attentivement pour résoudre ton blocage."})
                 parts.append({"inlineData": {"mimeType": "image/png", "data": res_view_dict["screenshot_b64"]}})
+                vision_requested = False
                 
             history.append({"role": "user", "parts": parts})
             state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", parts)
@@ -197,11 +215,12 @@ class Tools:
                 last_fn_name = "action"
                 
                 # 2. Exécution des outils
-                for part in tools_raw:
+                for index, part in enumerate(tools_raw):
                     fc = part["functionCall"]
                     fn_name = fc["name"]
                     fn_args = fc.get("args", {})
                     fn_id = fc.get("id") # Gemini 3.x parallèle
+                    is_last_tool = (index == len(tools_raw) - 1)
                     
                     await events.status(f"🖱️ Agent exécute : {fn_name}({fn_args})", done=False)
                     
@@ -209,10 +228,40 @@ class Tools:
                     if fn_name in registry:
                         try:
                             action_res = await registry[fn_name](**fn_args)
-                            if action_res.get("status") != "error":
-                                last_view = await browser.highlight()
-                                await _deploy_navigation_monitor(last_view, chat_id, uid, u_valves, events)
-                                _resp = {"status": "success", "dom_map": last_view.get("metadata", [])[:300]}
+                            
+                            if action_res.get("_trigger_vision"):
+                                vision_requested = True
+                                grid = action_res.get("grid", False)
+                                if grid:
+                                    last_view = await browser.vision_grid()
+                                else:
+                                    last_view = await browser.highlight()
+                                # On déploie avec highlight() spécifiquement pour le moniteur visuel, car la grille ne possède pas les hitboxes sémantiques.
+                                hud_view = await browser.highlight() if grid else last_view
+                                await _deploy_navigation_monitor(hud_view, chat_id, uid, u_valves, events)
+                                _resp = {"status": "success", "message": "Capture d'écran demandée. Elle est jointe à ce message."}
+                                last_fn_name = fn_name
+                                
+                            elif action_res.get("status") != "error":
+                                if is_last_tool:
+                                    last_view = await browser.highlight()
+                                    await _deploy_navigation_monitor(last_view, chat_id, uid, u_valves, events)
+                                    _resp = {"status": "success", "dom_map": last_view.get("metadata", [])}
+                                    
+                                    # Intégrer les résultats spécifiques de l'action dans la réponse
+                                    if "search_result" in action_res:
+                                        _resp["search_result"] = action_res["search_result"]
+                                    if "content" in action_res:
+                                        _resp["content"] = action_res["content"]
+                                    if "value" in action_res:
+                                        _resp["value"] = action_res["value"]
+                                else:
+                                    _resp = {"status": "success", "message": "Action exécutée avec succès."}
+                                    if "content" in action_res:
+                                        _resp["content"] = action_res["content"]
+                                    if "value" in action_res:
+                                        _resp["value"] = action_res["value"]
+                                        
                                 last_fn_name = fn_name
                             else:
                                 _resp = {"status": "error", "error": action_res.get("message")}
@@ -225,9 +274,11 @@ class Tools:
                     response_parts.append({"functionResponse": _fr})
                 
                 # 3. Ajout du message utilisateur contenant toutes les réponses
-                # Injection de la vision base64 dans les parts si la vue a changé
-                if last_view and use_vision and last_view.get("screenshot_b64"):
+                # Injection de la vision base64 dans les parts si elle a été demandée
+                if last_view and use_vision and vision_requested and last_view.get("screenshot_b64"):
+                    response_parts.append({"text": "Voici la capture d'écran demandée. Analyse-la attentivement."})
                     response_parts.append({"inlineData": {"mimeType": "image/png", "data": last_view["screenshot_b64"]}})
+                    vision_requested = False
                     
                 history.append({"role": "user", "parts": response_parts})
                 state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", response_parts)
@@ -258,7 +309,7 @@ class Tools:
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
         
         await events.status(f"🌐 Navigation vers {url}...")
-        await browser.action_navigate(url)
+        await browser.action_browser_control(command="navigate", value=url)
         
         res_action = await req_to_browser(self.valves.HTTP_TIMEOUT, "/action", {"session_id": chat_id, "action": "read_html"}, uid)
         b64_html = res_action.get("content", "")

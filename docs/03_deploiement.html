@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Déploiement du Framework ECHO v5 : provisioning Hyper-V, installation Linux natif, WSL2, cycle de vie des 6 phases, scripts sync-echo et install-stack.">
-  <title>ECHO v5 - 2. Déploiement &amp; Infrastructure</title>
+  <title>ECHO v5 - 3. Déploiement &amp; Infrastructure</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>2. Déploiement &amp; Infrastructure</h1>
+    <h1>3. Déploiement &amp; Infrastructure</h1>
 
     <p>
       ECHO est conçu pour transformer une machine standard en un serveur d'intelligence souveraine.
@@ -45,8 +45,8 @@
       <code>install-hyperv.ps1</code> agit comme assembleur. Il crée une archive ZIP du projet
       (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>), génère un
       disque dur virtuel CIDATA de 100 Mo contenant les fichiers <code>user-data</code> et
-      <code>meta-data</code> cloud-init, puis crée la VM Hyper-V de Génération 2 avec Secure
-      Boot désactivé et le disque Seed attaché.
+      <code>meta-data</code> cloud-init, puis crée la VM Hyper-V de Génération 2 (avec 8 Go de RAM alloués et un VHDX de 70 Go dynamiques, Secure
+      Boot désactivé) et le disque Seed attaché.
     </p>
 
     <h3>Phase 2 - Provisioning automatisé (VM Linux)</h3>
@@ -94,7 +94,8 @@
     <h3>Phase 4 - Orchestration Docker (<code>install-stack.sh</code>)</h3>
     <p>
       Ce script orchestre le démarrage de la pile applicative via le fichier de configuration
-      centralisé <code>stack-echo.yml</code>, qui remplace l'usage implicite de docker-compose.yml.
+      centralisé <code>stack-echo.yml</code>, .
+      Il sécurise également l'hôte en appliquant une politique Autosafety de rotation des logs Docker (max-size 50m).
       Il centralise les secrets et variables dans <code>/opt/ECHO/.env</code> (incluant la génération automatique de <code>ECHO_SSO_SECRET</code>), calcule dynamiquement 
       les origines CORS autorisées (<code>ECHO_DETECTED_ORIGINS</code>), puis lève les services.
     </p>
@@ -185,7 +186,7 @@ systemd=true</code></pre>
       </thead>
       <tbody>
         <tr><td><strong>Isolation</strong></td><td>Maximale (VM dédiée)</td><td>OS dédié</td><td>Partielle (noyau partagé)</td></tr>
-        <tr><td><strong>Prérequis</strong></td><td>Windows 11 Pro + Hyper-V activé</td><td>Ubuntu 22.04+ / Debian 12+</td><td>WSL2 activé sur Windows 10/11</td></tr>
+        <tr><td><strong>Prérequis</strong></td><td>Windows 11 Pro + Hyper-V + 8 Go RAM</td><td>Ubuntu 22.04+ / Debian 12+</td><td>WSL2 activé sur Windows 10/11</td></tr>
         <tr><td><strong>Complexité de démarrage</strong></td><td>Élevée (VM + cloud-init)</td><td>Faible</td><td>Faible</td></tr>
         <tr><td><strong>Idempotent</strong></td><td>Non (VM recréée)</td><td>Oui</td><td>Oui</td></tr>
         <tr><td><strong>Accès depuis Windows</strong></td><td>Via IP statique de la VM</td><td>Non direct</td><td><code>localhost</code> natif</td></tr>
@@ -211,8 +212,8 @@ systemd=true</code></pre>
           <td>Redémarrage « hot reload » des micro-services. Données préservées.</td>
         </tr>
         <tr>
-          <td><code>upgrade-echo</code></td>
-          <td>Mise à niveau majeure.</td>
+          <td><code>upgrade-echo.sh</code></td>
+          <td>Mise à niveau majeure de l'infrastructure.</td>
           <td>Re-synchronisation complète + rebuild des images Docker locales.</td>
         </tr>
         <tr>
@@ -228,33 +229,6 @@ systemd=true</code></pre>
       </tbody>
     </table>
 
-    <h2>Bouclier BunkerWeb (WAF) & ECHO Auth</h2>
-
-    <p>
-      L'activation de BunkerWeb (<code>enable-bunkerweb</code>) transforme l'infrastructure
-      en plateforme sécurisée exposable sur Internet. BunkerWeb agit comme reverse proxy WAF
-      devant Open WebUI et l'Admin Manager. <strong>L'activation de BunkerWeb déclenche également le lancement du module ECHO Auth (SSO IdP)</strong>, qui protège l'ensemble de la pile derrière une authentification forte (MFA, TOTP) via un mécanisme de Forward Auth.
-    </p>
-    <ul>
-      <li><strong>SSO & MFA :</strong> Le portail ECHO Auth devient le seul point de passage pour accéder à l'interface.</li>
-      <li><strong>Kill-Switch Service Worker (PWA) :</strong> Le WAF intègre un mécanisme de "poisoning" non-destructif (surcharge de <code>/_app/version.json</code>) pour forcer le rechargement des assets SvelteKit sans utiliser <code>Clear-Site-Data</code>, ce qui garantit la préservation du cookie JWT de session (évitant l'erreur 401 sur les flux audio).</li>
-      <li><strong>Tunnel SSH Antigravity (PKCE) :</strong> Pour sécuriser la connexion avec les environnements de développement locaux (IDE), un serveur SSH éphémère expose dynamiquement les ports <strong>8020 à 8024</strong>. Il est indispensable d'autoriser ces ports dans le pare-feu si vous utilisez Antigravity 2.1.</li>
-    </ul>
-    <p>
-      Il implémente une stratégie SPA Robuste de limitation de débit (rate limiting) granulaire :
-      1000 requêtes/s pour les assets statiques, 50 requêtes/s pour la navigation et 20 requêtes/s pour l'API backend.
-      Le moteur ModSecurity est spécifiquement paramétré pour exclure Open WebUI des vérifications de mauvais comportement (contournement des 400 CORS légitimes des SPA), évitant ainsi les faux positifs bloquants.
-      La configuration persistante est stockée dans <code>/opt/ECHO/bunkerweb/</code>.
-    </p>
-
-    <div class="warning-box">
-      <h4>⚠️ Exposition réseau</h4>
-      <p>
-        Sans BunkerWeb, ECHO n'écoute que sur le réseau Docker interne ou l'interface locale.
-        N'exposer jamais les ports 3000 (Open WebUI) ou 8080 (Admin Manager) directement
-        sur le WAN sans pare-feu applicatif.
-      </p>
-    </div>
 
     <h2>Quickstart depuis sources locales</h2>
 
@@ -267,11 +241,11 @@ sudo bash 00-echo-scripts/install-stack.sh
 
     <div class="transition-text">
       Une fois la pile opérationnelle, le cœur technique du framework repose sur ses librairies partagées.
-      <a href="03_echo_libs.html">Explorer les librairies partagées ➔</a>
+      <a href="04_echo_libs.html">Explorer les librairies partagées ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

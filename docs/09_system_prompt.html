@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Le Kernel ECHO v5 : system prompt, hiérarchie des normes, persona de l'IA, directives opérationnelles, Registre des Fichiers, règles de souveraineté.">
-  <title>ECHO v5 - 8. Le Kernel (System Prompt)</title>
+  <title>ECHO v5 - 9. Le Kernel (System Prompt)</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>8. Le Kernel (System Prompt)</h1>
+    <h1>9. Le Kernel (System Prompt)</h1>
 
     <p>
       Le <strong>System Prompt</strong> d'ECHO - désigné Kernel - est le document fondamental
@@ -52,6 +52,16 @@
     <h3>Principe de Cognition Interne et Réflexion (PCIR)</h3>
     <p>
       Ce méta-principe fondamental définit le mode opératoire de la pensée du Modèle. Le Modèle <strong>doit</strong> maximiser sa réflexion en verbalisant massivement en interne son chemin de pensée (Thought Signature) avant de répondre à l'Utilisateur ou déclencher un Outil. Il doit systématiquement s'interroger sur d'éventuels angles morts, approfondir le sujet, douter de ses propres hypothèses et les vérifier en interne avant d'agir.
+    </p>
+
+    <h3>Principe de Gestion du Contexte Unifié (PGCU)</h3>
+    <p>
+      Le modèle fixe son attention selon l'ordre de priorité contextuelle strict : 1) Kernel, 2) AEC (Proprioception), 3) Méta-Artéfacts et Mémoires Vectorisées, 4) Requêtes Utilisateur, 5) Résultats d'Outils. Il surveille le vecteur thématique principal et en signale tout changement.
+    </p>
+
+    <h3>Principe de Rigueur Analytique et Factuelle (PRAF)</h3>
+    <p>
+      Le modèle impose la vérification de chaque fait et hypothèse via les outils de recherche Web en respectant la priorité des sources. Chaque fait est sourcé et son niveau de confiance est justifié. Les données absentes ou de faible confiance impliquent impérativement la mention explicite de l'ignorance.
     </p>
 
     <h3>Règle d'Or - Registre Unifié V2</h3>
@@ -130,35 +140,16 @@
       </p>
     </div>
 
-    <h2>Injection et Versionning</h2>
 
-    <p>
-      Le Kernel est versionné dans le dépôt git et injecté via l'API Open WebUI lors du
-      provisioning (<code>config-owui.sh</code>). Les mises à jour du Kernel nécessitent
-      un <code>update-echo</code> suivi d'un <code>config-owui.sh</code> pour être propagées
-      dans l'interface. La commande <code>get_echo_version()</code> lit la version courante
-      depuis <code>/app/backend/data/ECHO_VERSION</code>.
-    </p>
-
-    <div class="audit-note">
-      <h4>✅ Correspondance GEMINI.md ↔ System Prompt</h4>
-      <p>
-        Le fichier <code>GEMINI.md</code> à la racine du dépôt est la version « agent »
-        du Kernel : il est lu directement par les agents d'IA (comme Antigravity IDE) pour
-        comprendre l'architecture et les règles d'ECHO. Il doit rester synchronisé avec
-        le <code>system-prompt.md</code> déployé. En cas de divergence, le
-        <code>system-prompt.md</code> fait foi pour l'environnement de production.
-      </p>
-    </div>
 
     <div class="transition-text">
-      <a href="07j_agent_orchestration.html">← 7j. Orchestration Multi-Agents</a>
+      <a href="08j_agent_orchestration.html">← 8j. Orchestration Multi-Agents</a>
       &nbsp;&nbsp;
-      <a href="09_admin_manager.html">Admin Manager (Console de Régulation) ➔</a>
+      <a href="10_infrastructure.html">10. Périphériques et Infrastructure ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

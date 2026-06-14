@@ -104,7 +104,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
         </tr>
         <tr>
           <td>4</td>
-          <td><code>export_pdf_action.py</code></td>
+          <td><code>print_pdf_action.py</code></td>
           <td>Export PDF</td>
           <td><code>4</code></td>
           <td>Capture conversation &rarr; PDF (texte + Rich Embeds)</td>
@@ -132,7 +132,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       Invalide l'ensemble des tokens OAuth2 et clés API enregistrés dans
       <code>identity.db</code> pour l'utilisateur courant. Au prochain message, le Cortex
       (<code>pipe_engine.py</code>) détecte l'absence de token valide et déclenche
-      automatiquement un nouveau flux d'authentification PKCE via
+      automatiquement un flux d'authentification PKCE via
       <code>echo_auth.py</code>.
     </p>
     <p>
@@ -267,7 +267,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </tbody>
     </table>
 
-    <h2>Action 4 - Export PDF (<code>export_pdf_action.py</code>)</h2>
+    <h2>Action 4 - Print / PDF (<code>print_pdf_action.py</code>)</h2>
 
     <p>
       Capture l'intégralité de la conversation courante et génère un fichier PDF
@@ -460,6 +460,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       <li>🎓 <strong>Expert</strong> : Agent expert qualifié selon un rôle métier défini.</li>
       <li>🏛️ <strong>Conseil (Council)</strong> : Stratégie de Table Ronde Delphi. L'interface fusionne <em>chronologiquement</em> tous les threads des membres du conseil en une vue unifiée.</li>
       <li>📋 <strong>Superviseur (Supervisor)</strong> : Orchestration hiérarchique. L'interface affiche l'agent superviseur avec le regroupement arborescent des <em>workers</em> sous sa tutelle.</li>
+      <li>🌐 <strong>Navigateur Web</strong> : Agent pilotant le navigateur web avec analyse DOM en temps réel.</li>
     </ul>
 
     <h2>Action 6 - ECHO Codex (<code>echo_codex_action.py</code>, v1.8)</h2>
@@ -499,16 +500,16 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
     </div>
 
     <p>Pour la documentation technique complète (architecture, API JS, protocole Python↔JS),
-    voir <a href="07h_codex_editor.html">ECHO Codex &rarr;</a>.</p>
+    voir <a href="08h_codex_editor.html">ECHO Codex &rarr;</a>.</p>
 
     <div class="transition-text">
-      <a href="07e_execution_monitoring.html">&larr; Exécution &amp; Pilotage</a>
+      <a href="08e_execution_monitoring.html">&larr; Exécution &amp; Pilotage</a>
       &nbsp;&nbsp;
-      <a href="07g_visual_intelligence.html">Visual Intelligence &rarr;</a>
+      <a href="08g_visual_intelligence.html">Visual Intelligence &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

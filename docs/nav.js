@@ -38,52 +38,55 @@ document.addEventListener('DOMContentLoaded', () => {
       { href: 'index.html',              text: 'Introduction' },
       { href: '00_fondations.html',      text: '0. Fondations & Philosophie' },
       { href: '01_hld_architecture.html',text: '1. High-Level Design (HLD)' },
-      { href: '02_deploiement.html',     text: '2. Déploiement & Infra' },
-      { href: '03_echo_libs.html',       text: '3. Librairies Partagées' },
-      { href: '04_hud_ui.html',          text: '4. Écosystème HUD & UI' },
-      { href: '05_filtre.html',          text: '5. Les Filtres (Conscience)' },
-      { href: '06_pipe.html',            text: '6. Le Pipe (Cortex)' },
+      { href: '02_communication_gemini.html', text: '2. Communication Gemini' },
+      { href: '03_deploiement.html',     text: '3. Déploiement & Infra' },
+      { href: '04_echo_libs.html',       text: '4. Librairies Partagées' },
+      { href: '05_hud_ui.html',          text: '5. Écosystème HUD & UI' },
+      { href: '06_filtre.html',          text: '6. Les Filtres (Conscience)' },
+      { href: '07_pipe.html',            text: '7. Le Pipe (Cortex)' },
       {
-        href: '07_arsenal_outils.html',
-        text: "7. L'Arsenal des Outils",
+        href: '08_arsenal_outils.html',
+        text: "8. L'Arsenal des Outils",
         sub: [
-          { href: '07a_strategic_planner.html', text: '7a. Planification Stratégique' },
-          { href: '07b_web_intelligence.html',  text: '7b. Web Intelligence' },
-          { href: '07c_vault_explorer.html',    text: "7c. Explorateur de l'Espace Personnel" },
-          { href: '07d_memory_cognition.html',  text: '7d. Mémoire & Cognition' },
-          { href: '07e_execution_monitoring.html', text: '7e. Exécution & Pilotage' },
-          { href: '07f_actions_ui.html',        text: '7f. Actions UI (HUD)' },
-          { href: '07g_visual_intelligence.html', text: '7g. Visual Intelligence' },
-          { href: '07h_codex_editor.html',      text: '7h. ECHO Codex (Éditeur)' },
-          { href: '07i_delegate_agent.html', text: '7i. Delegate Agent' },
-          { href: '07j_agent_orchestration.html', text: '7j. Orchestration Multi-Agents' }
+          { href: '08a_strategic_planner.html', text: '8a. Planification Stratégique' },
+          { href: '08b_web_intelligence.html',  text: '8b. Web Intelligence' },
+          { href: '08c_vault_explorer.html',    text: "8c. Explorateur de l'Espace Personnel" },
+          { href: '08d_memory_cognition.html',  text: '8d. Mémoire & Cognition' },
+          { href: '08e_execution_monitoring.html', text: '8e. Exécution & Pilotage' },
+          { href: '08f_actions_ui.html',        text: '8f. Actions UI (HUD)' },
+          { href: '08g_visual_intelligence.html', text: '8g. Visual Intelligence' },
+          { href: '08h_codex_editor.html',      text: '8h. ECHO Codex (Éditeur)' },
+          { href: '08i_delegate_agent.html', text: '8i. Delegate Agent' },
+          { href: '08j_agent_orchestration.html', text: '8j. Orchestration Multi-Agents' }
         ]
       },
-      { href: '08_system_prompt.html',   text: '8. Le Kernel (System Prompt)' },
+      { href: '09_system_prompt.html',   text: '9. Le Kernel (System Prompt)' },
       {
-        href: '09_infrastructure.html',
-        text: '9. Périphériques & Infra',
+        href: '10_infrastructure.html',
+        text: '10. Périphériques & Infra',
         sub: [
-          { href: '09a_admin_manager.html', text: '9a. Admin Manager' },
-          { href: '09b_audio_workers.html', text: '9b. Audio Workers' },
-          { href: '09c_scripts_infrastructure.html', text: '9c. Scripts d\'Infrastructure' }
+          { href: '10a_admin_manager.html', text: '10a. Admin Manager' },
+          { href: '10b_echo_auth_sso.html', text: '10b. ECHO Auth SSO & MFA' },
+          { href: '10c_bunkerweb_waf.html', text: '10c. Bouclier BunkerWeb WAF' },
+          { href: '10d_audio_workers.html', text: '10d. Audio Workers' },
+          { href: '10e_scripts_infrastructure.html', text: '10e. Scripts d\'Infrastructure' }
         ]
       },
       {
-        href: '10_annexes.html',
-        text: '10. Annexes Techniques'
+        href: '11_annexes.html',
+        text: '11. Annexes Techniques'
       },
       {
-        href: '11_credits.html',
-        text: '11. Crédits Open Source'
+        href: '12_credits.html',
+        text: '12. Crédits Open Source'
       },
       {
-        href: '12_manuel_utilisateur.html',
-        text: '12. Manuel Utilisateur'
+        href: '13_manuel_utilisateur.html',
+        text: '13. Manuel Utilisateur'
       },
       {
-        href: '13_registre_audit.html',
-        text: "13. Registre d'Audit"
+        href: '14_registre_audit.html',
+        text: "14. Registre d'Audit et Confidentialité"
       }
     ];
 

@@ -1,14 +1,8 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 13.2
-description: 12.14: Correction de syntaxe (IndentationError).
-             12.15: THINKING_LEVEL_TOOLS centralise la valeur MINIMAL (echo_constants v4.8).
-             13.0: Migration OSM Nominatim (révoquée — voir 13.1).
-             13.1: Retour au grounding Google Maps natif Gemini (googleMaps tool). Adoption
-             de call_cascade() (echo_utils v7.17) à la place de EchoGeminiClient.call() direct.
-             Gestion du tuple de retour (data, model_key, reason). Ajout __metadata__ à
-             search_maps() pour la politique de clamping Pipe.
+version: 13.3
+description: 13.3: Ajout argument optionnel print_map et lecture de _echo_suppress_map_ui pour blocage du rendu UI.
              13.2: Fix commentaires : MODEL_LITE est le plancher de la cascade (pas de fallback
              descendant possible). Aucune cascade automatique vers un modèle inférieur.
 """
@@ -52,6 +46,7 @@ class Tools:
         query: str,
         latitude: float = None,
         longitude: float = None,
+        print_map: bool = True,
         __user__: dict = {},
         __metadata__: dict = None,
         __event_emitter__: Any = None,
@@ -141,8 +136,12 @@ class Tools:
             await events.status("Carte interactive prête.", done=True)
 
             # Rendu UI : embed Google Maps + contexte textuel pour le LLM
-            response = EchoUI.map_viewer(query=query, title=f"ECHO Maps : {query}")
-            return response, wrap_tool_output(text=full_text)
+            suppress_ui = (__metadata__ or {}).get("_echo_suppress_map_ui", False)
+            if print_map and not suppress_ui:
+                response = EchoUI.map_viewer(query=query, title=f"ECHO Maps : {query}")
+                return response, wrap_tool_output(text=full_text)
+            
+            return wrap_tool_output(text=full_text)
 
         except Exception as e:
             return wrap_tool_output(

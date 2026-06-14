@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Communication avec l'API Gemini : authentification, priorités des identités, protocole PKCE et architecture Antigravity 2.1.">
+  <title>ECHO v5 - 2. Communication Gemini</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>2. Communication Gemini & Authentification</h1>
+
+    <p>
+      Cette section détaille les protocoles et mécanismes de sécurité permettant à ECHO
+      d'interagir avec l'API de Google Gemini de manière robuste et sécurisée.
+    </p>
+
+    <h2>Mécanismes d'Authentification API</h2>
+
+    <p>Pour communiquer avec les modèles de Google (Gemini), le Framework s'appuie sur une architecture multi-provider. Cette conception garantit la connectivité via différentes méthodes d'accès, selon le contexte (Local ou Cloud).</p>
+
+    <ul>
+      <li><strong>Résolution Multi-Provider :</strong> L'authentification est priorisée au sein du module <code>EchoAuth.get_ordered_auth_providers()</code>. Le système tente en priorité de s'authentifier par OAuth2, puis bascule sur les clés API statiques si l'OAuth2 n'est pas configuré.</li>
+      <li><strong>Le protocole d'authentification PKCE :</strong> ECHO utilise le flux <strong>Authorization Code + PKCE (RFC 7636)</strong> pour l'authentification OAuth2 headless dans Docker. PKCE (<em>Proof Key for Code Exchange</em>) est une extension du flux OAuth2 empêchant l'interception du code d'autorisation. Il génère une paire de secrets éphémères (<em>code_verifier</em> et <em>code_challenge</em>) à usage unique.</li>
+      <li><strong>Clés API :</strong> En solution de repli (ou par choix utilisateur), de simples clés API AI Studio (commençant par <code>AIza…</code>) peuvent être définies dans l'interface et utilisées directement.</li>
+    </ul>
+
+    <p>
+      En pratique pour l'OAuth2 : lorsqu'aucun fournisseur d'accès n'est configuré et qu'aucune clé API n'est fournie, le Pipe déclenche le flux PKCE automatiquement au premier message. Un tunnel SSH éphémère (<code>asyncssh</code>) est ouvert sur un port dynamique de la plage <code>8020–8024</code>, et le callback OAuth2 est reçu sur un port interne (<code>8025–8034</code>). L'utilisateur reçoit un lien cliquable dans l'interface et n'a qu'à autoriser ECHO sur son compte Google pour récupérer ses identifiants.
+    </p>
+
+    <div class="tech-spec">
+      <h4>⚙️ Priorité des identités d'accès</h4>
+      <p>
+        Le registre des fournisseurs d'accès aux modèles est résolu dans cet ordre par
+        <code>EchoAuth.get_ordered_auth_providers()</code> :
+      </p>
+      <ol>
+        <li><strong>OAuth2 (API Antigravity)</strong> - prioritaire, accès aux modèles <code>gemini-pro-agent</code> et <code>gemini-3-flash-agent</code>.</li>
+        <li><strong>Clé API primaire</strong> - AI Studio (<code>google_api_key</code>).</li>
+        <li><strong>Clé API secondaire</strong> - fallback de secours (<code>google_api_key_secondary</code>).</li>
+      </ol>
+    </div>
+
+    <div class="transition-text">
+      L'authentification valide permet de déployer l'infrastructure dans le cloud.
+      <a href="03_deploiement.html">Passer au Déploiement ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

@@ -1,8 +1,9 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.17
-description: 5.17: Ajout du dictionnaire FILE_INGESTION_STATUS pour centraliser les états d'ingestion.
+version: 5.18
+description: 5.18: Ajout de DEEP_RESEARCH_MAX_CALLS_DEFAULT pour l'agent de recherche profonde.
+             5.17: Ajout du dictionnaire FILE_INGESTION_STATUS pour centraliser les états d'ingestion.
              5.16: Réduction de MAX_DIRECT_MMEDIA_INJECT_SIZE de 5Mo à 1Mo pour optimisation de contexte.
              4.4: redirect_uri localhost (loopback RFC 8252).
              4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
@@ -392,6 +393,8 @@ ECHO_MR_SUMMARY_MAX_WORDS     = 400      # Limite de taille en mots pour les ré
 # ==============================================================================
 # 1.5 DELEGATE SUB-AGENT — Blacklist et appendice système
 # ==============================================================================
+
+DEEP_RESEARCH_MAX_CALLS_DEFAULT = 200
 
 # ⚠️  MAINTENANCE OBLIGATOIRE
 # À chaque création, modification ou suppression d'une function call dans les

@@ -29,7 +29,7 @@
     <p>
       La mémoire organique est la mémoire à <strong>long terme</strong> d'ECHO. Les souvenirs
       y sont stockés avec un niveau d'importance (1–5) qui influence leur rappel et leur durée de
-      vie. Ils persistent entre toutes les sessions, indépendamment du chat courant.
+      vie via l'algorithme de fusion sémantique (<code>MEMORY_IMPORTANCE_WEIGHTS</code>). La vectorisation intègre une distillation contextuelle automatique par <strong>fenêtre glissante déterministe</strong> (<code>WINDOW_SIZE=5</code>, <code>WINDOW_OVERLAP=2</code>).
     </p>
 
     <table>
@@ -59,7 +59,7 @@
     <p>
       La mémoire éphémère est la <strong>mémoire de travail</strong> d'une session. Elle stocke
       les distillats de fichiers volumineux, les résultats intermédiaires de navigation et toute
-      donnée volumineuse qu'il serait coûteux de maintenir dans le contexte actif.
+      donnée volumineuse qu'il serait coûteux de maintenir dans le contexte actif. L'état cognitif des ressources est géré via le registre d'ingestion (<code>FILE_INGESTION_STATUS</code> : <code>PUT_IN_CONTEXT</code>, <code>VECTORIZED_SUM_UP</code>, <code>INDEXED</code>).
       Elle est automatiquement purgée en fin de session par l'Admin Manager.
     </p>
 
@@ -84,7 +84,7 @@
         <code>source_id</code> natif (ex. <code>U_abc123_C_xyz789_T_1748246400</code>) et indexe les chunks bruts
         dans <code>echo_ephemeral</code>. Le modèle reçoit ce <code>source_id</code> dans l'AEC (via <code>evenement_systeme</code> s'il vient d'être soumis, ou via l'outil <code>query_registry</code>) et l'utilise pour
         interroger les détails précis de la source brute : <code>search_session_context("U_abc123_C_xyz789...", "...")</code>.
-        Ce mécanisme remplace avantageusement l'injection du fichier complet dans le contexte,
+        Ce mécanisme de <strong>Smart Context (Map-Reduce RAG V2)</strong> injecte des balises <code>&lt;smart_context&gt;</code> structurelles dans le prompt, remplaçant l'injection du fichier complet dans le contexte,
         qui serait prohibitive en tokens.
       </p>
     </div>
@@ -162,7 +162,7 @@ flowchart TD
       <tbody>
         <tr>
           <td><code>delegate_to_subagent(task, system_prompt, sub_sid)</code></td>
-          <td>Délégation cognitive <strong>stateful</strong> (depuis <code>delegate_tool.py</code> v1.0, remplace <code>delegate_reasoning</code> supprimée en v5.14). Boucle agentique complète avec accès aux outils, budget d'appels configurable, montée cognitive LITE&rarr;FLASH&rarr;PRO. Persistance de l'historique de thread dans SQLite (<code>cognitive_threads</code>). Protocole <code>QUESTION:</code> pour les clarifications.</td>
+          <td>Délégation cognitive <strong>stateful</strong> (depuis <code>delegate_tool.py</code> v1.0, stateful\)\. Boucle agentique complète avec accès aux outils, budget d'appels configurable, montée cognitive LITE&rarr;FLASH&rarr;PRO. Persistance de l'historique de thread dans SQLite (<code>cognitive_threads</code>). Protocole <code>QUESTION:</code> pour les clarifications.</td>
         </tr>
         <tr>
           <td><code>consult_expert_consultant(role_name, prompt, sub_sid, target_model)</code></td>
@@ -237,13 +237,13 @@ flowchart TD
     </div>
 
     <div class="transition-text">
-      <a href="07c_vault_explorer.html">← Vault Explorer</a>
+      <a href="08c_vault_explorer.html">← Vault Explorer</a>
       &nbsp;&nbsp;
-      <a href="07e_execution_monitoring.html">Exécution &amp; Pilotage →</a>
+      <a href="08e_execution_monitoring.html">Exécution &amp; Pilotage →</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

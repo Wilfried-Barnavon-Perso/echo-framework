@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Documentation officielle du Framework ECHO v5 - Espace Cognitif Heuristique Opérationnel, infrastructure d'IA souveraine construite sur Open WebUI et Gemini.">
-  <title>ECHO Framework v5.179.10 - Documentation Technique</title>
+  <title>ECHO Framework v5.182.17 - Documentation Technique</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -41,7 +41,7 @@
     <table>
       <thead>
         <tr>
-          <th><span class="version-badge">v5.179.10</span></th>
+          <th><span class="version-badge">v5.182.17</span></th>
           <th>Contenu</th>
         </tr>
       </thead>
@@ -55,75 +55,103 @@
           <td>Architecture globale, schémas de flux, lexique technique et schéma SQL.</td>
         </tr>
         <tr>
-          <td><a href="02_deploiement.html">2. Déploiement &amp; Infrastructure</a></td>
+          <td><a href="02_communication_gemini.html">2. Communication Gemini</a></td>
+          <td>Authentification PKCE, priorités des identités d'accès, protocole Antigravity.</td>
+        </tr>
+        <tr>
+          <td><a href="03_deploiement.html">3. Déploiement &amp; Infrastructure</a></td>
           <td>Scripts de provisioning Hyper-V, Docker Compose et installation Linux.</td>
         </tr>
         <tr>
-          <td><a href="03_echo_libs.html">3. Librairies Partagées</a></td>
+          <td><a href="04_echo_libs.html">4. Librairies Partagées</a></td>
           <td>Cœur technique : <code>echo_utils</code>, <code>echo_auth</code>, <code>echo_protocol</code>, <code>echo_constants</code>.</td>
         </tr>
         <tr>
-          <td><a href="04_hud_ui.html">4. Écosystème HUD &amp; UI</a></td>
+          <td><a href="05_hud_ui.html">5. Écosystème HUD &amp; UI</a></td>
           <td>Interface immersive injectée : Monitor, Context Gauge, Web Replay.</td>
         </tr>
         <tr>
-          <td><a href="05_filtre.html">5. Les Filtres</a></td>
+          <td><a href="06_filtre.html">6. Les Filtres</a></td>
           <td>Pré-traitement multimodal, Smart Context et mémoire long terme.</td>
         </tr>
         <tr>
-          <td><a href="06_pipe.html">6. Le Pipe (Cortex)</a></td>
+          <td><a href="07_pipe.html">7. Le Pipe (Cortex)</a></td>
           <td>Moteur d'orchestration : Suture Bit-Perfect, routage cognitif, scellement.</td>
         </tr>
         <tr>
-          <td><a href="07_arsenal_outils.html">7. L'Arsenal des Outils</a></td>
+          <td><a href="08_arsenal_outils.html">8. L'Arsenal des Outils</a></td>
           <td>Catalogue des outils sensoriels, exécutifs, cognitifs et visuels.</td>
         </tr>
         <tr>
-          <td><a href="07a_strategic_planner.html">↳ 7a. Planification Stratégique</a></td>
+          <td><a href="08a_strategic_planner.html">↳ 8a. Planification Stratégique</a></td>
           <td>Plans d'action LLM, cascade PRO→FLASH→LITE, registre SQLite.</td>
         </tr>
         <tr>
-          <td><a href="07b_web_intelligence.html">↳ 7b. Web Intelligence</a></td>
+          <td><a href="08b_web_intelligence.html">↳ 8b. Web Intelligence</a></td>
           <td>Navigation autonome Playwright et recherche SearxNG.</td>
         </tr>
         <tr>
-          <td><a href="07c_vault_explorer.html">↳ 7c. Explorateur de l'Espace Personnel</a></td>
+          <td><a href="08c_vault_explorer.html">↳ 8c. Explorateur de l'Espace Personnel</a></td>
           <td>Analyse de fichiers locaux, multimodalité et indexation sémantique.</td>
         </tr>
         <tr>
-          <td><a href="07d_memory_cognition.html">↳ 7d. Mémoire &amp; Cognition</a></td>
+          <td><a href="08d_memory_cognition.html">↳ 8d. Mémoire &amp; Cognition</a></td>
           <td>Persistance Qdrant, niveaux d'importance, cascade cognitive.</td>
         </tr>
         <tr>
-          <td><a href="07e_execution_monitoring.html">↳ 7e. Exécution &amp; Pilotage</a></td>
+          <td><a href="08e_execution_monitoring.html">↳ 8e. Exécution &amp; Pilotage</a></td>
           <td>Sandbox Python isolée, exécution de code sécurisée.</td>
         </tr>
         <tr>
-          <td><a href="07f_actions_ui.html">↳ 7f. Actions UI (HUD)</a></td>
+          <td><a href="08f_actions_ui.html">↳ 8f. Actions UI (HUD)</a></td>
           <td>Boutons interactifs : purge mémoire, reset auth, replay web.</td>
         </tr>
         <tr>
-          <td><a href="07g_visual_intelligence.html">↳ 7g. Visual Intelligence</a></td>
+          <td><a href="08g_visual_intelligence.html">↳ 8g. Visual Intelligence</a></td>
           <td>Génération d'interfaces visuelles riches (Markmap, Mermaid, ECharts).</td>
         </tr>
         <tr>
-          <td><a href="07h_codex_editor.html">↳ 7h. ECHO Codex (Éditeur)</a></td>
+          <td><a href="08h_codex_editor.html">↳ 8h. ECHO Codex (Éditeur)</a></td>
           <td>Éditeur Monaco multi-langage, Git intégré (dulwich), 9 Tool Calls, HUD draggable.</td>
         </tr>
         <tr>
-          <td><a href="07i_delegate_agent.html">↳ 7i. Delegate Agent</a></td>
+          <td><a href="08i_delegate_agent.html">↳ 8i. Delegate Agent</a></td>
           <td>Boucle agentique stateful, tri-source callables, protocole QUESTION:, blacklist.</td>
         </tr>
         <tr>
-          <td><a href="08_system_prompt.html">8. Le Kernel (System Prompt)</a></td>
+          <td><a href="08j_agent_orchestration.html">↳ 8j. Orchestration Multi-Agents</a></td>
+          <td>Conseil Delphi, Superviseurs experts, Forge de skills dynamique.</td>
+        </tr>
+        <tr>
+          <td><a href="09_system_prompt.html">9. Le Kernel (System Prompt)</a></td>
           <td>Hiérarchie des normes, persona de l'IA, directives opérationnelles.</td>
         </tr>
         <tr>
-          <td><a href="09_admin_manager.html">9. Admin Manager</a></td>
+          <td><a href="10_infrastructure.html">10. Périphériques & Infra</a></td>
+          <td>Console de supervision, audio workers, scripts d'infrastructure.</td>
+        </tr>
+        <tr>
+          <td><a href="10a_admin_manager.html">↳ 10a. Admin Manager</a></td>
           <td>Console de supervision, purge mémorielle TTL, sauvegardes.</td>
         </tr>
         <tr>
-          <td><a href="10_annexes.html">10. Annexes Techniques</a></td>
+          <td><a href="10b_echo_auth_sso.html">↳ 10b. ECHO Auth SSO &amp; MFA</a></td>
+          <td>Fournisseur d'identité autonome, protection Forward Auth et MFA/TOTP.</td>
+        </tr>
+        <tr>
+          <td><a href="10c_bunkerweb_waf.html">↳ 10c. Bouclier BunkerWeb WAF</a></td>
+          <td>Protection réseau périmétrique, limitation de débit et Kill-Switch PWA.</td>
+        </tr>
+        <tr>
+          <td><a href="10d_audio_workers.html">↳ 10d. Audio Workers</a></td>
+          <td>Services locaux de transcription (STT) et de synthèse vocale (TTS).</td>
+        </tr>
+        <tr>
+          <td><a href="10e_scripts_infrastructure.html">↳ 10e. Scripts d'Infrastructure</a></td>
+          <td>Outils CLI de déploiement, de mise à jour et d'orchestration.</td>
+        </tr>
+        <tr>
+          <td><a href="11_annexes.html">11. Annexes Techniques</a></td>
           <td>Topologie réseau, volumes Docker, schéma SQL complet, valves de configuration.</td>
         </tr>
       </tbody>
@@ -133,7 +161,7 @@
 
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

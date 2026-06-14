@@ -1,36 +1,8 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.4
-description: 1.0: Agent ECHO stateful avec accès aux outils et montée cognitive.
-             Le modèle est choisi par l'orchestrateur via target_model_key.
-             Budget d'appels de fonctions configurable par UserValve (par invocation).
-             Stateful via EchoStateManager (cognitive_threads).
-             4 functions calls :
-               - delegate_to_agent       : délégation principale (± Skill)
-               - list_agent_sessions     : liste des threads actifs du chat courant
-               - close_agent_session     : fermeture définitive d'un thread
-               - summarize_agent_session : résumé distillé (≤ 8192 tokens)
-             1.1: Fix critique — préservation des thoughtSignatures Gemini 3.x.
-             Les parts du modèle sont désormais conservées BRUTES (pattern _iterative_loop)
-             au lieu d'être reconstruites, ce qui perdait le champ thoughtSignature
-             présent dans les functionCall parts et causait des 400 Bad Request systématiques
-             sur tous les appels post-tool-execution.
-             Fix secondaire : suppression du budget_info (text) du message user contenant
-             les functionResponse — mélange interdit par l'API Gemini.
-             1.2: Fix injection outils agent.
-             __tools__ est None dans le contexte Pipe (OWUI ne l'injecte pas dans ce path).
-             Solution dual-source : specs via __metadata__['_echo_body_tools'] (injecté par Pipe,
-             format OpenAI, fiable), callables via __tools__ quand disponible. Diagnostic log
-             systématique pour confirmer l'état de __tools__ au runtime. Fallback gracieux vers
-             QUESTION: si callable absent (specs seules).
-             1.3: Résolution complète des callables via sys.modules.
-             OWUI n'injecte __tools__ ni dans les outils ni dans le Pipe (kwargs=[]). Il
-             charge cependant tous les modules tool_* dans sys.modules avant d'invoquer le Pipe.
-             La fonction _resolve_sub_tools_from_sys_modules() scanne sys.modules, instancie
-             chaque classe Tools avec user_valves injectées depuis __user__, et récupère les
-             méthodes async. Résultat : sub_tools peuplé avec specs (OpenAI→RAW) + callables
-             réels. Exécution directe possible sans QUESTION: ni dépendance OWUI interne.
+version: 1.5
+description: 1.5: Ajout du paramètre allowed_tools à delegate_to_agent pour restreindre l'arsenal.
              1.4: Fusion expert-consultant / sous-agent. Renommage subagent→agent.
              Ajout role_name optionnel (Skill via echo_skills) sur delegate_to_agent :
              sans Skill = agent générique, avec Skill = expert qualifié.
@@ -38,11 +10,6 @@ description: 1.0: Agent ECHO stateful avec accès aux outils et montée cognitiv
              dans le conseil et le superviseur. Suppression filtre dlg_ sur list/close
              (tous préfixes de session supportés : dlg_, thread_, thread_council_,
              thread_supervisor_).
-             1.5: Renommage fichier → agent_engine_tool.py.
-             1.6: Suppression new_cognitive_level de l'agent engine.
-             L'orchestrateur choisit le modèle via target_model_key.
-             Résolution centralisée via clamp_model() (echo_utils).
-             Cascade descendante préservée via call_cascade().
 """
 
 import sys
@@ -114,6 +81,7 @@ class Tools:
         with_context_distillate: bool = False,
         target_model_key: Optional[str] = None,
         # --- Paramètres internes (non exposés au LLM) ---
+        allowed_tools: Optional[List[str]] = None,
         max_calls_override: Optional[int] = None,
         __tools__: Optional[list] = None,
         __user__: Optional[dict] = None,
@@ -238,11 +206,13 @@ class Tools:
             # (ex: delegate_to_agent lui-même pour éviter les récursions infinies)
             sub_tools = {
                 k: v for k, v in _tools_dict.items()
-                if k not in DELEGATE_AGENT_BLACKLIST
+                if k not in DELEGATE_AGENT_BLACKLIST and (not allowed_tools or k in allowed_tools)
             }
         elif _body_tools_specs:
             # Source 3 : reconstruction depuis sys.modules (valves par défaut)
             sub_tools = _resolve_sub_tools_from_sys_modules(_body_tools_specs, __user__)
+            if allowed_tools:
+                sub_tools = {k: v for k, v in sub_tools.items() if k in allowed_tools}
 
         _callable_count = sum(1 for v in sub_tools.values() if v.get("callable") is not None)
         _log.debug(

@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Écosystème HUD et UI du Framework ECHO v5 : Context Gauge, Monitor visuel, signature deploy_context_gauge, persistance LocalStorage, architecture Backend/Frontend.">
-  <title>ECHO v5 - 4. Écosystème HUD &amp; UI</title>
+  <title>ECHO v5 - 5. Écosystème HUD &amp; UI</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>4. L'Écosystème HUD &amp; UI</h1>
+    <h1>5. L'Écosystème HUD &amp; UI</h1>
 
     <p>
       ECHO ne se limite pas à générer du texte dans une fenêtre de chat. Il dispose d'un moteur
@@ -184,8 +184,8 @@
       <h4>v5.20 - Unification du moteur visuel</h4>
       <p>
         Depuis la v5.20, <code>show_image_js()</code> réutilise le même moteur
-        <code>_generate_webplayer_js()</code> que le navigateur web. L'ancien overlay basique
-        (sans zoom/pan/resize) est supprimé. Deux nouveaux paramètres pilotent la personnalisation :
+        <code>_generate_webplayer_js()</code> que le navigateur web. L'overlay basique
+        (sans zoom/pan/resize) est supprimé. Deux paramètres pilotent la personnalisation :
       </p>
       <ul>
         <li><strong><code>direct_url</code></strong> : si fourni, l'image est chargée directement
@@ -231,7 +231,7 @@
 
     <div class="transition-text">
       La Context Gauge est alimentée par le Pipe, qui lui-même est précédé par le Filtre.
-      <a href="05_filtre.html">Découvrir le Filtre (Conscience) ➔</a>
+      <a href="06_filtre.html">Découvrir le Filtre (Conscience) ➔</a>
     </div>
 
     <h2><code>_generate_codex_js()</code> - Moteur HUD Monaco Codex (v5.23+)</h2>
@@ -239,7 +239,7 @@
     <p>
       Ajouté en <code>echo_ui.py</code> v5.23, <code>_generate_codex_js()</code> génère
       le script JavaScript complet du HUD Monaco Codex (voir
-      <a href="07h_codex_editor.html">ECHO Codex →</a>). Comme tous les HUDs ECHO,
+      <a href="08h_codex_editor.html">ECHO Codex →</a>). Comme tous les HUDs ECHO,
       il est injecté via <code>__event_call__({type: 'execute', data: {code: ...}})</code>.
     </p>
 
@@ -287,7 +287,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

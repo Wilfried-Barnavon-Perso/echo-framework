@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO Auth (SSO IdP) - Système d'authentification centralisé et sécurisé du Framework ECHO avec support MFA/TOTP et intégration Antigravity.">
+  <title>ECHO v5 - 10b. ECHO Auth SSO &amp; MFA</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>10b. ECHO Auth SSO &amp; MFA</h1>
+
+    <p>
+      Le module <strong>ECHO Auth</strong> (hébergé dans <code>docker-echo-auth</code>) est le fournisseur d'identité (IdP) natif et autonome du framework. Il a pour vocation de remplacer complètement l'authentification interne d'Open WebUI par une solution externe centralisée offrant un niveau de sécurité entreprise.
+    </p>
+
+    <h2>Architecture et Forward Auth</h2>
+
+    <p>
+      ECHO Auth ne se contente pas de vérifier un mot de passe. Il est profondément intégré avec la sécurité périmétrique :
+    </p>
+
+    <ul>
+      <li><strong>Point de passage unique :</strong> Lorsqu'il est activé, ECHO Auth devient le seul portail d'entrée. Il est couplé au WAF via l'endpoint <code>/api/verify</code>, protégeant l'ensemble de la pile de requêtes non autorisées (mécanisme de <em>Forward Auth</em>).</li>
+      <li><strong>Authentification forte (MFA/TOTP) :</strong> L'authentification repose systématiquement sur un couple d'identifiants (email/mot de passe) suivi obligatoirement de la validation d'un code OTP temporel.</li>
+      <li><strong>Gestion centralisée des sessions :</strong> Les jetons de session (JWT) émis par ECHO Auth peuvent être révoqués dynamiquement et unitairement depuis le <strong>Dashboard Actif</strong> de l'Admin Manager, offrant une capacité d'intervention immédiate en cas de compromission d'un accès.</li>
+    </ul>
+
+
+    <div class="transition-text">
+      Le fonctionnement du SSO est intrinsèquement lié à l'activation du pare-feu applicatif.
+      <a href="10c_bunkerweb_waf.html">Passer au Bouclier BunkerWeb ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

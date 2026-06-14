@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Les Filtres ECHO v5 : new_context_filter (Smart Context, Moulage, AEC) et conversation_memory_filter (distillation, vectorisation Qdrant, masquage clés API).">
-  <title>ECHO v5 - 5. Les Filtres (Conscience)</title>
+  <title>ECHO v5 - 6. Les Filtres (Conscience)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -16,7 +16,7 @@
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>5. Les Filtres (Conscience &amp; Mémoire)</h1>
+    <h1>6. Les Filtres (Conscience &amp; Mémoire)</h1>
 
     <p>
       En termes Open WebUI, un <em>Filter</em> est un middleware Python qui intercepte les messages
@@ -158,7 +158,7 @@ flowchart LR
 
     <div class="code-header">Structure du bloc AEC V2 (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.180.23"
+version_framework_echo: "5.182.17"
 modèle_actuel:   "##MODEL_ID##"
 modèle_origine:  "##MODEL_ORIGIN##"
 nom_utilisateur: "anonyme"
@@ -184,7 +184,7 @@ timezone:        "Europe/Paris"
     <div class="note-box">
       <h4>Règle d'Or - Registre Unifié V2</h4>
       <p>
-        Les registres massifs (`registre_fichiers`, etc.) ayant été supprimés du contexte permanent pour économiser des tokens, le modèle <strong>doit</strong> utiliser dynamiquement l'outil <code>query_registry</code> pour connaître l'état du système et de ses ressources (Codex, fichiers, plans). Seul un delta évènementiel (<code>&lt;evenement_systeme&gt;</code>) le prévient des actions asynchrones ou des fichiers du tour courant.
+        Les registres massifs (`registre_fichiers`, etc.) le modèle <strong>doit</strong> utiliser dynamiquement l'outil <code>query_registry</code> pour connaître l'état du système et de ses ressources (Codex, fichiers, plans). Seul un delta évènementiel (<code>&lt;evenement_systeme&gt;</code>) le prévient des actions asynchrones ou des fichiers du tour courant.
       </p>
     </div>
 
@@ -212,12 +212,12 @@ timezone:        "Europe/Paris"
     <table>
       <thead><tr><th>Valve</th><th>Défaut</th><th>Min</th><th>Max</th><th>Rôle</th></tr></thead>
       <tbody>
-        <tr><td><code>WINDOW_SIZE</code></td><td>5</td><td>2</td><td>10</td><td>Nombre de <strong>nouveaux</strong> messages avant déclenchement</td></tr>
+        <tr><td><code>WINDOW_SIZE</code></td><td>5</td><td>2</td><td>10</td><td>Nombre de messages ajoutés avant déclenchement</td></tr>
         <tr><td><code>WINDOW_OVERLAP</code></td><td>2</td><td>0</td><td>5</td><td>Messages de la fenêtre précédente réinjectés pour continuité contextuelle</td></tr>
       </tbody>
     </table>
     <p>
-      Tous les <code>WINDOW_SIZE</code> nouveaux messages, le filtre extrait une fenêtre de
+      Tous les <code>WINDOW_SIZE</code> messages, le filtre extrait une fenêtre de
       <code>WINDOW_SIZE + WINDOW_OVERLAP</code> messages (défaut : 7) et lance la distillation
       en arrière-plan via <code>asyncio.create_task</code>. Le recouvrement de 2 messages
       assure la continuité sémantique entre les fenêtres successives, sans perte d'information
@@ -237,7 +237,7 @@ timezone:        "Europe/Paris"
     <h3>Pipeline de distillation et vectorisation</h3>
     <ol>
       <li>
-        <strong>Distillation asynchrone :</strong> <code>call_distillation</code> route vers <code>gemini-2.5-flash</code> (API).
+        <strong>Distillation asynchrone :</strong> <code>call_distillation</code> route vers <code>gemini-3.1-flash-lite</code> (API).
         Génère un JSON structuré : <code>summary</code> (100–1000 mots), <code>memory_importance</code> (1–5),
       <code>memory_id</code> technique court, et 3–5 <code>tags</code> qualifiants.
       </li>
@@ -254,7 +254,7 @@ timezone:        "Europe/Paris"
       </li>
       <li>
         <strong>Fusion préservative :</strong> lors d'une collision, le score
-        <code>memory_importance</code> conservé est le <em>maximum</em> de l'ancien et du nouveau
+        <code>memory_importance</code> conservé est le <em>maximum</em> conservé des différentes occurrences de
         (pas de dégradation d'un souvenir critique).
       </li>
       <li>
@@ -301,11 +301,11 @@ timezone:        "Europe/Paris"
     <div class="transition-text">
       Les données préparées par le Filtre sont transmises au Pipe, qui opère la reconstruction
       bit-perfect de l'historique.
-      <a href="06_pipe.html">Découvrir le Pipe (Cortex) ➔</a>
+      <a href="07_pipe.html">Découvrir le Pipe (Cortex) ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

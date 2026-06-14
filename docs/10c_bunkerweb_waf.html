@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Bouclier BunkerWeb WAF - Protection périmétrique de l'infrastructure ECHO, PWA Kill-Switch et gestion ModSecurity.">
+  <title>ECHO v5 - 10c. Bouclier BunkerWeb WAF</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>10c. Bouclier BunkerWeb WAF</h1>
+
+    <p>
+      L'activation de BunkerWeb (via le script <code>enable-bunkerweb.sh</code>) transforme l'infrastructure locale
+      en une plateforme sécurisée exposable sur Internet. BunkerWeb agit comme un <strong>Web Application Firewall (WAF)</strong> de type Reverse Proxy, placé en frontal devant Open WebUI et l'Admin Manager.
+    </p>
+
+    <h2>Protection Périmétrique et ModSecurity</h2>
+
+    <p>
+      La stack ECHO implémente une stratégie SPA (Single Page Application) robuste de limitation de débit (rate limiting) granulaire :
+    </p>
+    <ul>
+      <li><strong>1000 requêtes/s</strong> pour les assets statiques.</li>
+      <li><strong>50 requêtes/s</strong> pour la navigation et les appels front-end.</li>
+      <li><strong>20 requêtes/s</strong> pour l'API backend.</li>
+    </ul>
+
+    <p>
+      Le moteur ModSecurity intégré est spécifiquement paramétré pour exclure Open WebUI des vérifications strictes de mauvais comportement (notamment le contournement des erreurs 400 CORS légitimes des SPA), évitant ainsi les faux positifs bloquants lors de l'utilisation normale de l'interface.
+      La configuration persistante de BunkerWeb est stockée de manière sécurisée dans <code>/opt/ECHO/bunkerweb/</code>.
+    </p>
+
+    <h2>Kill-Switch Service Worker (PWA)</h2>
+
+    <p>
+      Le WAF intègre un mécanisme de "poisoning" non-destructif pour purger le cache agressif du Service Worker de la PWA Open WebUI.
+    </p>
+    <p>
+      Lorsqu'une mise à jour de l'interface ou une modification de sécurité nécessite un rafraîchissement des clients, BunkerWeb intercepte les requêtes vers <code>/_app/version.json</code> et les surcharge avec un cache-busting dynamique. 
+      Cette méthode force le rechargement des assets SvelteKit sans utiliser l'en-tête destructif <code>Clear-Site-Data</code>. Cela garantit la préservation absolue du cookie JWT de session, évitant ainsi l'erreur 401 sur les flux audio en cours de lecture.
+    </p>
+
+    <div class="warning-box">
+      <h4>⚠️ Exposition réseau et sécurité</h4>
+      <p>
+        Sans BunkerWeb, ECHO n'écoute que sur le réseau Docker interne ou l'interface réseau locale. <strong>N'exposez jamais</strong> les ports 3000 (Open WebUI) ou 8080 (Admin Manager) directement sur le WAN sans activer ce pare-feu applicatif au préalable. L'activation de BunkerWeb lance également automatiquement le module ECHO Auth (SSO IdP).
+      </p>
+    </div>
+
+    <div class="transition-text">
+      Pour comprendre comment le système est géré au quotidien.
+      <a href="10a_admin_manager.html">Retourner à l'Admin Manager ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

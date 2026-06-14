@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ECHO Codex v5.170 : éditeur de code Monaco multi-langage avec Git intégré (dulwich), HUD draggable, édition AI assistée, WYSIWYG, navigation historique, 9 fonctions LLM (create, edit, read, search, summarize, list, delete, history, restore).">
+  <meta name="description" content="ECHO Codex v5.182 : éditeur de code Monaco multi-langage avec Git intégré (dulwich), HUD draggable, édition AI assistée, WYSIWYG, navigation historique, 9 fonctions LLM (create, edit, read, search, summarize, list, delete, history, restore).">
   <title>ECHO v5 - 7h. ECHO Codex (Éditeur)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -215,7 +215,7 @@ flowchart TD
       <tbody>
         <tr>
           <td><code>create_codex</code></td>
-          <td>Créer un nouveau fichier avec contenu initial</td>
+          <td>Créer un fichier vierge avec contenu initial</td>
           <td><code>filename</code>, <code>content</code>, <code>commit_msg</code> (optionnel)</td>
         </tr>
         <tr>
@@ -255,7 +255,7 @@ flowchart TD
         </tr>
         <tr>
           <td><code>restore_codex</code></td>
-          <td>Restaurer un fichier à un commit antérieur (crée un nouveau commit de restauration)</td>
+          <td>Restaurer un fichier à un commit antérieur (crée un commit de restauration)</td>
           <td><code>filename</code>, <code>commit_hash</code></td>
         </tr>
       </tbody>
@@ -451,7 +451,7 @@ flowchart TD
 
     <p>
       L'ancien système d'injection passive (registre_codex) ayant été déprécié (AEC V2) pour économiser des tokens,
-      Gemini doit désormais interroger l'état du Codex de manière active.
+      Gemini doit interroger l'état du Codex de manière active.
     </p>
 
     <div class="warning-box">
@@ -534,13 +534,13 @@ flowchart TD
     </div>
 
     <div class="transition-text">
-      <a href="07g_visual_intelligence.html">← Visual Intelligence</a>
+      <a href="08g_visual_intelligence.html">← Visual Intelligence</a>
       &nbsp;&nbsp;
-      <a href="07i_delegate_agent.html">Delegate Agent ➔</a>
+      <a href="08i_delegate_agent.html">Delegate Agent ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

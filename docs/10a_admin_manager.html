@@ -157,6 +157,12 @@ flowchart TD
         <strong>Révocation Dynamique des Sessions :</strong> La désactivation d'un compte, la réinitialisation de son MFA ou sa suppression entraînent instantanément la destruction de ses jetons de session actifs en mémoire (IdP), forçant une reconnexion.
       </li>
       <li>
+        <strong>Tunnel SSH Antigravity (PKCE) :</strong> Le système intègre un serveur SSH éphémère qui expose dynamiquement les ports 8020 à 8024 pour le flux d'autorisation OAuth2 PKCE (RFC 7636).
+      </li>
+      <li>
+        <strong>BunkerWeb Forward Auth :</strong> ECHO Auth est couplé au WAF BunkerWeb via l'endpoint <code>/api/verify</code>, protégeant l'ensemble de la pile derrière une authentification forte (TOTP) sans exposer directement les services.
+      </li>
+      <li>
         <strong>Purge de Base de Données Exhaustive :</strong> Lorsqu'un utilisateur est supprimé du système, l'Admin Manager n'efface pas uniquement la table <code>user</code> ou <code>chat</code>. Par une introspection dynamique (<em>sqlite_master</em> et <em>PRAGMA table_info</em>), il scrute <strong>toutes les tables</strong> du moteur Open WebUI possédant une colonne <code>user_id</code> et supprime les enregistrements orphelins (fichiers, outils personnalisés, modèles, mémoires). Cette purge chirurgicale garantit zéro fuite de données (Data Leak) en base.
       </li>
     </ul>
@@ -209,11 +215,11 @@ flowchart TD
 
     <div class="transition-text">
       L'Admin Manager complète l'architecture ECHO. Poursuivez avec l'architecture des moteurs vocaux.
-      <a href="09b_audio_workers.html">9b. Audio Workers ➔</a>
+      <a href="10d_audio_workers.html">9b. Audio Workers ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

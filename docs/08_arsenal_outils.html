@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="L'Arsenal des Outils ECHO v5 : écosystème de micro-services souverains, protocole Multipart wrap_tool_output, système Vault, six familles d'outils.">
-  <title>ECHO v5 - 7. L'Arsenal des Outils</title>
+  <title>ECHO v5 - 8. L'Arsenal des Outils</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>7. L'Arsenal des Outils</h1>
+    <h1>8. L'Arsenal des Outils</h1>
 
     <p>
       Un modèle de langage, sans accès au monde réel, est confiné à ses données d'entraînement.
@@ -120,14 +120,14 @@
         <h3>📋 Planification Stratégique</h3>
         <p>Construction, modification et gestion de plans d'action via un agent planificateur LLM (cascade PRO→FLASH→LITE). Plans persistés dans le Vault en Markdown et enregistrés dans un registre SQLite par chat.</p>
         <p><strong>Source :</strong> <code>12-owui-tools/strategic_planner.py</code></p>
-        <a href="07a_strategic_planner.html">Explorer ➔</a>
+        <a href="08a_strategic_planner.html">Explorer ➔</a>
       </div>
       <div class="card">
         <h3>🌐 Web Intelligence</h3>
-        <p>Navigation autonome Chromium (Playwright), cartographie du DOM, captures d'écran,
-        extraction de contenu et recherche via SearxNG souverain.</p>
+        <p>Navigation autonome Chromium (Playwright) via API à 4 piliers, Vision-On-Demand,
+        extraction de contenu et recherche souveraine (incluant le Deep Research Agent). Action HUD de Replay Web.</p>
         <p><strong>Source :</strong> <code>12-owui-tools/navigation_engine_tool.py</code></p>
-        <a href="07b_web_intelligence.html">Explorer ➔</a>
+        <a href="08b_web_intelligence.html">Explorer ➔</a>
       </div>
       <div class="card">
         <h3>🔌 Client API Universel</h3>
@@ -139,7 +139,7 @@
         <p>Analyse de fichiers locaux, multimodalité (image, PDF, audio), indexation sémantique
         et gestion des métadonnées du Vault.</p>
         <p><strong>Source :</strong> <code>12-owui-tools/file_content_explorer.py</code></p>
-        <a href="07c_vault_explorer.html">Explorer ➔</a>
+        <a href="08c_vault_explorer.html">Explorer ➔</a>
       </div>
       <div class="card">
         <h3>🧠 Mémoire Organique &amp; Éphémère</h3>
@@ -148,7 +148,7 @@
         <strong>Mémoire Vectorisée de Session</strong> (<code>save_session_context</code>, <code>search_session_context</code>) servant 
         d'espace de travail temporaire confiné à la session courante.</p>
         <p><strong>Source :</strong> <code>12-owui-tools/memory_and_rag_tool.py</code></p>
-        <a href="07d_memory_cognition.html">Explorer →</a>
+        <a href="08d_memory_cognition.html">Explorer →</a>
       </div>
       <div class="card">
         <h3>⏱️ Jauge de Contexte</h3>
@@ -160,21 +160,21 @@
         <p>Sandbox Python isolée (Docker Python Worker), exécution de code arbitraire avec
         support des bibliothèques scientifiques, journalisation des résultats.</p>
         <p><strong>Source :</strong> <code>12-owui-tools/python_code_executor.py</code></p>
-        <a href="07e_execution_monitoring.html">Explorer ➔</a>
+        <a href="08e_execution_monitoring.html">Explorer ➔</a>
       </div>
       <div class="card">
         <h3>🎮 Actions UI (Cockpits)</h3>
         <p>Boutons de contrôle manuel et interfaces riches (HUDs) injectés dans l'UI Open WebUI : Cockpit de purge sélective 
-        (Mémoire long terme), Sub-Agent Monitor (visualisation arborescente des threads cognitifs), Reset Auth, Replay Web.</p>
+        (Mémoire long terme), Print / PDF export, Sub-Agent Monitor (visualisation arborescente des threads cognitifs), Reset Auth, Replay Web.</p>
         <p><strong>Source :</strong> <code>13-owui-actions/</code></p>
-        <a href="07f_actions_ui.html">Explorer ➔</a>
+        <a href="08f_actions_ui.html">Explorer ➔</a>
       </div>
       <div class="card">
         <h3>🎨 Visual Intelligence</h3>
         <p>Génération d'interfaces visuelles dynamiques riches : Mindmaps (Markmap), graphes
         (Mermaid, ECharts), cartes géographiques (Google Maps), images premium.</p>
         <p><strong>Source :</strong> <code>12-owui-tools/universal_visual_generator.py</code></p>
-        <a href="07g_visual_intelligence.html">Explorer ➔</a>
+        <a href="08g_visual_intelligence.html">Explorer ➔</a>
       </div>
       <div class="card">
         <h3>🧠 Agents Cognitifs (Conseil d'Experts)</h3>
@@ -183,12 +183,12 @@
         tours parallélisés avec thoughtSignatures, synthèse par modèle dédié),
         forge et gestion des Skills (<code>forge_skill</code>, <code>list_skills</code>),
         <strong>Agent stateful</strong> (<code>delegate_to_agent</code> dans
-        <code>agent_engine_tool.py</code> - remplace <code>delegate_reasoning</code> v5.14).</p>
+        <code>agent_engine_tool.py</code> - délégation stateful.</p>
         <p><strong>Sources :</strong> <code>12-owui-tools/agent_orchestration_tool.py</code>,
         <code>12-owui-tools/agent_engine_tool.py</code></p>
-        <a href="07i_delegate_agent.html">Delegate Agent →</a>
+        <a href="08i_delegate_agent.html">Delegate Agent →</a>
         &nbsp;|
-        <a href="07j_agent_orchestration.html">Orchestration →</a>
+        <a href="08j_agent_orchestration.html">Orchestration →</a>
       </div>
       <div class="card">
         <h3>🗺️ Maps Grounding</h3>
@@ -208,7 +208,7 @@
         navigation historique temporelle. Propriéception via l'outil <code>query_registry</code>.</p>
         <p><strong>Sources :</strong> <code>12-owui-tools/echo_codex_tool.py</code>,
         <code>13-owui-actions/echo_codex_action.py</code></p>
-        <a href="07h_codex_editor.html">Explorer →</a>
+        <a href="08h_codex_editor.html">Explorer →</a>
       </div>
     </div>
 
@@ -224,11 +224,11 @@
 
     <div class="transition-text">
       L'utilisation de ces outils est guidée par les directives fondamentales du système.
-      <a href="08_system_prompt.html">Passer au Kernel (System Prompt) ➔</a>
+      <a href="09_system_prompt.html">Passer au Kernel (System Prompt) ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.180.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

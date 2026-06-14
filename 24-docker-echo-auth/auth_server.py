@@ -21,7 +21,7 @@ from typing import Optional, Dict
 # ==============================================================================
 DB_PATH = os.environ.get("AUTH_DB_PATH", "/data/auth.db")
 SECRET_KEY = os.environ.get("AUTH_SECRET_KEY", secrets.token_hex(32))
-# Récupération du domaine parent pour le cookie SSO (ex: echo-ai.eu)
+# Récupération du domaine parent pour le cookie SSO (ex: votre-domaine.public)
 ECHO_DOMAIN = os.environ.get("ECHO_DOMAIN", "localhost")
 SETTINGS_PATH = os.environ.get("AUTH_SETTINGS_PATH", "/app/auth-data/auth-settings.json")
 

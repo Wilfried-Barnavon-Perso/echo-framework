@@ -1,8 +1,15 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 1.0
-description: 1.0: Déportation de la logique de requêtage du navigateur et de la déclaration des outils Gemini.
+version: 1.8
+description: 1.8: Hotfix - Correction du mapping dans `get_registry` (`action_interact_semantic` -> `action_interact_a11y`).
+             1.7: Ajout du paramètre optionnel `name` dans `action_interact_a11y` pour le ciblage précis des rôles.
+             1.6: Refonte de l'API avec intégration de l'arbre a11y_tree et hiérarchie stricte.
+             1.5: Unification de l'API en 4 piliers (interact_a11y, interact_dom, inspect_page, browser_control).
+             1.4: Ajout des actions action_refresh et action_reset.
+             1.3: Support des coordonnées de repli (x,y) pour action_click et action_hover.
+             1.2: Ajout de action_request_vision, action_pause, action_search_dom (Navigation 2.0).
+             1.1: Ajout de action_press_key pour permettre la pression de touches spéciales (ex: Entrée).
 """
 
 import httpx
@@ -16,78 +23,59 @@ logger = logging.getLogger(__name__)
 
 BROWSER_TOOLS_SCHEMA = [
     {
-        "name": "action_navigate",
-        "description": "Accède à une URL absolue (doit commencer par http:// ou https://).",
+        "name": "action_interact_a11y",
+        "description": "NIVEAU 1 : Interagit avec un élément de l'arbre A11y (via role, text ou label). À utiliser juste après une inspection a11y_tree.",
         "parameters": {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "L'URL complète de la page cible."}
+                "method": {"type": "string", "enum": ["role", "label", "text"], "description": "La méthode de ciblage (role=ex:button/radio, label=attribut aria-label, text=texte brut visible)."},
+                "value": {"type": "string", "description": "La valeur associée à la méthode de ciblage (ex: 'button', 'Je suis d\\'accord')."},
+                "name": {"type": "string", "description": "(Optionnel) Si method='role', permet de filtrer par le nom du rôle (ex: 'Accepter') pour cibler précisément un bouton ou lien."},
+                "action_type": {"type": "string", "enum": ["click", "type", "hover"], "description": "Le type d'interaction."},
+                "text_to_type": {"type": "string", "description": "(Optionnel) Le texte à insérer si action_type='type'."}
             },
-            "required": ["url"]
+            "required": ["method", "value", "action_type"]
         }
     },
     {
-        "name": "action_click",
-        "description": "Déplace la souris et clique sur un élément de la page via son index.",
+        "name": "action_interact_dom",
+        "description": "NIVEAU 2 & 3 : Interagit via l'index du DOM Map (Niv 2) ou les coordonnées Vision X/Y (Niv 3).",
         "parameters": {
             "type": "object",
             "properties": {
-                "index": {"type": "integer", "description": "L'ID numérique de l'élément (indiqué entre crochets sur la carte du DOM)."}
+                "action_type": {"type": "string", "enum": ["click", "type", "hover"], "description": "Le type d'interaction."},
+                "index": {"type": "integer", "description": "L'ID numérique de l'élément (indiqué entre crochets sur la carte du DOM). À utiliser en priorité absolue."},
+                "x": {"type": "integer", "description": "Coordonnée X en pixels (à n'utiliser QUE si l'index est introuvable, suite à une action_inspect_page avec target='vision')."},
+                "y": {"type": "integer", "description": "Coordonnée Y en pixels (à n'utiliser QUE si l'index est introuvable)."},
+                "text_to_type": {"type": "string", "description": "(Optionnel) Le texte à insérer si action_type='type'."}
             },
-            "required": ["index"]
+            "required": ["action_type"]
         }
     },
     {
-        "name": "action_type",
-        "description": "Remplit un champ de texte (input/textarea) identifié par son index.",
+        "name": "action_inspect_page",
+        "description": "Extrait des informations de la page. NIVEAU 1: a11y_tree (Priorité absolue). NIVEAU 2: dom_map (Index). NIVEAU 3: vision (Capture/Grille). NIVEAU 4: read_text/read_html.",
         "parameters": {
             "type": "object",
             "properties": {
-                "index": {"type": "integer", "description": "L'ID numérique du champ."},
-                "text": {"type": "string", "description": "Le texte à insérer."}
+                "target": {"type": "string", "enum": ["a11y_tree", "dom_map", "vision", "read_text", "read_html", "search_dom", "url"], "description": "L'information à extraire."},
+                "index": {"type": "integer", "description": "(Optionnel) L'ID de l'élément si target='url'."},
+                "value": {"type": "string", "description": "(Optionnel) Le texte court à rechercher si target='search_dom'."},
+                "vision_grid": {"type": "boolean", "description": "(Optionnel) True pour calquer une grille orthonormée si target='vision'."}
             },
-            "required": ["index", "text"]
+            "required": ["target"]
         }
     },
     {
-        "name": "action_hover",
-        "description": "Survole un élément avec la souris pour dévoiler des menus déroulants.",
+        "name": "action_browser_control",
+        "description": "Pilote globalement le navigateur (navigation, défilement, clavier, attente).",
         "parameters": {
             "type": "object",
             "properties": {
-                "index": {"type": "integer", "description": "L'ID numérique de l'élément à survoler."}
+                "command": {"type": "string", "enum": ["navigate", "scroll", "press_key", "pause", "refresh", "reset", "tab_new", "tab_switch", "tab_close"], "description": "La commande globale à exécuter."},
+                "value": {"type": "string", "description": "(Optionnel) L'URL absolue pour navigate/tab_new, la direction ('up','down','top','bottom') pour scroll, la touche ('Enter','Tab') pour press_key, le délai en secondes pour pause, ou l'index pour tab_switch."}
             },
-            "required": ["index"]
-        }
-    },
-    {
-        "name": "action_scroll",
-        "description": "Fait défiler la page dans la direction souhaitée.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "direction": {"type": "string", "enum": ["up", "down", "top", "bottom"]}
-            },
-            "required": ["direction"]
-        }
-    },
-    {
-        "name": "action_read_page",
-        "description": "Lit le texte complet de la page pour rechercher des informations introuvables dans la carte du DOM.",
-        "parameters": {
-            "type": "object",
-            "properties": {}
-        }
-    },
-    {
-        "name": "action_get_url",
-        "description": "Extrait l'URL absolue d'un élément (ex: lien, image).",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "index": {"type": "integer", "description": "L'ID de l'élément."}
-            },
-            "required": ["index"]
+            "required": ["command"]
         }
     }
 ]
@@ -105,16 +93,23 @@ async def req_to_browser(timeout: int, endpoint: str, data: dict = None, user_id
 
 class EchoBrowserLib:
     """Encapsule les actions réseau pour le sous-agent navigateur."""
-    def __init__(self, timeout: int, session_id: str, user_id: str):
+    def __init__(self, timeout: int, session_id: str, user_id: str, vision_grid_step: int = 100):
         self.timeout = timeout
         self.session_id = session_id
         self.user_id = user_id
+        self.vision_grid_step = vision_grid_step
 
     async def _action(self, action: str, params: dict = None) -> dict:
-        return await req_to_browser(self.timeout, "/action", {"session_id": self.session_id, "action": action, "params": params or {}}, self.user_id)
+        params = params or {}
+        if action == "inspect_page" and params.get("target") == "vision" and params.get("vision_grid"):
+            params["vision_grid_step"] = self.vision_grid_step
+        return await req_to_browser(self.timeout, "/action", {"session_id": self.session_id, "action": action, "params": params}, self.user_id)
 
     async def highlight(self) -> dict:
-        return await self._action("highlight")
+        return await self._action("inspect_page", {"target": "vision", "vision_grid": False})
+
+    async def vision_grid(self) -> dict:
+        return await self._action("inspect_page", {"target": "vision", "vision_grid": True})
 
     async def ping(self) -> dict:
         return await self._action("ping")
@@ -127,37 +122,28 @@ class EchoBrowserLib:
         }, self.user_id)
         
     async def reset_session(self) -> dict:
-        return await self._action("reset")
+        return await self._action("browser_control", {"command": "reset"})
 
-    async def action_navigate(self, url: str) -> dict:
-        return await self._action("goto", {"url": url})
+    async def action_interact_a11y(self, method: str, value: str, action_type: str, name: str = None, text_to_type: str = None) -> dict:
+        return await self._action("interact_a11y", {"method": method, "value": value, "name": name, "action_type": action_type, "text_to_type": text_to_type})
 
-    async def action_click(self, index: int) -> dict:
-        return await self._action("click", {"index": index})
+    async def action_interact_dom(self, action_type: str, index: int = None, x: int = None, y: int = None, text_to_type: str = "") -> dict:
+        return await self._action("interact_dom", {"action_type": action_type, "index": index, "x": x, "y": y, "text_to_type": text_to_type})
 
-    async def action_type(self, index: int, text: str) -> dict:
-        return await self._action("type", {"index": index, "text": text})
+    async def action_inspect_page(self, target: str, index: int = None, value: str = "", vision_grid: bool = False) -> dict:
+        if target == "vision":
+            # Cette fonction est interceptée par l'orchestrateur, on flag la demande de grille
+            return {"status": "success", "message": "Capture d'écran demandée.", "_trigger_vision": True, "grid": vision_grid}
+        return await self._action("inspect_page", {"target": target, "index": index, "value": value, "vision_grid": vision_grid})
 
-    async def action_hover(self, index: int) -> dict:
-        return await self._action("hover", {"index": index})
-
-    async def action_scroll(self, direction: str) -> dict:
-        return await self._action("scroll", {"direction": direction})
-
-    async def action_read_page(self) -> dict:
-        return await self._action("read")
-
-    async def action_get_url(self, index: int) -> dict:
-        return await self._action("get_attribute", {"index": index, "attribute": "href"})
+    async def action_browser_control(self, command: str, value: str = "") -> dict:
+        return await self._action("browser_control", {"command": command, "value": str(value) if value is not None else ""})
         
     def get_registry(self) -> Dict[str, Callable]:
         """Retourne le mapping name -> callable pour l'interception de Gemini."""
         return {
-            "action_navigate": self.action_navigate,
-            "action_click": self.action_click,
-            "action_type": self.action_type,
-            "action_hover": self.action_hover,
-            "action_scroll": self.action_scroll,
-            "action_read_page": self.action_read_page,
-            "action_get_url": self.action_get_url
+            "action_interact_a11y": self.action_interact_a11y,
+            "action_interact_dom": self.action_interact_dom,
+            "action_inspect_page": self.action_inspect_page,
+            "action_browser_control": self.action_browser_control
         }
