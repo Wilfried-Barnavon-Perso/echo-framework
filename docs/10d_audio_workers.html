@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Architecture des Audio Workers ECHO v5 : Kokoro TTS (G2P hybride, streaming MP3) et Whisper STT.">
-  <title>ECHO v5 - 9b. Audio Workers</title>
+  <title>ECHO v5 - 10d. Audio Workers</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>9b. Audio Workers (TTS &amp; STT)</h1>
+    <h1>10d. Audio Workers (TTS &amp; STT)</h1>
 
     <p>
       ECHO intègre deux moteurs dédiés au traitement du signal vocal : <strong>Kokoro TTS</strong> (synthèse vocale) et <strong>Whisper STT</strong> (transcription). Ces services opèrent comme des micro-services isolés au sein de l'infrastructure Docker, exposant des API compatibles OpenAI (endpoints <code>/v1/audio/speech</code> et <code>/v1/audio/transcriptions</code>) consommées nativement par Open WebUI.
@@ -24,7 +24,8 @@
       <tbody>
         <tr><td><strong>Image</strong></td><td><code>echo-tts-worker</code></td><td><code>echo-stt-worker</code></td></tr>
         <tr><td><strong>Port Interne</strong></td><td>7996</td><td>7995</td></tr>
-        <tr><td><strong>Technologie</strong></td><td>Kokoro (ONNX) + Pydub</td><td>Faster-Whisper</td></tr>
+        <tr><td><strong>Technologie</strong></td><td>Kokoro (ONNX) + Pydub</td><td>Faster-Whisper (INT8)</td></tr>
+        <tr><td><strong>Modèle Actif</strong></td><td><code>kokoro-v0.19</code> (~80Mo)</td><td><code>whisper-base/small</code></td></tr>
         <tr><td><strong>Endpoint</strong></td><td><code>/v1/audio/speech</code></td><td><code>/v1/audio/transcriptions</code></td></tr>
       </tbody>
     </table>
@@ -71,12 +72,13 @@
     </p>
 
     <div class="transition-text">
-      L'orchestration globale de ces workers et des autres services est assurée par une suite de scripts dédiés.
-      <a href="10e_scripts_infrastructure.html">9c. Scripts d'Infrastructure ➔</a>
+      <a href="10c_bunkerweb_waf.html">← 10c. Bouclier BunkerWeb WAF</a>
+      &nbsp;&nbsp;
+      <a href="10e_scripts_infrastructure.html">10e. Scripts d'Infrastructure ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

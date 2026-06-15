@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ECHO Codex v5.182 : éditeur de code Monaco multi-langage avec Git intégré (dulwich), HUD draggable, édition AI assistée, WYSIWYG, navigation historique, 9 fonctions LLM (create, edit, read, search, summarize, list, delete, history, restore).">
-  <title>ECHO v5 - 7h. ECHO Codex (Éditeur)</title>
+  <meta name="description" content="ECHO Codex : éditeur de code Monaco multi-langage avec Git intégré (dulwich), HUD draggable, édition AI assistée, WYSIWYG, navigation historique, 9 fonctions LLM (create, edit, read, search, summarize, list, delete, history, restore).">
+  <title>ECHO v5 - 8h. ECHO Codex (Éditeur)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -15,7 +15,7 @@
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7h. ECHO Codex - Éditeur de Code Souverain</h1>
+    <h1>8h. ECHO Codex - Éditeur de Code Souverain</h1>
 
     <p>
       ECHO Codex est un environnement d'édition de code complet, entièrement intégré dans Open WebUI.
@@ -297,7 +297,7 @@ flowchart TD
 4. Patterns et conventions utilisés
 5. Points d'attention, complexité, dette technique éventuelle</code></pre>
 
-    <h2>Action HUD - <code>echo_codex_action.py</code> (v1.8)</h2>
+    <h2>Action HUD - <code>echo_codex_action.py</code></h2>
 
     <p>
       L'Action ECHO Codex injecte un <strong>éditeur Monaco complet</strong> directement dans le DOM
@@ -522,13 +522,13 @@ flowchart TD
     </table>
 
     <div class="audit-note">
-      <h4>✅ Exactitude - version 5.166.x</h4>
+      <h4>ℹ️ Exactitude documentaire</h4>
       <p>
         Les informations de cette page sont entièrement extraites du code source :
         <code>echo_codex_git.py</code>, <code>echo_codex_tool.py</code>,
         <code>echo_codex_action.py</code>, <code>echo_ui.py</code>,
-        <code>echo_constants.py</code> (§1.4), <code>echo_utils.py</code> (v7.21) et
-        <code>new_context_filter.py</code> (v7.12). Toute divergence avec ce document
+        <code>echo_constants.py</code>, <code>echo_utils.py</code> et
+        <code>new_context_filter.py</code>. Toute divergence avec ce document
         est à résoudre en faveur du code source.
       </p>
     </div>
@@ -540,7 +540,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

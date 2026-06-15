@@ -29,14 +29,23 @@
       <li><strong>Gestion centralisée des sessions :</strong> Les jetons de session (JWT) émis par ECHO Auth peuvent être révoqués dynamiquement et unitairement depuis le <strong>Dashboard Actif</strong> de l'Admin Manager, offrant une capacité d'intervention immédiate en cas de compromission d'un accès.</li>
     </ul>
 
+    <h2>Le Tunnel SSH Éphémère (PKCE)</h2>
+    <p>
+      L'intégration d'ECHO Auth avec le flux d'authentification Google (OAuth2 PKCE) est essentielle pour la récupération sécurisée des jetons API sans navigateur. Lors du déploiement initial, un tunnel SSH éphémère est dynamiquement monté par l'infrastructure sur une plage de ports exposée de manière sécurisée (<code>8020-8024</code>). 
+    </p>
+    <p>
+      Ce tunnel permet de capter le <em>callback</em> d'autorisation renvoyé par Google (sur les ports internes <code>8025-8034</code>) et de finaliser la chaîne PKCE en toute autonomie (<code>initiate_pkce_flow</code> → <code>await_pkce_callback</code>). Une fois le token d'accès obtenu (ou au bout de 120s de timeout), la session SSH jetable se referme, refermant ainsi la fenêtre d'exposition réseau.
+    </p>
+
 
     <div class="transition-text">
-      Le fonctionnement du SSO est intrinsèquement lié à l'activation du pare-feu applicatif.
-      <a href="10c_bunkerweb_waf.html">Passer au Bouclier BunkerWeb ➔</a>
+      <a href="10a_admin_manager.html">← 10a. Admin Manager</a>
+      &nbsp;&nbsp;
+      <a href="10c_bunkerweb_waf.html">10c. Bouclier BunkerWeb WAF ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

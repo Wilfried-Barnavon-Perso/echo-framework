@@ -17,7 +17,7 @@
       ECHO ne se limite pas à générer du texte dans une fenêtre de chat. Il dispose d'un moteur
       d'interface dynamique capable d'injecter des composants visuels directement dans le DOM d'Open WebUI :
       jauges, moniteurs, indicateurs de quota et interfaces de replay. Cet écosystème est piloté par
-      <code>echo_ui.py</code> (v5.27), assisté de <code>echo_visuals.py</code> pour les interfaces
+      <code>echo_ui.py</code>, assisté de <code>echo_visuals.py</code> pour les interfaces
       riches multi-moteurs.
     </p>
 
@@ -151,7 +151,7 @@
       La fonction principale du HUD accepte les paramètres suivants (tous avec valeurs par défaut
       sécurisées) :
     </p>
-    <div class="code-header">echo_ui.py v5.27 - deploy_context_gauge()</div>
+    <div class="code-header">echo_ui.py - deploy_context_gauge()</div>
     <pre><code>deploy_context_gauge(
     events,                        # EchoEvents - canal d'injection JS
     plan_name, credits_val,        # Identité du plan et crédits disponibles
@@ -181,11 +181,10 @@
     </p>
 
     <div class="note-box">
-      <h4>v5.20 - Unification du moteur visuel</h4>
+      <h4>Unification du moteur visuel</h4>
       <p>
-        Depuis la v5.20, <code>show_image_js()</code> réutilise le même moteur
-        <code>_generate_webplayer_js()</code> que le navigateur web. L'overlay basique
-        (sans zoom/pan/resize) est supprimé. Deux paramètres pilotent la personnalisation :
+        La méthode <code>show_image_js()</code> réutilise le même moteur
+        <code>_generate_webplayer_js()</code> que le navigateur web. Deux paramètres pilotent la personnalisation :
       </p>
       <ul>
         <li><strong><code>direct_url</code></strong> : si fourni, l'image est chargée directement
@@ -234,10 +233,10 @@
       <a href="06_filtre.html">Découvrir le Filtre (Conscience) ➔</a>
     </div>
 
-    <h2><code>_generate_codex_js()</code> - Moteur HUD Monaco Codex (v5.23+)</h2>
+    <h2><code>_generate_codex_js()</code> - Moteur HUD Monaco Codex</h2>
 
     <p>
-      Ajouté en <code>echo_ui.py</code> v5.23, <code>_generate_codex_js()</code> génère
+      La méthode <code>_generate_codex_js()</code> génère
       le script JavaScript complet du HUD Monaco Codex (voir
       <a href="08h_codex_editor.html">ECHO Codex →</a>). Comme tous les HUDs ECHO,
       il est injecté via <code>__event_call__({type: 'execute', data: {code: ...}})</code>.
@@ -262,10 +261,10 @@
       </ul>
     </div>
 
-    <h2><code>_generate_agent_monitor_js()</code> - HUD Cognitive Monitor (v5.28+)</h2>
+    <h2><code>_generate_agent_monitor_js()</code> - HUD Cognitive Monitor</h2>
     
     <p>
-      Introduit en v5.28 et peaufiné en v5.32, <code>_generate_agent_monitor_js()</code> propulse 
+      La méthode <code>_generate_agent_monitor_js()</code> propulse 
       le HUD interactif permettant de visualiser l'architecture d'orchestration multi-agentique.
     </p>
 
@@ -280,14 +279,14 @@
     <div class="tech-spec">
       <h4>⚙️ Caractéristiques spécifiques au HUD Multi-Agent</h4>
       <ul>
-        <li><strong>Support multi-agentique (v5.32)</strong> : Fusion chronologique des threads membres d'un même conseil, et rendu arborescent hiérarchique pour les superviseurs (via <code>worker_branch</code> et <code>indent_override</code>).</li>
+        <li><strong>Support multi-agentique</strong> : Fusion chronologique des threads membres d'un même conseil, et rendu arborescent hiérarchique pour les superviseurs (via <code>worker_branch</code> et <code>indent_override</code>).</li>
         <li><strong>Rafraîchissement live</strong> : La boucle événementielle permet un rafraîchissement manuel ou automatique (via un composant Promise récursif).</li>
         <li><strong>Clamp Viewport</strong> : Mécanisme <code>clampHud</code> pour s'assurer que le HUD reste toujours accessible dans la fenêtre du navigateur.</li>
       </ul>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

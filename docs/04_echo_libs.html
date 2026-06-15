@@ -91,7 +91,7 @@
         <tr><td><code>THINKING_LEVEL_TOOLS</code></td><td><code>"MINIMAL"</code></td><td>Outils stateless (maps, grounding, distillation rapide).</td></tr>
         <tr><td><code>TEMP_DEFAULT</code></td><td>1,0</td><td>Température de génération principale.</td></tr>
         <tr><td><code>TOP_P_DEFAULT</code></td><td>0,90</td><td>Nucleus sampling.</td></tr>
-        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.182.17)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
+        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.183.2)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
       </tbody>
     </table>
 
@@ -251,8 +251,8 @@
         <li><code>"error"</code> - échec de l'exécution (cascade épuisée, exception, config invalide).</li>
       </ul>
       <p>
-        Le champ <code>clamped:true</code> est supprimé : la divergence modèle est signalée
-        uniquement via <code>status=warning</code> + champ <code>reason</code>.
+        La divergence de modèle est signalée uniquement via <code>status=warning</code>
+        accompagné du champ <code>reason</code> (le champ historique <code>clamped:true</code> n'est pas utilisé).
       </p>
     </div>
 
@@ -269,6 +269,16 @@
         <tr><td><code>index_text_in_ephemeral_rag()</code></td><td>Pipeline complet chunk → embed → upsert Qdrant pour la Mémoire Vectorisée de Session. Recouvrement inter-chunks pour préserver le contexte aux jointures.</td></tr>
       </tbody>
     </table>
+
+    <h3>Pipeline de Vectorisation (RAG)</h3>
+    <p>
+      Le module <code>echo_utils.py</code> centralise la mécanique d'indexation vectorielle via la méthode <code>index_text_in_ephemeral_rag()</code>. Ce pipeline garantit une continuité sémantique lors de la construction de la Mémoire Vectorisée de Session.
+    </p>
+    <ul>
+      <li><strong>Chunking avec recouvrement :</strong> Le texte brut est découpé en fragments optimisés (chunks) avec un <em>overlap</em> (recouvrement). Cela évite de sectionner une phrase ou un concept au milieu de l'information.</li>
+      <li><strong>Vectorisation BAAI/bge-m3 :</strong> Chaque chunk est converti en un vecteur dense de 1024 dimensions. Cette étape exploite le modèle texte-first multilingue <code>bge-m3</code> de l'Embedding Worker, garantissant d'excellentes performances multilingues.</li>
+      <li><strong>Upsert Qdrant :</strong> Les vecteurs, accompagnés de leurs métadonnées (payload incluant le texte d'origine et le <code>source_id</code>), sont injectés dans la collection <code>echo_ephemeral</code> pour être interrogés par le modèle via ses outils.</li>
+    </ul>
 
     <h3>Politique Modèle Centralisée - <code>clamp_model()</code> et <code>resolve_model_policy()</code></h3>
     <p>
@@ -487,7 +497,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

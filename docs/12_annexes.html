@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Annexes Techniques ECHO v5 : topologie réseau et ports, volumes Docker, schéma SQL complet identity.db et {chat_id}.db, collections Qdrant, valves de configuration, API de référence.">
-  <title>ECHO v5 - 11. Annexes Techniques</title>
+  <title>ECHO v5 - 12. Annexes Techniques</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>11. Annexes Techniques</h1>
+    <h1>12. Annexes Techniques</h1>
 
     <p>
       Cette section constitue la référence de bas niveau du framework ECHO v5 :
@@ -23,7 +23,7 @@
 
     <p>
       ECHO orchestre un cluster de conteneurs sur un réseau Docker privé (<code>echo-network</code>),
-      dont la configuration de référence est définie par l'orchestrateur <code>stack-echo.yml</code> (v9.10).
+      dont la configuration de référence est définie par l'orchestrateur <code>stack-echo.yml</code>.
       La passerelle BunkerWeb est l'unique point d'entrée exposé sur le WAN lorsqu'elle est activée.
       Les services de l'Arsenal (Browser Agent, Python Worker, SearxNG) ne sont jamais exposés
       directement.
@@ -43,7 +43,7 @@
         <tr><td>Open WebUI</td><td><code>echo-open-webui</code></td><td>8080</td><td>3000</td><td>Via BunkerWeb</td></tr>
         <tr><td>Admin Manager</td><td><code>echo-admin-manager</code></td><td><strong>3001</strong></td><td>3001</td><td>Via BunkerWeb</td></tr>
         <tr><td>Qdrant</td><td><code>echo-qdrant</code></td><td>6333</td><td>Non</td><td>Non</td></tr>
-        <tr><td>Embedding Worker</td><td><code>echo-embedding</code></td><td>7997</td><td>Non</td><td>Non</td></tr>
+        <tr><td>Embedding Worker (HTTP/WS)</td><td><code>echo-embedding</code></td><td>7997</td><td>Non</td><td>Via WAF (<code>/ws/edge-embed</code>)</td></tr>
         <tr><td>STT Worker</td><td><code>echo-stt-worker</code></td><td>7995</td><td>Non</td><td>Non</td></tr>
         <tr><td>TTS Worker</td><td><code>echo-tts-worker</code></td><td>7996</td><td>Non</td><td>Non</td></tr>
         <tr><td>Browser Agent</td><td><code>echo-browser-agent</code></td><td><strong>5002</strong></td><td>Non</td><td>Non</td></tr>
@@ -339,8 +339,14 @@
       </tbody>
     </table>
 
+    <div class="transition-text">
+      <a href="11_edge_inference.html">← 11. Inférence Distante</a>
+      &nbsp;&nbsp;
+      <a href="13_credits.html">13. Crédits Open Source ➔</a>
+    </div>
+
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

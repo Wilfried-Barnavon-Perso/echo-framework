@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Mémoire et Cognition ECHO v5 : RAG organique echo_memory, Mémoire Vectorisée de Session echo_ephemeral, système d'importance mémorielle, routage cognitif new_cognitive_level, Agents Cognitifs (Conseil d'Experts) cognitive_agents.py.">
-  <title>ECHO v5 - 7d. Mémoire &amp; Cognition</title>
+  <title>ECHO v5 - 8d. Mémoire &amp; Cognition</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -15,7 +15,7 @@
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7d. Mémoire &amp; Cognition</h1>
+    <h1>8d. Mémoire &amp; Cognition</h1>
 
     <p>
       Cette famille d'outils est le cœur cognitif de l'Arsenal. Elle permet à ECHO de maintenir
@@ -162,7 +162,7 @@ flowchart TD
       <tbody>
         <tr>
           <td><code>delegate_to_subagent(task, system_prompt, sub_sid)</code></td>
-          <td>Délégation cognitive <strong>stateful</strong> (depuis <code>delegate_tool.py</code> v1.0, stateful\)\. Boucle agentique complète avec accès aux outils, budget d'appels configurable, montée cognitive LITE&rarr;FLASH&rarr;PRO. Persistance de l'historique de thread dans SQLite (<code>cognitive_threads</code>). Protocole <code>QUESTION:</code> pour les clarifications.</td>
+          <td>Délégation cognitive <strong>stateful</strong>. Boucle agentique complète avec accès aux outils, budget d'appels configurable, montée cognitive LITE&rarr;FLASH&rarr;PRO. Persistance de l'historique de thread dans SQLite (<code>cognitive_threads</code>). Protocole <code>QUESTION:</code> pour les clarifications.</td>
         </tr>
         <tr>
           <td><code>consult_expert_consultant(role_name, prompt, sub_sid, target_model)</code></td>
@@ -243,7 +243,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

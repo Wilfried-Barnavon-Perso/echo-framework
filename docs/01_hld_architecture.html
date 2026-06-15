@@ -95,6 +95,13 @@ flowchart TD
       </div>
     </div>
 
+    <div class="tech-spec">
+      <h4>⚙️ Extension : Inférence Distante (Edge Computing)</h4>
+      <p>
+        En complément de l'inférence Cloud (Gemini), l'architecture délègue l'inférence vectorielle lourde (BAAI/bge-m3) directement vers la <strong>Zone 0 (Interaction)</strong>. Un pont WebGPU/WASM, injecté par le Filtre 3, permet au navigateur de l'utilisateur de calculer les vecteurs, allégeant drastiquement la charge du backend qui n'agit plus qu'en relais et en <em>Fallback CPU</em> (secours local) en cas de timeout.
+      </p>
+    </div>
+
     <h2>Écorché Structurel - Modules Python</h2>
 
     <p>
@@ -198,7 +205,7 @@ flowchart TD
         <!-- echo_constants.py -->
         <rect x="512" y="258" width="60" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
         <text x="542" y="278" text-anchor="middle" fill="#60a5fa" font-size="9" font-family="monospace" font-weight="bold">constants</text>
-        <text x="542" y="294" text-anchor="middle" fill="#4ade80" font-size="7">v5.2</text>
+        <text x="542" y="294" text-anchor="middle" fill="#4ade80" font-size="7">v5.19</text>
         <text x="522" y="312" fill="#64748b" font-size="8" font-family="monospace">MODEL_*</text>
         <text x="522" y="326" fill="#64748b" font-size="8" font-family="monospace">MODEL_MAP_CA</text>
         <text x="522" y="340" fill="#64748b" font-size="8" font-family="monospace">THINKING_*</text>
@@ -211,7 +218,7 @@ flowchart TD
 
         <rect x="614" y="52" width="246" height="64" rx="6" fill="#0f172a" stroke="#0d9488" stroke-width="1.2"/>
         <text x="630" y="72" fill="#2dd4bf" font-size="10" font-family="monospace" font-weight="bold">echo_ui.py</text>
-        <text x="840" y="72" fill="#4ade80" font-size="8">v5.19</text>
+        <text x="840" y="72" fill="#4ade80" font-size="8">v5.20</text>
         <text x="630" y="88" fill="#64748b" font-size="9" font-family="monospace">EchoUI.deploy_context_gauge()</text>
         <text x="630" y="102" fill="#64748b" font-size="9" font-family="monospace">EchoUI.monitor_ECHO()</text>
 
@@ -743,7 +750,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

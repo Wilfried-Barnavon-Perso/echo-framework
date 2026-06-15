@@ -48,7 +48,7 @@
       <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
       <tbody>
         <tr><td><strong>Fichier source</strong></td><td><code>10-owui-pipes/pipe_engine.py</code></td></tr>
-        <tr><td><strong>Version</strong></td><td>192.17+ (déclarée dans le docstring du fichier)</td></tr>
+        <tr><td><strong>Version</strong></td><td>192.15 (déclarée dans le docstring du fichier)</td></tr>
         <tr><td><strong>Type Open WebUI</strong></td><td><code>Pipe</code> - se présente comme un modèle GenAI</td></tr>
         <tr><td><strong>Point d'entrée</strong></td><td><code>Pipe.pipe(body, __event_emitter__)</code></td></tr>
         <tr><td><strong>Exécution</strong></td><td>In-process dans Python d'Open WebUI, asynchrone (<code>asyncio</code>)</td></tr>
@@ -97,7 +97,7 @@
     </p>
 
     <div class="note-box">
-      <h4>⚠ Content multipart OWUI (v192.7)</h4>
+      <h4>⚠ Content multipart OWUI</h4>
       <p>
         Lorsque l'utilisateur colle des images dans le champ de saisie, Open WebUI transmet
         <code>content</code> sous forme de <strong>liste</strong> (et non de chaîne). Le filtre
@@ -210,7 +210,7 @@ flowchart TD
       </p>
     </div>
 
-    <h2>Cascade Descendante Technique (v192.11)</h2>
+    <h2>Cascade Descendante Technique</h2>
 
     <p>
       Indépendamment de l'escalade cognitive volontaire, le Pipe gère les <strong>erreurs
@@ -435,7 +435,7 @@ Content-Type: application/json</code></pre>
       Gauge. Le pipeline précis, extrait du code source :
     </p>
 
-    <div class="code-header">Pipeline HUD Quota - pipe_engine.py v192.7</div>
+    <div class="code-header">Pipeline HUD Quota - pipe_engine.py</div>
     <pre><code># 1. Résolution de l'ID modèle AGY (cloudcode-pa interne)
 ca_id = get_ca_model_id(target_model)
 # ex : MODEL_FLASH → "gemini-3-flash-agent"
@@ -466,7 +466,7 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

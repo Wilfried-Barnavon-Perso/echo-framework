@@ -1,19 +1,21 @@
 """
 ================================================================================
 MODULE : ECHO EMBEDDING WORKER (bge-m3)
-VERSION : 1.4
+VERSION : 1.5
 AUTEUR : Wilfried BARNAVON
-DATE : 2026-05-22
+DATE : 2026-06-15
 
 ROLE : Serveur d'embedding texte compatible OpenAI (BAAI/bge-m3)
        Multilingue, 1024 dimensions, 8192 tokens max.
-       Remplace SigLIP-2 (vision-only, 64 tokens — inadapté au RAG texte).
+       Support de l'Edge Embedding (WebGPU) via WebSocket Proxy.
 
 CHANGELOG :
   1.1 : Correction truncation=True (SigLIP-2 max 64 tokens).
   1.2 : Truncation silencieuse (guard-rail).
   1.3 : Migration BAAI/bge-m3. Suppression SigLIP-2 et branche image.
         CLS token pooling + normalisation L2.
+  1.4 : Stabilisation threadpool.
+  1.5 : Support Edge Embedding WebGPU (WebSocket proxy & Fallback).
 ================================================================================
 """
 
@@ -22,7 +24,10 @@ import logging
 import asyncio
 import torch
 import numpy as np
-from fastapi import FastAPI, HTTPException, Request
+import pybase64 as base64
+import orjson as json
+import uuid
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Union, Optional
@@ -35,8 +40,8 @@ logger = logging.getLogger("echo-embedding")
 
 app = FastAPI(
     title="ECHO bge-m3 Embedding Worker",
-    description="Worker souverain pour embeddings texte multilingues (BAAI/bge-m3)",
-    version="1.4"
+    description="Worker souverain pour embeddings texte multilingues (BAAI/bge-m3) & Edge WebGPU",
+    version="1.5"
 )
 
 # Verrou asynchrone global pour sérialiser l'inférence
@@ -57,6 +62,69 @@ state = {
     "model": None,
     "ready": False
 }
+
+# Registres pour le Edge Embedding WebGPU
+active_edge_clients: dict[str, WebSocket] = {}
+edge_client_status: dict[str, str] = {}
+pending_edge_requests: dict[str, asyncio.Future] = {}
+
+def get_user_id_from_jwt(token: str) -> str:
+    """Extraction basique du user_id depuis le JWT d'Open WebUI."""
+    try:
+        payload_b64 = token.split('.')[1]
+        payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode('utf-8'))
+        return payload.get("id")
+    except Exception:
+        return None
+
+@app.websocket("/ws/edge-embed")
+async def websocket_edge_embed(websocket: WebSocket):
+    # Le token peut être dans la query string (dev) ou dans les cookies (prod sécurisée par WAF)
+    token = websocket.query_params.get("token") or websocket.cookies.get("token")
+    if not token:
+        await websocket.close(code=1008)
+        return
+        
+    user_id = get_user_id_from_jwt(token)
+    if not user_id:
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+    active_edge_clients[user_id] = websocket
+    edge_client_status[user_id] = "connecting"
+    logger.info(f"🔌 WebGPU Client Connected | User: {user_id}")
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type")
+            
+            if msg_type == "ready":
+                edge_client_status[user_id] = "ready"
+                logger.info(f"✅ WebGPU Client Ready | User: {user_id}")
+            
+            elif msg_type == "incompatible":
+                edge_client_status[user_id] = "incompatible"
+                logger.warning(f"⚠️ WebGPU Client Incompatible | User: {user_id}")
+                
+            elif msg_type == "result":
+                req_id = data.get("request_id")
+                future = pending_edge_requests.get(req_id)
+                if future and not future.done():
+                    future.set_result(data.get("embedding"))
+                
+    except Exception as e:
+        logger.warning(f"🔌 WebGPU Client Disconnected | User: {user_id} | Reason: {e}")
+    finally:
+        active_edge_clients.pop(user_id, None)
+        edge_client_status.pop(user_id, None)
+
+@app.get("/internal/edge-status")
+async def edge_status(user_id: str):
+    """Vérification rapide de l'état Edge pour le filtre ECHO."""
+    return {"status": edge_client_status.get(user_id, "unknown")}
 
 @app.on_event("startup")
 async def load_model():
@@ -119,6 +187,41 @@ async def create_embeddings(request: EmbeddingRequest, req: Request):
         if isinstance(inputs, str):
             inputs = [inputs]
 
+        # 1. TENTATIVE EDGE EMBEDDING (WebGPU)
+        if user_id in active_edge_clients and edge_client_status.get(user_id) == "ready":
+            ws = active_edge_clients[user_id]
+            req_id = str(uuid.uuid4())
+            future = asyncio.get_running_loop().create_future()
+            pending_edge_requests[req_id] = future
+            
+            try:
+                await ws.send_json({"type": "embed", "texts": inputs, "request_id": req_id})
+                # Timeout strict (15s) pour basculer rapidement sur CPU si le navigateur bloque
+                embeddings = await asyncio.wait_for(future, timeout=15.0)
+                
+                batch_data = []
+                for i, emb in enumerate(embeddings):
+                    batch_data.append({
+                        "object": "embedding",
+                        "index": i,
+                        "embedding": emb
+                    })
+                    
+                duration = time.time() - start_time
+                logger.info(f"✨ Edge Vectors Generated | User: {user_id} | Count: {len(inputs)} | Time: {duration:.3f}s")
+                
+                return {
+                    "object": "list",
+                    "data": batch_data,
+                    "model": MODEL_ID,
+                    "usage": {"prompt_tokens": 0, "total_tokens": 0}
+                }
+            except asyncio.TimeoutError:
+                logger.warning(f"⚠️ Edge Inference Timeout for {user_id}. Fallback -> CPU.")
+            finally:
+                pending_edge_requests.pop(req_id, None)
+
+        # 2. FALLBACK CPU SYNCHRONE
         def process_batch_sync(inputs_list):
             batch_data = []
             for i, item in enumerate(inputs_list):

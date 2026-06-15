@@ -4,13 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Actions UI ECHO v5 : mécanique des Actions Open WebUI, pattern __event_call__ + Promise, purge mémoire Qdrant, reset OAuth2 PKCE, cockpit de replay web, export PDF avec détection Same-Origin.">
-  <title>ECHO v5 - 7f. Actions UI (HUD)</title>
+  <title>ECHO v5 - 8f. Actions UI (HUD)</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7f. Actions UI (HUD)</h1>
+    <h1>8f. Actions UI (HUD)</h1>
 
     <p>
       En termes Open WebUI, une <em>Action</em> est un bouton interactif injecté dans l'interface
@@ -154,7 +154,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 2 - Purge Mémoire Long Terme (<code>purge_memory_action.py</code>, v3.2)</h2>
+    <h2>Action 2 - Purge Mémoire Long Terme (<code>purge_memory_action.py</code>)</h2>
 
     <p>
       Supprime des souvenirs ciblés depuis la collection <code>echo_memory</code> dans Qdrant,
@@ -439,7 +439,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 5 - Agent Monitor (<code>agent_monitor_action.py</code>, v1.4)</h2>
+    <h2>Action 5 - Agent Monitor (<code>agent_monitor_action.py</code>)</h2>
 
     <p>
       Ouvre un HUD interactif (div draggable et redimensionnable) injecté dans le DOM permettant de
@@ -463,7 +463,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       <li>🌐 <strong>Navigateur Web</strong> : Agent pilotant le navigateur web avec analyse DOM en temps réel.</li>
     </ul>
 
-    <h2>Action 6 - ECHO Codex (<code>echo_codex_action.py</code>, v1.8)</h2>
+    <h2>Action 6 - ECHO Codex (<code>echo_codex_action.py</code>)</h2>
 
     <p>
       Ouvre un éditeur de code Monaco complet dans un HUD draggable et redimensionnable,
@@ -509,7 +509,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

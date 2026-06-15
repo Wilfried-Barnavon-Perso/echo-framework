@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Les Filtres ECHO v5 : new_context_filter (Smart Context, Moulage, AEC) et conversation_memory_filter (distillation, vectorisation Qdrant, masquage clés API).">
+  <meta name="description" content="Les Filtres ECHO v5 : new_context_filter (AEC), conversation_memory_filter (vectorisation Qdrant), et edge_embed_bridge_filter (pont WebGPU).">
   <title>ECHO v5 - 6. Les Filtres (Conscience)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -21,13 +21,14 @@
     <p>
       En termes Open WebUI, un <em>Filter</em> est un middleware Python qui intercepte les messages
       <strong>avant</strong> (hook <code>inlet</code>) ou <strong>après</strong> (hook <code>outlet</code>)
-      qu'ils atteignent le Pipe. ECHO en déploie deux, aux rôles complémentaires :
-      <code>new_context_filter.py</code> prépare le contexte en amont, et
-      <code>conversation_memory_filter.py</code> consolide la mémoire en aval.
+      qu'ils atteignent le Pipe. ECHO en déploie trois, aux rôles complémentaires :
+      <code>new_context_filter.py</code> prépare le contexte en amont,
+      <code>conversation_memory_filter.py</code> consolide la mémoire en aval, et
+      <code>edge_embed_bridge_filter.py</code> gère l'injection de l'inférence distante WebGPU.
     </p>
 
     <div class="didactic-box">
-      <h4>💡 Pourquoi deux filtres ?</h4>
+      <h4>💡 Pourquoi trois filtres ?</h4>
       <p>
         La séparation des responsabilités est délibérée. Le filtre de contexte opère
         <strong>avant</strong> la génération : il analyse les fichiers, construit le Draft et injecte
@@ -37,7 +38,7 @@
       </p>
     </div>
 
-    <h2>Filtre 1 - <code>new_context_filter.py</code> (v7.18)</h2>
+    <h2>Filtre 1 - <code>new_context_filter.py</code></h2>
 
     <p>
       Ce filtre est la porte d'entrée cognitive d'ECHO. Il opère en deux phases :
@@ -92,7 +93,7 @@ flowchart LR
       </div>
     </div>
 
-    <h3>Extraction ordonnée des parts multimodales (v7.9)</h3>
+    <h3>Extraction ordonnée des parts multimodales</h3>
     <p>
       Lorsqu'un utilisateur colle ou glisse des images directement dans le champ de saisie
       d'Open WebUI (sans utiliser le file picker), OWUI construit un <code>content</code>
@@ -158,7 +159,7 @@ flowchart LR
 
     <div class="code-header">Structure du bloc AEC V2 (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.182.17"
+version_framework_echo: "5.183.2"
 modèle_actuel:   "##MODEL_ID##"
 modèle_origine:  "##MODEL_ORIGIN##"
 nom_utilisateur: "anonyme"
@@ -197,7 +198,7 @@ timezone:        "Europe/Paris"
       secret ne « fuit » vers l'interface visuelle quelle que soit la réponse du modèle.
     </p>
 
-    <h2>Filtre 2 - <code>conversation_memory_filter.py</code> (v4.0)</h2>
+    <h2>Filtre 2 - <code>conversation_memory_filter.py</code></h2>
 
     <p>
       Ce filtre ne traite que la phase <strong>Outlet</strong> (post-génération). Il orchestre la
@@ -298,14 +299,24 @@ timezone:        "Europe/Paris"
       </p>
     </div>
 
+    <h2>Filtre 3 - <code>edge_embed_bridge_filter.py</code></h2>
+
+    <p>
+      Ce filtre intercepte le corps de la page Open WebUI pour injecter dynamiquement le pont JavaScript WebGPU d'inférence distante (WASM).
+      Il gère également un mécanisme de blocage actif (maximum 3 secondes) garantissant que le client s'est connecté au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
+    </p>
+
     <div class="transition-text">
-      Les données préparées par le Filtre sont transmises au Pipe, qui opère la reconstruction
-      bit-perfect de l'historique.
+      <p>Pour comprendre le détail de l'architecture WebGPU :</p>
+      <a href="11_edge_inference.html">Consulter le chapitre Inférence Distante ➔</a>
+      <br><br>
+      <p>Les données préparées par le Filtre sont transmises au Pipe, qui opère la reconstruction
+      bit-perfect de l'historique.</p>
       <a href="07_pipe.html">Découvrir le Pipe (Cortex) ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

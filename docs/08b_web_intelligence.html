@@ -4,13 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="ECHO Web Intelligence v5 : navigation autonome Chromium (Playwright), Browser Agent FastAPI v9.2, port 5002, 14 actions disponibles, SearxNG souverain, Cockpit Replay.">
-  <title>ECHO v5 - 7b. Web Intelligence</title>
+  <title>ECHO v5 - 8b. Web Intelligence</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7b. Web Intelligence</h1>
+    <h1>8b. Web Intelligence</h1>
 
     <p>
       Les outils de Web Intelligence confèrent à ECHO la capacité de naviguer sur le Web de manière
@@ -167,13 +167,12 @@
     </p>
 
     <div class="note-box">
-      <h4>v9.3-9.4 - Distillation via <code>call_cascade()</code> centralisé</h4>
+      <h4>Distillation via <code>call_cascade()</code> centralisé</h4>
       <p>
         L'action <code>distill_page</code> utilise <code>EchoGeminiClient.call_cascade()</code>
-        (au lieu d'un appel direct) avec <code>MODEL_FLASH</code> clampé par la politique Pipe.
+        avec <code>MODEL_FLASH</code> clampé par la politique Pipe.
         La propagation du <code>user_id</code> vers <code>clamp_model</code> garantit que le fallback
-        SQLite <code>echo_settings</code> est lu correctement même si OWUI ne propage pas les
-        métadonnées du Pipe.
+        SQLite <code>echo_settings</code> est lu correctement.
       </p>
     </div>
 
@@ -191,7 +190,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

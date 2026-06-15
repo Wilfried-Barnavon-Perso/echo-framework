@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Architecture des scripts d'infrastructure ECHO v5 : orchestration Docker, synchronisation, provisionnement et déploiement.">
-  <title>ECHO v5 - 9c. Scripts d'Infrastructure</title>
+  <title>ECHO v5 - 10e. Scripts d'Infrastructure</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>9c. Scripts d'Infrastructure</h1>
+    <h1>10e. Scripts d'Infrastructure</h1>
 
     <p>
       L'orchestration, le déploiement et la maintenance du framework ECHO reposent sur un ensemble de scripts Shell et PowerShell. Ils garantissent la reproductibilité clinique de l'environnement, de l'hôte Windows jusqu'aux conteneurs Docker de la machine virtuelle Ubuntu.
@@ -41,14 +41,14 @@
 
     <h3><code>install-hyperv.ps1</code></h3>
     <p>
-      Ce script PowerShell s'exécute avec des privilèges administrateur sur l'hôte Windows. Il orchestre le transfert physique des données :
+      Ce script PowerShell s'exécute avec des privilèges administrateur sur l'hôte Windows. Il orchestre le transfert physique des données en contournant les limitations réseau :
     </p>
     <ul>
-      <li><strong>Archivage :</strong> Compresse le dépôt courant (branche <code>dev</code>) en un fichier <code>echo-update.zip</code>.</li>
-      <li><strong>Configuration VM :</strong> Allocation de 8 Go de RAM pour respecter les exigences système (ex: Ubuntu 26.04) et création d'une VM Hyper-V de Génération 2.</li>
-      <li><strong>Montage VHDX :</strong> Monte le disque virtuel <code>echo-seed.vhdx</code> de la machine virtuelle de destination.</li>
-      <li><strong>Injection :</strong> Copie l'archive et le script d'amorçage dans le disque virtuel, puis le démonte.</li>
-      <li><strong>Démarrage :</strong> Démarre (ou redémarre) la machine virtuelle Hyper-V.</li>
+      <li><strong>Archivage :</strong> Compresse l'intégralité du dépôt courant (branche <code>dev</code>) en un fichier d'archive compact <code>echo-update.zip</code>.</li>
+      <li><strong>Provisionnement VM :</strong> Allocation garantie de 8 Go de RAM dynamique (pour respecter les exigences système d'Ubuntu 24.04/26.04) et création d'une VM Hyper-V de Génération 2 sécurisée.</li>
+      <li><strong>Injection VHDX (Disque Seed) :</strong> Monte localement le disque virtuel VHDX de la VM de destination via WMI.</li>
+      <li><strong>Transfert de Fichiers :</strong> Copie l'archive ZIP et le script d'amorçage Linux (<code>sync-echo.sh</code>) directement dans le système de fichiers du disque virtuel, puis le démonte proprement.</li>
+      <li><strong>Démarrage :</strong> Démarre la machine virtuelle Hyper-V, amorçant le processus de boot Linux.</li>
     </ul>
     <p>
       L'orchestration interne est assurée par le déploiement de <code>stack-echo.yml</code> (Docker Compose). Une fois les services en ligne, la sécurisation réseau (BunkerWeb) est initialisée ou arrêtée dynamiquement via <code>enable-bunkerweb.sh</code>.
@@ -66,6 +66,11 @@
     </ul>
 
     <h2>Mise à Niveau Majeure</h2>
+
+    <h3><code>upgrade-echo.sh</code></h3>
+    <p>
+      Ce script prend en charge la mise à niveau majeure de l'infrastructure hôte (Ubuntu) de la machine virtuelle. Il assure la transition sécurisée vers les nouvelles versions d'ECHO en mettant à jour les dépendances système, en migrant les bases de données si nécessaire, et en réalignant la configuration Docker Compose avec le nouveau référentiel, tout en préservant l'intégrité des données utilisateur stockées dans l'Espace Personnel.
+    </p>
 
     <h2>Orchestration Interne (VM)</h2>
 
@@ -96,12 +101,13 @@
     </ul>
 
     <div class="transition-text">
-      L'ensemble des schémas SQL, des attributions de ports et des règles de pare-feu associés à ces scripts sont compilés dans les annexes.
-      <a href="11_annexes.html">11. Annexes Techniques ➔</a>
+      <a href="10d_audio_workers.html">← 10d. Audio Workers</a>
+      &nbsp;&nbsp;
+      <a href="11_edge_inference.html">11. Edge Inference ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

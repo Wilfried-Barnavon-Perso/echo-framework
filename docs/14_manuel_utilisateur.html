@@ -2,14 +2,14 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>ECHO v5 - 13. Manuel Utilisateur Intégré</title>
+  <title>ECHO v5 - 14. Manuel Utilisateur Intégré</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="sidebar"></div>
 
   <main>
-    <h1>13. Manuel Utilisateur Intégré</h1>
+    <h1>14. Manuel Utilisateur Intégré</h1>
 
     <p>Ce manuel documente l'utilisation de l'interface conversationnelle (Open WebUI) et de la console d'administration (Admin Manager) du framework ECHO. Il est destiné aux utilisateurs et aux administrateurs de l'infrastructure.</p>
 
@@ -39,7 +39,7 @@
     <p>L'Espace de Travail permet la gestion des connaissances et des configurations. La section "Modèles" permet de visualiser et de paramétrer les modèles actifs (ex: Gemini Flash, Pro). C'est ici que l'utilisateur peut configurer ses bases documentaires RAG (Qdrant).</p>
 
     <img src="./assets/manuel/workspace_tools_page_1781007689685.png" alt="Workspace - Outils" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
-    <p>La section "Outils" recense l'<strong>Arsenal</strong>. Au déploiement de la version 5.179.10, l'interface affiche 13 outils pré-intégrés (notamment le Codex, le Web Navigator, et le système Delphi Council) prêts à être injectés dans le <code>pipe_engine</code>.</p>
+    <p>La section "Outils" recense l'<strong>Arsenal</strong>. L'interface affiche 12 outils pré-intégrés (notamment le Codex, le Web Navigator, et le système Delphi Council) prêts à être injectés dans le <code>pipe_engine</code>.</p>
 
     <h3>2.3 Panneau d'Administration (Open WebUI)</h3>
     <img src="./assets/manuel/admin_panel_overview_1781007758044.png" alt="Panneau d'Administration OWUI" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
@@ -57,7 +57,7 @@
 
     <h3>3.2 Docker & Conteneurs</h3>
     <img src="./assets/manuel/admin_manager_docker_containers_1781007850899.png" alt="Admin Manager - Conteneurs Docker" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
-    <p>Cette section offre une vue temps réel sur l'orchestration Docker (via lecture du socket <code>/var/run/docker.sock</code>). En régime nominal de la stack v9.3+, l'interface liste l'ensemble des conteneurs en état <code>Running</code> (généralement 17 conteneurs incluant SearXNG, Qdrant, les Workers et BunkerWeb). Le redémarrage ciblé des services s'effectue depuis cet écran.</p>
+    <p>Cette section offre une vue temps réel sur l'orchestration Docker (via lecture du socket <code>/var/run/docker.sock</code>). En régime nominal de l'orchestrateur, l'interface liste l'ensemble des conteneurs en état <code>Running</code> (généralement 17 conteneurs incluant SearXNG, Qdrant, les Workers et BunkerWeb). Le redémarrage ciblé des services s'effectue depuis cet écran.</p>
 
     <h3>3.3 Sauvegardes et Purge (Système & Maintenance)</h3>
     <img src="./assets/manuel/admin_manager_system_maintenance_1781007810997.png" alt="Admin Manager - Système et Maintenance" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; margin-bottom: 15px;">
@@ -69,13 +69,13 @@
     <p>Cette page gère l'IdP. L'administrateur peut y forcer la déconnexion des sessions actives (revocation de JWT), imposer des resets de clés TOTP, et configurer le bannissement IP par interaction avec BunkerWeb.</p>
 
     <div class="transition-text">
-      <a href="11_annexes.html">← 11. Annexes</a>
+      <a href="13_credits.html">← 13. Crédits Open Source</a>
       &nbsp;&nbsp;
-      <a href="14_registre_audit.html">14. Registre d'Audit ➔</a>
+      <a href="15_registre_audit.html">15. Registre d'Audit ➔</a>
     </div>
 
     <footer>
-      ECHO v5 Documentation - Version <span class="version-badge">5.182.17</span>
+      ECHO v5 Documentation - Version <span class="version-badge">5.183.2</span>
     </footer>
   </main>
 

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Architecture Edge Embedding Bridge d'ECHO v5 : inférence distante BAAI/bge-m3, WebGPU, WASM, WebSocket proxy et Fallback CPU.">
+  <title>ECHO v5 - 11. Inférence Distante (Edge Computing)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>11. Inférence Distante (Edge Computing)</h1>
+
+    <p>
+      ECHO intègre un pont d'inférence distante (<strong>Edge Embedding Bridge</strong>) permettant de déporter l'exécution du modèle de vectorisation <code>BAAI/bge-m3</code> directement sur le matériel de l'utilisateur final. Ce système tire parti des capacités de la carte graphique du client (WebGPU) via un pont WebAssembly (WASM), allégeant drastiquement la charge CPU sur l'infrastructure hébergeant le framework.
+    </p>
+
+    <h2>Architecture du Pont WebGPU</h2>
+
+    <p>
+      Le mécanisme de pont s'appuie sur une interaction synchrone entre un filtre Open WebUI (le Côté Client) et le Worker d'Embedding (le Côté Serveur). Le processus se décompose en plusieurs étapes gérées de façon transparente pour l'utilisateur.
+    </p>
+
+    <h3>1. Injection du Payload (<code>edge_embed_bridge_filter.py</code>)</h3>
+    <p>
+      Le filtre <code>edge_embed_bridge_filter.py</code> intercepte la construction de l'interface graphique. Il injecte un module JavaScript (<code>&lt;script type="module"&gt;</code>) directement dans la balise <code>&lt;body&gt;</code> de l'application. Ce script contient la logique de chargement de la bibliothèque <em>Transformers.js</em> et télécharge les poids du modèle <code>Xenova/bge-m3</code> de manière asynchrone dans le navigateur.
+    </p>
+
+    <h3>2. Connexion WebSocket (<code>/ws/edge-embed</code>)</h3>
+    <p>
+      Une fois le script injecté, le client initie une connexion WebSocket vers le Worker d'Embedding sur l'endpoint <code>/ws/edge-embed</code>, en transmettant son jeton d'authentification (JWT). Le Worker authentifie la connexion et enregistre le client dans la liste des nœuds de calcul disponibles (<code>active_edge_clients</code>).
+    </p>
+
+    <h3>3. Boucle d'Attente Active</h3>
+    <p>
+      Avant de libérer la requête HTTP initiale (et donc d'afficher la page), le filtre interroge le Worker (via l'API <code>/internal/edge-status</code>) pendant une durée maximale de <strong>3 secondes</strong>. Il attend que le statut du client passe à <code>ready</code> (le modèle est chargé en RAM GPU sur le navigateur). Dès que le client est prêt, l'interface graphique est affichée.
+    </p>
+
+    <h2>Processus de Vectorisation</h2>
+
+    <p>
+      Lorsqu'une demande de vectorisation (RAG, mémorisation) survient au sein de la boucle cognitive, ECHO dirige la requête vers le Worker d'Embedding (port 7997).
+    </p>
+
+    <ol>
+      <li>Le Worker vérifie si le <code>user_id</code> possède un WebSocket actif dont le statut est <code>ready</code>.</li>
+      <li>Si tel est le cas, le Worker envoie un message JSON contenant le texte à vectoriser (payload : <code>{ action: "embed", text: "...", task_type: "retrieval_document" }</code>) vers le navigateur client.</li>
+      <li>Le navigateur utilise WebGPU (ou WebGL en cas de non-support) pour exécuter l'inférence via l'environnement WASM de Transformers.js.</li>
+      <li>Le navigateur renvoie les 1024 vecteurs normalisés (L2) au Worker via WebSocket (payload : <code>{ status: "success", embedding: [...] }</code>).</li>
+      <li>Le Worker transmet la réponse finale à la base vectorielle Qdrant.</li>
+    </ol>
+
+    <h2>Mécanisme de Repli (Fallback CPU)</h2>
+
+    <p>
+      La robustesse du framework exige que le système puisse fonctionner même si le navigateur de l'utilisateur n'est pas en mesure de traiter l'inférence. Le Worker d'Embedding intègre un mécanisme de <strong>Fallback CPU Synchrone</strong> (géré dans <code>app.py</code>).
+    </p>
+
+    <p>
+      Le repli CPU s'active immédiatement dans les scénarios suivants :
+    </p>
+    <ul>
+      <li><strong>Incompatibilité matérielle :</strong> Le client envoie un statut <code>incompatible</code> via le WebSocket s'il ne peut initialiser le contexte WebGPU/WASM.</li>
+      <li><strong>Déconnexion :</strong> Le client a fermé l'onglet ou la connexion WebSocket est perdue.</li>
+      <li><strong>Timeout Strict :</strong> Si le navigateur met plus de <strong>15 secondes</strong> à retourner les vecteurs après une requête d'inférence, le Worker annule l'attente asynchrone et bascule instantanément sur l'exécution locale du modèle (via PyTorch) sur le CPU du serveur hôte.</li>
+    </ul>
+
+    <div class="transition-text">
+      <a href="10e_scripts_infrastructure.html">← 10e. Scripts d'Infrastructure</a>
+      &nbsp;&nbsp;
+      <a href="12_annexes.html">12. Annexes Techniques ➔</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

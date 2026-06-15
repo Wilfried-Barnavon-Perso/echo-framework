@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.182.17
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.183.2
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -33,6 +33,7 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 - **Gestion de l'importance des souvenirs :** Algorithme de fusion sémantique préservant le score `memory_importance` maximal des souvenirs.
 - **Smart Context :** Injection de faits via des balises XML structurelles (`<smart_context>`) et utilisation de `source_id` natifs (au lieu de slugs) pour la Mémoire Vectorisée de Session.
 - **Pipeline d'Ingestion Zéro-RAM :** Conversion native des documents Office en Markdown (MarkItDown) et traitement hybride transparent (Mémoire Vectorisée, Codex Git, Fallback SQLite) géré dynamiquement par le filtre.
+- **Edge Embedding Bridge :** Offload de l'inférence vectorielle (bge-m3) vers le navigateur client via WebGPU/WASM (WebSocket), réduisant drastiquement la charge CPU avec bascule automatique sur le backend Docker en cas d'inactivité.
 
 ### 3. Contexte Proprioceptif : `environnement_contexte` & `evenement_systeme`
 Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre `new_context_filter.py`.
@@ -54,7 +55,7 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 ### 5. Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
 - **ECHO Auth (SSO & MFA) :** IdP autonome (`/opt/ECHO/24-docker-echo-auth/`) gérant l'authentification forte (TOTP). Couplé à BunkerWeb via Forward Auth (`/api/verify`), l'état des sessions et les bannissements IP sont pilotés depuis l'Admin Manager (Révocations granulaires, Kill-Switch).
 - **Dashboard Actif :** Interface interactive (Sidebar asynchrone) de monitoring du cluster Docker, gestion renforcée du SSO (révocation, purge dynamique sécurisée des utilisateurs via garde-fous API) et supervision des ressources système.
-- **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec un mécanisme de Kill-Switch de Service Worker (PWA) via surcharge de `version.json` de façon non-destructive (préservation du cookie JWT de session).
+- **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec Kill-Switch PWA et routage natif (`location = /ws/edge-embed`) garantissant l'accès direct au Worker d'Embedding pour le pont WebGPU.
 - **Régulation & Consolidation :** Optimisation physique SQLite (Vacuum/WAL), gestion des sauvegardes à chaud (incluant les bases IdP) et autosécurité Docker (rotation automatisée des logs pour prévenir la saturation disque).
 - **Purge Temporelle des Souvenirs (TTL) :** Centralisation du processus d'élagage de la base vectorielle des souvenirs pour optimiser les performances.
 - **Configuration Automatique (Open WebUI) :** Script d'orchestration post-déploiement (`00-echo-scripts/config-owui.sh`) paramétrant dynamiquement l'interface, les modèles et les permissions via API à partir du template statique (`01-config/webui-settings.json`).
@@ -70,7 +71,7 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 ### 7. Infrastructure d'Exécution
 - **Python Worker (`/opt/ECHO/docker-python-worker/`) :** Exécution isolée de code Python avec support `orjson`/`pybase64`.
 - **Browser Agent (`/opt/ECHO/docker-browser-agent/`) :** Instance Playwright (Python 3.14) pilotée par API (httpx, FastAPI) pour la navigation autonome.
-- **Embedding Worker (`/opt/ECHO/docker-embedding-worker/`) :** Inférence BAAI/bge-m3 locale (1024d, multilingue). PyTorch CPU-only. Détection GPU dynamique.
+- **Embedding Worker (`/opt/ECHO/docker-embedding-worker/`) :** Architecture hybride. Offload prioritaire de l'inférence BAAI/bge-m3 vers le navigateur client via **Edge Computing (WebGPU)**. Fallback transparent sur le conteneur Docker (PyTorch CPU-only) en cas d'inactivité du navigateur.
 
 ### 8. Orchestration Séquentielle (Docker Compose)
 Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy` :
@@ -117,6 +118,6 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.182.17*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.183.2*
 
 

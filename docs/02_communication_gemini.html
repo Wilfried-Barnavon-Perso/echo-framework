@@ -45,13 +45,53 @@
       </ol>
     </div>
 
+    <h2>Méthodes Factorisées d'Appel (EchoGeminiClient)</h2>
+
+    <p>
+      Le framework centralise toutes les communications sortantes vers les modèles de langage au sein du module <code>EchoGeminiClient</code>. Ce client HTTP/2 asynchrone orchestre le routage, la résilience et la mise en forme canonique des requêtes.
+    </p>
+
+    <ul>
+      <li><strong>Routage Transparent :</strong> Le client bascule dynamiquement entre l'API publique (AI Studio) et l'API interne (Antigravity) selon l'identité d'accès prioritaire, en appliquant les traductions de noms de modèles nécessaires.</li>
+      <li><strong>Failover Hybride et Résilience :</strong> En cas de surcharge (HTTP 429, 500, 503), le client applique un backoff exponentiel avec <em>jitter</em>. Si le seuil d'échecs consécutifs est franchi, il bascule automatiquement sur la source d'accès suivante (par exemple, d'OAuth2 vers la clé de secours). Si le modèle lui-même est inaccessible, une cascade descendante (PRO → FLASH → LITE) est enclenchée.</li>
+      <li><strong>Statut Tri-état :</strong> Chaque appel LLM, qu'il provienne du Pipe ou d'un outil agentique, renvoie un statut standardisé (<code>success</code>, <code>warning</code>, <code>error</code>). Une divergence (clamping de politique ou cascade) est marquée comme <code>warning</code> avec le détail du motif.</li>
+    </ul>
+
+    <div class="code-header">Exemple de Code - Signatures et Routage</div>
+    <pre><code># 1. Préparation du contexte réseau (HTTP/2, Headers furtifs, Auth)
+req_ctx = await EchoGeminiClient._prepare_request_context(
+    provider=active_provider,
+    target_model="gemini-3.5-flash",
+    payload={"contents": [...]},
+    method="streamGenerateContent",
+    chat_id=chat_id,
+    enable_paid_credits=True
+)
+
+# 2. Appel Centralisé avec Cascade Cognitive (PRO -> FLASH -> LITE)
+data, model_key, reason = await EchoGeminiClient.call_cascade(
+    target_model_key="MODEL_FLASH", 
+    payload=payload,
+    user_id=user_id,
+    metadata=__metadata__,
+    events=events,
+    include_thoughts=False
+)
+
+# Analyse du statut tri-état
+if reason:
+    status = "warning"  # Ex: "policy clamping" ou "cascade downgrade"
+else:
+    status = "success"
+</code></pre>
+
     <div class="transition-text">
       L'authentification valide permet de déployer l'infrastructure dans le cloud.
       <a href="03_deploiement.html">Passer au Déploiement ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

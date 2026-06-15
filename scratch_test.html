@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<body>
+<script type="module">
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.16.1/dist/transformers.min.js';
+env.allowLocalModels = false;
+async function test() {
+    try {
+        let extractor = await pipeline('feature-extraction', 'Xenova/bge-m3');
+        console.log("Success");
+    } catch (e) {
+        console.error(e);
+    }
+}
+test();
+</script>
+</body>
+</html>

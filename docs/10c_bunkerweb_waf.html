@@ -44,6 +44,12 @@
       Cette méthode force le rechargement des assets SvelteKit sans utiliser l'en-tête destructif <code>Clear-Site-Data</code>. Cela garantit la préservation absolue du cookie JWT de session, évitant ainsi l'erreur 401 sur les flux audio en cours de lecture.
     </p>
 
+    <h2>Routage Edge WebGPU</h2>
+
+    <p>
+      Le WAF est spécifiquement configuré pour router le trafic d'inférence distante vers le Worker d'Embedding. La directive Nginx <code>location = /ws/edge-embed</code> garantit que ce flux WebSocket (wss://) bénéficie d'un accès direct et prioritaire. En court-circuitant le backend Open WebUI standard, le WAF supprime le goulet d'étranglement HTTP classique et maintient la connexion persistante requise pour la communication asynchrone bidirectionnelle avec le payload WASM du client, tout en bloquant nativement les tentatives d'inondation (flood).
+    </p>
+
     <div class="warning-box">
       <h4>⚠️ Exposition réseau et sécurité</h4>
       <p>
@@ -52,12 +58,13 @@
     </div>
 
     <div class="transition-text">
-      Pour comprendre comment le système est géré au quotidien.
-      <a href="10a_admin_manager.html">Retourner à l'Admin Manager ➔</a>
+      <a href="10b_echo_auth_sso.html">← 10b. ECHO Auth SSO &amp; MFA</a>
+      &nbsp;&nbsp;
+      <a href="10d_audio_workers.html">10d. Audio Workers ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

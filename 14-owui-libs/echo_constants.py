@@ -1,8 +1,9 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.18
-description: 5.18: Ajout de DEEP_RESEARCH_MAX_CALLS_DEFAULT pour l'agent de recherche profonde.
+version: 5.19
+description: 5.19: Ajout DEFAULT_EDGE_EMBEDDING_TIMEOUT pour le Edge Embedding WebGPU.
+             5.18: Ajout de DEEP_RESEARCH_MAX_CALLS_DEFAULT pour l'agent de recherche profonde.
              5.17: Ajout du dictionnaire FILE_INGESTION_STATUS pour centraliser les états d'ingestion.
              5.16: Réduction de MAX_DIRECT_MMEDIA_INJECT_SIZE de 5Mo à 1Mo pour optimisation de contexte.
              4.4: redirect_uri localhost (loopback RFC 8252).
@@ -525,6 +526,9 @@ ECHO_HTTP_CLIENT_TIMEOUT = 600       # Délai d'abandon (600s) si Google API ne 
 ECHO_HTTP_MAX_CONNECTIONS = 100      # Nombre max de connexions simultanées.
 ECHO_HTTP_MAX_KEEPALIVE = 20         # Nombre max de connexions Keep-Alive maintenues.
 ECHO_HTTP_KEEPALIVE_EXPIRY = 300     # Expiration des connexions Keep-Alive (en secondes).
+
+# Timeout d'attente pour le chargement du modèle d'embedding WebGPU (Edge Embedding)
+DEFAULT_EDGE_EMBEDDING_TIMEOUT = 180
 
 # Limite Physique de Contexte
 # ECHO_MAX_CONTEXT_SIZE : Taille officielle du contexte absorbable par les modèles Gemini.

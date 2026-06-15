@@ -73,20 +73,24 @@ document.addEventListener('DOMContentLoaded', () => {
         ]
       },
       {
-        href: '11_annexes.html',
-        text: '11. Annexes Techniques'
+        href: '11_edge_inference.html',
+        text: '11. Inférence Distante (Edge Computing)'
       },
       {
-        href: '12_credits.html',
-        text: '12. Crédits Open Source'
+        href: '12_annexes.html',
+        text: '12. Annexes Techniques'
       },
       {
-        href: '13_manuel_utilisateur.html',
-        text: '13. Manuel Utilisateur'
+        href: '13_credits.html',
+        text: '13. Crédits Open Source'
       },
       {
-        href: '14_registre_audit.html',
-        text: "14. Registre d'Audit et Confidentialité"
+        href: '14_manuel_utilisateur.html',
+        text: '14. Manuel Utilisateur'
+      },
+      {
+        href: '15_registre_audit.html',
+        text: "15. Registre d'Audit et Confidentialité"
       }
     ];
 

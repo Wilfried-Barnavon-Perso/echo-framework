@@ -613,11 +613,15 @@ class EchoGeminiClient:
             "input": text
         }
         
+        headers = {}
+        if __user__ and "id" in __user__:
+            headers["X-OpenWebUI-User-Id"] = str(__user__["id"])
+        
         last_error = None
         for attempt in range(max_retries + 1):
             try:
                 client = await _get_global_client()
-                resp = await client.post(f"{ECHO_EMBEDDING_URL}/embeddings", json=payload, timeout=60)
+                resp = await client.post(f"{ECHO_EMBEDDING_URL}/embeddings", headers=headers, json=payload, timeout=60)
                 
                 if resp.status_code == 200:
                     data = resp.json()

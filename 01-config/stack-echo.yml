@@ -84,6 +84,20 @@ services:
       - "bunkerweb.REVERSE_PROXY_PRESERVE_HOST=yes"
       - "bunkerweb.KEEP_UPSTREAM_HEADERS=*"
 
+      # 🛡️ ROUTAGE WEBSOCKET POUR LE EDGE EMBEDDING
+      # Priorité absolue Nginx via "location =" pour surpasser le proxy générique
+      - |
+        bunkerweb.CUSTOM_CONF_SERVER_HTTP_edgeembed=location = /ws/edge-embed {
+            proxy_pass http://echo-embedding:7997;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade "websocket";
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+
       # 🛡️ ECHO AUTH : Forward Auth
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_redirect; location @auth_redirect { default_type application/json; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; }"

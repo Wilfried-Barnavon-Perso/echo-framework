@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ECHO Delegate Agent v1.3 (delegate_tool.py) : agent stateful avec accès aux outils, montée cognitive identique au Pipe (new_cognitive_level), budget d'appels configurable, protocole QUESTION:, résolution callables via _TOOLS_CACHE et sys.modules.">
-  <title>ECHO v5 - 7i. Delegate Agent</title>
+  <meta name="description" content="ECHO Delegate Agent (delegate_tool.py) : agent stateful avec accès aux outils, montée cognitive identique au Pipe (new_cognitive_level), budget d'appels configurable, protocole QUESTION:, résolution callables via _TOOLS_CACHE et sys.modules.">
+  <title>ECHO v5 - 8i. Delegate Agent</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -15,10 +15,10 @@
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
-    <h1>7i. Delegate Agent - Agent Stateful</h1>
+    <h1>8i. Delegate Agent - Agent Stateful</h1>
 
     <p>
-      <code>delegate_tool.py</code> (v1.3) implémente un système de agents ECHO
+      <code>delegate_tool.py</code> implémente un système de agents ECHO
       <strong>stateful avec accès aux outils</strong>. Le agent dispose d'une boucle agentique complète identique au Pipe principal,
       d'un budget d'appels de fonctions configurable et d'un mécanisme de reprise via
       identifiant de session (<code>sub_sid</code>). L'état et la cascade de cette boucle 
@@ -105,12 +105,12 @@
     <p>
       OWUI présente un problème architectural fondamental : les callables Python des outils
       ne sont pas transmis nativement aux tool callables ni au Pipe via les paramètres standards.
-      ECHO v5.166 résout ce problème via une architecture à trois sources de résolution, par ordre de priorité :
+      L'architecture résout ce problème via une approche à trois sources de résolution, par ordre de priorité :
     </p>
 
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
-        <span>Résolution des callables - delegate_tool.py v1.3</span>
+        <span>Résolution des callables - delegate_tool.py</span>
         <span>[Tri-sources]</span>
       </div>
       <div class="mermaid">
@@ -219,7 +219,7 @@ flowchart TD
     <h3>Préservation des ThoughtSignatures</h3>
 
     <p>
-      La règle critique (fix v1.1) : les parts du modèle sont conservées
+      La règle critique : les parts du modèle sont conservées
       <strong>brutes</strong> dans l'historique. Elles ne sont jamais reconstruites à partir
       des sous-champs extraits. Le champ <code>thoughtSignature</code> est inclus dans les
       parts <code>functionCall</code> de Gemini 3.x - le perdre cause un
@@ -387,21 +387,21 @@ SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
                             N'émets jamais plusieurs functionCall dans le même tour de réponse.</code></pre>
 
     <div class="audit-note">
-      <h4>✅ Exactitude - version 1.3</h4>
+      <h4>ℹ️ Exactitude documentaire</h4>
       <p>
-        Cette documentation est extraite du code source <code>delegate_tool.py</code> v1.3
-        et de <code>echo_constants.py</code> v5.6 (DELEGATE_AGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX).
+        Cette documentation est extraite du code source <code>delegate_tool.py</code>
+        et de <code>echo_constants.py</code> (DELEGATE_AGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX).
       </p>
     </div>
 
     <div class="transition-text">
       <a href="08h_codex_editor.html">← ECHO Codex</a>
       &nbsp;&nbsp;
-      <a href="08j_agent_orchestration.html">7j. Orchestration Multi-Agents ➔</a>
+      <a href="08j_agent_orchestration.html">8j. Orchestration Multi-Agents ➔</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.182.17 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>
