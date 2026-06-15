@@ -91,7 +91,7 @@
         <tr><td><code>THINKING_LEVEL_TOOLS</code></td><td><code>"MINIMAL"</code></td><td>Outils stateless (maps, grounding, distillation rapide).</td></tr>
         <tr><td><code>TEMP_DEFAULT</code></td><td>1,0</td><td>Température de génération principale.</td></tr>
         <tr><td><code>TOP_P_DEFAULT</code></td><td>0,90</td><td>Nucleus sampling.</td></tr>
-        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.183.2)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
+        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.183.11)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
       </tbody>
     </table>
 
@@ -497,7 +497,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

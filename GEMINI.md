@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.183.2
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.183.11
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -51,6 +51,7 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 - **Explorateur de l'Espace Personnel :** Analyse sécurisée et indexation des documents locaux de l'utilisateur.
 - **Registre Unifié V2 (`query_registry_tool.py`) :** Outil de consultation de l'état cognitif des ressources centralisées (`FILE_INGESTION_STATUS`) indexées par le système.
 - **ECHO Codex (`echo_codex_tool.py`) :** Éditeur multi-langage avec Git intégré (dulwich). 9 fonctions (create, edit, read, search, summarize, list, delete, history). Édition assistée par sub-chat `MODEL_FLASH` via `call_cascade`. Registre `codex_docs` dans SQLite par chat. Distillation Cloud pour résumé technique.
+- **Python Code Executor (`python_code_executor.py`) :** Exécution de code Python dans une sandbox sécurisée (docker-python-worker) dédiée à la validation analytique complexe et aux calculs Data Science (pandas, numpy). Pilote l'API distante avec isolation des environnements et gestion native des erreurs OS.
 
 ### 5. Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
 - **ECHO Auth (SSO & MFA) :** IdP autonome (`/opt/ECHO/24-docker-echo-auth/`) gérant l'authentification forte (TOTP). Couplé à BunkerWeb via Forward Auth (`/api/verify`), l'état des sessions et les bannissements IP sont pilotés depuis l'Admin Manager (Révocations granulaires, Kill-Switch).
@@ -69,7 +70,7 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 - **ECHO Codex (`echo_codex_action.py`) :** HUD Monaco Editor draggable avec file tree, mini-chat AI (quick actions), diff view (accept/reject), import/export PC, navigation historique Git (◀ ▶ avec mode read-only), restauration de version.
 
 ### 7. Infrastructure d'Exécution
-- **Python Worker (`/opt/ECHO/docker-python-worker/`) :** Exécution isolée de code Python avec support `orjson`/`pybase64`.
+- **Python Worker (`/opt/ECHO/docker-python-worker/`) :** API Flask isolée exécutant du code Python en mémoire protégée via isolation système (`multiprocessing` / dossier temporaire). Conçue pour la validation analytique, elle supporte la restitution graphique en Base64 (`pybase64`) et la sérialisation asynchrone ultra-rapide (`orjson`).
 - **Browser Agent (`/opt/ECHO/docker-browser-agent/`) :** Instance Playwright (Python 3.14) pilotée par API (httpx, FastAPI) pour la navigation autonome.
 - **Embedding Worker (`/opt/ECHO/docker-embedding-worker/`) :** Architecture hybride. Offload prioritaire de l'inférence BAAI/bge-m3 vers le navigateur client via **Edge Computing (WebGPU)**. Fallback transparent sur le conteneur Docker (PyTorch CPU-only) en cas d'inactivité du navigateur.
 
@@ -118,6 +119,4 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.183.2*
-
-
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.183.11*

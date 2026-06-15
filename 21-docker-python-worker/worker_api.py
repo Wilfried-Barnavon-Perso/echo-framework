@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify # pyright: ignore[reportMissingImports]
-import sys, io, contextlib, traceback, multiprocessing, tempfile, os
+import sys, io, contextlib, traceback, multiprocessing, tempfile, os, queue
 import logging
 import orjson as json
 import pybase64 as base64
@@ -7,10 +7,12 @@ import pybase64 as base64
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : 1.5 (CLEAN ERROR)
+VERSION : 1.6 (DATA SCIENCE HEADLESS)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-05-27
+DATE MAJ : 2026-06-15
 
+CHANGELOG 1.6 :
+- Correction d'un risque de deadlock IPC (utilisation de queue.get avec timeout au lieu de p.join bloquant).
 CHANGELOG 1.5 :
 - Omission du champ 'error' quand stderr est vide (alignement standard ECHO).
 CHANGELOG 1.4 :
@@ -40,6 +42,7 @@ def run_isolated_process(code, result_queue):
             stdout_capture = io.StringIO()
             stderr_capture = io.StringIO()
             result = {'status': 'success', 'output': ''}
+            
             try:
                 # Contexte d'exécution vierge
                 execution_context = {'__name__': '__main__'}
@@ -51,6 +54,7 @@ def run_isolated_process(code, result_queue):
                 if stderr_output:
                     result['error'] = stderr_output
                     result['status'] = 'error'
+                    
             except Exception:
                 result['status'] = 'critical_error'
                 result['error'] = traceback.format_exc()
@@ -71,20 +75,24 @@ def execute_code():
     
     logger.info(f"🚀 Execution START | User: {user_id} | Timeout: {timeout}s | Code Len: {len(code)}")
 
-    queue = multiprocessing.Queue()
     # Création d'un processus OS distinct (Vrai parallélisme + Isolation mémoire)
-    p = multiprocessing.Process(target=run_isolated_process, args=(code, queue))
+    q_result = multiprocessing.Queue()
+    p = multiprocessing.Process(target=run_isolated_process, args=(code, q_result))
     p.start()
-    p.join(timeout=timeout)
     
-    if p.is_alive():
-        p.terminate()
+    try:
+        # On lit la queue avec un timeout. Si le buffer Base64 dépasse 64ko, 
+        # le child bloquerait si le parent fait un p.join() au lieu de lire la queue (Deadlock Linux Pipe).
+        res = q_result.get(timeout=timeout)
         p.join()
+    except queue.Empty:
+        if p.is_alive():
+            p.terminate()
+            p.join()
         logger.warning(f"⏰ Timeout | User: {user_id}")
         return jsonify({'status': 'error', 'error': f'Timeout ({timeout}s).'})
     
-    if not queue.empty():
-        res = queue.get()
+    if res is not None:
         status = res.get('status', 'unknown')
         logger.info(f"✅ Execution END | User: {user_id} | Status: {status}")
         return jsonify(res)

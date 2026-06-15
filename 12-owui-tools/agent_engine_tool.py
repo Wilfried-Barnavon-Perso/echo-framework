@@ -1,8 +1,9 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.5
-description: 1.5: Ajout du paramètre allowed_tools à delegate_to_agent pour restreindre l'arsenal.
+version: 1.6
+description: 1.6: Fix - Utilisation stricte de raw_parts dans l'historique pour empêcher le rejet 400 de la thoughtSignature par Gemini 3.x.
+             1.5: Ajout du paramètre allowed_tools à delegate_to_agent pour restreindre l'arsenal.
              1.4: Fusion expert-consultant / sous-agent. Renommage subagent→agent.
              Ajout role_name optionnel (Skill via echo_skills) sur delegate_to_agent :
              sans Skill = agent générique, avec Skill = expert qualifié.
@@ -574,7 +575,7 @@ async def _run_agent_loop(
                 progress = text[:text.rfind("QUESTION:")].strip()
 
                 # Parts brutes du modèle (thoughtSignature préservée)
-                model_raw = text_raw if text_raw else [{"text": text}]
+                model_raw = raw_parts if raw_parts else [{"text": text}]
                 history.append({"role": "model", "parts": model_raw})
                 state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
 
@@ -593,7 +594,7 @@ async def _run_agent_loop(
         # CAS 3 : Réponse finale (texte pur, pas de tool call)
         # =====================================================================
         if not real_fc:
-            model_raw = text_raw if text_raw else [{"text": "(Réponse vide)"}]
+            model_raw = raw_parts if raw_parts else [{"text": "(Réponse vide)"}]
             history.append({"role": "model", "parts": model_raw})
             state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
 
@@ -677,8 +678,8 @@ async def _run_agent_loop(
         # =====================================================================
         # Règle Gemini 3.x : le thoughtSignature est dans la 1ère functionCall part
         # (appels parallèles). On conserve les parts BRUTES — jamais reconstruites.
-        history.append({"role": "model", "parts": tools_raw})
-        state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", tools_raw, _sig(tools_raw))
+        history.append({"role": "model", "parts": raw_parts})
+        state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", raw_parts, _sig(raw_parts))
 
         # Exécution de chaque outil (potentiellement en parallèle dans les parts)
         response_parts = []

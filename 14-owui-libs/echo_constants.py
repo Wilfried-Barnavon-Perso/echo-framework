@@ -1,8 +1,9 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.19
-description: 5.19: Ajout DEFAULT_EDGE_EMBEDDING_TIMEOUT pour le Edge Embedding WebGPU.
+version: 5.20
+description: 5.20: Ajout ECHO_MAX_WAIT_TIMER pour la limite du Timer Généraliste.
+             5.19: Ajout DEFAULT_EDGE_EMBEDDING_TIMEOUT pour le Edge Embedding WebGPU.
              5.18: Ajout de DEEP_RESEARCH_MAX_CALLS_DEFAULT pour l'agent de recherche profonde.
              5.17: Ajout du dictionnaire FILE_INGESTION_STATUS pour centraliser les états d'ingestion.
              5.16: Réduction de MAX_DIRECT_MMEDIA_INJECT_SIZE de 5Mo à 1Mo pour optimisation de contexte.
@@ -533,6 +534,9 @@ DEFAULT_EDGE_EMBEDDING_TIMEOUT = 180
 # Limite Physique de Contexte
 # ECHO_MAX_CONTEXT_SIZE : Taille officielle du contexte absorbable par les modèles Gemini.
 ECHO_MAX_CONTEXT_SIZE = 1048576
+
+# Limite maximale (en secondes) pour le Wait Timer Généraliste
+ECHO_MAX_WAIT_TIMER = 180
 
 # ==============================================================================
 # 1.7 CONVERSION DE FICHIERS NON SUPPORTÉS

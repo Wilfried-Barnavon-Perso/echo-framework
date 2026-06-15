@@ -3,8 +3,8 @@ title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
 funding_url: https://github.com/echo-framework
-description: Injecte le bridge JavaScript WebGPU pour l'accélération matérielle des embeddings via bge-m3.
-version: 1.1
+description: Injecte le bridge JavaScript WebGPU pour l'accélération matérielle des embeddings via bge-m3. Gestion intelligente du cache navigateur.
+version: 1.2
 """
 
 import os
@@ -88,17 +88,22 @@ class Filter:
         # 5. Gestion des requêtes
         js_code = """
         (async function initEdgeEmbedding() {
-            const EDGE_VERSION = "1.5";
+            const EDGE_VERSION = "1.6";
             console.log("🚀 Initialisation ECHO Edge Embedding Bridge v" + EDGE_VERSION);
 
-            // 1. PURGE DU CACHE (Fix Bug v1.2 HTML Poison)
-            if (window.caches) {
-                try {
-                    await caches.delete('transformers-cache');
-                    console.log("🧹 Cache Transformers purgé avec succès.");
-                } catch(e) {
-                    console.warn("Impossible de vider le cache:", e);
+            // 1. GESTION DU CACHE CONDITIONNELLE
+            const storedVersion = localStorage.getItem('ECHO_EDGE_VERSION');
+            if (storedVersion !== EDGE_VERSION) {
+                console.log(`🔄 Nouvelle version détectée (${storedVersion} -> ${EDGE_VERSION}). Purge du cache...`);
+                if (window.caches) {
+                    try {
+                        await caches.delete('transformers-cache');
+                        console.log("🧹 Cache Transformers purgé avec succès.");
+                    } catch(e) {
+                        console.warn("Impossible de vider le cache:", e);
+                    }
                 }
+                localStorage.setItem('ECHO_EDGE_VERSION', EDGE_VERSION);
             }
 
             // 2. HARDWARE CHECK
@@ -310,18 +315,27 @@ class Filter:
                         const transformers = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0/dist/transformers.min.js');
                         transformers.env.allowLocalModels = false;
                         
-                        const extractor = await transformers.pipeline('feature-extraction', 'Xenova/bge-m3', {
-                            device: 'webgpu',
-                            dtype: 'fp16',
-                            progress_callback: (x) => {
-                                if (!window._echoEdgeConnecting) return; // Stop updates if cancelled
-                                if (x.status === 'downloading' || x.status === 'progress') {
-                                    const percent = x.total ? Math.round((x.loaded / x.total) * 100) : 0;
-                                    textRow.innerHTML = `Chargement modèle: <b>${percent}%</b>`;
-                                    progressBar.style.width = `${percent}%`;
+                        let extractor;
+                        try {
+                            extractor = await transformers.pipeline('feature-extraction', 'Xenova/bge-m3', {
+                                device: 'webgpu',
+                                dtype: 'fp16',
+                                progress_callback: (x) => {
+                                    if (!window._echoEdgeConnecting) return; // Stop updates if cancelled
+                                    if (x.status === 'downloading' || x.status === 'progress') {
+                                        const percent = x.total ? Math.round((x.loaded / x.total) * 100) : 0;
+                                        textRow.innerHTML = `Chargement modèle: <b>${percent}%</b>`;
+                                        progressBar.style.width = `${percent}%`;
+                                    }
                                 }
+                            });
+                        } catch (pipelineErr) {
+                            console.error("💥 Erreur lors du chargement du modèle (HTML Poison possible). Purge du cache...", pipelineErr);
+                            if (window.caches) {
+                                await caches.delete('transformers-cache');
                             }
-                        });
+                            throw pipelineErr; // Déclenche le catch(modelError) pour le repli CPU
+                        }
                         
                         if (!window._echoEdgeConnecting) return; // Cancelled during download
                         

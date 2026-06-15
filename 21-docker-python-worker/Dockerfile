@@ -1,16 +1,12 @@
-FROM python:3.14-slim
+FROM python:3.14
 
 LABEL maintainer="Wilfried BARNAVON"
-LABEL version="1.0"
+LABEL version="1.6"
 LABEL description="ECHO Python Worker (Data Science & Logic)"
 
 WORKDIR /app
 
-# Installation des dépendances système nécessaires à la compilation
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
+# L'image de base comprend déjà les build-essentials (gcc, python3-dev, etc.)
 
 # Installation des packages Python
 COPY requirements.txt .

@@ -1,8 +1,9 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.4
-description: 11.4: Hotfix - Restauration de la persistance Vault et SQLite (echo_resources) des captures de navigation.
+version: 11.5
+description: 11.5: Fix - Utilisation stricte de raw_parts dans l'historique pour empêcher le rejet 400 de la thoughtSignature par Gemini 3.x.
+             11.4: Hotfix - Restauration de la persistance Vault et SQLite (echo_resources) des captures de navigation.
              11.3: Hotfix - Restitution du payload (content/value) pour a11y_tree, read_text et url dans l'orchestrateur.
              11.2: Refonte Full-Stack API à 4 piliers, Mode Lot Modéré, Hiérarchie A11y.
              11.1: Mode hybride Lidar/Vision (ajout des coordonnées x,y en fallback) et renforcement de la règle Vision-On-Demand.
@@ -204,11 +205,11 @@ class Tools:
             tool_called = len(tools_raw) > 0
 
             if tool_called:
-                # 1. Ajout du message modèle avec TOUTES les parts d'outils (préservation thoughtSignature)
-                history.append({"role": "model", "parts": tools_raw})
+                # 1. Ajout du message modèle avec TOUTES les parts brutes (préservation thoughtSignature STRICTE)
+                history.append({"role": "model", "parts": raw_parts})
                 
-                sig = next((p["thoughtSignature"] for p in tools_raw if "thoughtSignature" in p), None)
-                state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", tools_raw, sig)
+                sig = next((p["thoughtSignature"] for p in raw_parts if "thoughtSignature" in p), None)
+                state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", raw_parts, sig)
                 
                 response_parts = []
                 last_view = None
@@ -287,9 +288,9 @@ class Tools:
                 # Synthèse finale
                 text_out = "".join(p.get("text", "") for p in text_raw)
                 
-                history.append({"role": "model", "parts": text_raw})
-                sig = next((p["thoughtSignature"] for p in text_raw if "thoughtSignature" in p), None)
-                state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", text_raw, sig)
+                history.append({"role": "model", "parts": raw_parts})
+                sig = next((p["thoughtSignature"] for p in raw_parts if "thoughtSignature" in p), None)
+                state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", raw_parts, sig)
                 
                 await events.status(f"✅ Mission terminée en {iterations} étapes.", done=True)
                 return wrap_tool_output(text=f"🤖 Synthèse du Navigateur :\n{text_out}", status={"status": "success", "steps": iterations, "sid": sid})

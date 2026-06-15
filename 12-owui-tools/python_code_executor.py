@@ -1,10 +1,11 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 6.2
-description: 6.0: Validation analytique (PRAF) par calcul empirique. Capacité graphique retirée (Headless).
+version: 6.3
+description: 6.0: Validation analytique par calcul empirique. Capacité graphique retirée (Headless).
              6.1: Alignement du status sur le standard wrap_tool_output ECHO.
              6.2: Correction d'un bug d'import (ECHO_PYTHON_WORKER_URL) et unbound local error (text_out).
+             6.3: Nettoyage sémantique de la docstring (Retrait de la mention PRAF).
 """
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
@@ -36,11 +37,10 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Exécute du code Python dans un environnement sandbox sécurisé et isolé pour la validation analytique (PRAF).
-        Idéal pour les calculs complexes, l'analyse de données (pandas, numpy, networkx) ou la manipulation de structures JSON.
-        Le code a accès à Internet mais ne partage pas ses fichiers avec les autres outils ECHO.
-        NOTE : La génération de graphiques ou schémas visuels n'est pas supportée par cet outil.
-        :param code: Le code Python complet à exécuter (ex: import pandas as pd; ...).
+        Exécute du code Python dans un environnement sandbox sécurisé et isolé pour la validation analytique.
+        Idéal pour les calculs complexes ou l'analyse de données (pandas, numpy).
+        Le code a accès à Internet. La génération de graphiques n'est pas supportée.
+        :param code: Le code Python complet à exécuter.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
 
@@ -64,15 +64,8 @@ class Tools:
                 if worker_res.get("error"):
                     echo_status["error"] = worker_res["error"]
 
-                # PURGE & REDIRECTION: Extraire les graphiques éventuels pour l'IA
-                multiparts = []
-                plots = worker_res.pop("plots", [])
-                if isinstance(plots, list):
-                    for plot_b64 in plots:
-                        multiparts.append({"type": "media", "mime_type": "image/png", "data": plot_b64})
-                
                 await events.status("Exécution terminée.", done=True)
-                return wrap_tool_output(text=text_out, status=echo_status, echo_tool_multiparts=multiparts)
+                return wrap_tool_output(text=text_out, status=echo_status)
             else:
                 err_msg = f"Erreur Worker (HTTP {response.status_code})"
                 await events.status(f"❌ {err_msg}", done=True)

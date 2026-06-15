@@ -1,8 +1,11 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.33
-description: 5.33: Bascule de monitor_ECHO vers events.emit pour compatibilité universelle avec les Outils.
+version: 5.36
+description: 5.36: Fix Python SyntaxError (échappement des f-strings pour editorRatio/previewRatio).
+             5.35: Redimensionnement proportionnel (ratio 33/67) pour le preview Codex.
+             5.34: Fix redimensionnement du preview Codex (min-width:0 sur flex item) empêchant la perte du bouton PDF et l'ascenseur horizontal.
+             5.33: Bascule de monitor_ECHO vers events.emit pour compatibilité universelle avec les Outils.
              5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro. 5.17: Ajout show_image_js (injection JS sans HTMLResponse).
              5.18: Tooltip AUTHENTIFICATION refondu : section QUOTAS détaillée (Crédits, Quota modèle, Reset, Type).
              5.19: Nouveaux paramètres quota (quota_model, RPD, RPM) dans la signature et le tooltip.
@@ -751,7 +754,8 @@ return new Promise(function(resolve) {{
       let lastModel = 'MODEL_FLASH';
       let modified = false;
       let previewOpen = false;
-      let previewWidth = 350;
+      let editorRatio = 33;
+      let previewRatio = 67;
       const PREVIEW_LANGS = ['markdown', 'html', 'css', 'xml'];
       let markedLoaded = false;
       let previewDebounceTimer = null;
@@ -760,7 +764,8 @@ return new Promise(function(resolve) {{
       let savedState = {{}};
       try {{ savedState = JSON.parse(localStorage.getItem(STATE_KEY) || '{{}}'); }} catch(e) {{}}
       if (savedState.previewOpen !== undefined) previewOpen = savedState.previewOpen;
-      if (savedState.previewWidth) previewWidth = savedState.previewWidth;
+      if (savedState.editorRatio) editorRatio = savedState.editorRatio;
+      if (savedState.previewRatio) previewRatio = savedState.previewRatio;
 
       // --- Theme Detection ---
       const isDark = document.documentElement.classList.contains('dark') ||
@@ -775,6 +780,20 @@ return new Promise(function(resolve) {{
       const accentColor = '#89b4fa';
       const hoverBg = isDark ? 'rgba(137,180,250,0.1)' : 'rgba(0,0,0,0.05)';
       const historyBg = isDark ? 'rgba(250,179,135,0.15)' : 'rgba(255,200,100,0.2)';
+
+      // --- Custom Scrollbars ---
+      if (!document.getElementById(CODEX_ID + '-scrollbars')) {{
+        const scrollStyle = document.createElement('style');
+        scrollStyle.id = CODEX_ID + '-scrollbars';
+        scrollStyle.textContent = `
+          #${{CODEX_ID}} *::-webkit-scrollbar {{ width: 10px; height: 10px; }}
+          #${{CODEX_ID}} *::-webkit-scrollbar-track {{ background: ${{isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)'}}; border-radius: 4px; }}
+          #${{CODEX_ID}} *::-webkit-scrollbar-thumb {{ background: ${{isDark ? '#555' : '#ccc'}}; border-radius: 4px; }}
+          #${{CODEX_ID}} *::-webkit-scrollbar-thumb:hover {{ background: ${{accentColor}}; }}
+          #${{CODEX_ID}} *::-webkit-scrollbar-corner {{ background: transparent; }}
+        `;
+        document.head.appendChild(scrollStyle);
+      }}
 
       // --- HUD Container ---
       const hud = document.createElement('div');
@@ -820,7 +839,7 @@ return new Promise(function(resolve) {{
       // Editor container
       const editorWrap = document.createElement('div');
       editorWrap.id = CODEX_ID + '-editor';
-      editorWrap.style.cssText = 'flex:1; overflow:hidden; position:relative;';
+      editorWrap.style.cssText = `flex:${{previewOpen ? editorRatio : 100}} 1 0%; overflow:hidden; position:relative; min-width:0;`;
 
       // Splitter (entre éditeur et preview)
       const splitter = document.createElement('div');
@@ -832,15 +851,15 @@ return new Promise(function(resolve) {{
       // Preview panel (panneau latéral droit)
       const previewPanel = document.createElement('div');
       previewPanel.id = CODEX_ID + '-preview';
-      previewPanel.style.cssText = `width:${{previewWidth}}px; display:none; flex-shrink:0; flex-direction:column; overflow:hidden; background:${{bgColor}};`;
+      previewPanel.style.cssText = `flex:${{previewRatio}} 1 0%; min-width:0; display:none; flex-direction:column; overflow:hidden; background:${{bgColor}};`;
       previewPanel.innerHTML = `
-        <div style="padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0; display:flex; align-items:center;">
-          <span id="${{CODEX_ID}}-preview-label" style="flex:1;">Preview</span>
+        <div style="padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0; display:flex; align-items:center; gap:8px;">
           <button id="${{CODEX_ID}}-preview-print" title="Print / PDF" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><polyline points="9 15 12 18 15 15"/></svg>
           </button>
+          <span id="${{CODEX_ID}}-preview-label" style="flex:1;">Preview</span>
         </div>
-        <div id="${{CODEX_ID}}-preview-content" style="flex:1; padding:12px; overflow:auto; font-size:14px; line-height:1.6;"></div>
+        <div id="${{CODEX_ID}}-preview-content" style="flex:1; padding:12px; overflow:auto; font-size:14px; line-height:1.6; min-width:0;"></div>
       `;
 
       body.appendChild(sidebar);
@@ -1166,7 +1185,8 @@ return new Promise(function(resolve) {{
             x: hud.style.left, y: hud.style.top,
             w: hud.style.width, h: hud.style.height,
             previewOpen: previewOpen,
-            previewWidth: previewWidth,
+            editorRatio: editorRatio,
+            previewRatio: previewRatio,
           }}));
         }} catch(e) {{}}
       }}
@@ -1399,8 +1419,13 @@ return new Promise(function(resolve) {{
         }}
 
         panel.style.display = previewOpen ? 'flex' : 'none';
-        panel.style.width = previewWidth + 'px';
         split.style.display = previewOpen ? 'block' : 'none';
+        if (previewOpen) {{
+          editorWrap.style.flex = `${{editorRatio}} 1 0%`;
+          panel.style.flex = `${{previewRatio}} 1 0%`;
+        }} else {{
+          editorWrap.style.flex = `1 1 0%`;
+        }}
 
         updatePreviewButton();
         saveState();
@@ -1542,9 +1567,13 @@ return new Promise(function(resolve) {{
         const hudRect = hud.getBoundingClientRect();
         const sidebarW = document.getElementById(CODEX_ID + '-sidebar').offsetWidth;
         const avail = hudRect.width - sidebarW - 5;
-        const newW = Math.max(200, Math.min(hudRect.right - e.clientX, avail - 300));
-        previewWidth = newW;
-        document.getElementById(CODEX_ID + '-preview').style.width = newW + 'px';
+        let edW = e.clientX - (hudRect.left + sidebarW);
+        edW = Math.max(200, Math.min(edW, avail - 200));
+        const prevW = avail - edW;
+        editorRatio = (edW / avail) * 100;
+        previewRatio = (prevW / avail) * 100;
+        editorWrap.style.flex = `${{editorRatio}} 1 0%`;
+        document.getElementById(CODEX_ID + '-preview').style.flex = `${{previewRatio}} 1 0%`;
       }});
       document.addEventListener('mouseup', () => {{
         if (isDraggingSplit) {{
@@ -1562,8 +1591,9 @@ return new Promise(function(resolve) {{
         const _pp = document.getElementById(CODEX_ID + '-preview');
         const _sp = document.getElementById(CODEX_ID + '-splitter');
         if (_pp) _pp.style.display = 'flex';
-        if (_pp) _pp.style.width = previewWidth + 'px';
         if (_sp) _sp.style.display = 'block';
+        editorWrap.style.flex = `${{editorRatio}} 1 0%`;
+        if (_pp) _pp.style.flex = `${{previewRatio}} 1 0%`;
       }}
       updatePreviewButton();
 
