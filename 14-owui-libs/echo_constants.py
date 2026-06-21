@@ -1,8 +1,11 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.20
-description: 5.20: Ajout ECHO_MAX_WAIT_TIMER pour la limite du Timer Généraliste.
+version: 5.23
+description: 5.23: Ajout de SESSION_RAG_CONVERSATION_SOURCE_ID pour le filtre d'historique.
+             5.22: Ajout des seuils de troncature du contexte (CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, CHARS_PER_TOKEN).
+             5.21: Ajout de PENDING_INGESTION pour le Data Broker (Auto-Ingestion Playwright).
+             5.20: Ajout ECHO_MAX_WAIT_TIMER pour la limite du Timer Généraliste.
              5.19: Ajout DEFAULT_EDGE_EMBEDDING_TIMEOUT pour le Edge Embedding WebGPU.
              5.18: Ajout de DEEP_RESEARCH_MAX_CALLS_DEFAULT pour l'agent de recherche profonde.
              5.17: Ajout du dictionnaire FILE_INGESTION_STATUS pour centraliser les états d'ingestion.
@@ -234,8 +237,9 @@ AGY_MODEL_MAP: dict[str, str] = {
 # Alias de compatibilité ascendante
 CODE_ASSIST_MODEL_MAP = AGY_MODEL_MAP
 EMBEDDING_DIM_V2   = 1024               # Dimension bge-m3 (remplace 768 SigLIP-2)
-COLLECTION_MEMORY    = "echo_memory"
-COLLECTION_EPHEMERAL = "echo_ephemeral"
+COLLECTION_META_ARTIFACTS = "echo_meta_artifacts"
+COLLECTION_SESSION_RAG    = "echo_session_rag"
+SESSION_RAG_CONVERSATION_SOURCE_ID = "conversation_history"
 
 # Poids de reranking par niveau d'importance mémorielle.
 # Appliqués dans recall_memories : score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]
@@ -302,6 +306,7 @@ FILE_INGESTION_STATUS = {
     "PUT_IN_CONTEXT":    "put_in_context",    # Injection directe dans le prompt (brut ou base64)
     "VECTORIZED_SUM_UP": "vectorized_sum_up", # Résumé via Smart Context (RAG)
     "INDEXED":           "indexed",           # Stockage SQLite seul (Fallback ou Image Web)
+    "PENDING_INGESTION": "pending_ingestion", # En attente d'ingestion (ex: Téléchargements Playwright)
 }
 
 # ==============================================================================
@@ -385,6 +390,7 @@ MAX_TOKENS_DEFAULT = 65535  # Limite universelle — tous modèles, toutes APIs 
 # --- INJECTION ET SMART CONTEXT (MÉMOIRE VECTORISÉE DE SESSION) ---
 MAX_DIRECT_TEXT_INJECT_SIZE   = 32768    # 32 Ko : Plafond d'injection directe pour le texte
 MAX_DIRECT_MMEDIA_INJECT_SIZE = 1048576  # 1 Mo  : Plafond d'injection directe base64 multimédia
+ECHO_SESSION_RAG_CHUNK_SIZE   = 1600     # ~400 tokens bge-m3 : Seuil de densité sémantique pour le RAG
 ECHO_MR_CHUNK_SIZE            = 182858   # 178 Ko : Taille d'un chunk Map-Reduce texte
 ECHO_MR_OVERLAP_SIZE          = 1024     # 1 Ko   : Recouvrement (overlap) entre chunks
 ECHO_MR_MAX_TOKENS            = 1600     # Limite de sortie (tokens) pour les distillations du Map-Reduce
@@ -534,6 +540,9 @@ DEFAULT_EDGE_EMBEDDING_TIMEOUT = 180
 # Limite Physique de Contexte
 # ECHO_MAX_CONTEXT_SIZE : Taille officielle du contexte absorbable par les modèles Gemini.
 ECHO_MAX_CONTEXT_SIZE = 1048576
+CONTEXT_WARNING_THRESHOLD = 0.80  # Alerte jaune
+CONTEXT_TRUNCATE_THRESHOLD = 0.90 # Alerte rouge et Troncature
+CHARS_PER_TOKEN = 4               # Heuristique standard
 
 # Limite maximale (en secondes) pour le Wait Timer Généraliste
 ECHO_MAX_WAIT_TIMER = 180
@@ -588,6 +597,15 @@ MIME_MAPPING_BIN = {
 # ==============================================================================
 # 3. HELPER FUNCTIONS
 # ==============================================================================
+
+# ==============================================================================
+# 9. SEUILS COGNITIFS ET DÉFENSE PASSIVE (V5)
+# ==============================================================================
+CHARS_PER_TOKEN = 4
+ECHO_MAX_CONTEXT_SIZE = 1000000  # Limite technique 1M (on peut cibler plus bas si Gemini Flash/Pro a des limites strictes pour ECHO)
+CONTEXT_WARNING_THRESHOLD = 0.80  # 80% : Toast d'alerte jaune (Resume in New Chat conseillé)
+CONTEXT_TRUNCATE_THRESHOLD = 0.90 # 90% : Troncature silencieuse
+
 
 def get_gemini_mime(file_path: str) -> tuple[str, bool]:
     """

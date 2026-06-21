@@ -26,7 +26,7 @@
 
     <h2>1. Table Ronde Delphi (Consult Council)</h2>
     
-    <p>La fonction <code>consult_council</code> permet de convoquer <strong>entre 2 et 5 experts</strong> pour délibérer sur une question complexe. Au fil des différents tours, chaque participant prend connaissance des arguments des autres et ajuste son analyse, garantissant l'émergence d'un consensus solide et nuancé. L'orchestrateur peut restreindre les outils disponibles via le paramètre optionnel <code>allowed_tools</code>.</p>
+    <p>La fonction <code>consult_council</code> permet de convoquer <strong>entre 2 et 5 experts</strong> pour délibérer sur une question complexe. Au fil des différents tours, chaque participant prend connaissance des arguments des autres et ajuste son analyse, garantissant l'émergence d'un consensus solide et nuancé.</p>
 
     <div class="svg-diagram">
       <div class="mermaid-wrapper">
@@ -66,7 +66,7 @@ sequenceDiagram
 
     <h2>2. Supervision & Critique Itérative (Supervised Workers)</h2>
     
-    <p>Contrairement au Conseil qui est horizontal et consultatif, la fonction <code>consult_supervised_workers</code> est <strong>verticale et coercitive</strong>. Elle distribue des tâches spécifiques à plusieurs <em>Workers</em> (avec des outils potentiellement restreints via <code>allowed_tools</code>), puis confie la validation de tous les livrables à un <em>Critique</em> omniscient.</p>
+    <p>Contrairement au Conseil qui est horizontal et consultatif, la fonction <code>consult_supervised_workers</code> est <strong>verticale et coercitive</strong>. Elle distribue des tâches spécifiques à plusieurs <em>Workers</em>, puis confie la validation de tous les livrables à un <em>Critique</em> omniscient.</p>
 
     <div class="svg-diagram">
       <div class="mermaid-wrapper">
@@ -120,13 +120,13 @@ stateDiagram-v2
     </table>
 
     <div class="transition-text">
-      <a href="08i_delegate_agent.html">← Delegate Agent</a>
+      <a href="08i_delegate_agent.html">&larr; Delegate Agent</a>
       &nbsp;&nbsp;
-      <a href="09_system_prompt.html">9. Le Kernel (System Prompt) ➔</a>
+      <a href="09_system_prompt.html">Le Kernel (System Prompt) &rarr;</a>
     </div>
 
     <footer>
-      ECHO v5 Documentation - Version <span class="version-badge">5.183.11</span>
+      ECHO v5 Documentation - Version <span class="version-badge">5.185.13</span>
     </footer>
   </main>
 

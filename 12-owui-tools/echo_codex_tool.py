@@ -1,8 +1,9 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 1.2
-description: 1.2: Registre Unifié V2 — save_codex_record → save_resource,
+version: 1.4
+description: 1.3: Restauration des descriptions de paramètres sémantiques pour create_codex.
+             1.2: Registre Unifié V2 — save_codex_record → save_resource,
              delete_codex_record → delete_resource.
              1.1: Correction docstring summarize_codex (distillation cloud Gemini).
              1.0: Éditeur multi-langage avec Git intégré. 9 fonctions Tool pour le LLM :
@@ -91,18 +92,19 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Crée un nouveau fichier dans le Codex de cette conversation.
-        Le fichier est versionné via Git. Le langage est auto-détecté depuis l'extension si non spécifié.
-        :param filename: Nom du fichier avec extension (ex: "main.py", "notes.md").
-        :param content: Contenu initial du fichier.
-        :param language: Langage (optionnel, auto-détecté depuis l'extension).
-        :param commit_message: Message de commit Git (optionnel, auto-généré si absent).
+        """Création de fichier dans le Codex avec versioning Git. Validation Registre (query_registry) requise.
+        :param filename: Nom du fichier cible.
+        :param content: Le contenu texte intégral à injecter dans le fichier.
+        :param language: (Optionnel) Langage du fichier.
+        :param commit_message: (Optionnel) Message Git.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
+
+        if repo.read_file(filename):
+            return wrap_tool_output(text=f"❌ Le fichier `{filename}` existe déjà. IMPLIQUE `edit_codex`.", status={"status": "error"})
 
         await events.status(f"📝 Création de {filename}...", done=False)
 
@@ -134,14 +136,11 @@ class Tools:
         __event_call__: Any = None,
     ) -> str:
         """
-        Modifie un fichier Codex existant. Deux modes :
-        - new_content fourni : remplacement direct du fichier, commit immédiat.
-        - instructions fournies (sans new_content) : délégation à un agent éditeur spécialisé
-          (sub-chat MODEL_FLASH) qui lit le fichier, applique les instructions et retourne le résultat.
-        :param filename: Fichier cible (doit exister dans le Codex).
-        :param new_content: Contenu modifié complet (mode direct).
-        :param instructions: Instructions d'édition en langage naturel (mode agent).
-        :param commit_message: Message de commit (optionnel, auto-généré si absent).
+        Modification d'un fichier Codex.
+        [CONTRAINTE CRITIQUE : Les paramètres `new_content` et `instructions` sont mutuellement exclusifs. Le Modèle DOIT obligatoirement fournir l'un OU l'autre, et ne doit JAMAIS utiliser les deux simultanément.]
+        :param filename: Fichier cible (existant).
+        :param new_content: (Optionnel) Remplacement intégral immédiat (exclut instructions).
+        :param instructions: (Optionnel) Directives d'édition (exclut new_content).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
@@ -151,7 +150,7 @@ class Tools:
         # Vérification existence
         existing = repo.read_file(filename)
         if not existing:
-            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable dans le Codex.", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable. IMPLIQUE `create_codex` ou vérification Registre.", status={"status": "error"})
 
         lang = CodexRepo.detect_language(filename)
 
@@ -237,10 +236,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Supprime un fichier du Codex. Irréversible (mais l'historique Git est conservé pour restauration).
-        :param filename: Fichier à supprimer.
-        """
+        """Suppression d'un fichier du Codex. Validation Registre requise."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
@@ -268,16 +264,10 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Lit le contenu d'un fichier Codex.
-        Sans start_line/end_line : fichier complet.
-        Avec : plage [start_line, end_line] (1-indexed, inclusif).
-        Le nombre total de lignes est toujours indiqué.
-        Pour les fichiers volumineux (>300 lignes), préférer summarize_codex pour une vue d'ensemble,
-        puis cibler avec start_line/end_line.
-        :param filename: Fichier à lire.
-        :param start_line: Première ligne (optionnel, 1-indexed).
-        :param end_line: Dernière ligne (optionnel, 1-indexed, inclusif).
+        """Lecture du contenu d'un fichier Codex. Paramètres optionnels de plage (start_line/end_line).
+        :param filename: Fichier cible.
+        :param start_line: (Optionnel) Ligne de début (1-indexed).
+        :param end_line: (Optionnel) Ligne de fin (inclusive).
         """
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
@@ -304,13 +294,9 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Recherche un pattern dans un fichier Codex.
-        Retourne les lignes correspondantes avec leurs numéros.
-        Utile pour cibler une zone avant read_codex(start_line, end_line).
-        :param filename: Fichier cible.
-        :param query: Pattern de recherche (texte littéral ou regex).
-        :param is_regex: Si True, query est interprété comme regex.
+        """Recherche d'un pattern dans un fichier Codex (littéral ou regex).
+        :param query: Motif de recherche.
+        :param is_regex: (Bool) Interprétation regex du motif.
         """
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
@@ -336,11 +322,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Produit un résumé technique structuré du fichier (≤ 8000 tokens) via distillation (Gemini).
-        Utile pour comprendre un fichier volumineux sans le charger intégralement dans le contexte.
-        :param filename: Fichier à résumer.
-        """
+        """Résumé technique structuré d'un fichier Codex par distillation Gemini."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
@@ -377,10 +359,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Liste tous les fichiers du Codex de cette conversation.
-        Retourne : filename, langage, nombre de lignes, dernier commit.
-        """
+        """Liste tous les fichiers du Codex de la session courante."""
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
@@ -404,7 +383,7 @@ class Tools:
 
     async def history_codex(
         self,
-        filename: str = None,
+        filename: Optional[str] = None,
         limit: int = 20,
         __user__: dict = {},
         __metadata__: dict = {},
@@ -412,10 +391,9 @@ class Tools:
         __event_call__: Any = None,
     ) -> str:
         """
-        Affiche l'historique Git du Codex.
-        Sans filename : historique global du repo. Avec : historique d'un fichier spécifique.
-        :param filename: Fichier cible (optionnel, tout le repo si absent).
-        :param limit: Nombre max de commits à afficher (défaut 20).
+        Affiche l'historique Git du Codex (global ou par fichier).
+        :param filename: (Optionnel) Nom du fichier pour filtrer l'historique.
+        :param limit: (Optionnel) Nombre maximum de commits à retourner. Le Modèle doit limiter (Maximum conseillé: 100) pour éviter la surcharge cognitive.
         """
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:

@@ -1,10 +1,25 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 9.8 (A11y Role/Name Resolution)
+VERSION : 9.13 (Async Threading Offload)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-06-14
+DATE MAJ : 2026-06-18
 
+CHANGELOG 9.13 :
+- OPTIM: Délégation des tâches CPU-bound (Compression WebP Pillow et parsing html2text) vers des threads natifs OS (`asyncio.to_thread`) pour libérer totalement l'Event Loop asynchrone et supporter le multi-chat intensif.
+CHANGELOG 9.12 :
+- OPTIM: Substitution globale de `networkidle` par `load` pour diviser les temps de navigation par 2-3.
+- OPTIM: Déploiement de FastAPI `ORJSONResponse` pour accélérer la sérialisation native des JSON.
+- OPTIM: Désactivation des sous-systèmes Chromium inutiles (sync, extensions, background-timer).
+CHANGELOG 9.11 :
+- OPTIM: Accélération drastique de la souris (Bézier Cubique) via la réduction des étapes (steps) et du sleep.
+- FEAT: Ajout d'un délai humain (visée oculaire) de 150-400ms entre la fin du mouvement et l'action (clic/type) pour un réalisme accru.
+CHANGELOG 9.10 :
+- OPTIM: Bridage du moteur Playwright Chromium à 9 FPS (--limit-fps) pour économiser drastiquement le CPU.
+- OPTIM: Ajustement dynamique de la compression WebP pour matcher le FPS de rendu.
+CHANGELOG 9.9 :
+- FEAT: Implémentation du support screencast natif Playwright pour l'orchestrateur.
+- FEAT: Encodage WebP avec compression de frames en direct + Frame HD finale (Pillow).
 CHANGELOG 9.8 :
 - FIX: Prise en charge du paramètre `name` dans `interact_a11y` pour filtrer les rôles et éviter le clic sur le premier élément du DOM par défaut.
 - FIX: Fallback intelligent (text) si l'élément n'est pas trouvé via Role+Name.
@@ -59,8 +74,11 @@ import uuid
 import logging
 import orjson as json
 import html2text
+import io
+from PIL import Image
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
 
@@ -70,6 +88,7 @@ logger = logging.getLogger(__name__)
 # --- ETAT GLOBAL ---
 IDLE_TIMEOUT_DEFAULT = 3600 # 1 heure de survie par defaut
 MAX_SESSIONS = 20
+RENDERING_FPS = 9 # Vitesse du moteur headless pour optimiser le CPU
 SESSIONS = {}
 SESSIONS_LOCK = asyncio.Lock()
 
@@ -184,6 +203,8 @@ class BrowserSession:
         self.pages = [] # Liste des onglets ouverts
         self.active_page_index = 0
         self.last_activity = time.time()
+        self.cdp_client = None
+        self.screencast_frames = []
 
     async def get_active_page(self):
         # Refresh activity on every access
@@ -216,8 +237,8 @@ class BrowserSession:
                 self.mouse_x, self.mouse_y = target_x, target_y
                 return
 
-            # Fitts Law: Temps dynamique "Power User"
-            steps = max(10, min(30, int(distance / 30)))
+            # Fitts Law: Temps dynamique "Power User" (Accéléré)
+            steps = max(5, min(15, int(distance / 60)))
             
             # Overshoot (Micro-correction) pour longues distances (réduit)
             overshoot_x = target_x + random.uniform(-5, 5) if distance > 300 else target_x
@@ -243,7 +264,7 @@ class BrowserSession:
                 y += random.uniform(-1, 1)
                 
                 await page.mouse.move(x, y)
-                await asyncio.sleep(random.uniform(0.005, 0.015))
+                await asyncio.sleep(random.uniform(0.001, 0.005))
                 
             # Micro-correction finale rapide
             if distance > 300:
@@ -291,7 +312,11 @@ async def lifespan(app: FastAPI):
         args=[
             "--no-sandbox", 
             "--disable-gpu", 
-            "--disable-dev-shm-usage"
+            "--disable-dev-shm-usage",
+            "--disable-background-timer-throttling",
+            "--disable-extensions",
+            "--disable-sync",
+            f"--limit-fps={RENDERING_FPS}"
         ]
     )
     cleanup_task = asyncio.create_task(session_cleanup_loop())
@@ -300,7 +325,7 @@ async def lifespan(app: FastAPI):
     await state.browser.close()
     await state.playwright.stop()
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, default_response_class=ORJSONResponse)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 async def session_cleanup_loop():
@@ -386,6 +411,116 @@ async def find_element_and_frame(page, selector):
             pass
     return None
 
+@app.post("/screencast/start")
+async def screencast_start(request: Request):
+    data = await request.json()
+    sid = data.get("session_id")
+    session = SESSIONS.get(sid)
+    if not session:
+        return {"status": "error", "message": "Session introuvable."}
+    
+    page = await session.get_active_page()
+    if not page:
+        return {"status": "error", "message": "Aucune page active."}
+        
+    try:
+        session.screencast_frames = []
+        if session.cdp_client:
+            try:
+                await session.cdp_client.send('Page.stopScreencast')
+            except: pass
+            session.cdp_client = None
+            
+        session.cdp_client = await page.context.new_cdp_session(page)
+        
+        vp = page.viewport_size
+        max_w = (vp["width"] // 2) if vp else 640
+        max_h = (vp["height"] // 2) if vp else 400
+        
+        async def handle_frame(event):
+            session.screencast_frames.append(event['data'])
+            try:
+                await session.cdp_client.send('Page.screencastFrameAck', {'sessionId': event['sessionId']})
+            except:
+                pass
+                
+        session.cdp_client.on("Page.screencastFrame", handle_frame)
+        await session.cdp_client.send('Page.startScreencast', {
+            'format': 'jpeg',
+            'quality': 50,
+            'maxWidth': max_w,
+            'maxHeight': max_h,
+            'everyNthFrame': 1
+        })
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"[{sid}] Screencast start error: {e}")
+        return {"status": "error", "error": str(e)}
+
+@app.post("/screencast/stop")
+async def screencast_stop(request: Request):
+    data = await request.json()
+    sid = data.get("session_id")
+    hd_b64_in = data.get("hd_b64")
+    session = SESSIONS.get(sid)
+    if not session:
+        return {"status": "error", "message": "Session introuvable."}
+        
+    page = await session.get_active_page()
+    
+    webp_b64 = None
+    hd_b64 = hd_b64_in
+    
+    try:
+        if session.cdp_client:
+            try:
+                await session.cdp_client.send('Page.stopScreencast')
+            except: pass
+            
+        if page and session.screencast_frames:
+            try:
+                vp = page.viewport_size or {"width": 1280, "height": 800}
+                
+                def process_frames(frames_data, hd_b64, viewport):
+                    _frames = []
+                    for f in frames_data:
+                        _img = Image.open(io.BytesIO(base64.b64decode(f)))
+                        _img = _img.resize((viewport["width"], viewport["height"]), Image.Resampling.NEAREST)
+                        _frames.append(_img)
+                        
+                    if _frames:
+                        if hd_b64:
+                            _hd_img = Image.open(io.BytesIO(base64.b64decode(hd_b64)))
+                            _frames.append(_hd_img)
+                        
+                        _out = io.BytesIO()
+                        _frame_duration = round(1 + 1000 / RENDERING_FPS)
+                        _frames[0].save(_out, format='WEBP', save_all=True, append_images=_frames[1:], duration=_frame_duration, loop=1)
+                        return base64.b64encode(_out.getvalue()).decode('utf-8')
+                    return None
+                    
+                webp_b64 = await asyncio.to_thread(process_frames, session.screencast_frames, hd_b64_in, vp)
+            except Exception as e:
+                logger.error(f"[{sid}] WebP encoding error: {e}")
+                    
+    except Exception as e:
+        logger.error(f"[{sid}] Screencast stop error: {e}")
+        
+    finally:
+        if session.cdp_client:
+            try:
+                await session.cdp_client.detach()
+            except:
+                pass
+            session.cdp_client = None
+        session.screencast_frames = []
+        
+    return {
+        "status": "success", 
+        "screenshot_b64": hd_b64, 
+        "webp_b64": webp_b64
+    }
+
 @app.post("/action")
 async def browser_action(request: Request):
     data = await request.json()
@@ -428,12 +563,22 @@ async def browser_action(request: Request):
             loc = loc.first
             await session.move_mouse_to_locator(page, loc)
             
+            # Délai humain avant interaction (visée oculaire)
+            await asyncio.sleep(random.uniform(0.15, 0.4))
+            
             if a_type == "click":
                 try:
                     await loc.click(timeout=10000)
                 except Exception as e:
                     logger.warning(f"[{sid}] Native semantic click failed, trying force: {e}")
                     await loc.click(force=True, timeout=5000)
+                try:
+                    box = await loc.bounding_box()
+                    if box:
+                        await asyncio.sleep(random.uniform(0.05, 0.15))
+                        await session.bezier_mouse_move(page, max(0, box['x'] + box['width']/2 + random.uniform(30, 100) * random.choice([1, -1])), max(0, box['y'] + box['height']/2 + random.uniform(30, 100) * random.choice([1, -1])))
+                except Exception:
+                    pass
             elif a_type == "type":
                 await loc.click(timeout=10000)
                 for char in text_to_type:
@@ -443,8 +588,57 @@ async def browser_action(request: Request):
                     if random.random() < 0.10: await asyncio.sleep(random.uniform(0.5, 1.2))
             elif a_type == "hover":
                 await loc.hover(timeout=10000)
+            elif a_type == "download":
+                async def handle_download():
+                    try:
+                        file_id = params.get("download_file_id", f"DL_{int(time.time())}")
+                        async with page.expect_download(timeout=120000) as download_info:
+                            await loc.click()
+                        download = await download_info.value
+                        
+                        dl_dir = os.path.join("/app/data/downloads", session.user_id, sid)
+                        os.makedirs(dl_dir, exist_ok=True)
+                        
+                        filename = download.suggested_filename
+                        final_path = os.path.join(dl_dir, f"{file_id}_{filename}")
+                        
+                        await download.save_as(final_path)
+                        logger.info(f"[{sid}] 📥 Download completed: {final_path}")
+                    except Exception as e:
+                        logger.error(f"[{sid}] ⚠️ Download error: {e}")
+
+                    asyncio.create_task(handle_download())
+                    return {"status": "downloading", "action": a_type, "message": "Téléchargement initié en tâche de fond."}
+                    
+            elif a_type == "save_target":
+                async def stealth_download():
+                    try:
+                        tag_name = await loc.evaluate("el => el.tagName.toLowerCase()")
+                        url_attr = "href" if tag_name == "a" else "src"
+                        target_url = await loc.get_attribute(url_attr)
+                        if not target_url:
+                            logger.error(f"[{sid}] Save_target failed: target has no href or src")
+                            return
+                        from urllib.parse import urljoin
+                        target_url = urljoin(page.url, target_url)
+                        file_id = params.get("download_file_id", f"DL_{int(time.time())}")
+                        dl_dir = os.path.join("/app/data/downloads", session.user_id, sid)
+                        os.makedirs(dl_dir, exist_ok=True)
+                        filename = target_url.split("/")[-1].split("?")[0]
+                        if not filename: filename = "downloaded_file"
+                        dest_path = os.path.join(dl_dir, f"{file_id}_{filename}")
+                        response = await page.context.request.get(target_url)
+                        body = await response.body()
+                        with open(dest_path, "wb") as f:
+                            f.write(body)
+                        logger.info(f"[{sid}] 📥 Stealth Download completed: {dest_path}")
+                    except Exception as e:
+                        logger.error(f"[{sid}] ⚠️ Stealth Download error: {e}")
+
+                asyncio.create_task(stealth_download())
+                return {"status": "downloading", "action": a_type, "message": "Téléchargement furtif initié en tâche de fond."}
                 
-            await page.wait_for_load_state("networkidle", timeout=15000)
+            await page.wait_for_load_state("load", timeout=15000)
             result["url"] = page.url
 
         elif action == "interact_dom":
@@ -461,8 +655,14 @@ async def browser_action(request: Request):
                 css_x, css_y = float(x) / dsf, float(y) / dsf
                 logger.info(f"[{sid}] 🖱️ Interact DOM ({a_type}) Coordinates: Img({x}, {y}) -> CSS({css_x}, {css_y})")
                 await session.bezier_mouse_move(page, css_x, css_y)
+                
+                # Délai humain avant interaction (visée oculaire)
+                await asyncio.sleep(random.uniform(0.15, 0.4))
+                
                 if a_type == "click":
                     await page.mouse.click(css_x, css_y)
+                    await asyncio.sleep(random.uniform(0.05, 0.15))
+                    await session.bezier_mouse_move(page, max(0, css_x + random.uniform(30, 100) * random.choice([1, -1])), max(0, css_y + random.uniform(30, 100) * random.choice([1, -1])))
                 elif a_type == "type":
                     await page.mouse.click(css_x, css_y)
                     for char in text_to_type:
@@ -480,14 +680,72 @@ async def browser_action(request: Request):
                     
                 await session.move_mouse_to_locator(page, loc)
                 
+                # Délai humain avant interaction (visée oculaire)
+                await asyncio.sleep(random.uniform(0.15, 0.4))
+                
                 if a_type == "click":
                     try:
                         await loc.click(timeout=10000)
                     except Exception as e:
-                        logger.warning(f"[{sid}] Native click failed, trying force: {e}")
+                        logger.warning(f"[{sid}] Native DOM click failed, trying force: {e}")
                         await loc.click(force=True, timeout=5000)
+                    try:
+                        box = await loc.bounding_box()
+                        if box:
+                            await asyncio.sleep(random.uniform(0.05, 0.15))
+                            await session.bezier_mouse_move(page, max(0, box['x'] + box['width']/2 + random.uniform(30, 100) * random.choice([1, -1])), max(0, box['y'] + box['height']/2 + random.uniform(30, 100) * random.choice([1, -1])))
+                    except Exception:
+                        pass
                 elif a_type == "hover":
                     await loc.hover(timeout=10000)
+                elif a_type == "download":
+                    async def handle_download():
+                        try:
+                            file_id = params.get("download_file_id", f"DL_{int(time.time())}")
+                            async with page.expect_download(timeout=120000) as download_info:
+                                await loc.click()
+                            download = await download_info.value
+                            
+                            dl_dir = os.path.join("/app/data/downloads", session.user_id, sid)
+                            os.makedirs(dl_dir, exist_ok=True)
+                            
+                            filename = download.suggested_filename
+                            final_path = os.path.join(dl_dir, f"{file_id}_{filename}")
+                            
+                            await download.save_as(final_path)
+                            logger.info(f"[{sid}] 📥 Download completed: {final_path}")
+                        except Exception as e:
+                            logger.error(f"[{sid}] ⚠️ Download error: {e}")
+
+                    asyncio.create_task(handle_download())
+                    return {"status": "downloading", "action": a_type, "message": "Téléchargement initié en tâche de fond."}
+                elif a_type == "save_target":
+                    async def stealth_download():
+                        try:
+                            tag_name = await loc.evaluate("el => el.tagName.toLowerCase()")
+                            url_attr = "href" if tag_name == "a" else "src"
+                            target_url = await loc.get_attribute(url_attr)
+                            if not target_url:
+                                logger.error(f"[{sid}] Save_target failed: target has no href or src")
+                                return
+                            from urllib.parse import urljoin
+                            target_url = urljoin(page.url, target_url)
+                            file_id = params.get("download_file_id", f"DL_{int(time.time())}")
+                            dl_dir = os.path.join("/app/data/downloads", session.user_id, sid)
+                            os.makedirs(dl_dir, exist_ok=True)
+                            filename = target_url.split("/")[-1].split("?")[0]
+                            if not filename: filename = "downloaded_file"
+                            dest_path = os.path.join(dl_dir, f"{file_id}_{filename}")
+                            response = await page.context.request.get(target_url)
+                            body = await response.body()
+                            with open(dest_path, "wb") as f:
+                                f.write(body)
+                            logger.info(f"[{sid}] 📥 Stealth Download completed: {dest_path}")
+                        except Exception as e:
+                            logger.error(f"[{sid}] ⚠️ Stealth Download error: {e}")
+
+                    asyncio.create_task(stealth_download())
+                    return {"status": "downloading", "action": a_type, "message": "Téléchargement furtif initié en tâche de fond."}
                 elif a_type == "type":
                     await loc.click(timeout=10000)
                     for char in text_to_type:
@@ -496,7 +754,7 @@ async def browser_action(request: Request):
                         await asyncio.sleep(delay_ms / 1000.0)
                         if random.random() < 0.10: await asyncio.sleep(random.uniform(0.5, 1.2))
                         
-            await page.wait_for_load_state("networkidle", timeout=15000)
+            await page.wait_for_load_state("load", timeout=15000)
             result["url"] = page.url
 
         elif action == "inspect_page":
@@ -536,7 +794,8 @@ async def browser_action(request: Request):
 
             elif target == "read_text":
                 content = await page.content()
-                result["content"] = h2t.handle(content)[:30000]
+                text_content = await asyncio.to_thread(h2t.handle, content)
+                result["content"] = text_content[:30000]
                 result["url"] = page.url
 
             elif target == "read_html":
@@ -611,7 +870,7 @@ async def browser_action(request: Request):
                         pass
                         
                     try:
-                        vision_data = await frame.evaluate(HIGHLIGHT_JS, global_index)
+                        vision_data = await asyncio.wait_for(frame.evaluate(HIGHLIGHT_JS, global_index), timeout=2.0)
                         elements = vision_data.get("elements", [])
                         for el in elements:
                             el['coords'][0] += offset_x
@@ -740,7 +999,7 @@ async def browser_action(request: Request):
             
             if cmd == "navigate":
                 if not val: return {"status": "error", "message": "URL manquante."}
-                await page.goto(val, wait_until="networkidle", timeout=60000)
+                await page.goto(val, wait_until="load", timeout=60000)
                 result["title"], result["url"] = await page.title(), page.url
             elif cmd == "scroll":
                 if val == "down": await page.evaluate("window.scrollBy(0, window.innerHeight * 0.8)")
@@ -751,13 +1010,13 @@ async def browser_action(request: Request):
                 result["url"] = page.url
             elif cmd == "press_key":
                 await page.keyboard.press(val or "Enter")
-                await page.wait_for_load_state("networkidle", timeout=30000)
+                await page.wait_for_load_state("load", timeout=30000)
                 result["url"] = page.url
             elif cmd == "pause":
                 await asyncio.sleep(float(val or 2))
                 result["url"] = page.url
             elif cmd == "refresh":
-                await page.reload(wait_until="networkidle", timeout=30000)
+                await page.reload(wait_until="load", timeout=30000)
                 result["url"] = page.url
             elif cmd == "reset":
                 async with SESSIONS_LOCK:
@@ -767,7 +1026,7 @@ async def browser_action(request: Request):
                 result["message"] = "Session réinitialisée."
             elif cmd == "tab_new":
                 new_p = await session.context.new_page()
-                await new_p.goto(val or "about:blank", wait_until="networkidle")
+                await new_p.goto(val or "about:blank", wait_until="load")
                 session.pages.append(new_p)
                 session.active_page_index = len(session.pages) - 1
                 result["message"] = f"Nouvel onglet ouvert (Index: {session.active_page_index})"

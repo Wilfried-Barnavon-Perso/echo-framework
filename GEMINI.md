@@ -1,4 +1,4 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.183.11
+# 🧠 ECHO Framework (GEMINI.md) - Version 5.185.13
 
 ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
 
@@ -32,6 +32,7 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 - **Base vectorielle des souvenirs :** Système RAG vectoriel (Qdrant) avec Distillation Contextuelle automatique par **fenêtre glissante déterministe** (`WINDOW_SIZE`=5 + `WINDOW_OVERLAP`=2, configurable). Nettoyage des messages (role+content+fichiers) pour optimiser le budget tokens de la distillation Cloud.
 - **Gestion de l'importance des souvenirs :** Algorithme de fusion sémantique préservant le score `memory_importance` maximal des souvenirs.
 - **Smart Context :** Injection de faits via des balises XML structurelles (`<smart_context>`) et utilisation de `source_id` natifs (au lieu de slugs) pour la Mémoire Vectorisée de Session.
+- **Conversation RAG Filter :** Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG par fenêtre glissante déterministe.
 - **Pipeline d'Ingestion Zéro-RAM :** Conversion native des documents Office en Markdown (MarkItDown) et traitement hybride transparent (Mémoire Vectorisée, Codex Git, Fallback SQLite) géré dynamiquement par le filtre.
 - **Edge Embedding Bridge :** Offload de l'inférence vectorielle (bge-m3) vers le navigateur client via WebGPU/WASM (WebSocket), réduisant drastiquement la charge CPU avec bascule automatique sur le backend Docker en cas d'inactivité.
 
@@ -43,7 +44,7 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 
 ### 4. L'Arsenal (`/opt/ECHO/owui-tools/`)
 - **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Cascade cognitive centralisée via `call_cascade()`, persistance Markdown dans le Vault, registre SQLite par chat, injection proprioceptive dans `registre_plan`.
-- **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites de gestion mémoire : `save_memory` (long terme, importance 1→5), `search_memory` (reranking pondéré), `save_session_context` / `search_session_context` (Mémoire Vectorisée de Session), `forget_memory`, `list_memory_topics`.
+- **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites basés sur la nomenclature Méta-Artéfacts : `update_meta_artifact`, `search_meta_artifacts` (avec reranking pondéré et filtres temporels), `consult_meta_artifacts`, `delete_meta_artifact_item`, `save_session_context` et `search_session_context` (avec recherche globale inter-sessions et filtres temporels).
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes) via `universal_visual_generator.py` et `echo_visuals.py` (Pattern 'Data Island' pour isoler le JS).
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) pilotée par **boucle OODA autonome** via une **API à 4 piliers** (A11y, DOM, Inspect, Control). Utilise un mode hybride Lidar/Vision (Vision-On-Demand) et une intégration multimodale (Gemini 3.x).
 - **Sovereign Web Search (`sovereign_web_search.py`) :** Outils de recherche souveraine via SearXNG (recherche classique One-Shot) et DuckDuckGo (réponse instantanée factuelle), avec capacité de délégation à un agent de recherche profonde (Deep Research Agent) autonome pour les requêtes complexes multi-tours.
@@ -58,7 +59,7 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 - **Dashboard Actif :** Interface interactive (Sidebar asynchrone) de monitoring du cluster Docker, gestion renforcée du SSO (révocation, purge dynamique sécurisée des utilisateurs via garde-fous API) et supervision des ressources système.
 - **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec Kill-Switch PWA et routage natif (`location = /ws/edge-embed`) garantissant l'accès direct au Worker d'Embedding pour le pont WebGPU.
 - **Régulation & Consolidation :** Optimisation physique SQLite (Vacuum/WAL), gestion des sauvegardes à chaud (incluant les bases IdP) et autosécurité Docker (rotation automatisée des logs pour prévenir la saturation disque).
-- **Purge Temporelle des Souvenirs (TTL) :** Centralisation du processus d'élagage de la base vectorielle des souvenirs pour optimiser les performances.
+- **Purge Vectorielle & SQLite :** Centralisation du processus d'élagage temporel (TTL) et de la purge des orphelins dans les collections Qdrant (`echo_meta_artifacts`, `echo_session_rag`), incluant la purge dynamique utilisateur par introspection SQLite.
 - **Configuration Automatique (Open WebUI) :** Script d'orchestration post-déploiement (`00-echo-scripts/config-owui.sh`) paramétrant dynamiquement l'interface, les modèles et les permissions via API à partir du template statique (`01-config/webui-settings.json`).
 
 ### 6. Actions Interactives (`/opt/ECHO/owui-actions/`)
@@ -108,6 +109,7 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **UI HUD :** Toutes les interactions visuelles (Jauges de contexte, Status) passent par `echo_ui.py` avec gestion événementielle universelle (`events.emit`) et garde-fous mobiles (`get_mobile_guard_js`).
 - **API Resilience :** `EchoGeminiClient` gère le multi-provider, le basculement sur erreur 429/500 et le backoff exponentiel.
 - **Politique Modèle Centralisée :** `call_cascade()` dans `echo_utils.py` gère le clamping (politique Pipe via UserValve `MODEL_SELECTION`), l'injection `thinkingConfig` automatique, la cascade descendante PRO→FLASH→LITE et la signalisation (🔒 clamping, ⚡ cascade, ❌ épuisement). `wrap_cascade_output()` rend le modèle effectif visible au LLM orchestrateur.
+- **Règle d'Énonciation :** Le Kernel statique et les docstrings des outils doivent impérativement adopter un ton impersonnel (ex: "Le Modèle doit", "Permet au Modèle de"). L'utilisation de la 2ème personne ("Tu es...", "Tu DOIS") est STRICTEMENT réservée aux prompts internes (`system_prompt`) destinés aux sous-agents pour définir leur persona.
 
 ## 📚 Documentation Technique
 
@@ -119,4 +121,4 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.183.11*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.185.13*

@@ -52,6 +52,11 @@
 
     <h2>1. Monitoring Holistique (Dashboard Gridstack)</h2>
 
+    <div class="note-box" style="margin-bottom: 20px;">
+      <h4>📸 Découverte Visuelle</h4>
+      <p>Pour explorer des captures d'écran de ces différentes interfaces en conditions réelles, consultez la section <a href="14_manuel_utilisateur.html#admin-manager-visite">Console d'Infrastructure</a> du Manuel Utilisateur.</p>
+    </div>
+
     <p>
       L'interface de l'Admin Manager repose sur un <strong>Dashboard interactif</strong> propulsé par
       <code>Gridstack.js</code>. Il permet de réorganiser les widgets en drag &amp; drop et affiche
@@ -86,9 +91,9 @@
       </div>
       <div class="mermaid">
 flowchart TD
-  AM[Admin Manager<br/>Cron Jobs] --> TTL[Purge TTL<br/>echo_memory]
+  AM[Admin Manager<br/>Cron Jobs] --> TTL[Purge TTL<br/>echo_meta_artifacts]
   AM --> ORPH[Sync Qdrant<br/>Points orphelins]
-  AM --> EPH[Purge Post-Session<br/>echo_ephemeral]
+  AM --> EPH[Purge Post-Session<br/>echo_session_rag]
   AM --> VAC[Vacuum & Consolidation<br/>SQLite]
   AM --> BAK[Sauvegardes à chaud<br/>/backups]
 
@@ -105,7 +110,7 @@ flowchart TD
     <h3><code>run_semantic_pruning()</code> - Purge TTL</h3>
     <p>
       Cette fonction (<code>server.py</code>) itère sur tous les points de la collection
-      <code>echo_memory</code> dans Qdrant et supprime ceux dont l'âge dépasse la durée de
+      <code>echo_meta_artifacts</code> dans Qdrant et supprime ceux dont l'âge dépasse la durée de
       rétention associée à leur niveau d'importance :
     </p>
     <table>
@@ -133,10 +138,10 @@ flowchart TD
       mais dont les vecteurs subsistent dans Qdrant.
     </p>
 
-    <h3>Purge Post-Session (<code>echo_ephemeral</code>)</h3>
+    <h3>Purge Post-Session (<code>echo_session_rag</code>)</h3>
     <p>
       Suppression de tous les vecteurs appartenant à un <code>chat_id</code> terminé dans la
-      collection <code>echo_ephemeral</code>. Cette purge garantit que les données intermédiaires
+      collection <code>echo_session_rag</code>. Cette purge garantit que les données intermédiaires
       (analyses web, distillations) ne s'accumulent pas indéfiniment.
     </p>
 
@@ -214,13 +219,13 @@ flowchart TD
     </div>
 
     <div class="transition-text">
-      <a href="10_infrastructure.html">← 10. Périphériques et Infrastructure</a>
+      <a href="10_infrastructure.html">&larr; Périphériques & Infra</a>
       &nbsp;&nbsp;
-      <a href="10b_echo_auth_sso.html">10b. ECHO Auth SSO &amp; MFA ➔</a>
+      <a href="10b_echo_auth_sso.html">ECHO Auth SSO & MFA &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

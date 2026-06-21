@@ -58,6 +58,14 @@
       <li><strong>Control (<code>action_browser_control</code>)</strong> : Manipulation du navigateur (navigation, scroll, gestion des onglets, touches clavier).</li>
     </ul>
 
+    <div class="tech-spec">
+      <h4>⚙️ Optimisation de l'Exécution (Gemini 3.x)</h4>
+      <ul>
+        <li><strong>Parallel Function Calling</strong> : L'agent est autorisé à grouper plusieurs actions non mutantes dans le même tour (règle 3), et à demander simultanément plusieurs extractions de l'état (règle 1) pour accélérer sa boucle OODA.</li>
+        <li><strong>Injection Multimodale Native</strong> : Les captures d'écran sont injectées directement via l'attribut <code>parts</code> de la <code>functionResponse</code>, évitant la perte du contexte visuel et les erreurs 400.</li>
+      </ul>
+    </div>
+
     <div class="note-box">
       <h4>Vision-On-Demand et Mode Lidar</h4>
       <p>
@@ -158,6 +166,15 @@
       <li><strong>desktop</strong> : Chrome 120, 1280×800 - pour les sites nécessitant un viewport large.</li>
     </ul>
 
+    <h2>Défense Passive et Gestion du Contexte</h2>
+    <p>
+      Pour éviter l'explosion du contexte avec de multiples itérations et des DOM lourds, le système implémente une double défense :
+    </p>
+    <ul>
+      <li><strong>Proactive Context Pruning :</strong> Élagage dynamique des cartes DOM, arbres A11y et images obsolètes dans les anciens messages de l'historique (seuil configurable via <code>PRUNE_CONTENT_THRESHOLD</code>).</li>
+      <li><strong>Troncature Silencieuse (Smart Pop) :</strong> Évaluation de la taille globale en tokens (<code>estimate_token_size</code>). Si le contexte approche la limite maximale (<code>CONTEXT_TRUNCATE_THRESHOLD</code>), les messages les plus anciens sont purgés en garantissant l'intégrité des paires ToolCall/ToolResponse pour prévenir tout crash de l'API Gemini.</li>
+    </ul>
+
     <h2>Recherche Web Souveraine</h2>
     <p>
       La recherche Web est fournie par l'outil séparé <code>sovereign_web_search.py</code>, qui offre un double moteur :
@@ -184,13 +201,13 @@
     </p>
 
     <div class="transition-text">
-      <a href="08_arsenal_outils.html">← Retour à l'Arsenal</a>
+      <a href="08a_strategic_planner.html">&larr; Planification Stratégique</a>
       &nbsp;&nbsp;
-      <a href="08c_vault_explorer.html">Explorateur de l'Espace Personnel ➔</a>
+      <a href="08c_vault_explorer.html">Explorateur de l'Espace Personnel &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

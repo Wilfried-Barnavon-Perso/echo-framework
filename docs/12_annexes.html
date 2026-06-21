@@ -68,7 +68,7 @@
         <tr>
           <td><code>echo-qdrant-data</code></td>
           <td><code>/qdrant/storage</code></td>
-          <td>Index vectoriels Qdrant (<code>echo_memory</code>, <code>echo_ephemeral</code>).</td>
+          <td>Index vectoriels Qdrant (<code>echo_meta_artifacts</code>, <code>echo_session_rag</code>).</td>
         </tr>
         <tr>
           <td><code>echo-backups</code></td>
@@ -193,7 +193,7 @@
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><code>chat_id</code></td><td>TEXT PK</td><td>Session de rattachement.</td></tr>
-        <tr><td><code>file_id</code></td><td>TEXT PK</td><td>UUID du fichier (clé composite avec chat_id).</td></tr>
+        <tr><td><code>source_id</code></td><td>TEXT PK</td><td>UUID natif (clé composite avec chat_id).</td></tr>
         <tr><td><code>filename</code></td><td>TEXT</td><td>Nom original du fichier uploadé.</td></tr>
         <tr><td><code>mime</code></td><td>TEXT</td><td>Type MIME détecté.</td></tr>
         <tr><td><code>mode</code></td><td>TEXT</td><td>Mode de traitement (<code>direct</code>, <code>vectorized_sum_up</code>, <code>rag_organic</code>).</td></tr>
@@ -265,7 +265,7 @@
       <thead><tr><th>Collection</th><th>Constante</th><th>Dimensions</th><th>Distance</th><th>Scope</th><th>Durée de vie</th></tr></thead>
       <tbody>
         <tr>
-          <td><code>echo_memory</code></td>
+          <td><code>echo_meta_artifacts</code></td>
           <td><code>COLLECTION_MEMORY</code></td>
           <td>1024 (bge-m3)</td>
           <td>Cosinus</td>
@@ -273,7 +273,7 @@
           <td>Permanent - TTL par niveau (Admin Manager)</td>
         </tr>
         <tr>
-          <td><code>echo_ephemeral</code></td>
+          <td><code>echo_session_rag</code></td>
           <td><code>COLLECTION_EPHEMERAL</code></td>
           <td>1024 (bge-m3)</td>
           <td>Cosinus</td>
@@ -302,7 +302,7 @@
         <tr><td><code>ECHO_RETRY_JITTER_MIN/MAX</code></td><td>0,7 / 1,3</td><td>Pipe</td><td>Plage de jitter aléatoire pour éviter les tempêtes de retry.</td></tr>
         <tr><td><code>PKCE_CALLBACK_TIMEOUT</code></td><td>300 s</td><td>Auth</td><td>Délai maximal pour l'utilisateur pour autoriser dans le navigateur.</td></tr>
         <tr><td><code>GOOGLE_OAUTH_TOKEN_LIFETIME</code></td><td>3 300 s</td><td>Auth</td><td>Durée proactive de rafraîchissement du token (55 min).</td></tr>
-        <tr><td><code>SCORE_THRESHOLD</code></td><td>0,45</td><td>Mémoire</td><td>Score pondéré minimal pour inclure un résultat de <code>search_memory</code>.</td></tr>
+        <tr><td><code>SCORE_THRESHOLD</code></td><td>0,45</td><td>Mémoire</td><td>Score pondéré minimal pour inclure un résultat de <code>search_meta_artifacts</code>.</td></tr>
         <tr><td><code>PROBE_TIMEOUT</code></td><td>120 s</td><td>Vault Explorer</td><td>Timeout de l'analyse sémantique <code>semantic_probe</code> (appel LLM).</td></tr>
       </tbody>
     </table>
@@ -340,13 +340,13 @@
     </table>
 
     <div class="transition-text">
-      <a href="11_edge_inference.html">← 11. Inférence Distante</a>
+      <a href="11_edge_inference.html">&larr; Inférence Distante (Edge Computing)</a>
       &nbsp;&nbsp;
-      <a href="13_credits.html">13. Crédits Open Source ➔</a>
+      <a href="13_credits.html">Crédits Open Source &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

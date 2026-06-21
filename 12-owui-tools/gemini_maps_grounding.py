@@ -53,12 +53,7 @@ class Tools:
         __event_call__: Any = None
     ) -> Union[dict, Tuple[HTMLResponse, dict]]:
         """
-        Recherche des lieux, commerces ou itinéraires, affiche une carte via Google Maps.
-        Affiche une interface visuelle interactive à l'utilisateur et fournit les détails textuels au modèle.
-
-        NOTE : Cet outil utilise call_cascade avec MODEL_LITE (modèle plancher — aucun
-        fallback descendant possible). En cas de quota 429 ou d'indisponibilité, le modèle
-        doit signaler cette limitation technique à l'utilisateur.
+        Recherche géo-spatiale (lieux, itinéraires) via Google Maps. Affiche l'UI locale. Le Modèle analyse ensuite les données textuelles retournées.
         """
         user_id = __user__.get("id", "system")
         chat_id = (__metadata__ or {}).get("chat_id")
@@ -113,8 +108,7 @@ class Tools:
             candidates = data.get("candidates", [])
             if not candidates:
                 return wrap_tool_output(
-                    text="⚠️ Google Maps n'a renvoyé aucun résultat pour cette recherche "
-                         "ou cet itinéraire. Veuillez préciser votre demande.",
+                    text="⚠️ Google Maps n'a renvoyé aucun résultat. Le Modèle DOIT demander à l'utilisateur de préciser sa recherche.",
                     status={"status": "no_results"}
                 )
 

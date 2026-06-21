@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Les Filtres ECHO v5 : new_context_filter (AEC), conversation_memory_filter (vectorisation Qdrant), et edge_embed_bridge_filter (pont WebGPU).">
+  <meta name="description" content="Les Filtres ECHO v5 : new_context_filter (AEC), conversation_rag_filter (vectorisation Qdrant), et edge_embed_bridge_filter (pont WebGPU).">
   <title>ECHO v5 - 6. Les Filtres (Conscience)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -23,7 +23,7 @@
       <strong>avant</strong> (hook <code>inlet</code>) ou <strong>après</strong> (hook <code>outlet</code>)
       qu'ils atteignent le Pipe. ECHO en déploie trois, aux rôles complémentaires :
       <code>new_context_filter.py</code> prépare le contexte en amont,
-      <code>conversation_memory_filter.py</code> consolide la mémoire en aval, et
+      <code>conversation_rag_filter.py</code> consolide la mémoire en aval, et
       <code>edge_embed_bridge_filter.py</code> gère l'injection de l'inférence distante WebGPU.
     </p>
 
@@ -74,7 +74,7 @@ flowchart LR
   CODEX -->|"Si > 256 Ko"| EXTR["🔍 Extraction Transmodale<br/>(API ou Lecture Locale)"]
   AN -->|"Multimédia > 256 Ko"| EXTR
   
-  EXTR -->|"Texte unifié"| RAG["🧱 Mémoire Vectorisée de Session & Map-Reduce<br/>(Qdrant echo_ephemeral)"]
+  EXTR -->|"Texte unifié"| RAG["🧱 Mémoire Vectorisée de Session & Map-Reduce<br/>(Qdrant echo_session_rag)"]
   AN -->|"Déjà dans le Vault<br/>(file_id détecté)"| VAULT["📂 Référence Vault"]
 
   OWUI -->|"Images inline<br/>(drag/paste)"| INLINE["🖼️ Extraction Ordonnée<br/>(texte + images entrelacés)"]
@@ -126,7 +126,7 @@ flowchart LR
       </p>
     </div>
 
-    <h3>Mémoire Vectorisée de Session Transmodale et Map-Reduce</h3>
+    <h3>Mémoire Vectorisée de Session Transmodale et Synthèse Guidée par RAG (O(1))</h3>
     <p>
       Lorsqu'un fichier dépasse <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko) ou nécessite un traitement complexe, le filtre déclenche
       un processus approfondi en arrière-plan : la <strong>Mémoire Vectorisée de Session</strong>. 
@@ -134,13 +134,11 @@ flowchart LR
     </p>
     <p>
       Le texte brut unifié est immédiatement vectorisé par <code>bge-m3</code> (1024d) et stocké dans 
-      la collection <code>echo_ephemeral</code>. Ensuite, un processus de <strong>Map-Reduce</strong> 
-      est exécuté (via l'API Gemini) pour générer un résumé synthétique. 
-      Un <em>Fast-path</em> (court-circuit) est appliqué si le texte est suffisamment court (<code>ECHO_MR_SUMMARY_MAX_WORDS</code>), 
-      évitant une distillation inutile.
+      la collection <code>echo_session_rag</code>. Ensuite, un processus de <strong>Synthèse Guidée par RAG (O(1))</strong>
+      (introduit en v7.37) est exécuté. Plutôt que de distiller le document de bout en bout, le système génère une requête vectorielle stratégique (<em>"Introduction, résumé exécutif, conclusion, thèmes clés..."</em>) pour extraire dynamiquement les <code>SMART_CONTEXT_CHUNK_LIMIT</code> (défaut: 10) passages les plus pertinents depuis la base Qdrant. Le résumé est ensuite généré via l'API Gemini exclusivement à partir de ces extraits. Un <em>Fast-path</em> (court-circuit) est appliqué si le texte est suffisamment court (<code>ECHO_MR_SUMMARY_MAX_WORDS</code>).
     </p>
     <p>
-      Le modèle principal reçoit uniquement le résumé et le <code>source_id</code>, son statut devenant <code>vectorized_sum_up</code>.
+      Le modèle principal reçoit uniquement le résumé exhaustif et le <code>source_id</code>, son statut devenant <code>vectorized_sum_up</code>.
       Il peut interroger la donnée brute avec précision via l'outil <code>search_session_context(source_id, query)</code> 
       sans saturer sa fenêtre de contexte.
     </p>
@@ -159,7 +157,7 @@ flowchart LR
 
     <div class="code-header">Structure du bloc AEC V2 (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.183.11"
+version_framework_echo: "5.185.13"
 modèle_actuel:   "##MODEL_ID##"
 modèle_origine:  "##MODEL_ORIGIN##"
 nom_utilisateur: "anonyme"
@@ -177,7 +175,7 @@ timezone:        "Europe/Paris"
 &lt;/evenement_systeme&gt;
 
 &lt;smart_context filename="rapport.pdf" mime_type="application/pdf" mode="vectorized_sum_up" source_id="U_abc123_C_xyz789_T_1748246400"&gt;
-[Résumé ≤ 300 mots généré par Map-Reduce local]
+[Résumé exhaustif et structuré généré par Synthèse Guidée par RAG]
 
 > ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_session_context`
 &lt;/smart_context&gt;</code></pre>
@@ -198,96 +196,46 @@ timezone:        "Europe/Paris"
       secret ne « fuit » vers l'interface visuelle quelle que soit la réponse du modèle.
     </p>
 
-    <h2>Filtre 2 - <code>conversation_memory_filter.py</code></h2>
+    <h2>Filtre 2 - <code>conversation_rag_filter.py</code></h2>
 
     <p>
-      Ce filtre ne traite que la phase <strong>Outlet</strong> (post-génération). Il orchestre la
-      consolidation de la mémoire organique à long terme dans Qdrant via une
-      <strong>fenêtre glissante déterministe</strong> à stride fixe.
+      Ce filtre ne traite que la phase <strong>Outlet</strong> (post-génération). Son objectif unique est d'injecter sans latence l'historique conversationnel dans la mémoire de travail vectorisée de la session (<code>echo_session_rag</code>), afin d'alléger le contexte principal et de permettre l'exploration d'historiques profonds via le RAG.
     </p>
 
-    <h3>Fenêtre glissante déterministe</h3>
+    <h3>Fenêtre glissante déterministe et Zéro-Latence</h3>
     <p>
-      Le déclenchement de la distillation repose sur deux paramètres configurables (Valves) :
+      Le déclenchement de l'indexation repose sur un paramètre configurable unique (Valve) :
     </p>
     <table>
-      <thead><tr><th>Valve</th><th>Défaut</th><th>Min</th><th>Max</th><th>Rôle</th></tr></thead>
+      <thead><tr><th>Valve</th><th>Défaut</th><th>Rôle</th></tr></thead>
       <tbody>
-        <tr><td><code>WINDOW_SIZE</code></td><td>5</td><td>2</td><td>10</td><td>Nombre de messages ajoutés avant déclenchement</td></tr>
-        <tr><td><code>WINDOW_OVERLAP</code></td><td>2</td><td>0</td><td>5</td><td>Messages de la fenêtre précédente réinjectés pour continuité contextuelle</td></tr>
+        <tr><td><code>WINDOW_SIZE</code></td><td>1</td><td>Nombre de messages à attendre avant de déclencher l'indexation dans le Session RAG</td></tr>
       </tbody>
     </table>
     <p>
       Tous les <code>WINDOW_SIZE</code> messages, le filtre extrait une fenêtre de
-      <code>WINDOW_SIZE + WINDOW_OVERLAP</code> messages (défaut : 7) et lance la distillation
-      en arrière-plan via <code>asyncio.create_task</code>. Le recouvrement de 2 messages
-      assure la continuité sémantique entre les fenêtres successives, sans perte d'information
-      aux jointures.
+      <code>WINDOW_SIZE</code> messages récents et lance l'indexation
+      en arrière-plan via <code>asyncio.create_task</code>. (L'ancien système d'overlap a été supprimé en v1.1 pour éviter la redondance vectorielle).
     </p>
 
-    <h3>Nettoyage des messages</h3>
+    <h3>Pipeline Zéro-LLM</h3>
     <p>
-      Avant distillation, la méthode <code>_clean_messages()</code> produit un texte épuré
-      ne conservant que <code>role</code>, <code>content</code> et les <strong>noms de fichiers joints</strong>.
-      Les UUIDs, timestamps, metadata OWUI et identifiants de branches sont éliminés.
-      Ce nettoyage réduit le budget tokens d'environ 8× par rapport à la sérialisation
-      brute <code>str(messages)</code>, garantissant que chaque token transmis à l'API de distillation
-      porte de l'information sémantique utile.
+      Le fonctionnement de ce filtre a été radicalement simplifié et optimisé par rapport à son prédécesseur (qui gérait la distillation long terme). Le processus actuel est le suivant :
     </p>
-
-    <h3>Pipeline de distillation et vectorisation</h3>
     <ol>
       <li>
-        <strong>Distillation asynchrone :</strong> <code>call_distillation</code> route vers <code>gemini-3.1-flash-lite</code> (API).
-        Génère un JSON structuré : <code>summary</code> (100–1000 mots), <code>memory_importance</code> (1–5),
-      <code>memory_id</code> technique court, et 3–5 <code>tags</code> qualifiants.
+        <strong>Formatage direct :</strong> Les messages de la fenêtre sont formatés en texte brut (ROLE: Content).
       </li>
       <li>
-        <strong>Vectorisation locale :</strong> le résumé est envoyé à l'Embedding Worker
-        (<code>BAAI/bge-m3</code>, 1024d, <code>http://echo-embedding:7997</code>).
-        Aucune donnée ne quitte l'infrastructure.
+        <strong>Injection Asynchrone :</strong> Le texte formaté est transmis directement à la méthode <code>index_text_in_ephemeral_rag</code> (avec l'identifiant réservé <code>SESSION_RAG_CONVERSATION_SOURCE_ID</code>).
       </li>
       <li>
-        <strong>Collision sémantique :</strong> recherche vectorielle dans <code>echo_memory</code>
-        filtrée par <code>user_id</code>. Si la similarité cosinus dépasse
-        <code>SIMILARITY_THRESHOLD</code> (0.85), fusion LLM des résumés. Si elle dépasse
-        <code>EXACT_MATCH_THRESHOLD</code> (0.95), simple mise à jour de date sans coût LLM.
-      </li>
-      <li>
-        <strong>Fusion préservative :</strong> lors d'une collision, le score
-        <code>memory_importance</code> conservé est le <em>maximum</em> conservé des différentes occurrences de
-        (pas de dégradation d'un souvenir critique).
-      </li>
-      <li>
-        <strong>Stockage Qdrant :</strong> le vecteur est upserted dans la collection
-        <code>echo_memory</code>, avec les métadonnées
-        <code>user_id</code>, <code>chat_id</code>, <code>timestamp</code>,
-        <code>memory_importance</code> (1–5), <code>memory_id</code>, <code>tags</code>.
+        <strong>Vectorisation :</strong> L'Embedding Worker (bge-m3) calcule les embeddings et injecte silencieusement les vecteurs et le payload dans Qdrant (<code>echo_session_rag</code>).
       </li>
     </ol>
-
-    <div class="tech-spec">
-      <h4>⚙️ Système de pondération mémorielle</h4>
-      <p>
-        Lors du rappel (<code>search_memory</code>), le score de reranking est calculé ainsi :
-        <code>score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[niveau]</code>.
-      </p>
-      <table>
-        <thead><tr><th>Niveau</th><th>Label</th><th>Poids</th><th>Durée TTL</th></tr></thead>
-        <tbody>
-          <tr><td>1</td><td>Trivial</td><td>0,55</td><td>30 jours</td></tr>
-          <tr><td>2</td><td>Mineur</td><td>0,75</td><td>60 jours</td></tr>
-          <tr><td>3</td><td>Utile</td><td>1,00</td><td>180 jours</td></tr>
-          <tr><td>4</td><td>Majeur</td><td>1,30</td><td>365 jours</td></tr>
-          <tr><td>5</td><td>Axiome</td><td>1,70</td><td>540 jours</td></tr>
-        </tbody>
-      </table>
-      <p>
-        Un Axiome (niveau 5) à similarité cosinus 0,60 obtient un score de 1,02, surclassant
-        un Trivial (niveau 1) à similarité 0,85 (score 0,47). Les informations cruciales
-        remontent toujours dans les résultats.
-      </p>
-    </div>
+    <p>
+      Il n'y a <strong>aucun appel LLM</strong> pour résumer ces messages. L'exécution est quasi-instantanée et préserve la latence de la réponse utilisateur, rendant le RAG de session continuellement à jour pour l'agent de planification ou d'autres outils d'analyse (ex: <code>search_session_context</code>).
+    </p>
 
     <div class="audit-note">
       <h4>✅ Déduplication d'accès (Dédoublonnage Vault)</h4>
@@ -307,16 +255,13 @@ timezone:        "Europe/Paris"
     </p>
 
     <div class="transition-text">
-      <p>Pour comprendre le détail de l'architecture WebGPU :</p>
-      <a href="11_edge_inference.html">Consulter le chapitre Inférence Distante ➔</a>
-      <br><br>
-      <p>Les données préparées par le Filtre sont transmises au Pipe, qui opère la reconstruction
-      bit-perfect de l'historique.</p>
-      <a href="07_pipe.html">Découvrir le Pipe (Cortex) ➔</a>
+      <a href="05_hud_ui.html">&larr; Écosystème HUD & UI</a>
+      &nbsp;&nbsp;
+      <a href="07_pipe.html">Le Pipe (Cortex) &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

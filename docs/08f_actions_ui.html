@@ -157,7 +157,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
     <h2>Action 2 - Purge Mémoire Long Terme (<code>purge_memory_action.py</code>)</h2>
 
     <p>
-      Supprime des souvenirs ciblés depuis la collection <code>echo_memory</code> dans Qdrant,
+      Supprime des souvenirs ciblés depuis la collection <code>echo_meta_artifacts</code> dans Qdrant,
       filtrés obligatoirement par <code>user_id</code> (clause <code>must</code>). L'action
       concerne exclusivement la <strong>mémoire long terme</strong> (organique) ; la mémoire
       de travail de la session en cours n'est pas affectée. L'utilisateur est guidé via
@@ -192,7 +192,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
         (<code>max-height: 150px</code>). Tous les slugs sont listés (pas de limite à 10).
       </li>
       <li>
-        <strong>Suppression</strong> : appel <code>POST /collections/echo_memory/points/delete</code>
+        <strong>Suppression</strong> : appel <code>POST /collections/echo_meta_artifacts/points/delete</code>
         sur l'API Qdrant interne (<code>http://echo-qdrant:6333</code>), avec le filtre
         <code>must</code> incluant systématiquement <code>user_id</code> + <code>tags</code>
         (et optionnellement <code>chat_id</code>).
@@ -495,7 +495,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
         <code>echo_codex_tool.py</code> : le HUD est piloté <strong>par l'utilisateur</strong>
         (bouton sous le message), l'outil LLM est piloté <strong>par Gemini</strong>
         (Tool Call au cours d'une génération). Les deux accèdent au même dépôt Git
-        et au même registre SQLite <code>codex_docs</code>.
+        et au même registre SQLite <code>resources</code> (Registre Unifié V2).
       </p>
     </div>
 
@@ -503,13 +503,13 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
     voir <a href="08h_codex_editor.html">ECHO Codex &rarr;</a>.</p>
 
     <div class="transition-text">
-      <a href="08e_execution_monitoring.html">&larr; Exécution &amp; Pilotage</a>
+      <a href="08e_execution_monitoring.html">&larr; Exécution & Pilotage</a>
       &nbsp;&nbsp;
       <a href="08g_visual_intelligence.html">Visual Intelligence &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

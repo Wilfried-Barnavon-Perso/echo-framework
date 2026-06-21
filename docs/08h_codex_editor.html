@@ -355,7 +355,7 @@ flowchart TD
       <thead><tr><th>Action JS</th><th>Traitement Python</th></tr></thead>
       <tbody>
         <tr><td><code>close</code></td><td>Sortie de la boucle.</td></tr>
-        <tr><td><code>save</code></td><td><code>CodexRepo.commit_file()</code> + <code>state.save_codex_record()</code> + notification JS <code>echoCodexNotify('saved')</code>.</td></tr>
+        <tr><td><code>save</code></td><td><code>CodexRepo.commit_file()</code> + <code>state.save_resource()</code> + notification JS <code>echoCodexNotify('saved')</code>.</td></tr>
         <tr><td><code>ai_edit</code></td><td>Appel <code>_codex_ai_edit()</code> → <code>call_cascade()</code> → <code>echoCodexShowDiff()</code>.</td></tr>
         <tr><td><code>accept_diff</code></td><td><code>commit_file()</code> + <code>echoCodexNotify('committed')</code> + rechargement contenu.</td></tr>
         <tr><td><code>reject_diff</code></td><td><code>echoCodexRevertDiff()</code> + rechargement contenu HEAD.</td></tr>
@@ -365,9 +365,9 @@ flowchart TD
         <tr><td><code>history_restore</code></td><td><code>commit_file()</code> avec message <code>"Restore from {hash}"</code> + <code>echoCodexNotify('restored')</code>.</td></tr>
         <tr><td><code>new_file</code></td><td><code>commit_file(filename, "", "Create ...")</code> + refresh tree.</td></tr>
         <tr><td><code>load_file</code></td><td><code>read_file()</code> → <code>echoCodexSetContent()</code>.</td></tr>
-        <tr><td><code>rename_file</code></td><td><code>repo.rename_file(old, new)</code> + mise à jour <code>codex_docs</code> + refresh tree.</td></tr>
-        <tr><td><code>delete_file</code></td><td><code>delete_file()</code> + <code>delete_codex_record()</code> + refresh tree + auto-switch vers premier fichier.</td></tr>
-        <tr><td><code>reset</code></td><td><code>repo.reset_all()</code> + <code>state.clear_codex_records()</code> + <code>echoCodexReset()</code> (destroy HUD) + sortie boucle.</td></tr>
+        <tr><td><code>rename_file</code></td><td><code>repo.rename_file(old, new)</code> + mise à jour <code>resources</code> + refresh tree.</td></tr>
+        <tr><td><code>delete_file</code></td><td><code>delete_file()</code> + <code>delete_resource()</code> + refresh tree + auto-switch vers premier fichier.</td></tr>
+        <tr><td><code>reset</code></td><td><code>repo.reset_all()</code> + <code>state.delete_resource()</code> (purge par session) + <code>echoCodexReset()</code> (destroy HUD) + sortie boucle.</td></tr>
         <tr><td><code>refresh</code></td><td><code>list_files()</code> → <code>echoCodexRefreshTree()</code> + rechargement fichier courant.</td></tr>
       </tbody>
     </table>
@@ -485,7 +485,7 @@ flowchart TD
         <tr>
           <td>Outil LLM Codex</td>
           <td><code>12-owui-tools/echo_codex_tool.py</code></td>
-          <td>1.0</td>
+          <td>1.4</td>
           <td>9 Tool Calls exposés à Gemini</td>
         </tr>
         <tr>
@@ -534,13 +534,13 @@ flowchart TD
     </div>
 
     <div class="transition-text">
-      <a href="08g_visual_intelligence.html">← Visual Intelligence</a>
+      <a href="08g_visual_intelligence.html">&larr; Visual Intelligence</a>
       &nbsp;&nbsp;
-      <a href="08i_delegate_agent.html">Delegate Agent ➔</a>
+      <a href="08i_delegate_agent.html">Delegate Agent &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

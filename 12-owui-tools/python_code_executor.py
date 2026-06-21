@@ -36,12 +36,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Exécute du code Python dans un environnement sandbox sécurisé et isolé pour la validation analytique.
-        Idéal pour les calculs complexes ou l'analyse de données (pandas, numpy).
-        Le code a accès à Internet. La génération de graphiques n'est pas supportée.
-        :param code: Le code Python complet à exécuter.
-        """
+        """Exécution isolée de code Python (Worker distant). Idéal pour validation analytique (math, dates, data). Aucun accès direct aux fichiers locaux (injecter les données textuellement). IMPLIQUE Python 3."""
         events = EchoEvents(__event_emitter__, __event_call__)
 
         await events.status("🐍 Exécution Python en cours...")

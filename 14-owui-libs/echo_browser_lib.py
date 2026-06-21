@@ -1,8 +1,9 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 1.8
-description: 1.8: Hotfix - Correction du mapping dans `get_registry` (`action_interact_semantic` -> `action_interact_a11y`).
+version: 1.10
+description: 1.10: Optim - Refonte des descriptions d'outils pour autoriser les appels parallèles (suppression de la notion de niveaux stricts).
+             1.9: Ajout de l'action_type `download` pour supporter le téléchargement de fichiers via Playwright.
              1.7: Ajout du paramètre optionnel `name` dans `action_interact_a11y` pour le ciblage précis des rôles.
              1.6: Refonte de l'API avec intégration de l'arbre a11y_tree et hiérarchie stricte.
              1.5: Unification de l'API en 4 piliers (interact_a11y, interact_dom, inspect_page, browser_control).
@@ -24,14 +25,14 @@ logger = logging.getLogger(__name__)
 BROWSER_TOOLS_SCHEMA = [
     {
         "name": "action_interact_a11y",
-        "description": "NIVEAU 1 : Interagit avec un élément de l'arbre A11y (via role, text ou label). À utiliser juste après une inspection a11y_tree.",
+        "description": "Interagit avec un élément de l'arbre A11y (via role, text ou label). Tu peux appeler cet outil plusieurs fois dans le même tour pour effectuer des actions groupées.",
         "parameters": {
             "type": "object",
             "properties": {
                 "method": {"type": "string", "enum": ["role", "label", "text"], "description": "La méthode de ciblage (role=ex:button/radio, label=attribut aria-label, text=texte brut visible)."},
                 "value": {"type": "string", "description": "La valeur associée à la méthode de ciblage (ex: 'button', 'Je suis d\\'accord')."},
                 "name": {"type": "string", "description": "(Optionnel) Si method='role', permet de filtrer par le nom du rôle (ex: 'Accepter') pour cibler précisément un bouton ou lien."},
-                "action_type": {"type": "string", "enum": ["click", "type", "hover"], "description": "Le type d'interaction."},
+                "action_type": {"type": "string", "enum": ["click", "type", "hover", "download", "save_target"], "description": "Le type d'interaction (download force un clic et attend le fichier, save_target extrait l'URL du lien/image et la télécharge furtivement)."},
                 "text_to_type": {"type": "string", "description": "(Optionnel) Le texte à insérer si action_type='type'."}
             },
             "required": ["method", "value", "action_type"]
@@ -39,11 +40,11 @@ BROWSER_TOOLS_SCHEMA = [
     },
     {
         "name": "action_interact_dom",
-        "description": "NIVEAU 2 & 3 : Interagit via l'index du DOM Map (Niv 2) ou les coordonnées Vision X/Y (Niv 3).",
+        "description": "Interagit via l'index du DOM Map ou les coordonnées Vision X/Y. Tu peux appeler cet outil plusieurs fois dans le même tour pour des actions groupées.",
         "parameters": {
             "type": "object",
             "properties": {
-                "action_type": {"type": "string", "enum": ["click", "type", "hover"], "description": "Le type d'interaction."},
+                "action_type": {"type": "string", "enum": ["click", "type", "hover", "download", "save_target"], "description": "Le type d'interaction (download force un clic et attend le fichier, save_target extrait l'URL et la télécharge furtivement)."},
                 "index": {"type": "integer", "description": "L'ID numérique de l'élément (indiqué entre crochets sur la carte du DOM). À utiliser en priorité absolue."},
                 "x": {"type": "integer", "description": "Coordonnée X en pixels (à n'utiliser QUE si l'index est introuvable, suite à une action_inspect_page avec target='vision')."},
                 "y": {"type": "integer", "description": "Coordonnée Y en pixels (à n'utiliser QUE si l'index est introuvable)."},
@@ -54,7 +55,7 @@ BROWSER_TOOLS_SCHEMA = [
     },
     {
         "name": "action_inspect_page",
-        "description": "Extrait des informations de la page. NIVEAU 1: a11y_tree (Priorité absolue). NIVEAU 2: dom_map (Index). NIVEAU 3: vision (Capture/Grille). NIVEAU 4: read_text/read_html.",
+        "description": "Extrait des informations de la page (a11y_tree, dom_map, vision, etc.). Tu peux appeler cet outil plusieurs fois en parallèle avec des 'target' différentes dans le même tour.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -120,15 +121,21 @@ class EchoBrowserLib:
             "idle_timeout": idle_timeout, 
             "mode": mode
         }, self.user_id)
+
+    async def start_screencast(self) -> dict:
+        return await req_to_browser(self.timeout, "/screencast/start", {"session_id": self.session_id}, self.user_id)
+
+    async def stop_screencast(self, hd_b64: str = None) -> dict:
+        return await req_to_browser(self.timeout, "/screencast/stop", {"session_id": self.session_id, "hd_b64": hd_b64}, self.user_id)
         
     async def reset_session(self) -> dict:
         return await self._action("browser_control", {"command": "reset"})
 
-    async def action_interact_a11y(self, method: str, value: str, action_type: str, name: str = None, text_to_type: str = None) -> dict:
-        return await self._action("interact_a11y", {"method": method, "value": value, "name": name, "action_type": action_type, "text_to_type": text_to_type})
+    async def action_interact_a11y(self, method: str, value: str, action_type: str, name: str = None, text_to_type: str = None, download_file_id: str = None) -> dict:
+        return await self._action("interact_a11y", {"method": method, "value": value, "name": name, "action_type": action_type, "text_to_type": text_to_type, "download_file_id": download_file_id})
 
-    async def action_interact_dom(self, action_type: str, index: int = None, x: int = None, y: int = None, text_to_type: str = "") -> dict:
-        return await self._action("interact_dom", {"action_type": action_type, "index": index, "x": x, "y": y, "text_to_type": text_to_type})
+    async def action_interact_dom(self, action_type: str, index: int = None, x: int = None, y: int = None, text_to_type: str = "", download_file_id: str = None) -> dict:
+        return await self._action("interact_dom", {"action_type": action_type, "index": index, "x": x, "y": y, "text_to_type": text_to_type, "download_file_id": download_file_id})
 
     async def action_inspect_page(self, target: str, index: int = None, value: str = "", vision_grid: bool = False) -> dict:
         if target == "vision":

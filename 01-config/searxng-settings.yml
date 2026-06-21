@@ -16,18 +16,138 @@ search:
     - json # INDISPENSABLE pour l'outil ECHO
 
 engines:
+  # --- GENERAL ---
   - name: google
     engine: google
     shortcut: g
-  - name: bing
-    engine: bing
-    shortcut: b
   - name: duckduckgo
     engine: duckduckgo
     shortcut: ddg
+  - name: brave
+    engine: brave
+    shortcut: br
+  - name: startpage
+    engine: startpage
+    shortcut: sp
   - name: wikipedia
     engine: wikipedia
     shortcut: w
+  - name: wikidata
+    engine: wikidata
+    shortcut: wd
+
+  # --- IT ---
+  - name: github
+    engine: github
+    shortcut: gh
+  - name: stackoverflow
+    engine: stackoverflow
+    shortcut: so
+  - name: gitlab
+    engine: gitlab
+    shortcut: gl
+  - name: pypi
+    engine: pypi
+    shortcut: py
+  - name: npm
+    engine: npm
+    shortcut: npm
+  - name: docker hub
+    engine: docker hub
+    shortcut: dh
+
+  # --- SCIENCE ---
+  - name: arxiv
+    engine: arxiv
+    shortcut: ar
+  - name: pubmed
+    engine: pubmed
+    shortcut: pm
+  - name: google scholar
+    engine: google scholar
+    shortcut: gs
+  - name: crossref
+    engine: crossref
+    shortcut: cr
+  - name: semantic scholar
+    engine: semantic scholar
+    shortcut: ss
+  - name: openaire
+    engine: openaire
+    shortcut: oa
+
+  # --- IMAGES ---
+  - name: google images
+    engine: google images
+    shortcut: gi
+  - name: duckduckgo images
+    engine: duckduckgo images
+    shortcut: ddi
+  - name: qwant images
+    engine: qwant images
+    shortcut: qi
+  - name: pinterest
+    engine: pinterest
+    shortcut: pin
+  - name: unsplash
+    engine: unsplash
+    shortcut: uns
+  - name: deviantart
+    engine: deviantart
+    shortcut: da
+
+  # --- VIDEO ---
+  - name: youtube
+    engine: youtube
+    shortcut: yt
+  - name: vimeo
+    engine: vimeo
+    shortcut: vm
+  - name: dailymotion
+    engine: dailymotion
+    shortcut: dm
+
+  # --- SOCIAL MEDIA ---
+  - name: reddit
+    engine: reddit
+    shortcut: rd
+  - name: twitter
+    engine: twitter
+    shortcut: tw
+  - name: mastodon
+    engine: mastodon
+    shortcut: mas
+  - name: lemmy
+    engine: lemmy
+    shortcut: lm
+  - name: hacker news
+    engine: hacker news
+    shortcut: hn
+
+  # --- MUSIC ---
+  - name: spotify
+    engine: spotify
+    shortcut: sfy
+  - name: soundcloud
+    engine: soundcloud
+    shortcut: sc
+  - name: youtube music
+    engine: youtube music
+    shortcut: ytm
+  - name: genius
+    engine: genius
+    shortcut: gen
+  - name: bandcamp
+    engine: bandcamp
+    shortcut: bc
+
+  # --- MAP ---
+  - name: openstreetmap
+    engine: openstreetmap
+    shortcut: osm
+  - name: photon
+    engine: photon
+    shortcut: pho
 
 ui:
   static_path: ""

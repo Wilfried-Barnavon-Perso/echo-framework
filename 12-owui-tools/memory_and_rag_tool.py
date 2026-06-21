@@ -1,8 +1,11 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.5
-description: 1.2: Ajout forget_memory. 1.3: Mémoire Vectorisée de Session. 1.4: Mise à jour version. 1.5: Reranking par importance (MEMORY_IMPORTANCE_WEIGHTS) dans recall_memories.
+version: 2.17
+description: 2.17: Ajout start_date/end_date dans consult_session_context. Clarification SNR purge.
+             2.16: Fix Gemini API 400 Bad Request sur l'enum vide de l'artifact_name.
+             2.10: Migration complète vers la nomenclature Méta-Artéfacts et ajout du drapeau global_search.
+             1.2: Ajout forget_memory. 1.3: Mémoire Vectorisée de Session. 1.4: Mise à jour version. 1.5: Reranking par importance (MEMORY_IMPORTANCE_WEIGHTS) dans recall_memories.
              1.6: Docstrings proactifs memorize_that + recall_memories. Fix double-docstring (bug Python L82-83).
              1.7: Docstring proactif query_distilled_data + distinction claire RAG organique vs éphémère.
              1.8: Renommage sémantique : memorize_that→save_memory, recall_memories→search_memory,
@@ -13,9 +16,14 @@ description: 1.2: Ajout forget_memory. 1.3: Mémoire Vectorisée de Session. 1.4
              2.2: Directives de reformulation search_memory et list_memory_topics (contenu
              invisible pour l'utilisateur dans l'UI OWUI).
              2.3: Clean Slate architecture: remplacement de slug par memory_id (long terme) et source_id (éphémère).
+             2.11: Ajout de l'horodatage UTC dans les retours de search_meta_artifacts et consult_meta_artifacts.
+             2.12: Rétrocompatibilité tags null et correction indentation source_id dans global_search.
+             2.13: Filtres temporels (start_date/end_date) et consult_session_context.
+             2.14: Bypass vectoriel (API Scroll chronologique) pour les requêtes vides et extraction preview RAG.
 """
 
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Literal
+from datetime import datetime, timezone
 import orjson as json
 import os
 import sys
@@ -30,7 +38,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_constants import (
     MODEL_DISTILLATION, MODEL_EMBEDDING,
-    COLLECTION_MEMORY, EMBEDDING_DIM_V2,
+    COLLECTION_META_ARTIFACTS, EMBEDDING_DIM_V2,
     MEMORY_IMPORTANCE_WEIGHTS, MEMORY_IMPORTANCE_LABELS,
     ECHO_QDRANT_URL
 )
@@ -58,55 +66,53 @@ class Tools:
         if self._collection_verified:
             return
         try:
-            resp = await client.get(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}")
+            resp = await client.get(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}")
             if resp.status_code == 404:
-                logger.info(f"[ECHO-MEMORY] 🏗️ Création collection {COLLECTION_MEMORY} ({EMBEDDING_DIM_V2}d)...")
+                logger.info(f"[ECHO-MEMORY] 🏗️ Création collection {COLLECTION_META_ARTIFACTS} ({EMBEDDING_DIM_V2}d)...")
                 create_payload = {"vectors": {"size": EMBEDDING_DIM_V2, "distance": "Cosine"}}
                 cr = await client.put(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}",
                     json=create_payload
                 )
                 if cr.status_code not in (200, 201):
                     logger.error(f"[ECHO-MEMORY] ❌ Échec création collection ({cr.status_code}): {cr.text}")
                     return  # Ne pas valider si la création a échoué
-                logger.info(f"[ECHO-MEMORY] ✅ Collection {COLLECTION_MEMORY} créée.")
+                logger.info(f"[ECHO-MEMORY] ✅ Collection {COLLECTION_META_ARTIFACTS} créée.")
             self._collection_verified = True
         except Exception as e:
             logger.error(f"[ECHO-MEMORY] ❌ _ensure_collection : {e}")
+
+    def _parse_iso_date(self, date_str: str, is_end_of_day: bool = False) -> Optional[int]:
+        if not date_str:
+            return None
+        try:
+            if "T" not in date_str and len(date_str) <= 10:
+                date_str += "T23:59:59" if is_end_of_day else "T00:00:00"
+            dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return int(dt.timestamp())
+        except Exception:
+            return None
 
     # ==========================================================================
     # ÉCRITURE : Mémoriser un fait explicitement
     # ==========================================================================
 
-    async def save_memory(
+    async def update_meta_artifact(
         self,
+        artifact_name: Literal["Profil d'Alignement", "Hypothèses d'Apprentissage"],
         fact: str,
-        importance: int = 1,
+        importance: int = 3,
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
         """
-        Sauvegarde définitivement un fait en mémoire long terme — accessible dans toutes les sessions futures.
-
-        **Quand l'utiliser :**
-        - Préférences utilisateur ("préfère Python 3.12", "utilise dark mode")
-        - Décisions prises ("on a choisi PostgreSQL pour ce projet")
-        - Contraintes techniques découvertes (OS, versions, architecture, limites)
-        - Identifiants critiques (noms de projets, IDs, URLs importantes)
-        - Règles ou conventions établies par l'utilisateur
-
-        **Ne pas utiliser** si l'info n'a de sens que pour cette session → utiliser save_session_context.
-
-        **Vallée de la Mort :** Sauvegarder les faits importants proactivement dès qu'ils sont
-        identifiés, avant que la saturation contextuelle ne les rende difficiles à retrouver.
-
-        **Paramètre `importance`** (1→5) :
-        - 1 Trivial     : Préférences légères, anecdotes
-        - 2 Ordinaire   : Infos utiles mais non critiques
-        - 3 Significatif : Décisions, faits importants [défaut]
-        - 4 Clé         : Contraintes majeures, ressources critiques
-        - 5 Axiome      : Règles absolues, vérités fondamentales
+        Consigne de manière persistante une information dans un Méta-Artéfact (PACP ou PRAC). Retourne le memory_id généré. Ce retour est indispensable pour permettre au Modèle de supprimer ou cibler ce fait ultérieurement via delete_meta_artifact_item.
+        :param artifact_name: Le nom du Méta-Artéfact cible.
+        :param fact: Le fait ou l'hypothèse à enregistrer.
+        :param importance: Niveau d'importance de 1 à 5.
         """
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id") or not __metadata__:
@@ -136,11 +142,12 @@ class Tools:
                     "id": point_id, "vector": vector,
                     "payload": {
                         "user_id": user_id, "chat_id": chat_id, "memory_id": memory_id, "summary": fact,
+                        "artifact_name": artifact_name,
                         "memory_importance": int(importance), "tags": tags, "timestamp": int(time.time())
                     }
                 }]}
                 resp = await client.put(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points",
                     json=upsert_payload
                 )
                 if resp.status_code != 200:
@@ -156,33 +163,27 @@ class Tools:
     # LECTURE : Recherche sémantique
     # ==========================================================================
 
-    async def search_memory(
+    async def search_meta_artifacts(
         self,
         query: str,
-        limit: int = 5,
+        artifact_name: Optional[Literal["Profil d'Alignement", "Hypothèses d'Apprentissage"]] = None,
+        limit: int = 20,
+        start_date: str = "",
+        end_date: str = "",
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
         """
-        Recherche dans la mémoire long terme — retrouve des faits mémorisés lors de sessions précédentes.
+        Recherche sémantique vectorielle dans les Méta-Artéfacts (PACP / PRAC).
+        Utilise le concept pour extraire des faits pertinents. Pour une lecture globale ou temporelle, utiliser l'outil consult_* correspondant.
 
-        **Quand l'utiliser :**
-        - Avant de répondre à une question sur des préférences, habitudes ou décisions passées
-        - Quand l'utilisateur évoque quelque chose qui a pu être mentionné avant
-        - Pour vérifier si un fait a déjà été mémorisé avant de le sauvegarder à nouveau
-        - Toute question impliquant un historique au-delà de la session courante
-
-        **Vallée de la Mort :** À forte charge contextuelle, les informations des sessions
-        précédentes sont totalement absentes du contexte — ce RAG est le seul moyen de les récupérer.
-
-        Les souvenirs d'importance élevée (Clé, Axiome) remontent même avec une faible similarité.
-        Préférer des requêtes courtes et précises ("préférences Python", "décision architecture").
-
-        IMPORTANT : Les résultats de cette recherche sont encapsulés dans un bloc
-        technique invisible pour l'utilisateur. Reformule les souvenirs retrouvés
-        dans ta réponse de manière naturelle et synthétique.
+        :param query: Obligatoire. Le concept, l'idée ou le mot-clé à retrouver.
+        :param artifact_name: Optionnel. Restreint la recherche vectorielle à un Méta-Artéfact spécifique.
+        :param limit: Optionnel. Nombre maximum de résultats. Défaut: 20.
+        :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
+        :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
         """
 
         events = EchoEvents(__event_emitter__, __event_call__)
@@ -190,26 +191,36 @@ class Tools:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"})
 
         user_id = __user__.get("id")
-        await events.status("🧠 Recherche sémantique...")
         try:
-            vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)
-            if not vector:
-                return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"})
-
             async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
                 await self._ensure_collection(client)
-                # Over-fetch ×3 pour permettre le reranking par importance.
-                # Seuil Qdrant abaissé à 0.35 : les souvenirs importants (lvl4-5)
-                # doivent pouvoir entrer même avec un cos_score modéré.
+                qdrant_filter = {"must": [{"key": "user_id", "match": {"value": user_id}}]}
+                if artifact_name:
+                    qdrant_filter["must"].append({"key": "artifact_name", "match": {"value": artifact_name}})
+                
+                ts_start = self._parse_iso_date(start_date, False)
+                ts_end = self._parse_iso_date(end_date, True)
+                if ts_start or ts_end:
+                    rng = {}
+                    if ts_start: rng["gte"] = ts_start
+                    if ts_end: rng["lte"] = ts_end
+                    qdrant_filter["must"].append({"key": "timestamp", "range": rng})
+
+                # RECHERCHE SÉMANTIQUE
+                await events.status("🧠 Recherche sémantique...")
+                vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)
+                if not vector:
+                    return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"})
+
                 search_payload = {
                     "vector": vector,
                     "limit": limit * 3,
                     "with_payload": True,
                     "score_threshold": 0.35,
-                    "filter": {"must": [{"key": "user_id", "match": {"value": user_id}}]}
+                    "filter": qdrant_filter
                 }
                 resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/search",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/search",
                     json=search_payload
                 )
                 if resp.status_code != 200:
@@ -220,8 +231,6 @@ class Tools:
                 return wrap_tool_output(text="Aucun souvenir trouvé.", status={"status": "success", "results": []})
 
             # --- RERANKING PAR IMPORTANCE ---
-            # score_pondéré = cos_score × poids_importance
-            # Exemple : Axiome cos=0.60 → 0.60×1.70=1.02 > Trivial cos=0.85 → 0.85×0.55=0.47
             for r in candidates:
                 imp = int(r["payload"].get("memory_importance",
                                            r["payload"].get("importance", 3)))
@@ -249,9 +258,13 @@ class Tools:
                 p = r["payload"]
                 imp = int(p.get("memory_importance", p.get("importance", 3)))
                 label = MEMORY_IMPORTANCE_LABELS.get(imp, "?")
+                
+                ts = p.get("timestamp")
+                date_str = f" | {datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}" if ts else ""
+                
                 md += (
                     f"- **{p.get('memory_id', p.get('slug', 'Note'))}** "
-                    f"[{label} / score: {r['_weighted']:.2f}]\n"
+                    f"[{label} / score: {r['_weighted']:.2f}{date_str}]\n"
                     f"  > {p.get('summary', '')}\n\n"
                 )
 
@@ -265,22 +278,24 @@ class Tools:
     # LECTURE : Index des sujets mémorisés
     # ==========================================================================
 
-    async def list_memory_topics(
+    async def consult_meta_artifacts(
         self,
-        scope: str = "global",
+        artifact_name: Optional[Literal["Profil d'Alignement", "Hypothèses d'Apprentissage"]] = None,
+        limit: int = 20,
+        start_date: str = "",
+        end_date: str = "",
         __user__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
         """
-        Liste tous les sujets mémorisés en mémoire long terme (memory_id, tags, niveau d'importance).
+        Aspiration chronologique des Méta-Artéfacts.
+        Sert à balayer aveuglément le contexte sans biais thématique (lecture temporelle).
+        Renvoie la liste des derniers faits mémorisés triés par date décroissante.
 
-        **Quand l'utiliser :**
-        - Avant un forget_memory, pour trouver le memory_id exact à supprimer
-        - Pour répondre à "qu'est-ce que tu sais sur moi ?" ou "qu'as-tu mémorisé ?"
-        - Pour vérifier si un sujet a déjà été indexé avant d'utiliser search_memory
-
-        IMPORTANT : Le contenu retourné est invisible pour l'utilisateur. Présente
-        la liste des topics dans ta réponse en langage naturel.
+        :param artifact_name: Optionnel. Filtre pour ne remonter que les faits d'un Méta-Artéfact spécifique.
+        :param limit: Optionnel. Nombre maximum de souvenirs à lister. Défaut: 20.
+        :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
+        :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
         """
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id"):
@@ -291,13 +306,25 @@ class Tools:
         try:
             async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
                 await self._ensure_collection(client)
+                qdrant_filter = {"must": [{"key": "user_id", "match": {"value": user_id}}]}
+                if artifact_name:
+                    qdrant_filter["must"].append({"key": "artifact_name", "match": {"value": artifact_name}})
+                
+                ts_start = self._parse_iso_date(start_date, False)
+                ts_end = self._parse_iso_date(end_date, True)
+                if ts_start or ts_end:
+                    rng = {}
+                    if ts_start: rng["gte"] = ts_start
+                    if ts_end: rng["lte"] = ts_end
+                    qdrant_filter["must"].append({"key": "timestamp", "range": rng})
+
                 scroll_payload = {
-                    "filter": {"must": [{"key": "user_id", "match": {"value": user_id}}]},
-                    "limit": 100,
-                    "with_payload": ["memory_id", "slug", "tags", "memory_importance", "timestamp"]
+                    "filter": qdrant_filter,
+                    "limit": limit,
+                    "with_payload": ["memory_id", "slug", "tags", "memory_importance", "timestamp", "artifact_name"]
                 }
                 resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/scroll",
                     json=scroll_payload
                 )
                 if resp.status_code != 200:
@@ -305,15 +332,18 @@ class Tools:
 
                 points = resp.json().get("result", {}).get("points", [])
                 if not points:
-                    return wrap_tool_output(text="Votre base vectorielle des souvenirs est actuellement vide.", status={"status": "success"})
+                    return wrap_tool_output(text="La base vectorielle des souvenirs est actuellement vide.", status={"status": "success"})
 
                 if self.valves.DEBUG_MODE:
                     print(f"[ECHO-MEMORY] list_memory_topics : {len(points)} sujets trouvés pour {user_id}.", flush=True)
 
-                md = "### 📚 Index de votre Base Vectorielle des Souvenirs\n\n"
+                md = "### 🧠 Index de la Base Vectorielle des Souvenirs\n\n"
                 for p in points:
                     pay = p.get("payload", {})
-                    md += f"- **{pay.get('memory_id', pay.get('slug', 'Note'))}** | Lvl {pay.get('memory_importance', pay.get('importance', 1))} | `{', '.join(pay.get('tags', []))}`\n"
+                    ts = pay.get("timestamp")
+                    date_str = f" | {datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}" if ts else ""
+                    pay_tags = pay.get('tags') or []
+                    md += f"- **{pay.get('memory_id', pay.get('slug', 'Note'))}** ({pay.get('artifact_name', 'Global')}) | Lvl {pay.get('memory_importance', pay.get('importance', 1))}{date_str} | `{', '.join(pay_tags)}`\n"
                 return wrap_tool_output(text=md, status={"status": "success"})
 
         except Exception as e:
@@ -323,19 +353,13 @@ class Tools:
     # SUPPRESSION : Oublier un souvenir
     # ==========================================================================
 
-    async def forget_memory(
+    async def delete_meta_artifact_item(
         self,
         memory_id: str,
         __user__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
-        """
-        Supprime définitivement un souvenir de la mémoire long terme.
-
-        **ATTENTION :** Irréversible. Ne supprime que la mémoire long terme (pas la Mémoire Vectorisée de Session).
-        **Règle :** Le memory_id exact est requis.
-        Si inconnu → utiliser d'abord list_memory_topics ou search_memory pour le retrouver.
-        """
+        """Supprime une information obsolète ou erronée d'un Méta-Artéfact par son memory_id."""
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id"):
             return wrap_tool_output(text="❌ Erreur : Utilisateur non identifié.", status={"status": "error"})
@@ -351,7 +375,7 @@ class Tools:
                     "points": [point_id]
                 }
                 resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/delete",
                     json=delete_payload
                 )
                 if resp.status_code != 200:
@@ -376,26 +400,7 @@ class Tools:
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
-        """
-        Indexe du texte dans la Mémoire Vectorisée de Session — mémoire de travail valable uniquement pour cette session.
-
-        **Quand l'utiliser :**
-        - Conclusion d'une analyse longue à retrouver plus tard dans la session
-        - Résultats intermédiaires d'un calcul ou d'une recherche
-        - Contenu extrait d'un document utilisé plusieurs fois dans la session
-        - Toute information utile maintenant mais sans intérêt après la session
-
-        **Différence clé :**
-        - save_memory          → permanent, accessible dans toutes les sessions futures
-        - save_session_context → temporaire, session courante seulement
-
-        **Vallée de la Mort :** Dès que le contexte dépasse ~30% de saturation, indexer
-        proactivement les résultats intermédiaires importants pour ne pas les perdre.
-
-        Après indexation, retrouver via search_session_context(source_id=..., query=...).
-        Paramètre `source_id` : identifiant court de la source (ex: "analyse-pr42", "résultat-tva").
-        Paramètre `text` : texte à indexer (découpé automatiquement en chunks sémantiques).
-        """
+        """Sauvegarde éphémère dans le RAG Temporaire (Contexte de la session en cours)."""
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"})
@@ -427,29 +432,25 @@ class Tools:
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
 
-    async def search_session_context(
+    async def consult_session_context(
         self,
-        source_id: str,
-        query: str,
+        limit: int = 20,
+        start_date: str = "",
+        end_date: str = "",
+        global_search: bool = False,
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
         """
-        Recherche dans la Mémoire Vectorisée de Session — retrouve du contenu indexé plus tôt dans la session courante.
+        Aspiration exhaustive de la Mémoire Vectorisée de Session.
+        Sert à balayer aveuglément le contexte sans biais thématique (lecture temporelle).
+        Renvoie la liste détaillée de toutes les sources (fichiers, URLs, notes) actuellement actives.
 
-        **Quand l'utiliser :**
-        - Après navigation web : le contenu de la page est indexé (source_id = domaine ou nom court)
-        - Après analyse de fichier : le contenu est indexé (source_id = file_id)
-        - Après save_session_context : retrouver ce qui a été mis en mémoire de travail
-        - Quand le contenu source est sorti de la fenêtre de contexte visible
-
-        **Vallée de la Mort :** À forte charge contextuelle (>30%), préférer ce RAG plutôt
-        que de tenter de relire loin dans l'historique — la précision sémantique est bien supérieure.
-
-        Le contenu disparaît à la fin de la session (contrairement à search_memory).
-        Paramètre `source_id` : identifiant de la source (affiché lors de l'indexation ou dans le registre_fichiers).
-        Paramètre `query` : question sémantique posée sur ce contenu.
+        :param limit: Optionnel. Nombre maximal de sources à lister. Défaut: 20.
+        :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
+        :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
+        :param global_search: Optionnel. Si True, liste les sources de TOUTES les sessions de l'utilisateur.
         """
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id") or not __metadata__:
@@ -457,27 +458,192 @@ class Tools:
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
-        await events.status(f"🧠 Recherche dans la Mémoire Vectorisée de Session ({source_id})...")
+        scope = "globale" if global_search else "locale"
+        await events.status(f"🧠 Cartographie du RAG Session ({scope})...")
 
         try:
-            vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)
-            if not vector:
-                return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"})
-
-            from echo_constants import COLLECTION_EPHEMERAL
+            from echo_constants import COLLECTION_SESSION_RAG
             async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
+                must_filters = [{"key": "user_id", "match": {"value": user_id}}]
+                if not global_search:
+                    must_filters.append({"key": "chat_id", "match": {"value": chat_id}})
+                
+                ts_start = self._parse_iso_date(start_date, False)
+                ts_end = self._parse_iso_date(end_date, True)
+                if ts_start or ts_end:
+                    rng = {}
+                    if ts_start: rng["gte"] = ts_start
+                    if ts_end: rng["lte"] = ts_end
+                    must_filters.append({"key": "timestamp", "range": rng})
+
+                scroll_payload = {
+                    "filter": {"must": must_filters},
+                    "limit": limit,
+                    "with_payload": ["source_id", "tags", "timestamp", "text"]
+                }
+                resp = await client.post(
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/scroll",
+                    json=scroll_payload
+                )
+                if resp.status_code != 200:
+                    return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"})
+
+                points = resp.json().get("result", {}).get("points", [])
+                if not points:
+                    return wrap_tool_output(text="Aucune ressource indexée trouvée.", status={"status": "success"})
+
+                sources = {}
+                tags = set()
+                for p in points:
+                    pay = p.get("payload", {})
+                    if "source_id" in pay:
+                        sid = pay["source_id"]
+                        ts = pay.get("timestamp", 0)
+                        if sid not in sources or ts > sources[sid]["timestamp"]:
+                            sources[sid] = {
+                                "timestamp": ts,
+                                "preview": pay.get("text", "")[:60].replace("\n", " ") + "..."
+                            }
+                    pay_tags = pay.get("tags") or []
+                    for t in pay_tags:
+                        tags.add(t)
+
+                md = f"### 🧠 Cartographie du RAG Session ({scope})\n\n"
+                md += f"**Sources disponibles (avec aperçu) :**\n"
+                # Tri par timestamp décroissant
+                sorted_sources = sorted(sources.items(), key=lambda x: x[1]["timestamp"], reverse=True)
+                for sid, data in sorted_sources:
+                    ts_str = datetime.fromtimestamp(data["timestamp"], timezone.utc).strftime('%Y-%m-%d %H:%M UTC') if data["timestamp"] else "Inconnu"
+                    md += f"- **`{sid}`** [{ts_str}] : _{data['preview']}_\n"
+                md += f"\n**Tags détectés :** `{', '.join(sorted(tags))}`"
+                return wrap_tool_output(text=md, status={"status": "success"})
+
+        except Exception as e:
+            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
+
+    async def delete_session_context_source(
+        self,
+        source_id: str,
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __event_emitter__: Optional[Any] = None
+    ) -> dict:
+        """
+        Suppression intégrale et irréversible d'une source du RAG Éphémère.
+        Permet d'éliminer le contexte d'un fichier, d'une page web ou d'une session obsolète de la mémoire de travail.
+        Attention : Purge strictement locale à la source nommée. Une suppression globale de session est impossible via cet outil.
+
+        :param source_id: Obligatoire. L'identifiant strict de la source (ex: nom de fichier, UUID de session, slug libre) à purger de la mémoire.
+        """
+        events = EchoEvents(__event_emitter__)
+        if not __user__ or not __user__.get("id") or not __metadata__:
+            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"})
+
+        user_id = __user__.get("id")
+        chat_id = __metadata__.get("chat_id")
+        await events.status(f"🧠 Suppression de la source {source_id}...")
+
+        try:
+            from echo_constants import COLLECTION_SESSION_RAG
+            async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
+                must_filters = [
+                    {"key": "user_id", "match": {"value": user_id}},
+                    {"key": "chat_id", "match": {"value": chat_id}},
+                    {"key": "source_id", "match": {"value": source_id}}
+                ]
+                count_payload = {
+                    "filter": {"must": must_filters}
+                }
+                count_resp = await client.post(
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/count",
+                    json=count_payload
+                )
+                if count_resp.status_code != 200:
+                    return wrap_tool_output(text=f"❌ Erreur de vérification Qdrant : {count_resp.text}", status={"status": "error"})
+                
+                count = count_resp.json().get("result", {}).get("count", 0)
+                if count == 0:
+                    return wrap_tool_output(
+                        text="❌ Échec : Source introuvable ou isolée dans une autre session. Suppression inter-session bloquée par sécurité.",
+                        status={"status": "error"}
+                    )
+                
+                delete_payload = {
+                    "filter": {"must": must_filters}
+                }
+                del_resp = await client.post(
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/delete",
+                    json=delete_payload
+                )
+                if del_resp.status_code != 200:
+                    return wrap_tool_output(text=f"❌ Erreur Qdrant : {del_resp.text}", status={"status": "error"})
+
+                await events.status(f"🧠 Source {source_id} supprimée.", done=True)
+                return wrap_tool_output(text=f"✅ Source purgée avec succès ({count} vecteurs supprimés).", status={"status": "success"})
+
+        except Exception as e:
+            return wrap_tool_output(text=f"❌ Erreur lors de la suppression : {str(e)}", status={"status": "error"})
+
+    async def search_session_context(
+        self,
+        query: str,
+        source_id: str = "",
+        global_search: bool = False,
+        limit: int = 20,
+        start_date: str = "",
+        end_date: str = "",
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __event_emitter__: Optional[Any] = None
+    ) -> dict:
+        """
+        Recherche sémantique vectorielle dans la mémoire de travail de la session courante (RAG Éphémère).
+        Renvoie les extraits textuels complets correspondant au concept recherché.
+
+        :param query: Obligatoire. Concept textuel ou mots-clés de la recherche sémantique.
+        :param source_id: Optionnel. UUID de la source pour restreindre la recherche à un document ou une session spécifique.
+        :param global_search: Optionnel. Si True, étend la recherche à toutes les sessions actives. Défaut: False.
+        :param limit: Optionnel. Nombre maximum de résultats. Défaut: 20.
+        :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
+        :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
+        """
+        events = EchoEvents(__event_emitter__)
+        if not __user__ or not __user__.get("id") or not __metadata__:
+            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"})
+
+        user_id = __user__.get("id")
+        chat_id = __metadata__.get("chat_id")
+        try:
+            from echo_constants import COLLECTION_SESSION_RAG
+            async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
+                must_filters = [{"key": "user_id", "match": {"value": user_id}}]
+                if not global_search:
+                    must_filters.append({"key": "chat_id", "match": {"value": chat_id}})
+                if source_id:
+                    must_filters.append({"key": "source_id", "match": {"value": source_id}})
+                
+                ts_start = self._parse_iso_date(start_date, False)
+                ts_end = self._parse_iso_date(end_date, True)
+                if ts_start or ts_end:
+                    rng = {}
+                    if ts_start: rng["gte"] = ts_start
+                    if ts_end: rng["lte"] = ts_end
+                    must_filters.append({"key": "timestamp", "range": rng})
+
+                # RECHERCHE SÉMANTIQUE
+                await events.status(f"🧠 Recherche dans la Mémoire Vectorisée de Session ({source_id})...")
+                vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)
+                if not vector:
+                    return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"})
+
                 search_payload = {
-                    "vector": vector, "limit": 5, "with_payload": True,
+                    "vector": vector, "limit": limit, "with_payload": True,
                     "filter": {
-                        "must": [
-                            {"key": "user_id", "match": {"value": user_id}},
-                            {"key": "chat_id", "match": {"value": chat_id}},
-                            {"key": "source_id", "match": {"value": source_id}}
-                        ]
+                        "must": must_filters
                     }
                 }
                 resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_EPHEMERAL}/points/search",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/search",
                     json=search_payload
                 )
                 

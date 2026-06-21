@@ -1,7 +1,7 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.15
+version: 5.16
 description: 5.7: Résolution du conflit de nom get_all_skills (shadowing).
              5.8: Centralisation des niveaux de réflexion (THINKING_LEVEL_*) — suppression
              valves FLASH_THINKING et PRO_THINKING. Remplacement par constantes echo_constants.
@@ -71,15 +71,10 @@ class Tools:
         instructions: str,
         __user__: Optional[dict] = None
     ) -> str:
-        """
-        Créez ou modifiez une expertise cognitive (SKILL) au format SKILL.md.
-        Pour un résultat optimal, concevez un profil riche : définissez un ton (ex: incisif), une méthodologie (ex: premiers principes), et des contraintes de sortie strictes. 
-        Plus le Skill est détaillé, plus l'expert sera pertinent dans sa réflexion.
-        
-        :param skill_id: Identifiant unique du skill (ex: 'lead_dev_rust', 'expert_cyber').
-        :param name: Nom lisible du rôle (ex: 'Lead Developer Rust').
-        :param description: Brève description de l'expertise pour la découverte.
-        :param instructions: Instructions système détaillées définissant le comportement du rôle.
+        """Création/Mise à jour et liste des expertises (Skills). Requis avant appel d'un agent inexistant.
+        :param skill_id: Identifiant technique (snake_case).
+        :param name: Titre lisible.
+        :param instructions: Directives système détaillées.
         """
         user_id = __user__.get("id", "system") if __user__ else "system"
         success = save_skill(user_id, skill_id, name, description, instructions)
@@ -92,10 +87,7 @@ class Tools:
         self,
         __user__: Optional[dict] = None
     ) -> str:
-        """
-        Consultez la liste des expertises (SKILLS) disponibles pour les agents et conseils.
-        Permet de découvrir les rôles déjà forgés et leurs descriptions.
-        """
+        """Liste des expertises (Skills) forgées."""
         user_id = __user__.get("id", "system") if __user__ else "system"
         skills = get_all_skills(user_id)
         
@@ -116,7 +108,7 @@ class Tools:
     async def consult_council(
         self,
         question: str,
-        participants: str,
+        participants: List[str],
         council_id: Optional[str] = None,
         target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
         synthesis_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
@@ -129,24 +121,11 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Convoquez un conseil d'experts pour une délibération multi-tours.
-
-        PRÉREQUIS : Un conseil exige AU MINIMUM 2 participants distincts.
-        Avant d'appeler cet outil, vérifie via list_skills que tu disposes d'au
-        moins 2 skills pertinents. Si ce n'est pas le cas, forge les skills
-        manquants avec forge_skill AVANT de convoquer le conseil.
-
-        Chaque expert est un agent ECHO autonome avec accès aux outils (web, codex, etc.).
-        Il reçoit la question, utilise ses outils si besoin, puis réagit aux contributions
-        des autres participants lors des tours suivants. Un synthétiseur produit la conclusion.
-
-        :param question: La problématique ou question soumise au conseil.
-        :param participants: Liste CSV des skill_ids (ex: "lead_dev,expert_secu,archi_cloud"). Min 2, Max 5.
-        :param council_id: (Optionnel) Identifiant du conseil. Si omis, généré automatiquement.
-        :param target_model: Modèle Gemini pour TOUS les experts (défaut: MODEL_PRO).
-        :param synthesis_model: Modèle pour la synthèse finale (défaut: MODEL_FLASH).
-        :param rounds: Nombre de tours de parole (défaut: 3, max: 5).
-        :param close_on_finish: Si True, purge les sessions des experts à la fin (défaut: True).
+        Table ronde (N experts, tours parallèles). Synthèse multi-perspectives. Minimum 2 experts requis. IMPLIQUE appel à `forge_skill` si experts manquants.
+        
+        :param question: Sujet de délibération.
+        :param participants: Chaîne CSV de `skill_id` (ex: expert_1, dev_py) (min 2, [ p * r ] <= 30).
+        :param rounds: Nombre d'itérations ([ p * r ] <= 30).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -154,7 +133,7 @@ class Tools:
             return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.")
 
         # ── Phase 0 : Validation & Chargement ──
-        skill_ids = [s.strip() for s in participants.split(",") if s.strip()]
+        skill_ids = [s.strip() for s in participants if s.strip()]
 
         max_p = self.user_valves.COUNCIL_MAX_PARTICIPANTS
         if len(skill_ids) > max_p:
@@ -163,9 +142,9 @@ class Tools:
             available = get_all_skills(user_id)
             skill_list = ", ".join(f"`{s['id']}`" for s in available) if available else "aucun"
             return wrap_tool_output(
-                text=f"❌ Un conseil nécessite au minimum 2 participants (reçu: {len(skill_ids)}).\n\n"
+                text=f"❌ Conseil : Minimum 2 participants (Reçu: {len(skill_ids)}).\n\n"
                      f"**Skills disponibles :** {skill_list}\n\n"
-                     f"→ Utilise `forge_skill` pour créer les experts manquants, puis rappelle `consult_council`.",
+                     f"→ Si expert/skill manquant, appeler d'abord `forge_skill`.",
                 status={"status": "error"}
             )
 
@@ -180,7 +159,7 @@ class Tools:
             content = get_skill_content(user_id, sid)
             if not content:
                 return wrap_tool_output(
-                    text=f"❌ Skill '{sid}' introuvable. Utilisez forge_skill d'abord."
+                    text=f"❌ Skill '{sid}' introuvable. Le Modèle DOIT utiliser l'outil forge_skill au préalable."
                 )
             meta = parse_skill_metadata(content)
             roster.append({
@@ -376,7 +355,7 @@ class Tools:
     async def consult_supervised_workers(
         self,
         objective: str,
-        workers: str,
+        workers: dict,
         target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
         critic_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
         max_correction_rounds: Optional[int] = None,
@@ -388,29 +367,10 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Orchestre plusieurs agents sur un objectif commun avec contrôle qualité récursif.
-
-        Processus en 4 phases :
-        1. DÉLÉGATION : Chaque worker exécute sa tâche via delegate_to_agent.
-        2. ÉVALUATION : Un critique analyse tous les livrables et rend un verdict.
-        3. CORRECTION : Les workers fautifs sont relancés avec le feedback du critique.
-        4. CONSOLIDATION : Synthèse finale des livrables approuvés.
-
-        Le critique retourne un JSON structuré :
-        {"verdict": "APPROVED"|"REJECTED", "global_assessment": "...",
-         "worker_feedback": {"worker_id": {"status": "ok"|"needs_correction", "feedback": "..."}}}
-
-        :param objective: La mission globale à accomplir.
-        :param workers: JSON dict. Chaque entrée :
-                        - Clé = identifiant du worker.
-                        - Valeur = dict avec "task" (obligatoire), "role_name" (Skill, optionnel)
-                          et/ou "system_prompt" (optionnel si role_name fourni).
-                        Exemple : {"dev": {"task": "Implémenter X", "role_name": "lead_dev"},
-                                   "review": {"task": "Vérifier X", "system_prompt": "Tu es un reviewer strict."}}
-        :param target_model: Modèle pour les workers (défaut: MODEL_FLASH).
-        :param critic_model: Modèle pour l'évaluation critique (défaut: MODEL_PRO).
-        :param max_correction_rounds: Surcharge la UserValve SUPERVISOR_MAX_CORRECTION_ROUNDS.
-        :param close_on_finish: Si True, purge les sessions des workers à la fin.
+        Boucle itérative asynchrone avec supervision critique (Délégation, Évaluation, Correction, Consolidation). Utile pour validations croisées.
+        
+        :param objective: Mission globale.
+        :param workers: Mapping JSON {worker_id_libre: {"task": "...", "skill_id": "..."}}.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -450,7 +410,7 @@ class Tools:
 
         for w_id, w_config in workers_dict.items():
             w_task = w_config.get("task", "")
-            w_role = w_config.get("role_name")
+            w_role = w_config.get("skill_id")
             w_sys = w_config.get("system_prompt", f"Tu es un agent chargé de : {w_task}")
             agent_sid = f"thread_supervisor_{task_id}_{w_id}"
             worker_sids[w_id] = agent_sid
@@ -458,7 +418,7 @@ class Tools:
             result = await delegate.delegate_to_agent(
                 task=f"### OBJECTIF GLOBAL\n{objective}\n\n### TA TÂCHE\n{w_task}",
                 system_prompt=w_sys,
-                role_name=w_role,
+                skill_id=w_role,
                 sub_sid=agent_sid,
                 target_model_key=target_model,
                 __user__=__user__,

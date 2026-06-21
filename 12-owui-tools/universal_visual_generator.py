@@ -1,7 +1,7 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.2
+version: 5.4
 description: 5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux). 5.2: Renommage niveau_cognitif→target_model, migration stream→call_cascade() centralisé.
 """
 
@@ -10,7 +10,7 @@ import sys
 import re
 import base64
 import orjson as json
-from typing import Optional, Any, Tuple, Union
+from typing import Optional, Any, Tuple, Union, Literal
 from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
 
@@ -21,6 +21,8 @@ from echo_ui import EchoUI
 from echo_constants import (
     MODEL_FLASH, MODEL_ROUTING
 )
+
+
 
 class Tools:
   class Valves(BaseModel):
@@ -34,52 +36,20 @@ class Tools:
     self,
     intention: str,
     donnees_contextuelles: str,
-    moteur: Optional[str] = None,
-    niveau_cognitif: str = "MODEL_FLASH",
+    # [MAINTENANCE_AI] Avertissement: Toujours mettre à jour ce Literal lors de l'ajout/suppression d'un moteur de rendu.
+    moteur: Optional[Literal["markmap", "mermaid", "sketch", "echarts", "vega", "timeline", "bpmn", "gantt", "aframe", "svg", "cytoscape", "wavedrom", "chem", "science", "bio", "astro"]] = None,
+    niveau_cognitif: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
     __user__: dict = {},
     __metadata__: dict = {},
     __event_emitter__: Any = None,
     __event_call__: Any = None
   ) -> Union[dict, Tuple[HTMLResponse, dict]]:
     """
-    Déploie une interface visuelle interactive (OS de Rendu Visuel ECHO - Mermaid v11.14.0).
-    MOTEURS DISPONIBLES :
-    - 'markmap' : Mindmaps et hiérarchies (Markdown).
-    - 'mermaid' : Flowcharts, Séquences, UML (Mermaid v11).
-    - 'sketch' : Schémas et diagrammes façon "croquis à main levée" (utilise Mermaid + Rough.js).
-    - 'echarts' : Tableaux de bord, Finance, Heatmaps, Cartes de données (JSON).
-    - 'vega' : Science des données, Statistiques complexes (JSON).
-    - 'timeline' : Chronologies et frises historiques (JSON).
-    - 'bpmn' : Processus métiers normés (XML BPMN 2.0).
-    - 'gantt' : Plannings et gestion de projet (SYNTAXE MERMAID GANTT).
-    - 'aframe' : Scènes 3D, Architecture, Volumes (HTML).
-    - 'svg' : Plans 2D, Schémas vectoriels sur mesure.
-    - 'cytoscape' : Réseaux, Graphes de force, Clusters (JSON).
-    - 'wavedrom' : Électronique, Signaux numériques (JSON).
-    - 'chem' : Chimie moléculaire (SMILES).
-    - 'science' : Physique & Mathématiques (Plotly.js JSON).
-    - 'bio' : Biologie structurelle (ID PDB, ex: 1A8M).
-    - 'astro' : Exploration céleste (D3-CELESTIAL JSON).
-
-    CONTRAINTE SYNTAXIQUE MERMAID v11 — IDENTIFIANTS DE NŒUDS (CRITIQUE) :
-    La syntaxe Mermaid v11 est particulièrement stricte concernant les identifiants de nœuds.
-    Un identifiant est la partie nue du nœud (ex: `A` dans `A["Mon libellé"]`).
-    RÈGLES ABSOLUES :
-      - Les identifiants NE DOIVENT PAS contenir : accents (é, è, à, ç...), tirets (-),
-        espaces, apostrophes, parenthèses ni aucun autre caractère spécial.
-      - Seuls les caractères ASCII alphanumériques et le underscore (_) sont sûrs.
-      - Tous les caractères spéciaux ou texte lisible doivent figurer UNIQUEMENT dans
-        le libellé entre guillemets ou crochets : `A["Libellé avec accents et tirets"]`.
-      CORRECT  : `EtatInitial["État initial"] --> VerifAcces["Vérif. d'accès"]`
-      INCORRECT: `État-initial --> Vérif-d-accès`  (provoque une erreur de parsing)
-
-    :param intention: Description du besoin visuel (ex: "Plan 3D d'un bureau", "Structure de la hiérarchie").
-    :param donnees_contextuelles: Faits, chiffres et relations à modéliser.
-    :param moteur: Optionnel. Force un moteur spécifique parmi la liste ci-dessus.
-    :param niveau_cognitif: Choisir selon la complexité (cascade auto si indisponible) :
-        - 'MODEL_LITE' : Mindmaps simples, Flowcharts basiques.
-        - 'MODEL_FLASH' : Standard (ECharts, BPMN, SVG).
-        - 'MODEL_PRO' : Complexe (3D A-Frame, Réseaux Cytoscape, Signaux WaveDrom, Vega).
+    Génération asynchrone d'interfaces interactives (Mindmaps, Graphes, Tableaux). Sub-chat MODEL_FLASH. Retourne le composant ECHO Visual.
+    :param intention: Objectif du rendu visuel.
+    :param donnees_contextuelles: Données brutes à modéliser.
+    :param moteur: (Optionnel) markmap, mermaid, echarts, etc.
+    :param niveau_cognitif: (Optionnel) Enum des modèles (echo_constants).
     """
     events = EchoEvents(__event_emitter__, __event_call__)
     await events.status(f"🧠 Rendu Visuel : Orchestration {moteur or 'Auto'}...")

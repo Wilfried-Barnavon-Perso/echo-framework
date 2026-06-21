@@ -36,11 +36,9 @@ class Tools:
         __metadata__: dict = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> dict:
+    ) -> str:
         """
-        Renvoie l'utilisation exacte du contexte (en nombre de tokens et pourcentage) pour la session actuelle.
-        Lit l'historique de consommation de tokens directement depuis la base de données persistante de l'utilisateur.
-        Utilisez cet outil lorsque vous devez vérifier si vous approchez de la limite de mémoire de travail (Context Window).
+        Surveillance de la saturation du contexte (Tokens). Déclencheur d'escalade cognitive : si >50%, RECOMMANDE l'usage de 'new_cognitive_level' (PRO). Retourne un JSON détaillé (context_load_percent, used_tokens, status).
         """
         limit = self.valves.context_limit
         real_stats = None

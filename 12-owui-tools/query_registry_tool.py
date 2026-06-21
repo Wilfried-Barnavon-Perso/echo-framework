@@ -1,37 +1,35 @@
 """
 title: ECHO Resource Registry
 author: Wilfried BARNAVON
-version: 1.1
+version: 1.4
 description: 1.0: Outil de consultation du registre unifié des ressources (echo_resources).
              Permet au modèle de requêter l'état complet des fichiers, plans, documents Codex
              et pages web de la session.
              1.1: Fix troncature ID UUID dans le tableau ([:20] supprimé).
              Fix fallback partiel dans get_resource (LIKE si ID exact échoue).
+             1.2: Suppression des Valves inutilisées (code mort).
 """
 
 # ECHO CONFIG NAME : ECHO Registry
 
 import sys
-from typing import Optional, Any
-from pydantic import BaseModel, Field
+from typing import Optional, Any, Literal
 
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, EchoEvents, EchoStateManager
-from echo_constants import ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES
+
+
 
 
 class Tools:
-    class Valves(BaseModel):
-        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD)
-        MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES)
-
     def __init__(self):
-        self.valves = self.Valves()
+        pass
 
     async def query_registry(
         self,
-        resource_type: str = None,
-        status: str = None,
+        # [MAINTENANCE_AI] Avertissement: Toujours mettre à jour ces Literal en cas d'évolution du Registre V2.
+        resource_type: Optional[Literal["codex", "agent", "plan", "memory"]] = None,
+        status: Optional[Literal["active", "archived", "error"]] = None,
         search_term: str = None,
         resource_id: str = None,
         __user__: dict = {},
@@ -39,21 +37,8 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Consulte le registre des ressources de la session (fichiers, plans, code, pages web).
-
-        Utilise cet outil pour :
-        - Retrouver un fichier, un plan ou un document du Codex par nom ou ID.
-        - Lister toutes les ressources d'un type donné.
-        - Vérifier l'existence d'une ressource avant de la manipuler.
-        - Obtenir les détails complets d'une ressource (statut, chemin, métadonnées).
-
-        Types de ressources : 'codex' (fichiers texte/code), 'plan' (plans stratégiques),
-        'media' (images/vidéos/PDF), 'binary' (fichiers non assimilables), 'weburl' (pages web distillées).
-
-        :param resource_type: Filtre par type (optionnel).
-        :param status: Filtre par statut (optionnel).
-        :param search_term: Recherche par nom (optionnel).
-        :param resource_id: ID exact pour détails complets (optionnel).
+        """
+        Consultation centralisée de l'état des ressources du Registre (fichiers, URLs, agents, Codex, plans, etc.). Étape de validation obligatoire AVANT toute manipulation.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous") if __user__ else "anonymous"

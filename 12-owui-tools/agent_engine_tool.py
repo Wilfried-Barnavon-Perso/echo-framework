@@ -1,8 +1,9 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.6
-description: 1.6: Fix - Utilisation stricte de raw_parts dans l'historique pour empêcher le rejet 400 de la thoughtSignature par Gemini 3.x.
+version: 1.8
+description: 1.7: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
+             1.6: Fix - Utilisation stricte de raw_parts dans l'historique pour empêcher le rejet 400 de la thoughtSignature par Gemini 3.x.
              1.5: Ajout du paramètre allowed_tools à delegate_to_agent pour restreindre l'arsenal.
              1.4: Fusion expert-consultant / sous-agent. Renommage subagent→agent.
              Ajout role_name optionnel (Skill via echo_skills) sur delegate_to_agent :
@@ -11,6 +12,7 @@ description: 1.6: Fix - Utilisation stricte de raw_parts dans l'historique pour 
              dans le conseil et le superviseur. Suppression filtre dlg_ sur list/close
              (tous préfixes de session supportés : dlg_, thread_, thread_council_,
              thread_supervisor_).
+             1.7: Ajout de la défense passive (troncature silencieuse) sur le contexte des sous-agents.
 """
 
 import sys
@@ -27,7 +29,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import (
     wrap_tool_output, wrap_cascade_output,
     EchoEvents, EchoGeminiClient, EchoStateManager,
-    clamp_model,
+    clamp_model, estimate_token_size, smart_truncate_history
 )
 from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO,
@@ -35,6 +37,7 @@ from echo_constants import (
     TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
     TEMP_DISTILLATION, TOP_P_DISTILLATION,
     DELEGATE_AGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX,
+    CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
 )
 from echo_skills import get_skill_content
 
@@ -76,8 +79,8 @@ class Tools:
     async def delegate_to_agent(
         self,
         task: str,
-        system_prompt: str,
-        role_name: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        skill_id: Optional[str] = None,
         sub_sid: Optional[str] = None,
         with_context_distillate: bool = False,
         target_model_key: Optional[str] = None,
@@ -92,40 +95,14 @@ class Tools:
         __event_call__: Any = None,
     ) -> str:
         """
-        Délègue une tâche à un agent ECHO autonome avec accès aux outils.
-
-        L'agent peut être générique (system_prompt seul) ou qualifié par un Skill
-        (role_name). Un Skill injecte une persona d'expert persistante qui est
-        préfixée au system_prompt.
-
-        L'agent est stateful : son historique est persisté via sub_sid.
-        Rappeler avec le même sub_sid pour reprendre ou répondre à une QUESTION.
-
-        Le modèle de l'agent est choisi par l'orchestrateur via target_model_key.
-        Si non fourni, l'agent utilise le plafond de la politique utilisateur.
-        Le modèle est soumis au clamping centralisé (clamp_model) et à la
-        cascade descendante en cas d'échec API (call_cascade).
-
-        Retours possibles :
-          status "success"          → "result" contient la réponse finale
-          status "pending_question" → "question" de l'agent, relancer avec sub_sid + réponse dans task
-          status "error"            → "message" d'erreur technique
-
-        :param task: Mission initiale, ou réponse à une QUESTION (si reprise via sub_sid).
-        :param system_prompt: Persona et règles de l'agent (rédigés par l'orchestrateur).
-                              Le framework ajoute automatiquement le cadre d'exécution (budget, SESSION_ID).
-        :param role_name: (Optionnel) Identifiant d'un Skill qualifiant l'agent en expert
-                          (ex: 'lead_dev', 'expert_secu'). Si fourni, le contenu du Skill
-                          est chargé et préfixé au system_prompt. Utilisez forge_skill pour
-                          créer des Skills.
-        :param sub_sid: None = nouveau thread (SID retourné dans status.sid).
-                        Fourni = reprise du thread existant.
-        :param with_context_distillate: Si True, injecter un résumé de la branche active du chat
-                                         principal dans le system_prompt initial. Désactivé par défaut.
-        :param target_model_key: (Optionnel) Modèle pour l'agent
-                                 ("MODEL_LITE", "MODEL_FLASH", "MODEL_PRO").
-                                 Soumis au clamping de la politique utilisateur.
-                                 Défaut: plafond de la politique (MODEL_SELECTION).
+        Exécution mono-tâche experte par agent autonome. Réservé aux opérations isolées ne nécessitant pas de supervision multi-agents.
+        
+        :param task: Mission ou réponse (si reprise).
+        :param system_prompt: Directives comportementales (Optionnel si skill_id fourni).
+        :param skill_id: Identifiant de Skill (Optionnel si system_prompt fourni).
+        :param sub_sid: (Optionnel) ID de session pour reprise.
+        :param with_context_distillate: (Bool) Injection du résumé de branche.
+        :param target_model_key: (Optionnel) Enum des modèles (echo_constants).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = (__user__ or {}).get("id", "system")
@@ -138,24 +115,33 @@ class Tools:
                 status={"status": "error", "message": "user_id requis"}
             )
 
+        if not skill_id and not system_prompt:
+            # Fallback : Transfert du system_prompt d'ECHO au sous-agent
+            try:
+                with open("/app/backend/data/system-prompt.md", "r", encoding="utf-8") as f:
+                    system_prompt = f.read()
+            except Exception:
+                system_prompt = "Tu es une extension cognitive experte du framework ECHO."
+
         # 1. Résolution de la persona (Skill optionnel)
-        if role_name:
-            skill_content = get_skill_content(user_id, role_name)
+        if skill_id:
+            skill_content = get_skill_content(user_id, skill_id)
             if not skill_content:
                 return wrap_tool_output(
-                    text=f"❌ Skill '{role_name}' introuvable. Utilisez forge_skill pour en créer un.",
-                    status={"status": "error", "message": f"Skill '{role_name}' not found"}
+                    text=f"❌ Skill '{skill_id}' introuvable. IMPLIQUE `forge_skill`.",
+                    status={"status": "error", "message": f"Skill '{skill_id}' not found"}
                 )
             # Le Skill définit la persona, le system_prompt l'enrichit contextuellement
-            base_system = f"{skill_content}\n\n{system_prompt}"
+            base_system = f"{skill_content}\n\n{system_prompt}" if system_prompt else skill_content
         else:
             base_system = system_prompt
+
 
         # 2. Résolution du sub_sid
         if sub_sid:
             sid = sub_sid
-        elif role_name:
-            sid = f"thread_{role_name}_{uuid.uuid4().hex[:8]}"
+        elif skill_id:
+            sid = f"thread_{skill_id}_{uuid.uuid4().hex[:8]}"
         else:
             sid = f"dlg_{uuid.uuid4().hex[:10]}"
         is_resume = sub_sid is not None
@@ -281,12 +267,7 @@ class Tools:
         __chat_id__: Optional[str] = None,
         __event_emitter__: Any = None,
     ) -> str:
-        """
-        Liste les sessions d'agents actives pour ce chat.
-        Permet à l'orchestrateur de retrouver un sub_sid pour reprendre une tâche.
-
-        :return: Markdown listant sub_sid, type, nombre d'étapes et résumé de chaque session.
-        """
+        """Liste des sessions d'agents actives."""
         user_id = (__user__ or {}).get("id", "system")
         if not __chat_id__:
             return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"})
@@ -335,11 +316,8 @@ class Tools:
         __chat_id__: Optional[str] = None,
         __event_emitter__: Any = None,
     ) -> str:
-        """
-        Ferme définitivement une session d'agent et purge son historique (irréversible).
-        Utiliser list_agent_sessions pour retrouver le sub_sid.
-
-        :param sub_sid: ID de la session à fermer.
+        """Ferme définitivement une session d'agent et purge son historique (irréversible).
+        :param sub_sid: Identifiant strict de la session.
         """
         user_id = (__user__ or {}).get("id", "system")
         if not __chat_id__:
@@ -374,13 +352,8 @@ class Tools:
         __metadata__: Optional[dict] = None,
         __event_emitter__: Any = None,
     ) -> str:
-        """
-        Génère un résumé structuré d'une session d'agent (≤ 8192 tokens).
-        Limité aux sessions du chat courant.
-
-        Structure du résumé : tâche initiale, outils utilisés, résultats clés, conclusion.
-
-        :param sub_sid: ID de la session à résumer.
+        """Résumé structuré d'une session d'agent.
+        :param sub_sid: Identifiant strict de la session.
         """
         events = EchoEvents(__event_emitter__)
         user_id = (__user__ or {}).get("id", "system")
@@ -496,6 +469,17 @@ async def _run_agent_loop(
         # 1. Construction des function_declarations (source A : sub_tools, B : body_tools_specs)
         fn_decls = _build_function_declarations(sub_tools, body_tools_specs)
 
+        # 1.5. Défense passive : Troncature de l'historique de l'agent
+        size = estimate_token_size(history) + estimate_token_size(final_system)
+        max_tokens = ECHO_MAX_CONTEXT_SIZE
+        if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
+            try:
+                await events.toast(f"⚠️ Agent [{sid}] : saturation contextuelle ({int(size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
+            except AttributeError:
+                if __event_emitter__: await __event_emitter__({"type": "toast", "data": {"title": "ECHO Agent", "message": f"⚠️ Agent [{sid}] : saturation contextuelle. Troncature silencieuse active.", "type": "warning"}})
+            while estimate_token_size(history) + estimate_token_size(final_system) > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
+                if not smart_truncate_history(history, 0):
+                    break
 
         # 2. Payload Gemini complet
         payload: dict = {
@@ -580,7 +564,7 @@ async def _run_agent_loop(
                 state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
 
                 return wrap_tool_output(
-                    text=f"L'agent [{sid}] a besoin d'une clarification avant de continuer.",
+                    text=f"⚠️ Agent [{sid}] bloqué. IMPLIQUE clarification utilisateur.",
                     status={
                         "status": "pending_question",
                         "sid": sid,

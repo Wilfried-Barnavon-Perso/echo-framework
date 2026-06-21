@@ -1,9 +1,12 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.18
+version: 192.21
 requirements: asyncssh
-description: 192.18: Utilisation de FILE_INGESTION_STATUS pour la sauvegarde des fichiers.
+description: 192.21: Fix du silent crash lors de l'auto-escalade. Exclusion fonctionnelle du modèle actif via MODEL_IDENTITY et feedback via functionResponse.
+             192.20: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
+             192.19: Implémentation de la défense passive contextuelle (troncature silencieuse + alertes UI).
+             192.18: Utilisation de FILE_INGESTION_STATUS pour la sauvegarde des fichiers.
              192.17: Antigravity 2.1 — Refonte architecture Auth via EchoAuth (OAuth2 PKCE multi-user).
              191.1: Fix regression auth - callback PKCE background task.
              192.0: Tunnel SSH ephemere asyncssh pour callback OAuth2 PKCE.
@@ -67,8 +70,10 @@ from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING, MODEL_IDENTITY,
     TEMP_DEFAULT, TOP_P_DEFAULT,
     THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
-    MAX_TOKENS_DEFAULT, FILE_INGESTION_STATUS
+    MAX_TOKENS_DEFAULT, FILE_INGESTION_STATUS,
+    CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
 )
+from echo_utils import estimate_token_size, smart_truncate_history
 from echo_auth import AuthService
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
@@ -421,6 +426,28 @@ class Orchestrator:
             inv_hash = self.user_data_manager.calculate_invariant(role, restored_parts)
             last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
 
+        # --- SATURATION ET TRONCATURE ---
+        if events:
+            size = estimate_token_size(final_contents)
+            max_tokens = getattr(self.valves, "MAX_CONTEXT_SIZE", ECHO_MAX_CONTEXT_SIZE)
+            
+            if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
+                try:
+                    await events.toast("⚠️ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "warning")
+                except AttributeError:
+                    await events.emit({"type": "toast", "data": {"title": "ECHO V5", "message": "⚠️ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "type": "warning"}})
+            
+            if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
+                system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
+                while estimate_token_size(final_contents) > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(final_contents) > 3:
+                    idx = 1 if (system_parts and final_contents[0].get("role") == "system") else 0
+                    if not smart_truncate_history(final_contents, idx):
+                        break
+                try:
+                    await events.toast("🚨 Troncature active : les messages les plus anciens sont ignorés pour éviter le crash.", "error")
+                except AttributeError:
+                    await events.emit({"type": "toast", "data": {"title": "ECHO V5", "message": "🚨 Troncature active : les messages les plus anciens sont ignorés pour éviter le crash.", "type": "error"}})
+
         body["_echo_last_cumul"] = last_cumul
         if self.logger: self.logger.log("context_reconstructed", final_contents)
         return final_contents
@@ -758,37 +785,35 @@ class Pipe:
             
             # --- [NOUVEAU] INJECTION OUTIL CHANGEMENT COGNITIF (BIDIRECTIONNEL) ---
             if is_auto:
-                # Menu évolutif selon le modèle actuel
-                menu_escalade = []
-                if target_model == MODEL_LITE:
-                    menu_escalade = ["MODEL_FLASH"]
-                    if user_valves.MODEL_SELECTION == "AUTO_PRO": menu_escalade.append("MODEL_PRO")
-                elif target_model == MODEL_FLASH:
-                    menu_escalade = ["MODEL_LITE"]
-                    if user_valves.MODEL_SELECTION == "AUTO_PRO": menu_escalade.append("MODEL_PRO")
-                elif target_model == MODEL_PRO:
-                    menu_escalade = ["MODEL_LITE", "MODEL_FLASH"]
+                # Construction simplifiée : tous les modèles dispos, moins le modèle actif
+                menu_escalade = ["MODEL_LITE", "MODEL_FLASH"]
+                if user_valves.MODEL_SELECTION == "AUTO_PRO":
+                    menu_escalade.append("MODEL_PRO")
+                target_identity = MODEL_IDENTITY.get(target_model)
+                if target_identity in menu_escalade:
+                    menu_escalade.remove(target_identity)
                 
                 if menu_escalade:
                     escalation_tool = {
                         "name": "new_cognitive_level",
                         "description": (
-                            "Ajuste le niveau cognitif d'ECHO. Tu DOIS appeler cet outil AVANT "
+                            "Outil d'ajustement cognitif. Le Modèle est tenu d'appeler cet outil AVANT "
                             "toute tâche non-triviale pour garantir la qualité de la réponse.\n\n"
                             "## Règles de sélection\n"
                             "- **MODEL_LITE** (Réflexe — défaut) : Salutations, remerciements, extractions simples, "
                             "traduction courte, questions factuelles basiques.\n"
-                            "- **MODEL_FLASH** (Exécution — moteur agentique) : OBLIGATOIRE pour toute "
+                            "- **MODEL_FLASH** (Exécution — moteur agentique) : Escalade requise pour toute "
                             "tâche non-triviale. Recherche web, écriture de code, analyse sémantique, "
                             "synthèse de documents, orchestration d'outils, planification, réponses "
                             "structurées, raisonnement multi-étapes.\n"
-                            "  \u2192 Escalader vers FLASH SYSTÉMATIQUEMENT dès que la tâche "
-                            "dépasse le simple réflexe. Ne pas rester en LITE par inertie.\n"
+                            "  \u2192 Le Modèle escalade vers FLASH systématiquement dès que la tâche "
+                            "dépasse le simple réflexe. L'inertie en LITE est proscrite.\n"
                             "- **MODEL_PRO** (Expertise) : Pour les tâches de haute complexité où "
                             "FLASH a échoué ou serait insuffisant. Architectures systèmes complexes, "
                             "refactoring multi-fichiers avec contraintes imbriquées, logique formelle.\n"
-                            "  \u2192 Justifier le besoin de PRO. Redescendre vers FLASH ou LITE "
-                            "une fois la tâche complexe accomplie.\n\n"
+                            "  → Le Modèle justifie le besoin de PRO et redescend vers FLASH ou LITE "
+                            "une fois la tâche complexe accomplie. (Note : Ne sont présentés dans l'enum que les modèles "
+                            "vers lesquels une transition est possible, le modèle en cours d'utilisation en est exclu).\n\n"
                             "## Corrélation contextuelle\n"
                             "La saturation contextuelle est atténuée par la Mémoire Vectorisée de Session (save_memory "
                             "et save_session_context stockent les éléments critiques). Vigilance "
@@ -893,7 +918,16 @@ class Pipe:
                     continue # On reboucle avec le MÊME target_model
                 
                 if new_target == target_model:
-                    break
+                    await events.status(f"⚠️ Auto-transfert annulé ({target_req}).")
+                    context.append({
+                        "role": "model",
+                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                    })
+                    context.append({
+                        "role": "user",
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": "Déjà sur le modèle", "message": f"ERREUR : Vous êtes déjà sur le modèle {target_req}. Poursuivez votre tâche."}}}]
+                    })
+                    continue
 
                 await events.status(f"🚀 Transfert cognitif vers {new_target}...")
                 

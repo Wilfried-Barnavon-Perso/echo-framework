@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Mémoire et Cognition ECHO v5 : RAG organique echo_memory, Mémoire Vectorisée de Session echo_ephemeral, système d'importance mémorielle, routage cognitif new_cognitive_level, Agents Cognitifs (Conseil d'Experts) cognitive_agents.py.">
+  <meta name="description" content="Mémoire et Cognition ECHO v5 : RAG organique echo_meta_artifacts, Mémoire Vectorisée de Session echo_session_rag, système d'importance mémorielle, routage cognitif new_cognitive_level, Agents Cognitifs (Conseil d'Experts) cognitive_agents.py.">
   <title>ECHO v5 - 8d. Mémoire &amp; Cognition</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -24,10 +24,10 @@
       complexes à un niveau cognitif supérieur (<em>routage dynamique</em>).
     </p>
 
-    <h2>RAG Organique - <code>echo_memory</code></h2>
+    <h2>RAG Organique - <code>echo_meta_artifacts</code></h2>
 
     <p>
-      La mémoire organique est la mémoire à <strong>long terme</strong> d'ECHO. Les souvenirs
+      La mémoire organique est la mémoire à <strong>long terme</strong> d'ECHO. Elle stocke principalement les préférences de l'Utilisateur et l'expérience du Modèle (règles, axiomes) découvertes au cours des différentes sessions. Ces artéfacts
       y sont stockés avec un niveau d'importance (1–5) qui influence leur rappel et leur durée de
       vie via l'algorithme de fusion sémantique (<code>MEMORY_IMPORTANCE_WEIGHTS</code>). La vectorisation intègre une distillation contextuelle automatique par <strong>fenêtre glissante déterministe</strong> (<code>WINDOW_SIZE=5</code>, <code>WINDOW_OVERLAP=2</code>).
     </p>
@@ -36,25 +36,25 @@
       <thead><tr><th>Outil</th><th>Description</th></tr></thead>
       <tbody>
         <tr>
-          <td><code>save_memory(fact, importance)</code></td>
-          <td>Vectorise et stocke un souvenir dans <code>echo_memory</code>. Utilise un UUID déterministe (UUIDv5) basé sur le <code>memory_id</code> technique distillé - un appel avec le même <code>memory_id</code> <em>remplace</em> le souvenir existant (upsert). Paramètre <code>importance</code> de 1 (Trivial) à 5 (Axiome), défaut 1.</td>
+          <td><code>update_meta_artifact(artifact_name, fact, importance)</code></td>
+          <td>Vectorise et stocke un souvenir dans <code>echo_meta_artifacts</code>. Utilise un UUID déterministe (UUIDv5) basé sur le <code>memory_id</code> technique distillé - un appel avec le même <code>memory_id</code> <em>remplace</em> le souvenir existant (upsert). Paramètre <code>importance</code> de 1 (Trivial) à 5 (Axiome), défaut 3.</td>
         </tr>
         <tr>
-          <td><code>search_memory(query, limit)</code></td>
-          <td>Recherche sémantique dans <code>echo_memory</code>. <em>Over-fetch</em> ×3 puis reranking par <code>cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code>. Paramètre <code>limit</code> (défaut 5).</td>
+          <td><code>search_meta_artifacts(query, artifact_name, limit, start_date, end_date)</code></td>
+          <td>Recherche sémantique dans <code>echo_meta_artifacts</code>. <em>Over-fetch</em> ×3 puis reranking par <code>cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code>. Paramètre <code>limit</code> (défaut 20). Filtres temporels disponibles. Horodatage UTC inclus dans les retours.</td>
         </tr>
         <tr>
-          <td><code>list_memory_topics(scope)</code></td>
-          <td>Liste les thèmes mémorisés (<code>memory_id</code>, tags, niveau d'importance). Paramètre <code>scope</code> optionnel, défaut <code>"global"</code>. Utile avant un <code>forget_memory</code> pour retrouver l'identifiant exact.</td>
+          <td><code>consult_meta_artifacts(artifact_name, limit, start_date, end_date)</code></td>
+          <td>Liste les thèmes mémorisés avec filtres temporels (<code>start_date/end_date</code>). Utile avant un <code>delete_meta_artifact_item</code> pour retrouver l'identifiant exact.</td>
         </tr>
         <tr>
-          <td><code>forget_memory(memory_id)</code></td>
-          <td>Supprime définitivement un souvenir de la collection Qdrant par son <code>memory_id</code>. Irréversible. L'identifiant exact est requis - utiliser <code>list_memory_topics</code> pour le retrouver si inconnu.</td>
+          <td><code>delete_meta_artifact_item(memory_id)</code></td>
+          <td>Supprime définitivement un souvenir de la collection Qdrant par son <code>memory_id</code>. Irréversible.</td>
         </tr>
       </tbody>
     </table>
 
-    <h2>Mémoire Vectorisée de Session - <code>echo_ephemeral</code></h2>
+    <h2>Mémoire Vectorisée de Session - <code>echo_session_rag</code></h2>
 
     <p>
       La mémoire éphémère est la <strong>mémoire de travail</strong> d'une session. Elle stocke
@@ -68,11 +68,19 @@
       <tbody>
         <tr>
           <td><code>save_session_context(text, source_id)</code></td>
-          <td>Indexe du texte dans <code>echo_ephemeral</code>, partitioné par <code>user_id + chat_id + source_id</code>. Le texte est découpé automatiquement en chunks sémantiques. Paramètre <code>text</code> en premier, <code>source_id</code> en second (identifiant natif du fichier).</td>
+          <td>Indexe du texte dans <code>echo_session_rag</code>, partitioné par <code>user_id + chat_id + source_id</code>. Le texte est découpé automatiquement en chunks sémantiques. Paramètre <code>text</code> en premier, <code>source_id</code> en second (identifiant natif du fichier).</td>
         </tr>
         <tr>
-          <td><code>search_session_context(source_id, query)</code></td>
-          <td>Recherche sémantique dans la partition du <code>source_id</code> courant. Retourne les chunks les plus pertinents au-dessus du <code>SCORE_THRESHOLD</code> (défaut 0.45).</td>
+          <td><code>search_session_context(query, source_id, global_search, limit, start_date, end_date)</code></td>
+          <td>Recherche sémantique dans la partition du <code>source_id</code> courant ou globalement avec l'option <code>global_search</code>. Retourne les chunks les plus pertinents au-dessus du <code>SCORE_THRESHOLD</code> (défaut 0.45).</td>
+        </tr>
+        <tr>
+          <td><code>consult_session_context(limit, start_date, end_date, global_search)</code></td>
+          <td>Aspiration exhaustive de la Mémoire Vectorisée de Session avec filtrage par date.</td>
+        </tr>
+        <tr>
+          <td><code>delete_session_context_source(source_id)</code></td>
+          <td>Suppression intégrale et irréversible d'une source du RAG Éphémère.</td>
         </tr>
       </tbody>
     </table>
@@ -82,7 +90,7 @@
       <p>
         Lorsque le Filtre effectue l'extraction transmodale et le Map-Reduce d'un fichier volumineux, il utilise le
         <code>source_id</code> natif (ex. <code>U_abc123_C_xyz789_T_1748246400</code>) et indexe les chunks bruts
-        dans <code>echo_ephemeral</code>. Le modèle reçoit ce <code>source_id</code> dans l'AEC (via <code>evenement_systeme</code> s'il vient d'être soumis, ou via l'outil <code>query_registry</code>) et l'utilise pour
+        dans <code>echo_session_rag</code>. Le modèle reçoit ce <code>source_id</code> dans l'AEC (via <code>evenement_systeme</code> s'il vient d'être soumis, ou via l'outil <code>query_registry</code>) et l'utilise pour
         interroger les détails précis de la source brute : <code>search_session_context("U_abc123_C_xyz789...", "...")</code>.
         Ce mécanisme de <strong>Smart Context (Map-Reduce RAG V2)</strong> injecte des balises <code>&lt;smart_context&gt;</code> structurelles dans le prompt, remplaçant l'injection du fichier complet dans le contexte,
         qui serait prohibitive en tokens.
@@ -121,7 +129,7 @@
         La combinaison des deux RAG est la réponse architecturale à la Vallée de la Mort Contextuelle.
         <code>save_session_context</code> doit être utilisé proactivement dès qu'une information
         volumineuse risque de saturer le contexte (au-delà de ~30 % de remplissage).
-        <code>search_memory</code> couvre les informations des sessions antérieures, totalement
+        <code>search_meta_artifacts</code> couvre les préférences de l'Utilisateur et l'expérience du Modèle découvertes au cours des différentes sessions, totalement
         absentes du contexte actif.
       </p>
       <div class="mermaid-wrapper">
@@ -131,12 +139,12 @@
         </div>
         <div class="mermaid">
 flowchart TD
-  O["Outils Cognitifs<br/>(memory_and_rag_tool)"] --> |save_memory<br/>search_memory| COL1
-  O --> |save_session_context<br/>search_session_context| COL2
+  O["Outils Cognitifs<br/>(memory_and_rag_tool)"] --> |update_meta_artifact<br/>search_meta_artifacts| COL1
+  O --> |save_session_context<br/>search_session_context<br/>consult_session_context| COL2
 
   subgraph Q["Qdrant Engine (Port 6333)"]
-    COL1[("🧠 echo_memory<br/>Mémoire long terme<br/>TTL, Consolidation, Importance")]
-    COL2[("⏳ echo_ephemeral<br/>RAG de session<br/>Map-Reduce, source_id, Purge auto")]
+    COL1[("🧠 echo_meta_artifacts<br/>Mémoire long terme<br/>TTL, Consolidation, Importance")]
+    COL2[("⏳ echo_session_rag<br/>RAG de session<br/>Map-Reduce, source_id, Purge auto")]
   end
 
   classDef db fill:#0f172a,stroke:#3b82f6,color:#f8fafc
@@ -237,13 +245,13 @@ flowchart TD
     </div>
 
     <div class="transition-text">
-      <a href="08c_vault_explorer.html">← Vault Explorer</a>
+      <a href="08c_vault_explorer.html">&larr; Explorateur de l'Espace Personnel</a>
       &nbsp;&nbsp;
-      <a href="08e_execution_monitoring.html">Exécution &amp; Pilotage →</a>
+      <a href="08e_execution_monitoring.html">Exécution & Pilotage &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

@@ -97,7 +97,7 @@
     </p>
     <ul>
       <li>
-        <strong>Indexation :</strong> chaque fichier reçoit un <code>file_id</code> unique au
+        <strong>Indexation :</strong> chaque fichier reçoit un <code>source_id</code> unique au
         format <code>U_{uid}_C_{cid}_T_{timestamp}</code>, garantissant l'unicité par utilisateur,
         par session et par instant.
       </li>
@@ -108,7 +108,7 @@
       </li>
       <li>
         <strong>Réutilisation :</strong> si un fichier est référencé dans une session ultérieure,
-        le Filtre le reconnaît via son <code>file_id</code> et transmet uniquement la référence,
+        le Filtre le reconnaît via son <code>source_id</code> et transmet uniquement la référence,
         sans ré-uploader le contenu binaire.
       </li>
     </ul>
@@ -142,9 +142,9 @@
         <a href="08c_vault_explorer.html">Explorer ➔</a>
       </div>
       <div class="card">
-        <h3>🧠 Mémoire Organique &amp; Éphémère</h3>
-        <p>Architecture mémorielle scindée en deux espaces distincts. La <strong>Mémoire Organique</strong> à long terme 
-        (<code>save_memory</code>, <code>search_memory</code>, <code>forget_memory</code>, <code>list_memory_topics</code>) stockée définitivement, et le 
+        <h3>🧠 Mémoire &amp; Méta-Artéfacts</h3>
+        <p>Architecture mémorielle scindée en deux espaces distincts. La <strong>Mémoire Méta-Artéfacts</strong> à long terme 
+        (<code>update_meta_artifact</code>, <code>search_meta_artifacts</code>, <code>delete_meta_artifact_item</code>, <code>consult_meta_artifacts</code>) stockée définitivement, et la 
         <strong>Mémoire Vectorisée de Session</strong> (<code>save_session_context</code>, <code>search_session_context</code>) servant 
         d'espace de travail temporaire confiné à la session courante.</p>
         <p><strong>Source :</strong> <code>12-owui-tools/memory_and_rag_tool.py</code></p>
@@ -223,14 +223,13 @@
     </div>
 
     <div class="transition-text">
-      L'utilisation de ces outils est guidée par les directives fondamentales du système.<br><br>
-      <a href="07_pipe.html">← 7. Le Pipe (Cortex)</a>
+      <a href="07_pipe.html">&larr; Le Pipe (Cortex)</a>
       &nbsp;&nbsp;
-      <a href="09_system_prompt.html">9. Le Kernel (System Prompt) ➔</a>
+      <a href="08a_strategic_planner.html">Planification Stratégique &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,7 +1,7 @@
 """
 title: ECHO Universal API Client
 author: Wilfried BARNAVON
-version: 1.4
+version: 1.5
 description: 1.4: Switched complex objects to JSON strings to avoid 400 errors with strict Gemini REST schemas.
 """
 
@@ -12,7 +12,7 @@ import socket
 import ipaddress
 from urllib.parse import urlparse
 from pydantic import BaseModel, Field
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Literal
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
@@ -50,34 +50,22 @@ class Tools:
     def call_api(
         self,
         url: str,
-        method: str = "GET",
-        headers_json: Optional[str] = None,
-        body_json: Optional[str] = None,
+        method: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] = "GET",
+        headers: Optional[dict] = None,
+        body: Optional[dict] = None,
     ) -> str:
         """
-        Effectue un appel API HTTP universel.
-        :param url: L'URL cible de la requête.
-        :param method: La méthode HTTP à utiliser (GET, POST, PUT, DELETE). Par défaut 'GET'.
-        :param headers_json: Dictionnaire optionnel des headers HTTP au format chaîne JSON (ex: '{"Authorization": "Bearer..."}').
-        :param body_json: Corps de la requête au format chaîne JSON. Sera automatiquement converti en dictionnaire.
+        Requête HTTP universelle. Optionnel : headers, body.
+        :param url: URL cible sécurisée.
+        :param method: (Optionnel) GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS (Défaut: GET).
+        :param headers: (Optionnel) Dictionnaire Headers.
+        :param body: (Optionnel) Corps de requête format Object.
         """
         if not self._is_safe_url(url):
              return wrap_tool_output(text="❌ Accès réseau non autorisé (SSRF ou domaine non whitelisté).", status={"status": "error", "domain": url})
 
-        # Parsing des paramètres JSON via orjson
-        actual_headers = {}
-        if headers_json:
-            try:
-                actual_headers = json.loads(headers_json)
-            except Exception as e:
-                return wrap_tool_output(text=f"❌ Erreur format headers_json : {str(e)}", status={"status": "error"})
-
-        actual_body = None
-        if body_json:
-            try:
-                actual_body = json.loads(body_json)
-            except Exception as e:
-                return wrap_tool_output(text=f"❌ Erreur format body_json : {str(e)}", status={"status": "error"})
+        actual_headers = headers if headers else {}
+        actual_body = body if body else None
 
         try:
             response = requests.request(

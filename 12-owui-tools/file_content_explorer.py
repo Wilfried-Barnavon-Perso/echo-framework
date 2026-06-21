@@ -1,8 +1,10 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.14
-description: 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade(). 5.109.12: Injection __metadata__ et chat_id pour respect isolation fichiers par session. 5.109.13: Fix hallucination ID fichiers via docstring explicite et résolution résiliente. 5.109.14: Registre Unifié V2 — mark_processed → save_resource.
+version: 5.109.19
+description: 5.109.17: Suppression de la classe UserValves vide pour éviter le bug UI Open WebUI (Aucune vanne trouvée).
+             5.109.16: Transformation de show_image_to_user en Sonde Visuelle pour les URL distantes (3 états: success, warning, error). 5.109.15: Délégation des URLs distantes au Markdown, WebPlayer limité au Base64 local. 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade(). 5.109.12: Injection __metadata__ et chat_id pour respect isolation fichiers par session. 5.109.13: Fix hallucination ID fichiers via docstring explicite et résolution résiliente. 5.109.14: Registre Unifié V2 — mark_processed → save_resource.
+             5.109.18: Suppression de download_from_url (redondant, court-circuitage Registre V2).
 """
 
 import os
@@ -37,13 +39,9 @@ class Tools:
         MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW).")
         MAX_MULTIMODAL_SIZE_KB: int = Field(default=102400, description="Taille maximale (en Ko) pour l'injection multimédia.")
 
-    class UserValves(BaseModel):
-        pass
-
     def __init__(self):
         self.valves = self.Valves()
         self.uploads_dir = ECHO_UPLOADS_TRANSIT_DIR
-        self.user_valves = self.UserValves()
 
     async def read_raw_file_content(
         self, 
@@ -57,13 +55,14 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Lit et retourne le contenu brut d'un fichier extrait (PDF, DOCX, CSV, etc.).
-        
-        :param file_id: L'identifiant strict du fichier (doit obligatoirement être un `id` existant listé dans la section registre_fichiers du contexte, ne jamais l'inventer).
-        :param offset: La position de départ pour la lecture (0 par défaut).
-        :param limit: Le nombre maximum de caractères à lire.
-        
-        Note : La sortie est strictement limitée à 16 Ko pour conformité API Gemini.
+        """
+        Lecture sécurisée d'un fichier personnel (Espace Utilisateur). Validation Registre (query_registry) requise.
+        [CONTRAINTE CRITIQUE : byte_offset est mutuellement exclusif avec start_line/end_line. Maximum conseillé pour byte_offset/lignes : éviter de saturer le contexte (ex: 100 lignes max).]
+        :param file_id: Identifiant strict Registre (ex: a1b2c3d4).
+        :param start_line: (Optionnel) Ligne de départ.
+        :param end_line: (Optionnel) Ligne de fin.
+        :param output_mode: (Optionnel) Format: 'text' (défaut/extraction standard), 'base64' (pour injection multimodale ou encapsulation de binaires), 'hex' (analyse structurelle).
+        :param byte_offset: (Optionnel) Décalage binaire (exclut start_line/end_line).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
@@ -117,10 +116,9 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Sonde sémantiquement un fichier volumineux ou complexe via call_cascade centralisé.
-        
-        :param file_id: L'identifiant strict du fichier (doit obligatoirement être un `id` existant listé dans la section registre_fichiers du contexte, ne jamais l'inventer).
-        :param query: La question ou l'instruction d'analyse à appliquer au fichier.
+        """Sonde sémantiquement un fichier volumineux ou complexe. Validation Registre requise.
+        :param file_id: Identifiant strict Registre (utiliser query_registry, ne jamais l'inventer).
+        :param query: Motif d'analyse sémantique.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
@@ -202,11 +200,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> dict:
-        """
-        Affiche une image (Locale ou Distante) dans un viewer flottant injecté dans le DOM.
-        Supporte file_id ou URL http(s).
-        Retourne un dict standard (wrap_tool_output) — jamais un Tuple ou HTMLResponse.
-        """
+        """Avertissement à l'Utilisateur et syntaxe markdown en dernier recours. Le Modèle est multimédia natif (pas d'outil requis pour visionner)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         is_url = target.lower().startswith(("http://", "https://"))
@@ -217,37 +211,57 @@ class Tools:
 
         try:
             if is_url:
-                await events.status("🌐 Validation image distante...")
+                await events.status("🌐 Vérification du lien distant...")
                 h = get_stealth_headers(target)
-                server_ok = True
+                
                 try:
-                    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+                    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as c:
                         r = await c.head(target, headers=h)
                         if r.status_code >= 400:
-                            # Certains serveurs bloquent HEAD, on tente un GET partiel
-                            r = await c.get(target, headers={**h, "Range": "bytes=0-0"}, timeout=10.0)
-                            r.raise_for_status()
+                            r = await c.get(target, headers={**h, "Range": "bytes=0-0"}, timeout=8.0)
+                        
+                        r.raise_for_status()
+                        
+                        content_type = r.headers.get("content-type", "").lower()
+                        if content_type and not content_type.startswith("image/"):
+                            return wrap_tool_output(
+                                text=f"❌ Le lien pointe vers un contenu '{content_type}', pas une image. Le Modèle DOIT s'interdire d'utiliser la syntaxe MD.",
+                                status={"status": "error"}
+                            )
+                            
+                        return wrap_tool_output(
+                            text=f"✅ L'image est valide et accessible. Le Modèle DOIT utiliser ce code exact dans sa réponse : `![Description]({target})`",
+                            status={"status": "success"}
+                        )
+                        
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        return wrap_tool_output(
+                            text=f"❌ L'image n'existe pas (Erreur 404). Lien mort. Ne l'affichez pas.",
+                            status={"status": "error"}
+                        )
+                    else:
+                        return wrap_tool_output(
+                            text=f"⚠️ La vérification serveur est bloquée (Erreur {e.response.status_code}). Le navigateur de l'utilisateur y parviendra peut-être. Tentez le code en dernier recours : `![Description]({target})`",
+                            status={"status": "warning"}
+                        )
                 except Exception:
-                    # Le serveur backend ne peut pas y accéder, mais le
-                    # navigateur client pourra peut-être. On tente quand même.
-                    server_ok = False
-
-                suffix = "" if server_ok else " ⚠️ (non vérifié côté serveur)"
-                title = f"Distant : {target[:50]}...{suffix}"
-                img_url = target
+                    return wrap_tool_output(
+                        text=f"⚠️ La vérification serveur a échoué (Réseau/Timeout). Le navigateur client y parviendra peut-être. Tentez le code : `![Description]({target})`",
+                        status={"status": "warning"}
+                    )
             else:
                 fpath = resolve_upload_file_path(uid, target, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
                 if not fpath:
                     return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"})
                 mime, _ = mimetypes.guess_type(fpath)
+                mime = mime or 'image/png'
                 with open(fpath, 'rb') as f:
                     b64 = base64.b64encode(f.read()).decode('utf-8')
-                img_url = f"data:{mime or 'image/png'};base64,{b64}"
                 title = f"Espace Personnel : {os.path.basename(fpath)}"
 
             # Injection JS pure dans le DOM Open WebUI — aucun retour HTMLResponse
-            # Pattern identique à EchoUI.monitor_ECHO (events.call "execute")
-            js_code = EchoUI.show_image_js(img_url, title)
+            js_code = EchoUI.show_image_js(b64, mime, title)
             if events and (events.caller or events.emitter):
                 await events.call("execute", {"code": js_code})
             
@@ -257,53 +271,6 @@ class Tools:
         except Exception as e:
             return wrap_tool_output(text=f"❌ Échec affichage : {str(e)}", status={"status": "error"})
 
-    async def download_from_url(
-        self, 
-        url: str, 
-        filename: Optional[str] = None,
-        __user__: dict = {},
-        __metadata__: dict = {},
-        __event_emitter__: Any = None,
-        __event_call__: Any = None
-    ) -> dict:
-        """
-        Télécharge un fichier avec le Stealth Engine (Mimic Browser).
-        Gère les redirections (302) et les protections anti-bot (403).
-        """
-        events = EchoEvents(__event_emitter__, __event_call__)
-        uid = __user__.get("id", "anonymous")
-        cid = __metadata__.get("chat_id", "unknown")
-        os.makedirs(os.path.join(self.uploads_dir, f"U_{uid}"), exist_ok=True)
-        file_id = generate_echo_file_id(uid, cid)
-        orig_name = filename or os.path.basename(urlparse(url).path.split('?')[0]) or "file"
-        fpath = os.path.join(self.uploads_dir, f"{file_id}_{quote(orig_name)}")
-        
-        await events.status(f"📥 Récupération Stealth : {url[:50]}...")
-        try:
-            h = get_stealth_headers(url)
-            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-                # Wikimedia/Wikipedia nécessitent souvent une session cohérente
-                async with client.stream("GET", url, headers=h) as resp:
-                    resp.raise_for_status()
-                    furl = str(resp.url)
-                    mime = resp.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
-                    with open(fpath, 'wb') as f:
-                        async for chunk in resp.aiter_bytes(): f.write(chunk)
-            
-            state = EchoStateManager(user_id=uid, chat_id=cid)
-            state.save_resource(
-                id=file_id, name=orig_name, resource_type='media',
-                status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'], mime=mime, storage_path=fpath,
-            )
-            state.move_to_vault(file_id, orig_name)
-
-            return wrap_tool_output(
-                text=f"✅ Téléchargement réussi (ID: {file_id}).\nSource: {url}\nDestination finale: {furl}", 
-                status={"status": "success", "file_id": file_id}
-            )
-        except Exception as e:
-            if os.path.exists(fpath): os.remove(fpath)
-            return wrap_tool_output(text=f"❌ Échec téléchargement : {str(e)}", status={"status": "error"})
 
     async def get_file_metadata(self, file_id: str, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> str:
         """Récupère les métadonnées techniques d'un fichier."""
@@ -315,7 +282,7 @@ class Tools:
         return wrap_tool_output(text=f"📊 **{os.path.basename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}", status={"status": "success"})
 
     async def calculate_file_hashes(self, file_ids: List[str], __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> str:
-        """Calcule les hashs SHA-256 de fichiers."""
+        """Calcul d'empreintes (SHA-256) pour validation d'intégrité de l'Espace Personnel."""
         uid = __user__.get("id", "anonymous")
         res = []
         for fid in file_ids:

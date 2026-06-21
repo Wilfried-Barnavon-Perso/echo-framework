@@ -107,7 +107,7 @@ flowchart TD
     <p>
       Ce schéma vectoriel représente l'imbrication réelle des modules Python d'ECHO et leurs dépendances.
       Les connexions reproduisent fidèlement les imports déclarés dans le code source
-      (<code>pipe_engine.py v192.1</code>, <code>echo_utils.py v7.14</code>).
+      (<code>pipe_engine.py v192.21</code>, <code>echo_utils.py v8.2</code>).
       Cliquer sur le diagramme pour le zoomer.
     </p>
 
@@ -138,13 +138,13 @@ flowchart TD
         <text x="51" y="74" fill="#94a3b8" font-size="10" font-family="monospace" font-weight="bold">new_context_filter.py</text>
         <text x="51" y="89" fill="#64748b" font-size="9" font-family="monospace">inlet() → Smart Context</text>
         <text x="51" y="102" fill="#64748b" font-size="9" font-family="monospace">_process_file_task() → Moulage</text>
-        <text x="236" y="74" fill="#4ade80" font-size="8">v7.8</text>
+        <text x="236" y="74" fill="#4ade80" font-size="8">v7.37</text>
 
-        <!-- Filtre: conversation_memory_filter.py -->
+        <!-- Filtre: conversation_rag_filter.py -->
         <rect x="36" y="128" width="230" height="64" rx="6" fill="#1e293b" stroke="#64748b" stroke-width="1"/>
-        <text x="51" y="150" fill="#94a3b8" font-size="10" font-family="monospace" font-weight="bold">conversation_memory_filter.py</text>
-        <text x="51" y="165" fill="#64748b" font-size="9" font-family="monospace">outlet() → Distillation</text>
-        <text x="51" y="178" fill="#64748b" font-size="9" font-family="monospace">Vectorisation → Qdrant echo_memory</text>
+        <text x="51" y="150" fill="#94a3b8" font-size="10" font-family="monospace" font-weight="bold">conversation_rag_filter.py</text>
+        <text x="51" y="165" fill="#64748b" font-size="9" font-family="monospace">Filtre Outlet asynchrone (Fenêtre glissante)</text>
+        <text x="51" y="178" fill="#64748b" font-size="9" font-family="monospace">Vectorisation → Session RAG</text>
 
         <!-- Zone PIPE -->
         <rect x="320" y="24" width="250" height="180" rx="8" fill="#1e1b4b" stroke="#4338ca" stroke-width="1.5" stroke-dasharray="6,3"/>
@@ -153,7 +153,7 @@ flowchart TD
         <!-- pipe_engine.py -->
         <rect x="334" y="52" width="222" height="140" rx="6" fill="#172554" stroke="#4338ca" stroke-width="1.5"/>
         <text x="350" y="74" fill="#818cf8" font-size="10" font-family="monospace" font-weight="bold">pipe_engine.py</text>
-        <text x="520" y="74" fill="#4ade80" font-size="8">v192.1</text>
+        <text x="520" y="74" fill="#4ade80" font-size="8">v192.21</text>
         <text x="350" y="92" fill="#64748b" font-size="9" font-family="monospace">pipe() → Orchestrateur principal</text>
         <text x="350" y="106" fill="#64748b" font-size="9" font-family="monospace">prepare_context() → Suture BP</text>
         <text x="350" y="120" fill="#64748b" font-size="9" font-family="monospace">StreamProcessor.process() → SSE</text>
@@ -169,7 +169,7 @@ flowchart TD
         <!-- echo_utils.py -->
         <rect x="36" y="258" width="160" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
         <text x="52" y="278" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_utils.py</text>
-        <text x="186" y="278" fill="#4ade80" font-size="8">v7.14</text>
+        <text x="186" y="278" fill="#4ade80" font-size="8">v8.2</text>
         <text x="52" y="295" fill="#64748b" font-size="9" font-family="monospace">EchoStateManager</text>
         <text x="52" y="309" fill="#64748b" font-size="9" font-family="monospace">EchoGeminiClient</text>
         <text x="52" y="323" fill="#64748b" font-size="9" font-family="monospace">EchoAuth</text>
@@ -246,8 +246,8 @@ flowchart TD
 
         <rect x="248" y="464" width="160" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
         <text x="328" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Qdrant :6333</text>
-        <text x="328" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">echo_memory (permanent)</text>
-        <text x="328" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">echo_ephemeral (session)</text>
+        <text x="328" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">echo_meta_artifacts (permanent)</text>
+        <text x="328" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">echo_session_rag (session)</text>
 
         <rect x="424" y="464" width="160" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
         <text x="504" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Vault Fichiers</text>
@@ -398,7 +398,7 @@ flowchart TD
         <p>
           Déclenché par le Filtre pour tout fichier dépassant <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko).
           L'API de distillation (<code>call_distillation</code>) produit un distillat structuré, vectorisé
-          dans <code>echo_ephemeral</code> (Qdrant, bge-m3). Le modèle principal reçoit un résumé
+          dans <code>echo_session_rag</code> (Qdrant, bge-m3). Le modèle principal reçoit un résumé
           (≤ 300 mots) et le <code>source_id</code> pour interroger les détails.
         </p>
       </div>
@@ -441,8 +441,8 @@ flowchart TD
 
     <div class="grid-container">
       <div class="card">
-        <h3>🧠 RAG Organique (<code>echo_memory</code>)</h3>
-        <p><strong>Outils :</strong> <code>save_memory</code>, <code>search_memory</code>, <code>list_memory_topics</code>, <code>forget_memory</code></p>
+        <h3>🧠 RAG Organique (<code>echo_meta_artifacts</code>)</h3>
+        <p><strong>Outils :</strong> <code>update_meta_artifact</code>, <code>search_meta_artifacts</code>, <code>consult_meta_artifacts</code>, <code>delete_meta_artifact_item</code></p>
         <p><strong>Scope :</strong> <code>user_id</code> - permanent, survit aux sessions.</p>
         <p><strong>Usage :</strong> Préférences, contraintes techniques, décisions structurelles, règles personnelles.</p>
         <p>
@@ -453,7 +453,7 @@ flowchart TD
         <p><strong>Purge TTL :</strong> De 30 jours (Trivial) à 540 jours (Axiome), orchestrée par l'Admin Manager.</p>
       </div>
       <div class="card">
-        <h3>⏱️ Mémoire Vectorisée de Session (<code>echo_ephemeral</code>)</h3>
+        <h3>⏱️ Mémoire Vectorisée de Session (<code>echo_session_rag</code>)</h3>
         <p><strong>Outils :</strong> <code>save_session_context</code>, <code>search_session_context</code></p>
         <p><strong>Scope :</strong> <code>user_id + chat_id + source_id</code> - session courante uniquement.</p>
         <p><strong>Usage :</strong> Distillats de fichiers volumineux, résultats de navigation web, données intermédiaires d'analyse.</p>
@@ -468,7 +468,7 @@ flowchart TD
         deviennent effectivement inaccessibles au mécanisme d'attention. Les deux RAG constituent la
         réponse architecturale : <code>save_session_context</code> indexe proactivement avant saturation,
         <code>search_session_context</code> permet une lecture sémantique précise indépendante de la
-        position dans l'historique. <code>search_memory</code> couvre les sessions antérieures,
+        position dans l'historique. <code>search_meta_artifacts</code> couvre les préférences de l'Utilisateur et l'expérience du Modèle découvertes au cours des différentes sessions,
         totalement absentes du contexte actif.
       </p>
     </div>
@@ -512,7 +512,7 @@ sequenceDiagram
   note over F,DB: PHASE 1 : PRÉPARATION & DRAFT
   F->>F: Sniffing MIME & Analyse Multimodale
   F->>DB: get_session_registry(chat_id)
-  F->>F: Moulage fichiers > 256 Ko → echo_ephemeral
+  F->>F: Moulage fichiers > 256 Ko → echo_session_rag
   F-->>OWUI: Injection AEC + Draft YAML (metadata)
 
   OWUI->>P: Routage /api/chat/completions
@@ -601,6 +601,7 @@ flowchart TB
     BA["🌐 Browser Agent<br/>[:3001]"]
     PW["🚀 Python Worker<br/>[:3002]"]
     SNG["🔍 SearxNG Proxy<br/>[:8080]"]
+    DL["⬇️ Download Broker<br/>[:3003]"]
     AUD["🎙️ Audio Workers<br/>[:7995, :7996]"]
   end
 
@@ -660,7 +661,7 @@ flowchart TB
     <h2>Schéma SQL - Ombres Riches</h2>
 
     <p>
-      La persistance repose sur la classe <code>EchoStateManager</code> (<code>echo_utils.py v7.14</code>).
+      La persistance repose sur la classe <code>EchoStateManager</code> (<code>echo_utils.py v8.2</code>).
       Chaque chat dispose d'une base SQLite dédiée, en mode <strong>WAL</strong> (Write-Ahead Logging)
       pour la résistance aux pannes.
     </p>
@@ -745,12 +746,13 @@ erDiagram
     </div>
 
     <div class="transition-text">
-      Cette architecture requiert une infrastructure précise pour s'exécuter de manière fiable.
-      <a href="03_deploiement.html">Passer à la stratégie de déploiement ➔</a>
+      <a href="00_fondations.html">&larr; Fondations & Philosophie</a>
+      &nbsp;&nbsp;
+      <a href="02_communication_gemini.html">Communication Gemini &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

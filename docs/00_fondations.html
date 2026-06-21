@@ -76,8 +76,8 @@
         </tr>
         <tr>
           <td><strong>Véracité</strong></td>
-          <td>Reconstruction bit-perfect de l'historique conversationnel à chaque tour d'inférence.</td>
-          <td>Table SQLite <code>message_shadows</code>, double hachage SHA-256 (Invariant + Cumulatif), Verrou de Version.</td>
+          <td>Recherche contre les hallucinations et la capacité de mobiliser des connaissances externes.</td>
+          <td>Un prompt système orienté sur la non complaisance dans une hiérarchie de principes très stricte et des outils de recherche web avancée.</td>
         </tr>
         <tr>
           <td><strong>Autonomie</strong></td>
@@ -100,11 +100,11 @@
     <p>ECHO y répond par une architecture mémorielle à deux niveaux :</p>
     <ul>
       <li>
-        <strong>RAG Organique</strong> (<code>echo_memory</code>) : mémoire long terme permanente,
-        survit aux sessions. Outils : <code>save_memory</code> / <code>search_memory</code>.
+        <strong>RAG Organique</strong> (<code>echo_meta_artifacts</code>) : mémoire long terme permanente,
+        survit aux sessions. Outils : <code>update_meta_artifact</code> / <code>search_meta_artifacts</code>.
       </li>
       <li>
-        <strong>Mémoire Vectorisée de Session</strong> (<code>echo_ephemeral</code>) : mémoire de travail de la session courante,
+        <strong>Mémoire Vectorisée de Session</strong> (<code>echo_session_rag</code>) : mémoire de travail de la session courante,
         purgée automatiquement en fin de session. Outils : <code>save_session_context</code> / <code>search_session_context</code>.
       </li>
     </ul>
@@ -130,12 +130,13 @@
     </p>
 
     <div class="transition-text">
-      Ces fondements philosophiques et techniques se concrétisent dans une architecture modulaire précise.
-      <a href="01_hld_architecture.html">Passer au High-Level Design (HLD) ➔</a>
+      <a href="index.html">&larr; Introduction</a>
+      &nbsp;&nbsp;
+      <a href="01_hld_architecture.html">High-Level Design (HLD) &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

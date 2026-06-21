@@ -2,7 +2,14 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.101 (Persistance Menu)
+VERSION : 5.104 (Architecture Méta-Artéfacts & Qdrant)
+--- CHANGELOG 5.104 ---
+- Correctif : Propagation du artifact_name lors du clustering (Atrophie) pour maintenir la synchronisation avec les filtres RAG.
+--- CHANGELOG 5.103 ---
+- Architecture : Mise à jour des noms des collections Qdrant (echo_meta_artifacts, echo_session_rag) pour la purge temporelle et orpheline.
+--- CHANGELOG 5.102 ---
+- Fix (Critique) : Ajout de la purge du Vault (ECHO_USERS_ROOT) dans `run_semantic_pruning` (le paramètre vault_days était ignoré).
+- Fix (Critique) : Ajout d'une protection dans `maint_loop` (réinitialisation du scheduler) pour éviter une boucle de plantage silencieuse en cas d'exception non interceptée.
 --- CHANGELOG 5.101 ---
 - UX : Persistance dynamique de la navigation (Sidebar et Sous-onglets) lors des rechargements de page (actions POST) via `localStorage`.
 --- CHANGELOG 5.100 ---
@@ -42,7 +49,7 @@ VERSION : 5.101 (Persistance Menu)
 - Feature : Bouton exclusif "Import Admin" pour importer spécifiquement l'administrateur système de OWUI vers l'IdP.
 - Sécurité : Interdiction définitive de la suppression du compte `admin@echo.local` depuis le manager.
 --- CHANGELOG 5.89 ---
-- Feature : Paramétrage dynamique de la complexité des mots de passe SSO via la modale de sécurité Auth.
+- Sécurité : Paramétrage dynamique de la complexité des mots de passe SSO via la modale de sécurité Auth.
 - Feature : Ajout d'une date d'expiration des mots de passe temporaires.
 --- CHANGELOG 5.88 ---
 - Feature : Bouton de bascule du rôle administrateur dans la vue des sessions utilisateur.
@@ -90,6 +97,8 @@ DATE MAJ : 2026-06-03
 Ce micro-service assure la régulation et le monitoring du framework ECHO.
 Architecture ECHO-Native avec distinction entre stockage et sessions.
 
+--- CHANGELOG 5.64 ---
+- Correctif (Critique) : Implémentation d'un mécanisme asynchrone (Wait-for-it) de 60 minutes au démarrage de la Purge Temporelle (run_semantic_pruning). Résout la Race Condition avec la tâche de sauvegarde (03:00) qui rendait l'API Open WebUI et Qdrant temporairement indisponibles et annulait la purge silencieusement.
 --- CHANGELOG 5.63 ---
 - Nettoyage : Suppression du provider SFTP du wizard Rclone (doublon avec le SFTP natif paramiko).
 --- CHANGELOG 5.62 ---
@@ -119,7 +128,7 @@ Architecture ECHO-Native avec distinction entre stockage et sessions.
 --- CHANGELOG 5.50 ---
 - Optimisation : Centralisation du processus de Purge Temporelle des Souvenirs de la base vectorielle dans l'Admin Manager pour alléger le traitement temps-réel du filtre conversationnel.
 --- CHANGELOG 5.41 ---
-- Correctif : Restauration des constantes QDRANT_URL et COLLECTION_MEMORY.
+- Correctif : Restauration des constantes QDRANT_URL et COLLECTION_META_ARTIFACTS.
 - UX : Ajout du label "Logs" sur le bouton d'historique de maintenance.
 --- CHANGELOG 5.40 ---
 - Ajout : Synchronisation automatique de la base vectorielle des souvenirs (Qdrant) pour éliminer les souvenirs orphelins (utilisateurs ou chats supprimés).
@@ -157,6 +166,7 @@ import uuid
 import copy
 from werkzeug.utils import secure_filename # pyright: ignore[reportMissingImports]
 import re
+from collections import Counter
 
 # ==============================================================================
 # SECTION 1 : GESTION DES DÉPENDANCES
@@ -215,8 +225,8 @@ OWUI_ADMIN_SECRET_PATH = "/app/secrets/.owui-admin-secret"
 
 WEBUI_URL = "http://echo-open-webui:8080"
 QDRANT_URL = "http://echo-qdrant:6333"
-COLLECTION_MEMORY = "echo_memory"
-COLLECTION_EPHEMERAL = "echo_ephemeral"
+COLLECTION_META_ARTIFACTS = "echo_meta_artifacts"
+COLLECTION_SESSION_RAG = "echo_session_rag"
 
 DIRS = {
     "uploads": UPLOADS_DIR,
@@ -454,6 +464,49 @@ def save_maint_report(report_str):
 def run_semantic_pruning():
     """Purge Temporelle des Souvenirs (v5.51 + Qdrant Sync & TTL)."""
     print("🧬 [ECHO-LIFECYCLE] Démarrage...")
+    
+    # 0. Wait-for-it (Asynchrone 1h max) : Attente de dispo post-backup
+    services_ready = False
+    for _ in range(60):
+        db_ok = False
+        qdrant_ok = False
+        
+        # Check SQLite
+        try:
+            if os.path.exists(WEBUI_DB_PATH):
+                # mode=ro évite les WAL locks pendant le boot d'Open WebUI
+                conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True, timeout=5.0)
+                conn.execute("SELECT id FROM user LIMIT 1").fetchone()
+                conn.close()
+                db_ok = True
+            else:
+                pass
+        except Exception:
+            pass
+            
+        # Check Qdrant
+        if HAS_HTTPX:
+            try:
+                r = httpx.get(f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}", timeout=5.0)
+                if r.status_code == 200:
+                    qdrant_ok = True
+            except Exception:
+                pass
+        else:
+            qdrant_ok = True
+            
+        if db_ok and qdrant_ok:
+            services_ready = True
+            break
+            
+        time.sleep(60)
+        
+    if not services_ready:
+        err_msg = "Pruning annulé : Délai d'attente dépassé (1h) pour la disponibilité de SQLite/Qdrant."
+        print(f"❌ [ECHO-LIFECYCLE] {err_msg}")
+        save_maint_report(err_msg)
+        return err_msg
+
     report = []
     config = load_maint_config()
     
@@ -556,14 +609,14 @@ def run_semantic_pruning():
             if HAS_HTTPX and valid_ids:
                 try:
                     # Test de disponibilité Qdrant
-                    r = httpx.get(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}", timeout=5)
+                    r = httpx.get(f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}", timeout=5)
                     if r.status_code == 200:
                         # 1) Utilisateurs orphelins
                         if config.get("purge_orphaned_users", False):
-                            httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", 
+                            httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/delete", 
                                        json={"filter": {"must_not": [{"key": "user_id", "match": {"any": list(valid_ids)}}]}}, 
                                        timeout=30)
-                            httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_EPHEMERAL}/points/delete", 
+                            httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/delete", 
                                        json={"filter": {"must_not": [{"key": "user_id", "match": {"any": list(valid_ids)}}]}}, 
                                        timeout=30)
                         
@@ -589,8 +642,8 @@ def run_semantic_pruning():
                                         "must_not": [{"key": "chat_id", "match": {"any": valid_chat_ids_for_qdrant}}]
                                     }
                                 }
-                                httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", json=payload, timeout=30)
-                                httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_EPHEMERAL}/points/delete", json=payload, timeout=30)
+                                httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/delete", json=payload, timeout=30)
+                                httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/delete", json=payload, timeout=30)
                             
                             # Decay TTL
                             for level, seconds in ttl_map.items():
@@ -603,7 +656,7 @@ def run_semantic_pruning():
                                         ]
                                     }
                                 }
-                                httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete", json=decay_payload, timeout=30)
+                                httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/delete", json=decay_payload, timeout=30)
                         
                         qdrant_synced = True
                 except Exception as e:
@@ -618,7 +671,8 @@ def run_semantic_pruning():
 
     # 2. Atrophie
     rem_u = prune_recursive(UPLOADS_DIR, config["retention"]["uploads_days"])
-    report.append(f"Élagage: {rem_u}")
+    rem_v = prune_recursive(ECHO_USERS_ROOT, config["retention"]["vault_days"])
+    report.append(f"Élagage Uploads: {rem_u} | Vault: {rem_v}")
 
     # 3. Vacuum
     vax = 0
@@ -682,7 +736,7 @@ def consolidate_memories_for_user(user_id: str, config: dict) -> dict:
     try:
         # 1. COUNT : guard — évite de charger les vecteurs si pas assez de lvl1
         count_resp = httpx.post(
-            f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/count",
+            f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/count",
             json={"filter": {"must": [
                 {"key": "user_id",          "match": {"value": user_id}},
                 {"key": "memory_importance", "match": {"value": 1}}
@@ -695,7 +749,7 @@ def consolidate_memories_for_user(user_id: str, config: dict) -> dict:
 
         # 2. SCROLL with_vectors=True — récupère les vecteurs pour le clustering local
         scroll_resp = httpx.post(
-            f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
+            f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/scroll",
             json={
                 "filter": {"must": [
                     {"key": "user_id",          "match": {"value": user_id}},
@@ -743,24 +797,33 @@ def consolidate_memories_for_user(user_id: str, config: dict) -> dict:
             summaries    = [pt["payload"].get("summary", "") for pt in cluster if pt.get("payload")]
             fused_summary = " | ".join(s for s in summaries if s)
             tags          = list({t for pt in cluster for t in pt.get("payload", {}).get("tags", [])})[:5]
+            
+            # Propagation de l'artifact_name (le plus fréquent du cluster)
+            a_names = [pt["payload"].get("artifact_name") for pt in cluster if pt.get("payload") and pt["payload"].get("artifact_name")]
+            major_artifact = Counter(a_names).most_common(1)[0][0] if a_names else None
+            
             new_memory_id = f"consolidated_{uuid.uuid4().hex[:8]}"
             new_id        = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{new_memory_id}"))
 
+            payload_data = {
+                "user_id":           user_id,
+                "chat_id":           "consolidated",
+                "timestamp":         int(time.time()),
+                "memory_importance": 2,      # Promotion lvl1 -> lvl2
+                "memory_id":         new_memory_id,
+                "tags":              tags,
+                "summary":           fused_summary
+            }
+            if major_artifact:
+                payload_data["artifact_name"] = major_artifact
+
             # Upsert du nouveau point lvl2
             upsert_resp = httpx.put(
-                f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points",
+                f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points",
                 json={"points": [{
                     "id": new_id,
                     "vector": fused_vector,
-                    "payload": {
-                        "user_id":           user_id,
-                        "chat_id":           "consolidated",
-                        "timestamp":         int(time.time()),
-                        "memory_importance": 2,      # Promotion lvl1 → lvl2
-                        "memory_id":         new_memory_id,
-                        "tags":              tags,
-                        "summary":           fused_summary
-                    }
+                    "payload": payload_data
                 }]}, timeout=30
             )
             if upsert_resp.status_code not in (200, 206):
@@ -770,7 +833,7 @@ def consolidate_memories_for_user(user_id: str, config: dict) -> dict:
             # Suppression des anciens points par liste d'IDs
             # (API Qdrant : {"points": [id1, id2, ...]} et non pas {"filter": ...})
             del_resp = httpx.post(
-                f"{QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete",
+                f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/delete",
                 json={"points": [pt["id"] for pt in cluster]},
                 timeout=30
             )
@@ -791,7 +854,11 @@ def setup_lifecycle_scheduler():
     try:
         config = load_maint_config()
         schedule.clear()
-        schedule.every().day.at(config.get("cleanup_hour", "03:00")).do(run_semantic_pruning)
+        
+        def _async_prune():
+            threading.Thread(target=run_semantic_pruning, daemon=True).start()
+            
+        schedule.every().day.at(config.get("cleanup_hour", "03:00")).do(_async_prune)
     except Exception: pass
 
 def change_system_password(username, current_pwd, new_pwd):
@@ -2101,7 +2168,9 @@ if __name__ == '__main__':
         def maint_loop():
             while True:
                 try: schedule.run_pending()
-                except Exception: pass
+                except Exception as e:
+                    print(f"[ECHO-LIFECYCLE] Erreur critique Scheduler : {e}")
+                    setup_lifecycle_scheduler()
                 time.sleep(60)
         threading.Thread(target=maint_loop, daemon=True).start()
     app.run(host='0.0.0.0', port=3001, debug=False, threaded=True)

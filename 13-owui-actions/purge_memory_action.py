@@ -12,11 +12,12 @@ import httpx
 import orjson as json
 from pydantic import BaseModel, Field
 from typing import Any, Optional, List, Set, Dict
+from datetime import datetime, timezone
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents
-from echo_constants import COLLECTION_MEMORY, ECHO_QDRANT_URL
+from echo_constants import COLLECTION_META_ARTIFACTS, ECHO_QDRANT_URL
 
 class Action:
     class Valves(BaseModel):
@@ -37,7 +38,7 @@ class Action:
                 }
                 
                 resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/scroll",
                     json=scroll_payload
                 )
                 
@@ -78,19 +79,23 @@ class Action:
                 search_payload = {
                     "filter": {"must": must_filters},
                     "limit": 50, # On limite l'affichage
-                    "with_payload": ["memory_id", "slug"]
+                    "with_payload": ["memory_id", "slug", "timestamp"]
                 }
                 
                 resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/scroll",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/scroll",
                     json=search_payload
                 )
                 
                 if resp.status_code == 200:
                     results = resp.json().get("result", {}).get("points", [])
                     for p in results:
-                        memory_id = p.get("payload", {}).get("memory_id", p.get("payload", {}).get("slug"))
-                        if memory_id: memory_ids.add(memory_id)
+                        payload = p.get("payload", {})
+                        memory_id = payload.get("memory_id", payload.get("slug"))
+                        ts = payload.get("timestamp")
+                        if memory_id:
+                            date_str = f" ({datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d')})" if ts else ""
+                            memory_ids.add(f"{memory_id}{date_str}")
                 return list(memory_ids)
         except: return []
 
@@ -255,7 +260,7 @@ class Action:
 
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_MEMORY}/points/delete",
+                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/delete",
                     json=delete_payload
                 )
 

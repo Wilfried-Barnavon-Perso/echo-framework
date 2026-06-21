@@ -1,8 +1,11 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.36
-description: 5.36: Fix Python SyntaxError (échappement des f-strings pour editorRatio/previewRatio).
+version: 5.39
+description: 5.39: Refonte show_image_js pour passer le Base64 explicite au lieu de l'URL.
+             5.38: Ajout des boutons de copie universelle (Code Brut et Rendu Preview) avec fallback HTTP.
+             5.37: Fix Race condition au démarrage du Codex (polling sur echoCodexResolve pour Pull).
+             5.36: Fix Python SyntaxError (échappement des f-strings pour editorRatio/previewRatio).
              5.35: Redimensionnement proportionnel (ratio 33/67) pour le preview Codex.
              5.34: Fix redimensionnement du preview Codex (min-width:0 sur flex item) empêchant la perte du bouton PDF et l'ascenseur horizontal.
              5.33: Bascule de monitor_ECHO vers events.emit pour compatibilité universelle avec les Outils.
@@ -17,6 +20,8 @@ description: 5.36: Fix Python SyntaxError (échappement des f-strings pour edito
              5.22: Retour embed Google Maps (googleMaps grounding natif Gemini) —
              suppression Leaflet/OSM. Signature simplifiée (query, title uniquement).
              5.23: Ajout _generate_codex_js() — Moteur HUD Monaco Codex.
+             5.25: Ajout mécanisme Heartbeat (ping) dans _generate_codex_js() pour
+             rafraîchissement en direct de l'Action Codex.
              File tree, mini-chat AI, quick actions, diff view, upload/download,
              navigation historique ◀ ▶, détection thème dark/light.
              5.24: Spinner AI, refresh post-diff via load_file, sélecteur modèle
@@ -408,7 +413,7 @@ class EchoUI(EchoRichUI):
           this.hud.innerHTML = `
             <div id="${{HUD_ID}}-header" style="height:${{this.headerH}}px; padding:0 15px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:12px; border-bottom:1px solid #222; cursor:move; user-select:none; box-sizing:border-box;">
               <span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">{icon}</span>
-              <input id="${{HUD_ID}}-url" type="text" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:6px; color:#00d4ff; font-size:11px; padding:6px 12px; outline:none; font-family:monospace;" readonly />
+              <input id="${{HUD_ID}}-url" type="text" placeholder="URL du navigateur..." style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:6px; color:#00d4ff; font-size:11px; padding:6px 12px; outline:none; font-family:monospace;" readonly />
               <div style="display:flex; gap:8px;">
                 <button id="${{HUD_ID}}-btn-zoom" title="Maximiser (Ajuster)" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;">⛶</button>
                 <button id="${{HUD_ID}}-btn-reset" title="Taille réelle (1:1)" style="background:none; border:none; color:#777; cursor:pointer; font-size:11px; font-weight:bold;">1:1</button>
@@ -465,7 +470,19 @@ class EchoUI(EchoRichUI):
             }});
             this.syncLayout();
           }};
+          
           img.src = "data:" + data.mime + ";base64," + data.b64;
+          
+          const area = document.getElementById(HUD_ID + "-area");
+          if (data.mime === "image/webp") {{
+             area.ondblclick = () => {{
+                let currentSrc = img.src;
+                img.src = "";
+                setTimeout(() => {{ img.src = currentSrc; }}, 50);
+             }};
+          }} else {{
+             area.ondblclick = null;
+          }}
         }}
       }};
     }}
@@ -474,9 +491,12 @@ class EchoUI(EchoRichUI):
     """
 
   @staticmethod
-  async def monitor_ECHO(events: Any, b64: str, metadata: List[Dict] = None, hud_id: str = "echo-webplayer", state_key: str = "echo_webplayer_state", current_url: str = ""):
+  async def monitor_ECHO(events: Any, b64: str, metadata: List[Dict] = None, hud_id: str = "echo-webplayer", state_key: str = "echo_webplayer_state", current_url: str = "", webp_b64: str = None):
     """Déploie le moniteur visuel interactif (HUD) haute performance."""
-    js_code = EchoUI._generate_webplayer_js(b64, "image/png", metadata or [], current_url, hud_id, state_key, icon="🌐")
+    if webp_b64:
+        js_code = EchoUI._generate_webplayer_js(webp_b64, "image/webp", metadata or [], current_url, hud_id, state_key, icon="🌐")
+    else:
+        js_code = EchoUI._generate_webplayer_js(b64, "image/png", metadata or [], current_url, hud_id, state_key, icon="🌐")
     await events.emit("execute", {"code": js_code})
 
   @staticmethod
@@ -546,12 +566,12 @@ class EchoUI(EchoRichUI):
     """
     await events.emit("execute", {"code": js_code})
   @staticmethod
-  def show_image_js(img_url: str, title: str = "Aperçu Image") -> str:
-    """Réutilise le moteur WebPlayer (HUD navigateur) pour afficher une image.
+  def show_image_js(b64: str, mime: str = "image/png", title: str = "Aperçu Image") -> str:
+    """Réutilise le moteur WebPlayer (HUD navigateur) pour afficher une image locale (Base64).
     Utiliser via events.call('execute', {'code': ...}).
     N'utilise pas HTMLResponse — retour 100% propre, sans pollution du contexte Gemini."""
     return EchoUI._generate_webplayer_js(
-      b64="", mime="image/png", metadata=[], current_url=title, 
+      b64=b64, mime=mime, metadata=[], current_url=title, 
       hud_id="echo-preview", state_key="echo_preview_state", icon="🖼️"
     )
 
@@ -854,6 +874,9 @@ return new Promise(function(resolve) {{
       previewPanel.style.cssText = `flex:${{previewRatio}} 1 0%; min-width:0; display:none; flex-direction:column; overflow:hidden; background:${{bgColor}};`;
       previewPanel.innerHTML = `
         <div style="padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0; display:flex; align-items:center; gap:8px;">
+          <button id="${{CODEX_ID}}-preview-copy" title="Copier le rendu" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
           <button id="${{CODEX_ID}}-preview-print" title="Print / PDF" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><polyline points="9 15 12 18 15 15"/></svg>
           </button>
@@ -1122,29 +1145,79 @@ return new Promise(function(resolve) {{
         if (currentFile) window.echoCodexResolve({{action:'download', filename:currentFile}});
       }};
 
-      // Copier dans le presse-papier (fallback HTTP via execCommand)
+      // ===== CLIPBOARD UTILS =====
+      function copyPlainText(text) {{
+        if (navigator.clipboard && window.isSecureContext) {{
+          navigator.clipboard.writeText(text).then(() => updateStatus('📋 Code copi\u00e9 !')).catch(() => fallbackCopyText(text));
+        }} else {{
+          fallbackCopyText(text);
+        }}
+      }}
+      function fallbackCopyText(text) {{
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
+        document.body.appendChild(ta);
+        ta.select();
+        try {{ 
+          document.execCommand('copy'); 
+          updateStatus('📋 Code copi\u00e9 (Fallback HTTP) !');
+        }} catch (e) {{ updateStatus('❌ Erreur de copie'); }}
+        document.body.removeChild(ta);
+      }}
+      function copyRichText(html, text) {{
+        if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {{
+          try {{
+            const blobHtml = new Blob([html], {{ type: 'text/html' }});
+            const blobText = new Blob([text], {{ type: 'text/plain' }});
+            const data = [new ClipboardItem({{ 'text/html': blobHtml, 'text/plain': blobText }})];
+            navigator.clipboard.write(data).then(() => {{
+              updateStatus('📋 Rendu copi\u00e9 (Rich Text) !');
+            }}).catch(() => fallbackCopyRichText(html));
+          }} catch(e) {{ fallbackCopyRichText(html); }}
+        }} else {{
+          fallbackCopyRichText(html);
+        }}
+      }}
+      function fallbackCopyRichText(html) {{
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        div.style.cssText = 'position:fixed;left:-9999px;opacity:0;pointer-events:none;';
+        document.body.appendChild(div);
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(div);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        try {{ 
+          document.execCommand('copy'); 
+          updateStatus('📋 Rendu copi\u00e9 (Fallback HTTP) !');
+        }} catch (e) {{ updateStatus('❌ Erreur de copie'); }}
+        selection.removeAllRanges();
+        document.body.removeChild(div);
+      }}
+
+      // ===== COPY BINDINGS =====
       document.getElementById(CODEX_ID + '-copy').onclick = () => {{
         if (!editor) return;
-        const text = editor.getModel().getValueInRange(editor.getSelection()) || editor.getValue();
-        const showOk = () => {{
-          const btn = document.getElementById(CODEX_ID + '-copy');
-          const orig = btn.innerHTML;
-          btn.textContent = '\u2714';
-          setTimeout(() => btn.innerHTML = orig, 1200);
-        }};
-        if (navigator.clipboard && window.isSecureContext) {{
-          navigator.clipboard.writeText(text).then(showOk);
-        }} else {{
-          const ta = document.createElement('textarea');
-          ta.value = text;
-          ta.style.cssText = 'position:fixed;left:-9999px;';
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand('copy');
-          document.body.removeChild(ta);
-          showOk();
-        }}
+        copyPlainText(editor.getValue());
       }};
+
+      const previewCopyBtn = document.getElementById(CODEX_ID + '-preview-copy');
+      if (previewCopyBtn) {{
+        previewCopyBtn.onclick = () => {{
+          if (!currentFile) return;
+          const lang = files.find(f => f.filename === currentFile)?.lang;
+          const content = editor ? editor.getValue() : '';
+          
+          if (lang === 'markdown') {{
+            const container = document.getElementById(CODEX_ID + '-preview-content');
+            copyRichText(container.innerHTML, container.innerText);
+          }} else {{
+            copyPlainText(content);
+          }}
+        }};
+      }}
 
       // History ◀ ▶
       document.getElementById(CODEX_ID + '-hist-prev').onclick = () => {{
@@ -1441,9 +1514,11 @@ return new Promise(function(resolve) {{
         const container = document.getElementById(CODEX_ID + '-preview-content');
         const label = document.getElementById(CODEX_ID + '-preview-label');
         const printBtn = document.getElementById(CODEX_ID + '-preview-print');
+        const copyBtn = document.getElementById(CODEX_ID + '-preview-copy');
         if (!container) return;
 
         if (printBtn) printBtn.style.display = (lang === 'markdown' || lang === 'html') ? 'flex' : 'none';
+        if (copyBtn) copyBtn.style.display = PREVIEW_LANGS.includes(lang) ? 'flex' : 'none';
 
         if (lang === 'markdown') {{
           if (label) label.textContent = 'Markdown Preview';
@@ -1645,6 +1720,17 @@ return new Promise(function(resolve) {{
           updatePreviewButton();
           if (previewOpen) updatePreview();
         }};
+
+        // Demande de chargement initial asynchrone (Pull)
+        const checkReady = setInterval(() => {{
+          if (typeof window.echoCodexResolve === 'function') {{
+            clearInterval(checkReady);
+            if (currentFile) {{
+              updateStatus(currentFile + ' \u2022 chargement...');
+              window.echoCodexResolve({{action:'load_file', filename: currentFile}});
+            }}
+          }}
+        }}, 50);
       }}
 
       function loadMonaco() {{
@@ -1660,6 +1746,14 @@ return new Promise(function(resolve) {{
         }};
         document.head.appendChild(loaderScript);
       }}
+
+      // ===== PING HEARTBEAT =====
+      setInterval(() => {{
+        if (typeof window.echoCodexResolve === 'function' && !document.hidden) {{
+          window.echoCodexResolve({{action: 'ping', current_file: currentFile}});
+          window.echoCodexResolve = null;
+        }}
+      }}, 3000);
 
       loadMonaco();
     }})();

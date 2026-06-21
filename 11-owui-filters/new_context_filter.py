@@ -2,8 +2,9 @@
 title: ECHO New Context Filter V2
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.36
-description: 7.36: Refactorisation statuts d'ingestion. Centralisation via FILE_INGESTION_STATUS.
+version: 7.37
+description: 7.37: Refonte de l'ingestion par Synthèse Guidée par RAG (O(1)) et ajout de SMART_CONTEXT_CHUNK_LIMIT.
+             7.36: Refactorisation statuts d'ingestion. Centralisation via FILE_INGESTION_STATUS.
              7.35: Renommage rag_ephemeral -> vectorized_sum_up et assouplissement de la directive système.
              7.34: Intégration native des PDF dans le Cas 1 (Injection Binaire Directe) via inline_data.
              7.33: Hotfix ImportError get_gemini_mime preventing file processing.
@@ -59,6 +60,7 @@ import time
 import uuid as _uuid_module
 import hashlib
 import shutil
+import httpx
 from concurrent.futures import ThreadPoolExecutor
 
 # Importations ECHO Strictes (Volume Docker)
@@ -88,6 +90,7 @@ class Filter:
 
     class UserValves(BaseModel):
         ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Active le résumé intelligent des fichiers volumineux via Gemini Flash.")
+        SMART_CONTEXT_CHUNK_LIMIT: int = Field(default=10, ge=2, le=50, description="🧠 Nombre de passages extraits pour la Synthèse Guidée par RAG (2-50).")
         ENABLE_OFFICE_CONVERSION: bool = Field(default=True, description="📄 Convertit automatiquement les fichiers Office (Word, Excel, PowerPoint) en texte pour l'analyse.")
         MAX_OFFICE_FILE_SIZE_MB: int = Field(default=DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB, description="📏 Taille maximale (Mo) des fichiers Office acceptés pour la conversion automatique.")
         ENABLE_USER_NAME: bool = Field(default=False, description="🔒 Partager mon nom avec le modèle.")
@@ -251,7 +254,7 @@ class Filter:
             print(f"[ECHO-FILTER] !! Vectorisation échouée pour {filename} : {err}", flush=True)
             raise ValueError(f"Vectorisation échouée : {err}")
 
-        # --- ETAPE 2 : Map-Reduce Local (sur la source unifiée) ---
+        # --- ETAPE 2 : Synthèse Guidée par RAG (O(1)) ---
         brief_summary = "Résumé indisponible (fichier trop complexe)."
         try:
             words_len = len(source_text.split())
@@ -259,38 +262,52 @@ class Filter:
                 await events.status(f"Fast-Path appliqué pour {filename} (texte court)...", False)
                 brief_summary = source_text
             else:
-                await events.status(f"Distillation Map-Reduce de {filename}...", False)
-                chunks = []
-                start = 0
-                text_len = len(source_text)
-                while start < text_len:
-                    end = min(start + ECHO_MR_CHUNK_SIZE, text_len)
-                    chunks.append(source_text[start:end])
-                    if end == text_len: break
-                    start = end - ECHO_MR_OVERLAP_SIZE
+                await events.status(f"Extraction RAG des thèmes clés de {filename}...", False)
+                
+                # Requête stratégique
+                query_text = "Introduction, résumé exécutif, conclusion, thèmes clés et informations principales"
+                vector = await EchoGeminiClient.generate_embedding(query_text, "query", u_ctx, m_ctx)
+                
+                if vector:
+                    from echo_constants import COLLECTION_SESSION_RAG
+                    limit = getattr(self.user_valves, 'SMART_CONTEXT_CHUNK_LIMIT', 10)
+                    
+                    async with httpx.AsyncClient(timeout=60) as client:
+                        search_payload = {
+                            "vector": vector, "limit": limit, "with_payload": True,
+                            "filter": {
+                                "must": [
+                                    {"key": "user_id", "match": {"value": user_id}},
+                                    {"key": "chat_id", "match": {"value": chat_id}},
+                                    {"key": "source_id", "match": {"value": file_id}}
+                                ]
+                            }
+                        }
+                        resp = await client.post(
+                            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/search",
+                            json=search_payload
+                        )
+                        
+                        if resp.status_code == 200:
+                            results = resp.json().get("result", [])
+                            if results:
+                                await events.status(f"Distillation globale de {filename}...", False)
+                                combined = "\n\n---\n\n".join([r["payload"].get("text", "") for r in results])
+                                prompt = f"Fais un résumé exhaustif et structuré (en markdown) de {ECHO_MR_SUMMARY_MAX_WORDS} mots maximum de ce document en te basant UNIQUEMENT sur les extraits suivants pertinents :\n\n{combined}"
+                                brief_summary = await EchoGeminiClient.call_distillation(
+                                    prompt, u_ctx, m_ctx, is_json=False, max_tokens=ECHO_MR_MAX_TOKENS
+                                )
+                            else:
+                                brief_summary = "⚠️ *Aucun extrait pertinent n'a pu être récupéré via RAG.*"
+                        else:
+                            brief_summary = f"⚠️ *Erreur Qdrant lors de l'extraction RAG ({resp.status_code}).*"
+                else:
+                    brief_summary = "⚠️ *Échec de la vectorisation de la requête stratégique.*"
 
-                distillates = []
-                for i, chunk in enumerate(chunks):
-                    await events.status(f"Distillation (partie {i+1}/{len(chunks)}) de {filename}...", False)
-                    prompt = f"Résume ce passage selon l'importance des données; en maximum {ECHO_MR_SUMMARY_MAX_WORDS} mots.:\n\n{chunk}"
-                    res = await EchoGeminiClient.call_distillation(
-                        prompt, u_ctx, m_ctx, is_json=False, max_tokens=ECHO_MR_MAX_TOKENS
-                    )
-                    if res: distillates.append(res)
-
-                if len(distillates) > 1:
-                    await events.status(f"Synthèse finale de {filename}...", False)
-                    combined = "\n\n---\n\n".join(distillates)
-                    prompt = f"Fais un résumé global de {ECHO_MR_SUMMARY_MAX_WORDS} mots maximum à partir de ces synthèses partielles du document d'origine :\n\n{combined}"
-                    brief_summary = await EchoGeminiClient.call_distillation(
-                        prompt, u_ctx, m_ctx, is_json=False, max_tokens=ECHO_MR_MAX_TOKENS
-                    )
-                elif len(distillates) == 1:
-                    brief_summary = distillates[0]
         except Exception as mr_err:
-            print(f"[ECHO-FILTER] !! Map-Reduce Timeout/Erreur pour {filename} : {mr_err}", flush=True)
+            print(f"[ECHO-FILTER] !! Erreur Synthèse Guidée par RAG pour {filename} : {mr_err}", flush=True)
             # On continue car l'indexation brute a réussi.
-            brief_summary = "⚠️ *Le résumé automatique a échoué en raison de la complexité ou de la taille du fichier.*"
+            brief_summary = "⚠️ *Le résumé automatique a échoué en raison d'une erreur interne.*"
 
         res_text = (
             f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\" mode=\"vectorized_sum_up\"\n"
@@ -623,6 +640,25 @@ class Filter:
                             else:
                                 files_to_process.append(f)
                 
+            # [NEW] Injection des téléchargements Playwright en attente d'ingestion
+            if chat_id and state_manager:
+                pending_resources = state_manager.get_resources(
+                    status=FILE_INGESTION_STATUS.get("PENDING_INGESTION", "pending_ingestion")
+                )
+                for pr in pending_resources:
+                    f_obj = {
+                        "id": pr["id"],
+                        "name": pr["name"],
+                        "mime_type": pr.get("mime", "application/octet-stream"),
+                        "file": {
+                            "id": pr["id"],
+                            "name": pr["name"],
+                            "path": pr.get("storage_path", "")
+                        }
+                    }
+                    if f_obj not in files_to_process:
+                        files_to_process.append(f_obj)
+
             results_to_seal = []
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)

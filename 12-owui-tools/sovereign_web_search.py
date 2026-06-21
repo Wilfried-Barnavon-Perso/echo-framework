@@ -1,8 +1,12 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.7
-description: 1.7: Précision dans la docstring de delegate_deep_research sur le comportement conditionnel du navigateur (dernier recours).
+version: 1.11
+description: 1.11: Optim - Ajout de la suggestion de changement de méthode en cas de blocage SearXNG.
+             1.10: Optim - Intégration sous contrainte de delegate_web_browsing dans le Deep Research Agent.
+             1.9: Optim - Ajout d'une règle anti-spam cognitif limitant le burst du Parallel Function Calling pour prévenir le bannissement de l'IP.
+             1.8: Redéfinition des docstrings de search_web et delegate_deep_research.
+             1.7: Précision dans la docstring de delegate_deep_research sur le comportement conditionnel du navigateur (dernier recours).
              1.6: Renommage de search_deep_web en search_web pour dissiper la confusion avec le "Dark Web".
              1.5: Clarification sémantique des docstrings des outils de recherche pour optimiser le routage.
              1.4: Amélioration de la docstring de delegate_deep_research pour clarifier son usage.
@@ -15,7 +19,7 @@ import sys
 import os
 import re
 import uuid
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Literal
 from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
@@ -45,11 +49,7 @@ class Tools:
         __event_emitter__: Any = None
     ) -> str:
         """
-        Récupère une réponse instantanée (faits, définitions, encyclopédie) via DuckDuckGo.
-        Idéal pour : Vérifier une date, un chiffre ou une définition factuelle rapide. Ne retourne pas de liste de sites web.
-        RÈGLE STRICTE : Ne JAMAIS formuler de question complète. Fournissez UNIQUEMENT les mots-clés exacts.
-        TRÈS IMPORTANT : L'entité cible DOIT être traduite en ANGLAIS pour garantir un résultat.
-        Exemples intemporels valides : "Theory of relativity", "Photosynthesis", "Isaac Newton".
+        Définition de concepts, biographies ou dates (Wikipédia). Actualité ou événements récents proscrits. Mots-clés nus obligatoires.
         """
         events = EchoEvents(__event_emitter__)
         await events.status(f"🦆 DuckDuckGo Instant Answer : {query}...")
@@ -73,22 +73,22 @@ class Tools:
                     if source_url: output += f"\n\n[Lire la suite]({source_url})"
                     return wrap_tool_output(text=output, status={"status": "success"})
                 
-                return wrap_tool_output(text="⚠️ Pas de réponse instantanée trouvée. Essayez 'search_web'.", status={"status": "no_result"})
+                return wrap_tool_output(text="⚠️ Aucune réponse instantanée. IMPLIQUE `search_web`.", status={"status": "no_result"})
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur DDG: {str(e)}", status={"status": "error"})
 
     async def search_web(
         self,
         query: str,
-        time_range: Optional[str] = None, # None, day, week, month, year
+        categories: Optional[Literal['general', 'it', 'science', 'images', 'videos', 'social media', 'news', 'music', 'map']] = None,
         __user__: dict = {},
         __event_emitter__: Any = None
     ) -> str:
         """
-        Recherche web classique via SearxNG (agrégateur). Retourne une liste de liens et de courts extraits.
-        Idéal pour : L'actualité récente, trouver des sources spécifiques, lire les titres de forums ou récupérer rapidement des liens de référence. C'est une recherche en une seule passe (One-Shot).
-        :param query: La requête de recherche.
-        :param time_range: (Optionnel) Filtre temporel : 'day', 'week', 'month', 'year'.
+        **Priorité 1.** Recherche de faits récents, actualités ou URLs pertinentes. Snippets rapides.
+        1. **Précision** : Mots-clés traduits en anglais. Contextualisation spatio-temporelle requise si judicieux.
+        2. **PCEA** : Agrégation des concepts. Fragmentation proscrite.
+        :param categories: (Optionnel) Restreindre la recherche à une catégorie (ex: 'news', 'science', 'it', 'general').
         """
         events = EchoEvents(__event_emitter__)
         u_valves = __user__.get("valves", self.UserValves()) if __user__ else self.UserValves()
@@ -100,7 +100,7 @@ class Tools:
             "language": "fr-FR",
             "safesearch": 1
         }
-        if time_range: params["time_range"] = time_range
+        if categories: params["categories"] = categories
         
         url = f"{ECHO_SEARXNG_BASE_URL}/search"
         headers = {"User-Agent": ECHO_USER_AGENT}
@@ -115,7 +115,7 @@ class Tools:
                 results = data.get("results", [])[:u_valves.MAX_RESULTS]
                 
                 if not results:
-                    return wrap_tool_output(text="⚠️ Aucun résultat trouvé pour cette recherche.", status={"status": "no_result"})
+                    return wrap_tool_output(text="⚠️ Requête bloquée/sans réponse. IMPLIQUE `wait_timer` (60-180s) et altération mots-clés (1 seule tentative). Échec ultérieur IMPLIQUE autre outil.", status={"status": "no_result"})
                 
                 formatted_results = []
                 for i, r in enumerate(results, 1):
@@ -140,7 +140,7 @@ class Tools:
     async def delegate_deep_research(
         self,
         query: str,
-        target_model_key: str = "MODEL_PRO",
+        target_model_key: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
         __user__: dict = {},
         __chat_id__: str = "",
         __metadata__: dict = {},
@@ -148,10 +148,8 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Agent autonome de recherche profonde (Deep Research Agent).
-        Idéal pour : Déléguer une recherche web sur un sujet complexe, large ou profond nécessitant une synthèse exhaustive.
-        L'agent travaillera en arrière-plan (multi-tours, croisement de sources) et te retournera un rapport consolidé complet.
-        À utiliser quand le sujet demande de l'investigation. Note : Il privilégiera les requêtes web classiques et n'invoquera le navigateur autonome qu'en dernier recours absolu si les autres méthodes ne donnent pas satisfaction.
+        Recherche avancée. Investigation vaste (croisement de sources, comparaison).
+        **PCEA** : Problématique d'ensemble consolidée. Question ponctuelle ou URL de départ proscrite.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
@@ -163,7 +161,7 @@ class Tools:
         _agent_mod = sys.modules.get("tool_agent_engine_tool")
         if not _agent_mod or not hasattr(_agent_mod, "Tools"):
             return wrap_tool_output(
-                text="❌ L'outil agent_engine_tool est introuvable. Activez-le dans l'interface.",
+                text="❌ `agent_engine_tool` introuvable. IMPLIQUE notification utilisateur pour activation.",
                 status={"status": "error"}
             )
         
@@ -181,13 +179,16 @@ class Tools:
             "RÈGLES ABSOLUES :\n"
             "1. Poursuis ta recherche tant que tu n'as pas une vision complète et vérifiée.\n"
             "2. Privilégie 'search_web' et 'search_instant_answer' pour l'agrégation de données.\n"
-            "3. N'utilise le navigateur web ('delegate_web_browsing') qu'en dernier recours absolu "
-            "si une source l'exige impérativement.\n"
-            "4. Si tu utilises 'search_maps', tu DOIS passer l'argument print_map=False pour ne pas afficher de carte.\n"
-            "5. Produis une synthèse finale riche, structurée en Markdown, et citant précisément tes sources."
+            "3. Si tu utilises 'search_maps', tu DOIS passer l'argument print_map=False pour ne pas afficher de carte.\n"
+            "4. Produis une synthèse finale riche, structurée en Markdown, et citant précisément tes sources.\n"
+            "5. RÈGLE ANTI-SPAM : Ne lance JAMAIS plus de 2 recherches web (search_web) simultanément dans le même tour. Essaie plutôt d'agréger tes mots-clés dans une seule requête complexe.\n"
+            "6. RÈGLE DE NAVIGATION (delegate_web_browsing) : Cet outil est STRICTEMENT réservé à l'extraction d'informations parfaitement ciblées depuis une URL absolue découverte via 'search_web'.\n"
+            "   - INTERDICTION FORMELLE d'utiliser le navigateur pour effectuer des recherches sur un moteur de recherche (Google, Bing, etc.).\n"
+            "   - Tu DOIS passer l'argument `max_iterations=20` lors de ton appel à l'outil pour respecter la limite d'actions par demande.\n"
+            "   - Utilise-le UNIQUEMENT si l'extrait (snippet) de 'search_web' est insuffisant pour ta synthèse."
         )
         
-        allowed = ["search_web", "search_instant_answer", "delegate_web_browsing", "search_maps"]
+        allowed = ["search_web", "search_instant_answer", "search_maps", "wait_timer", "delegate_web_browsing"]
         
         # Injection du flag de suppression d'UI pour maps
         child_metadata = {**(__metadata__ or {}), "_echo_suppress_map_ui": True}

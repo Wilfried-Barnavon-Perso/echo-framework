@@ -1,7 +1,7 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.0
+version: 1.1
 description: 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
 """
 
@@ -35,9 +35,8 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Déclenche une attente temporelle (Timer) bloquant l'exécution de l'agent.
-        Utile pour imposer une pause stricte avant de poursuivre.
-        :param seconds: Durée de l'attente en secondes (entre 1 et 180 par défaut).
+        Met en pause l'exécution du Modèle. Strictement limité à 1 seule tentative pour éviter les boucles infinies.
+        :param seconds: Durée en secondes (Maximum autorisé: 300).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         

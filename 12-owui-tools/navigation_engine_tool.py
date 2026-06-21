@@ -1,8 +1,14 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.5
-description: 11.5: Fix - Utilisation stricte de raw_parts dans l'historique pour empêcher le rejet 400 de la thoughtSignature par Gemini 3.x.
+version: 11.11
+description: 11.11: Optim - Autorisation du Parallel Function Calling dans les instructions pour accélérer la perception (règle 1) et les actions (règle 3).
+             11.10: Fix - Ajout de la Valve PRUNE_CONTENT_THRESHOLD pour configurer le seuil d'élagage dynamique du contexte.
+             11.9: Fix - Implémentation du Proactive Context Pruning (Élagage dynamique des DOMs obsolètes).
+             11.8: Fix - Implémentation du Multimodal function calling (Gemini 3.x) via l'attribut parts de la functionResponse pour injecter les captures d'écran, évitant l'erreur 400. Suppression des notifications "Traitement de l'affichage".
+             11.7: Redéfinition de la docstring de delegate_web_browsing.
+             11.6: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
+             11.5: Fix - Utilisation stricte de raw_parts dans l'historique pour empêcher le rejet 400 de la thoughtSignature par Gemini 3.x.
              11.4: Hotfix - Restauration de la persistance Vault et SQLite (echo_resources) des captures de navigation.
              11.3: Hotfix - Restitution du payload (content/value) pour a11y_tree, read_text et url dans l'orchestrateur.
              11.2: Refonte Full-Stack API à 4 piliers, Mode Lot Modéré, Hiérarchie A11y.
@@ -15,6 +21,7 @@ description: 11.5: Fix - Utilisation stricte de raw_parts dans l'historique pour
              10.2: Ajout close_web_thread et purge automatique de session en fin de mission.
              10.1: Persistance ThoughtSignatures Gemini 3.x — save_thread_step sur chaque tour (model + user) avec extraction de la signature. SID exposé dans le retour.
              10.0: Architecture multi-agentique. Remplacement de l'interaction manuelle par la boucle OODA autonome (delegate_web_browsing). Intégration Native Gemini Tool Calling et vision multimodale (Base64). Déportation de la logique mécanique dans echo_browser_lib.
+             11.6: Ajout de la défense passive (troncature silencieuse) sur le contexte du navigateur web.
 """
 
 import os
@@ -27,10 +34,10 @@ from pydantic import BaseModel, Field
 from typing import Optional, Literal, Dict, Any, List
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, clamp_model, get_echo_session_path
+from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, clamp_model, get_echo_session_path, estimate_token_size, smart_truncate_history
 from echo_ui import EchoUI
 from echo_browser_lib import EchoBrowserLib, BROWSER_TOOLS_SCHEMA, req_to_browser
-from echo_constants import FILE_INGESTION_STATUS
+from echo_constants import FILE_INGESTION_STATUS, CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
 
 async def _verify_engine_status(timeout: int, chat_id: str, user_id: str, u_valves: Any, events: EchoEvents) -> bool:
     res = await req_to_browser(timeout, "/action", {"session_id": chat_id, "action": "ping"}, user_id)
@@ -79,7 +86,8 @@ async def _deploy_navigation_monitor(res_view: dict, chat_id: str, uid: str, u_v
         metadata=metadata,
         hud_id=f"nav-{chat_id[:8]}",
         state_key=f"nav_state_{chat_id}",
-        current_url=res_view.get("url", "")
+        current_url=res_view.get("url", ""),
+        webp_b64=res_view.get("webp_b64")
     )
 
 class Tools:
@@ -91,6 +99,7 @@ class Tools:
         SHOW_BROWSER_HUD: bool = Field(default=True, description="Afficher le moniteur de navigation (HUD)")
         USE_MULTIMODAL_VISION: bool = Field(default=True, description="Fournir les captures d'écran à l'agent")
         VISION_GRID_STEP: int = Field(default=100, description="Pas de la grille de vision en pixels (ex: 50, 100).")
+        PRUNE_CONTENT_THRESHOLD: int = Field(default=1000, description="Seuil d'élagage (en caractères) des contenus lourds (A11y, HTML) obsolètes.")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -101,8 +110,8 @@ class Tools:
         max_iterations: int = Field(default=30, description="Nombre max d'itérations. À augmenter pour les tâches longues (ex: 60 questions). Max: 100."),
         __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None
     ) -> dict:
-        """Lance l'Agent Navigateur autonome pour accomplir une mission web complexe.
-        IMPORTANT : Tu DOIS inclure la date, l'heure et le lieu actuels dans la description de `task_objective` pour que l'agent navigateur ait conscience de son contexte temporel et géographique lors de ses recherches.
+        """
+        Interactions web complexes (formulaires, clics, lecture intégrale d'URL). Recherche d'informations simples proscrite (utiliser `search_web`). La requête (task_objective) DOIT INCLURE le contexte général et spatio-temporel si judicieux.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = __metadata__.get("chat_id", "default_session")
@@ -132,9 +141,9 @@ class Tools:
         sys_prompt = (
             f"Tu es l'Agent Navigateur Autonome d'ECHO.\nMISSION : {task_objective}\n\n"
             f"=== MANUEL D'EXPLOITATION COGNITIVE ===\n"
-            f"Règle 1 (Perception Séquentielle) : Tu dois inspecter la page dans cet ordre strict selon ton besoin de compréhension : `action_inspect_page(target='a11y_tree')` (Priorité absolue pour lire) -> `dom_map` -> `vision` -> `read_text`/`read_html`.\n"
+            f"Règle 1 (Perception Globale) : Tu PEUX demander simultanément plusieurs extractions de l'état de la page en un seul tour via `action_inspect_page` pour accélérer ta compréhension globale.\n"
             f"Règle 2 (Hiérarchie d'Interaction) : 1) Tente d'abord `action_interact_a11y` sur l'arbre A11y. Pour un élément interactif (button, link, textbox), utilise `method='role'` ET le paramètre `name` pour cibler précisément l'élément. Si l'élément est du texte simple, utilise `method='text'`. 2) Si complexe, utilise l'index de la `dom_map` avec `action_interact_dom`. 3) En dernier recours, utilise les coordonnées x, y issues d'une inspection vision.\n"
-            f"Règle 3 (Mode Lot Modéré) : Tu PEUX grouper plusieurs actions non-mutantes dans le même tour pour aller très vite (ex: remplir plusieurs champs). Cependant, tu NE DOIS PAS enchaîner une action si la précédente risque de modifier drastiquement la page (ex: cliquer sur 'Soumettre', ouvrir une modale, changer de page). Si une action est mutante, elle DOIT être la dernière de ton lot.\n"
+            f"Règle 3 (Mode Action Groupée) : Tu PEUX grouper plusieurs actions non-mutantes dans le même tour (ex: remplir plusieurs champs, faire plusieurs clics de sélection/choix). Cependant, tu NE DOIS PAS enchaîner une action si la précédente risque de modifier drastiquement la page (ex: soumettre un formulaire, changer de page). Si une action est mutante, elle DOIT être la dernière de ton lot.\n"
             f"Règle 4 (Bannières & Pop-ups) : Si un overlay, un bouton 'Accepter les cookies' ou 'Fermer' bloque la navigation, ta priorité absolue est d'utiliser `action_interact_dom(action_type='click')` ou `action_interact_a11y` pour t'en débarrasser.\n"
             f"Règle 5 (Formulaires) : Remplis les champs avec `action_interact_dom(action_type='type')`. Fais un `action_browser_control(command='pause')` si tu attends une liste d'autocomplétion. Si la liste apparaît ensuite, clique dessus. Sinon, valide avec `action_browser_control(command='press_key', value='Enter')`.\n"
             f"Règle 6 (Scroll & Pagination) : Si une information est absente du DOM, scrolle vers le bas via `action_browser_control(command='scroll', value='down')` avant d'abandonner.\n"
@@ -172,6 +181,30 @@ class Tools:
                 
             history.append({"role": "user", "parts": parts})
             state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", parts)
+        def prune_heavy_context(history_list, threshold: int):
+            """Élagage proactif : purge les cartes DOM, A11y et images obsolètes pour éviter le Token Bloat et accélérer l'inférence."""
+            for msg in history_list:
+                # Purge de la vision (inlineData est au niveau racine de msg["parts"], pas dans functionResponse)
+                if "parts" in msg:
+                    msg["parts"] = [p for p in msg["parts"] if "inlineData" not in p]
+                    
+                for part in msg.get("parts", []):
+                    # Purge dans les retours d'outils (functionResponse)
+                    if "functionResponse" in part:
+                        fr = part["functionResponse"]
+                        resp = fr.get("response", {})
+                        if isinstance(resp, dict):
+                            if "dom_map" in resp and resp["dom_map"] != "[PURGED]":
+                                resp["dom_map"] = "[PURGED]"
+                            # Purge des gros blocs de texte (A11y, HTML)
+                            if "content" in resp and isinstance(resp["content"], str) and len(resp["content"]) > threshold:
+                                resp["content"] = f"[PURGED : Contenu obsolète de {len(resp['content'])} chars]"
+                                
+                    # Purge du DOM initial en texte brut (push_state)
+                    if "text" in part:
+                        text = part["text"]
+                        if text.startswith("Voici les éléments interactifs actuels") and "[PURGED" not in text:
+                            part["text"] = "Voici les éléments interactifs actuels (Carte DOM) :\n[PURGED]"
 
         push_state(res_view)
 
@@ -181,6 +214,18 @@ class Tools:
         while iterations < max_iterations:
             iterations += 1
             await events.status(f"🤖 Agent Navigateur: Analyse en cours (Étape {iterations})...", done=False)
+            
+            # Défense passive : Troncature de l'historique du navigateur
+            size = estimate_token_size(history)
+            max_tokens = ECHO_MAX_CONTEXT_SIZE
+            if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
+                try:
+                    await events.toast(f"⚠️ Navigateur [{sid}] : saturation contextuelle ({int(size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
+                except AttributeError:
+                    if __event_emitter__: await __event_emitter__({"type": "toast", "data": {"title": "ECHO Browser", "message": f"⚠️ Navigateur [{sid}] : saturation contextuelle. Troncature silencieuse active.", "type": "warning"}})
+                while estimate_token_size(history) > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
+                    if not smart_truncate_history(history, 1):
+                        break
             
             payload = {
                 "contents": history,
@@ -216,6 +261,10 @@ class Tools:
                 last_fn_name = "action"
                 
                 # 2. Exécution des outils
+                try:
+                    await browser.start_screencast()
+                except: pass
+                
                 for index, part in enumerate(tools_raw):
                     fc = part["functionCall"]
                     fn_name = fc["name"]
@@ -223,6 +272,10 @@ class Tools:
                     fn_id = fc.get("id") # Gemini 3.x parallèle
                     is_last_tool = (index == len(tools_raw) - 1)
                     
+                    if fn_args.get("action_type") in ["download", "save_target"]:
+                        file_id = f"DL_{str(uuid.uuid4())[:8]}"
+                        fn_args["download_file_id"] = file_id
+                        
                     await events.status(f"🖱️ Agent exécute : {fn_name}({fn_args})", done=False)
                     
                     _resp = {"status": "error", "message": "Outil inconnu."}
@@ -239,6 +292,13 @@ class Tools:
                                     last_view = await browser.highlight()
                                 # On déploie avec highlight() spécifiquement pour le moniteur visuel, car la grille ne possède pas les hitboxes sémantiques.
                                 hud_view = await browser.highlight() if grid else last_view
+                                if is_last_tool:
+                                    try:
+                                        sc_res = await browser.stop_screencast(hud_view.get("screenshot_b64"))
+                                        if sc_res and sc_res.get("webp_b64"):
+                                            hud_view["webp_b64"] = sc_res["webp_b64"]
+                                    except: pass
+                                    
                                 await _deploy_navigation_monitor(hud_view, chat_id, uid, u_valves, events)
                                 _resp = {"status": "success", "message": "Capture d'écran demandée. Elle est jointe à ce message."}
                                 last_fn_name = fn_name
@@ -246,9 +306,18 @@ class Tools:
                             elif action_res.get("status") != "error":
                                 if is_last_tool:
                                     last_view = await browser.highlight()
+                                    try:
+                                        sc_res = await browser.stop_screencast(last_view.get("screenshot_b64"))
+                                        if sc_res and sc_res.get("webp_b64"):
+                                            last_view["webp_b64"] = sc_res["webp_b64"]
+                                    except: pass
+                                    
                                     await _deploy_navigation_monitor(last_view, chat_id, uid, u_valves, events)
                                     _resp = {"status": "success", "dom_map": last_view.get("metadata", [])}
                                     
+                                    if action_res.get("status") == "downloading":
+                                        _resp["message"] = f"📥 Le téléchargement a débuté avec l'identifiant ({fn_args.get('download_file_id')}). Il sera automatiquement injecté dans votre contexte une fois terminé."
+
                                     # Intégrer les résultats spécifiques de l'action dans la réponse
                                     if "search_result" in action_res:
                                         _resp["search_result"] = action_res["search_result"]
@@ -258,6 +327,8 @@ class Tools:
                                         _resp["value"] = action_res["value"]
                                 else:
                                     _resp = {"status": "success", "message": "Action exécutée avec succès."}
+                                    if action_res.get("status") == "downloading":
+                                        _resp["message"] = f"📥 Le téléchargement a débuté avec l'identifiant ({fn_args.get('download_file_id')}). Il sera automatiquement injecté dans votre contexte une fois terminé."
                                     if "content" in action_res:
                                         _resp["content"] = action_res["content"]
                                     if "value" in action_res:
@@ -275,12 +346,29 @@ class Tools:
                     response_parts.append({"functionResponse": _fr})
                 
                 # 3. Ajout du message utilisateur contenant toutes les réponses
-                # Injection de la vision base64 dans les parts si elle a été demandée
+                # Injection de la vision base64 dans la functionResponse correspondante si elle a été demandée
                 if last_view and use_vision and vision_requested and last_view.get("screenshot_b64"):
-                    response_parts.append({"text": "Voici la capture d'écran demandée. Analyse-la attentivement."})
-                    response_parts.append({"inlineData": {"mimeType": "image/png", "data": last_view["screenshot_b64"]}})
+                    # On attache la capture d'écran directement dans les 'parts' de la dernière functionResponse
+                    # Règle Gemini 3.x : Multimodal function calling
+                    # On trouve la functionResponse qui a déclenché la vision (last_fn_name) ou la dernière.
+                    target_fr = None
+                    for rp in reversed(response_parts):
+                        if "functionResponse" in rp and rp["functionResponse"].get("name") == last_fn_name:
+                            target_fr = rp["functionResponse"]
+                            break
+                    if not target_fr and response_parts:
+                        target_fr = response_parts[-1]["functionResponse"]
+                        
+                    if target_fr:
+                        target_fr["response"]["message"] = "Voici la capture d'écran demandée. Analyse-la attentivement."
+                        response_parts.append(
+                            {"inlineData": {"mimeType": "image/png", "data": last_view["screenshot_b64"]}}
+                        )
                     vision_requested = False
                     
+                # Élagage des vieux contextes lourds (DOM, A11y, Images) avant d'injecter la nouvelle réponse
+                prune_heavy_context(history, getattr(u_valves, 'PRUNE_CONTENT_THRESHOLD', 1000))
+                
                 history.append({"role": "user", "parts": response_parts})
                 state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", response_parts)
                 
@@ -298,7 +386,7 @@ class Tools:
         return wrap_tool_output(text="❌ Mission interrompue: nombre maximum d'étapes atteint.", status={"status": "timeout"})
 
     async def distill_web_page(self, url: str, __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None) -> dict:
-        """Navigue vers une URL, extrait le contenu source et l'indexe dans le RAG."""
+        """Distillation d'URL et indexation dans le RAG de Session."""
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = __metadata__.get("chat_id", "default_session")
         uid = __user__.get("id", "anonymous")
@@ -339,7 +427,7 @@ class Tools:
             if nb_points == 0: return wrap_tool_output(text=f"❌ Vectorisation échouée. {err}", status={"status": "error"})
 
             await events.status(f"✅ Page indexée dans la Mémoire Vectorisée de Session ({nb_points} vecteurs).", done=True)
-            return wrap_tool_output(text=f"✅ Page `{url}` indexée ({nb_points} vecteurs).\nSource ID: `{source_id}`\nUtilisez `search_session_context` pour l'interroger.", status={"status": "success"})
+            return wrap_tool_output(text=f"✅ Page `{url}` indexée ({nb_points} vecteurs).\nSource ID: `{source_id}`. IMPLIQUE `search_session_context` pour interrogation.", status={"status": "success"})
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur distillation: {str(e)}", status={"status": "error"})
 
@@ -382,9 +470,7 @@ class Tools:
 
     async def get_browser_frames_history(self, depth: Optional[int] = 10, __user__: dict = {}, __metadata__: dict = {}) -> dict:
         """
-        Consulte l'historique des captures d'écran de la session actuelle dans le Vault.
-        Utilise cet outil avec tes capacités de vision multimodale pour voir à quoi ressemble la page web, 
-        analyser l'interface visuelle ou comprendre comment interagir avec elle.
+        Consultation de l'historique des captures d'écran (Vision multimodale).
         """
         import orjson as json
         chat_id = __metadata__.get("chat_id", "default_session")

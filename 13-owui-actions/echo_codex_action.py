@@ -1,9 +1,10 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 2.0
-description: 1.0: Action HUD Codex — Éditeur Monaco multi-langage avec Git intégré.
-             Boucle événementielle bidirectionnelle (save, ai_edit, accept/reject diff,
+version: 2.3
+description: 2.3: Fix du crash silencieux de la boucle asynchrone (get_latest_commit n'existait pas).
+             Remplacement par get_repo_stats().get('last_commit_hash').
+             2.2: Refonte de la boucle événementielle en tâche de fond (asyncio) pour
              upload, download, historique ◀ ▶, reset). Sub-chat MODEL_FLASH via call_cascade.
              1.1: Ajout load_file (chargement contenu via echoCodexSetContent), delete_file
              (suppression individuelle avec refresh tree). Bouton × par fichier dans le tree.
@@ -17,6 +18,11 @@ description: 1.0: Action HUD Codex — Éditeur Monaco multi-langage avec Git in
              2.0: Registre Unifié V2 — save_codex_record → save_resource,
              delete_codex_record → delete_resource, clear_codex_records →
              clear_resources_by_type.
+             2.1: Fix Race Condition au chargement initial (Pull au lieu de Push).
+             Affichage direct du contenu vide lors de la création manuelle (new_file).
+             2.2: Refonte de la boucle événementielle en tâche de fond (asyncio) pour 
+             éviter le timeout du proxy (504). Ajout du mécanisme Heartbeat (ping)
+             pour rafraîchissement en direct depuis le chat.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNCAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWOHoiLz48cG9seWxpbmUgcG9pbnRzPSIxNCAyIDE0IDggMjAgOCIvPjxwYXRoIGQ9Ik04IDEzaDgiLz48cGF0aCBkPSJNOCAxN2g4Ii8+PHBhdGggZD0iTTEwIDloLTIiLz48L3N2Zz4=
 """
 
@@ -78,377 +84,411 @@ class Action:
         quick_actions_json = json.dumps(CODEX_QUICK_ACTIONS).decode("utf-8")
         hud_js = EchoUI._generate_codex_js(files_json, quick_actions_json, cid)
         await __event_call__({"type": "execute", "data": {"code": hud_js}})
-        # 2. Chargement initial du premier fichier (avant la boucle Promise)
-        if files:
-            first_file = files[0]["filename"]
-            result = repo.read_file(first_file)
-            if result:
-                escaped = json.dumps(result["content"]).decode("utf-8")
-                escaped_name = json.dumps(first_file).decode("utf-8")
-                init_load = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
-                await __event_call__({"type": "execute", "data": {"code": init_load}})
+        await events.status("HUD Codex injecté.", done=True, hidden=True)
 
-        # 3. Boucle événementielle bidirectionnelle
-        while True:
-            wait_code = "return new Promise(r => window.echoCodexResolve = r);"
-            response = await __event_call__({"type": "execute", "data": {"code": wait_code}})
+        # 2. Définition de la boucle événementielle bidirectionnelle (Détachée)
+        async def background_loop():
+            try:
+                stats = repo.get_repo_stats()
+                current_commit = stats.get("last_commit_hash")
+                while True:
+                    wait_code = "return new Promise(r => window.echoCodexResolve = r);"
+                    response = await __event_call__({"type": "execute", "data": {"code": wait_code}})
 
-            if not response or not isinstance(response, dict):
-                break
+                    if not response or not isinstance(response, dict):
+                        break
 
-            action_type = response.get("action")
+                    action_type = response.get("action")
 
-            # ---- FERMETURE ----
-            if action_type == "close":
-                break
+                    # ---- FERMETURE ----
+                    if action_type == "close":
+                        break
 
-            # ---- SAUVEGARDE (Ctrl+S dans Monaco) ----
-            elif action_type == "save":
-                filename = response.get("filename", "")
-                content = response.get("content", "")
-                lang = response.get("language") or CodexRepo.detect_language(filename)
+                    # ---- PING HEARTBEAT (Auto-refresh) ----
+                    elif action_type == "ping":
+                        stats = repo.get_repo_stats()
+                        new_commit = stats.get("last_commit_hash")
+                        if new_commit != current_commit:
+                            current_commit = new_commit
+                            updated_files = repo.list_files()
+                            files_json = json.dumps(updated_files).decode("utf-8")
+                            current_file = response.get("current_file", "")
+                            if current_file:
+                                result = repo.read_file(current_file)
+                                if result:
+                                    escaped_content = json.dumps(result["content"]).decode("utf-8")
+                                    escaped_name = json.dumps(current_file).decode("utf-8")
+                                    sync_code = (
+                                        f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});" 
+                                        f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});" 
+                                    )
+                                    await __event_call__({"type": "execute", "data": {"code": sync_code}})
+                                    continue
+                            refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                            await __event_call__({"type": "execute", "data": {"code": refresh_code}})
 
-                if not filename:
-                    continue
+                    # ---- SAUVEGARDE (Ctrl+S dans Monaco) ----
+                    elif action_type == "save":
+                        filename = response.get("filename", "")
+                        content = response.get("content", "")
+                        lang = response.get("language") or CodexRepo.detect_language(filename)
 
-                msg = f"Edit {filename}"
-                commit_hash = repo.commit_file(filename, content, msg)
-                line_count = content.count("\n") + 1
-                state.save_resource(
-                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                    git_tracked=True, language=lang, lines=line_count,
-                    last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
-                )
+                        if not filename:
+                            continue
 
-                # Notification dans le HUD
-                notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('saved', '{commit_hash[:7]}');"
-                await __event_call__({"type": "execute", "data": {"code": notify_code}})
+                        msg = f"Edit {filename}"
+                        commit_hash = repo.commit_file(filename, content, msg)
+                        line_count = content.count("\n") + 1
+                        state.save_resource(
+                            id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                            git_tracked=True, language=lang, lines=line_count,
+                            last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
+                        )
 
-            # ---- ÉDITION AI (sub-chat) ----
-            elif action_type == "ai_edit":
-                instruction = response.get("instruction", "")
-                content = response.get("content", "")
-                selection = response.get("selection")
-                filename = response.get("filename", "")
-                lang = response.get("language", "plaintext")
+                        # Notification dans le HUD
+                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('saved', '{commit_hash[:7]}');"
+                        await __event_call__({"type": "execute", "data": {"code": notify_code}})
 
-                if not instruction or not filename:
-                    continue
+                    # ---- ÉDITION AI (sub-chat) ----
+                    elif action_type == "ai_edit":
+                        instruction = response.get("instruction", "")
+                        content = response.get("content", "")
+                        selection = response.get("selection")
+                        filename = response.get("filename", "")
+                        lang = response.get("language", "plaintext")
 
-                target_model = response.get("model", "MODEL_FLASH")
-                await events.status(f"🧠 Codex AI ({target_model.split('_')[-1]}) : édition de {filename}...", done=False)
+                        if not instruction or not filename:
+                            continue
 
-                result = await self._codex_ai_edit(
-                    instruction, content, selection, filename, lang,
-                    uid, cid, events, __metadata__, target_model
-                )
+                        target_model = response.get("model", "MODEL_FLASH")
+                        await events.status(f"🧠 Codex AI ({target_model.split('_')[-1]}) : édition de {filename}...", done=False)
 
-                if result:
-                    modified_text, actual_model = result
-                    escaped = json.dumps(modified_text).decode("utf-8")
-                    # Appel combiné : repositionner le modèle + afficher le diff
-                    combined = (
-                        f"if(window.echoCodexSetModel) window.echoCodexSetModel('{actual_model}');"
-                        f"if(window.echoCodexShowDiff) window.echoCodexShowDiff({escaped});"
-                    )
-                    await __event_call__({"type": "execute", "data": {"code": combined}})
-                    await events.status(f"✅ Proposition prête ({actual_model.split('_')[-1]}) — Accepter ou Rejeter.", done=True)
-                else:
-                    hide_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Aucun r\u00e9sultat');"
-                    await __event_call__({"type": "execute", "data": {"code": hide_code}})
-                    await events.status("❌ L'éditeur AI n'a pas produit de résultat.", done=True)
+                        result = await self._codex_ai_edit(
+                            instruction, content, selection, filename, lang,
+                            uid, cid, events, __metadata__, target_model
+                        )
 
-            # ---- ACCEPTER DIFF ----
-            elif action_type == "accept_diff":
-                filename = response.get("filename", "")
-                content = response.get("content", "")
-                instruction = response.get("instruction", "AI edit")
-                lang = CodexRepo.detect_language(filename)
+                        if result:
+                            modified_text, actual_model = result
+                            escaped = json.dumps(modified_text).decode("utf-8")
+                            # Appel combiné : repositionner le modèle + afficher le diff
+                            combined = (
+                                f"if(window.echoCodexSetModel) window.echoCodexSetModel('{actual_model}');"
+                                f"if(window.echoCodexShowDiff) window.echoCodexShowDiff({escaped});"
+                            )
+                            await __event_call__({"type": "execute", "data": {"code": combined}})
+                            await events.status(f"✅ Proposition prête ({actual_model.split('_')[-1]}) — Accepter ou Rejeter.", done=True)
+                        else:
+                            hide_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Aucun r\u00e9sultat');"
+                            await __event_call__({"type": "execute", "data": {"code": hide_code}})
+                            await events.status("❌ L'éditeur AI n'a pas produit de résultat.", done=True)
 
-                if not filename or not content:
-                    continue
+                    # ---- ACCEPTER DIFF ----
+                    elif action_type == "accept_diff":
+                        filename = response.get("filename", "")
+                        content = response.get("content", "")
+                        instruction = response.get("instruction", "AI edit")
+                        lang = CodexRepo.detect_language(filename)
 
-                msg = f"AI: {instruction[:60]}"
-                commit_hash = repo.commit_file(filename, content, msg)
-                line_count = content.count("\n") + 1
-                state.save_resource(
-                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                    git_tracked=True, language=lang, lines=line_count,
-                    last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
-                )
+                        if not filename or not content:
+                            continue
 
-                notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('committed', '{commit_hash[:7]}');"
-                await __event_call__({"type": "execute", "data": {"code": notify_code}})
+                        msg = f"AI: {instruction[:60]}"
+                        commit_hash = repo.commit_file(filename, content, msg)
+                        line_count = content.count("\n") + 1
+                        state.save_resource(
+                            id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                            git_tracked=True, language=lang, lines=line_count,
+                            last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
+                        )
 
-                # Recharger le fichier dans l'éditeur
-                result = repo.read_file(filename)
-                file_content = result["content"] if result else ""
-                escaped = json.dumps(file_content).decode("utf-8")
-                escaped_name = json.dumps(filename).decode("utf-8")
-                load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
-                await __event_call__({"type": "execute", "data": {"code": load_code}})
+                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('committed', '{commit_hash[:7]}');"
+                        await __event_call__({"type": "execute", "data": {"code": notify_code}})
 
-            # ---- REJETER DIFF ----
-            elif action_type == "reject_diff":
-                revert_code = "if(window.echoCodexRevertDiff) window.echoCodexRevertDiff();"
-                await __event_call__({"type": "execute", "data": {"code": revert_code}})
-
-                # Recharger le fichier original dans l'éditeur
-                filename = response.get("filename", "")
-                if filename:
-                    result = repo.read_file(filename)
-                    file_content = result["content"] if result else ""
-                    escaped = json.dumps(file_content).decode("utf-8")
-                    escaped_name = json.dumps(filename).decode("utf-8")
-                    load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
-                    await __event_call__({"type": "execute", "data": {"code": load_code}})
-
-            # ---- REFRESH (🔄 dans le header) ----
-            elif action_type == "refresh":
-                updated_files = repo.list_files()
-                files_json = json.dumps(updated_files).decode("utf-8")
-                refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
-                await __event_call__({"type": "execute", "data": {"code": refresh_code}})
-                # Recharger le fichier courant si spécifié
-                filename = response.get("filename", "")
-                if filename:
-                    result = repo.read_file(filename)
-                    if result:
-                        escaped = json.dumps(result["content"]).decode("utf-8")
+                        # Recharger le fichier dans l'éditeur
+                        result = repo.read_file(filename)
+                        file_content = result["content"] if result else ""
+                        escaped = json.dumps(file_content).decode("utf-8")
                         escaped_name = json.dumps(filename).decode("utf-8")
                         load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
                         await __event_call__({"type": "execute", "data": {"code": load_code}})
-                await events.status("🔄 Actualisé.", done=True)
 
-            # ---- UPLOAD (PC → Codex) ----
-            elif action_type == "upload":
-                filename = response.get("filename", "")
-                content = response.get("content", "")
-                if not filename:
-                    continue
+                    # ---- REJETER DIFF ----
+                    elif action_type == "reject_diff":
+                        revert_code = "if(window.echoCodexRevertDiff) window.echoCodexRevertDiff();"
+                        await __event_call__({"type": "execute", "data": {"code": revert_code}})
 
-                lang = CodexRepo.detect_language(filename)
-                commit_hash = repo.commit_file(filename, content, f"Import {filename}")
-                line_count = content.count("\n") + 1
-                state.save_resource(
-                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                    git_tracked=True, language=lang, lines=line_count,
-                    last_commit=commit_hash[:12], commit_msg=f"Import {filename}", storage_path=f"codex/{filename}",
-                )
+                        # Recharger le fichier original dans l'éditeur
+                        filename = response.get("filename", "")
+                        if filename:
+                            result = repo.read_file(filename)
+                            file_content = result["content"] if result else ""
+                            escaped = json.dumps(file_content).decode("utf-8")
+                            escaped_name = json.dumps(filename).decode("utf-8")
+                            load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                            await __event_call__({"type": "execute", "data": {"code": load_code}})
 
-                # Refresh file tree
-                updated_files = repo.list_files()
-                files_json = json.dumps(updated_files).decode("utf-8")
-                refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
-                await __event_call__({"type": "execute", "data": {"code": refresh_code}})
-                await events.status(f"📂 {filename} importé (commit {commit_hash[:7]}).", done=True)
+                    # ---- REFRESH (🔄 dans le header) ----
+                    elif action_type == "refresh":
+                        updated_files = repo.list_files()
+                        files_json = json.dumps(updated_files).decode("utf-8")
+                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                        await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+                        # Recharger le fichier courant si spécifié
+                        filename = response.get("filename", "")
+                        if filename:
+                            result = repo.read_file(filename)
+                            if result:
+                                escaped = json.dumps(result["content"]).decode("utf-8")
+                                escaped_name = json.dumps(filename).decode("utf-8")
+                                load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                                await __event_call__({"type": "execute", "data": {"code": load_code}})
+                        await events.status("🔄 Actualisé.", done=True)
 
-            # ---- DOWNLOAD (Codex → PC) ----
-            elif action_type == "download":
-                filename = response.get("filename", "")
-                result = repo.read_file(filename)
-                if result:
-                    escaped = json.dumps(result["content"]).decode("utf-8")
-                    dl_code = f"if(window.echoCodexDownload) window.echoCodexDownload('{filename}', {escaped});"
-                    await __event_call__({"type": "execute", "data": {"code": dl_code}})
+                    # ---- UPLOAD (PC → Codex) ----
+                    elif action_type == "upload":
+                        filename = response.get("filename", "")
+                        content = response.get("content", "")
+                        if not filename:
+                            continue
 
-            # ---- NAVIGATION HISTORIQUE ◀ ----
-            elif action_type == "history_prev":
-                filename = response.get("filename", "")
-                if not filename:
-                    continue
+                        lang = CodexRepo.detect_language(filename)
+                        commit_hash = repo.commit_file(filename, content, f"Import {filename}")
+                        line_count = content.count("\n") + 1
+                        state.save_resource(
+                            id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                            git_tracked=True, language=lang, lines=line_count,
+                            last_commit=commit_hash[:12], commit_msg=f"Import {filename}", storage_path=f"codex/{filename}",
+                        )
 
-                # Initialiser l'index de navigation si nécessaire
-                if filename not in history_nav:
-                    commits = repo.get_file_history_index(filename)
-                    if not commits:
-                        continue
-                    history_nav[filename] = {"commits": commits, "idx": len(commits) - 1}
+                        # Refresh file tree
+                        updated_files = repo.list_files()
+                        files_json = json.dumps(updated_files).decode("utf-8")
+                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                        await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+                        await events.status(f"📂 {filename} importé (commit {commit_hash[:7]}).", done=True)
 
-                nav = history_nav[filename]
-                if nav["idx"] > 0:
-                    nav["idx"] -= 1
+                    # ---- DOWNLOAD (Codex → PC) ----
+                    elif action_type == "download":
+                        filename = response.get("filename", "")
+                        result = repo.read_file(filename)
+                        if result:
+                            escaped = json.dumps(result["content"]).decode("utf-8")
+                            dl_code = f"if(window.echoCodexDownload) window.echoCodexDownload('{filename}', {escaped});"
+                            await __event_call__({"type": "execute", "data": {"code": dl_code}})
 
-                commit_entry = nav["commits"][nav["idx"]]
-                content = repo.get_file_at_commit(filename, commit_entry["hash_full"])
-                if content is not None:
-                    info_json = json.dumps({
-                        "hash": commit_entry["hash"],
-                        "message": commit_entry["message"],
-                        "timestamp": commit_entry["timestamp"],
-                    }).decode("utf-8")
-                    escaped = json.dumps(content).decode("utf-8")
-                    load_code = (
-                        f"if(window.echoCodexLoadVersion) "
-                        f"window.echoCodexLoadVersion({escaped}, {info_json}, {nav['idx']}, {len(nav['commits'])});"
-                    )
-                    await __event_call__({"type": "execute", "data": {"code": load_code}})
+                    # ---- NAVIGATION HISTORIQUE ◀ ----
+                    elif action_type == "history_prev":
+                        filename = response.get("filename", "")
+                        if not filename:
+                            continue
 
-            # ---- NAVIGATION HISTORIQUE ▶ ----
-            elif action_type == "history_next":
-                filename = response.get("filename", "")
-                if not filename or filename not in history_nav:
-                    continue
+                        # Initialiser l'index de navigation si nécessaire
+                        if filename not in history_nav:
+                            commits = repo.get_file_history_index(filename)
+                            if not commits:
+                                continue
+                            history_nav[filename] = {"commits": commits, "idx": len(commits) - 1}
 
-                nav = history_nav[filename]
-                if nav["idx"] < len(nav["commits"]) - 1:
-                    nav["idx"] += 1
+                        nav = history_nav[filename]
+                        if nav["idx"] > 0:
+                            nav["idx"] -= 1
 
-                commit_entry = nav["commits"][nav["idx"]]
-                content = repo.get_file_at_commit(filename, commit_entry["hash_full"])
-                if content is not None:
-                    info_json = json.dumps({
-                        "hash": commit_entry["hash"],
-                        "message": commit_entry["message"],
-                        "timestamp": commit_entry["timestamp"],
-                    }).decode("utf-8")
-                    escaped = json.dumps(content).decode("utf-8")
-                    load_code = (
-                        f"if(window.echoCodexLoadVersion) "
-                        f"window.echoCodexLoadVersion({escaped}, {info_json}, {nav['idx']}, {len(nav['commits'])});"
-                    )
-                    await __event_call__({"type": "execute", "data": {"code": load_code}})
+                        commit_entry = nav["commits"][nav["idx"]]
+                        content = repo.get_file_at_commit(filename, commit_entry["hash_full"])
+                        if content is not None:
+                            info_json = json.dumps({
+                                "hash": commit_entry["hash"],
+                                "message": commit_entry["message"],
+                                "timestamp": commit_entry["timestamp"],
+                            }).decode("utf-8")
+                            escaped = json.dumps(content).decode("utf-8")
+                            load_code = (
+                                f"if(window.echoCodexLoadVersion) "
+                                f"window.echoCodexLoadVersion({escaped}, {info_json}, {nav['idx']}, {len(nav['commits'])});"
+                            )
+                            await __event_call__({"type": "execute", "data": {"code": load_code}})
 
-            # ---- RESTAURER VERSION HISTORIQUE ----
-            elif action_type == "history_restore":
-                filename = response.get("filename", "")
-                content = response.get("content", "")
-                source_hash = response.get("source_hash", "???")
-                if not filename or not content:
-                    continue
+                    # ---- NAVIGATION HISTORIQUE ▶ ----
+                    elif action_type == "history_next":
+                        filename = response.get("filename", "")
+                        if not filename or filename not in history_nav:
+                            continue
 
-                lang = CodexRepo.detect_language(filename)
-                msg = f"Restore from {source_hash}"
-                commit_hash = repo.commit_file(filename, content, msg)
-                line_count = content.count("\n") + 1
-                state.save_resource(
-                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                    git_tracked=True, language=lang, lines=line_count,
-                    last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
-                )
+                        nav = history_nav[filename]
+                        if nav["idx"] < len(nav["commits"]) - 1:
+                            nav["idx"] += 1
 
-                # Purge navigation historique
-                history_nav.pop(filename, None)
+                        commit_entry = nav["commits"][nav["idx"]]
+                        content = repo.get_file_at_commit(filename, commit_entry["hash_full"])
+                        if content is not None:
+                            info_json = json.dumps({
+                                "hash": commit_entry["hash"],
+                                "message": commit_entry["message"],
+                                "timestamp": commit_entry["timestamp"],
+                            }).decode("utf-8")
+                            escaped = json.dumps(content).decode("utf-8")
+                            load_code = (
+                                f"if(window.echoCodexLoadVersion) "
+                                f"window.echoCodexLoadVersion({escaped}, {info_json}, {nav['idx']}, {len(nav['commits'])});"
+                            )
+                            await __event_call__({"type": "execute", "data": {"code": load_code}})
 
-                notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('restored', '{commit_hash[:7]}');"
-                await __event_call__({"type": "execute", "data": {"code": notify_code}})
+                    # ---- RESTAURER VERSION HISTORIQUE ----
+                    elif action_type == "history_restore":
+                        filename = response.get("filename", "")
+                        content = response.get("content", "")
+                        source_hash = response.get("source_hash", "???")
+                        if not filename or not content:
+                            continue
 
-            # ---- SORTIR DE L'HISTORIQUE ----
-            elif action_type == "history_exit":
-                filename = response.get("filename", "")
-                history_nav.pop(filename, None)
+                        lang = CodexRepo.detect_language(filename)
+                        msg = f"Restore from {source_hash}"
+                        commit_hash = repo.commit_file(filename, content, msg)
+                        line_count = content.count("\n") + 1
+                        state.save_resource(
+                            id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                            git_tracked=True, language=lang, lines=line_count,
+                            last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}",
+                        )
 
-                exit_code = "if(window.echoCodexExitHistory) window.echoCodexExitHistory();"
-                await __event_call__({"type": "execute", "data": {"code": exit_code}})
+                        # Purge navigation historique
+                        history_nav.pop(filename, None)
 
-            # ---- RESET ALL ----
-            elif action_type == "reset":
-                file_count = len(repo.list_files())
-                # La confirmation est gérée côté JS (confirm dialog)
-                repo.reset_all()
-                state.clear_resources_by_type('codex')
-                history_nav.clear()
+                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('restored', '{commit_hash[:7]}');"
+                        await __event_call__({"type": "execute", "data": {"code": notify_code}})
 
-                reset_code = "if(window.echoCodexReset) window.echoCodexReset();"
-                await __event_call__({"type": "execute", "data": {"code": reset_code}})
-                await events.toast(f"🗑️ Codex réinitialisé ({file_count} fichiers supprimés).", "success")
-                break
+                    # ---- SORTIR DE L'HISTORIQUE ----
+                    elif action_type == "history_exit":
+                        filename = response.get("filename", "")
+                        history_nav.pop(filename, None)
 
-            # ---- NOUVEAU FICHIER ----
-            elif action_type == "new_file":
-                filename = response.get("filename", "")
-                if not filename:
-                    continue
+                        exit_code = "if(window.echoCodexExitHistory) window.echoCodexExitHistory();"
+                        await __event_call__({"type": "execute", "data": {"code": exit_code}})
 
-                lang = CodexRepo.detect_language(filename)
-                commit_hash = repo.commit_file(filename, "", f"Create {filename}")
-                state.save_resource(
-                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                    git_tracked=True, language=lang, lines=0,
-                    last_commit=commit_hash[:12], commit_msg=f"Create {filename}", storage_path=f"codex/{filename}",
-                )
+                    # ---- RESET ALL ----
+                    elif action_type == "reset":
+                        file_count = len(repo.list_files())
+                        # La confirmation est gérée côté JS (confirm dialog)
+                        repo.reset_all()
+                        state.clear_resources_by_type('codex')
+                        history_nav.clear()
 
-                updated_files = repo.list_files()
-                files_json = json.dumps(updated_files).decode("utf-8")
-                refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
-                await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+                        reset_code = "if(window.echoCodexReset) window.echoCodexReset();"
+                        await __event_call__({"type": "execute", "data": {"code": reset_code}})
+                        await events.toast(f"🗑️ Codex réinitialisé ({file_count} fichiers supprimés).", "success")
+                        break
 
-            # ---- CHARGEMENT CONTENU FICHIER ----
-            elif action_type == "load_file":
-                filename = response.get("filename", "")
-                if not filename:
-                    continue
+                    # ---- NOUVEAU FICHIER ----
+                    elif action_type == "new_file":
+                        filename = response.get("filename", "")
+                        if not filename:
+                            continue
 
-                result = repo.read_file(filename)
-                content = result["content"] if result else ""
-                escaped = json.dumps(content).decode("utf-8")
-                escaped_name = json.dumps(filename).decode("utf-8")
-                load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
-                await __event_call__({"type": "execute", "data": {"code": load_code}})
+                        lang = CodexRepo.detect_language(filename)
+                        commit_hash = repo.commit_file(filename, "", f"Create {filename}")
+                        state.save_resource(
+                            id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                            git_tracked=True, language=lang, lines=0,
+                            last_commit=commit_hash[:12], commit_msg=f"Create {filename}", storage_path=f"codex/{filename}",
+                        )
 
-            # ---- SUPPRESSION FICHIER ----
-            elif action_type == "delete_file":
-                filename = response.get("filename", "")
-                if not filename:
-                    continue
+                        updated_files = repo.list_files()
+                        files_json = json.dumps(updated_files).decode("utf-8")
+                        escaped_content = json.dumps("").decode("utf-8")
+                        escaped_name = json.dumps(filename).decode("utf-8")
+                
+                        refresh_code = (
+                            f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                            f"currentFile = {escaped_name};"
+                            f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                        )
+                        await __event_call__({"type": "execute", "data": {"code": refresh_code}})
 
-                commit_hash = repo.delete_file(filename, f"Delete {filename}")
-                if commit_hash:
-                    state.delete_resource(filename)
+                    # ---- CHARGEMENT CONTENU FICHIER ----
+                    elif action_type == "load_file":
+                        filename = response.get("filename", "")
+                        if not filename:
+                            continue
 
-                updated_files = repo.list_files()
-                files_json = json.dumps(updated_files).decode("utf-8")
-                refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
-                await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+                        result = repo.read_file(filename)
+                        content = result["content"] if result else ""
+                        escaped = json.dumps(content).decode("utf-8")
+                        escaped_name = json.dumps(filename).decode("utf-8")
+                        load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                        await __event_call__({"type": "execute", "data": {"code": load_code}})
 
-                # Si le fichier supprimé était ouvert, charger le premier fichier restant
-                if filename == response.get("filename"):
-                    if updated_files:
-                        first = updated_files[0]["filename"]
-                        first_escaped = json.dumps(first).decode("utf-8")
-                        switch_code = f"if(window.echoCodexSetContent) {{ currentFile = {first_escaped}; window.echoCodexResolve({{action:'load_file', filename:{first_escaped}}}); }}"
-                        await __event_call__({"type": "execute", "data": {"code": switch_code}})
+                    # ---- SUPPRESSION FICHIER ----
+                    elif action_type == "delete_file":
+                        filename = response.get("filename", "")
+                        if not filename:
+                            continue
 
-                await events.status(f"🗑️ {filename} supprimé.", done=True)
+                        commit_hash = repo.delete_file(filename, f"Delete {filename}")
+                        if commit_hash:
+                            state.delete_resource(filename)
 
-            # ---- RENOMMAGE FICHIER (changement de langage) ----
-            elif action_type == "rename_file":
-                old_name = response.get("old_name", "")
-                new_name = response.get("new_name", "")
-                if not old_name or not new_name:
-                    continue
+                        updated_files = repo.list_files()
+                        files_json = json.dumps(updated_files).decode("utf-8")
+                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                        await __event_call__({"type": "execute", "data": {"code": refresh_code}})
 
-                commit_hash = repo.rename_file(old_name, new_name, f"Rename {old_name} → {new_name}")
-                if commit_hash:
-                    # Mettre à jour le registre codex (supprimer ancien, créer nouveau)
-                    state.delete_resource(old_name)
-                    new_lang = CodexRepo.detect_language(new_name)
-                    result = repo.read_file(new_name)
-                    line_count = result["total_lines"] if result else 0
-                    state.save_resource(
-                        id=new_name, name=new_name, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                        git_tracked=True, language=new_lang, lines=line_count,
-                        last_commit=commit_hash[:12], commit_msg=f"Rename {old_name} → {new_name}",
-                        storage_path=f"codex/{new_name}",
-                    )
+                        # Si le fichier supprimé était ouvert, charger le premier fichier restant
+                        if filename == response.get("filename"):
+                            if updated_files:
+                                first = updated_files[0]["filename"]
+                                first_escaped = json.dumps(first).decode("utf-8")
+                                switch_code = f"if(window.echoCodexSetContent) {{ currentFile = {first_escaped}; window.echoCodexResolve({{action:'load_file', filename:{first_escaped}}}); }}"
+                                await __event_call__({"type": "execute", "data": {"code": switch_code}})
 
-                    # Refresh tree + charger le fichier renommé
-                    updated_files = repo.list_files()
-                    files_json = json.dumps(updated_files).decode("utf-8")
-                    escaped_name = json.dumps(new_name).decode("utf-8")
-                    content = result["content"] if result else ""
-                    escaped_content = json.dumps(content).decode("utf-8")
-                    combined = (
-                        f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
-                        f"currentFile = {escaped_name};"
-                        f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
-                    )
-                    await __event_call__({"type": "execute", "data": {"code": combined}})
-                    await events.status(f"✏️ Renommé : {old_name} → {new_name} ({commit_hash[:7]})", done=True)
-                else:
-                    notify_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Renommage \u00e9chou\u00e9');"
-                    await __event_call__({"type": "execute", "data": {"code": notify_code}})
+                        await events.status(f"🗑️ {filename} supprimé.", done=True)
 
+                    # ---- RENOMMAGE FICHIER (changement de langage) ----
+                    elif action_type == "rename_file":
+                        old_name = response.get("old_name", "")
+                        new_name = response.get("new_name", "")
+                        if not old_name or not new_name:
+                            continue
+
+                        commit_hash = repo.rename_file(old_name, new_name, f"Rename {old_name} → {new_name}")
+                        if commit_hash:
+                            # Mettre à jour le registre codex (supprimer ancien, créer nouveau)
+                            state.delete_resource(old_name)
+                            new_lang = CodexRepo.detect_language(new_name)
+                            result = repo.read_file(new_name)
+                            line_count = result["total_lines"] if result else 0
+                            state.save_resource(
+                                id=new_name, name=new_name, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                                git_tracked=True, language=new_lang, lines=line_count,
+                                last_commit=commit_hash[:12], commit_msg=f"Rename {old_name} → {new_name}",
+                                storage_path=f"codex/{new_name}",
+                            )
+
+                            # Refresh tree + charger le fichier renommé
+                            updated_files = repo.list_files()
+                            files_json = json.dumps(updated_files).decode("utf-8")
+                            escaped_name = json.dumps(new_name).decode("utf-8")
+                            content = result["content"] if result else ""
+                            escaped_content = json.dumps(content).decode("utf-8")
+                            combined = (
+                                f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                                f"currentFile = {escaped_name};"
+                                f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                            )
+                            await __event_call__({"type": "execute", "data": {"code": combined}})
+                            await events.status(f"✏️ Renommé : {old_name} → {new_name} ({commit_hash[:7]})", done=True)
+                        else:
+                            notify_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Renommage \u00e9chou\u00e9');"
+                            await __event_call__({"type": "execute", "data": {"code": notify_code}})
+
+            except Exception as e:
+                logger.error(f"[ECHO Codex] Erreur background_loop: {e}")
+
+        # 3. Lancement de la tâche de fond
+        import asyncio
+        asyncio.create_task(background_loop())
+
+        # 4. Libération immédiate de la requête HTTP
         return {"status": "success"}
 
     async def _codex_ai_edit(

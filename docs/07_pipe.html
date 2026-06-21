@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py) : Suture Bit-Perfect, routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modèle centralisée Pipe → outils, bridge _TOOLS_CACHE pour délégation sous-agent.">
+  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py) : Suture Bit-Perfect, troncature silencieuse (Smart Pop), routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modèle centralisée Pipe → outils.">
   <title>ECHO v5 - 7. Le Pipe (Cortex)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -20,7 +20,7 @@
 
 
     <p>
-      Le <code>pipe_engine.py</code> (v192.15) est l'unité centrale de traitement d'ECHO.
+      Le <code>pipe_engine.py</code> (v192.21) est l'unité centrale de traitement d'ECHO.
       Open WebUI le voit comme un modèle GenAI standard, mais il agit en réalité comme un
       <strong>orchestrateur de contexte</strong> : il reconstruit l'historique bit-perfect depuis
       SQLite, pilote la boucle d'outils de l'Arsenal, gère l'authentification et l'inférence via
@@ -48,7 +48,7 @@
       <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
       <tbody>
         <tr><td><strong>Fichier source</strong></td><td><code>10-owui-pipes/pipe_engine.py</code></td></tr>
-        <tr><td><strong>Version</strong></td><td>192.15 (déclarée dans le docstring du fichier)</td></tr>
+        <tr><td><strong>Version</strong></td><td>192.21 (déclarée dans le docstring du fichier)</td></tr>
         <tr><td><strong>Type Open WebUI</strong></td><td><code>Pipe</code> - se présente comme un modèle GenAI</td></tr>
         <tr><td><strong>Point d'entrée</strong></td><td><code>Pipe.pipe(body, __event_emitter__)</code></td></tr>
         <tr><td><strong>Exécution</strong></td><td>In-process dans Python d'Open WebUI, asynchrone (<code>asyncio</code>)</td></tr>
@@ -119,6 +119,26 @@
         tels quels dans le contexte Gemini. Le contenu binaire n'est jamais retranscodé - garantie
         d'une fidélité à l'octet près (<em>bit-perfect</em>). Les pièces jointes qui dépassent
         la limite de taille de l'API sont automatiquement remplacées par leur slug Qdrant.
+      </p>
+    </div>
+
+    <h2>Défense Passive : Troncature Silencieuse (Smart Pop)</h2>
+
+    <p>
+      Intégrée en version 192.19, la <strong>Troncature Silencieuse</strong> (Smart Pop) est le dernier filet de sécurité du Pipe contre l'épuisement soudain de la fenêtre de contexte longue (1M/2M tokens) avant de l'envoyer au modèle cible.
+    </p>
+
+    <div class="tech-spec">
+      <h4>⚙️ Algorithme de Troncature (Smart Pop)</h4>
+      <p>
+        Après la reconstruction du contexte, le Pipe évalue sa taille en tokens via <code>estimate_token_size()</code>.
+      </p>
+      <ul>
+        <li><strong>Zone d'Alerte (<code>CONTEXT_WARNING_THRESHOLD</code>) :</strong> Un toast UI prévient l'utilisateur d'envisager une migration via l'action "Resume in New Chat".</li>
+        <li><strong>Zone Critique (<code>CONTEXT_TRUNCATE_THRESHOLD</code>) :</strong> Si la taille dépasse ce seuil (par défaut 65-80% de la limite API), le Pipe élague silencieusement l'historique par le bas.</li>
+      </ul>
+      <p>
+        L'élagage utilise <code>smart_truncate_history()</code> pour supprimer les messages les plus anciens tout en protégeant le bloc d'instructions système (<code>system</code>). L'algorithme garantit que les paires <code>functionCall</code> / <code>functionResponse</code> ne sont jamais dissociées, préservant ainsi l'intégrité de la structure séquentielle exigée par l'API Gemini. Un toast rouge avertit l'utilisateur de cette troncature d'urgence sans que le backend ne crashe ni que la génération en cours n'échoue.
       </p>
     </div>
 
@@ -461,12 +481,13 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
 
 
     <div class="transition-text">
-      Pour accomplir ses missions, le Pipe s'appuie sur un Arsenal d'outils spécialisés.
-      <a href="08_arsenal_outils.html">Découvrir l'Arsenal des Outils ➔</a>
+      <a href="06_filtre.html">&larr; Les Filtres (Conscience)</a>
+      &nbsp;&nbsp;
+      <a href="08_arsenal_outils.html">L'Arsenal des Outils &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ECHO Delegate Agent (delegate_tool.py) : agent stateful avec accès aux outils, montée cognitive identique au Pipe (new_cognitive_level), budget d'appels configurable, protocole QUESTION:, résolution callables via _TOOLS_CACHE et sys.modules.">
+  <meta name="description" content="ECHO Delegate Agent (agent_engine_tool.py v1.8) : agent stateful avec accès aux outils, troncature silencieuse, budget d'appels configurable, protocole QUESTION:, résolution callables via _TOOLS_CACHE et sys.modules.">
   <title>ECHO v5 - 8i. Delegate Agent</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -18,7 +18,7 @@
     <h1>8i. Delegate Agent - Agent Stateful</h1>
 
     <p>
-      <code>delegate_tool.py</code> implémente un système de agents ECHO
+      <code>agent_engine_tool.py</code> implémente un système d'agents ECHO
       <strong>stateful avec accès aux outils</strong>. Le agent dispose d'une boucle agentique complète identique au Pipe principal,
       d'un budget d'appels de fonctions configurable et d'un mécanisme de reprise via
       identifiant de session (<code>sub_sid</code>). L'état et la cascade de cette boucle 
@@ -48,8 +48,8 @@
       <tbody>
         <tr>
           <td><strong><code>delegate_to_agent</code></strong></td>
-          <td>Délégation principale : crée ou reprend un thread de agent. Peut être spécialisé via un Skill.</td>
-          <td><code>task</code>, <code>system_prompt</code>, <code>sub_sid</code> (opt.), <code>with_context_distillate</code> (opt.), <code>allowed_tools</code> (opt.), <code>role_name</code> (opt.)</td>
+          <td>Délégation principale : crée ou reprend un thread d'agent. Peut être spécialisé via un Skill.</td>
+          <td><code>task</code>, <code>system_prompt</code> (opt.), <code>skill_id</code> (opt.), <code>sub_sid</code> (opt.), <code>with_context_distillate</code> (opt.), <code>target_model_key</code> (opt.)</td>
         </tr>
         <tr>
           <td><code>list_agent_sessions</code></td>
@@ -79,7 +79,7 @@
       <ul>
         <li><strong>Récursion</strong> : <code>delegate_to_agent</code> (guard absolu depth=1)</li>
         <li><strong>Orchestration cognitive</strong> : <code>consult_council</code>, <code>consult_supervised_workers</code></li>
-        <li><strong>Écriture RAG</strong> : <code>save_memory</code>, <code>forget_memory</code>, <code>save_session_context</code></li>
+        <li><strong>Écriture RAG</strong> : <code>update_meta_artifact</code>, <code>delete_meta_artifact_item</code>, <code>save_session_context</code></li>
         <li><strong>Rendu UI</strong> : <code>generate_rich_visualization</code></li>
         <li><strong>Méta-session</strong> : <code>list_agent_sessions</code>, <code>close_agent_session</code>, <code>summarize_agent_session</code>, <code>list_councils</code>, <code>close_council</code>, <code>list_supervised_tasks</code>, <code>close_supervised_task</code>, <code>context_gauge</code></li>
       </ul>
@@ -110,7 +110,7 @@
 
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
-        <span>Résolution des callables - delegate_tool.py</span>
+        <span>Résolution des callables - agent_engine_tool.py</span>
         <span>[Tri-sources]</span>
       </div>
       <div class="mermaid">
@@ -145,7 +145,7 @@ flowchart TD
     <p>
       Le Pipe (<code>pipe_engine.py</code>) stocke <code>__tools__</code> dans un dictionnaire
       module-level <code>_TOOLS_CACHE[chat_id]</code> à chaque invocation. Ce cache est accessible
-      depuis <code>delegate_tool</code> via <code>sys.modules["function_pipe_engine"]</code>.
+      depuis <code>agent_engine_tool</code> via <code>sys.modules["function_pipe_engine"]</code>.
       C'est la <strong>source principale en production</strong> : elle contient les callables
       OWUI originaux (des <code>functools.partial</code> pré-configurés avec les paramètres
       d'infrastructure).
@@ -349,6 +349,15 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
       </p>
     </div>
 
+    <h2>Défense Passive : Troncature Silencieuse (Smart Pop)</h2>
+
+    <p>
+      Introduite en V1.8, la <strong>Troncature Silencieuse</strong> (Smart Pop) est une défense passive intégrée directement dans <code>agent_engine_tool.py</code> pour prévenir l'épuisement soudain de la fenêtre de contexte longue (1M / 2M tokens) lors d'un emballement d'outils (ex: extraction massive de données). 
+    </p>
+    <p>
+      Lorsque la taille du thread SQLite dépasse le seuil configuré (<code>ECHO_MAX_CONTEXT_SIZE * CONTEXT_TRUNCATE_THRESHOLD</code>, par défaut ~65% à 80% du buffer), l'historique est silencieusement élagué par le bas (les plus anciens échanges de la session) <strong>sans alerter le modèle ni crasher</strong>. Cette troncature s'effectue intelligemment pour préserver l'intégrité de la structure séquentielle requête/réponse de l'API Gemini. Un warning non bloquant est émis dans l'interface, permettant à l'agent de continuer sa tâche courante avec un historique recentré sur les derniers échanges.
+    </p>
+
     <h2>Distillation du contexte principal (<code>with_context_distillate</code>)</h2>
 
     <p>
@@ -389,19 +398,19 @@ SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
     <div class="audit-note">
       <h4>ℹ️ Exactitude documentaire</h4>
       <p>
-        Cette documentation est extraite du code source <code>delegate_tool.py</code>
+        Cette documentation est extraite du code source <code>agent_engine_tool.py</code>
         et de <code>echo_constants.py</code> (DELEGATE_AGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX).
       </p>
     </div>
 
     <div class="transition-text">
-      <a href="08h_codex_editor.html">← ECHO Codex</a>
+      <a href="08h_codex_editor.html">&larr; ECHO Codex (Éditeur)</a>
       &nbsp;&nbsp;
-      <a href="08j_agent_orchestration.html">8j. Orchestration Multi-Agents ➔</a>
+      <a href="08j_agent_orchestration.html">Orchestration Multi-Agents &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

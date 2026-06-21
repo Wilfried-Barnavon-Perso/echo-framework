@@ -8,7 +8,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <meta name="description" content="Explorateur de l'Espace Personnel ECHO v5 (file_content_explorer.py v5.183.11) : read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, download_from_url, get_file_metadata, calculate_file_hashes.">
+  <meta name="description" content="Explorateur de l'Espace Personnel ECHO v5 (file_content_explorer.py v5.185.13) : read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes.">
 
   <title>ECHO v5 - 8c. Explorateur de l'Espace Personnel</title>
 
@@ -28,7 +28,7 @@
 
     <p>
 
-      L'Explorateur de l'Espace Personnel (<code>file_content_explorer.py</code> v5.183.11) permet à ECHO
+      L'Explorateur de l'Espace Personnel (<code>file_content_explorer.py</code> v5.185.13) permet à ECHO
 
       d'analyser, de sonder sémantiquement, d'afficher et de télécharger des fichiers depuis le Vault de
 
@@ -78,7 +78,7 @@
 
           <td>
 
-            Lecture paginée d'un fichier par son <code>file_id</code>. Trois modes de sortie :
+            Lecture paginée d'un fichier par son <code>source_id</code>. Trois modes de sortie :
 
             <code>text</code> (lignes numérotées), <code>base64</code> (12 Ko par chunk), <code>hex</code> (8 Ko par chunk).
 
@@ -86,7 +86,7 @@
 
           </td>
 
-          <td><code>file_id</code>, <code>start_line</code>, <code>end_line</code>, <code>output_mode</code>, <code>byte_offset</code></td>
+          <td><code>source_id</code>, <code>start_line</code>, <code>end_line</code>, <code>output_mode</code>, <code>byte_offset</code></td>
 
         </tr>
 
@@ -102,7 +102,7 @@
 
           </td>
 
-          <td><code>file_id</code>, <code>query</code></td>
+          <td><code>source_id</code>, <code>query</code></td>
 
         </tr>
 
@@ -118,7 +118,7 @@
 
           </td>
 
-          <td><code>file_id</code></td>
+          <td><code>source_id</code></td>
 
         </tr>
 
@@ -128,37 +128,17 @@
 
           <td>
 
-            Affiche une image dans le HUD interactif ECHO (même moteur que le navigateur web :
-
-            zoom, pan, drag, resize, minimisation).
-
-            Accepte un <code>file_id</code> local (Base64 inline) ou une URL distante.
-
-            Fallback gracieux si le serveur ne peut pas valider l'URL (CDN restrictifs type Wikimedia) -
-
-            l'image est quand même injectée côté client.
+            Affiche une image dans le HUD interactif ECHO (WebPlayer local) ou délègue au Markdown pour le distant :<br>
+            - <strong>Cible locale (Base64) :</strong> Injecte le code JS du WebPlayer interactif (zoom, pan, drag).<br>
+            - <strong>Cible distante (URL) :</strong> Agit comme une <em>Sonde Visuelle</em>. Vérifie le lien (Head/Get) et ses en-têtes. En cas de succès (ou fallback), ordonne au modèle d'utiliser la syntaxe Markdown `![Desc](url)` dans sa réponse. Bloque les erreurs 404.
 
           </td>
 
-          <td><code>target</code> (file_id ou URL)</td>
+          <td><code>target</code> (source_id ou URL)</td>
 
         </tr>
 
-        <tr>
 
-          <td><code>download_from_url</code></td>
-
-          <td>
-
-            Télécharge un fichier depuis une URL distante avec le <strong>Stealth Engine</strong> (User-Agent mimic navigateur,
-
-            gestion des redirections 302, anti-403). Le fichier est sauvegardé dans le Vault et enregistré dans <code>processed_files</code>.
-
-          </td>
-
-          <td><code>url</code>, <code>filename</code> (optionnel)</td>
-
-        </tr>
 
         <tr>
 
@@ -170,7 +150,7 @@
 
           </td>
 
-          <td><code>file_id</code></td>
+          <td><code>source_id</code></td>
 
         </tr>
 
@@ -186,7 +166,7 @@
 
           </td>
 
-          <td><code>file_ids</code> (liste)</td>
+          <td><code>source_ids</code> (liste)</td>
 
         </tr>
 
@@ -220,33 +200,29 @@
 
     <p>
 
-      La résolution des chemins passe systématiquement par <code>resolve_upload_file_path(uid, file_id, uploads_dir)</code>.
+      La résolution des chemins passe systématiquement par <code>resolve_upload_file_path(uid, source_id, uploads_dir)</code>.
 
-      Cette fonction valide que le <code>file_id</code> appartient bien à l'utilisateur courant.
+      Cette fonction valide que le <code>source_id</code> appartient bien à l'utilisateur courant.
 
       Un modèle ne peut jamais accéder aux fichiers d'un autre utilisateur, même s'il connaît
 
-      son <code>file_id</code>.
+      son <code>source_id</code>.
 
     </p>
 
 
 
     <div class="transition-text">
-
-      <a href="08b_web_intelligence.html">← Web Intelligence</a>
-
+      <a href="08b_web_intelligence.html">&larr; Web Intelligence</a>
       &nbsp;&nbsp;
-
-      <a href="08d_memory_cognition.html">Mémoire &amp; Cognition ➔</a>
-
+      <a href="08d_memory_cognition.html">Mémoire & Cognition &rarr;</a>
     </div>
 
 
 
     <footer>
 
-      ECHO Framework - Version 5.183.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
 
     </footer>
 

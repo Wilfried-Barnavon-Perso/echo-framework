@@ -1,8 +1,10 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.0
-description: 7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
+version: 8.2
+description: 8.2: Ajout de smart_truncate_history pour préserver l'intégrité des blocs d'outils Gemini.
+             8.1: Ajout de estimate_token_size pour le calcul heuristique du poids cognitif.
+             7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
              Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
              7.8: Fix mismatch client OAuth2 dans refresh_google_oauth_token().
@@ -82,6 +84,7 @@ from echo_constants import (
     GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, AGY_BASE_URL,
     GOOGLE_OAUTH_TOKEN_LIFETIME, AUTH_DATA_USER_TIER,
     MAX_TOKENS_DEFAULT,  # Utilisé comme valeur par défaut de call_distillation.max_tokens
+    CHARS_PER_TOKEN,
     ECHO_HTTP_CLIENT_TIMEOUT, ECHO_HTTP_MAX_CONNECTIONS,
     ECHO_HTTP_MAX_KEEPALIVE, ECHO_HTTP_KEEPALIVE_EXPIRY,
 )
@@ -185,6 +188,44 @@ def get_stealth_headers(url: Optional[str] = None) -> Dict[str, str]:
 # ==============================================================================
 # SECTION 1 : STANDARDS DE COMMUNICATION (MULTI-PARTS)
 # ==============================================================================
+
+def estimate_token_size(content: Any) -> int:
+    """Estime le poids cognitif (tokens) via une heuristique rapide sur la longueur de la chaîne."""
+    if isinstance(content, str):
+        return len(content) // CHARS_PER_TOKEN
+    elif isinstance(content, (dict, list)):
+        try:
+            return len(json.dumps(content)) // CHARS_PER_TOKEN
+        except Exception:
+            return len(str(content)) // CHARS_PER_TOKEN
+    return len(str(content)) // CHARS_PER_TOKEN
+
+def smart_truncate_history(history: list, start_index: int = 0) -> bool:
+    """
+    Supprime le bloc le plus ancien de l'historique de manière intelligente.
+    Garantit l'intégrité structurelle des appels d'outils (functionCall + functionResponse).
+    Retourne True si un élément a été supprimé, False si l'historique est trop petit.
+    """
+    if len(history) <= start_index:
+        return False
+        
+    msg = history[start_index]
+    parts = msg.get("parts", [])
+    if not isinstance(parts, list):
+        history.pop(start_index)
+        return True
+        
+    is_call = any(isinstance(p, dict) and "functionCall" in p for p in parts)
+    is_response = any(isinstance(p, dict) and "functionResponse" in p for p in parts)
+    
+    history.pop(start_index)
+    
+    if is_call and start_index < len(history):
+        next_parts = history[start_index].get("parts", [])
+        if isinstance(next_parts, list) and any(isinstance(p, dict) and "functionResponse" in p for p in next_parts):
+            history.pop(start_index)
+            
+    return True
 
 def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
     if not isinstance(text, str): return text, None
@@ -705,7 +746,7 @@ class EchoGeminiClient:
         chat_id: str,
         __user__: dict,
         __metadata__: dict,
-        max_chunk: int = 1600,
+        max_chunk: Optional[int] = None,
         timeout: int = 180
     ) -> tuple:
         """
@@ -719,8 +760,11 @@ class EchoGeminiClient:
         0 points indique un échec total (embedding worker indisponible ou Qdrant KO).
         """
         import uuid as _uuid
-        from echo_constants import COLLECTION_EPHEMERAL, EMBEDDING_DIM_V2, ECHO_QDRANT_URL
+        from echo_constants import COLLECTION_SESSION_RAG, EMBEDDING_DIM_V2, ECHO_QDRANT_URL, ECHO_SESSION_RAG_CHUNK_SIZE
         qdrant_base = ECHO_QDRANT_URL
+        
+        if max_chunk is None:
+            max_chunk = ECHO_SESSION_RAG_CHUNK_SIZE
 
         # --- 1. CHUNKING PAR PARAGRAPHES SÉMANTIQUES ---
         raw_paragraphs = [p.strip() for p in distillate.split("\n\n") if p.strip()]
@@ -764,10 +808,10 @@ class EchoGeminiClient:
         points = []
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                coll_check = await client.get(f"{qdrant_base}/collections/{COLLECTION_EPHEMERAL}")
+                coll_check = await client.get(f"{qdrant_base}/collections/{COLLECTION_SESSION_RAG}")
                 if coll_check.status_code == 404:
                     cr = await client.put(
-                        f"{qdrant_base}/collections/{COLLECTION_EPHEMERAL}",
+                        f"{qdrant_base}/collections/{COLLECTION_SESSION_RAG}",
                         json={"vectors": {"size": EMBEDDING_DIM_V2, "distance": "Cosine"}}
                     )
                     if cr.status_code not in (200, 201):
@@ -797,7 +841,7 @@ class EchoGeminiClient:
 
                 # --- 5. UPSERT ADDITIF (non destructif) ---
                 upsert_resp = await client.put(
-                    f"{qdrant_base}/collections/{COLLECTION_EPHEMERAL}/points",
+                    f"{qdrant_base}/collections/{COLLECTION_SESSION_RAG}/points",
                     json={"points": points}
                 )
                 if upsert_resp.status_code not in (200, 206):
