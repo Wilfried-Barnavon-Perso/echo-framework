@@ -1,8 +1,9 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.23
-description: 5.23: Ajout de SESSION_RAG_CONVERSATION_SOURCE_ID pour le filtre d'historique.
+version: 5.24
+description: 5.24: Correction sécurité DELEGATE_AGENT_BLACKLIST (identifiants RAG et jauge de contexte).
+             5.23: Ajout de SESSION_RAG_CONVERSATION_SOURCE_ID pour le filtre d'historique.
              5.22: Ajout des seuils de troncature du contexte (CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, CHARS_PER_TOKEN).
              5.21: Ajout de PENDING_INGESTION pour le Data Broker (Auto-Ingestion Playwright).
              5.20: Ajout ECHO_MAX_WAIT_TIMER pour la limite du Timer Généraliste.
@@ -334,23 +335,36 @@ CODEX_LANG_MAP = {
 CODEX_DEFAULT_LANG = "plaintext"
 
 # Prompt système sub-chat édition (HUD AI-assisted)
-CODEX_EDIT_SYSTEM_PROMPT = """Tu es l'éditeur de code ECHO Codex.
+CODEX_EDIT_SYSTEM_PROMPT = """<persona>
+Le Modèle est l'éditeur de code ECHO Codex.
+</persona>
+
+<rules>
 RÈGLES ABSOLUES :
-1. Retourne UNIQUEMENT le fichier modifié complet. Aucune explication, aucun markdown de formatage.
-2. Si une sélection est fournie, ne modifie QUE cette partie dans le contexte du fichier complet.
-3. Préserve le style, l'indentation et les conventions du document original.
-4. Si l'instruction est ambiguë, fais le choix le plus conservateur.
-Fichier : {filename} | Langage : {language}"""
+1. Le Modèle DOIT retourner UNIQUEMENT le fichier modifié complet. Aucune explication, aucun markdown de formatage.
+2. Si une sélection est fournie, le Modèle ne modifie QUE cette partie dans le contexte du fichier complet.
+3. Le Modèle DOIT préserver le style, l'indentation et les conventions du document original.
+4. Si l'instruction est ambiguë, le Modèle DOIT faire le choix le plus conservateur.
+</rules>
+
+<context>
+Fichier : {filename} | Langage : {language}
+</context>"""
 
 # Prompt distillation/résumé de fichier
-CODEX_SUMMARIZE_PROMPT = """Analyse technique exhaustive du fichier '{filename}' ({language}).
-Structure ta réponse :
+CODEX_SUMMARIZE_PROMPT = """<instruction>
+Le Modèle DOIT fournir une analyse technique exhaustive du fichier '{filename}' ({language}).
+Le Modèle DOIT être technique, précis et complet.
+</instruction>
+
+<output_format>
+Le Modèle DOIT structurer sa réponse strictement selon le format suivant :
 1. Objectif et rôle du fichier
 2. Architecture : classes, fonctions, structures principales
 3. Dépendances et imports
 4. Patterns et conventions utilisés
 5. Points d'attention, complexité, dette technique éventuelle
-Sois technique, précis et complet."""
+</output_format>"""
 
 # Actions rapides prédéfinies (boutons HUD)
 CODEX_QUICK_ACTIONS = {
@@ -426,9 +440,10 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     "consult_council",
     "consult_supervised_workers",
     # 2. Écriture RAG
-    "save_memory",            # Écrit en mémoire long terme (Qdrant)
-    "forget_memory",          # Supprime de la mémoire long terme
+    "update_meta_artifact",   # Écrit en mémoire long terme (Qdrant)
+    "delete_meta_artifact_item", # Supprime de la mémoire long terme
     "save_session_context",   # Écrit dans la Mémoire Vectorisée de Session
+    "delete_session_context_source", # Supprime un fichier du RAG éphémère
     # 3. Rendu UI
     "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
     # 4. Méta-session (gestion des sessions du tool delegate)
@@ -439,7 +454,7 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     "close_council",
     "list_supervised_tasks",
     "close_supervised_task",
-    "context_gauge",          # Dépend de l'état interne du Pipe principal
+    "get_context_load",       # Dépend de l'état interne du Pipe principal
 })
 
 # Appendice système injecté automatiquement à la fin de tout system_prompt de sous-agent.

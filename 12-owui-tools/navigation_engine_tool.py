@@ -1,8 +1,9 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.11
-description: 11.11: Optim - Autorisation du Parallel Function Calling dans les instructions pour accélérer la perception (règle 1) et les actions (règle 3).
+version: 11.12
+description: 11.12: Optim - Ajout de la règle interdisant explicitement l'usage des moteurs de recherche généralistes au niveau du navigateur autonome.
+             11.11: Optim - Autorisation du Parallel Function Calling dans les instructions pour accélérer la perception (règle 1) et les actions (règle 3).
              11.10: Fix - Ajout de la Valve PRUNE_CONTENT_THRESHOLD pour configurer le seuil d'élagage dynamique du contexte.
              11.9: Fix - Implémentation du Proactive Context Pruning (Élagage dynamique des DOMs obsolètes).
              11.8: Fix - Implémentation du Multimodal function calling (Gemini 3.x) via l'attribut parts de la functionResponse pour injecter les captures d'écran, évitant l'erreur 400. Suppression des notifications "Traitement de l'affichage".
@@ -26,6 +27,7 @@ description: 11.11: Optim - Autorisation du Parallel Function Calling dans les i
 
 import os
 import time
+import asyncio
 import sys
 import uuid
 import urllib.parse
@@ -139,16 +141,25 @@ class Tools:
         vision_requested = False
 
         sys_prompt = (
-            f"Tu es l'Agent Navigateur Autonome d'ECHO.\nMISSION : {task_objective}\n\n"
-            f"=== MANUEL D'EXPLOITATION COGNITIVE ===\n"
-            f"Règle 1 (Perception Globale) : Tu PEUX demander simultanément plusieurs extractions de l'état de la page en un seul tour via `action_inspect_page` pour accélérer ta compréhension globale.\n"
-            f"Règle 2 (Hiérarchie d'Interaction) : 1) Tente d'abord `action_interact_a11y` sur l'arbre A11y. Pour un élément interactif (button, link, textbox), utilise `method='role'` ET le paramètre `name` pour cibler précisément l'élément. Si l'élément est du texte simple, utilise `method='text'`. 2) Si complexe, utilise l'index de la `dom_map` avec `action_interact_dom`. 3) En dernier recours, utilise les coordonnées x, y issues d'une inspection vision.\n"
-            f"Règle 3 (Mode Action Groupée) : Tu PEUX grouper plusieurs actions non-mutantes dans le même tour (ex: remplir plusieurs champs, faire plusieurs clics de sélection/choix). Cependant, tu NE DOIS PAS enchaîner une action si la précédente risque de modifier drastiquement la page (ex: soumettre un formulaire, changer de page). Si une action est mutante, elle DOIT être la dernière de ton lot.\n"
-            f"Règle 4 (Bannières & Pop-ups) : Si un overlay, un bouton 'Accepter les cookies' ou 'Fermer' bloque la navigation, ta priorité absolue est d'utiliser `action_interact_dom(action_type='click')` ou `action_interact_a11y` pour t'en débarrasser.\n"
-            f"Règle 5 (Formulaires) : Remplis les champs avec `action_interact_dom(action_type='type')`. Fais un `action_browser_control(command='pause')` si tu attends une liste d'autocomplétion. Si la liste apparaît ensuite, clique dessus. Sinon, valide avec `action_browser_control(command='press_key', value='Enter')`.\n"
-            f"Règle 6 (Scroll & Pagination) : Si une information est absente du DOM, scrolle vers le bas via `action_browser_control(command='scroll', value='down')` avant d'abandonner.\n"
-            f"Règle 7 (Erreurs & Repli) : Si `action_browser_control(command='press_key')` échoue, cherche et clique sur le bouton de soumission. Si une action ne produit aucun effet, change d'approche.\n"
-            f"Règle 8 (Synthèse Obligatoire) : Ta synthèse finale DOIT être une phrase complète. Il est STRICTEMENT INTERDIT de renvoyer uniquement un nombre ou un mot isolé.\n"
+            "<persona>\n"
+            "Le Modèle est l'Agent Navigateur Autonome d'ECHO, expert en automatisation web.\n"
+            "</persona>\n\n"
+            "<mission>\n"
+            "Le Modèle doit piloter un navigateur de manière autonome pour accomplir son objectif en interagissant avec l'interface web (clics, formulaires, extraction).\n"
+            "</mission>\n\n"
+            f"<objective>\n{task_objective}\n</objective>\n\n"
+            "<rules>\n"
+            "1. PERCEPTION GLOBALE : Le Modèle PEUT demander simultanément plusieurs extractions de l'état de la page en un seul tour via `action_inspect_page` pour accélérer sa compréhension.\n"
+            "2. HIÉRARCHIE D'INTERACTION : 1) Tenter d'abord `action_interact_a11y` sur l'arbre A11y (utiliser `method='role'` ET `name` pour cibler précisément un bouton/lien, ou `method='text'` pour du texte). 2) Si l'élément est complexe, utiliser l'index de la `dom_map` avec `action_interact_dom`. 3) En dernier recours, utiliser les coordonnées (x, y) d'une inspection vision.\n"
+            "3. ACTIONS GROUPÉES : Le Modèle PEUT grouper plusieurs actions non-mutantes (ex: remplir plusieurs champs). Cependant, il NE DOIT PAS enchaîner une action si la précédente risque de modifier drastiquement la page (soumission, navigation). Une action mutante DOIT être la dernière du lot.\n"
+            "4. OVERLAYS & POP-UPS : Si une bannière bloque la navigation (cookies, popup), la priorité absolue du Modèle est d'utiliser `action_interact_dom(action_type='click')` ou `action_interact_a11y` pour s'en débarrasser.\n"
+            "5. FORMULAIRES : Remplir les champs avec `action_interact_dom(action_type='type')`. Exécuter `action_browser_control(command='pause')` pour attendre une liste d'autocomplétion. Si la liste apparaît, cliquer dessus. Sinon, valider avec `action_browser_control(command='press_key', value='Enter')`.\n"
+            "6. SCROLL : Si une information est absente du DOM, le Modèle DOIT scroller vers le bas via `action_browser_control(command='scroll', value='down')` avant d'abandonner.\n"
+            "7. ERREURS & REPLI : Si `action_browser_control(command='press_key')` échoue, le Modèle doit chercher et cliquer sur le bouton de soumission. Si une approche échoue, il DOIT changer de stratégie.\n"
+            "8. RESTRICTION DE RECHERCHE : Il est STRICTEMENT INTERDIT d'utiliser le navigateur pour effectuer une recherche sur un moteur de recherche généraliste (Google, Bing, etc.). Le navigateur est réservé à l'interaction sur une URL précise.\n"
+            "9. SYNTHÈSE : La synthèse finale DOIT être une phrase complète. Il est STRICTEMENT INTERDIT de renvoyer uniquement un nombre ou un mot isolé.\n"
+            "10. SATURATION : Si une balise <system_alert> de saturation apparaît, le Modèle DOIT clore ce tour en écrivant un texte libre commençant par [SATURATION_CONTEXTE] suivi d'une synthèse détaillée des textes lus et de ses avancées. Il NE DOIT PAS appeler d'outils ce tour-ci.\n"
+            "</rules>"
         )
 
         history = [{"role": "user", "parts": [{"text": sys_prompt}]}]
@@ -196,9 +207,7 @@ class Tools:
                         if isinstance(resp, dict):
                             if "dom_map" in resp and resp["dom_map"] != "[PURGED]":
                                 resp["dom_map"] = "[PURGED]"
-                            # Purge des gros blocs de texte (A11y, HTML)
-                            if "content" in resp and isinstance(resp["content"], str) and len(resp["content"]) > threshold:
-                                resp["content"] = f"[PURGED : Contenu obsolète de {len(resp['content'])} chars]"
+                            # Préservation intégrale des gros blocs de texte (content) pour éviter l'amnésie sémantique.
                                 
                     # Purge du DOM initial en texte brut (push_state)
                     if "text" in part:
@@ -208,182 +217,238 @@ class Tools:
 
         push_state(res_view)
 
-        max_iterations = 15
         iterations = 0
         
-        while iterations < max_iterations:
-            iterations += 1
-            await events.status(f"🤖 Agent Navigateur: Analyse en cours (Étape {iterations})...", done=False)
-            
-            # Défense passive : Troncature de l'historique du navigateur
-            size = estimate_token_size(history)
-            max_tokens = ECHO_MAX_CONTEXT_SIZE
-            if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
+        # Injection du Proxy Live Asynchrone
+        stop_streaming = asyncio.Event()
+        async def stream_proxy():
+            last_id = 0
+            import re
+            clean_hud_id = re.sub(r'[^a-zA-Z0-9]', '_', f"nav-{chat_id[:8]}")
+            while not stop_streaming.is_set():
                 try:
-                    await events.toast(f"⚠️ Navigateur [{sid}] : saturation contextuelle ({int(size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
-                except AttributeError:
-                    if __event_emitter__: await __event_emitter__({"type": "toast", "data": {"title": "ECHO Browser", "message": f"⚠️ Navigateur [{sid}] : saturation contextuelle. Troncature silencieuse active.", "type": "warning"}})
-                while estimate_token_size(history) > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
-                    if not smart_truncate_history(history, 1):
-                        break
+                    resp = await req_to_browser(10, "/screencast/latest", {"session_id": chat_id, "last_frame_id": last_id}, uid)
+                    if resp and resp.get("status") == "success":
+                        new_id = resp.get("frame_id", last_id)
+                        b64 = resp.get("frame_b64")
+                        if b64 and new_id != last_id:
+                            last_id = new_id
+                            update_code = f"if(window.echoWebPlayerUpdate_{clean_hud_id}) window.echoWebPlayerUpdate_{clean_hud_id}('{b64}', {new_id});"
+                            await events.emit("execute", {"code": update_code})
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    pass
+                await asyncio.sleep(0.05)
+                
+        if getattr(u_valves, 'SHOW_BROWSER_HUD', True):
+            proxy_task = asyncio.create_task(stream_proxy())
+        else:
+            proxy_task = None
             
-            payload = {
-                "contents": history,
-                "tools": [{"function_declarations": BROWSER_TOOLS_SCHEMA}],
-                "tool_config": {"function_calling_config": {"mode": "AUTO"}}
-            }
-
-            model = clamp_model(target_model_key, __metadata__, user_id=uid)
-            data, _, err = await EchoGeminiClient.call_cascade(model, payload, uid, __metadata__, events, timeout=120)
-
-            if err or not data:
-                return wrap_tool_output(text=f"❌ Erreur modèle: {err}", status={"status": "error"})
-
-            candidates = data.get("candidates", [])
-            if not candidates or not candidates[0].get("content"): break
+        try:
+        
+            while iterations < max_iterations:
+                iterations += 1
+                await events.status(f"🤖 Agent Navigateur: Analyse en cours (Étape {iterations})...", done=False)
             
-            # Conservation des parts BRUTES pour préserver thoughtSignature (Gemini 3.x)
-            raw_parts = candidates[0]["content"].get("parts", [])
-            tools_raw = [p for p in raw_parts if "functionCall" in p]
-            text_raw = [p for p in raw_parts if "text" in p and not p.get("thought")]
-            
-            tool_called = len(tools_raw) > 0
-
-            if tool_called:
-                # 1. Ajout du message modèle avec TOUTES les parts brutes (préservation thoughtSignature STRICTE)
-                history.append({"role": "model", "parts": raw_parts})
-                
-                sig = next((p["thoughtSignature"] for p in raw_parts if "thoughtSignature" in p), None)
-                state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", raw_parts, sig)
-                
-                response_parts = []
-                last_view = None
-                last_fn_name = "action"
-                
-                # 2. Exécution des outils
-                try:
-                    await browser.start_screencast()
-                except: pass
-                
-                for index, part in enumerate(tools_raw):
-                    fc = part["functionCall"]
-                    fn_name = fc["name"]
-                    fn_args = fc.get("args", {})
-                    fn_id = fc.get("id") # Gemini 3.x parallèle
-                    is_last_tool = (index == len(tools_raw) - 1)
-                    
-                    if fn_args.get("action_type") in ["download", "save_target"]:
-                        file_id = f"DL_{str(uuid.uuid4())[:8]}"
-                        fn_args["download_file_id"] = file_id
-                        
-                    await events.status(f"🖱️ Agent exécute : {fn_name}({fn_args})", done=False)
-                    
-                    _resp = {"status": "error", "message": "Outil inconnu."}
-                    if fn_name in registry:
-                        try:
-                            action_res = await registry[fn_name](**fn_args)
-                            
-                            if action_res.get("_trigger_vision"):
-                                vision_requested = True
-                                grid = action_res.get("grid", False)
-                                if grid:
-                                    last_view = await browser.vision_grid()
-                                else:
-                                    last_view = await browser.highlight()
-                                # On déploie avec highlight() spécifiquement pour le moniteur visuel, car la grille ne possède pas les hitboxes sémantiques.
-                                hud_view = await browser.highlight() if grid else last_view
-                                if is_last_tool:
-                                    try:
-                                        sc_res = await browser.stop_screencast(hud_view.get("screenshot_b64"))
-                                        if sc_res and sc_res.get("webp_b64"):
-                                            hud_view["webp_b64"] = sc_res["webp_b64"]
-                                    except: pass
-                                    
-                                await _deploy_navigation_monitor(hud_view, chat_id, uid, u_valves, events)
-                                _resp = {"status": "success", "message": "Capture d'écran demandée. Elle est jointe à ce message."}
-                                last_fn_name = fn_name
-                                
-                            elif action_res.get("status") != "error":
-                                if is_last_tool:
-                                    last_view = await browser.highlight()
-                                    try:
-                                        sc_res = await browser.stop_screencast(last_view.get("screenshot_b64"))
-                                        if sc_res and sc_res.get("webp_b64"):
-                                            last_view["webp_b64"] = sc_res["webp_b64"]
-                                    except: pass
-                                    
-                                    await _deploy_navigation_monitor(last_view, chat_id, uid, u_valves, events)
-                                    _resp = {"status": "success", "dom_map": last_view.get("metadata", [])}
-                                    
-                                    if action_res.get("status") == "downloading":
-                                        _resp["message"] = f"📥 Le téléchargement a débuté avec l'identifiant ({fn_args.get('download_file_id')}). Il sera automatiquement injecté dans votre contexte une fois terminé."
-
-                                    # Intégrer les résultats spécifiques de l'action dans la réponse
-                                    if "search_result" in action_res:
-                                        _resp["search_result"] = action_res["search_result"]
-                                    if "content" in action_res:
-                                        _resp["content"] = action_res["content"]
-                                    if "value" in action_res:
-                                        _resp["value"] = action_res["value"]
-                                else:
-                                    _resp = {"status": "success", "message": "Action exécutée avec succès."}
-                                    if action_res.get("status") == "downloading":
-                                        _resp["message"] = f"📥 Le téléchargement a débuté avec l'identifiant ({fn_args.get('download_file_id')}). Il sera automatiquement injecté dans votre contexte une fois terminé."
-                                    if "content" in action_res:
-                                        _resp["content"] = action_res["content"]
-                                    if "value" in action_res:
-                                        _resp["value"] = action_res["value"]
-                                        
-                                last_fn_name = fn_name
-                            else:
-                                _resp = {"status": "error", "error": action_res.get("message")}
-                        except Exception as e:
-                            _resp = {"status": "error", "error": str(e)}
-                            
-                    # Construction stricte du functionResponse avec l'ID natif
-                    _fr = {"name": fn_name, "response": _resp}
-                    if fn_id: _fr["id"] = fn_id
-                    response_parts.append({"functionResponse": _fr})
-                
-                # 3. Ajout du message utilisateur contenant toutes les réponses
-                # Injection de la vision base64 dans la functionResponse correspondante si elle a été demandée
-                if last_view and use_vision and vision_requested and last_view.get("screenshot_b64"):
-                    # On attache la capture d'écran directement dans les 'parts' de la dernière functionResponse
-                    # Règle Gemini 3.x : Multimodal function calling
-                    # On trouve la functionResponse qui a déclenché la vision (last_fn_name) ou la dernière.
-                    target_fr = None
-                    for rp in reversed(response_parts):
-                        if "functionResponse" in rp and rp["functionResponse"].get("name") == last_fn_name:
-                            target_fr = rp["functionResponse"]
+                # Défense passive : Troncature de l'historique du navigateur
+                size = estimate_token_size(history)
+                max_tokens = ECHO_MAX_CONTEXT_SIZE
+                if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
+                    try:
+                        await events.toast(f"⚠️ Navigateur [{sid}] : saturation contextuelle ({int(size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
+                    except AttributeError:
+                        if __event_emitter__: await __event_emitter__({"type": "toast", "data": {"title": "ECHO Browser", "message": f"⚠️ Navigateur [{sid}] : saturation contextuelle. Troncature silencieuse active.", "type": "warning"}})
+                    while estimate_token_size(history) > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
+                        if not smart_truncate_history(history, 1):
                             break
-                    if not target_fr and response_parts:
-                        target_fr = response_parts[-1]["functionResponse"]
-                        
-                    if target_fr:
-                        target_fr["response"]["message"] = "Voici la capture d'écran demandée. Analyse-la attentivement."
-                        response_parts.append(
-                            {"inlineData": {"mimeType": "image/png", "data": last_view["screenshot_b64"]}}
-                        )
-                    vision_requested = False
-                    
-                # Élagage des vieux contextes lourds (DOM, A11y, Images) avant d'injecter la nouvelle réponse
-                prune_heavy_context(history, getattr(u_valves, 'PRUNE_CONTENT_THRESHOLD', 1000))
-                
-                history.append({"role": "user", "parts": response_parts})
-                state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", response_parts)
-                
-            else:
-                # Synthèse finale
-                text_out = "".join(p.get("text", "") for p in text_raw)
-                
-                history.append({"role": "model", "parts": raw_parts})
-                sig = next((p["thoughtSignature"] for p in raw_parts if "thoughtSignature" in p), None)
-                state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", raw_parts, sig)
-                
-                await events.status(f"✅ Mission terminée en {iterations} étapes.", done=True)
-                return wrap_tool_output(text=f"🤖 Synthèse du Navigateur :\n{text_out}", status={"status": "success", "steps": iterations, "sid": sid})
+            
+                payload = {
+                    "contents": history,
+                    "tools": [{"function_declarations": BROWSER_TOOLS_SCHEMA}],
+                    "tool_config": {"function_calling_config": {"mode": "AUTO"}}
+                }
 
-        return wrap_tool_output(text="❌ Mission interrompue: nombre maximum d'étapes atteint.", status={"status": "timeout"})
+                model = clamp_model(target_model_key, __metadata__, user_id=uid)
+                data, _, err = await EchoGeminiClient.call_cascade(model, payload, uid, __metadata__, events, timeout=120)
+
+                if err or not data:
+                    return wrap_tool_output(text=f"❌ Erreur modèle: {err}", status={"status": "error"})
+
+                candidates = data.get("candidates", [])
+                if not candidates or not candidates[0].get("content"): break
+            
+                # Conservation des parts BRUTES pour préserver thoughtSignature (Gemini 3.x)
+                raw_parts = candidates[0]["content"].get("parts", [])
+                tools_raw = [p for p in raw_parts if "functionCall" in p]
+                text_raw = [p for p in raw_parts if "text" in p and not p.get("thought")]
+            
+                tool_called = len(tools_raw) > 0
+
+                if tool_called:
+                    # 1. Ajout du message modèle avec TOUTES les parts brutes (préservation thoughtSignature STRICTE)
+                    history.append({"role": "model", "parts": raw_parts})
+                
+                    sig = next((p["thoughtSignature"] for p in raw_parts if "thoughtSignature" in p), None)
+                    state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", raw_parts, sig)
+                
+                    response_parts = []
+                    last_view = None
+                    last_fn_name = "action"
+                
+                    # 2. Exécution des outils
+                    try:
+                        await browser.start_screencast()
+                    except: pass
+                
+                    for index, part in enumerate(tools_raw):
+                        fc = part["functionCall"]
+                        fn_name = fc["name"]
+                        fn_args = fc.get("args", {})
+                        fn_id = fc.get("id") # Gemini 3.x parallèle
+                        is_last_tool = (index == len(tools_raw) - 1)
+                    
+                        if fn_args.get("action_type") in ["download", "save_target"]:
+                            file_id = f"DL_{str(uuid.uuid4())[:8]}"
+                            fn_args["download_file_id"] = file_id
+                        
+                        await events.status(f"🖱️ Agent exécute : {fn_name}({fn_args})", done=False)
+                    
+                        _resp = {"status": "error", "message": "Outil inconnu."}
+                        if fn_name in registry:
+                            try:
+                                action_res = await registry[fn_name](**fn_args)
+                            
+                                if action_res.get("_trigger_vision"):
+                                    vision_requested = True
+                                    grid = action_res.get("grid", False)
+                                    if grid:
+                                        last_view = await browser.vision_grid()
+                                    else:
+                                        last_view = await browser.highlight()
+                                    # On déploie avec highlight() spécifiquement pour le moniteur visuel, car la grille ne possède pas les hitboxes sémantiques.
+                                    hud_view = await browser.highlight() if grid else last_view
+                                    if is_last_tool:
+                                        try:
+                                            sc_res = await browser.stop_screencast(hud_view.get("screenshot_b64"))
+                                            if sc_res and sc_res.get("webp_b64"):
+                                                hud_view["webp_b64"] = sc_res["webp_b64"]
+                                        except: pass
+                                    
+                                    await _deploy_navigation_monitor(hud_view, chat_id, uid, u_valves, events)
+                                    _resp = {"status": "success", "message": "Capture d'écran demandée. Elle est jointe à ce message."}
+                                    last_fn_name = fn_name
+                                
+                                elif action_res.get("status") != "error":
+                                    if is_last_tool:
+                                        last_view = await browser.highlight()
+                                        try:
+                                            sc_res = await browser.stop_screencast(last_view.get("screenshot_b64"))
+                                            if sc_res and sc_res.get("webp_b64"):
+                                                last_view["webp_b64"] = sc_res["webp_b64"]
+                                        except: pass
+                                    
+                                        await _deploy_navigation_monitor(last_view, chat_id, uid, u_valves, events)
+                                        _resp = {"status": "success", "dom_map": last_view.get("metadata", [])}
+                                    
+                                        if action_res.get("status") == "downloading":
+                                            _resp["message"] = f"📥 Le téléchargement a débuté avec l'identifiant ({fn_args.get('download_file_id')}). Il sera automatiquement injecté dans votre contexte une fois terminé."
+
+                                        # Intégrer les résultats spécifiques de l'action dans la réponse
+                                        if "search_result" in action_res:
+                                            _resp["search_result"] = action_res["search_result"]
+                                        if "content" in action_res:
+                                            _resp["content"] = action_res["content"]
+                                        if "value" in action_res:
+                                            _resp["value"] = action_res["value"]
+                                    else:
+                                        _resp = {"status": "success", "message": "Action exécutée avec succès."}
+                                        if action_res.get("status") == "downloading":
+                                            _resp["message"] = f"📥 Le téléchargement a débuté avec l'identifiant ({fn_args.get('download_file_id')}). Il sera automatiquement injecté dans votre contexte une fois terminé."
+                                        if "content" in action_res:
+                                            _resp["content"] = action_res["content"]
+                                        if "value" in action_res:
+                                            _resp["value"] = action_res["value"]
+                                        
+                                    last_fn_name = fn_name
+                                else:
+                                    _resp = {"status": "error", "error": action_res.get("message")}
+                            except Exception as e:
+                                _resp = {"status": "error", "error": str(e)}
+                            
+                        # Construction stricte du functionResponse avec l'ID natif
+                        _fr = {"name": fn_name, "response": _resp}
+                        if fn_id: _fr["id"] = fn_id
+                        response_parts.append({"functionResponse": _fr})
+                
+                    # 3. Ajout du message utilisateur contenant toutes les réponses
+                    # Injection de la vision base64 dans la functionResponse correspondante si elle a été demandée
+                    if last_view and use_vision and vision_requested and last_view.get("screenshot_b64"):
+                        # On attache la capture d'écran directement dans les 'parts' de la dernière functionResponse
+                        # Règle Gemini 3.x : Multimodal function calling
+                        # On trouve la functionResponse qui a déclenché la vision (last_fn_name) ou la dernière.
+                        target_fr = None
+                        for rp in reversed(response_parts):
+                            if "functionResponse" in rp and rp["functionResponse"].get("name") == last_fn_name:
+                                target_fr = rp["functionResponse"]
+                                break
+                        if not target_fr and response_parts:
+                            target_fr = response_parts[-1]["functionResponse"]
+                        
+                        if target_fr:
+                            target_fr["response"]["message"] = "Voici la capture d'écran demandée. Analyse-la attentivement."
+                            response_parts.append(
+                                {"inlineData": {"mimeType": "image/png", "data": last_view["screenshot_b64"]}}
+                            )
+                        vision_requested = False
+                    
+                    # Détection de saturation et trigger du Graceful Shutdown (40% max)
+                    if estimate_token_size(history) > ECHO_MAX_CONTEXT_SIZE * 0.40:
+                        response_parts.append({"text": "<system_alert>SATURATION DU CONTEXTE ATTEINTE. Appliquez la Règle 10.</system_alert>"})
+                    
+                    # Élagage des vieux contextes lourds (DOM, A11y, Images) avant d'injecter la nouvelle réponse
+                    prune_heavy_context(history, getattr(u_valves, 'PRUNE_CONTENT_THRESHOLD', 1000))
+                
+                    history.append({"role": "user", "parts": response_parts})
+                    state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", response_parts)
+                
+                else:
+                    # Synthèse finale ou Auto-Relaunch
+                    text_out = "".join(p.get("text", "") for p in text_raw)
+                
+                    history.append({"role": "model", "parts": raw_parts})
+                    sig = next((p["thoughtSignature"] for p in raw_parts if "thoughtSignature" in p), None)
+                    state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", raw_parts, sig)
+                    
+                    if "[SATURATION_CONTEXTE]" in text_out:
+                        await events.status("🔄 Saturation mémoire : Auto-synthèse et Relance interne...", done=False)
+                        synthesis = text_out.replace("[SATURATION_CONTEXTE]", "").strip()
+                        
+                        # Auto-Relaunch : Réinitialisation de la mémoire avec injection de la synthèse
+                        history = [{"role": "user", "parts": [{"text": sys_prompt}]}]
+                        history.append({
+                            "role": "user", 
+                            "parts": [{"text": f"Reprise de session interne.\nObjectif initial :\n{task_objective}\n\nSynthèse des recherches précédentes :\n{synthesis}\n\nContinuez la mission sans répéter les mêmes actions."}]
+                        })
+                        state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", history[1]["parts"])
+                        continue  # Relance la boucle while
+                
+                    await events.status(f"✅ Mission terminée en {iterations} étapes.", done=True)
+                    return wrap_tool_output(text=f"🤖 Synthèse du Navigateur :\n{text_out}", status={"status": "success", "steps": iterations, "sid": sid})
+
+            return wrap_tool_output(
+                text=(
+                    f"ÉCHEC : Nombre maximum d'itérations atteint ({max_iterations}). "
+                    "Le Modèle doit analyser la synthèse suivante et relancer l'outil `delegate_web_browsing` pour poursuivre la tâche.\n"
+                    f"[SYNTHÈSE_NAVIGATEUR] :\n{text_out if 'text_out' in locals() else 'Aucune synthèse (Interrompu en cours d\'action).'}"
+                ), 
+                status={"status": "too_many_tries"}
+            )
+        finally:
+            stop_streaming.set()
+            if proxy_task:
+                proxy_task.cancel()
 
     async def distill_web_page(self, url: str, __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None) -> dict:
         """Distillation d'URL et indexation dans le RAG de Session."""
@@ -409,7 +474,12 @@ class Tools:
         await events.status(f"🧠 Distillation de la page → vectorisation locale...")
         try:
             html_text = base64.b64decode(b64_html).decode('utf-8', errors='ignore')
-            prompt = f"SOURCE HTML :\n{html_text[:100000]}\n\nINSTRUCTION :\nAnalyse ce code HTML et génère un résumé structuré, sémantique et très détaillé de tout le contenu de la page."
+            prompt = (
+                "<instruction>\n"
+                "Le Modèle doit analyser ce code HTML et générer un résumé structuré, sémantique et très détaillé de tout le contenu textuel de la page.\n"
+                "</instruction>\n\n"
+                f"<source_html>\n{html_text[:100000]}\n</source_html>"
+            )
             
             analyse_model = clamp_model("MODEL_FLASH", __metadata__, user_id=uid)
             data, _, _ = await EchoGeminiClient.call_cascade(

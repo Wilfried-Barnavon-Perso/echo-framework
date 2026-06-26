@@ -1,8 +1,12 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.2
-description: 8.2: Ajout de smart_truncate_history pour préserver l'intégrité des blocs d'outils Gemini.
+version: 8.6
+description: 8.6: Log explicite de l'exception réseau dans docker logs pour EchoGeminiClient.call.
+             8.5: Fix `call_cascade` : Interception explicite des exceptions `httpx.TimeoutException` et `asyncio.TimeoutError` pour afficher un statut clair "Allocated time elapsed (Timeout)" au lieu d'une erreur silencieuse `()`.
+             8.4: Amélioration de `estimate_token_size` avec heuristiques dynamiques basées sur le `mimeType` pour évaluer les coûts des médias (Images haute résolution, Vidéo, Audio, PDF).
+             8.3: Fix de `estimate_token_size` (calcul heuristique correct pour la donnée base64, 258 tokens constants) pour prévenir la troncature prématurée.
+             8.2: Ajout de smart_truncate_history pour préserver l'intégrité des blocs d'outils Gemini.
              8.1: Ajout de estimate_token_size pour le calcul heuristique du poids cognitif.
              7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
@@ -191,13 +195,70 @@ def get_stealth_headers(url: Optional[str] = None) -> Dict[str, str]:
 
 def estimate_token_size(content: Any) -> int:
     """Estime le poids cognitif (tokens) via une heuristique rapide sur la longueur de la chaîne."""
-    if isinstance(content, str):
-        return len(content) // CHARS_PER_TOKEN
-    elif isinstance(content, (dict, list)):
+    
+    def _estimate_media_tokens(mime_type: str, b64_length: int) -> int:
+        # Poids décodé estimé en Mo
+        size_mb = (b64_length * 0.75) / (1024 * 1024)
+        
+        if mime_type.startswith("image/"):
+            # 258 tokens de base + tuiles pour les hautes résolutions (approx. 1 tuile par 0.5 Mo)
+            return 258 + int(size_mb / 0.5) * 258
+        elif mime_type == "application/pdf":
+            # Gemini facture 258 tokens par page. Moyenne d'environ 1 page / 100Ko
+            return int(size_mb * 2500) or 258
+        elif mime_type.startswith("audio/"):
+            # ~32 tokens / sec. Un MP3 128kbps = ~1Mo / min -> ~1920 tokens / Mo
+            return int(size_mb * 2000)
+        elif mime_type.startswith("video/"):
+            # ~263 tokens / sec. Vidéo compressée ~10Mo / min -> ~1578 tokens / Mo
+            return int(size_mb * 1500)
+        else:
+            return 258 # Fallback générique
+
+    def _calc_size(item: Any) -> int:
+        if isinstance(item, dict):
+            media_node = item.get("inlineData") or item.get("inline_data")
+            if media_node and isinstance(media_node, dict):
+                mime_type = media_node.get("mimeType", media_node.get("mime_type", "image/unknown"))
+                b64_data = media_node.get("data", "")
+                b64_length = len(b64_data) if isinstance(b64_data, str) else 0
+                
+                tokens = _estimate_media_tokens(mime_type, b64_length)
+                
+                for k, v in item.items():
+                    if k not in ["inlineData", "inline_data"]:
+                        tokens += len(str(k)) // CHARS_PER_TOKEN
+                        tokens += _calc_size(v)
+                return tokens
+            elif "image_url" in item:
+                tokens = 258
+                for k, v in item.items():
+                    if k != "image_url":
+                        tokens += len(str(k)) // CHARS_PER_TOKEN
+                        tokens += _calc_size(v)
+                return tokens
+            else:
+                tokens = 0
+                for k, v in item.items():
+                    tokens += len(str(k)) // CHARS_PER_TOKEN
+                    tokens += _calc_size(v)
+                return tokens
+        elif isinstance(item, list):
+            return sum(_calc_size(i) for i in item)
+        elif isinstance(item, str):
+            return len(item) // CHARS_PER_TOKEN
+        else:
+            return len(str(item)) // CHARS_PER_TOKEN
+
+    if isinstance(content, (dict, list)):
         try:
-            return len(json.dumps(content)) // CHARS_PER_TOKEN
+            return _calc_size(content)
         except Exception:
-            return len(str(content)) // CHARS_PER_TOKEN
+            try:
+                return len(std_json.dumps(content)) // CHARS_PER_TOKEN
+            except Exception:
+                pass
+
     return len(str(content)) // CHARS_PER_TOKEN
 
 def smart_truncate_history(history: list, start_index: int = 0) -> bool:
@@ -736,7 +797,7 @@ class EchoGeminiClient:
                 return std_json.loads(clean_text)
             return clean_text
         except:
-            return {} if is_json else "Analyse indisponible."
+            return {} if is_json else ""
 
     @staticmethod
     async def index_text_in_ephemeral_rag(
@@ -960,6 +1021,7 @@ class EchoGeminiClient:
             except Exception as e:
                 if attempt < max_retries:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
+                    print(f"[EchoGemini] ⚠️ Tentative {attempt + 1}/{max_retries} échouée pour {target_model} : {e.__class__.__name__} - {str(e)}")
                     if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
@@ -1050,13 +1112,19 @@ class EchoGeminiClient:
                 return data, model_key, reason
 
             except Exception as e:
+                err_msg = str(e)[:60]
+                if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError)):
+                    err_msg = "Allocated time elapsed (Timeout)"
+                elif not err_msg:
+                    err_msg = e.__class__.__name__
+
                 # Toast warning sur erreur technique (tous modes)
                 if events:
                     await events.toast(
                         f"⚠️ {model_key} indisponible — repli automatique", "warning"
                     )
                     await events.status(
-                        f"⚠️ {model_key} ({str(e)[:60]}). Repli...", done=False
+                        f"⚠️ {model_key} ({err_msg}). Repli...", done=False
                     )
                 continue
 

@@ -54,8 +54,7 @@
     <p>
       La <strong>V5 (actuelle)</strong> matérialise ces concepts en une infrastructure conteneurisée.
       Elle introduit l'<em>Ombre Riche</em> (persistance SQLite bit-perfect), le double RAG vectoriel
-      (Qdrant), les filtres Python d'interception, et le Pipe comme orchestrateur central. La V5 est capable
-      de maintenir une cohérence sémantique absolue sur des sessions dépassant un million de tokens.
+      (Qdrant), les filtres Python d'interception, et le Pipe comme orchestrateur central. 
     </p>
 
     <h2>Les trois piliers fondamentaux</h2>
@@ -105,7 +104,7 @@
       </li>
       <li>
         <strong>Mémoire Vectorisée de Session</strong> (<code>echo_session_rag</code>) : mémoire de travail de la session courante,
-        purgée automatiquement en fin de session. Outils : <code>save_session_context</code> / <code>search_session_context</code>.
+        purgée automatiquement en fin de session. Outils : <code>save_session_context</code> / <code>search_session_context</code> (consultable également depuis d'autres sessions).
       </li>
     </ul>
     <div class="note-box">
@@ -136,7 +135,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.188.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,8 +1,9 @@
 """
 title: ECHO Session RAG Conversation Filter
 author: ECHO Framework
-version: 1.2
-description: 1.2: Correction ModuleNotFoundError empêchant l'activation par défaut.
+version: 1.3
+description: 1.3: Correction de la sécurité d'importation (ajouts systèmes ECHO pour le filtre).
+             1.2: Correction ModuleNotFoundError empêchant l'activation par défaut.
              1.1: Suppression de l'overlap de messages pour éviter la redondance dans le RAG.
              1.0: Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG.
 """
@@ -11,6 +12,12 @@ from typing import Optional, Any
 from pydantic import BaseModel, Field
 import asyncio
 import time
+
+# Importations ECHO Standard
+import sys
+sys.path.append("/app/backend/echo_libs")
+from echo_utils import EchoGeminiClient
+from echo_constants import SESSION_RAG_CONVERSATION_SOURCE_ID
 
 class Filter:
     priority: int = 100

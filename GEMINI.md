@@ -1,10 +1,3 @@
-# 🧠 ECHO Framework (GEMINI.md) - Version 5.185.13
-
-ECHO (Espace Cognitif Heuristique Opérationnel) est un framework d'orchestration d'intelligence auto-hébergée de grade industriel, conçu comme un Kernel de contrôle pour Open WebUI. Optimisé pour la famille Gemini (Google AI Studio), il garantit la confidentialité, l'autonomie et la persistance cognitive.
-
-## 💻 Environnement de Développement & Déploiement
-
-- **OS Hôte :** Windows 11 Pro.
 - **IDE :** VS Code.
 - **Terminal :** PowerShell (Admin requis pour Hyper-V).
 - **Infrastructure Cible :** Machine Virtuelle Ubuntu 24.04 sur Hyper-V (Allouée à 8Go RAM et 70Go VHD dynamiques).
@@ -46,7 +39,7 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 - **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Cascade cognitive centralisée via `call_cascade()`, persistance Markdown dans le Vault, registre SQLite par chat, injection proprioceptive dans `registre_plan`.
 - **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites basés sur la nomenclature Méta-Artéfacts : `update_meta_artifact`, `search_meta_artifacts` (avec reranking pondéré et filtres temporels), `consult_meta_artifacts`, `delete_meta_artifact_item`, `save_session_context` et `search_session_context` (avec recherche globale inter-sessions et filtres temporels).
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes) via `universal_visual_generator.py` et `echo_visuals.py` (Pattern 'Data Island' pour isoler le JS).
-- **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) pilotée par **boucle OODA autonome** via une **API à 4 piliers** (A11y, DOM, Inspect, Control). Utilise un mode hybride Lidar/Vision (Vision-On-Demand) et une intégration multimodale (Gemini 3.x).
+- **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) pilotée par **boucle OODA autonome** via une **API à 4 piliers** (A11y, DOM, Inspect, Control). Utilise un mode hybride Lidar/Vision (Vision-On-Demand), une intégration multimodale (Gemini 3.x via attribut `parts` pour prévenir l'erreur 400) et le *Parallel Function Calling*. Inclut un mécanisme de *Proactive Context Pruning* (élagage dynamique du DOM via seuil configurable) et proscrit l'usage de moteurs de recherche généralistes.
 - **Sovereign Web Search (`sovereign_web_search.py`) :** Outils de recherche souveraine via SearXNG (recherche classique One-Shot) et DuckDuckGo (réponse instantanée factuelle), avec capacité de délégation à un agent de recherche profonde (Deep Research Agent) autonome pour les requêtes complexes multi-tours.
 - **Agent Engine (`agent_engine_tool.py`) :** Moteur d'exécution d'un agent unique via `delegate_to_agent` (± Skill via `role_name`). Boucle agentique avec outils, escalade cognitive, budget configurable. Depth=1 (pas de récursion), pas d'écriture RAG.
 - **Explorateur de l'Espace Personnel :** Analyse sécurisée et indexation des documents locaux de l'utilisateur.
@@ -57,7 +50,7 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 ### 5. Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
 - **ECHO Auth (SSO & MFA) :** IdP autonome (`/opt/ECHO/24-docker-echo-auth/`) gérant l'authentification forte (TOTP). Couplé à BunkerWeb via Forward Auth (`/api/verify`), l'état des sessions et les bannissements IP sont pilotés depuis l'Admin Manager (Révocations granulaires, Kill-Switch).
 - **Dashboard Actif :** Interface interactive (Sidebar asynchrone) de monitoring du cluster Docker, gestion renforcée du SSO (révocation, purge dynamique sécurisée des utilisateurs via garde-fous API) et supervision des ressources système.
-- **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec Kill-Switch PWA et routage natif (`location = /ws/edge-embed`) garantissant l'accès direct au Worker d'Embedding pour le pont WebGPU.
+- **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec Kill-Switch PWA, routage natif (`location = /ws/edge-embed`) pour le pont WebGPU, et routage sécurisé du service `echo-auth` via proxy inverse.
 - **Régulation & Consolidation :** Optimisation physique SQLite (Vacuum/WAL), gestion des sauvegardes à chaud (incluant les bases IdP) et autosécurité Docker (rotation automatisée des logs pour prévenir la saturation disque).
 - **Purge Vectorielle & SQLite :** Centralisation du processus d'élagage temporel (TTL) et de la purge des orphelins dans les collections Qdrant (`echo_meta_artifacts`, `echo_session_rag`), incluant la purge dynamique utilisateur par introspection SQLite.
 - **Configuration Automatique (Open WebUI) :** Script d'orchestration post-déploiement (`00-echo-scripts/config-owui.sh`) paramétrant dynamiquement l'interface, les modèles et les permissions via API à partir du template statique (`01-config/webui-settings.json`).
@@ -69,11 +62,13 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 - **Agent Monitor :** Action HUD (`agent_monitor_action.py`) offrant une vue arborescente des agents (agents, experts, conseils, superviseurs, **navigateur web avec analyse DOM**) en temps réel via lecture SQLite.
 - **Réinitialisation Auth :** Purge des tokens Google OAuth2 de l'Espace Personnel (`reset_auth_action.py`).
 - **ECHO Codex (`echo_codex_action.py`) :** HUD Monaco Editor draggable avec file tree, mini-chat AI (quick actions), diff view (accept/reject), import/export PC, navigation historique Git (◀ ▶ avec mode read-only), restauration de version.
+- **Resume in New Chat (`resume_in_new_chat_action.py`) :** Migration complète du contexte saturé vers une nouvelle session distillée avec duplication du FS Vault, mutation SQLite (`session.db`) et clonage Qdrant.
 
 ### 7. Infrastructure d'Exécution
 - **Python Worker (`/opt/ECHO/docker-python-worker/`) :** API Flask isolée exécutant du code Python en mémoire protégée via isolation système (`multiprocessing` / dossier temporaire). Conçue pour la validation analytique, elle supporte la restitution graphique en Base64 (`pybase64`) et la sérialisation asynchrone ultra-rapide (`orjson`).
-- **Browser Agent (`/opt/ECHO/docker-browser-agent/`) :** Instance Playwright (Python 3.14) pilotée par API (httpx, FastAPI) pour la navigation autonome.
+- **Browser Agent (`/opt/ECHO/docker-browser-agent/`) :** Instance Playwright (Python 3.14) pilotée par API **FastAPI asynchrone**. Intègre un Watchdog d'Auto-Stop pour libération CDP, un streaming Live Long-Polling pour le screencast, et délègue les tâches CPU-bound (WebP/html2text) aux threads OS natifs. Moteur bridé à 9 FPS avec sérialisation asynchrone (`ORJSONResponse`) pour des performances optimales.
 - **Embedding Worker (`/opt/ECHO/docker-embedding-worker/`) :** Architecture hybride. Offload prioritaire de l'inférence BAAI/bge-m3 vers le navigateur client via **Edge Computing (WebGPU)**. Fallback transparent sur le conteneur Docker (PyTorch CPU-only) en cas d'inactivité du navigateur.
+- **Download Broker (`/opt/ECHO/docker-download-broker/`) :** Service autonome gérant l'ingestion asynchrone des téléchargements Web. Assure le Garbage Collection et le déplacement atomique vers le Vault utilisateur avec sérialisation SQLite (`PENDING_INGESTION`).
 
 ### 8. Orchestration Séquentielle (Docker Compose)
 Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy` :
@@ -83,6 +78,7 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Tier 4** : Admin Manager — attend Open WebUI (dernier).
 - **Ports internes** : Qdrant (6333), Embedding (7997) ne sont **pas** exposés sur la VM. Accès uniquement via le réseau Docker `echo-network`.
 - **Ports exposés** : Open WebUI (3000), Admin Manager (3001), SSH Tunnel (8020-8024).
+
 ## 🔢 Stratégie de Versioning (`VERSIONING.md`)
 
 ### A. Version de la Stack (Globale)
@@ -106,7 +102,7 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Éthique Open Source :** Tout composant ou bibliothèque tiers intégré à ECHO DOIT obligatoirement être crédité avec sa licence dans le fichier `CREDITS.md` situé à la racine.
 - **Async-First :** Utilisation impérative d'`asyncio` et `httpx`.
 - **Persistence :** `EchoStateManager` (SQLite) pour la persistance par utilisateur (`identity.db`) et par chat (`{chat_id}.db`).
-- **UI HUD :** Toutes les interactions visuelles (Jauges de contexte, Status) passent par `echo_ui.py` avec gestion événementielle universelle (`events.emit`) et garde-fous mobiles (`get_mobile_guard_js`).
+- **UI HUD (EchoRichUI) :** Moteur de rendu modulaire centralisé dans `echo_ui.py`. Standardise la génération des composants (Drag/Drop, Resizable HUD), la gestion événementielle universelle (`events.emit`), et inclut des mécanismes robustes (heartbeat, synchronisation automatique de thème, logique de rendu HUD mobile, état persistant et fallback automatique).
 - **API Resilience :** `EchoGeminiClient` gère le multi-provider, le basculement sur erreur 429/500 et le backoff exponentiel.
 - **Politique Modèle Centralisée :** `call_cascade()` dans `echo_utils.py` gère le clamping (politique Pipe via UserValve `MODEL_SELECTION`), l'injection `thinkingConfig` automatique, la cascade descendante PRO→FLASH→LITE et la signalisation (🔒 clamping, ⚡ cascade, ❌ épuisement). `wrap_cascade_output()` rend le modèle effectif visible au LLM orchestrateur.
 - **Règle d'Énonciation :** Le Kernel statique et les docstrings des outils doivent impérativement adopter un ton impersonnel (ex: "Le Modèle doit", "Permet au Modèle de"). L'utilisation de la 2ème personne ("Tu es...", "Tu DOIS") est STRICTEMENT réservée aux prompts internes (`system_prompt`) destinés aux sous-agents pour définir leur persona.
@@ -121,4 +117,4 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.185.13*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.188.1*

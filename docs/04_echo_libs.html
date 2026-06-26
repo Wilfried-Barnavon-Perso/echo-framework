@@ -47,13 +47,13 @@
         <tr>
           <td><code>MODEL_PRO</code></td>
           <td><code>gemini-3.1-pro-preview</code></td>
-          <td><code>gemini-pro-agent</code></td>
+          <td><code>gemini-3.1-pro-preview</code></td>
           <td>Expertise - dernier recours uniquement</td>
         </tr>
         <tr>
           <td><code>MODEL_FLASH</code></td>
           <td><code>gemini-3.5-flash</code></td>
-          <td><code>gemini-3-flash-agent</code></td>
+          <td><code>gemini-3.5-flash</code></td>
           <td>Moteur agentique principal</td>
         </tr>
         <tr>
@@ -91,7 +91,7 @@
         <tr><td><code>THINKING_LEVEL_TOOLS</code></td><td><code>"MINIMAL"</code></td><td>Outils stateless (maps, grounding, distillation rapide).</td></tr>
         <tr><td><code>TEMP_DEFAULT</code></td><td>1,0</td><td>Température de génération principale.</td></tr>
         <tr><td><code>TOP_P_DEFAULT</code></td><td>0,90</td><td>Nucleus sampling.</td></tr>
-        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.185.13)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
+        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.188.1)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
       </tbody>
     </table>
 
@@ -202,7 +202,7 @@
           <td><strong>API Antigravity</strong></td>
           <td>OAuth2 Bearer (token)</td>
           <td><code>cloudcode-pa.googleapis.com/v1internal</code></td>
-          <td>IDs internes Antigravity (<code>gemini-3-flash-agent</code>, etc.)</td>
+          <td>IDs internes Antigravity (<code>gemini-3.5-flash</code>, etc.)</td>
         </tr>
       </tbody>
     </table>
@@ -425,8 +425,8 @@
         <tr><th>Nom ECHO (AI Studio)</th><th>ID API Antigravity</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>gemini-3.1-pro-preview</code></td><td><code>gemini-pro-agent</code></td></tr>
-        <tr><td><code>gemini-3.5-flash</code></td><td><code>gemini-3-flash-agent</code></td></tr>
+        <tr><td><code>gemini-3.1-pro-preview</code></td><td><code>gemini-3.1-pro-preview</code></td></tr>
+        <tr><td><code>gemini-3.5-flash</code></td><td><code>gemini-3.5-flash</code></td></tr>
         <tr><td><code>gemini-3.1-flash-lite</code></td><td><code>gemini-3.1-flash-lite</code> (identique)</td></tr>
       </tbody>
     </table>
@@ -498,7 +498,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.188.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

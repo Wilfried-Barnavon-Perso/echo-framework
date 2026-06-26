@@ -260,6 +260,9 @@ async def logout_sso(request: Request, next: str = "/", echo_auth_session: Optio
 @app.api_route("/api/verify", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
 async def verify_auth(request: Request, echo_auth_session: Optional[str] = Cookie(None)):
     """Endpoint de Forward-Auth appelé par BunkerWeb."""
+    if not echo_auth_session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+        
     email = get_current_user_email(echo_auth_session)
     if email:
         # Utilisateur authentifié : On injecte l'entête
@@ -268,8 +271,8 @@ async def verify_auth(request: Request, echo_auth_session: Optional[str] = Cooki
         response.headers["X-Echo-Sso-Secret"] = os.environ.get("ECHO_SSO_SECRET", "")
         return response
     
-    # Non authentifié : On retourne 401 pour que BunkerWeb redirige vers /login
-    raise HTTPException(status_code=401, detail="Unauthorized")
+    # Non authentifié : Session expiré ou utilisateur révoqué
+    raise HTTPException(status_code=403, detail="Forbidden")
 
 # ==============================================================================
 # PAGES UI & LOGIQUE METIER

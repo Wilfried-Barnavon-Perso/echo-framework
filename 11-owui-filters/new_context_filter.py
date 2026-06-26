@@ -83,7 +83,7 @@ logger = logging.getLogger("ECHO-FILTER")
 
 class Filter:
     # Priorité basse (1) pour s'exécuter en tout premier (Inlet) avant les autres filtres
-    priority: int = 1
+    priority: int = 20
 
     class Valves(BaseModel):
         DEBUG_MODE: bool = Field(default=False)

@@ -39,7 +39,7 @@ from echo_constants import (
     DELEGATE_AGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX,
     CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
 )
-from echo_skills import get_skill_content
+from echo_skills import get_skill_content, parse_skill_metadata
 
 # Identifiant de rôle pour les threads delegate dans cognitive_threads
 _DELEGATE_ROLE_ID = "delegate"
@@ -124,6 +124,7 @@ class Tools:
                 system_prompt = "Tu es une extension cognitive experte du framework ECHO."
 
         # 1. Résolution de la persona (Skill optionnel)
+        role_name = None
         if skill_id:
             skill_content = get_skill_content(user_id, skill_id)
             if not skill_content:
@@ -131,6 +132,11 @@ class Tools:
                     text=f"❌ Skill '{skill_id}' introuvable. IMPLIQUE `forge_skill`.",
                     status={"status": "error", "message": f"Skill '{skill_id}' not found"}
                 )
+            
+            # Extraction du nom lisible pour l'UI
+            skill_meta = parse_skill_metadata(skill_content)
+            role_name = skill_meta.get("name", skill_id)
+
             # Le Skill définit la persona, le system_prompt l'enrichit contextuellement
             base_system = f"{skill_content}\n\n{system_prompt}" if system_prompt else skill_content
         else:

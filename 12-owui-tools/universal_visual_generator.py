@@ -1,8 +1,9 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.4
-description: 5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux). 5.2: Renommage niveau_cognitif→target_model, migration stream→call_cascade() centralisé.
+version: 5.5
+description: 5.5: Optimisation du prompt Architecte Visuel (balises XML, bloc <thinking>, ton impersonnel).
+             5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux). 5.2: Renommage niveau_cognitif→target_model, migration stream→call_cascade() centralisé.
 """
 
 import os
@@ -54,36 +55,54 @@ class Tools:
     events = EchoEvents(__event_emitter__, __event_call__)
     await events.status(f"🧠 Rendu Visuel : Orchestration {moteur or 'Auto'}...")
     user_id = __user__.get("id", "system") if __user__ else "system"
+    target_model = niveau_cognitif
 
     # 1. Manuel Technique de l'Architecte
-    directive_moteur = f"Tu DOIS impérativement utiliser le moteur : '{moteur}'." if moteur else "Choisis le moteur le plus adapté."
+    directive_moteur = f"Le Modèle DOIT impérativement utiliser le moteur : '{moteur}'." if moteur else "Le Modèle DOIT choisir le moteur le plus adapté."
     
     system_prompt = (
-      "Tu es l'Architecte Visuel Souverain du Framework ECHO.\n"
-      "Ta mission : transformer une intention et des données en un payload technique certifié.\n\n"
-      f"{directive_moteur}\n\n"
-      "MANUEL DE RÉFÉRENCE TECHNIQUE (Thème Clair) :\n"
-      "1. 'markmap' : Markdown hiérarchique pur. Pas de code block.\n"
-      "2. 'mermaid' : Syntaxe v11 stricte. Pas de backticks. 'flowchart TD' ou 'sequenceDiagram'.\n"
-      "   IDENTIFIANTS DE NŒUDS : utiliser exclusivement des caractères ASCII alphanumériques ou underscore.\n"
-      "   Les accents, tirets (-), espaces et caractères spéciaux sont INTERDITS dans les identifiants.\n"
-      "   Placer tout texte lisible dans le libellé entre guillemets : EtatOk[\"État OK\"] et non Etat-Ok.\n"
-      "3. 'echarts' : JSON ECharts 5+. Inclure 'tooltip', 'legend', 'xAxis', 'yAxis', 'series'. Thème clair.\n"
-      "4. 'vega' : JSON Vega-Lite strict. Spécifier '$schema', 'data', 'mark', 'encoding'.\n"
-      "5. 'timeline' : JSON TimelineJS. Structure : {'events': [{'start_date':..., 'text':{'headline':..., 'text':...}}]}.\n"
-      "6. 'bpmn' : XML BPMN 2.0 valide.\n"
-      "7. 'gantt' : Syntaxe Mermaid Gantt pure (commencer par 'gantt').\n"
-      "8. 'aframe' : Code HTML A-Frame (balises <a-scene>, <a-box>, etc.).\n"
-      "9. 'cytoscape' : JSON Cytoscape.js (elements: {nodes: [], edges: []}).\n"
-      "10. 'wavedrom' : JSON WaveDrom (signal: []).\n"
-      "11. 'astro' : JSON Celestial (projection: 'orthographic', transform: 'equatorial').\n"
-      "12. 'bio' : Renvoie UNIQUEMENT l'ID PDB (ex: 1A8M) ou le contenu complet d'un fichier PDB.\n"
-      "13. 'svg' : Code XML SVG complet et valide.\n"
-      "14. 'chem' : Chaîne SMILES (ex: 'CC(=O)OC1=CC=CC=C1C(=O)O').\n"
-      "15. 'science' : JSON Plotly.js (data: [], layout: {}).\n\n"
-
-      "CONSIGNE CRITIQUE : Renvoie UNIQUEMENT le payload technique (JSON, XML ou Markdown) dans un bloc de code. "
-      "N'ajoute aucun commentaire avant ou après."
+        "<persona>\n"
+        "Le Modèle est un architecte technique expert en génération de représentations visuelles.\n"
+        "</persona>\n\n"
+        "<mission>\n"
+        "Le Modèle doit transformer une intention textuelle et un jeu de données en un payload technique certifié et fonctionnel.\n"
+        "</mission>\n\n"
+        f"<directive>\n"
+        f"{directive_moteur}\n"
+        f"</directive>\n\n"
+        "<technical_manual>\n"
+        "1. 'markmap' : Markdown hiérarchique pur. Aucun bloc de code.\n"
+        "2. 'mermaid' : Syntaxe v11 stricte. Identifiants de nœuds STRICTEMENT ASCII alphanumériques ou underscore (aucun espace/tiret). Texte lisible encapsulé entre guillemets (ex: ID[\"Texte\"]).\n"
+        "3. 'echarts' : JSON ECharts 5+ valide (inclure tooltip, legend, xAxis, yAxis, series). Thème clair.\n"
+        "4. 'vega' : JSON Vega-Lite strict (spécifier $schema, data, mark, encoding).\n"
+        "5. 'timeline' : JSON TimelineJS. Structure imposée: {\"events\": [{\"start_date\":..., \"text\":{\"headline\":..., \"text\":...}}]}.\n"
+        "6. 'bpmn' : XML BPMN 2.0 valide.\n"
+        "7. 'gantt' : Syntaxe Mermaid Gantt pure (débute par 'gantt').\n"
+        "8. 'aframe' : HTML A-Frame (<a-scene>, <a-box>, etc.).\n"
+        "9. 'cytoscape' : JSON Cytoscape.js (elements: {\"nodes\": [], \"edges\": []}).\n"
+        "10. 'wavedrom' : JSON WaveDrom (signal: []).\n"
+        "11. 'astro' : JSON Celestial (projection: 'orthographic', transform: 'equatorial').\n"
+        "12. 'bio' : Renvoie UNIQUEMENT l'ID PDB (ex: 1A8M) ou le contenu complet d'un fichier PDB.\n"
+        "13. 'svg' : XML SVG complet et valide.\n"
+        "14. 'chem' : Chaîne SMILES (ex: 'CC(=O)OC1=CC=CC=C1C(=O)O').\n"
+        "15. 'science' : JSON Plotly.js (data: [], layout: {}).\n"
+        "</technical_manual>\n\n"
+        "<rules>\n"
+        "1. RÉFLEXION : Le Modèle DOIT structurer sa réflexion analytique préalable dans une balise <thinking>.\n"
+        "2. EXÉCUTION : Le Modèle DOIT renvoyer UNIQUEMENT le payload technique encapsulé dans un bloc de code (```).\n"
+        "3. SILENCE : Le Modèle a l'INTERDICTION absolue d'ajouter du texte ou des commentaires en dehors de la balise <thinking> et du bloc de code.\n"
+        "</rules>\n\n"
+        "<example>\n"
+        "<thinking>\n"
+        "Processus séquentiel requis. Choix du moteur: Mermaid (sequenceDiagram). Vérification: Les identifiants de participants doivent être strictement alphanumériques (User1, SystemA).\n"
+        "</thinking>\n"
+        "```mermaid\n"
+        "sequenceDiagram\n"
+        f"    participant User1\n"
+        f"    participant SystemA\n"
+        f"    User1->>SystemA: Request\n"
+        f"```\n"
+        f"</example>"
     )
 
     # 3. Génération

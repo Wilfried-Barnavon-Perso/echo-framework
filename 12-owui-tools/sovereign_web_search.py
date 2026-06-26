@@ -1,8 +1,10 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.11
-description: 1.11: Optim - Ajout de la suggestion de changement de méthode en cas de blocage SearXNG.
+version: 1.13
+description: 1.13: Optim - Nouveaux paramètres SearxNG, résolution du paradoxe logique (docstrings) et suppression algorithmique des appâts de boucle.
+             1.12: Optim - Rééquilibrage cognitif des docstrings de recherche pour prioriser delegate_deep_research sur les requêtes complexes.
+             1.11: Optim - Ajout de la suggestion de changement de méthode en cas de blocage SearXNG.
              1.10: Optim - Intégration sous contrainte de delegate_web_browsing dans le Deep Research Agent.
              1.9: Optim - Ajout d'une règle anti-spam cognitif limitant le burst du Parallel Function Calling pour prévenir le bannissement de l'IP.
              1.8: Redéfinition des docstrings de search_web et delegate_deep_research.
@@ -49,7 +51,7 @@ class Tools:
         __event_emitter__: Any = None
     ) -> str:
         """
-        Définition de concepts, biographies ou dates (Wikipédia). Actualité ou événements récents proscrits. Mots-clés nus obligatoires.
+        Permet au Modèle d'obtenir des définitions de concepts, biographies ou dates via DuckDuckGo (type Wikipédia). Actualité ou événements récents proscrits. Les requêtes doivent utiliser des mots-clés stricts.
         """
         events = EchoEvents(__event_emitter__)
         await events.status(f"🦆 DuckDuckGo Instant Answer : {query}...")
@@ -81,14 +83,23 @@ class Tools:
         self,
         query: str,
         categories: Optional[Literal['general', 'it', 'science', 'images', 'videos', 'social media', 'news', 'music', 'map']] = None,
+        time_range: Optional[Literal['day', 'week', 'month', 'year']] = None,
+        language: Literal['fr-FR', 'en-US', 'all'] = "fr-FR",
+        safesearch: int = 1,
+        engines: Optional[str] = None,
         __user__: dict = {},
+        __metadata__: dict = {},
         __event_emitter__: Any = None
     ) -> str:
         """
-        **Priorité 1.** Recherche de faits récents, actualités ou URLs pertinentes. Snippets rapides.
-        1. **Précision** : Mots-clés traduits en anglais. Contextualisation spatio-temporelle requise si judicieux.
-        2. **PCEA** : Agrégation des concepts. Fragmentation proscrite.
-        :param categories: (Optionnel) Restreindre la recherche à une catégorie (ex: 'news', 'science', 'it', 'general').
+        Permet au Modèle d'effectuer une recherche web simple (one-shot). Retourne des extraits textuels (snippets) limités. Strictement réservé à l'extraction de faits rapides ou d'URLs. Ne permet pas de lire le contenu complet des pages.
+        
+        :param query: La recherche textuelle.
+        :param categories: Catégorie spécifique de recherche.
+        :param time_range: Filtre temporel.
+        :param language: Code langue, ex: 'fr-FR', 'en-US', 'all' (défaut: 'fr-FR').
+        :param safesearch: 0:Désactivé, 1:Modéré, 2:Strict (défaut: 1).
+        :param engines: Moteurs séparés par des virgules sans espace (ex: 'google,duckduckgo,wikipedia').
         """
         events = EchoEvents(__event_emitter__)
         u_valves = __user__.get("valves", self.UserValves()) if __user__ else self.UserValves()
@@ -97,10 +108,12 @@ class Tools:
         params = {
             "q": query,
             "format": "json",
-            "language": "fr-FR",
-            "safesearch": 1
+            "language": language if language != "all" else "",
+            "safesearch": safesearch
         }
         if categories: params["categories"] = categories
+        if time_range: params["time_range"] = time_range
+        if engines: params["engines"] = engines.replace(" ", "")
         
         url = f"{ECHO_SEARXNG_BASE_URL}/search"
         headers = {"User-Agent": ECHO_USER_AGENT}
@@ -113,9 +126,13 @@ class Tools:
                 
                 data = resp.json()
                 results = data.get("results", [])[:u_valves.MAX_RESULTS]
+                is_sub_agent = __metadata__.get("_is_deep_research_agent", False)
                 
                 if not results:
-                    return wrap_tool_output(text="⚠️ Requête bloquée/sans réponse. IMPLIQUE `wait_timer` (60-180s) et altération mots-clés (1 seule tentative). Échec ultérieur IMPLIQUE autre outil.", status={"status": "no_result"})
+                    if not is_sub_agent:
+                        return wrap_tool_output(text="⚠️ Aucun résultat. Les extraits textuels courts sont insuffisants, IMPLIQUE `delegate_deep_research`.", status={"status": "no_result"})
+                    else:
+                        return wrap_tool_output(text="⚠️ Requête sans réponse. Altération des mots-clés requise.", status={"status": "no_result"})
                 
                 formatted_results = []
                 for i, r in enumerate(results, 1):
@@ -127,9 +144,9 @@ class Tools:
                 
                 output = f"## 🔎 Résultats de recherche Web\n\n" + "\n\n".join(formatted_results)
                 
-                # Capture des suggestions de recherche si présentes
+                # Capture des suggestions de recherche si présentes (masqué pour le modèle principal pour éviter les boucles)
                 suggestions = data.get("suggestions", [])
-                if suggestions:
+                if is_sub_agent and suggestions:
                     output += f"\n\n💡 **Suggestions :** {', '.join(suggestions[:5])}"
 
                 await events.status("Recherche terminée.", done=True)
@@ -140,6 +157,7 @@ class Tools:
     async def delegate_deep_research(
         self,
         query: str,
+        engines: Optional[str] = Field(default=None, description="Ciblage éventuel des moteurs pour l'agent (ex: 'scholar,wikipedia')"),
         target_model_key: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
         __user__: dict = {},
         __chat_id__: str = "",
@@ -148,8 +166,7 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Recherche avancée. Investigation vaste (croisement de sources, comparaison).
-        **PCEA** : Problématique d'ensemble consolidée. Question ponctuelle ou URL de départ proscrite.
+        Permet au Modèle de déléguer la recherche web complexe à un Agent Autonome multi-tours. L'agent naviguera en profondeur pour lire le contenu intégral des pages, procéder à des investigations vastes et croiser de multiples sources.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
@@ -173,33 +190,41 @@ class Tools:
         sid = f"thread_deepresearch_{uuid.uuid4().hex[:8]}"
         
         STATIC_SYSTEM_PROMPT = (
-            "Tu es un chercheur web expert, rigoureux et autonome.\n"
-            "Ta mission est d'explorer le sujet demandé de manière exhaustive, de croiser les sources "
-            "et d'identifier les angles morts pour garantir la complétude du champ de recherche.\n\n"
-            "RÈGLES ABSOLUES :\n"
-            "1. Poursuis ta recherche tant que tu n'as pas une vision complète et vérifiée.\n"
-            "2. Privilégie 'search_web' et 'search_instant_answer' pour l'agrégation de données.\n"
-            "3. Si tu utilises 'search_maps', tu DOIS passer l'argument print_map=False pour ne pas afficher de carte.\n"
-            "4. Produis une synthèse finale riche, structurée en Markdown, et citant précisément tes sources.\n"
-            "5. RÈGLE ANTI-SPAM : Ne lance JAMAIS plus de 2 recherches web (search_web) simultanément dans le même tour. Essaie plutôt d'agréger tes mots-clés dans une seule requête complexe.\n"
-            "6. RÈGLE DE NAVIGATION (delegate_web_browsing) : Cet outil est STRICTEMENT réservé à l'extraction d'informations parfaitement ciblées depuis une URL absolue découverte via 'search_web'.\n"
-            "   - INTERDICTION FORMELLE d'utiliser le navigateur pour effectuer des recherches sur un moteur de recherche (Google, Bing, etc.).\n"
-            "   - Tu DOIS passer l'argument `max_iterations=20` lors de ton appel à l'outil pour respecter la limite d'actions par demande.\n"
-            "   - Utilise-le UNIQUEMENT si l'extrait (snippet) de 'search_web' est insuffisant pour ta synthèse."
+            "<persona>\n"
+            "Le Modèle est un expert en recherche web approfondie, rigoureuse et autonome.\n"
+            "</persona>\n\n"
+            "<mission>\n"
+            "Le Modèle doit explorer le sujet de manière exhaustive, croiser de multiples sources et combler proactivement les angles morts pour garantir une complétude absolue.\n"
+            "</mission>\n\n"
+            "<rules>\n"
+            "1. ITÉRATION : Le Modèle DOIT poursuivre sa recherche tant que son analyse globale n'est pas complète et factuellement vérifiée.\n"
+            "2. OUTILS : Le Modèle DOIT privilégier 'search_web' et 'search_instant_answer'.\n"
+            "3. CARTOGRAPHIE : Si l'outil 'search_maps' est mobilisé, le Modèle DOIT obligatoirement définir l'argument 'print_map=False'.\n"
+            "4. ANTI-SPAM : Le Modèle a l'INTERDICTION d'exécuter plus de 2 appels à 'search_web' simultanément lors d'un même tour. Il DOIT agréger ses mots-clés en requêtes denses.\n"
+            "5. NAVIGATION ('delegate_web_browsing') : Cet outil est STRICTEMENT réservé à l'extraction sur une URL absolue précise obtenue précédemment. INTERDICTION FORMELLE de l'utiliser sur un moteur de recherche. L'argument 'max_iterations=20' est OBLIGATOIRE.\n"
+            "</rules>\n\n"
+            "<output_format>\n"
+            "Le Modèle doit produire une synthèse finale structurée en Markdown, en citant rigoureusement chaque source consultée.\n"
+            "</output_format>"
         )
         
         allowed = ["search_web", "search_instant_answer", "search_maps", "wait_timer", "delegate_web_browsing"]
         
-        # Injection du flag de suppression d'UI pour maps
-        child_metadata = {**(__metadata__ or {}), "_echo_suppress_map_ui": True}
+        # Injection du flag de suppression d'UI pour maps et flag d'agent de recherche
+        child_metadata = {**(__metadata__ or {}), "_echo_suppress_map_ui": True, "_is_deep_research_agent": True}
         
         await events.status("🕵️‍♂️ L'agent de recherche explore le web...")
         
+        # Injection de la contrainte de moteurs de recherche dans la tâche
+        augmented_query = query
+        if engines:
+            augmented_query += f"\n\n[INSTRUCTION SYSTÈME : Vous DEVEZ restreindre vos recherches aux moteurs suivants via l'argument 'engines' de vos outils : {engines}]"
+        
         # Exécution
         result = await delegate.delegate_to_agent(
-            task=query,
+            task=augmented_query,
             system_prompt=STATIC_SYSTEM_PROMPT,
-            role_name=None,
+            skill_id=None,
             sub_sid=sid,
             with_context_distillate=False,
             target_model_key=target_model_key,

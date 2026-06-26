@@ -162,13 +162,13 @@
       (= <code>chat_id</code> ECHO). Deux profils de navigateur sont disponibles :
     </p>
     <ul>
-      <li><strong>mobile</strong> (défaut) : iPad 820×1180, User-Agent Safari iOS 16 - contourne une majorité de protections anti-bot.</li>
+      <li><strong>mobile</strong> (défaut) : iPad 820×1180, User-Agent Safari iOS 16.</li>
       <li><strong>desktop</strong> : Chrome 120, 1280×800 - pour les sites nécessitant un viewport large.</li>
     </ul>
 
     <h2>Défense Passive et Gestion du Contexte</h2>
     <p>
-      Pour éviter l'explosion du contexte avec de multiples itérations et des DOM lourds, le système implémente une double défense :
+      Pour éviter l'explosion du contexte avec de multiples itérations et des DOM lourds, le système implémente une double approche :
     </p>
     <ul>
       <li><strong>Proactive Context Pruning :</strong> Élagage dynamique des cartes DOM, arbres A11y et images obsolètes dans les anciens messages de l'historique (seuil configurable via <code>PRUNE_CONTENT_THRESHOLD</code>).</li>
@@ -180,7 +180,7 @@
       La recherche Web est fournie par l'outil séparé <code>sovereign_web_search.py</code>, qui offre un double moteur :
       une recherche instantanée via <strong>DuckDuckGo</strong> (mode anonyme) et une recherche approfondie (deep search) 
       via l'instance <strong>SearxNG</strong> interne (<code>http://echo-searxng:8080</code>). 
-      Aucune donnée de recherche ne transite par un moteur tiers tracé.
+      Aucune donnée de recherche ne transite par un moteur tiers tracé. Conformément aux principes de souveraineté, l'usage de moteurs de recherche généralistes (comme Google ou Bing) est proscrit.
     </p>
 
     <div class="note-box">
@@ -207,7 +207,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.188.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

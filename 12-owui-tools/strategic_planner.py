@@ -1,8 +1,9 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.3
-description: 1.0: Outil de planification stratégique — construction, modification et gestion
+version: 1.4
+description: 1.4: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
+             1.0: Outil de planification stratégique — construction, modification et gestion
              de plans d'action via un agent planificateur LLM (cascade PRO→FLASH→LITE).
              Plans persistés en Markdown dans le vault, registre de contrôle SQLite par chat,
              injection automatique dans registre_plan (environnement_contexte).
@@ -42,24 +43,28 @@ from echo_constants import (
 # PROMPTS SYSTÈME POUR L'AGENT PLANIFICATEUR
 # ==============================================================================
 
-SYSTEM_PROMPT_BUILD = """Tu es l'Architecte de Plans Stratégiques ECHO.
+SYSTEM_PROMPT_BUILD = """<persona>
+Le Modèle est un architecte expert en planification stratégique.
+</persona>
 
-## Ta mission
-Rédiger un plan d'action structuré en Markdown pour atteindre l'objectif donné.
+<mission>
+Le Modèle doit rédiger un plan d'action stratégique structuré en Markdown, focalisé exclusivement sur la résolution logique de l'objectif.
+</mission>
 
-## Règles strictes
-1. Le plan est centré sur L'OBJECTIF, pas sur les outils.
-2. Tu as accès à la liste exhaustive des outils ECHO ci-dessous.
-   Quand un outil est pertinent pour une étape, utilise UNIQUEMENT un nom
-   de la liste ci-dessous avec la notation → `nom_exact_outil` en fin de ligne.
-   N'invente JAMAIS de noms d'outils. Si aucun outil ne correspond, n'en mentionne pas.
-3. Profondeur maximale des sous-tâches : {max_depth} niveaux.
-4. Chaque tâche commence par `- [ ]` (notation Markdown).
-5. Le plan doit être ACTIONNABLE : pas de formulations vagues.
-6. Identifie les contraintes et risques réels.
-7. Définis des critères de succès mesurables.
+<rules>
+1. PROFONDEUR : La profondeur maximale des sous-tâches est strictement limitée à {max_depth} niveaux.
+2. SYNTAXE : Chaque tâche DOIT impérativement commencer par `- [ ] ` (notation Markdown).
+3. CONTENU : Le plan DOIT être actionnable, sans ambiguïté, identifier les contraintes/risques réels et définir des critères de succès mesurables.
+4. OUTILS : Le Modèle a l'INTERDICTION d'inventer des outils. Il DOIT utiliser UNIQUEMENT ceux fournis dans la balise <available_tools>, en ajoutant la syntaxe `→ nom_exact_outil` à la fin de la ligne de la tâche correspondante.
+</rules>
 
-## Format de sortie OBLIGATOIRE (respecter exactement)
+<available_tools>
+{tools_summary}
+</available_tools>
+
+<output_format>
+Le Modèle doit retourner EXACTEMENT le frontmatter YAML suivi du plan, selon l'exemple suivant.
+<example>
 ---
 plan_id: {plan_id}
 chat_id: {chat_id}
@@ -68,38 +73,37 @@ goal: "{goal}"
 author_model: {author_model}
 status: draft
 ---
-
 ## 🎯 Objectif
-(Reformulation précise de l'objectif)
-
+(Reformulation claire et analytique de l'objectif)
 ## 📋 Plan d'action
-- [ ] Étape 1 : ...
-  - [ ] Sous-tâche 1.1 : ... (→ `outil` si pertinent)
-- [ ] Étape 2 : ...
-
+- [ ] Étape 1 : Analyse initiale
+  - [ ] Sous-tâche 1.1 : Lire les fichiers cibles (→ `echo_codex_tool`)
 ## ⚠️ Contraintes & Risques
-...
-
+- Risque identifié X...
 ## ✅ Critères de succès
-...
+- Critère mesurable 1...
+</example>
+</output_format>"""
 
-## Outils ECHO disponibles pour ce plan
-{tools_summary}
-"""
+SYSTEM_PROMPT_UPDATE = """<persona>
+Le Modèle est un architecte expert en planification stratégique.
+</persona>
 
-SYSTEM_PROMPT_UPDATE = """Tu es l'Architecte de Plans Stratégiques ECHO.
+<mission>
+Le Modèle doit modifier le plan existant selon les instructions fournies, sans en altérer la structure globale.
+</mission>
 
-## Ta mission
-Modifier le plan existant selon les instructions fournies.
-Applique UNIQUEMENT les modifications demandées.
-Ne modifie RIEN d'autre (structure, étapes non mentionnées, frontmatter non ciblé).
+<rules>
+1. SCOPE : Le Modèle DOIT appliquer UNIQUEMENT les modifications demandées. Il ne doit RIEN modifier d'autre (étapes non mentionnées, frontmatter non ciblé).
+2. STATUT : Si les instructions impliquent un changement de statut, Le Modèle DOIT mettre à jour le champ `status:` du frontmatter YAML.
+3. SYNTAXE : Si les instructions cochent/décochent des tâches, Le Modèle DOIT utiliser strictement cette notation :
+   - [ ] = en attente | [/] = en cours | [x] = terminée | [!] = échouée | [-] = ignorée
+</rules>
 
-Si les instructions changent le statut, mets à jour le champ `status:` du frontmatter.
-Si les instructions cochent/décochent des tâches, utilise la notation ECHO :
-- [ ] = en attente | [/] = en cours | [x] = terminée | [!] = échouée | [-] = ignorée
-
-Retourne le plan COMPLET modifié (frontmatter YAML inclus, délimiteurs --- inclus).
-Ne retourne RIEN d'autre que le plan Markdown complet."""
+<output_format>
+Le Modèle DOIT retourner le plan COMPLET modifié (incluant le frontmatter YAML et ses délimiteurs ---).
+Le Modèle a l'INTERDICTION d'ajouter du texte ou des commentaires en dehors du plan Markdown.
+</output_format>"""
 
 
 class Tools:
@@ -140,9 +144,13 @@ class Tools:
         """Lit un plan depuis le Codex via glob sur {plan_id}_*.md dans le repo Git."""
         repo = CodexRepo(uid, chat_id)
         files = repo.list_files()
-        for f in files:
-            if f.startswith(f"{plan_id}_") and f.endswith(".md"):
-                return repo.read_file(f)
+        for f_dict in files:
+            f_name = f_dict["filename"]
+            if f_name.startswith(f"{plan_id}_") and f_name.endswith(".md"):
+                data = repo.read_file(f_name)
+                if data:
+                    data["filename"] = f_name
+                return data
         return None
 
     @staticmethod
@@ -275,8 +283,7 @@ class Tools:
             return wrap_tool_output(text="❌ Erreur : le planificateur n'a produit aucun contenu.")
 
         # Remplacement du placeholder author_model dans le frontmatter
-        actual_model = MODEL_ROUTING.get(model_key_used, model_key_used)
-        plan_content = plan_content.replace("{author_model}", actual_model)
+        plan_content = plan_content.replace("{author_model}", model_key_used)
 
         # Persistance dans le Codex (Git)
         repo = CodexRepo(user_id, chat_id)
@@ -286,7 +293,7 @@ class Tools:
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         state.save_resource(
             id=plan_id, name=goal[:80], resource_type='plan', status='draft',
-            mime='text/markdown', plan_goal=goal[:200], author_model=actual_model,
+            mime='text/markdown', plan_goal=goal[:200], author_model=model_key_used,
             git_tracked=True, storage_path=f"codex/{filename}",
         )
 
@@ -294,7 +301,7 @@ class Tools:
 
         return wrap_cascade_output(
             text=f"### Plan stratégique créé — `{plan_id}` (draft)\n\n"
-                 f"**Modèle :** {model_key_used} ({actual_model})\n"
+                 f"**Modèle :** {model_key_used}\n"
                  f"**Fichier :** `{filename}`\n\n"
                  f"---\n\n{plan_content}",
             model_requested=planner_model,

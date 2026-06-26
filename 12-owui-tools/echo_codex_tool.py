@@ -1,8 +1,10 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 1.4
-description: 1.3: Restauration des descriptions de paramètres sémantiques pour create_codex.
+version: 1.5
+description: 1.5: Augmentation du CODEX_EDIT_TIMEOUT à 600s et max_retries=0 pour call_cascade.
+             1.4: [précédent]
+             1.3: Restauration des descriptions de paramètres sémantiques pour create_codex.
              1.2: Registre Unifié V2 — save_codex_record → save_resource,
              delete_codex_record → delete_resource.
              1.1: Correction docstring summarize_codex (distillation cloud Gemini).
@@ -36,7 +38,7 @@ class Tools:
     class Valves(BaseModel):
         KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD)
         MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES)
-        CODEX_EDIT_TIMEOUT: int = Field(default=120, description="Timeout sub-chat édition (secondes).")
+        CODEX_EDIT_TIMEOUT: int = Field(default=600, description="Timeout sub-chat édition (secondes).")
 
     class UserValves(BaseModel):
         CODEX_EDIT_MODEL: str = Field(
@@ -198,6 +200,7 @@ class Tools:
                 timeout=self.valves.CODEX_EDIT_TIMEOUT,
                 chat_id=cid,
                 include_thoughts=False,
+                max_retries=0,
             )
 
             if not data:

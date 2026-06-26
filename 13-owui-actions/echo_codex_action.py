@@ -1,8 +1,10 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 2.3
-description: 2.3: Fix du crash silencieux de la boucle asynchrone (get_latest_commit n'existait pas).
+version: 2.5
+description: 2.5: Fix timeout (augmentation du CODEX_EDIT_TIMEOUT à 600s pour permettre la réflexion prolongée du MODEL_PRO sur des contextes massifs sans échec HTTPX).
+             2.4: Fix du crash silencieux (UnboundLocalError sur files_json), support de l'upload multiple (batch), et correction de la synchronisation UI après une suppression.
+             2.3: Fix du crash silencieux de la boucle asynchrone (get_latest_commit n'existait pas).
              Remplacement par get_repo_stats().get('last_commit_hash').
              2.2: Refonte de la boucle événementielle en tâche de fond (asyncio) pour
              upload, download, historique ◀ ▶, reset). Sub-chat MODEL_FLASH via call_cascade.
@@ -49,7 +51,7 @@ logger = logging.getLogger(__name__)
 class Action:
     class Valves(BaseModel):
         priority: int = Field(default=4, description="Priorité d'affichage (4 = Quatrième).")
-        CODEX_EDIT_TIMEOUT: int = Field(default=120, description="Timeout sub-chat édition (secondes).")
+        CODEX_EDIT_TIMEOUT: int = Field(default=300, description="Timeout sub-chat édition (secondes).")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -88,6 +90,7 @@ class Action:
 
         # 2. Définition de la boucle événementielle bidirectionnelle (Détachée)
         async def background_loop():
+            nonlocal files_json
             try:
                 stats = repo.get_repo_stats()
                 current_commit = stats.get("last_commit_hash")
@@ -247,26 +250,41 @@ class Action:
 
                     # ---- UPLOAD (PC → Codex) ----
                     elif action_type == "upload":
-                        filename = response.get("filename", "")
-                        content = response.get("content", "")
-                        if not filename:
+                        files_list = response.get("files", [])
+                        if not files_list:
+                            # Fallback de compatibilité ascendante
+                            filename = response.get("filename", "")
+                            content = response.get("content", "")
+                            if filename:
+                                files_list = [{"filename": filename, "content": content}]
+
+                        if not files_list:
                             continue
 
-                        lang = CodexRepo.detect_language(filename)
-                        commit_hash = repo.commit_file(filename, content, f"Import {filename}")
-                        line_count = content.count("\n") + 1
-                        state.save_resource(
-                            id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                            git_tracked=True, language=lang, lines=line_count,
-                            last_commit=commit_hash[:12], commit_msg=f"Import {filename}", storage_path=f"codex/{filename}",
-                        )
+                        for f in files_list:
+                            filename = f.get("filename", "")
+                            content = f.get("content", "")
+                            if not filename:
+                                continue
+
+                            lang = CodexRepo.detect_language(filename)
+                            commit_hash = repo.commit_file(filename, content, f"Import {filename}")
+                            line_count = content.count("\n") + 1
+                            state.save_resource(
+                                id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                                git_tracked=True, language=lang, lines=line_count,
+                                last_commit=commit_hash[:12], commit_msg=f"Import {filename}", storage_path=f"codex/{filename}",
+                            )
 
                         # Refresh file tree
                         updated_files = repo.list_files()
                         files_json = json.dumps(updated_files).decode("utf-8")
                         refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
                         await __event_call__({"type": "execute", "data": {"code": refresh_code}})
-                        await events.status(f"📂 {filename} importé (commit {commit_hash[:7]}).", done=True)
+                        if len(files_list) == 1:
+                            await events.status(f"📂 {files_list[0]['filename']} importé (commit {commit_hash[:7]}).", done=True)
+                        else:
+                            await events.status(f"📂 {len(files_list)} fichiers importés.", done=True)
 
                     # ---- DOWNLOAD (Codex → PC) ----
                     elif action_type == "download":
@@ -421,6 +439,7 @@ class Action:
                     # ---- SUPPRESSION FICHIER ----
                     elif action_type == "delete_file":
                         filename = response.get("filename", "")
+                        current_file = response.get("current_file", "")
                         if not filename:
                             continue
 
@@ -434,11 +453,18 @@ class Action:
                         await __event_call__({"type": "execute", "data": {"code": refresh_code}})
 
                         # Si le fichier supprimé était ouvert, charger le premier fichier restant
-                        if filename == response.get("filename"):
+                        if filename == current_file:
                             if updated_files:
                                 first = updated_files[0]["filename"]
                                 first_escaped = json.dumps(first).decode("utf-8")
-                                switch_code = f"if(window.echoCodexSetContent) {{ currentFile = {first_escaped}; window.echoCodexResolve({{action:'load_file', filename:{first_escaped}}}); }}"
+                                result = repo.read_file(first)
+                                content = result["content"] if result else ""
+                                escaped_content = json.dumps(content).decode("utf-8")
+                                switch_code = f"if(window.echoCodexSetContent) {{ currentFile = {first_escaped}; window.echoCodexSetContent({escaped_content}, {first_escaped}); }}"
+                                await __event_call__({"type": "execute", "data": {"code": switch_code}})
+                            else:
+                                empty_escaped = json.dumps("").decode("utf-8")
+                                switch_code = f"if(window.echoCodexSetContent) {{ currentFile = null; window.echoCodexSetContent({empty_escaped}, null); }}"
                                 await __event_call__({"type": "execute", "data": {"code": switch_code}})
 
                         await events.status(f"🗑️ {filename} supprimé.", done=True)

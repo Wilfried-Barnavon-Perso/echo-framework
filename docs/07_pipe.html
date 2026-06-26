@@ -458,7 +458,7 @@ Content-Type: application/json</code></pre>
     <div class="code-header">Pipeline HUD Quota - pipe_engine.py</div>
     <pre><code># 1. Résolution de l'ID modèle AGY (cloudcode-pa interne)
 ca_id = get_ca_model_id(target_model)
-# ex : MODEL_FLASH → "gemini-3-flash-agent"
+# ex : MODEL_FLASH → "gemini-3.5-flash"
 
 # 2. Lecture du quota depuis identity.db (EchoAuth.get_model_quota)
 model_quota = await echo_auth.get_model_quota(ca_id)
@@ -487,7 +487,7 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     </div>
 
     <footer>
-      ECHO Framework - Version 5.185.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.188.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

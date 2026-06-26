@@ -1,8 +1,10 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.39
-description: 5.39: Refonte show_image_js pour passer le Base64 explicite au lieu de l'URL.
+version: 5.41
+description: 5.41: Fix Codex file tree actions (batch upload, state sync on delete).
+             5.40: Scroll automatique vers le bas du Cognitive Monitor lors du refresh (manuel ou auto).
+             5.39: Refonte show_image_js pour passer le Base64 explicite au lieu de l'URL.
              5.38: Ajout des boutons de copie universelle (Code Brut et Rendu Preview) avec fallback HTTP.
              5.37: Fix Race condition au démarrage du Codex (polling sur echoCodexResolve pour Pull).
              5.36: Fix Python SyntaxError (échappement des f-strings pour editorRatio/previewRatio).
@@ -221,6 +223,14 @@ class EchoUI(EchoRichUI):
     {EchoUI.get_mobile_guard_js(hud_id, block_execution=True, error_msg="Le WebPlayer est indisponible sur mobile.")}
     const STATE_KEY = '{state_key}';
     const ENGINE_KEY = 'echoWebPlayer_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_');
+
+    // Expose a global update function for the backend to push frames
+    window['echoWebPlayerUpdate_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_')] = function(newB64, newId) {{
+        if (window[ENGINE_KEY]) {{
+            const img = document.getElementById(HUD_ID + "-img");
+            if (img) img.src = 'data:image/jpeg;base64,' + newB64;
+        }}
+    }};
 
     const payload = {{
       b64: {b64_j}, mime: {mime_j}, metadata: {meta_j},
@@ -450,13 +460,20 @@ class EchoUI(EchoRichUI):
           document.getElementById(HUD_ID + "-url").value = data.url;
           
           img.onload = () => {{
-            this.ratio = img.naturalHeight / img.naturalWidth;
-            matrix.style.width = img.naturalWidth + "px";
+            const newNatW = img.naturalWidth;
+            if (this.lastNatWidth && newNatW !== this.lastNatWidth && this.imgScale) {{
+                this.imgScale = this.imgScale * (this.lastNatWidth / newNatW);
+                if (this.saveState) this.saveState();
+            }}
+            this.lastNatWidth = newNatW;
+            
+            this.ratio = img.naturalHeight / newNatW;
+            matrix.style.width = newNatW + "px";
             matrix.style.height = img.naturalHeight + "px";
 
             if (!localStorage.getItem(STATE_KEY)) {{
-                this.imgScale = this.getInitialScale(img.naturalWidth, img.naturalHeight);
-                this.posX = (window.innerWidth - (img.naturalWidth * this.imgScale)) / 2;
+                this.imgScale = this.getInitialScale(newNatW, img.naturalHeight);
+                this.posX = (window.innerWidth - (newNatW * this.imgScale)) / 2;
                 this.posY = (window.innerHeight - (img.naturalHeight * this.imgScale + this.headerH)) / 2;
             }}
             
@@ -729,7 +746,9 @@ return new Promise(function(resolve) {{
         cleanup({{ success: true, timeout: true }});
     }}, 60000);
 
-    window.print();
+    setTimeout(function() {{
+        window.print();
+    }}, 3000);
 }});
 """
 
@@ -998,7 +1017,7 @@ return new Promise(function(resolve) {{
           delBtn.onclick = (e) => {{
             e.stopPropagation();
             if (confirm('Supprimer ' + f.filename + ' ?')) {{
-              window.echoCodexResolve({{action:'delete_file', filename:f.filename}});
+              window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
             }}
           }};
           item.appendChild(delBtn);
@@ -1132,9 +1151,13 @@ return new Promise(function(resolve) {{
         inp.type = 'file';
         inp.multiple = true;
         inp.onchange = async () => {{
+          const filesData = [];
           for (const file of inp.files) {{
             const text = await file.text();
-            window.echoCodexResolve({{action:'upload', filename:file.name, content:text}});
+            filesData.push({{filename: file.name, content: text}});
+          }}
+          if (filesData.length > 0) {{
+            window.echoCodexResolve({{action:'upload', files: filesData}});
           }}
         }};
         inp.click();
@@ -1881,7 +1904,7 @@ return new Promise(function(resolve) {{
       "      + '<div><div style=\"font-weight:600; font-size:13px; color:' + t.color + ';\">' + esc(t.label) + '</div>'\n"
       "      + '<div style=\"font-size:11px; color:' + C.textMuted + '; font-family:monospace;\">' + t.sid + ' \\u00b7 ' + t.steps_count + ' \\u00e9tapes \\u00b7 ' + fmtTime(t.updated_at) + '</div></div></div>';\n"
       "\n"
-      "    html += '<div style=\"padding:8px 12px; overflow-y:auto; flex:1;\">';\n"
+      "    html += '<div id=\"' + HUD_ID + '-tree-scroll\" style=\"padding:8px 12px; overflow-y:auto; flex:1;\">';\n"
       "\n"
       "    if (!t.nodes || t.nodes.length === 0) {\n"
       "      html += '<div style=\"color:' + C.textMuted + '; font-style:italic; padding:16px;\">Thread vide.</div>';\n"
@@ -2134,6 +2157,8 @@ return new Promise(function(resolve) {{
       "    renderSidebar();\n"
       "    renderTree();\n"
       "    updateStatusBar();\n"
+      "    var scrollArea = document.getElementById(HUD_ID + '-tree-scroll');\n"
+      "    if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;\n"
       "  };\n"
       "\n"
       "  // =============== INIT ===============\n"
@@ -2141,6 +2166,8 @@ return new Promise(function(resolve) {{
       "  renderSidebar();\n"
       "  renderTree();\n"
       "  updateAutoState();\n"
+      "  var initialScroll = document.getElementById(HUD_ID + '-tree-scroll');\n"
+      "  if (initialScroll) initialScroll.scrollTop = initialScroll.scrollHeight;\n"
       "})();\n"
     )
 

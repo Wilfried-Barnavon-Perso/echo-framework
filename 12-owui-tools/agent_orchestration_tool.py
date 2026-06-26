@@ -1,8 +1,9 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.16
-description: 5.7: Résolution du conflit de nom get_all_skills (shadowing).
+version: 5.18
+description: 5.18: Refonte des prompts Council et Supervisor (XML, Few-Shot JSON, ton impersonnel).
+             5.7: Résolution du conflit de nom get_all_skills (shadowing).
              5.8: Centralisation des niveaux de réflexion (THINKING_LEVEL_*) — suppression
              valves FLASH_THINKING et PRO_THINKING. Remplacement par constantes echo_constants.
              5.9: Renommage consult_council → consult_expert_consultant.
@@ -71,7 +72,7 @@ class Tools:
         instructions: str,
         __user__: Optional[dict] = None
     ) -> str:
-        """Création/Mise à jour et liste des expertises (Skills). Requis avant appel d'un agent inexistant.
+        """Création/Mise à jour d'une expertise (Skill). Requis avant appel d'un agent inexistant.
         :param skill_id: Identifiant technique (snake_case).
         :param name: Titre lisible.
         :param instructions: Directives système détaillées.
@@ -87,7 +88,7 @@ class Tools:
         self,
         __user__: Optional[dict] = None
     ) -> str:
-        """Liste des expertises (Skills) forgées."""
+        """Permet au Modèle de lister les expertises (Skills) forgées pour obtenir les skill_id valides avant délégation."""
         user_id = __user__.get("id", "system") if __user__ else "system"
         skills = get_all_skills(user_id)
         
@@ -113,7 +114,7 @@ class Tools:
         target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
         synthesis_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
         rounds: Optional[int] = None,
-        close_on_finish: bool = True,
+        close_on_finish: bool = False,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
         __metadata__: dict = {},
@@ -122,10 +123,13 @@ class Tools:
     ) -> str:
         """
         Table ronde (N experts, tours parallèles). Synthèse multi-perspectives. Minimum 2 experts requis. IMPLIQUE appel à `forge_skill` si experts manquants.
+        Le conseil reste ouvert (close_on_finish=False) pour permettre de le relancer avec le même council_id. Le Modèle DOIT utiliser close_council une fois la délibération définitivement terminée.
         
         :param question: Sujet de délibération.
         :param participants: Chaîne CSV de `skill_id` (ex: expert_1, dev_py) (min 2, [ p * r ] <= 30).
         :param rounds: Nombre d'itérations ([ p * r ] <= 30).
+        :param council_id: Identifiant (optionnel) pour conserver et reprendre le conseil plus tard.
+        :param close_on_finish: False par défaut pour reprise de contexte. Mettre à True pour détruire immédiatement.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -213,9 +217,9 @@ class Tools:
                     )
                     round_prompts[sid] = (
                         f"### CONTRIBUTIONS DU TOUR {round_num - 1}\n{others}\n\n"
-                        f"### TA MISSION\n"
-                        f"Tu es {p['alias']}. Réagis aux contributions ci-dessus. "
-                        f"Exprime ton analyse, tes accords, tes désaccords et tes compléments."
+                        f"### MISSION DU MODÈLE\n"
+                        f"Le Modèle est {p['alias']}. Il DOIT réagir aux contributions ci-dessus. "
+                        f"Il DOIT exprimer son analyse, ses accords, ses désaccords et ses compléments."
                     )
 
             # Appels parallèles — chaque participant est un agent indépendant
@@ -229,18 +233,18 @@ class Tools:
                 # Prompt système enrichi avec le contexte du conseil
                 members = "\n".join(f"- {p['alias']} : {p['name']}" for p in roster)
                 council_system = (
-                    f"Tu es {participant['alias']} dans un conseil de {len(roster)} experts.\n\n"
+                    f"Le Modèle agit en tant que {participant['alias']} dans un conseil de {len(roster)} experts.\n\n"
                     f"### COMPOSITION DU CONSEIL\n{members}\n\n"
                     f"Tour {round_num}/{effective_rounds}. "
                     f"Budget outils ce tour : {max_calls_per_round} appels max.\n\n"
                     f"Les experts ne connaissent pas les instructions détaillées "
-                    f"des autres participants. Tu ne connais que leur rôle déclaré ci-dessus."
+                    f"des autres participants. Le Modèle ne connait que leur rôle déclaré ci-dessus."
                 )
 
                 result = await delegate.delegate_to_agent(
                     task=prompt,
                     system_prompt=council_system,
-                    role_name=sid,
+                    skill_id=sid,
                     sub_sid=agent_sid,
                     target_model_key=target_model,
                     max_calls_override=max_calls_per_round,
@@ -298,10 +302,10 @@ class Tools:
                     transcript += f"**{p['alias']}** ({p['name']}) :\n{responses[sid]}\n\n"
 
         synthesis_system = (
-            "Tu es le rapporteur du conseil. Tu n'es pas un participant. "
-            "Tu produis une synthèse structurée, objective et actionnable "
-            "de la délibération. Identifie les consensus, les divergences et "
-            "les recommandations clés. Sois exhaustif mais concis."
+            "Le Modèle est le rapporteur du conseil. Il n'est pas un participant. "
+            "Le Modèle DOIT produire une synthèse structurée, objective et actionnable "
+            "de la délibération. Il DOIT identifier les consensus, les divergences et "
+            "les recommandations clés, tout en restant exhaustif mais concis."
         )
 
         synthesis_payload = {
@@ -359,7 +363,7 @@ class Tools:
         target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
         critic_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
         max_correction_rounds: Optional[int] = None,
-        close_on_finish: bool = True,
+        close_on_finish: bool = False,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
         __metadata__: dict = {},
@@ -368,9 +372,11 @@ class Tools:
     ) -> str:
         """
         Boucle itérative asynchrone avec supervision critique (Délégation, Évaluation, Correction, Consolidation). Utile pour validations croisées.
+        La tâche reste ouverte par défaut (close_on_finish=False). Le Modèle DOIT utiliser close_supervised_task une fois définitivement terminée.
         
         :param objective: Mission globale.
         :param workers: Mapping JSON {worker_id_libre: {"task": "...", "skill_id": "..."}}.
+        :param close_on_finish: False par défaut pour reprise de contexte. Mettre à True pour détruire immédiatement.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -453,13 +459,34 @@ class Tools:
                 f"### WORKER: {w_id}\n{text}" for w_id, text in deliverables.items()
             )
             critic_prompt = (
-                f"### OBJECTIF GLOBAL\n{objective}\n\n"
-                f"### LIVRABLES DES WORKERS\n{deliverables_text}\n\n"
-                f"### TA MISSION\n"
-                f"Évalue la qualité et la cohérence de chaque livrable par rapport à l'objectif global.\n"
-                f"Retourne UNIQUEMENT un JSON valide (pas de markdown, pas de commentaire) :\n"
-                f'{{"verdict": "APPROVED"|"REJECTED", "global_assessment": "...", '
-                f'"worker_feedback": {{"worker_id": {{"status": "ok"|"needs_correction", "feedback": "..."}}}}}}'
+                "<persona>\n"
+                "Le Modèle est un évaluateur critique expert.\n"
+                "</persona>\n\n"
+                "<mission>\n"
+                "Le Modèle doit évaluer la qualité, la précision factuelle et la pertinence sémantique de chaque livrable fourni par les travailleurs (workers), par rapport à l'objectif global.\n"
+                "</mission>\n\n"
+                f"<objective>\n{objective}\n</objective>\n\n"
+                f"<deliverables>\n{deliverables_text}\n</deliverables>\n\n"
+                "<rules>\n"
+                "1. Le Modèle DOIT analyser méticuleusement chaque livrable.\n"
+                "2. Le Modèle DOIT identifier formellement toute erreur, omission ou déviation.\n"
+                "3. FORMAT : Le Modèle DOIT retourner UNIQUEMENT un objet JSON valide, SANS bloc Markdown englobant (pas de ```json).\n"
+                "</rules>\n\n"
+                "<output_format>\n"
+                "Le Modèle DOIT respecter STRICTEMENT ce schéma JSON exact :\n"
+                "<example>\n"
+                "{\n"
+                '  "global_assessment": "(RÉFLEXION) Analyse des résultats, identification des points faibles et justification logique du verdict.",\n'
+                '  "verdict": "APPROVED",\n'
+                '  "worker_feedback": {\n'
+                '    "worker_id_1": {\n'
+                '      "status": "ok",\n'
+                '      "feedback": "Directives précises pour la correction..."\n'
+                "    }\n"
+                "  }\n"
+                "}\n"
+                "</example>\n"
+                "</output_format>"
             )
 
             critic_res, _, _ = await EchoGeminiClient.call_cascade(
@@ -528,13 +555,13 @@ class Tools:
 
                 # Reprise du même sub_sid (continuité de contexte)
                 w_config = workers_dict.get(w_id, {})
-                w_role = w_config.get("role_name")
+                w_role = w_config.get("skill_id", w_config.get("role_name"))
                 w_sys = w_config.get("system_prompt", "")
 
                 result = await delegate.delegate_to_agent(
-                    task=f"### FEEDBACK DU CRITIQUE\n{feedback}\n\n### OBJECTIF\nCorrige ton livrable précédent.",
+                    task=f"### FEEDBACK DU CRITIQUE\n{feedback}\n\n### OBJECTIF\nLe Modèle DOIT corriger son livrable précédent.",
                     system_prompt=w_sys,
-                    role_name=w_role,
+                    skill_id=w_role,
                     sub_sid=agent_sid,
                     target_model_key=target_model,
                     __user__=__user__,
@@ -564,9 +591,9 @@ class Tools:
         consolidation_prompt = (
             f"### OBJECTIF\n{objective}\n\n"
             f"### LIVRABLES FINAUX\n{consolidation_text}\n\n"
-            f"### TA MISSION\n"
-            f"Produis une synthèse consolidée et actionnable de tous les livrables. "
-            f"Fusionne les résultats, élimine les redondances, et structure la réponse finale."
+            f"### MISSION DU MODÈLE\n"
+            f"Le Modèle DOIT produire une synthèse consolidée et actionnable de tous les livrables. "
+            f"Il DOIT fusionner les résultats, éliminer les redondances, et structurer la réponse finale."
         )
 
         consolidation_res, _, _ = await EchoGeminiClient.call_cascade(
