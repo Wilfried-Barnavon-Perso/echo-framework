@@ -6,6 +6,11 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+</script>
+
   <div class="sidebar"></div>
 
   <main>
@@ -126,28 +131,11 @@ stateDiagram-v2
     </div>
 
     <footer>
-      ECHO v5 Documentation - Version <span class="version-badge">5.188.1</span>
+      ECHO v5 Documentation - Version <span class="version-badge">5.189.9</span>
     </footer>
   </main>
 
   <script src="nav.js"></script>
-  <!-- Inclusion de Mermaid JS pour le rendu des schémas -->
-  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-  <script>
-    document.addEventListener("DOMContentLoaded", function() {
-      mermaid.initialize({ 
-        startOnLoad: true, 
-        theme: 'base',
-        themeVariables: {
-          primaryColor: '#0a0f1d',
-          primaryTextColor: '#cdd9e5',
-          primaryBorderColor: '#38bdf8',
-          lineColor: '#c084fc',
-          secondaryColor: '#1e293b',
-          tertiaryColor: '#0f172a'
-        }
-      });
-    });
-  </script>
+  
 </body>
 </html>

@@ -1,9 +1,9 @@
 """
 title: ECHO Session RAG Conversation Filter
 author: ECHO Framework
-version: 1.3
-description: 1.3: Correction de la sécurité d'importation (ajouts systèmes ECHO pour le filtre).
-             1.2: Correction ModuleNotFoundError empêchant l'activation par défaut.
+version: 1.4
+description: 1.4: Extraction propre du texte dans les messages multipart pour empêcher l'embedding de Base64 massif.
+             1.3: Correction de la sécurité d'importation (ajouts systèmes ECHO pour le filtre).
              1.1: Suppression de l'overlap de messages pour éviter la redondance dans le RAG.
              1.0: Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG.
 """
@@ -46,8 +46,14 @@ class Filter:
         for msg in messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
-            if content:
-                formatted.append(f"{role.upper()}:\n{content}")
+            if isinstance(content, list):
+                text_parts = [str(p.get("text", "")) for p in content if isinstance(p, dict) and p.get("type") == "text" and p.get("text")]
+                content = "\n".join(text_parts)
+            else:
+                content = str(content)
+            
+            if content.strip():
+                formatted.append(f"{role.upper()}:\n{content.strip()}")
         return "\n\n".join(formatted)
 
     async def outlet(

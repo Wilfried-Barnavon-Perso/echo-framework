@@ -1,8 +1,10 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.6
-description: 8.6: Log explicite de l'exception réseau dans docker logs pour EchoGeminiClient.call.
+version: 8.8
+description: 8.8: Renforcement de la regex _prepare_zero_ram_content (hook inviolable).
+             8.7: Fix majeur Streaming Zéro-RAM (blocage SQLite). Offload du streamer asynchrone via asyncio.to_thread pour éviter la famine de l'Event Loop.
+             8.6: Log explicite de l'exception réseau dans docker logs pour EchoGeminiClient.call.
              8.5: Fix `call_cascade` : Interception explicite des exceptions `httpx.TimeoutException` et `asyncio.TimeoutError` pour afficher un statut clair "Allocated time elapsed (Timeout)" au lieu d'une erreur silencieuse `()`.
              8.4: Amélioration de `estimate_token_size` avec heuristiques dynamiques basées sur le `mimeType` pour évaluer les coûts des médias (Images haute résolution, Vidéo, Audio, PDF).
              8.3: Fix de `estimate_token_size` (calcul heuristique correct pour la donnée base64, 258 tokens constants) pour prévenir la troncature prématurée.
@@ -341,10 +343,16 @@ def resolve_upload_file_path(user_id: str, file_id: str, uploads_dir: str = ECHO
             if matches: return matches[0]
         else:
             # Fallback de sécurité si appelé hors contexte chat_id
-            user_chats = os.path.join(ECHO_USERS_ROOT, safe_uid, "chats")
+            user_chats = get_echo_global_path(user_id, "chats")
             pattern = os.path.join(user_chats, "*", "files", f"{file_id}_*")
             matches = glob.glob(pattern)
             if matches: return matches[0]
+            
+            # Fallback Ultime : Dossier global des fichiers
+            user_global_files = get_echo_global_path(user_id, "files")
+            pattern_global = os.path.join(user_global_files, f"{file_id}_*")
+            matches_global = glob.glob(pattern_global)
+            if matches_global: return matches_global[0]
             
     pattern = os.path.join(uploads_dir, f"{file_id}_*")
     matches = glob.glob(pattern)
@@ -554,6 +562,59 @@ class EchoAuth:
 
 class EchoGeminiClient:
     """Moteur factorisé pour les appels API Gemini avec Architecture Symétrique (AI Studio & Code Assist)."""
+
+    @staticmethod
+    async def _zero_ram_stream_generator(filepath: str, json_prefix: bytes, json_suffix: bytes):
+        yield json_prefix
+        chunk_size = 3 * 1024 * 1024  # Multiple strict de 3 requis pour B64 sans padding interne
+        import asyncio
+        
+        has_aiofiles = False
+        try:
+            import aiofiles
+            has_aiofiles = True
+        except ImportError:
+            pass
+
+        if has_aiofiles:
+            async with aiofiles.open(filepath, "rb") as f:
+                while True:
+                    chunk = await f.read(chunk_size)
+                    if not chunk: break
+                    b64_chunk = await asyncio.to_thread(base64.b64encode, chunk)
+                    yield b64_chunk
+        else:
+            with open(filepath, "rb") as f:
+                while True:
+                    # Empêcher le blocage de l'Event Loop principal (crucial pour SQLite)
+                    chunk = await asyncio.to_thread(f.read, chunk_size)
+                    if not chunk: break
+                    # L'encodage B64 est CPU-bound, on peut aussi l'offload si nécessaire
+                    b64_chunk = await asyncio.to_thread(base64.b64encode, chunk)
+                    yield b64_chunk
+        yield json_suffix
+
+    @staticmethod
+    def _prepare_zero_ram_content(payload: dict):
+        """Détecte le Hook Porteur dans le JSON et prépare le Stream HTTPX. Retourne (generator, content_length)."""
+        import json, re, os
+        payload_str = json.dumps(payload)
+        match = re.search(r'("data":\s*)"___ECHO_STREAM_FILE___(.*?)___"', payload_str)
+        if match:
+            filepath = json.loads('"' + match.group(2) + '"')
+            parts = payload_str.split(match.group(0), 1)
+            if len(parts) != 2:
+                raise ValueError("Erreur inattendue de découpage du Hook Zéro-RAM.")
+            prefix = (parts[0] + match.group(1) + '"').encode('utf-8')
+            suffix = ('"' + parts[1]).encode('utf-8')
+            
+            # Calcul mathématique exact du Content-Length
+            file_size = os.path.getsize(filepath)
+            b64_size = ((file_size + 2) // 3) * 4
+            content_length = len(prefix) + b64_size + len(suffix)
+            
+            return EchoGeminiClient._zero_ram_stream_generator(filepath, prefix, suffix), str(content_length)
+        return None, None
 
     @staticmethod
     async def _get_auth_headers(provider: Dict, is_agy: bool = False, is_generation: bool = False) -> Dict[str, str]:
@@ -976,7 +1037,17 @@ class EchoGeminiClient:
                         active_idx += 1; continue
                     else: raise Exception(f"Configuration d'authentification {provider['type']} invalide (Project ID manquant).")
 
-                resp = await client.post(req_ctx["url"], json=req_ctx["payload"], headers=req_ctx["headers"], timeout=timeout)
+                stream_content, content_length = EchoGeminiClient._prepare_zero_ram_content(req_ctx["payload"])
+                if stream_content:
+                    if content_length:
+                        req_ctx["headers"]["Content-Length"] = content_length
+                    request = client.build_request(
+                        "POST", req_ctx["url"], headers=req_ctx["headers"],
+                        content=stream_content
+                    )
+                    resp = await client.send(request)
+                else:
+                    resp = await client.post(req_ctx["url"], json=req_ctx["payload"], headers=req_ctx["headers"], timeout=timeout)
 
                 if resp.status_code == 200:
                     json_data = resp.json()
@@ -1279,7 +1350,9 @@ class EchoStateManager:
                 if domain != "db":
                     os.makedirs(get_echo_session_path(self.user_id, self.chat_id, domain), exist_ok=True)
             self.db_path = get_echo_session_path(self.user_id, self.chat_id, "db")
-        else: 
+        else:
+            for domain in ECHO_GLOBAL_DOMAINS:
+                os.makedirs(get_echo_global_path(self.user_id, domain), exist_ok=True)
             self.db_path = os.path.join(self.user_dir, "identity.db")
             
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)

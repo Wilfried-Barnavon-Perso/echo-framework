@@ -88,11 +88,11 @@
     <div class="note-box">
       <h4>Usage canonique de la Mémoire Vectorisée de Session</h4>
       <p>
-        Lorsque le Filtre effectue l'extraction transmodale et le Map-Reduce d'un fichier volumineux, il utilise le
+        Lorsque le Filtre effectue l'extraction transmodale et le Synthèse Guidée par RAG (O(1)) d'un fichier volumineux, il utilise le
         <code>source_id</code> natif (ex. <code>U_abc123_C_xyz789_T_1748246400</code>) et indexe les chunks bruts
         dans <code>echo_session_rag</code>. Le modèle reçoit ce <code>source_id</code> dans l'AEC (via <code>evenement_systeme</code> s'il vient d'être soumis, ou via l'outil <code>query_registry</code>) et l'utilise pour
         interroger les détails précis de la source brute : <code>search_session_context("U_abc123_C_xyz789...", "...")</code>.
-        Ce mécanisme de <strong>Smart Context (Map-Reduce RAG V2)</strong> injecte des balises <code>&lt;smart_context&gt;</code> structurelles dans le prompt, remplaçant l'injection du fichier complet dans le contexte,
+        Ce mécanisme de <strong>Smart Context (Synthèse Guidée par RAG (O(1)) RAG V2)</strong> injecte des balises <code>&lt;smart_context&gt;</code> structurelles dans le prompt, remplaçant l'injection du fichier complet dans le contexte,
         qui serait prohibitive en tokens.
       </p>
     </div>
@@ -126,7 +126,7 @@
     <div class="tech-spec">
       <h4>⚙️ Mémoire duale et Vallée de la Mort</h4>
       <p>
-        La combinaison des deux RAG est la réponse architecturale à la Vallée de la Mort Contextuelle.
+        La combinaison des deux RAG est la réponse architecturale à la Vallée de la Mort Contextuelle. L'ingestion vectorielle de ces RAG est soutenue par l'Edge Embedding Bridge (WebGPU) qui décharge l'inférence BAAI/bge-m3 sur le navigateur client pour optimiser les performances.
         <code>save_session_context</code> doit être utilisé proactivement dès qu'une information
         volumineuse risque de saturer le contexte (au-delà de ~30 % de remplissage).
         <code>search_meta_artifacts</code> couvre les préférences de l'Utilisateur et l'expérience du Modèle découvertes au cours des différentes sessions, totalement
@@ -144,7 +144,7 @@ flowchart TD
 
   subgraph Q["Qdrant Engine (Port 6333)"]
     COL1[("🧠 echo_meta_artifacts<br/>Mémoire long terme<br/>TTL, Consolidation, Importance")]
-    COL2[("⏳ echo_session_rag<br/>RAG de session<br/>Map-Reduce, source_id, Purge auto")]
+    COL2[("⏳ echo_session_rag<br/>RAG de session<br/>Synthèse Guidée par RAG (O(1)), source_id, Purge auto")]
   end
 
   classDef db fill:#0f172a,stroke:#3b82f6,color:#f8fafc

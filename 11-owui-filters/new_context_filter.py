@@ -2,8 +2,11 @@
 title: ECHO New Context Filter V2
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.37
-description: 7.37: Refonte de l'ingestion par Synthèse Guidée par RAG (O(1)) et ajout de SMART_CONTEXT_CHUNK_LIMIT.
+version: 7.41
+description: 7.41: Purge explicite de l'image_url généré par OWUI pour éliminer le doublon Base64.
+             7.40: Correction de la stringification fatale des listes multipart (images Base64) dans l'outlet, empêchant l'erreur 400 RAG.
+             7.39: Fix angle mort de l'import Workspace (fichiers globaux meta.files non vus).
+             7.37: Refonte de l'ingestion par Synthèse Guidée par RAG (O(1)) et ajout de SMART_CONTEXT_CHUNK_LIMIT.
              7.36: Refactorisation statuts d'ingestion. Centralisation via FILE_INGESTION_STATUS.
              7.35: Renommage rag_ephemeral -> vectorized_sum_up et assouplissement de la directive système.
              7.34: Intégration native des PDF dans le Cas 1 (Injection Binaire Directe) via inline_data.
@@ -71,8 +74,6 @@ from echo_constants import (
     GOOGLE_API_KEY_REGEX, MODEL_FLASH,
     ECHO_QDRANT_URL,
     THINKING_LEVEL_FLASH,
-    MAX_DIRECT_TEXT_INJECT_SIZE, MAX_DIRECT_MMEDIA_INJECT_SIZE,
-    ECHO_MR_CHUNK_SIZE, ECHO_MR_OVERLAP_SIZE, ECHO_MR_MAX_TOKENS, ECHO_MR_SUMMARY_MAX_WORDS,
     CONVERTIBLE_OFFICE_EXTENSIONS, DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB, OOXML_IMAGE_EXTENSIONS,
     FILE_INGESTION_STATUS
 )
@@ -108,444 +109,6 @@ class Filter:
         self.auth = EchoAuth()
         self.toggle = True
         self.icon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIzIi8+PHBhdGggZD0iTTEyIDdWNW0wIDE0di0yTTcgMTJINW0xNCAwaC0ybTEuNS01LjVsLTEuNSAxLjVNOCAxNmwtMS41IDEuNU0xNy41IDE3LjVsLTEuNS0xLjVNOCA4TDYuNSA2LjUiLz48cGF0aCBkPSJNMiAxMmg0bTExIDBoNW0tMyAwbDMtM20tMyAzbDMgMyIvPjwvc3ZnPg=="
-
-    async def _convert_unsupported_file(
-        self, path: str, ext: str, filename: str,
-        user_id: str, chat_id: str, events: Any
-    ) -> Optional[str]:
-        """Convertit un fichier non supporté nativement en texte Markdown, écrit sur disque.
-        
-        Architecture extensible : le routage par extension permet d'ajouter
-        de futures stratégies de conversion sans modifier _process_file_task.
-        Retourne le chemin du fichier .md créé, ou None en cas d'échec.
-        """
-        # --- STRATÉGIE : MARKITDOWN (Office OOXML) ---
-        if ext in CONVERTIBLE_OFFICE_EXTENSIONS:
-            try:
-                from markitdown import MarkItDown
-
-                # 1. Conversion textuelle (sync, déportée en thread — CPU-bound)
-                await events.status(f"📄 Conversion Office de {filename}...", False)
-                md_converter = MarkItDown()
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(None, md_converter.convert, path)
-                converted_text = result.text_content
-
-                if not converted_text or not converted_text.strip():
-                    raise ValueError("Conversion vide — fichier probablement corrompu.")
-
-                # 2. Extraction et description des images embarquées (OOXML)
-                if ext in OOXML_IMAGE_EXTENSIONS:
-                    image_descriptions = await self._describe_ooxml_images(
-                        path, filename, user_id, chat_id, events
-                    )
-                    if image_descriptions:
-                        converted_text += "\n\n---\n## Images extraites du document\n\n"
-                        converted_text += "\n\n".join(image_descriptions)
-
-                # 3. Écriture sur disque — même répertoire que l'original
-                md_path = os.path.splitext(path)[0] + "_converted.md"
-                with open(md_path, "w", encoding="utf-8") as f:
-                    f.write(converted_text)
-
-                md_size = os.path.getsize(md_path)
-                print(f"[ECHO-FILTER] ✅ Conversion réussie : {filename} → "
-                      f"{md_path} ({md_size} octets)", flush=True)
-                return md_path
-
-            except ImportError:
-                print("[ECHO-FILTER] !! markitdown non installé — conversion impossible", flush=True)
-                return None
-            except Exception as e:
-                print(f"[ECHO-FILTER] !! Erreur conversion {filename}: {e}", flush=True)
-                return None
-
-        # --- FUTURES STRATÉGIES (extensibilité) ---
-        # elif ext in SOME_OTHER_CONVERTIBLE_SET:
-        #     ...
-
-        return None
-
-    async def _describe_ooxml_images(
-        self, path: str, filename: str,
-        user_id: str, chat_id: str, events: Any
-    ) -> List[str]:
-        """Extrait les images d'un OOXML (docx/pptx) et les décrit via LITE."""
-        import zipfile
-
-        descriptions = []
-        try:
-            with zipfile.ZipFile(path, 'r') as z:
-                image_files = [
-                    n for n in z.namelist()
-                    if '/media/' in n and any(
-                        n.lower().endswith(e)
-                        for e in ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp')
-                    )
-                ]
-
-                if not image_files:
-                    return []
-
-                await events.status(
-                    f"🖼️ Description de {len(image_files)} image(s) de {filename}...", False
-                )
-
-                u_ctx = {"id": user_id}
-                m_ctx = {"chat_id": chat_id}
-
-                for i, img_name in enumerate(image_files):
-                    try:
-                        img_data = z.read(img_name)
-                        b64 = base64.b64encode(img_data).decode("utf-8")
-
-                        # Détection MIME par extension
-                        img_ext = os.path.splitext(img_name)[1].lower()
-                        mime_map = {
-                            '.png': 'image/png', '.jpg': 'image/jpeg',
-                            '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-                            '.webp': 'image/webp', '.bmp': 'image/bmp'
-                        }
-                        img_mime = mime_map.get(img_ext, 'image/png')
-
-                        description = await EchoGeminiClient.call_distillation(
-                            f"Décris cette image extraite du document '{filename}' "
-                            f"de manière concise et précise (2-3 phrases max).",
-                            u_ctx, m_ctx, is_json=False,
-                            parts=[{"role": "user", "parts": [
-                                {"text": f"Décris cette image '{os.path.basename(img_name)}' "
-                                         f"extraite du document '{filename}'."},
-                                {"inline_data": {"mime_type": img_mime, "data": b64}}
-                            ]}],
-                            target_model="MODEL_LITE"
-                        )
-
-                        if description and description != "Analyse indisponible.":
-                            descriptions.append(
-                                f"**Image {i+1}** (`{os.path.basename(img_name)}`) : {description}"
-                            )
-                    except Exception as img_err:
-                        print(f"[ECHO-FILTER] !! Image {img_name}: {img_err}", flush=True)
-
-        except zipfile.BadZipFile:
-            print(f"[ECHO-FILTER] !! {filename} n'est pas un ZIP valide", flush=True)
-
-        return descriptions
-
-    async def _index_and_summarize(
-        self, source_text: str, file_id: str, filename: str,
-        mime: str, user_id: str, chat_id: str, events: Any
-    ) -> dict:
-        """Pipeline réutilisable : Indexation Mémoire Vectorisée de Session + Map-Reduce.
-        
-        Utilisé par :
-        - CAS 3 (texte/multimodal large supporté nativement)
-        - Post-conversion de fichiers non supportés (Office → MD sur disque)
-        """
-        u_ctx = {"id": user_id}
-        m_ctx = {"chat_id": chat_id}
-
-        # --- ETAPE 1 : Indexation Brute (Rapide) ---
-        await events.status(f"Vectorisation de {filename}...", False)
-        nb_points, err = await EchoGeminiClient.index_text_in_ephemeral_rag(
-            source_text, file_id, user_id, chat_id, u_ctx, m_ctx
-        )
-        if nb_points == 0:
-            print(f"[ECHO-FILTER] !! Vectorisation échouée pour {filename} : {err}", flush=True)
-            raise ValueError(f"Vectorisation échouée : {err}")
-
-        # --- ETAPE 2 : Synthèse Guidée par RAG (O(1)) ---
-        brief_summary = "Résumé indisponible (fichier trop complexe)."
-        try:
-            words_len = len(source_text.split())
-            if words_len <= ECHO_MR_SUMMARY_MAX_WORDS:
-                await events.status(f"Fast-Path appliqué pour {filename} (texte court)...", False)
-                brief_summary = source_text
-            else:
-                await events.status(f"Extraction RAG des thèmes clés de {filename}...", False)
-                
-                # Requête stratégique
-                query_text = "Introduction, résumé exécutif, conclusion, thèmes clés et informations principales"
-                vector = await EchoGeminiClient.generate_embedding(query_text, "query", u_ctx, m_ctx)
-                
-                if vector:
-                    from echo_constants import COLLECTION_SESSION_RAG
-                    limit = getattr(self.user_valves, 'SMART_CONTEXT_CHUNK_LIMIT', 10)
-                    
-                    async with httpx.AsyncClient(timeout=60) as client:
-                        search_payload = {
-                            "vector": vector, "limit": limit, "with_payload": True,
-                            "filter": {
-                                "must": [
-                                    {"key": "user_id", "match": {"value": user_id}},
-                                    {"key": "chat_id", "match": {"value": chat_id}},
-                                    {"key": "source_id", "match": {"value": file_id}}
-                                ]
-                            }
-                        }
-                        resp = await client.post(
-                            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/search",
-                            json=search_payload
-                        )
-                        
-                        if resp.status_code == 200:
-                            results = resp.json().get("result", [])
-                            if results:
-                                await events.status(f"Distillation globale de {filename}...", False)
-                                combined = "\n\n---\n\n".join([r["payload"].get("text", "") for r in results])
-                                prompt = f"Fais un résumé exhaustif et structuré (en markdown) de {ECHO_MR_SUMMARY_MAX_WORDS} mots maximum de ce document en te basant UNIQUEMENT sur les extraits suivants pertinents :\n\n{combined}"
-                                brief_summary = await EchoGeminiClient.call_distillation(
-                                    prompt, u_ctx, m_ctx, is_json=False, max_tokens=ECHO_MR_MAX_TOKENS
-                                )
-                            else:
-                                brief_summary = "⚠️ *Aucun extrait pertinent n'a pu être récupéré via RAG.*"
-                        else:
-                            brief_summary = f"⚠️ *Erreur Qdrant lors de l'extraction RAG ({resp.status_code}).*"
-                else:
-                    brief_summary = "⚠️ *Échec de la vectorisation de la requête stratégique.*"
-
-        except Exception as mr_err:
-            print(f"[ECHO-FILTER] !! Erreur Synthèse Guidée par RAG pour {filename} : {mr_err}", flush=True)
-            # On continue car l'indexation brute a réussi.
-            brief_summary = "⚠️ *Le résumé automatique a échoué en raison d'une erreur interne.*"
-
-        res_text = (
-            f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\" mode=\"vectorized_sum_up\"\n"
-            f"                source_id=\"{file_id}\">\n"
-            f"{brief_summary}\n\n"
-            f"> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_session_context`\n"
-            f"</smart_context>"
-        )
-
-        # Scellement déféré dans le pipe (V2 : plus de mark_processed dans le filtre)
-        print(f"[ECHO-FILTER] ✅ {filename} → Mémoire Vectorisée de Session (source_id={file_id}).", flush=True)
-        return {"status": "success", "type": FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"], "source_id": file_id, "fid": file_id, "name": filename, "mime": mime, "content": res_text}
-
-    def _move_to_codex_and_commit(self, path: str, filename: str, file_id: str, mime: str, user_id: str, chat_id: str) -> str:
-        """Déplace physiquement le fichier dans le Codex Git (Zero-RAM) et l'enregistre dans SQLite."""
-        try:
-            import shutil
-            from echo_codex_git import CodexRepo
-            from echo_utils import EchoStateManager, get_echo_session_path
-            import dulwich.porcelain
-            
-            repo = CodexRepo(user_id, chat_id)
-            safe_name = os.path.basename(filename)
-            new_path = os.path.join(repo.repo_path, safe_name)
-            
-            # Préservation du snapshot immutable dans le vault 'files'
-            vault_dir = get_echo_session_path(user_id, chat_id, "files")
-            os.makedirs(vault_dir, exist_ok=True)
-            vault_name = os.path.basename(path) # Typiquement file_id_*
-            vault_path = os.path.join(vault_dir, vault_name)
-            
-            if path != vault_path:
-                shutil.move(path, vault_path)
-                
-            # Copie vers le codex pour édition (branche de travail)
-            shutil.copy2(vault_path, new_path)
-            
-            try:
-                # Commit Git
-                dulwich.porcelain.add(repo.repo_path, paths=[safe_name])
-                try:
-                    commit_sha = dulwich.porcelain.commit(
-                        repo.repo_path,
-                        message=b"Importation automatique via Upload",
-                        author=b"ECHO Codex <codex@echo.local>",
-                        committer=b"ECHO Codex <codex@echo.local>",
-                    )
-                    commit_hash = commit_sha.decode("ascii") if isinstance(commit_sha, bytes) else str(commit_sha)
-                except Exception as commit_err:
-                    # Gère le cas "No changes added to commit" (fichier identique)
-                    print(f"[ECHO-FILTER] Commit vide ignoré pour {filename}: {commit_err}", flush=True)
-                    commit_hash = repo.get_last_commit() or "unknown"
-                
-                # Mise à jour SQLite
-                state_manager = EchoStateManager(user_id, chat_id)
-                lines = 0
-                try:
-                    with open(new_path, "r", encoding="utf-8", errors="replace") as f:
-                        lines = sum(1 for _ in f)
-                except: pass
-                
-                state_manager.save_resource(
-                    id=file_id, name=filename, resource_type='codex',
-                    status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'], mime=mime, git_tracked=True,
-                    language=CodexRepo.detect_language(filename),
-                    lines=lines,
-                    last_commit=commit_hash, commit_msg="Importation automatique via Upload"
-                )
-                
-                print(f"[ECHO-FILTER] 📦 Fichier {filename} intégré au Codex Zéro-RAM avec succès.", flush=True)
-            except Exception as e:
-                import traceback
-                print(f"[ECHO-FILTER] !! Erreur mineure Codex pour {filename} (Git/SQL): {e}\n{traceback.format_exc()}", flush=True)
-                
-            return vault_path
-        except Exception as e:
-            import traceback
-            print(f"[ECHO-FILTER] !! Erreur critique intégration Codex pour {filename}: {e}\n{traceback.format_exc()}", flush=True)
-            return path
-
-    async def _process_file_task(self, user_id: str, file_obj: dict, tokens: List[str], project_id: str, thinking_level: str, chat_id: str, events: Any) -> dict:
-        """Tâche de traitement de fichier (Smart Context, Binaire ou Index)."""
-        file_id = file_obj.get("id") or file_obj.get("file", {}).get("id")
-        filename = file_obj.get("name") or file_obj.get("file", {}).get("meta", {}).get("name", "inconnu")
-        mime = file_obj.get("mime_type") or file_obj.get("file", {}).get("meta", {}).get("content_type", "application/octet-stream")
-        
-        path = file_obj.get("file", {}).get("path")
-        if not path or not os.path.exists(path):
-            from echo_utils import resolve_upload_file_path
-            path = resolve_upload_file_path(user_id, file_id, chat_id=chat_id)
-            if not path:
-                return {"status": "error", "fid": file_id, "name": filename, "error": "Fichier physique introuvable"}
-
-        # Sécurisation immédiate dans le Vault pour TOUS les fichiers
-        from echo_utils import get_echo_session_path
-        import shutil
-        vault_dir = get_echo_session_path(user_id, chat_id, "files")
-        os.makedirs(vault_dir, exist_ok=True)
-        vault_name = os.path.basename(path)
-        vault_path = os.path.join(vault_dir, vault_name)
-        if path != vault_path and os.path.exists(path):
-            shutil.move(path, vault_path)
-            path = vault_path
-
-        size = os.path.getsize(path)
-        mime, is_supported = get_gemini_mime(path)
-        
-        print(f"[ECHO-FILTER] 📄 Analyse de {filename} ({mime}) - Taille: {size} octets", flush=True)
-
-        # === BLOC CONVERSION : Fichiers non supportés mais convertibles ===
-        ext = os.path.splitext(path)[1].lower()
-        max_convert_bytes = getattr(
-            self.user_valves, 'MAX_OFFICE_FILE_SIZE_MB',
-            DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB
-        ) * 1024 * 1024
-
-        if (not is_supported
-            and ext in CONVERTIBLE_OFFICE_EXTENSIONS
-            and self.user_valves.ENABLE_OFFICE_CONVERSION
-            and size <= max_convert_bytes):
-
-            converted_path = await self._convert_unsupported_file(
-                path, ext, filename, user_id, chat_id, events
-            )
-
-            if converted_path:
-                # Suppression de la source originale (DocX)
-                try:
-                    os.remove(path)
-                    print(f"[ECHO-FILTER] 🗑️ Suppression de la source originale : {os.path.basename(path)}", flush=True)
-                except Exception as e:
-                    print(f"[ECHO-FILTER] !! Échec suppression source {path}: {e}", flush=True)
-
-                # Substitution transparente : le fichier converti remplace l'original
-                # dans le pipeline. Le nom reste inchangé pour le registre.
-                path = converted_path
-                size = os.path.getsize(converted_path)
-                mime, is_supported = get_gemini_mime(converted_path)
-                # → mime="text/plain", is_supported=True (.md dans MIME_MAPPING_TXT)
-                # Le filename affiché dans les status suivants indique la conversion
-                filename = f"{filename} (→ MD)"
-                print(f"[ECHO-FILTER] 🔄 Substitution : {filename} → {mime} "
-                      f"({size} octets) [converti]", flush=True)
-            else:
-                # Échec conversion → avertissement + fallthrough vers CAS 4
-                await events.status(
-                    f"⚠️ Conversion de {filename} échouée. Indexation par défaut.", True
-                )
-
-        # Ingestion Codex anticipée (Zero-RAM)
-        if is_supported and ("text/" in mime or "application/json" in mime):
-            path = self._move_to_codex_and_commit(path, filename, file_id, mime, user_id, chat_id)
-            if os.path.exists(path):
-                size = os.path.getsize(path)
-
-        # --- CAS 1 : IMAGE / AUDIO / VIDEO / PDF (Injection Binaire Directe si petit) ---
-        # Note: Délégation du traitement PDF en natif aux modèles Gemini 1.5.
-        if is_supported and any(x in mime for x in ["image/", "audio/", "video/", "application/pdf"]) and size < MAX_DIRECT_MMEDIA_INJECT_SIZE:
-            try:
-                print(f"[ECHO-FILTER] --> Mode: BINAIRE (Base64)", flush=True)
-                await events.status(f"Encapsulation de {filename}...", False)
-                with open(path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode("utf-8")
-                return {
-                    "status": "success", "type": FILE_INGESTION_STATUS["PUT_IN_CONTEXT"], "fid": file_id, "name": filename, "mime": mime, "sub_type": "binary",
-                    "storage_path": path,
-                    "content": {"anchor": f"📎 **Fichier joint : {filename}** ({mime})", "mime": mime, "data": b64}
-                }
-            except Exception as e:
-                print(f"[ECHO-FILTER] !! Erreur binaire: {e}", flush=True)
-                return {"status": "error", "fid": file_id, "name": filename, "mime": mime, "error": f"Erreur binaire : {str(e)}"}
-
-        # --- CAS 2 : TEXTE PETIT (Injection Directe) ---
-        if is_supported and size < MAX_DIRECT_TEXT_INJECT_SIZE and ("text/" in mime or "application/json" in mime):
-            try:
-                print(f"[ECHO-FILTER] --> Mode: INJECTION_DIRECTE (Texte)", flush=True)
-                with open(path, "r", encoding="utf-8", errors="ignore") as f: content = f.read()
-                ext = os.path.splitext(filename)[1].strip('.')
-                lang = ext if ext else ""
-                return {
-                    "status": "success", "type": FILE_INGESTION_STATUS["PUT_IN_CONTEXT"], "fid": file_id, "name": filename, "mime": mime, "sub_type": "text",
-                    "storage_path": path,
-                    "content": f"📄 **Fichier : {filename}**\n```{lang}\n{content}\n```\n\n"
-                }
-            except Exception as e:
-                print(f"[ECHO-FILTER] !! Erreur lecture: {e}", flush=True)
-                return {"status": "error", "fid": file_id, "name": filename, "mime": mime, "error": f"Erreur lecture : {str(e)}"}
-
-        # --- CAS 3 : TEXTE LARGE / MULTIMODAL LARGE (Mémoire Vectorisée de Session v8.0 Map-Reduce Transmodal) ---
-        if self.user_valves.ENABLE_SMART_CONTEXT and is_supported:
-            try:
-                import unicodedata as _ud
-                u_ctx = {"id": user_id}
-                m_ctx = {"chat_id": chat_id}
-                
-                is_text = ("text/" in mime or "application/json" in mime)
-                
-                # --- PHASE 1 : EXTRACTION / TRANSCRIPTION ---
-                source_text = ""
-                if not is_text:
-                    print(f"[ECHO-FILTER] --> Phase 1 (Extraction Multimédia) pour {filename}", flush=True)
-                    with open(path, "rb") as f: b64_data = base64.b64encode(f.read()).decode("utf-8")
-                    content_part = {"inline_data": {"mime_type": mime, "data": b64_data}}
-                    
-                    await events.status(f"Transcription API de {filename}...", False)
-                    extraction_prompt = (
-                        "Tu es un extracteur de données brut. Ta mission est de décrire, transcrire et analyser "
-                        "ce document. Si le document est structuré reproduis et respecte strictement la structure. "
-                        "Si le document est textuel, respecte strictement son verbatim. Si le document est audiovisuel "
-                        "la description doit être précise, détaillée, complète, couvrant autant, le textuel, le visuel que l'audio, et parfaitement horosynchronisé."
-                    )
-                    multimodal_parts = [{"text": extraction_prompt}, content_part]
-                    
-                    source_text = await EchoGeminiClient.call_distillation(
-                        extraction_prompt,
-                        u_ctx, m_ctx, is_json=False,
-                        parts=[{"role": "user", "parts": multimodal_parts}],
-                        target_model="MODEL_DISTILLATION"
-                    )
-                    if not source_text:
-                        raise ValueError("Transcription multimédia vide ou échouée.")
-                else:
-                    print(f"[ECHO-FILTER] --> Phase 1 (Lecture Texte) pour {filename}", flush=True)
-                    with open(path, "r", encoding="utf-8", errors="ignore") as f: source_text = f.read()
-                
-                # --- PHASE 2 : MAP-REDUCE UNIVERSEL (délégué à _index_and_summarize) ---
-                print(f"[ECHO-FILTER] --> Phase 2 (Indexation Brute + Map-Reduce) pour {filename}", flush=True)
-                return await self._index_and_summarize(
-                    source_text, file_id, filename, mime, user_id, chat_id, events
-                )
-
-            except Exception as e:
-                print(f"[ECHO-FILTER] !! Exception CAS 3 pour {filename}: {e}", flush=True)
-                # Fallback → CAS 4 (indexation)
-
-        # CAS 4 : Scellement déféré dans le pipe (V2)
-        print(f"[ECHO-FILTER] --> Mode: INDEXATION (Fallback)", flush=True)
-        return {"status": "success", "type": FILE_INGESTION_STATUS["INDEXED"], "fid": file_id, "name": filename, "mime": mime}
 
     def _dict_to_yaml(self, d: Any, indent: int = 0) -> str:
         """Sérialiseur YAML minimaliste pour ECHO."""
@@ -595,18 +158,24 @@ class Filter:
                 state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
             
             all_files_dict = {}
-            for f in body.get("files", []):
+            for f in (body.get("files") or []):
                 fid = f.get("id") or f.get("file", {}).get("id")
                 if fid: all_files_dict[fid] = f
                 
-            user_msg_files = meta.get("user_message", {}).get("files", [])
+            user_msg_files = meta.get("user_message", {}).get("files") or []
             for f in user_msg_files:
+                fid = f.get("id") or f.get("file", {}).get("id")
+                if fid: all_files_dict[fid] = f
+                
+            # [NOUVEAU] Récupération des fichiers globaux (ex: import Workspace)
+            global_workspace_files = meta.get("files") or []
+            for f in global_workspace_files:
                 fid = f.get("id") or f.get("file", {}).get("id")
                 if fid: all_files_dict[fid] = f
                 
             all_files = list(all_files_dict.values())
             
-            msgs = body.get("messages", [])
+            msgs = body.get("messages") or []
             if not msgs: return body
 
             if len(msgs) >= 2:
@@ -662,10 +231,38 @@ class Filter:
             results_to_seal = []
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
-                tasks = [self._process_file_task(user_id, f, tokens, None, THINKING_LEVEL_FLASH, chat_id, events) for f in files_to_process]
-                for task in tasks:
-                    results_to_seal.append(await task)
-                    await asyncio.sleep(0.5)
+                
+                # Instanciation du Pipeline Externe
+                if "/app/backend/echo_libs" not in sys.path:
+                    sys.path.append("/app/backend/echo_libs")
+                try:
+                    from echo_ingestion import EchoIngestionPipeline
+                except ImportError as e:
+                    # Dans le cas où on teste localement, on ajoute le path du dossier contenant echo_ingestion
+                    dir_path = os.path.dirname(os.path.realpath(__file__))
+                    lib_path = os.path.join(os.path.dirname(dir_path), "14-owui-libs")
+                    sys.path.append(lib_path)
+                    from echo_ingestion import EchoIngestionPipeline
+                    
+                pipeline = EchoIngestionPipeline(valves=self.user_valves)
+                sem = asyncio.Semaphore(3)
+                
+                async def safe_process(f):
+                    async with sem:
+                        return await pipeline.process_file_task(user_id, f, chat_id, events)
+                        
+                tasks = [safe_process(f) for f in files_to_process]
+                gathered = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                for i, res in enumerate(gathered):
+                    if isinstance(res, Exception):
+                        err_msg = str(res)
+                        file_name = files_to_process[i].get('name', 'inconnu')
+                        print(f"[ECHO-FILTER] !! Pipeline exception for {file_name}: {err_msg}", flush=True)
+                        if events: await events.status(f"❌ Crash critique pour {file_name}", False)
+                        results_to_seal.append({"status": "error", "name": file_name, "error": f"Crash Pipeline: {err_msg}"})
+                    else:
+                        results_to_seal.append(res)
 
             results = list(results_to_seal)
             
@@ -687,7 +284,6 @@ class Filter:
                             })
                         elif res.get("resource_type") == "media" and res.get("status") == FILE_INGESTION_STATUS["PUT_IN_CONTEXT"] and res.get("storage_path") and os.path.exists(res["storage_path"]):
                             # Réhydratation d'un média binaire petit (CAS 1)
-                            import base64
                             with open(res["storage_path"], "rb") as file_obj:
                                 b64 = base64.b64encode(file_obj.read()).decode("utf-8")
                             mime = res.get("mime", "application/octet-stream")
@@ -717,10 +313,17 @@ class Filter:
                         # Content multipart OWUI (texte + images inline) : extraction ordonnée
                         for p in orig_content:
                             if isinstance(p, dict):
-                                if p.get("type") == "image_url" or "inline_data" in p or "inlineData" in p:
+                                if p.get("type") == "image_url":
+                                    # [PURGE] Liste Noire : On ignore volontairement 'image_url' (généré par OWUI).
+                                    # ECHO gérera l'image via son propre pipeline d'ingestion (inline_data ou text_summary).
+                                    pass
+                                elif p.get("type") == "text":
+                                    if p.get("text", "").strip():
+                                        ordered_user_parts.append({"text": p["text"]})
+                                else:
+                                    # [PASSTHROUGH] Liste Blanche implicite.
+                                    # On laisse passer les 'inline_data' d'ECHO, et tout futur format inattendu.
                                     ordered_user_parts.append(p)
-                                elif p.get("type") == "text" and p.get("text", "").strip():
-                                    ordered_user_parts.append({"text": p["text"]})
                     break
 
             if idx != -1:
@@ -756,20 +359,25 @@ class Filter:
 
                 # === AEC V2 : Évènements système (fichiers uploadés ce tour) ===
                 sys_events = []
+                error_events = []
                 for r in results:
                     if r.get("status") == "success":
                         evt = {"type": r.get("type"), "name": r.get("name"), "mime": r.get("mime")}
                         if r.get("source_id"): evt["source_id"] = r["source_id"]
-                        sys_events.append(evt)
+                        if evt not in sys_events: sys_events.append(evt)
+                    elif r.get("status") == "error":
+                        err_evt = {"name": r.get("name"), "error": r.get("error", "Erreur inconnue")}
+                        if err_evt not in error_events: error_events.append(err_evt)
 
                 # === AEC V2 : Détection delta (ressources créées par outils/HUD hors-tour) ===
                 if chat_id:
                     last_check = body.get("metadata", {}).get("_echo_last_event_check_at")
                     if last_check:
                         delta_resources = state_manager.get_resources(created_after=int(last_check))
+                        already_processed_ids = [f.get("id") or f.get("file", {}).get("id") for f in files_already_processed]
                         for dr in delta_resources:
-                            # Ne pas dupliquer les fichiers du tour courant
-                            if not any(e.get("name") == dr["name"] for e in sys_events):
+                            # Ne pas dupliquer les fichiers du tour courant (sys_events) ou déjà ingérés (files_already_processed)
+                            if dr["id"] not in already_processed_ids and not any(e.get("name") == dr["name"] for e in sys_events):
                                 sys_events.append({
                                     "type": dr["status"], "name": dr["name"],
                                     "mime": dr.get("mime"), "resource_type": dr["resource_type"],
@@ -779,11 +387,16 @@ class Filter:
                     body["metadata"]["_echo_last_event_check_at"] = int(time.time())
 
                 # Injection des évènements dans l'AEC (uniquement s'il y en a)
-                if sys_events:
-                    events_yaml = self._dict_to_yaml(sys_events)
-                    rich_parts.append({"text": f"<evenement_systeme>\n{events_yaml}\n"
-                                              f"> Utilisez `query_registry` pour consulter l'état complet des ressources.\n"
-                                              f"</evenement_systeme>\n\n"})
+                if sys_events or error_events:
+                    events_text = "<evenement_systeme>\n"
+                    if sys_events:
+                        events_text += self._dict_to_yaml(sys_events) + "\n"
+                        events_text += "> Utilisez `query_registry` pour consulter l'état complet des ressources.\n"
+                    if error_events:
+                        events_text += "\n[ERREURS D'INGESTION]\n" + self._dict_to_yaml(error_events) + "\n"
+                        events_text += "> Ces fichiers ont échoué et ne sont pas exploitables.\n"
+                    events_text += "</evenement_systeme>\n\n"
+                    rich_parts.append({"text": events_text})
 
                 if ordered_user_parts: rich_parts.extend(ordered_user_parts)
                 
@@ -815,9 +428,21 @@ class Filter:
     async def outlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
         msgs = body.get("messages", [])
         for m in msgs:
-            content = str(m.get("content", ""))
-            # Masquage des clés API AI Studio (AIza...) si elles apparaissent dans l'historique
-            if re.search(GOOGLE_API_KEY_REGEX, content):
-                content = re.sub(GOOGLE_API_KEY_REGEX, "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]", content)
-            m["content"] = content
+            orig = m.get("content", "")
+            if isinstance(orig, list):
+                new_content = []
+                for p in orig:
+                    if isinstance(p, dict) and p.get("type") == "text":
+                        txt = str(p.get("text", ""))
+                        if re.search(GOOGLE_API_KEY_REGEX, txt):
+                            txt = re.sub(GOOGLE_API_KEY_REGEX, "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]", txt)
+                        p["text"] = txt
+                    new_content.append(p)
+                m["content"] = new_content
+            else:
+                content = str(orig)
+                # Masquage des clés API AI Studio (AIza...) si elles apparaissent dans l'historique
+                if re.search(GOOGLE_API_KEY_REGEX, content):
+                    content = re.sub(GOOGLE_API_KEY_REGEX, "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]", content)
+                m["content"] = content
         return body

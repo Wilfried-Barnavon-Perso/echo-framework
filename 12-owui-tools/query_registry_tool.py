@@ -28,8 +28,8 @@ class Tools:
     async def query_registry(
         self,
         # [MAINTENANCE_AI] Avertissement: Toujours mettre à jour ces Literal en cas d'évolution du Registre V2.
-        resource_type: Optional[Literal["codex", "agent", "plan", "memory"]] = None,
-        status: Optional[Literal["active", "archived", "error"]] = None,
+        resource_type: Optional[Literal["codex", "plan", "media", "binary", "weburl"]] = None,
+        status: Optional[Literal["put_in_context", "vectorized_sum_up", "indexed", "pending_ingestion", "active", "archived", "error"]] = None,
         search_term: str = None,
         resource_id: str = None,
         __user__: dict = {},

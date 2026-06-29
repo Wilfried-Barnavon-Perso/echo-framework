@@ -24,8 +24,11 @@ async def process_downloads():
                 shutil.rmtree(cid_dir) # Purge de la branche morte
                 continue
                 
-            vault_files_dir = vault_cid_dir / "files"
-            vault_files_dir.mkdir(parents=True, exist_ok=True)
+            global_files_dir = Path(ECHO_USERS_ROOT) / uid / "files"
+            global_files_dir.mkdir(parents=True, exist_ok=True)
+            
+            chat_files_dir = vault_cid_dir / "files"
+            chat_files_dir.mkdir(parents=True, exist_ok=True)
             
             for file_path in cid_dir.iterdir():
                 if not file_path.is_file() or file_path.name.endswith(".part"): 
@@ -35,10 +38,14 @@ async def process_downloads():
                 if "_" not in filename: continue
                 fid = filename.split("_", 1)[0]
                 
-                # Déplacement atomique vers le Vault
-                dest_path = vault_files_dir / filename
+                # Déplacement atomique vers le Vault Global
+                dest_path = global_files_dir / filename
                 try:
                     shutil.move(str(file_path), str(dest_path))
+                    # Création du leurre symbolique dans le chat
+                    chat_symlink = chat_files_dir / filename
+                    if not chat_symlink.exists():
+                        os.symlink(str(dest_path), str(chat_symlink))
                 except Exception as e:
                     print(f"Erreur déplacement fichier {filename}: {e}")
                     continue # Réessai au prochain cycle

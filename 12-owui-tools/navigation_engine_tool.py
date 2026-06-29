@@ -1,8 +1,10 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.12
-description: 11.12: Optim - Ajout de la règle interdisant explicitement l'usage des moteurs de recherche généralistes au niveau du navigateur autonome.
+version: 11.14
+description: 11.14: Descente Cognitive - Injection dynamique de action_analyze_page et action_archive_page dans BROWSER_TOOLS_SCHEMA pour rendre le Sous-Agent autonome, et correction d'un bug de payload sur inspect_page.
+             11.13: Refonte - Remplacement du distillateur web monolithique par une dichotomie stricte (analyze_web_page via Streaming Sémantique natif ECHO et archive_web_page asynchrone).
+             11.12: Optim - Ajout de la règle interdisant explicitement l'usage des moteurs de recherche généralistes au niveau du navigateur autonome.
              11.11: Optim - Autorisation du Parallel Function Calling dans les instructions pour accélérer la perception (règle 1) et les actions (règle 3).
              11.10: Fix - Ajout de la Valve PRUNE_CONTENT_THRESHOLD pour configurer le seuil d'élagage dynamique du contexte.
              11.9: Fix - Implémentation du Proactive Context Pruning (Élagage dynamique des DOMs obsolètes).
@@ -110,7 +112,7 @@ class Tools:
         self, task_objective: str, start_url: Optional[str] = None, 
         target_model_key: Literal["MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH", 
         max_iterations: int = Field(default=30, description="Nombre max d'itérations. À augmenter pour les tâches longues (ex: 60 questions). Max: 100."),
-        __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None
+        __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None
     ) -> dict:
         """
         Interactions web complexes (formulaires, clics, lecture intégrale d'URL). Recherche d'informations simples proscrite (utiliser `search_web`). La requête (task_objective) DOIT INCLURE le contexte général et spatio-temporel si judicieux.
@@ -264,9 +266,28 @@ class Tools:
                         if not smart_truncate_history(history, 1):
                             break
             
+                schema_extensions = [
+                    {
+                        "name": "action_analyze_page",
+                        "description": "Analyse intelligemment le contenu textuel complet de la page actuelle en tâche de fond (recherche précise, résumé large bande, etc.) sans saturer ta mémoire de travail.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "L'objectif de l'analyse (ex: 'Cherche la date de naissance', ou 'Résume les grands axes de cet article')."}
+                            },
+                            "required": ["query"]
+                        }
+                    },
+                    {
+                        "name": "action_archive_page",
+                        "description": "Archive silencieusement tout le texte de la page actuelle dans la mémoire à long terme (RAG). À n'utiliser que si la page contient un savoir encyclopédique ou technique vital.",
+                        "parameters": {"type": "object", "properties": {}}
+                    }
+                ]
+
                 payload = {
                     "contents": history,
-                    "tools": [{"function_declarations": BROWSER_TOOLS_SCHEMA}],
+                    "tools": [{"function_declarations": BROWSER_TOOLS_SCHEMA + schema_extensions}],
                     "tool_config": {"function_calling_config": {"mode": "AUTO"}}
                 }
 
@@ -376,6 +397,20 @@ class Tools:
                                     _resp = {"status": "error", "error": action_res.get("message")}
                             except Exception as e:
                                 _resp = {"status": "error", "error": str(e)}
+                        elif fn_name == "action_analyze_page":
+                            try:
+                                current_url_resp = await browser.action_inspect_page(target="url")
+                                raw_res = await self.analyze_web_page(current_url_resp.get("url", ""), fn_args.get("query", ""), __user__, __metadata__, __event_call__, __event_emitter__)
+                                _resp = {"status": "success", "result": raw_res}
+                            except Exception as e:
+                                _resp = {"status": "error", "error": str(e)}
+                        elif fn_name == "action_archive_page":
+                            try:
+                                current_url_resp = await browser.action_inspect_page(target="url")
+                                raw_res = await self.archive_web_page(current_url_resp.get("url", ""), __user__, __metadata__, __event_call__, __event_emitter__)
+                                _resp = {"status": "success", "result": raw_res}
+                            except Exception as e:
+                                _resp = {"status": "error", "error": str(e)}
                             
                         # Construction stricte du functionResponse avec l'ID natif
                         _fr = {"name": fn_name, "response": _resp}
@@ -437,11 +472,12 @@ class Tools:
                     await events.status(f"✅ Mission terminée en {iterations} étapes.", done=True)
                     return wrap_tool_output(text=f"🤖 Synthèse du Navigateur :\n{text_out}", status={"status": "success", "steps": iterations, "sid": sid})
 
+            fallback_msg = "Aucune synthèse (Interrompu en cours d'action)."
             return wrap_tool_output(
                 text=(
                     f"ÉCHEC : Nombre maximum d'itérations atteint ({max_iterations}). "
                     "Le Modèle doit analyser la synthèse suivante et relancer l'outil `delegate_web_browsing` pour poursuivre la tâche.\n"
-                    f"[SYNTHÈSE_NAVIGATEUR] :\n{text_out if 'text_out' in locals() else 'Aucune synthèse (Interrompu en cours d\'action).'}"
+                    f"[SYNTHÈSE_NAVIGATEUR] :\n{text_out if 'text_out' in locals() else fallback_msg}"
                 ), 
                 status={"status": "too_many_tries"}
             )
@@ -450,58 +486,112 @@ class Tools:
             if proxy_task:
                 proxy_task.cancel()
 
-    async def distill_web_page(self, url: str, __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None) -> dict:
-        """Distillation d'URL et indexation dans le RAG de Session."""
+    async def analyze_web_page(self, url: str, query: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
+        """[ANALYSE SÉMANTIQUE IMMÉDIATE] Permet au Modèle de déléguer la lecture d'une page Web à un sous-agent pour synthétiser la page, la décrire ou y chercher une donnée précise. Retourne la réponse dans le tour de parole courant sans affecter la mémoire vectorielle.
+        
+        :param url: L'URL absolue de la page à analyser.
+        :param query: La directive (ex: 'Résume cet article', 'Trouve le prix', 'Décris le produit').
+        """
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = __metadata__.get("chat_id", "default_session")
         uid = __user__.get("id", "anonymous")
         u_valves = __user__.get("valves", self.UserValves())
         
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
-            return wrap_tool_output(text="❌ Session perdue.", status={"status": "error"})
+            return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"})
 
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
-        
         await events.status(f"🌐 Navigation vers {url}...")
         await browser.action_browser_control(command="navigate", value=url)
         
-        res_action = await req_to_browser(self.valves.HTTP_TIMEOUT, "/action", {"session_id": chat_id, "action": "read_html"}, uid)
-        b64_html = res_action.get("content", "")
+        await events.status("🧠 Extraction sémantique Markdown...")
+        res_action = await browser.action_inspect_page(target="read_text")
+        markdown_text = res_action.get("content", "")
         
+        vault_dir = get_echo_session_path(uid, chat_id, "files")
+        os.makedirs(vault_dir, exist_ok=True)
+        tmp_path = os.path.join(vault_dir, f"tmp_stream_{uuid.uuid4().hex[:8]}.txt")
+        
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(markdown_text)
+            
+        await events.status("🧠 Analyse par le sous-agent...")
+        
+        from echo_constants import TEMP_DEFAULT, TOP_P_DEFAULT
+        
+        payload = {
+            "contents": [{"role": "user", "parts": [
+                {"text": f"<instruction>\nLe Modèle doit analyser ce document Web pour accomplir cette tâche : {query}\nLa réponse doit être factuelle, précise et issue du texte.\n</instruction>"},
+                {"inline_data": {"mime_type": "text/plain", "data": f"___ECHO_STREAM_FILE___{tmp_path}___"}}
+            ]}],
+            "generationConfig": {
+                "temperature": TEMP_DEFAULT,
+                "topP": TOP_P_DEFAULT
+            }
+        }
+        
+        analyse_model = clamp_model("MODEL_FLASH", __metadata__, user_id=uid)
+        data, _, _ = await EchoGeminiClient.call_cascade(
+            target_model_key=analyse_model,
+            payload=payload,
+            user_id=uid, metadata=__metadata__, events=events, timeout=120, include_thoughts=False
+        )
+        
+        if os.path.exists(tmp_path): os.remove(tmp_path)
+        
+        distillate = "".join(p.get("text", "") for p in data.get("candidates", [])[0]["content"].get("parts", []))
+        return wrap_tool_output(text=f"Résultat de l'analyse pour '{query}' :\n{distillate}", status={"status": "success"})
+
+
+    async def archive_web_page(self, url: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
+        """[ARCHIVAGE RAG ASYNCHRONE] Permet au Modèle de sauvegarder l'intégralité du texte Markdown d'une page Web volumineuse dans la Mémoire Vectorisée. L'archivage s'effectue silencieusement en tâche de fond. Le Modèle doit utiliser cet outil uniquement pour figer un savoir de long-terme.
+        
+        :param url: L'URL absolue de la page à archiver.
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        chat_id = __metadata__.get("chat_id", "default_session")
+        uid = __user__.get("id", "anonymous")
+        u_valves = __user__.get("valves", self.UserValves())
+        
+        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
+            return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"})
+
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
+        await events.status(f"🌐 Navigation vers {url}...")
+        await browser.action_browser_control(command="navigate", value=url)
+        
+        await events.status("🧠 Extraction sémantique (Markdown)...")
+        res_action = await browser.action_inspect_page(target="read_text")
+        markdown_text = res_action.get("content", "")
+        
+        if not markdown_text:
+            return wrap_tool_output(text="Erreur : Échec de l'extraction du texte.", status={"status": "error"})
+            
         domain = urllib.parse.urlparse(url).netloc.replace(".", "_")
-        source_id = f"{domain}_{uuid.uuid4().hex[:4]}"
+        file_id = f"ARCHIVE_{domain}_{uuid.uuid4().hex[:6]}"
+        filename = f"{domain}_archive.md"
         
-        await events.status(f"🧠 Distillation de la page → vectorisation locale...")
-        try:
-            html_text = base64.b64decode(b64_html).decode('utf-8', errors='ignore')
-            prompt = (
-                "<instruction>\n"
-                "Le Modèle doit analyser ce code HTML et générer un résumé structuré, sémantique et très détaillé de tout le contenu textuel de la page.\n"
-                "</instruction>\n\n"
-                f"<source_html>\n{html_text[:100000]}\n</source_html>"
-            )
+        vault_dir = get_echo_session_path(uid, chat_id, "files")
+        os.makedirs(vault_dir, exist_ok=True)
+        filepath = os.path.join(vault_dir, filename)
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(f"# Archive Web : {url}\n\n{markdown_text}")
             
-            analyse_model = clamp_model("MODEL_FLASH", __metadata__, user_id=uid)
-            data, _, _ = await EchoGeminiClient.call_cascade(
-                target_model_key=analyse_model,
-                payload={"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 8192}},
-                user_id=uid, metadata=__metadata__, events=events, timeout=120, include_thoughts=False
-            )
-            
-            if not data: return wrap_tool_output(text="❌ Cascade épuisée.", status={"status": "error"})
-            
-            candidates = data.get("candidates", [])
-            distillate = "".join(p.get("text", "") for p in candidates[0]["content"].get("parts", []) if "text" in p) if candidates else ""
-            
-            nb_points, err = await EchoGeminiClient.index_text_in_ephemeral_rag(distillate, source_id, uid, chat_id, __user__, __metadata__)
-            if nb_points == 0: return wrap_tool_output(text=f"❌ Vectorisation échouée. {err}", status={"status": "error"})
+        state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
+        state_manager.save_resource(
+            id=file_id, name=filename, resource_type='codex',
+            status=FILE_INGESTION_STATUS['PENDING_INGESTION'], mime='text/markdown',
+            storage_path=filepath
+        )
+        
+        await events.status(f"✅ Archive {filename} sauvegardée.", done=True)
+        return wrap_tool_output(
+            text=f"Succès : La page {url} a été archivée physiquement ({filename}). Le processus d'ingestion vectorielle s'exécutera silencieusement en arrière-plan. Le Modèle peut poursuivre son analyse courante.", 
+            status={"status": "success"}
+        )
 
-            await events.status(f"✅ Page indexée dans la Mémoire Vectorisée de Session ({nb_points} vecteurs).", done=True)
-            return wrap_tool_output(text=f"✅ Page `{url}` indexée ({nb_points} vecteurs).\nSource ID: `{source_id}`. IMPLIQUE `search_session_context` pour interrogation.", status={"status": "success"})
-        except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur distillation: {str(e)}", status={"status": "error"})
-
-    async def web_browse_reset(self, __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None) -> dict:
+    async def web_browse_reset(self, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """Réinitialise la session du navigateur (Fermeture et Nettoyage)."""
         chat_id = __metadata__.get("chat_id", "default_session")
         uid = __user__.get("id", "anonymous")
@@ -509,7 +599,7 @@ class Tools:
         res = await browser.reset_session()
         return wrap_tool_output(text="🚀 Navigateur réinitialisé.", status=res)
 
-    async def close_web_thread(self, sub_sid: str, __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None) -> dict:
+    async def close_web_thread(self, sub_sid: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """
         Ferme définitivement une session du navigateur web et purge son historique (irréversible).
         :param sub_sid: L'identifiant de la session web à fermer (ex: thread_web_abc123)
@@ -538,7 +628,7 @@ class Tools:
             status={"status": "success", "sid": sub_sid}
         )
 
-    async def get_browser_frames_history(self, depth: Optional[int] = 10, __user__: dict = {}, __metadata__: dict = {}) -> dict:
+    async def get_browser_frames_history(self, depth: Optional[int] = 10, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None) -> dict:
         """
         Consultation de l'historique des captures d'écran (Vision multimodale).
         """

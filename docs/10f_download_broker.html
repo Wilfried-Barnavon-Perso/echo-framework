@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO v5 - Le Download Broker (Ingestion asynchrone, Garbage Collection).">
+  <title>ECHO v5 - 10f. Download Broker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>10f. Download Broker</h1>
+
+    <p>
+      Le <strong>Download Broker</strong> (<code>25-docker-download-broker/download_broker.py</code>) est un service autonome (Daemon)
+      chargé de l'ingestion asynchrone des fichiers téléchargés depuis le web par l'Agent Navigateur. 
+      Il opère indépendamment du flux cognitif principal pour prévenir tout blocage IO.
+    </p>
+
+    <h2>Architecture et Fonctionnement</h2>
+
+    <p>
+      Le Download Broker fonctionne en tant que Worker Docker isolé sans port exposé. 
+      Il boucle de manière asynchrone (polling) sur le répertoire des téléchargements partagés (<code>/app/browser-data/downloads</code>) 
+      et traite les éléments selon la logique suivante :
+    </p>
+
+    <ul>
+      <li><strong>Garbage Collection</strong> : Si le chat associé (ID de conversation) n'existe plus dans le Vault de l'utilisateur, la branche de téléchargement est identifiée comme morte et purgée (<code>shutil.rmtree</code>).</li>
+      <li><strong>Déplacement Atomique</strong> : Les fichiers valides sont déplacés du répertoire temporaire vers le Vault global de l'utilisateur via <code>shutil.move()</code>.</li>
+      <li><strong>Leurre Symbolique</strong> : Afin de lier le fichier à la conversation active sans dupliquer la donnée, un lien symbolique (<code>os.symlink</code>) est créé dans le sous-dossier de la session.</li>
+      <li><strong>Sérialisation SQLite</strong> : Une fois le fichier validé et placé, le Broker détermine son MIME via <code>get_gemini_mime</code> et met à jour l'état cognitif via <code>EchoStateManager</code>, 
+      définissant le statut sur <code>PENDING_INGESTION</code>.</li>
+    </ul>
+
+    <div class="alert info">
+      <strong>Découplage des ressources</strong> : Cette architecture garantit que ni le Pipe, ni le navigateur headless ne s'encombrent du traitement des transferts disques locaux, et assure la persistance des résultats d'exploration Web dans le système documentaire unifié d'ECHO.
+    </div>
+
+  </main>
+  
+  <footer>
+    <p>&copy; 2026 Antigravity - Framework ECHO. <span class="version-badge">5.189.9</span></p>
+  </footer>
+  <script type="module" src="nav.js"></script>
+</body>
+</html>

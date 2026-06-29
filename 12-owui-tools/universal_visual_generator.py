@@ -1,8 +1,9 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.5
-description: 5.5: Optimisation du prompt Architecte Visuel (balises XML, bloc <thinking>, ton impersonnel).
+version: 5.6
+description: 5.6: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans le payload de génération via call_cascade.
+             5.5: Optimisation du prompt Architecte Visuel (balises XML, bloc <thinking>, ton impersonnel).
              5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux). 5.2: Renommage niveau_cognitif→target_model, migration stream→call_cascade() centralisé.
 """
 
@@ -20,7 +21,8 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, wrap_cascade_output, EchoGeminiClient, clamp_model
 from echo_ui import EchoUI
 from echo_constants import (
-    MODEL_FLASH, MODEL_ROUTING
+    MODEL_FLASH, MODEL_ROUTING,
+    TEMP_DEFAULT, TOP_P_DEFAULT
 )
 
 
@@ -110,8 +112,11 @@ class Tools:
       # Génération via call_cascade (clamping + thinking auto + cascade)
       data, model_used, _ = await EchoGeminiClient.call_cascade(
           target_model_key=niveau_cognitif,
-          payload={"contents": [{"role": "user", "parts": [{"text": f"INTENTION : {intention}\nDONNÉES : {donnees_contextuelles}"}]}],
-                   "systemInstruction": {"parts": [{"text": system_prompt}]}},
+          payload={
+              "contents": [{"role": "user", "parts": [{"text": f"INTENTION : {intention}\nDONNÉES : {donnees_contextuelles}"}]}],
+              "systemInstruction": {"parts": [{"text": system_prompt}]},
+              "generationConfig": {"temperature": TEMP_DEFAULT, "topP": TOP_P_DEFAULT}
+          },
           user_id=user_id,
           metadata=__metadata__,
           events=events,

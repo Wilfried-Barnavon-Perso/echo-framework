@@ -69,7 +69,8 @@ document.addEventListener('DOMContentLoaded', () => {
           { href: '10b_echo_auth_sso.html', text: '10b. ECHO Auth SSO & MFA' },
           { href: '10c_bunkerweb_waf.html', text: '10c. Bouclier BunkerWeb WAF' },
           { href: '10d_audio_workers.html', text: '10d. Audio Workers' },
-          { href: '10e_scripts_infrastructure.html', text: '10e. Scripts d\'Infrastructure' }
+          { href: '10e_scripts_infrastructure.html', text: '10e. Scripts d\'Infrastructure' },
+          { href: '10f_download_broker.html', text: '10f. Download Broker' }
         ]
       },
       {

@@ -112,7 +112,7 @@ flowchart TD
     </p>
 
     <div class="svg-diagram">
-      <svg viewBox="0 0 900 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Écorché structurel des modules Python ECHO v5">
+      <svg viewBox="0 0 900 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Écorché structurel des modules Python ECHO v5">
         <title>Écorché structurel ECHO v5 - Modules Python</title>
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
@@ -127,10 +127,10 @@ flowchart TD
         </defs>
 
         <!-- Fond zones -->
-        <rect x="10" y="10" width="870" height="540" rx="12" fill="#0b0e14" stroke="#2d3748" stroke-width="1"/>
+        <rect x="10" y="10" width="870" height="620" rx="12" fill="#0b0e14" stroke="#2d3748" stroke-width="1"/>
 
         <!-- Zone OWUI (fond bleu nuit) -->
-        <rect x="24" y="24" width="260" height="180" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1.5" stroke-dasharray="6,3"/>
+        <rect x="24" y="24" width="260" height="256" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1.5" stroke-dasharray="6,3"/>
         <text x="154" y="44" text-anchor="middle" fill="#64748b" font-size="9" font-family="monospace" letter-spacing="1">11-owui-filters</text>
 
         <!-- Filtre: new_context_filter.py -->
@@ -146,7 +146,13 @@ flowchart TD
         <text x="51" y="165" fill="#64748b" font-size="9" font-family="monospace">Filtre Outlet asynchrone (Fenêtre glissante)</text>
         <text x="51" y="178" fill="#64748b" font-size="9" font-family="monospace">Vectorisation → Session RAG</text>
 
-        <!-- Zone PIPE -->
+                <!-- Filtre: edge_embed_bridge_filter.py -->
+        <rect x="36" y="204" width="230" height="64" rx="6" fill="#1e293b" stroke="#64748b" stroke-width="1"/>
+        <text x="51" y="226" fill="#94a3b8" font-size="10" font-family="monospace" font-weight="bold">edge_embed_bridge.py</text>
+        <text x="51" y="317" fill="#64748b" font-size="9" font-family="monospace">WebGPU/WASM Offload</text>
+        <text x="51" y="330" fill="#64748b" font-size="9" font-family="monospace">BGE-m3 Acceleration</text>
+
+<!-- Zone PIPE -->
         <rect x="320" y="24" width="250" height="180" rx="8" fill="#1e1b4b" stroke="#4338ca" stroke-width="1.5" stroke-dasharray="6,3"/>
         <text x="445" y="44" text-anchor="middle" fill="#6366f1" font-size="9" font-family="monospace" letter-spacing="1">10-owui-pipes</text>
 
@@ -163,54 +169,54 @@ flowchart TD
         <text x="350" y="176" fill="#64748b" font-size="9" font-family="monospace">DebugLogger → debug_logs/</text>
 
         <!-- Zone LIBS -->
-        <rect x="24" y="230" width="560" height="180" rx="8" fill="#0d1117" stroke="#1e40af" stroke-width="1.5" stroke-dasharray="6,3"/>
-        <text x="304" y="250" text-anchor="middle" fill="#1d4ed8" font-size="9" font-family="monospace" letter-spacing="1">14-owui-libs</text>
+        <rect x="24" y="306" width="560" height="180" rx="8" fill="#0d1117" stroke="#1e40af" stroke-width="1.5" stroke-dasharray="6,3"/>
+        <text x="304" y="326" text-anchor="middle" fill="#1d4ed8" font-size="9" font-family="monospace" letter-spacing="1">14-owui-libs</text>
 
         <!-- echo_utils.py -->
-        <rect x="36" y="258" width="160" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
-        <text x="52" y="278" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_utils.py</text>
-        <text x="186" y="278" fill="#4ade80" font-size="8">v8.2</text>
-        <text x="52" y="295" fill="#64748b" font-size="9" font-family="monospace">EchoStateManager</text>
-        <text x="52" y="309" fill="#64748b" font-size="9" font-family="monospace">EchoGeminiClient</text>
-        <text x="52" y="323" fill="#64748b" font-size="9" font-family="monospace">EchoAuth</text>
-        <text x="52" y="337" fill="#64748b" font-size="9" font-family="monospace">EchoEvents</text>
-        <text x="52" y="351" fill="#64748b" font-size="9" font-family="monospace">split_thought_process()</text>
-        <text x="52" y="365" fill="#64748b" font-size="9" font-family="monospace">wrap_tool_output()</text>
-        <text x="52" y="379" fill="#64748b" font-size="9" font-family="monospace">index_text_in_ephemeral_rag()</text>
+        <rect x="36" y="334" width="160" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
+        <text x="52" y="354" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_utils.py</text>
+        <text x="186" y="354" fill="#4ade80" font-size="8">v8.2</text>
+        <text x="52" y="371" fill="#64748b" font-size="9" font-family="monospace">EchoStateManager</text>
+        <text x="52" y="385" fill="#64748b" font-size="9" font-family="monospace">EchoGeminiClient</text>
+        <text x="52" y="399" fill="#64748b" font-size="9" font-family="monospace">EchoAuth</text>
+        <text x="52" y="413" fill="#64748b" font-size="9" font-family="monospace">EchoEvents</text>
+        <text x="52" y="427" fill="#64748b" font-size="9" font-family="monospace">split_thought_process()</text>
+        <text x="52" y="441" fill="#64748b" font-size="9" font-family="monospace">wrap_tool_output()</text>
+        <text x="52" y="455" fill="#64748b" font-size="9" font-family="monospace">index_text_in_ephemeral_rag()</text>
 
         <!-- echo_auth.py -->
-        <rect x="208" y="258" width="140" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
-        <text x="224" y="278" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_auth.py</text>
-        <text x="334" y="278" fill="#4ade80" font-size="8">v7.3</text>
-        <text x="224" y="295" fill="#64748b" font-size="9" font-family="monospace">AuthService</text>
-        <text x="224" y="309" fill="#64748b" font-size="9" font-family="monospace">initiate_pkce_flow()</text>
-        <text x="224" y="323" fill="#64748b" font-size="9" font-family="monospace">await_pkce_callback()</text>
-        <text x="224" y="337" fill="#64748b" font-size="9" font-family="monospace">validate_and_save_api_key()</text>
-        <text x="224" y="351" fill="#64748b" font-size="9" font-family="monospace">fetch_available_models()</text>
-        <text x="224" y="365" fill="#64748b" font-size="9" font-family="monospace">fetch_user_quota()</text>
-        <text x="224" y="379" fill="#64748b" font-size="9" font-family="monospace">get_model_quota(ca_id)</text>
+        <rect x="208" y="334" width="140" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
+        <text x="224" y="354" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_auth.py</text>
+        <text x="334" y="354" fill="#4ade80" font-size="8">v7.3</text>
+        <text x="224" y="371" fill="#64748b" font-size="9" font-family="monospace">AuthService</text>
+        <text x="224" y="385" fill="#64748b" font-size="9" font-family="monospace">initiate_pkce_flow()</text>
+        <text x="224" y="399" fill="#64748b" font-size="9" font-family="monospace">await_pkce_callback()</text>
+        <text x="224" y="413" fill="#64748b" font-size="9" font-family="monospace">validate_and_save_api_key()</text>
+        <text x="224" y="427" fill="#64748b" font-size="9" font-family="monospace">fetch_available_models()</text>
+        <text x="224" y="441" fill="#64748b" font-size="9" font-family="monospace">fetch_user_quota()</text>
+        <text x="224" y="455" fill="#64748b" font-size="9" font-family="monospace">get_model_quota(ca_id)</text>
 
         <!-- echo_protocol.py -->
-        <rect x="360" y="258" width="140" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
-        <text x="376" y="278" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_protocol.py</text>
-        <text x="486" y="278" fill="#4ade80" font-size="8">v1.1</text>
-        <text x="376" y="295" fill="#64748b" font-size="9" font-family="monospace">get_ca_model_id()</text>
-        <text x="376" y="309" fill="#64748b" font-size="9" font-family="monospace">build_ca_generation_config()</text>
-        <text x="376" y="323" fill="#64748b" font-size="9" font-family="monospace">CA_EXCLUDED_GEN_CONF_FIELDS</text>
-        <text x="376" y="340" fill="#475569" font-size="8.5" font-family="monospace">Fonctions pures - aucun</text>
-        <text x="376" y="353" fill="#475569" font-size="8.5" font-family="monospace">appel réseau, aucun état.</text>
-        <text x="376" y="367" fill="#475569" font-size="8.5" font-family="monospace">Point unique de traduction</text>
-        <text x="376" y="380" fill="#475569" font-size="8.5" font-family="monospace">ECHO → API Antigravity.</text>
+        <rect x="360" y="334" width="140" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
+        <text x="376" y="354" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_protocol.py</text>
+        <text x="486" y="354" fill="#4ade80" font-size="8">v1.1</text>
+        <text x="376" y="371" fill="#64748b" font-size="9" font-family="monospace">get_ca_model_id()</text>
+        <text x="376" y="385" fill="#64748b" font-size="9" font-family="monospace">build_ca_generation_config()</text>
+        <text x="376" y="399" fill="#64748b" font-size="9" font-family="monospace">CA_EXCLUDED_GEN_CONF_FIELDS</text>
+        <text x="376" y="416" fill="#475569" font-size="8.5" font-family="monospace">Fonctions pures - aucun</text>
+        <text x="376" y="429" fill="#475569" font-size="8.5" font-family="monospace">appel réseau, aucun état.</text>
+        <text x="376" y="443" fill="#475569" font-size="8.5" font-family="monospace">Point unique de traduction</text>
+        <text x="376" y="456" fill="#475569" font-size="8.5" font-family="monospace">ECHO → API Antigravity.</text>
 
         <!-- echo_constants.py -->
-        <rect x="512" y="258" width="60" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
-        <text x="542" y="278" text-anchor="middle" fill="#60a5fa" font-size="9" font-family="monospace" font-weight="bold">constants</text>
-        <text x="542" y="294" text-anchor="middle" fill="#4ade80" font-size="7">v5.19</text>
-        <text x="522" y="312" fill="#64748b" font-size="8" font-family="monospace">MODEL_*</text>
-        <text x="522" y="326" fill="#64748b" font-size="8" font-family="monospace">MODEL_MAP_CA</text>
-        <text x="522" y="340" fill="#64748b" font-size="8" font-family="monospace">THINKING_*</text>
-        <text x="522" y="354" fill="#64748b" font-size="8" font-family="monospace">MAX_TOKENS</text>
-        <text x="522" y="368" fill="#64748b" font-size="8" font-family="monospace">get_gemini_mime</text>
+        <rect x="512" y="334" width="60" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
+        <text x="542" y="354" text-anchor="middle" fill="#60a5fa" font-size="9" font-family="monospace" font-weight="bold">constants</text>
+        <text x="542" y="370" text-anchor="middle" fill="#4ade80" font-size="7">v5.19</text>
+        <text x="522" y="388" fill="#64748b" font-size="8" font-family="monospace">MODEL_*</text>
+        <text x="522" y="402" fill="#64748b" font-size="8" font-family="monospace">MODEL_MAP_CA</text>
+        <text x="522" y="416" fill="#64748b" font-size="8" font-family="monospace">THINKING_*</text>
+        <text x="522" y="430" fill="#64748b" font-size="8" font-family="monospace">MAX_TOKENS</text>
+        <text x="522" y="444" fill="#64748b" font-size="8" font-family="monospace">get_gemini_mime</text>
 
         <!-- Zone UI/VISUALS -->
         <rect x="600" y="24" width="274" height="180" rx="8" fill="#0d1117" stroke="#0d9488" stroke-width="1.5" stroke-dasharray="6,3"/>
@@ -228,41 +234,41 @@ flowchart TD
         <text x="630" y="178" fill="#64748b" font-size="9" font-family="monospace">EchoRichUI - Pattern Data Island</text>
 
         <!-- Zone ADMIN -->
-        <rect x="600" y="230" width="274" height="100" rx="8" fill="#1a0505" stroke="#7f1d1d" stroke-width="1.5" stroke-dasharray="6,3"/>
-        <text x="737" y="250" text-anchor="middle" fill="#7f1d1d" font-size="9" font-family="monospace" letter-spacing="1">20-docker-admin-manager</text>
-        <rect x="614" y="258" width="246" height="60" rx="6" fill="#0f172a" stroke="#dc2626" stroke-width="1.2"/>
-        <text x="630" y="278" fill="#f87171" font-size="10" font-family="monospace" font-weight="bold">server.py</text>
-        <text x="630" y="294" fill="#64748b" font-size="9" font-family="monospace">Monitoring psutil+docker-py</text>
-        <text x="630" y="308" fill="#64748b" font-size="9" font-family="monospace">run_semantic_pruning() TTL Qdrant</text>
+        <rect x="600" y="306" width="274" height="100" rx="8" fill="#1a0505" stroke="#7f1d1d" stroke-width="1.5" stroke-dasharray="6,3"/>
+        <text x="737" y="326" text-anchor="middle" fill="#7f1d1d" font-size="9" font-family="monospace" letter-spacing="1">20-docker-admin-manager</text>
+        <rect x="614" y="334" width="246" height="60" rx="6" fill="#0f172a" stroke="#dc2626" stroke-width="1.2"/>
+        <text x="630" y="354" fill="#f87171" font-size="10" font-family="monospace" font-weight="bold">server.py</text>
+        <text x="630" y="370" fill="#64748b" font-size="9" font-family="monospace">Monitoring psutil+docker-py</text>
+        <text x="630" y="384" fill="#64748b" font-size="9" font-family="monospace">run_semantic_pruning() TTL Qdrant</text>
 
         <!-- Zone STOCKAGE -->
-        <rect x="24" y="436" width="850" height="96" rx="8" fill="#0a0a0a" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,4"/>
-        <text x="449" y="456" text-anchor="middle" fill="#78350f" font-size="9" font-family="monospace" letter-spacing="1">Couche de persistance (Volumes Docker)</text>
+        <rect x="24" y="512" width="850" height="96" rx="8" fill="#0a0a0a" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,4"/>
+        <text x="449" y="532" text-anchor="middle" fill="#78350f" font-size="9" font-family="monospace" letter-spacing="1">Couche de persistance (Volumes Docker)</text>
 
-        <rect x="36" y="464" width="196" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="134" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">SQLite Shadows</text>
-        <text x="134" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">/users/{uid}/chats/{cid}.db</text>
-        <text x="134" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">message_shadows + identity.db</text>
+        <rect x="36" y="540" width="196" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
+        <text x="134" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">SQLite Shadows</text>
+        <text x="134" y="576" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">/users/{uid}/chats/{cid}.db</text>
+        <text x="134" y="589" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">message_shadows + identity.db</text>
 
-        <rect x="248" y="464" width="160" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="328" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Qdrant :6333</text>
-        <text x="328" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">echo_meta_artifacts (permanent)</text>
-        <text x="328" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">echo_session_rag (session)</text>
+        <rect x="248" y="540" width="160" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
+        <text x="328" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Qdrant :6333</text>
+        <text x="328" y="576" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">echo_meta_artifacts (permanent)</text>
+        <text x="328" y="589" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">echo_session_rag (session)</text>
 
-        <rect x="424" y="464" width="160" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="504" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Vault Fichiers</text>
-        <text x="504" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">/users/{uid}/files/</text>
-        <text x="504" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Fichiers utilisateurs (pérennes)</text>
+        <rect x="424" y="540" width="160" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
+        <text x="504" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Vault Fichiers</text>
+        <text x="504" y="576" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">/users/{uid}/files/</text>
+        <text x="504" y="589" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Fichiers utilisateurs (pérennes)</text>
 
-        <rect x="600" y="464" width="120" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="660" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Worker :7997</text>
-        <text x="660" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">bge-m3</text>
-        <text x="660" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Vector local</text>
+        <rect x="600" y="540" width="120" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
+        <text x="660" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Worker :7997</text>
+        <text x="660" y="576" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">bge-m3</text>
+        <text x="660" y="589" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Vector local</text>
 
-        <rect x="730" y="464" width="130" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="795" y="484" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Audio Workers</text>
-        <text x="795" y="500" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Kokoro TTS :7996</text>
-        <text x="795" y="513" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Whisper STT :7995</text>
+        <rect x="730" y="540" width="130" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
+        <text x="795" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Audio Workers</text>
+        <text x="795" y="576" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Kokoro TTS :7996</text>
+        <text x="795" y="589" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Whisper STT :7995</text>
 
         <!-- ====== FLÈCHES ====== -->
         <!-- Filtre → Pipe -->
@@ -270,39 +276,39 @@ flowchart TD
         <text x="286" y="106" fill="#4ade80" font-size="8" font-family="monospace">Draft YAML</text>
 
         <!-- Pipe → echo_utils -->
-        <line x1="445" y1="192" x2="116" y2="258" stroke="#60a5fa" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
+        <line x1="445" y1="192" x2="116" y2="334" stroke="#60a5fa" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
 
         <!-- Pipe → echo_auth -->
-        <line x1="445" y1="192" x2="278" y2="258" stroke="#60a5fa" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
+        <line x1="445" y1="192" x2="278" y2="334" stroke="#60a5fa" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
 
         <!-- Pipe → echo_protocol -->
-        <line x1="445" y1="192" x2="430" y2="258" stroke="#60a5fa" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
+        <line x1="445" y1="192" x2="430" y2="334" stroke="#60a5fa" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
 
         <!-- Pipe → echo_constants -->
-        <line x1="500" y1="160" x2="542" y2="258" stroke="#60a5fa" stroke-width="0.8" stroke-dasharray="4,2" marker-end="url(#arrow-blue)"/>
+        <line x1="500" y1="160" x2="542" y2="334" stroke="#60a5fa" stroke-width="0.8" stroke-dasharray="4,2" marker-end="url(#arrow-blue)"/>
 
         <!-- Pipe → echo_ui -->
         <line x1="556" y1="100" x2="614" y2="84" stroke="#2dd4bf" stroke-width="1.2" marker-end="url(#arrow-gray)"/>
 
         <!-- echo_utils → SQLite -->
-        <line x1="116" y1="396" x2="134" y2="464" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
+        <line x1="116" y1="472" x2="134" y2="540" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
 
         <!-- echo_utils → Qdrant -->
-        <line x1="196" y1="380" x2="328" y2="464" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
+        <line x1="196" y1="456" x2="328" y2="540" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
 
         <!-- Admin → Qdrant -->
-        <line x1="737" y1="330" x2="408" y2="464" stroke="#dc2626" stroke-width="0.8" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
-        <text x="560" y="400" fill="#7f1d1d" font-size="8" font-family="monospace">TTL Purge</text>
+        <line x1="737" y1="406" x2="408" y2="540" stroke="#dc2626" stroke-width="0.8" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
+        <text x="560" y="476" fill="#7f1d1d" font-size="8" font-family="monospace">TTL Purge</text>
 
         <!-- Admin → SQLite -->
-        <line x1="737" y1="330" x2="134" y2="464" stroke="#dc2626" stroke-width="0.8" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
-        <text x="370" y="420" fill="#7f1d1d" font-size="8" font-family="monospace">Vacuum</text>
+        <line x1="737" y1="406" x2="134" y2="540" stroke="#dc2626" stroke-width="0.8" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
+        <text x="370" y="496" fill="#7f1d1d" font-size="8" font-family="monospace">Vacuum</text>
 
         <!-- Embedding Worker -->
-        <line x1="196" y1="380" x2="660" y2="464" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
+        <line x1="196" y1="456" x2="660" y2="540" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
         
         <!-- Audio Workers -->
-        <line x1="196" y1="380" x2="795" y2="464" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
+        <line x1="196" y1="456" x2="795" y2="540" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
       </svg>
 
       <div class="svg-legend">
@@ -598,10 +604,10 @@ flowchart TB
 
   subgraph SANDBOX ["🛠️ ZONE 4 : ARSENAL ISOLÉ (Sans accès entrant)"]
     direction LR
-    BA["🌐 Browser Agent<br/>[:3001]"]
-    PW["🚀 Python Worker<br/>[:3002]"]
+    BA["🌐 Browser Agent<br/>[:5002]"]
+    PW["🚀 Python Worker<br/>[:5000]"]
     SNG["🔍 SearxNG Proxy<br/>[:8080]"]
-    DL["⬇️ Download Broker<br/>[:3003]"]
+    DL["⬇️ Download Broker<br/>[Daemon]"]
     AUD["🎙️ Audio Workers<br/>[:7995, :7996]"]
   end
 
@@ -643,7 +649,7 @@ flowchart TB
   class U,BW,OWUI,AUTH,AM,DOCKER node
   class SQL,QD,FS,EMB db
   class F,P core
-  class BA,PW,SNG,AUD tool
+  class BA,PW,SNG,AUD,DL tool
       </div>
     </div>
 

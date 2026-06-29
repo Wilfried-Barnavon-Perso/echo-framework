@@ -74,7 +74,7 @@ flowchart LR
   CODEX -->|"Si > 256 Ko"| EXTR["🔍 Extraction Transmodale<br/>(API ou Lecture Locale)"]
   AN -->|"Multimédia > 256 Ko"| EXTR
   
-  EXTR -->|"Texte unifié"| RAG["🧱 Mémoire Vectorisée de Session & Map-Reduce<br/>(Qdrant echo_session_rag)"]
+  EXTR -->|"Texte unifié"| RAG["🧱 Mémoire Vectorisée de Session & Synthèse Guidée par RAG (O(1))<br/>(Qdrant echo_session_rag)"]
   AN -->|"Déjà dans le Vault<br/>(file_id détecté)"| VAULT["📂 Référence Vault"]
 
   OWUI -->|"Images inline<br/>(drag/paste)"| INLINE["🖼️ Extraction Ordonnée<br/>(texte + images entrelacés)"]
@@ -224,7 +224,7 @@ timezone:        "Europe/Paris"
     </p>
     <ol>
       <li>
-        <strong>Formatage direct :</strong> Les messages de la fenêtre sont formatés en texte brut (ROLE: Content).
+        <strong>Formatage direct et Filtre Anti-Base64 :</strong> Les messages de la fenêtre sont formatés en texte brut. Le filtre assure une extraction textuelle stricte des messages multipart, bloquant spécifiquement l'ingestion accidentelle de payloads Base64 (images) vers la base vectorielle afin de préserver l'intégrité et l'espace mémoire.
       </li>
       <li>
         <strong>Injection Asynchrone :</strong> Le texte formaté est transmis directement à la méthode <code>index_text_in_ephemeral_rag</code> (avec l'identifiant réservé <code>SESSION_RAG_CONVERSATION_SOURCE_ID</code>).

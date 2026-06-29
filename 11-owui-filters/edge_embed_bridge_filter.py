@@ -30,7 +30,7 @@ class Filter:
             description="Activer le pont Edge Embedding (nécessite BunkerWeb ou un proxy WSS configuré)"
         )
         WAIT_FOR_EDGE_EMBEDDING: bool = Field(
-            default=False,
+            default=True,
             description="Bloque le flux jusqu'à l'initialisation du Edge Embedding."
         )
         EDGE_EMBEDDING_TIMEOUT: int = Field(

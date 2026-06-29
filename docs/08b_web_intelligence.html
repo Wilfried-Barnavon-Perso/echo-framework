@@ -48,7 +48,8 @@
 
     <p>
       La navigation n'est plus manuelle : elle est déléguée à un agent autonome via <code>delegate_web_browsing</code>.
-      Cet agent opère selon une boucle OODA et interagit avec la page via une API structurée en 4 piliers :
+      <strong>Cet agent opère de manière strictement isolée dans une boucle fermée : il n'a ni l'autorisation ni la capacité technique d'invoquer d'autres sous-agents.</strong>
+      Il fonctionne selon sa propre boucle OODA (Observe, Orient, Decide, Act) et interagit avec la page via une API structurée en 4 piliers :
     </p>
 
     <ul>
@@ -70,6 +71,25 @@
       <h4>Vision-On-Demand et Mode Lidar</h4>
       <p>
         Pour limiter l'explosion du contexte, la vision multimodale n'est plus systématique. L'agent utilise le <strong>Vision-On-Demand</strong> : il doit explicitement demander une capture d'écran s'il est bloqué (ex: bouton sans texte). Il dispose également d'un mode hybride <strong>Lidar/Vision</strong> générant une grille de coordonnées (<code>VISION_GRID_STEP</code>, défaut 100px) pour cibler spatialement les éléments récalcitrants.
+      </p>
+    </div>
+
+    
+    <div class="alert warning">
+      <h4>🚨 Restriction de Recherche Strictement Codée</h4>
+      <p>
+        Bien que l'outil de recherche <code>search_web</code> accepte techniquement l'argument moteur <code>google</code> via SearXNG, le <strong>Navigateur Autonome</strong> (Browser Agent) et l'<strong>Agent de Recherche Profonde</strong> ont formellement l'interdiction de l'utiliser. Les règles 5 et 8 de leurs System Prompts internes proscrivent l'usage des moteurs de recherche généralistes. Le navigateur est strictement restreint à l'extraction sur URL absolue précise. Toute recherche doit obligatoirement passer par les outils dédiés (<code>search_web</code>, <code>search_instant_answer</code>).
+      </p>
+    </div>
+
+    
+    <div class="tech-spec">
+      <h4>⚙️ La Descente Cognitive (Superoutils)</h4>
+      <p>
+        L'ancienne méthode de distillation monolithique a été supprimée au profit de la <strong>Descente Cognitive</strong>. 
+        Le schéma injecte dynamiquement deux "superoutils" dans le contexte de l'Agent Navigateur : 
+        <code>action_analyze_page</code> (qui exploite le Streaming Sémantique natif d'ECHO pour lire le DOM en temps réel) et 
+        <code>action_archive_page</code> (qui procède à un archivage asynchrone RAG). L'agent devient totalement autonome dans son traitement.
       </p>
     </div>
 
@@ -186,7 +206,7 @@
     <div class="note-box">
       <h4>Distillation via <code>call_cascade()</code> centralisé</h4>
       <p>
-        L'action <code>distill_page</code> utilise <code>EchoGeminiClient.call_cascade()</code>
+        L'action <code>action_archive_page</code> utilise <code>EchoGeminiClient.call_cascade()</code>
         avec <code>MODEL_FLASH</code> clampé par la politique Pipe.
         La propagation du <code>user_id</code> vers <code>clamp_model</code> garantit que le fallback
         SQLite <code>echo_settings</code> est lu correctement.

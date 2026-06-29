@@ -605,6 +605,48 @@ def run_semantic_pruning():
                                     shutil.rmtree(os.path.join(user_chats_dir, cdir))
                                     orphans += 1
             
+            # --- A.bis Purge des Fichiers Physiques par RefCounting (Option B) ---
+            if os.path.exists(UPLOADS_DIR):
+                # 1. Nettoyage des liens cassés dans /upload
+                for upload_file in os.listdir(UPLOADS_DIR):
+                    path = os.path.join(UPLOADS_DIR, upload_file)
+                    if os.path.islink(path) and not os.path.exists(path):
+                        os.remove(path)
+                        orphans += 1
+                        
+            # 2. RefCounting : Suppression des fichiers orphelins absolus
+            for folder in valid_ids:
+                user_global_files_dir = os.path.join(ECHO_USERS_ROOT, folder, "files")
+                if not os.path.exists(user_global_files_dir): continue
+                
+                active_links = set()
+                # 2.a Recenser les liens dans les chats
+                user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
+                if os.path.exists(user_chats_dir):
+                    for cdir in os.listdir(user_chats_dir):
+                        chat_files_dir = os.path.join(user_chats_dir, cdir, "files")
+                        if os.path.exists(chat_files_dir):
+                            for f in os.listdir(chat_files_dir):
+                                link_path = os.path.join(chat_files_dir, f)
+                                if os.path.islink(link_path):
+                                    active_links.add(os.path.realpath(link_path))
+                
+                # 2.b Recenser les liens dans /upload
+                if os.path.exists(UPLOADS_DIR):
+                    for upload_file in os.listdir(UPLOADS_DIR):
+                        path = os.path.join(UPLOADS_DIR, upload_file)
+                        if os.path.islink(path):
+                            target = os.path.realpath(path)
+                            if target.startswith(user_global_files_dir):
+                                active_links.add(target)
+                            
+                # 2.c Suppression des fichiers physiques n'ayant plus AUCUN lien
+                for phys_file in os.listdir(user_global_files_dir):
+                    phys_path = os.path.realpath(os.path.join(user_global_files_dir, phys_file))
+                    if phys_path not in active_links:
+                        os.remove(phys_path)
+                        orphans += 1
+            
             # --- B. Purge Temporelle des Souvenirs & Garbage Collection (Qdrant) ---
             if HAS_HTTPX and valid_ids:
                 try:

@@ -1,8 +1,9 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.24
-description: 5.24: Correction sécurité DELEGATE_AGENT_BLACKLIST (identifiants RAG et jauge de contexte).
+version: 5.25
+description: 5.25: Suppression des constantes Map-Reduce obsolètes (ECHO_MR_*).
+             5.24: Correction sécurité DELEGATE_AGENT_BLACKLIST (identifiants RAG et jauge de contexte).
              5.23: Ajout de SESSION_RAG_CONVERSATION_SOURCE_ID pour le filtre d'historique.
              5.22: Ajout des seuils de troncature du contexte (CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, CHARS_PER_TOKEN).
              5.21: Ajout de PENDING_INGESTION pour le Data Broker (Auto-Ingestion Playwright).
@@ -75,7 +76,7 @@ ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
 ECHO_SESSION_DOMAINS = ["codex", "files", "db"]
-ECHO_GLOBAL_DOMAINS = ["skills"]
+ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats"]
 
 # Identité Réseau (Antigravity 2.1)
 ECHO_USER_AGENT             = "antigravity/2.1.0"
@@ -405,10 +406,6 @@ MAX_TOKENS_DEFAULT = 65535  # Limite universelle — tous modèles, toutes APIs 
 MAX_DIRECT_TEXT_INJECT_SIZE   = 32768    # 32 Ko : Plafond d'injection directe pour le texte
 MAX_DIRECT_MMEDIA_INJECT_SIZE = 1048576  # 1 Mo  : Plafond d'injection directe base64 multimédia
 ECHO_SESSION_RAG_CHUNK_SIZE   = 1600     # ~400 tokens bge-m3 : Seuil de densité sémantique pour le RAG
-ECHO_MR_CHUNK_SIZE            = 182858   # 178 Ko : Taille d'un chunk Map-Reduce texte
-ECHO_MR_OVERLAP_SIZE          = 1024     # 1 Ko   : Recouvrement (overlap) entre chunks
-ECHO_MR_MAX_TOKENS            = 1600     # Limite de sortie (tokens) pour les distillations du Map-Reduce
-ECHO_MR_SUMMARY_MAX_WORDS     = 400      # Limite de taille en mots pour les résumés générés ET pour le bypass (Fast-Path)
 
 # ----------------------------
 
@@ -682,3 +679,19 @@ def get_gemini_mime(file_path: str) -> tuple[str, bool]:
 
     # 6. Le Rejet et Fallback Sécuritaire (Binaires purs)
     return "application/octet-stream", False
+
+# ==============================================================================
+# DIRECTIVES DE DISTILLATION SENSORIELLE (UNIFIÉES)
+# ==============================================================================
+PROMPT_SENSORY_DISTILLATION = (
+    "Le Modèle DOIT générer un rapport analytique ultra-précis de la source fournie ({filename}). "
+    "Ce rapport constitue l'unique contexte disponible pour le Modèle Principal.\n\n"
+    "<directives_synchronisation>\n"
+    "1. CHRONOLOGIE : Horodatage strict ([HH:MM:SS - HH:MM:SS]) requis pour chaque segment.\n"
+    "2. SYNCHRONISATION MULTIMODALE : Croisement et alignement simultanés obligatoires pour chaque segment :\n"
+    "   - Canal Visuel : Actions, éléments notables, scènes.\n"
+    "   - Canal Auditif : Bruitages, ambiance, inflexions vocales.\n"
+    "   - Canal Textuel : Transcription verbatim des dialogues et textes affichés.\n"
+    "3. RIGUEUR : Aucune supposition ou interprétation. Description strictement factuelle et exhaustive.\n"
+    "</directives_synchronisation>"
+)

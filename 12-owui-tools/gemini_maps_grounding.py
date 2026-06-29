@@ -1,8 +1,9 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 13.3
-description: 13.3: Ajout argument optionnel print_map et lecture de _echo_suppress_map_ui pour blocage du rendu UI.
+version: 13.4
+description: 13.4: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans generationConfig.
+             13.3: Ajout argument optionnel print_map et lecture de _echo_suppress_map_ui pour blocage du rendu UI.
              13.2: Fix commentaires : MODEL_LITE est le plancher de la cascade (pas de fallback
              descendant possible). Aucune cascade automatique vers un modèle inférieur.
 """
@@ -19,7 +20,7 @@ from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_ui import EchoUI
 from echo_constants import (
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    THINKING_LEVEL_TOOLS
+    THINKING_LEVEL_TOOLS, TEMP_DEFAULT, TOP_P_DEFAULT
 )
 
 
@@ -65,6 +66,8 @@ class Tools:
             # Grounding natif Google Maps — active l'outil googleMaps du modèle Gemini
             "tools": [{"googleMaps": {"enableWidget": True}}],
             "generationConfig": {
+                "temperature": TEMP_DEFAULT,
+                "topP": TOP_P_DEFAULT,
                 "thinkingConfig": {"thinkingLevel": THINKING_LEVEL_TOOLS}
             }
         }

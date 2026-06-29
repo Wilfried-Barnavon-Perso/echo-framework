@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 9.14 (Long-Polling & Watchdog)
+VERSION : 9.15 (Archivage Sémantique Zéro-RAM)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-06-25
+DATE MAJ : 2026-06-28
 
+CHANGELOG 9.15 :
+- FEAT: Levée de la bride `read_text` à 2 millions de caractères (~600k tokens) pour libérer la pleine puissance contextuelle de Gemini 3.x lors des RAG et sondages.
 CHANGELOG 9.14 :
 - FEAT: Remplacement du stockage RAM WebP par un streaming Live Long-Polling (`/screencast/latest`).
 - FEAT: Sérialisation des requêtes concurrentes via `asyncio.Lock` sur `BrowserSession`.
@@ -828,7 +830,7 @@ async def browser_action(request: Request):
                 elif target == "read_text":
                     content = await page.content()
                     text_content = await asyncio.to_thread(h2t.handle, content)
-                    result["content"] = text_content[:30000]
+                    result["content"] = text_content[:2000000]
                     result["url"] = page.url
 
                 elif target == "read_html":

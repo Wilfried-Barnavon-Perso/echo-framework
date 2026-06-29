@@ -1,10 +1,15 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.19
-description: 5.109.17: Suppression de la classe UserValves vide pour éviter le bug UI Open WebUI (Aucune vanne trouvée).
+version: 5.109.24
+description: 5.109.24: Correction 400 Bad Request (inlineData -> inline_data) et interception robuste des exceptions sondes.
+             5.109.17: Suppression de la classe UserValves vide pour éviter le bug UI Open WebUI (Aucune vanne trouvée).
              5.109.16: Transformation de show_image_to_user en Sonde Visuelle pour les URL distantes (3 états: success, warning, error). 5.109.15: Délégation des URLs distantes au Markdown, WebPlayer limité au Base64 local. 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade(). 5.109.12: Injection __metadata__ et chat_id pour respect isolation fichiers par session. 5.109.13: Fix hallucination ID fichiers via docstring explicite et résolution résiliente. 5.109.14: Registre Unifié V2 — mark_processed → save_resource.
              5.109.18: Suppression de download_from_url (redondant, court-circuitage Registre V2).
+             5.109.20: Blocage de la lecture textuelle brute sur fichiers binaires (PDF) pour empêcher les boucles LLM infinies (silent crash).
+             5.109.21: Restauration de la lecture textuelle des binaires avec injection d'une directive anti-boucle (warning_msg) pour le LLM.
+             5.109.22: Fix critique OverflowError (orjson) lié à f.tell() retournant un entier de plus de 64-bits sur Windows.
+             5.109.23: Fix ALGORITHMIQUE MAJEUR : Le saut de lignes (start_line) était ignoré, provoquant une boucle infinie de relecture du début du fichier.
 """
 
 import os
@@ -14,6 +19,7 @@ import httpx
 import orjson as json
 import mimetypes
 import hashlib
+import asyncio
 from urllib.parse import urlparse, quote
 from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field
@@ -30,7 +36,8 @@ from echo_ui import EchoUI
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, MODEL_FLASH,
     MODEL_ROUTING, ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    TEMP_DEFAULT, TOP_P_DEFAULT, FILE_INGESTION_STATUS
+    TEMP_DEFAULT, TOP_P_DEFAULT, FILE_INGESTION_STATUS,
+    PROMPT_SENSORY_DISTILLATION
 )
 
 class Tools:
@@ -73,21 +80,39 @@ class Tools:
         if byte_offset > size: return wrap_tool_output(text=f"❌ Offset invalide.", status={"status": "error"})
 
         MAX_CHARS = self.valves.MAX_READ_SIZE_KB * 1024
-        await events.status(f"📂 Lecture : {os.path.basename(fpath)}...")
+        safe_name = os.path.basename(fpath)
+        if "_" in safe_name and len(safe_name.split("_")[0]) >= 32: safe_name = safe_name.split("_", 1)[1]
+        await events.status(f"📂 Lecture : {safe_name}...")
 
         try:
             new_offset = byte_offset
+            mime, _ = get_gemini_mime(fpath)
+            ext = os.path.splitext(fpath)[1].lower()
+            is_text = "text/" in mime or "application/json" in mime or "xml" in mime or ext in [".md", ".csv"] # Fallback
+
+            warning_msg = ""
+            if output_mode == "text" and not is_text:
+                warning_msg = f"\n\n[ATTENTION SYSTÈME ECHO]\nCe fichier est un binaire ({mime}). Si le texte extrait ci-dessus est illisible, incomplet ou ne correspond pas à vos attentes, NE BOUCLEZ PAS en rappelant l'outil avec d'autres lignes/offsets.\n=> Utilisez output_mode='base64' pour une injection multimodale native (PDF/Images/Media), ou interrogez le RAG via `semantic_probe`."
+
             if output_mode == "text":
                 lines = []
                 with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
                     f.seek(byte_offset)
-                    for i in range(end_line - start_line + 1):
-                        line = f.readline()
+                    
+                    # ALGORITHMIC FIX: Skip lines if byte_offset is 0 and start_line > 1
+                    if byte_offset == 0 and start_line > 1:
+                        for _ in range(start_line - 1):
+                            if not f.readline(MAX_CHARS): break
+                            
+                    # Start reading from the actual requested range
+                    for i in range(start_line, end_line + 1):
+                        line = f.readline(MAX_CHARS)
                         if not line: break
-                        lines.append(f"+{i} | {line.rstrip()}")
+                        clean_line = line.replace('\x00', '').rstrip()
+                        lines.append(f"+{i} | {clean_line}")
                         if len("\n".join(lines)) >= MAX_CHARS: break
                     new_offset = f.tell()
-                res_text = f"--- CONTENU TEXTE (Offset {byte_offset} à {new_offset}) ---\n\n" + "\n".join(lines)
+                res_text = f"--- CONTENU TEXTE (Lignes {start_line} à {end_line}, Offset {byte_offset} à {new_offset}) ---\n\n" + "\n".join(lines) + warning_msg
             elif output_mode == "base64":
                 with open(fpath, 'rb') as f:
                     f.seek(byte_offset)
@@ -103,7 +128,7 @@ class Tools:
                 res_text = f"--- CONTENU HEXADECIMAL ---\n\n{content}"
 
             await events.status("Lecture terminée.", done=True)
-            return wrap_tool_output(text=res_text, status={"status": "success", "new_offset": new_offset, "total_size": size})
+            return wrap_tool_output(text=res_text, status={"status": "success", "new_offset": str(new_offset), "total_size": str(size)})
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
 
@@ -128,17 +153,18 @@ class Tools:
         mime, supported = get_gemini_mime(fpath)
         if not supported: return wrap_tool_output(text=f"❌ Type {mime} non supporté.", status={"status": "error"})
 
-        await events.status(f"🤖 Analyse de {os.path.basename(fpath)}...")
+        safe_name = os.path.basename(fpath)
+        if "_" in safe_name and len(safe_name.split("_")[0]) >= 32: safe_name = safe_name.split("_", 1)[1]
+        await events.status(f"🤖 Analyse de {safe_name}...")
         try:
-            with open(fpath, 'rb') as f: b64 = base64.b64encode(f.read()).decode('utf-8')
             payload = {
-                "contents": [{"role": "user", "parts": [{"text": query}, {"inlineData": {"mimeType": mime, "data": b64}}]}],
+                "contents": [{"role": "user", "parts": [{"text": query}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}],
                 "generationConfig": {
                     "temperature": TEMP_DEFAULT,
                     "topP": TOP_P_DEFAULT,
                 }
             }
-            data, model_used, reason = await EchoGeminiClient.call_cascade(
+            cascade_task = asyncio.create_task(EchoGeminiClient.call_cascade(
                 target_model_key="MODEL_FLASH",
                 payload=payload, 
                 user_id=user_id,
@@ -148,13 +174,33 @@ class Tools:
                 max_retries=ECHO_API_MAX_RETRIES,
                 timeout=self.valves.PROBE_TIMEOUT,
                 include_thoughts=True,
-            )
+            ))
+
+            step_idx = 0
+            heartbeats = [f"🤖 Analyse sémantique de {safe_name}...", "🤖 Parcours des vecteurs sémantiques...", "🤖 Extraction des concepts complexes..."]
+            while not cascade_task.done():
+                await events.status(heartbeats[step_idx % len(heartbeats)], False)
+                step_idx += 1
+                try:
+                    await asyncio.wait_for(asyncio.shield(cascade_task), timeout=15.0)
+                except asyncio.TimeoutError:
+                    pass
+                except Exception:
+                    break
+
+            if cascade_task.exception():
+                return wrap_tool_output(text=f"❌ Erreur Sonde : {str(cascade_task.exception())}", status={"status": "error"})
+
+            data, model_used, reason = cascade_task.result()
+
             if not data:
                 return wrap_tool_output(text="❌ Cascade épuisée : aucun modèle disponible pour le sondage sémantique.", status={"status": "error"})
             target = data.get("response", {}) if "response" in data else data
             cand = target.get("candidates", [])[0]
             full_text = "".join([p["text"] for p in cand["content"]["parts"] if "text" in p])
             clean, thought = split_thought_process(full_text)
+            
+            await events.status("✅ Analyse terminée.", True)
             return wrap_cascade_output(
                 text=clean, model_requested="MODEL_FLASH", model_used=model_used,
                 status={"status": "success"},
@@ -172,7 +218,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Transmet un fichier multimédia au moteur Gemini."""
+        """Sonde sensorielle : Délègue l'analyse d'un média à un sous-agent pour obtenir un rapport textuel (Zéro-RAM)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
@@ -181,13 +227,57 @@ class Tools:
         mime, supported = get_gemini_mime(fpath)
         if not supported: return wrap_tool_output(text=f"❌ Type {mime} non supporté.", status={"status": "error"})
 
-        await events.status(f"👁️ Injection {os.path.basename(fpath)}...")
+        safe_name = os.path.basename(fpath)
+        if "_" in safe_name and len(safe_name.split("_")[0]) >= 32: safe_name = safe_name.split("_", 1)[1]
+        
+        prompt = PROMPT_SENSORY_DISTILLATION.format(filename=safe_name)
+        
         try:
-            with open(fpath, 'rb') as f: b64 = base64.b64encode(f.read()).decode('utf-8')
-            return wrap_tool_output(
-                text=f"✅ Média chargé dans le cortex.", 
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}]
+            }
+
+            cascade_task = asyncio.create_task(EchoGeminiClient.call_cascade(
+                target_model_key="MODEL_FLASH",
+                payload=payload,
+                user_id=uid,
+                metadata=__metadata__,
+                events=events,
+                include_thoughts=True
+            ))
+
+            step_idx = 0
+            heartbeats = [f"👁️ L'agent sensoriel visionne {safe_name}...", "👁️ Analyse visuelle en cours...", "👁️ Extraction des détails..."]
+            while not cascade_task.done():
+                await events.status(heartbeats[step_idx % len(heartbeats)], False)
+                step_idx += 1
+                try:
+                    await asyncio.wait_for(asyncio.shield(cascade_task), timeout=15.0)
+                except asyncio.TimeoutError:
+                    pass
+                except Exception:
+                    break
+
+            if cascade_task.exception():
+                return wrap_tool_output(text=f"❌ Erreur de l'agent sensoriel : {str(cascade_task.exception())}", status={"status": "error"})
+
+            data, model_used, reason = cascade_task.result()
+            
+            if not data: return wrap_tool_output(text="❌ Échec de l'agent sensoriel.", status={"status": "error"})
+
+            target = data.get("response", {}) if "response" in data else data
+            cand = target.get("candidates", [])[0]
+            full_text = "".join([p["text"] for p in cand["content"]["parts"] if "text" in p])
+            clean, thought = split_thought_process(full_text)
+
+            await events.status("✅ Distillation sensorielle terminée.", True)
+            
+            return wrap_cascade_output(
+                text=f"### 👁️ Rapport de Distillation ({safe_name})\n{clean}",
+                model_requested="MODEL_FLASH", model_used=model_used,
                 status={"status": "success"},
-                echo_tool_multiparts=[{"type": "media", "mime_type": mime, "data": b64}]
+                echo_tool_multiparts=[{"type": "thought", "content": thought}] if thought else [],
+                reason=reason
             )
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
@@ -281,13 +371,32 @@ class Tools:
         mime, _ = get_gemini_mime(fpath)
         return wrap_tool_output(text=f"📊 **{os.path.basename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}", status={"status": "success"})
 
-    async def calculate_file_hashes(self, file_ids: List[str], __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> str:
-        """Calcul d'empreintes (SHA-256) pour validation d'intégrité de l'Espace Personnel."""
+    async def calculate_file_hashes(
+        self, 
+        file_ids: List[str], 
+        algorithm: Literal["sha256", "md5", "sha1", "sha512", "blake2b", "crc32"] = "sha256",
+        __user__: dict = {}, 
+        __metadata__: dict = {}, 
+        __event_emitter__: Any = None
+    ) -> str:
+        """Calcul d'empreintes numériques (intégrité) pour l'Espace Personnel.
+        :param file_ids: Liste des identifiants stricts de fichiers (Registre).
+        :param algorithm: Algorithme de hachage à utiliser.
+        """
+        import zlib
         uid = __user__.get("id", "anonymous")
         res = []
         for fid in file_ids:
             p = resolve_upload_file_path(uid, fid, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
             if p:
-                with open(p, 'rb') as f: h = hashlib.sha256(f.read()).hexdigest()
-                res.append(f"{os.path.basename(p)}: {h}")
+                if algorithm == "crc32":
+                    crc = 0
+                    with open(p, 'rb') as f:
+                        for chunk in iter(lambda: f.read(65536), b""): crc = zlib.crc32(chunk, crc)
+                    res.append(f"{os.path.basename(p)} ({algorithm.upper()}): {crc & 0xFFFFFFFF:08x}")
+                else:
+                    h = hashlib.new(algorithm)
+                    with open(p, 'rb') as f:
+                        for chunk in iter(lambda: f.read(65536), b""): h.update(chunk)
+                    res.append(f"{os.path.basename(p)} ({algorithm.upper()}): {h.hexdigest()}")
         return wrap_tool_output(text="\n".join(res), status={"status": "success"})

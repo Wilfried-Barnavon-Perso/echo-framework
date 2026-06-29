@@ -1,8 +1,9 @@
 """
 title: Resume in New Chat
 author: ECHO Framework
-version: 1.2
-description: 1.2: Nettoyage tokens (fichiers + balises proprioceptives) pour distillation optimisée.
+version: 1.3
+description: 1.3: Préservation des liens symboliques lors du clonage du Vault (compatibilité ingestion).
+             1.2: Nettoyage tokens (fichiers + balises proprioceptives) pour distillation optimisée.
              1.1: Migration complète du contexte saturé vers une nouvelle session distillée.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMSAxNnYuNWExLjUgMS41IDAgMCAxLTEuNSAxLjVoLTZMMTIgMjBsLTIuNS0yLjVoLTZBMS41IDEuNSAwIDAgMSAyIDE2LjVWNGExLjUgMS41IDAgMCAxIDEuNS0xLjVoMTVBMS41IDEuNSAwIDAgMSAyMCA0djciLz48cGF0aCBkPSJtMTggMjIgMy0zLTMtMyIvPjxwb2x5bGluZSBwb2ludHM9IjIxIDE5IDEzIDE5Ii8+PC9zdmc+
 """
@@ -192,7 +193,7 @@ class Action:
 
         if os.path.exists(old_vault_path):
             try:
-                shutil.copytree(old_vault_path, new_vault_path)
+                shutil.copytree(old_vault_path, new_vault_path, symlinks=True)
                 # Renommage récursif
                 for root, dirs, files in os.walk(new_vault_path, topdown=False):
                     for name in files:
