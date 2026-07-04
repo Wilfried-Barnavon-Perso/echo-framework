@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Architecture Edge Embedding Bridge d'ECHO v5 : inférence distante BAAI/bge-m3, WebGPU, WASM, WebSocket proxy et Fallback CPU.">
+  <meta name="description" content="Architecture Edge Embedding Bridge d'ECHO v5 : inférence distante microsoft/Harrier-OSS-v1-0.6B (GGUF), WebGPU, WASM, WebSocket proxy et Fallback CPU.">
   <title>ECHO v5 - 11. Inférence Distante (Edge Computing)</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -14,7 +14,7 @@
     <h1>11. Inférence Distante (Edge Computing)</h1>
 
     <p>
-      ECHO intègre un pont d'inférence distante (<strong>Edge Embedding Bridge</strong>) permettant de déporter l'exécution du modèle de vectorisation <code>BAAI/bge-m3</code> directement sur le matériel de l'utilisateur final. Ce système tire parti des capacités de la carte graphique du client (WebGPU) via un pont WebAssembly (WASM), allégeant significativement la charge CPU sur l'infrastructure hébergeant le framework.
+      ECHO intègre un pont d'inférence distante (<strong>Edge Embedding Bridge</strong>) permettant de déporter l'exécution du modèle de vectorisation <code>microsoft/Harrier-OSS-v1-0.6B (GGUF)</code> directement sur le matériel de l'utilisateur final. Ce système tire parti des capacités de la carte graphique du client (WebGPU) via un pont WebAssembly (WASM), allégeant significativement la charge CPU sur l'infrastructure hébergeant le framework.
     </p>
 
     <h2>Architecture du Pont WebGPU</h2>
@@ -25,7 +25,7 @@
 
     <h3>1. Injection du Payload (<code>edge_embed_bridge_filter.py</code>)</h3>
     <p>
-      Le filtre <code>edge_embed_bridge_filter.py</code> intercepte la construction de l'interface graphique. Il injecte un module JavaScript (<code>&lt;script type="module"&gt;</code>) directement dans la balise <code>&lt;body&gt;</code> de l'application. Ce script contient la logique de chargement de la bibliothèque <em>Transformers.js</em> et télécharge les poids du modèle <code>Xenova/bge-m3</code> de manière asynchrone dans le navigateur.
+      Le filtre <code>edge_embed_bridge_filter.py</code> intercepte la construction de l'interface graphique. Il injecte un module JavaScript (<code>&lt;script type="module"&gt;</code>) directement dans la balise <code>&lt;body&gt;</code> de l'application. Ce script contient la logique de chargement de la bibliothèque <em>Transformers.js</em> et télécharge les poids du modèle <code>Xenova/Harrier-OSS-v1-0.6B</code> de manière asynchrone dans le navigateur.
     </p>
 
     <h3>2. Connexion WebSocket (<code>/ws/edge-embed</code>)</h3>
@@ -35,7 +35,7 @@
 
     <h3>3. Boucle d'Attente Active</h3>
     <p>
-      Avant de libérer la requête HTTP initiale (et donc d'afficher la page), le filtre interroge le Worker (via l'API <code>/internal/edge-status</code>) pendant une durée maximale de <strong>3 secondes</strong>. Il attend que le statut du client passe à <code>ready</code> (le modèle est chargé en RAM GPU sur le navigateur). Dès que le client est prêt, l'interface graphique est affichée.
+      Avant de libérer la requête HTTP initiale, le filtre vérifie si la valve <code>WAIT_FOR_EDGE_EMBEDDING</code> est active. Si oui, il interroge le Worker (via l'API <code>/internal/edge-status</code>). Il exige un premier signe de vie dans une fenêtre stricte de <strong>3 secondes</strong> (faute de quoi l'attente est annulée). Si le client répond, le filtre bloque le flux et attend que le statut passe à <code>ready</code> (modèle chargé en RAM GPU), dans la limite de temps maximale définie par la valve <code>EDGE_EMBEDDING_TIMEOUT</code> (défaut 180s). Dès que le client est prêt, l'interface graphique est affichée.
     </p>
 
     <h2>Processus de Vectorisation</h2>
@@ -64,7 +64,7 @@
     <ul>
       <li><strong>Incompatibilité matérielle :</strong> Le client envoie un statut <code>incompatible</code> via le WebSocket s'il ne peut initialiser le contexte WebGPU/WASM.</li>
       <li><strong>Déconnexion :</strong> Le client a fermé l'onglet ou la connexion WebSocket est perdue.</li>
-      <li><strong>Timeout Strict :</strong> Si le navigateur met plus de <strong>15 secondes</strong> à retourner les vecteurs après une requête d'inférence, le Worker annule l'attente asynchrone et bascule instantanément sur l'exécution locale du modèle (via PyTorch) sur le CPU du serveur hôte.</li>
+      <li><strong>Timeout Strict :</strong> Si le navigateur met plus de <strong>15 secondes</strong> à retourner les vecteurs après une requête d'inférence, le Worker annule l'attente asynchrone et bascule instantanément sur l'exécution locale du modèle (via Llama.cpp) sur le CPU du serveur hôte.</li>
     </ul>
 
     <div class="transition-text">
@@ -74,7 +74,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.188.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

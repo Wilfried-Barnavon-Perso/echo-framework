@@ -36,6 +36,7 @@ from echo_constants import (
     TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
     THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
     PLAN_STATUS, PLAN_TASK_STATUS, PLAN_EXECUTABLE_STATUSES,
+    PLANNER_MODEL_BUILD, PLANNER_MODEL_UPDATE,
 )
 
 
@@ -44,7 +45,7 @@ from echo_constants import (
 # ==============================================================================
 
 SYSTEM_PROMPT_BUILD = """<persona>
-Le Modèle est un architecte expert en planification stratégique.
+Le Modèle est un architecte expert en planification stratégique et tactique.
 </persona>
 
 <mission>
@@ -63,7 +64,8 @@ Le Modèle doit rédiger un plan d'action stratégique structuré en Markdown, f
 </available_tools>
 
 <output_format>
-Le Modèle doit retourner EXACTEMENT le frontmatter YAML suivi du plan, selon l'exemple suivant.
+Le Modèle DOIT retourner EXACTEMENT le frontmatter YAML suivi du plan, selon l'exemple suivant.
+Le Modèle a l'INTERDICTION d'ajouter du texte conversationnel en dehors du bloc Markdown pur. Toute information supplémentaire DOIT être intégrée au sein du plan (via des sections `##`).
 <example>
 ---
 plan_id: {plan_id}
@@ -86,7 +88,7 @@ status: draft
 </output_format>"""
 
 SYSTEM_PROMPT_UPDATE = """<persona>
-Le Modèle est un architecte expert en planification stratégique.
+Le Modèle est un architecte expert en planification stratégique et tactique.
 </persona>
 
 <mission>
@@ -101,12 +103,22 @@ Le Modèle doit modifier le plan existant selon les instructions fournies, sans 
 </rules>
 
 <output_format>
-Le Modèle DOIT retourner le plan COMPLET modifié (incluant le frontmatter YAML et ses délimiteurs ---).
-Le Modèle a l'INTERDICTION d'ajouter du texte ou des commentaires en dehors du plan Markdown.
+Le Modèle DOIT retourner UNIQUEMENT le bloc Markdown brut du plan modifié (incluant le frontmatter YAML). 
+Aucun préambule ni phrase d'introduction conversationnelle n'est toléré en dehors du Markdown. Les ajouts d'informations (comme un compte-rendu final) DOIVENT être insérés directement À L'INTÉRIEUR du plan en créant une nouvelle section appropriée. La réponse entière doit impérativement commencer par `---`.
 </output_format>"""
 
 
 class Tools:
+    """
+    OUTILS DE PLANIFICATION STRATEGIQUE ET TACTIQUE (ECHO PLANNER)
+    Permet a l'Orchestrateur de construire, consulter et maintenir un plan d'action formel.
+    
+    DIRECTIVE ORCHESTRATEUR (OBLIGATION DE SUIVI ET VALIDATION) :
+    1. Validation : L'outil build_plan sauvegarde nativement le plan dans le Codex. Apres creation, l'Orchestrateur DOIT presenter le plan a l'Utilisateur, specifier le nom sous lequel il est consultable dans le Codex, et obtenir son accord explicite avant d'entamer les taches.
+    2. Execution Sequentielle : L'Orchestrateur DOIT executer les phases du plan chronologiquement (telles que decrites dans la section Plan d'action du Markdown genere).
+    3. Suivi Tactique : L'Orchestrateur a l'OBLIGATION STRICTE de maintenir le plan a jour. A chaque etape technique franchie (succes ou echec), il DOIT invoquer l'outil update_plan pour pointer les taches (ex: [x] ou [!]) AVANT d'entreprendre l'etape suivante.
+    4. Resume d'Action : Une fois le plan entierement execute, le Modele DOIT ajouter a la fin du plan (via update_plan) le compte-rendu final de mise en oeuvre.
+    """
     class Valves(BaseModel):
         PLANNER_TIMEOUT: int = Field(
             default=180,
@@ -201,17 +213,19 @@ class Tools:
         self,
         goal: str,
         context: str,
-        planner_model: Literal["MODEL_PRO", "MODEL_FLASH", "MODEL_LITE"] = "MODEL_PRO",
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
         __tools__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
     ) -> dict:
-        """Création/Mise à jour d'un plan d'action avec organisation de la liste des tâches. Agent PLANNER dédié.
+        """
+        Creation d'un plan d'action avec organisation de la liste des taches.
+        ATTENTION ORCHESTRATEUR : L'outil sauvegarde AUTOMATIQUEMENT le plan dans le Codex (Git). Ne tentez pas de le sauvegarder vous-meme.
+        Une fois execute, le Modele DOIT presenter les grandes lignes a l'Utilisateur (en specifiant le nom du fichier Codex) pour validation avant de demarrer l'execution.
+        
         :param goal: Objectif final mesurable.
-        :param context: Contraintes et périmètre.
-        :param planner_model: (Optionnel) Enum des modèles (echo_constants).
+        :param context: Contraintes et perimetre.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -223,7 +237,7 @@ class Tools:
         await events.status("🗂️ Préparation du plan stratégique...")
 
         # Génération des identifiants
-        plan_id = str(int(time.time()))
+        plan_id = f"plan-{int(time.time())}"
         slug = self._slugify(goal)
         filename = f"{plan_id}_{slug}.md"
         iso_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
@@ -262,7 +276,7 @@ class Tools:
 
         # Appel cascade
         res_json, model_key_used, reason = await EchoGeminiClient.call_cascade(
-            target_model_key=planner_model,
+            target_model_key=PLANNER_MODEL_BUILD,
             payload=payload,
             user_id=user_id,
             metadata=__metadata__,
@@ -304,7 +318,7 @@ class Tools:
                  f"**Modèle :** {model_key_used}\n"
                  f"**Fichier :** `{filename}`\n\n"
                  f"---\n\n{plan_content}",
-            model_requested=planner_model,
+            model_requested=PLANNER_MODEL_BUILD,
             model_used=model_key_used,
             reason=reason
         )
@@ -317,7 +331,10 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
     ) -> dict:
-        """Lecture du contenu complet d'un plan stratégique existant. (plan_id)."""
+        """
+        Lecture du contenu complet d'un plan stratégique existant.
+        :param plan_id: Identifiant unique du plan (obtenu lors de la creation ou via query_registry).
+        """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
@@ -338,15 +355,16 @@ class Tools:
         self,
         plan_id: str,
         instructions: str,
-        planner_model: Literal["MODEL_PRO", "MODEL_FLASH", "MODEL_LITE"] = "MODEL_FLASH",
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
     ) -> dict:
-        """Modification d'un plan existant selon des instructions en langage naturel via l'Agent PLANNER dédié.
-        :param plan_id: Identifiant strict Registre.
-        :param instructions: Modifications attendues.
+        """
+        Outil tactique pour amender un plan OU mettre a jour l'etat d'avancement des taches.
+        
+        :param plan_id: Identifiant unique du plan (obtenu lors de la creation ou via query_registry).
+        :param instructions: Ordres precis (ex: "Coche la tache 1.1 comme terminee", "Ajoute un resume de mise en oeuvre a la fin").
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -383,7 +401,7 @@ class Tools:
 
         # 3. Appel cascade
         res_json, model_key_used, reason = await EchoGeminiClient.call_cascade(
-            target_model_key=planner_model,
+            target_model_key=PLANNER_MODEL_UPDATE,
             payload=payload,
             user_id=user_id,
             metadata=__metadata__,
@@ -422,7 +440,7 @@ class Tools:
                  f"**Modèle :** {model_key_used}\n"
                  f"**Statut :** {new_status or '(inchangé)'}\n\n"
                  f"---\n\n{new_content}",
-            model_requested=planner_model,
+            model_requested=PLANNER_MODEL_UPDATE,
             model_used=model_key_used,
             reason=reason
         )

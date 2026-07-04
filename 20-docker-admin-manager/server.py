@@ -2,7 +2,9 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.104 (Architecture Méta-Artéfacts & Qdrant)
+VERSION : 5.105 (Ablation RefCounting & Purge Fichiers)
+--- CHANGELOG 5.105 ---
+- Architecture : Ablation totale de la purge temporelle des fichiers et du RefCounting (A.bis) devenu dangereux avec MarkItDown (fichiers convertis .md vus comme orphelins). Le nettoyage est désormais exclusivement assuré par la purge stricte des chats/utilisateurs (avec synchronisation instantanée Qdrant).
 --- CHANGELOG 5.104 ---
 - Correctif : Propagation du artifact_name lors du clustering (Atrophie) pour maintenir la synchronisation avec les filtres RAG.
 --- CHANGELOG 5.103 ---
@@ -245,7 +247,7 @@ DEFAULT_BACKUP_CONFIG = {
 
 DEFAULT_MAINT_CONFIG = {
     "cleanup_hour": "03:00", "last_run": "Never",
-    "retention": { "uploads_days": 1095, "vault_days": 1095 },
+    "retention": {},
     "memory_ttl": { "lvl1": 30, "lvl2": 60, "lvl3": 180, "lvl4": 365, "lvl5": 540 },
     "consolidation": {
         "enabled": True,
@@ -375,21 +377,7 @@ def get_dir_stats(path, filter_ext=None):
             except Exception: pass
     return {"count": t_count, "size": t_size, "size_fmt": human_size(t_size)}
 
-def prune_recursive(path: str, days: int, sanctuary_files: Optional[List[str]] = None):
-    if sanctuary_files is None: sanctuary_files = ["identity.db"]
-    if not os.path.exists(path): return 0
-    cutoff = time.time() - (days * 86400)
-    removed = 0
-    for root, dirs, files in os.walk(path):
-        if "codex" in dirs: dirs.remove("codex") # Empêche la traversée du dossier codex
-        for f in files:
-            if f in sanctuary_files: continue
-            fpath = os.path.join(root, f)
-            try:
-                if os.path.getmtime(fpath) < cutoff:
-                    os.remove(fpath); removed += 1
-            except Exception: pass
-    return removed
+
 
 def get_echo_version():
     try:
@@ -605,47 +593,7 @@ def run_semantic_pruning():
                                     shutil.rmtree(os.path.join(user_chats_dir, cdir))
                                     orphans += 1
             
-            # --- A.bis Purge des Fichiers Physiques par RefCounting (Option B) ---
-            if os.path.exists(UPLOADS_DIR):
-                # 1. Nettoyage des liens cassés dans /upload
-                for upload_file in os.listdir(UPLOADS_DIR):
-                    path = os.path.join(UPLOADS_DIR, upload_file)
-                    if os.path.islink(path) and not os.path.exists(path):
-                        os.remove(path)
-                        orphans += 1
-                        
-            # 2. RefCounting : Suppression des fichiers orphelins absolus
-            for folder in valid_ids:
-                user_global_files_dir = os.path.join(ECHO_USERS_ROOT, folder, "files")
-                if not os.path.exists(user_global_files_dir): continue
-                
-                active_links = set()
-                # 2.a Recenser les liens dans les chats
-                user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
-                if os.path.exists(user_chats_dir):
-                    for cdir in os.listdir(user_chats_dir):
-                        chat_files_dir = os.path.join(user_chats_dir, cdir, "files")
-                        if os.path.exists(chat_files_dir):
-                            for f in os.listdir(chat_files_dir):
-                                link_path = os.path.join(chat_files_dir, f)
-                                if os.path.islink(link_path):
-                                    active_links.add(os.path.realpath(link_path))
-                
-                # 2.b Recenser les liens dans /upload
-                if os.path.exists(UPLOADS_DIR):
-                    for upload_file in os.listdir(UPLOADS_DIR):
-                        path = os.path.join(UPLOADS_DIR, upload_file)
-                        if os.path.islink(path):
-                            target = os.path.realpath(path)
-                            if target.startswith(user_global_files_dir):
-                                active_links.add(target)
-                            
-                # 2.c Suppression des fichiers physiques n'ayant plus AUCUN lien
-                for phys_file in os.listdir(user_global_files_dir):
-                    phys_path = os.path.realpath(os.path.join(user_global_files_dir, phys_file))
-                    if phys_path not in active_links:
-                        os.remove(phys_path)
-                        orphans += 1
+
             
             # --- B. Purge Temporelle des Souvenirs & Garbage Collection (Qdrant) ---
             if HAS_HTTPX and valid_ids:
@@ -711,10 +659,7 @@ def run_semantic_pruning():
         report_str += " | Qdrant: Synchro (Chats/Users/Purge Temporelle) | Mémoire Vectorisée de Session Purgée"
     report.append(report_str)
 
-    # 2. Atrophie
-    rem_u = prune_recursive(UPLOADS_DIR, config["retention"]["uploads_days"])
-    rem_v = prune_recursive(ECHO_USERS_ROOT, config["retention"]["vault_days"])
-    report.append(f"Élagage Uploads: {rem_u} | Vault: {rem_v}")
+
 
     # 3. Vacuum
     vax = 0
@@ -1428,8 +1373,7 @@ def update_maint():
     if not session.get('logged_in'): return redirect(url_for('index'))
     c = load_maint_config()
     c["cleanup_hour"] = request.form.get("cleanup_hour", "03:00")
-    c["retention"]["uploads_days"] = int(request.form.get("ret_uploads", 1095))
-    c["retention"]["vault_days"] = int(request.form.get("ret_vault", 1095))
+
     
     if "memory_ttl" not in c: c["memory_ttl"] = {}
     c["memory_ttl"]["lvl1"] = int(request.form.get("ttl_lvl1", 30))
@@ -1900,7 +1844,7 @@ HTML_DASHBOARD = """
 
                     <div class="tab-pane fade" id="v-pills-maint" role="tabpanel">
                         <div class="card border-info mb-3"><div class="card-header text-info"><i class="bi bi-scissors"></i> Élagage & Cycle de Vie (Jours)</div><div class="card-body small">
-                            <form action="/settings/maintenance" method="post" class="mb-3"><div class="row g-2 mb-2"><div class="col-6"><label class="x-small">Uploads</label><input type="number" name="ret_uploads" class="form-control form-control-sm" value="{{maint.retention.uploads_days}}" data-bs-toggle="tooltip" title="Durée de conservation (en jours) des fichiers temporaires uploadés."></div><div class="col-6"><label class="x-small">Vault</label><input type="number" name="ret_vault" class="form-control form-control-sm" value="{{maint.retention.vault_days}}" data-bs-toggle="tooltip" title="Durée de conservation (en jours) des fichiers persistants de l'Espace Personnel."></div></div><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Durée de conservation de la mémoire (TTL par niveau) :</label></div><div class="col text-center"><label class="x-small text-secondary mb-1">Trivial</label><input type="number" name="ttl_lvl1" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl1}}" title="Lv1 (Trivial)"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Mineur</label><input type="number" name="ttl_lvl2" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl2}}" title="Lv2"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Utile</label><input type="number" name="ttl_lvl3" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl3}}" title="Lv3"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Majeur</label><input type="number" name="ttl_lvl4" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl4}}" title="Lv4"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Axiome</label><input type="number" name="ttl_lvl5" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl5}}" title="Lv5 (Axiome/Critique)"></div></div><label class="x-small">Heure d'élagage automatique</label><input type="time" name="cleanup_hour" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Consolidation mémoire lvl1 → lvl2 :</label></div><div class="col-6"><label class="x-small text-secondary mb-1">Seuil (nb lvl1)</label><input type="number" name="consol_threshold" class="form-control form-control-sm text-center" value="{{maint.consolidation.trigger_threshold}}" title="Nb de souvenirs Triviaux par user avant consolidation" min="3" max="50"></div><div class="col-6"><label class="x-small text-secondary mb-1">Cluster min</label><input type="number" name="consol_min_cluster" class="form-control form-control-sm text-center" value="{{maint.consolidation.min_cluster_size}}" title="Nb minimum de souvenirs similaires pour fusionner" min="2" max="10"></div><div class="col-12 mt-1"><label class="x-small text-secondary mb-1">Seuil cosinus (0.0-1.0)</label><input type="number" name="consol_similarity" class="form-control form-control-sm text-center" value="{{maint.consolidation.similarity_threshold}}" title="Score cosinus minimal pour regrouper deux souvenirs dans un même cluster (0.75 = très similaires, 0.5 = assez proches)" min="0.4" max="0.99" step="0.05"></div></div><div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" name="purge_orphaned_chats" id="sw_purge_chats" {{ 'checked' if maint.purge_orphaned_chats }}><label class="form-check-label x-small" for="sw_purge_chats" data-bs-toggle="tooltip" title="Si activé, supprime les fichiers d'un chat dans l'Espace Personnel ECHO si le chat n'existe plus dans Open WebUI.">Purger les chats orphelins</label></div><div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="purge_orphaned_users" id="sw_purge_users" {{ 'checked' if maint.purge_orphaned_users }}><label class="form-check-label x-small" for="sw_purge_users" data-bs-toggle="tooltip" title="Si activé, détruit l'Espace Personnel complet (fichiers, bases, mémoires vectorielles) d'un utilisateur supprimé d'Open WebUI.">Purger les utilisateurs orphelins</label></div><button class="btn btn-sm btn-info w-100">Programmer le Cycle</button></form><hr><p class="m-0 mb-1">Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p><div class="d-flex gap-2"><form action="/action/pruning" method="post" onsubmit="showLoader('Élagage profond...')" class="flex-grow-1"><button class="btn btn-outline-info btn-sm w-100">Lancer l'Élagage</button></form><button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#historyLog"><i class="bi bi-journal-text"></i> Logs</button></div><form action="/action/consolidate" method="post" onsubmit="showLoader('Consolidation lvl1 → lvl2...')" class="mt-2"><button class="btn btn-outline-warning btn-sm w-100" title="Fusionne les souvenirs Triviaux similaires en souvenirs Mineurs (centroïde vectoriel).">🧬 Consolider Mémoires Lvl1</button></form><form action="/action/docker_prune" method="post" onsubmit="return confirm('Purger le cache de build Docker et le cache APT système ?') && (showLoader('Purge en cours...'), true)"><button class="btn btn-outline-danger btn-sm w-100 mt-1" title="Libère l'espace du build cache Docker (~4 Go) et du cache APT système.">🧹 Purge Cache Docker</button></form><div class="collapse mt-3" id="historyLog"><div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;"><h6 class="x-small text-uppercase text-muted border-bottom border-secondary pb-1">Historique 1 an</h6>{% for entry in history %}<div class="mb-2 pb-1 border-bottom border-secondary last-child-border-0"><span class="x-small text-info">{{ entry.timestamp }}</span><br><span style="font-size: 0.75rem;">{{ entry.report }}</span></div>{% endfor %}{% if not history %}<span class="x-small text-muted">Aucun log disponible.</span>{% endif %}</div></div>
+                            <form action="/settings/maintenance" method="post" class="mb-3"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Durée de conservation de la mémoire (TTL par niveau) :</label></div><div class="col text-center"><label class="x-small text-secondary mb-1">Trivial</label><input type="number" name="ttl_lvl1" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl1}}" title="Lv1 (Trivial)"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Mineur</label><input type="number" name="ttl_lvl2" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl2}}" title="Lv2"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Utile</label><input type="number" name="ttl_lvl3" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl3}}" title="Lv3"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Majeur</label><input type="number" name="ttl_lvl4" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl4}}" title="Lv4"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Axiome</label><input type="number" name="ttl_lvl5" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl5}}" title="Lv5 (Axiome/Critique)"></div></div><label class="x-small">Heure d'élagage automatique</label><input type="time" name="cleanup_hour" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Consolidation mémoire lvl1 → lvl2 :</label></div><div class="col-6"><label class="x-small text-secondary mb-1">Seuil (nb lvl1)</label><input type="number" name="consol_threshold" class="form-control form-control-sm text-center" value="{{maint.consolidation.trigger_threshold}}" title="Nb de souvenirs Triviaux par user avant consolidation" min="3" max="50"></div><div class="col-6"><label class="x-small text-secondary mb-1">Cluster min</label><input type="number" name="consol_min_cluster" class="form-control form-control-sm text-center" value="{{maint.consolidation.min_cluster_size}}" title="Nb minimum de souvenirs similaires pour fusionner" min="2" max="10"></div><div class="col-12 mt-1"><label class="x-small text-secondary mb-1">Seuil cosinus (0.0-1.0)</label><input type="number" name="consol_similarity" class="form-control form-control-sm text-center" value="{{maint.consolidation.similarity_threshold}}" title="Score cosinus minimal pour regrouper deux souvenirs dans un même cluster (0.75 = très similaires, 0.5 = assez proches)" min="0.4" max="0.99" step="0.05"></div></div><div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" name="purge_orphaned_chats" id="sw_purge_chats" {{ 'checked' if maint.purge_orphaned_chats }}><label class="form-check-label x-small" for="sw_purge_chats" data-bs-toggle="tooltip" title="Si activé, supprime les fichiers d'un chat dans l'Espace Personnel ECHO si le chat n'existe plus dans Open WebUI.">Purger les chats orphelins</label></div><div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="purge_orphaned_users" id="sw_purge_users" {{ 'checked' if maint.purge_orphaned_users }}><label class="form-check-label x-small" for="sw_purge_users" data-bs-toggle="tooltip" title="Si activé, détruit l'Espace Personnel complet (fichiers, bases, mémoires vectorielles) d'un utilisateur supprimé d'Open WebUI.">Purger les utilisateurs orphelins</label></div><button class="btn btn-sm btn-info w-100">Programmer le Cycle</button></form><hr><p class="m-0 mb-1">Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p><div class="d-flex gap-2"><form action="/action/pruning" method="post" onsubmit="showLoader('Élagage profond...')" class="flex-grow-1"><button class="btn btn-outline-info btn-sm w-100">Lancer l'Élagage</button></form><button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#historyLog"><i class="bi bi-journal-text"></i> Logs</button></div><form action="/action/consolidate" method="post" onsubmit="showLoader('Consolidation lvl1 → lvl2...')" class="mt-2"><button class="btn btn-outline-warning btn-sm w-100" title="Fusionne les souvenirs Triviaux similaires en souvenirs Mineurs (centroïde vectoriel).">🧬 Consolider Mémoires Lvl1</button></form><form action="/action/docker_prune" method="post" onsubmit="return confirm('Purger le cache de build Docker et le cache APT système ?') && (showLoader('Purge en cours...'), true)"><button class="btn btn-outline-danger btn-sm w-100 mt-1" title="Libère l'espace du build cache Docker (~4 Go) et du cache APT système.">🧹 Purge Cache Docker</button></form><div class="collapse mt-3" id="historyLog"><div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;"><h6 class="x-small text-uppercase text-muted border-bottom border-secondary pb-1">Historique 1 an</h6>{% for entry in history %}<div class="mb-2 pb-1 border-bottom border-secondary last-child-border-0"><span class="x-small text-info">{{ entry.timestamp }}</span><br><span style="font-size: 0.75rem;">{{ entry.report }}</span></div>{% endfor %}{% if not history %}<span class="x-small text-muted">Aucun log disponible.</span>{% endif %}</div></div>
                         </div></div>
                     </div>
 

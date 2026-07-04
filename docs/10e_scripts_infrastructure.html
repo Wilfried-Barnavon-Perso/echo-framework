@@ -44,7 +44,7 @@
       Ce script PowerShell s'exécute avec des privilèges administrateur sur l'hôte Windows. Il orchestre le transfert physique des données en contournant les limitations réseau :
     </p>
     <ul>
-      <li><strong>Archivage :</strong> Compresse l'intégralité du dépôt courant (branche <code>dev</code>) en un fichier d'archive compact <code>echo-update.zip</code>.</li>
+      <li><strong>Archivage :</strong> Compresse l'intégralité du dépôt courant (branche <code>main</code>) en un fichier d'archive compact <code>echo-update.zip</code>.</li>
       <li><strong>Provisionnement VM :</strong> Allocation garantie de 8 Go de RAM dynamique (pour respecter les exigences système d'Ubuntu 24.04/26.04) et création d'une VM Hyper-V de Génération 2 sécurisée.</li>
       <li><strong>Injection VHDX (Disque Seed) :</strong> Monte localement le disque virtuel VHDX de la VM de destination via WMI.</li>
       <li><strong>Transfert de Fichiers :</strong> Copie l'archive ZIP et le script d'amorçage Linux (<code>sync-echo.sh</code>) directement dans le système de fichiers du disque virtuel, puis le démonte proprement.</li>
@@ -107,7 +107,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.188.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

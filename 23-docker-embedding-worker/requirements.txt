@@ -1,7 +1,8 @@
 fastapi
 uvicorn
 websockets
-transformers
+llama-cpp-python
+huggingface-hub
 pillow
 pydantic
 orjson

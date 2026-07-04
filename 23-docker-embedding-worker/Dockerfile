@@ -1,19 +1,17 @@
-FROM python:3.14-slim
+FROM python:3.11-slim
 
 LABEL maintainer="Wilfried BARNAVON"
-LABEL version="1.0"
-LABEL description="ECHO Custom Embedding Worker for SigLIP-2 (CPU Optimized)"
+LABEL version="2.0"
+LABEL description="ECHO Custom Embedding Worker for Harrier-OSS GGUF (CPU Optimized)"
 
 WORKDIR /app
 
-# Installation des dépendances système minimales
+# Installation des dépendances système minimales (inclus outils de compilation pour llama.cpp)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
+    build-essential \
+    cmake \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# PyTorch CPU-only (zéro dépendance CUDA — économise ~400 Mo)
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
 # Autres dépendances Python
 COPY requirements.txt .

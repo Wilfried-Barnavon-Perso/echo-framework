@@ -1,8 +1,9 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.17
-description: 2.17: Ajout start_date/end_date dans consult_session_context. Clarification SNR purge.
+version: 2.18
+description: 2.18: Alignement sur Harrier-OSS (EMBEDDING_DIM), tri chronologique inverse pour search_session_context, directives de mise à jour de faits via memory_id et notes SNR RAG éphémère vs méta-artéfacts.
+             2.17: Ajout start_date/end_date dans consult_session_context. Clarification SNR purge.
              2.16: Fix Gemini API 400 Bad Request sur l'enum vide de l'artifact_name.
              2.10: Migration complète vers la nomenclature Méta-Artéfacts et ajout du drapeau global_search.
              1.2: Ajout forget_memory. 1.3: Mémoire Vectorisée de Session. 1.4: Mise à jour version. 1.5: Reranking par importance (MEMORY_IMPORTANCE_WEIGHTS) dans recall_memories.
@@ -38,7 +39,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_constants import (
     MODEL_DISTILLATION, MODEL_EMBEDDING,
-    COLLECTION_META_ARTIFACTS, EMBEDDING_DIM_V2,
+    COLLECTION_META_ARTIFACTS, EMBEDDING_DIM,
     MEMORY_IMPORTANCE_WEIGHTS, MEMORY_IMPORTANCE_LABELS,
     ECHO_QDRANT_URL
 )
@@ -68,8 +69,8 @@ class Tools:
         try:
             resp = await client.get(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}")
             if resp.status_code == 404:
-                logger.info(f"[ECHO-MEMORY] 🏗️ Création collection {COLLECTION_META_ARTIFACTS} ({EMBEDDING_DIM_V2}d)...")
-                create_payload = {"vectors": {"size": EMBEDDING_DIM_V2, "distance": "Cosine"}}
+                logger.info(f"[ECHO-MEMORY] 🏗️ Création collection {COLLECTION_META_ARTIFACTS} ({EMBEDDING_DIM}d)...")
+                create_payload = {"vectors": {"size": EMBEDDING_DIM, "distance": "Cosine"}}
                 cr = await client.put(
                     f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}",
                     json=create_payload
@@ -126,6 +127,7 @@ class Tools:
             distill_prompt = (
                 "<instruction>\n"
                 "Le Modèle DOIT extraire un 'memory_id' technique court et 2-3 'tags' pour ce fait.\n"
+                "RÈGLE CRITIQUE : Pour METTRE À JOUR un fait existant, réutiliser scrupuleusement son memory_id. Pour AJOUTER un nouveau fait distinct, générer un memory_id unique.\n"
                 "</instruction>\n\n"
                 f"<fact>\n{fact}\n</fact>"
             )
@@ -182,6 +184,7 @@ class Tools:
     ) -> dict:
         """
         Recherche sémantique vectorielle dans les Méta-Artéfacts (PACP / PRAC).
+        [INFO SNR] Le Modèle DOIT distinguer : 1) RAG Éphémère (Session courante) = Flux chronologique continu, mémoire de travail (infini). 2) Méta-Artéfacts = Faits persistants inter-sessions soumis au TTL.
         Utilise le concept pour extraire des faits pertinents. Pour une lecture globale ou temporelle, utiliser l'outil consult_* correspondant.
 
         :param query: Obligatoire. Le concept, l'idée ou le mot-clé à retrouver.
@@ -455,7 +458,7 @@ class Tools:
         :param limit: Optionnel. Nombre maximal de sources à lister. Défaut: 20.
         :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
         :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
-        :param global_search: Optionnel. Si True, liste les sources de TOUTES les sessions de l'utilisateur.
+        :param global_search: Optionnel. True, pour lister les sources de toutes les sessions de l'Utilisateur.
         """
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id") or not __metadata__:
@@ -602,12 +605,13 @@ class Tools:
         __event_emitter__: Optional[Any] = None
     ) -> dict:
         """
-        Recherche sémantique vectorielle dans la mémoire de travail de la session courante (RAG Éphémère).
+        Recherche sémantique vectorielle dans la mémoire de travail de la session courante.
+        [INFO SNR] Le Modèle DOIT distinguer : 1) RAG Éphémère (Session courante) = Flux chronologique continu, mémoire de travail (infini). 2) Méta-Artéfacts = Faits persistants inter-sessions soumis au TTL.
         Renvoie les extraits textuels complets correspondant au concept recherché.
 
         :param query: Obligatoire. Concept textuel ou mots-clés de la recherche sémantique.
         :param source_id: Optionnel. UUID de la source pour restreindre la recherche à un document ou une session spécifique.
-        :param global_search: Optionnel. Si True, étend la recherche à toutes les sessions actives. Défaut: False.
+        :param global_search: Optionnel. True pour étendre la recherche à toutes les sessions de l'Utilisateur. Défaut: False.
         :param limit: Optionnel. Nombre maximum de résultats. Défaut: 20.
         :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
         :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
@@ -658,6 +662,9 @@ class Tools:
                     return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"})
                 
                 results = resp.json().get("result", [])
+
+            # Tri chronologique inverse (le plus récent en premier)
+            results.sort(key=lambda x: x["payload"].get("timestamp", 0), reverse=True)
 
             if not results:
                 return wrap_tool_output(text="Aucune information trouvée dans cette source.", status={"status": "success", "results": []})

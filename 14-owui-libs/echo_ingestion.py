@@ -2,7 +2,7 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-Version: 1.2 (Correction 400 Bad Request, Fix OOM Texte, et Robustesse Smart Context Multimédia)
+Version: 1.3 (Correction 400 Bad Request, Fix OOM Texte, Alignement EMBEDDING_DIM et Robustesse Smart Context Multimédia)
 """
 
 import os
@@ -27,7 +27,7 @@ from echo_constants import (
     FILE_INGESTION_STATUS,
     MAX_DIRECT_TEXT_INJECT_SIZE, MAX_DIRECT_MMEDIA_INJECT_SIZE,
     CONVERTIBLE_OFFICE_EXTENSIONS, OOXML_IMAGE_EXTENSIONS, DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB,
-    ECHO_QDRANT_URL, COLLECTION_SESSION_RAG, EMBEDDING_DIM_V2,
+    ECHO_QDRANT_URL, COLLECTION_SESSION_RAG, EMBEDDING_DIM,
     ECHO_SESSION_RAG_CHUNK_SIZE, PROMPT_SENSORY_DISTILLATION
 )
 

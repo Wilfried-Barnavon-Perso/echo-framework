@@ -1,8 +1,9 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.8
-description: 8.8: Renforcement de la regex _prepare_zero_ram_content (hook inviolable).
+version: 8.9
+description: 8.9: Augmentation du timeout de l'embedding worker à 300s, intégration d'une graine unique (unique_seed) pour index_text_in_ephemeral_rag pour éviter les collisions UUID, et migration EMBEDDING_DIM.
+             8.8: Renforcement de la regex _prepare_zero_ram_content (hook inviolable).
              8.7: Fix majeur Streaming Zéro-RAM (blocage SQLite). Offload du streamer asynchrone via asyncio.to_thread pour éviter la famine de l'Event Loop.
              8.6: Log explicite de l'exception réseau dans docker logs pour EchoGeminiClient.call.
              8.5: Fix `call_cascade` : Interception explicite des exceptions `httpx.TimeoutException` et `asyncio.TimeoutError` pour afficher un statut clair "Allocated time elapsed (Timeout)" au lieu d'une erreur silencieuse `()`.
@@ -11,6 +12,7 @@ description: 8.8: Renforcement de la regex _prepare_zero_ram_content (hook invio
              8.2: Ajout de smart_truncate_history pour préserver l'intégrité des blocs d'outils Gemini.
              8.1: Ajout de estimate_token_size pour le calcul heuristique du poids cognitif.
              7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
+             7.8: Fix UUID collision dans index_text_in_ephemeral_rag (ajout du paramètre unique_seed).
              Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
              Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
              7.8: Fix mismatch client OAuth2 dans refresh_google_oauth_token().
@@ -784,7 +786,7 @@ class EchoGeminiClient:
         for attempt in range(max_retries + 1):
             try:
                 client = await _get_global_client()
-                resp = await client.post(f"{ECHO_EMBEDDING_URL}/embeddings", headers=headers, json=payload, timeout=60)
+                resp = await client.post(f"{ECHO_EMBEDDING_URL}/embeddings", headers=headers, json=payload, timeout=300.0)
                 
                 if resp.status_code == 200:
                     data = resp.json()
@@ -869,7 +871,8 @@ class EchoGeminiClient:
         __user__: dict,
         __metadata__: dict,
         max_chunk: Optional[int] = None,
-        timeout: int = 180
+        timeout: int = 180,
+        unique_seed: Optional[str] = None
     ) -> tuple:
         """
         Factorise le pipeline chunk → embed → upsert Qdrant pour la Mémoire Vectorisée de Session.
@@ -882,7 +885,7 @@ class EchoGeminiClient:
         0 points indique un échec total (embedding worker indisponible ou Qdrant KO).
         """
         import uuid as _uuid
-        from echo_constants import COLLECTION_SESSION_RAG, EMBEDDING_DIM_V2, ECHO_QDRANT_URL, ECHO_SESSION_RAG_CHUNK_SIZE
+        from echo_constants import COLLECTION_SESSION_RAG, EMBEDDING_DIM, ECHO_QDRANT_URL, ECHO_SESSION_RAG_CHUNK_SIZE
         qdrant_base = ECHO_QDRANT_URL
         
         if max_chunk is None:
@@ -934,7 +937,7 @@ class EchoGeminiClient:
                 if coll_check.status_code == 404:
                     cr = await client.put(
                         f"{qdrant_base}/collections/{COLLECTION_SESSION_RAG}",
-                        json={"vectors": {"size": EMBEDDING_DIM_V2, "distance": "Cosine"}}
+                        json={"vectors": {"size": EMBEDDING_DIM, "distance": "Cosine"}}
                     )
                     if cr.status_code not in (200, 201):
                         return 0, f"Échec création collection Qdrant : HTTP {cr.status_code}"
@@ -945,7 +948,8 @@ class EchoGeminiClient:
                         chunk, "document", __user__, __metadata__, title=source_id
                     )
                     if vector:
-                        point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{uid}_{chat_id}_{source_id}_{i}"))
+                        seed_str = f"{uid}_{chat_id}_{source_id}_{unique_seed}_{i}" if unique_seed else f"{uid}_{chat_id}_{source_id}_{i}"
+                        point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, seed_str))
                         points.append({
                             "id": point_id,
                             "vector": vector,

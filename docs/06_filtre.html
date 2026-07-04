@@ -251,7 +251,7 @@ timezone:        "Europe/Paris"
 
     <p>
       Ce filtre intercepte le corps de la page Open WebUI pour injecter dynamiquement le pont JavaScript WebGPU d'inférence distante (WASM).
-      Il gère également un mécanisme de blocage actif (maximum 3 secondes) garantissant que le client s'est connecté au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
+      Il gère également un mécanisme de blocage actif (conditionné par la valve <code>WAIT_FOR_EDGE_EMBEDDING</code>) avec une tolérance stricte de 3 secondes pour un signe de vie, et une limite globale définie par <code>EDGE_EMBEDDING_TIMEOUT</code>, garantissant que le client s'est connecté au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
     </p>
 
     <div class="transition-text">
@@ -261,7 +261,7 @@ timezone:        "Europe/Paris"
     </div>
 
     <footer>
-      ECHO Framework - Version 5.188.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

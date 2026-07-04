@@ -18,7 +18,7 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 - **Suture Bit-Perfect des Métadonnées Gemini :** Reconstruction de l'historique via SQLite (`message_shadows`, table conservée pour compatibilité production) pour une continuité absolue. Garantit une reprise de session identique au bit près via l'ID de message et le timestamp (Verrou de Version). Le suivi de la branche active et de l'état de la session est garanti par un calcul de hash cumulatif (Cumulative Hash) via `EchoStateManager`.
 - **Ajustement du niveau cognitif :** Routage dynamique intelligent (LITE -> FLASH -> PRO).
 - **Délégation Cognitive :** Utilisation de l'outil `new_cognitive_level` pour déléguer les tâches complexes au modèle PRO lors de la traversée de la "Vallée de la Mort Contextuelle" (saturation contextuelle > 50%).
-- **Orchestration Multi-Agents (`agent_orchestration_tool.py`) :** `consult_council` (Table Ronde Delphi, N experts agentiques avec outils, tours parallélisés) et `consult_supervised_workers` (boucle critique/correction récursive). Gestion des Skills via `forge_skill`/`list_skills`. Conservation des `thoughtSignatures` Gemini 3.x.
+- **Orchestration Multi-Agents (`agent_orchestration_tool.py`) :** `consult_council` (Table Ronde Delphi, N experts agentiques avec outils, tours parallélisés exigeant une dialectique structurée : Analyse/Dialectique/Réponse) et `consult_supervised_workers` (boucle critique/correction récursive). Gestion des Skills via `forge_skill`/`list_skills`. Conservation des `thoughtSignatures` Gemini 3.x.
 - **HTTP/2 Stealth Headers :** Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité (`get_stealth_headers`) pour simuler un navigateur réel.
 
 ### 2. La Conscience (`/opt/ECHO/owui-filters/`)
@@ -27,7 +27,7 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 - **Smart Context :** Injection de faits via des balises XML structurelles (`<smart_context>`) et utilisation de `source_id` natifs (au lieu de slugs) pour la Mémoire Vectorisée de Session. Le filtre intercepte désormais exhaustivement les fichiers globaux du Workspace pour garantir une ingestion totale.
 - **Conversation RAG Filter :** Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG par fenêtre glissante déterministe. Le filtre assure dorénavant l'extraction textuelle stricte des messages multipart pour bloquer l'ingestion accidentelle de payloads Base64 (images) vers la base vectorielle.
 - **Pipeline d'Ingestion Zéro-RAM :** Architecture asynchrone déportée (`echo_ingestion.py`) pour le traitement mémoire-efficient de masse (batch vector processing). Conversion native des documents Office en Markdown (MarkItDown) et traitement hybride transparent (Mémoire Vectorisée, Codex Git, Fallback SQLite).
-- **Edge Embedding Bridge :** Offload de l'inférence vectorielle (bge-m3) vers le navigateur client via WebGPU/WASM (WebSocket), réduisant drastiquement la charge CPU avec bascule automatique sur le backend Docker en cas d'inactivité.
+- **Edge Embedding Bridge :** Offload de l'inférence vectorielle (microsoft/Harrier-OSS-v1-0.6B) vers le navigateur client via WebGPU/WASM (WebSocket), réduisant drastiquement la charge CPU avec bascule automatique sur le backend Docker en cas d'inactivité.
 
 ### 3. Contexte Proprioceptif : `environnement_contexte` & `evenement_systeme`
 Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre `new_context_filter.py`.
@@ -36,12 +36,12 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 - **Règle d'Or :** Le modèle **DOIT** utiliser l'outil `query_registry` pour consulter le Registre Unifié V2 (Codex, Plans, Médias, URLs) et valider l'existence ou l'état d'une ressource avant toute manipulation.
 
 ### 4. L'Arsenal (`/opt/ECHO/owui-tools/`)
-- **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Cascade cognitive centralisée via `call_cascade()`, persistance Markdown dans le Vault, registre SQLite par chat, injection proprioceptive dans `registre_plan`.
+- **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Les instructions imposent à l'Orchestrateur le suivi tactique chronologique et la mise à jour obligatoire de l'état d'avancement via `update_plan` (modèle FLASH) après création via `build_plan` (modèle PRO). Cascade cognitive centralisée, persistance Markdown dans le Vault et registre SQLite.
 - **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites basés sur la nomenclature Méta-Artéfacts : `update_meta_artifact`, `search_meta_artifacts` (avec reranking pondéré et filtres temporels), `consult_meta_artifacts`, `delete_meta_artifact_item`, `save_session_context` et `search_session_context` (avec recherche globale inter-sessions et filtres temporels).
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes) via `universal_visual_generator.py` et `echo_visuals.py` (Pattern 'Data Island' pour isoler le JS).
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) pilotée par **boucle OODA autonome** via une **API à 4 piliers** (A11y, DOM, Inspect, Control). La *Descente Cognitive* (injection dynamique de `action_analyze_page` et `action_archive_page` dans le schéma) rend le Sous-Agent autonome via un Streaming Sémantique natif et un Archivage RAG asynchrone, remplaçant l'ancienne distillation monolithique. Utilise un mode hybride Lidar/Vision (Vision-On-Demand), une intégration multimodale (Gemini 3.x via attribut `parts` pour prévenir l'erreur 400) et le *Parallel Function Calling*. Inclut un mécanisme de *Proactive Context Pruning* (élagage dynamique du DOM via seuil configurable) et proscrit l'usage de moteurs de recherche généralistes.
 - **Sovereign Web Search (`sovereign_web_search.py`) :** Outils de recherche souveraine via SearXNG (recherche classique One-Shot) et DuckDuckGo (réponse instantanée factuelle), avec capacité de délégation à un agent de recherche profonde (Deep Research Agent) autonome pour les requêtes complexes multi-tours.
-- **Agent Engine (`agent_engine_tool.py`) :** Moteur d'exécution d'un agent unique via `delegate_to_agent` (± Skill via `role_name`). Boucle agentique avec outils, escalade cognitive, budget configurable. Depth=1 (pas de récursion), pas d'écriture RAG.
+- **Agent Engine (`agent_engine_tool.py`) :** Moteur d'exécution d'un agent unique via `delegate_to_agent` (± Skill via `role_name`). Boucle agentique avec outils, escalade cognitive, budget configurable. Depth=1 (pas de récursion), pas d'écriture RAG. Intègre l'injection universelle du contexte temporel (`<context_temporel>`) et des directives de rigueur (`<directives_globales>`) à la volée.
 - **Explorateur de l'Espace Personnel (`file_content_explorer.py`) :** Outil de lecture brute (RAW) et de sondage sémantique des fichiers locaux. Supporte l'extraction textuelle, l'encapsulation Base64 (pour l'injection multimodale) et l'analyse structurelle Hexadécimale. Soumis à validation via le Registre Unifié V2.
 - **Registre Unifié V2 (`query_registry_tool.py`) :** Outil de consultation de l'état cognitif des ressources centralisées (`FILE_INGESTION_STATUS`) indexées par le système.
 - **ECHO Codex (`echo_codex_tool.py`) :** Éditeur multi-langage avec Git intégré (dulwich). 9 fonctions (create, edit, read, search, summarize, list, delete, history). Édition assistée par sub-chat `MODEL_FLASH` via `call_cascade`. Registre `codex_docs` dans SQLite par chat. Distillation Cloud pour résumé technique.
@@ -67,11 +67,11 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 ### 7. Infrastructure d'Exécution
 - **Python Worker (`/opt/ECHO/docker-python-worker/`) :** API Flask isolée exécutant du code Python en mémoire protégée via isolation système (`multiprocessing` / dossier temporaire). Conçue pour la validation analytique, elle supporte la restitution graphique en Base64 (`pybase64`) et la sérialisation asynchrone ultra-rapide (`orjson`).
 - **Browser Agent (`/opt/ECHO/docker-browser-agent/`) :** Instance Playwright (Python 3.14) pilotée par API **FastAPI asynchrone**. Intègre un Watchdog d'Auto-Stop pour libération CDP, un streaming Live Long-Polling pour le screencast, et délègue les tâches CPU-bound (WebP/html2text) aux threads OS natifs. Moteur bridé à 9 FPS avec sérialisation asynchrone (`ORJSONResponse`) pour des performances optimales.
-- **Embedding Worker (`/opt/ECHO/docker-embedding-worker/`) :** Architecture hybride. Offload prioritaire de l'inférence BAAI/bge-m3 vers le navigateur client via **Edge Computing (WebGPU)**. Fallback transparent sur le conteneur Docker (PyTorch CPU-only) en cas d'inactivité du navigateur.
+- **Embedding Worker (`/opt/ECHO/docker-embedding-worker/`) :** Architecture hybride. Offload prioritaire de l'inférence microsoft/Harrier-OSS-v1-0.6B vers le navigateur client via **Edge Computing (WebGPU)**. Fallback transparent sur le conteneur Docker via **llama.cpp (GGUF)** optimisé CPU pour réduire massivement l'empreinte RAM (suppression de PyTorch).
 - **Download Broker (`/opt/ECHO/docker-download-broker/`) :** Service autonome gérant l'ingestion asynchrone des téléchargements Web. Assure le Garbage Collection et le déplacement atomique vers le Vault utilisateur avec sérialisation SQLite (`PENDING_INGESTION`).
 
 ### 8. Orchestration Séquentielle (Docker Compose)
-Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy` :
+Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`. Standardisation stricte des hostnames internes avec le préfixe `echo-` (ex: `echo-python-worker`, `echo-browser-agent`, `echo-searxng`) :
 - **Tier 1 (Fondations)** : Qdrant, SearXNG, Watchtower — démarrent en parallèle.
 - **Tier 2 (Workers)** : Embedding (après Qdrant), Python Worker, Browser Agent.
 - **Tier 3** : Open WebUI — attend Qdrant + Embedding + SearXNG.
@@ -117,4 +117,4 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.189.9*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.190.19*

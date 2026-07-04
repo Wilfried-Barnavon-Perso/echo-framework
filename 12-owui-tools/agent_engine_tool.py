@@ -1,8 +1,11 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.8
-description: 1.7: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
+version: 1.11
+description: 1.11: Correction injection PRAF (évite doublon si héritage du Kernel). Suppression acronyme PRAF.
+             1.10: Consolidation de l'injection universelle (date + PRAF ajusté) via <directives_globales>.
+             1.9: Injection universelle du contexte temporel (date iso) à la fin du base_system des agents délégués.
+             1.7: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
              1.6: Fix - Utilisation stricte de raw_parts dans l'historique pour empêcher le rejet 400 de la thoughtSignature par Gemini 3.x.
              1.5: Ajout du paramètre allowed_tools à delegate_to_agent pour restreindre l'arsenal.
              1.4: Fusion expert-consultant / sous-agent. Renommage subagent→agent.
@@ -96,10 +99,11 @@ class Tools:
     ) -> str:
         """
         Exécution mono-tâche experte par agent autonome. Réservé aux opérations isolées ne nécessitant pas de supervision multi-agents.
+        INFO ORCHESTRATEUR : Sans `skill_id` ni `system_prompt`, le prompt système actuel de l'Orchestrateur (Kernel statique) est cloné et transmis à l'agent.
         
         :param task: Mission ou réponse (si reprise).
-        :param system_prompt: Directives comportementales (Optionnel si skill_id fourni).
-        :param skill_id: Identifiant de Skill (Optionnel si system_prompt fourni).
+        :param system_prompt: (Optionnel) Directives comportementales additionnelles.
+        :param skill_id: (Optionnel) Identifiant de Skill (se combine avec system_prompt si les deux sont fournis).
         :param sub_sid: (Optionnel) ID de session pour reprise.
         :param with_context_distillate: (Bool) Injection du résumé de branche.
         :param target_model_key: (Optionnel) Enum des modèles (echo_constants).
@@ -141,6 +145,29 @@ class Tools:
             base_system = f"{skill_content}\n\n{system_prompt}" if system_prompt else skill_content
         else:
             base_system = system_prompt
+
+        import datetime
+        current_time = datetime.datetime.now().isoformat()
+        
+        if not base_system or ("<directives_globales>" not in base_system and "<context_temporel>" not in base_system):
+            if base_system and "PRAF" in base_system:
+                # Si le système hérite déjà du Kernel (contenant PRAF), on n'injecte que la date
+                appendix = (
+                    f"\n\n<directives_globales>\n"
+                    f"- Ancrage Temporel : {current_time}\n"
+                    f"</directives_globales>"
+                )
+            else:
+                # Sinon, on injecte la date et une consigne de rigueur factuelle sans jargon
+                appendix = (
+                    f"\n\n<directives_globales>\n"
+                    f"- Ancrage Temporel : {current_time}\n"
+                    f"- Rigueur Factuelle : Le Modèle DOIT asseoir son raisonnement sur des certitudes.\n"
+                    f"- Budget Maîtrisé : Si des outils de recherche sont disponibles, leur utilisation est ABSOLUMENT réservée à la levée d'un doute critique, la mise à jour temporelle d'une connaissance ou la validation d'un pivot factuel.\n"
+                    f"</directives_globales>"
+                )
+            
+            base_system = f"{base_system}{appendix}" if base_system else appendix
 
 
         # 2. Résolution du sub_sid

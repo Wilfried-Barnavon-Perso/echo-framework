@@ -1,7 +1,7 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.6
+version: 5.7
 description: 5.6: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans le payload de génération via call_cascade.
              5.5: Optimisation du prompt Architecte Visuel (balises XML, bloc <thinking>, ton impersonnel).
              5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux). 5.2: Renommage niveau_cognitif→target_model, migration stream→call_cascade() centralisé.
@@ -74,7 +74,7 @@ class Tools:
         f"</directive>\n\n"
         "<technical_manual>\n"
         "1. 'markmap' : Markdown hiérarchique pur. Aucun bloc de code.\n"
-        "2. 'mermaid' : Syntaxe v11 stricte. Identifiants de nœuds STRICTEMENT ASCII alphanumériques ou underscore (aucun espace/tiret). Texte lisible encapsulé entre guillemets (ex: ID[\"Texte\"]).\n"
+        "2. 'mermaid' : Syntaxe stricte compatible Mermaid v11.16.0. Identifiants de nœuds STRICTEMENT ASCII alphanumériques ou underscore (aucun espace/tiret). Texte lisible encapsulé entre guillemets (ex: ID[\"Texte\"]).\n"
         "3. 'echarts' : JSON ECharts 5+ valide (inclure tooltip, legend, xAxis, yAxis, series). Thème clair.\n"
         "4. 'vega' : JSON Vega-Lite strict (spécifier $schema, data, mark, encoding).\n"
         "5. 'timeline' : JSON TimelineJS. Structure imposée: {\"events\": [{\"start_date\":..., \"text\":{\"headline\":..., \"text\":...}}]}.\n"

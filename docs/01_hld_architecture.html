@@ -98,7 +98,7 @@ flowchart TD
     <div class="tech-spec">
       <h4>⚙️ Extension : Inférence Distante (Edge Computing)</h4>
       <p>
-        En complément de l'inférence Cloud (Gemini), l'architecture délègue l'inférence vectorielle lourde (BAAI/bge-m3) directement vers la <strong>Zone 0 (Interaction)</strong>. Un pont WebGPU/WASM, injecté par le Filtre 3, permet au navigateur de l'utilisateur de calculer les vecteurs, allégeant drastiquement la charge du backend qui n'agit plus qu'en relais et en <em>Fallback CPU</em> (secours local) en cas de timeout.
+        En complément de l'inférence Cloud (Gemini), l'architecture délègue l'inférence vectorielle lourde (microsoft/Harrier-OSS-v1-0.6B) directement vers la <strong>Zone 0 (Interaction)</strong>. Un pont WebGPU/WASM, injecté par le Filtre 3, permet au navigateur de l'utilisateur de calculer les vecteurs, allégeant drastiquement la charge du backend qui n'agit plus qu'en relais et en <em>Fallback CPU</em> (secours local) en cas de timeout.
       </p>
     </div>
 
@@ -235,7 +235,7 @@ flowchart TD
 
         <!-- Zone ADMIN -->
         <rect x="600" y="306" width="274" height="100" rx="8" fill="#1a0505" stroke="#7f1d1d" stroke-width="1.5" stroke-dasharray="6,3"/>
-        <text x="737" y="326" text-anchor="middle" fill="#7f1d1d" font-size="9" font-family="monospace" letter-spacing="1">20-docker-admin-manager</text>
+        <text x="737" y="326" text-anchor="middle" fill="#7f1d1d" font-size="9" font-family="monospace" letter-spacing="1">20-docker-echo-admin-manager</text>
         <rect x="614" y="334" width="246" height="60" rx="6" fill="#0f172a" stroke="#dc2626" stroke-width="1.2"/>
         <text x="630" y="354" fill="#f87171" font-size="10" font-family="monospace" font-weight="bold">server.py</text>
         <text x="630" y="370" fill="#64748b" font-size="9" font-family="monospace">Monitoring psutil+docker-py</text>
@@ -262,7 +262,7 @@ flowchart TD
 
         <rect x="600" y="540" width="120" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
         <text x="660" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Worker :7997</text>
-        <text x="660" y="576" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">bge-m3</text>
+        <text x="660" y="576" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Harrier-OSS-v1-0.6B</text>
         <text x="660" y="589" text-anchor="middle" fill="#64748b" font-size="8.5" font-family="monospace">Vector local</text>
 
         <rect x="730" y="540" width="130" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
@@ -404,7 +404,7 @@ flowchart TD
         <p>
           Déclenché par le Filtre pour tout fichier dépassant <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko).
           L'API de distillation (<code>call_distillation</code>) produit un distillat structuré, vectorisé
-          dans <code>echo_session_rag</code> (Qdrant, bge-m3). Le modèle principal reçoit un résumé
+          dans <code>echo_session_rag</code> (Qdrant, Harrier-OSS-v1-0.6B). Le modèle principal reçoit un résumé
           (≤ 300 mots) et le <code>source_id</code> pour interroger les détails.
         </p>
       </div>
@@ -441,7 +441,7 @@ flowchart TD
 
     <p>
       ECHO opère deux collections Qdrant physiquement isolées, vectorisées par le modèle local
-      <strong>BAAI/bge-m3</strong> (1024 dimensions, multilingue, 8192 tokens) via l'<em>Embedding Worker</em>
+      <strong>microsoft/Harrier-OSS-v1-0.6B</strong> (1024 dimensions, multilingue, 8192 tokens) via l'<em>Embedding Worker</em>
       (<code>http://echo-embedding:7997</code>). Aucune donnée ne quitte l'infrastructure.
     </p>
 
@@ -758,7 +758,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.188.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

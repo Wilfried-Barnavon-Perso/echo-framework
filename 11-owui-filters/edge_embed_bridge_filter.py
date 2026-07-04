@@ -3,8 +3,9 @@ title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
 funding_url: https://github.com/echo-framework
-description: Injecte le bridge JavaScript WebGPU pour l'accélération matérielle des embeddings via bge-m3. Gestion intelligente du cache navigateur.
-version: 1.2
+description: 1.4: Migration vers le modèle Harrier-OSS (WebGPU ONNX), implémentation manuelle du pooling CLS et normalisation L2 en JS, et morphing du HUD en pastille avec animation.
+             1.3: Injecte le bridge JavaScript WebGPU pour l'accélération matérielle des embeddings via bge-m3. Gestion intelligente du cache navigateur.
+version: 1.4
 """
 
 import os
@@ -88,7 +89,7 @@ class Filter:
         # 5. Gestion des requêtes
         js_code = """
         (async function initEdgeEmbedding() {
-            const EDGE_VERSION = "1.6";
+            const EDGE_VERSION = "2.0";
             console.log("🚀 Initialisation ECHO Edge Embedding Bridge v" + EDGE_VERSION);
 
             // 1. GESTION DU CACHE CONDITIONNELLE
@@ -121,6 +122,27 @@ class Filter:
             }
             window._echoEdgeVersion = EDGE_VERSION;
             window._echoEdgeConnecting = true;
+
+            // Injection CSS pour l'animation
+            const styleId = 'echo-edge-styles';
+            if (!document.getElementById(styleId)) {
+                const style = document.createElement('style');
+                style.id = styleId;
+                style.innerHTML = `
+                    @keyframes echoComputePulse {
+                        0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); transform: scale(0.95); }
+                        70% { box-shadow: 0 0 0 8px rgba(56, 189, 248, 0); transform: scale(1); }
+                        100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); transform: scale(0.95); }
+                    }
+                    .echo-gpu-computing {
+                        animation: echoComputePulse 1s infinite !important;
+                        opacity: 1 !important;
+                        background: rgba(56, 189, 248, 0.15) !important;
+                        border-color: rgba(56, 189, 248, 0.8) !important;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
 
             // 3. CREATION DU HUD DISCRET (TOAST)
             const hudId = 'echo-edge-hud-' + Date.now();
@@ -308,16 +330,17 @@ class Filter:
                     if (!window._echoEdgeConnecting) return; // Was cancelled
 
                     console.log("✅ WebSocket ECHO Edge connecté");
-                    textRow.innerHTML = 'Préparation BAAI/bge-m3...';
+                    textRow.innerHTML = 'Préparation Harrier-OSS...';
                     
                     try {
                         // 5. IMPORT ET CHARGEMENT DU MODELE V3
-                        const transformers = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0/dist/transformers.min.js');
+                        const transformers = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js');
                         transformers.env.allowLocalModels = false;
                         
-                        let extractor;
+                        let tokenizer, model;
                         try {
-                            extractor = await transformers.pipeline('feature-extraction', 'Xenova/bge-m3', {
+                            tokenizer = await transformers.AutoTokenizer.from_pretrained('onnx-community/harrier-oss-v1-0.6b-ONNX');
+                            model = await transformers.AutoModel.from_pretrained('onnx-community/harrier-oss-v1-0.6b-ONNX', {
                                 device: 'webgpu',
                                 dtype: 'fp16',
                                 progress_callback: (x) => {
@@ -343,25 +366,80 @@ class Filter:
                         ws.send(JSON.stringify({ type: 'ready' }));
                         window._echoEdgeReady = true;
                         
-                        // Destruction du HUD en douceur
-                        hud.style.opacity = '0';
-                        setTimeout(() => {
-                            hud.remove();
-                            document.removeEventListener('mouseup', dragEnd);
-                            document.removeEventListener('mousemove', drag);
-                        }, 300);
+                        // Morphing du HUD en mini-moniteur
+                        const svgIcon = titleBox.querySelector('svg');
+                        hud.innerHTML = ''; // Nettoyage total du contenu précédent (plus de code mort)
+                        hud.appendChild(svgIcon);
+                        
+                        // Transition CSS vers la pastille
+                        hud.style.width = '32px';
+                        hud.style.height = '32px';
+                        hud.style.padding = '0';
+                        hud.style.borderRadius = '50%';
+                        hud.style.justifyContent = 'center';
+                        hud.style.alignItems = 'center';
+                        hud.style.opacity = '0.4';
                         
                         // Gestion des requêtes
                         ws.onmessage = async (event) => {
                             try {
                                 const payload = JSON.parse(event.data);
                                 if (payload.type === 'embed' && payload.texts && payload.request_id) {
-                                    const output = await extractor(payload.texts, { pooling: 'cls', normalize: true });
-                                    ws.send(JSON.stringify({
-                                        type: 'result',
-                                        request_id: payload.request_id,
-                                        embedding: output.tolist()
-                                    }));
+                                    hud.classList.add('echo-gpu-computing');
+                                    try {
+                                        const texts = Array.isArray(payload.texts) ? payload.texts : [payload.texts];
+                                        const inputs = tokenizer(texts, { padding: true, truncation: true });
+                                        const outputs = await model(inputs);
+                                        
+                                        const hidden = outputs.last_hidden_state || outputs.logits || Object.values(outputs)[0];
+                                        const dims = hidden.dims;
+                                        const batch_size = dims[0];
+                                        
+                                        // Support des tenseurs 3D [batch, seq, dim] et 2D [batch, dim] (pooling intégré)
+                                        const is3D = dims.length >= 3;
+                                        const seq_len = is3D ? dims[1] : 1;
+                                        const embed_dim = is3D ? dims[2] : dims[1];
+                                        
+                                        const embeddings = [];
+                                        
+                                        for (let i = 0; i < batch_size; i++) {
+                                            // CLS Token pooling (Index 0) pour les modèles encodeurs
+                                            const cls_token_idx = 0;
+                                            
+                                            let vec_start, vec_end;
+                                            if (is3D) {
+                                                vec_start = (i * seq_len + cls_token_idx) * embed_dim;
+                                            } else {
+                                                vec_start = i * embed_dim;
+                                            }
+                                            vec_end = vec_start + embed_dim;
+                                            
+                                            const vector = hidden.data.slice(vec_start, vec_end);
+                                            
+                                            // L2 Normalization (match PyTorch exact logic)
+                                            let sum_sq = 0;
+                                            for (let j = 0; j < embed_dim; j++) {
+                                                sum_sq += vector[j] * vector[j];
+                                            }
+                                            const norm = Math.sqrt(sum_sq);
+                                            
+                                            const norm_vec = new Array(embed_dim);
+                                            for (let j = 0; j < embed_dim; j++) {
+                                                let val = Number(vector[j]);
+                                                if (isNaN(val)) val = 0; // Sécurité anti-NaN
+                                                norm_vec[j] = val / (norm || 1);
+                                            }
+                                            embeddings.push(norm_vec);
+                                        }
+                                        
+                                        ws.send(JSON.stringify({
+                                            type: 'result',
+                                            request_id: payload.request_id,
+                                            embedding: embeddings
+                                        }));
+                                    } finally {
+                                        hud.classList.remove('echo-gpu-computing');
+                                    }
                                 }
                             } catch(err) {
                                 console.error("❌ Erreur inférence Edge:", err);

@@ -1,8 +1,11 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.25
-description: 5.25: Suppression des constantes Map-Reduce obsolètes (ECHO_MR_*).
+version: 5.28
+description: 5.28: Mise à jour des hostnames Python Worker et Browser Agent (préfixe echo-).
+             5.27: Mise à jour hostname SearxNG (http://echo-searxng:8080) suite à la standardisation du docker-compose.
+             5.26: Passage à microsoft/Harrier-OSS-v1-0.6B comme modèle d'embedding par défaut (dimension 1024) et ajustement de la taille des chunks RAG à 4000.
+             5.25: Suppression des constantes Map-Reduce obsolètes (ECHO_MR_*).
              5.24: Correction sécurité DELEGATE_AGENT_BLACKLIST (identifiants RAG et jauge de contexte).
              5.23: Ajout de SESSION_RAG_CONVERSATION_SOURCE_ID pour le filtre d'historique.
              5.22: Ajout des seuils de troncature du contexte (CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, CHARS_PER_TOKEN).
@@ -207,7 +210,7 @@ MODEL_LITE  = "gemini-3.1-flash-lite"   # LITE  — identique sur les deux APIs 
 
 # --- MÉMOIRE ORGANIQUE V2 ---
 MODEL_DISTILLATION = "gemini-3.1-flash-lite"  # identique sur les deux APIs ✅ 200
-MODEL_EMBEDDING    = "BAAI/bge-m3"      # Modèle texte-first, multilingue, 1024d, 8192 tokens
+MODEL_EMBEDDING    = "microsoft/Harrier-OSS-v1-0.6B" # Modèle texte-first, multilingue, 1024d, 32k tokens
 
 # Table de capacités Code Assist — source de vérité documentaire.
 # max_output_tokens : limites réelles certifiées par diagnostic live v2.1 (2026-05-25).
@@ -238,7 +241,7 @@ AGY_MODEL_MAP: dict[str, str] = {
 }
 # Alias de compatibilité ascendante
 CODE_ASSIST_MODEL_MAP = AGY_MODEL_MAP
-EMBEDDING_DIM_V2   = 1024               # Dimension bge-m3 (remplace 768 SigLIP-2)
+EMBEDDING_DIM      = 1024               # Dimension Harrier-OSS (remplace bge-m3)
 COLLECTION_META_ARTIFACTS = "echo_meta_artifacts"
 COLLECTION_SESSION_RAG    = "echo_session_rag"
 SESSION_RAG_CONVERSATION_SOURCE_ID = "conversation_history"
@@ -267,6 +270,10 @@ MEMORY_IMPORTANCE_LABELS: dict[int, str] = {
 # ==============================================================================
 # 1.3 PLAN STRATÉGIQUE — STATUTS & TÂCHES
 # ==============================================================================
+
+# Modèles par défaut pour l'agent de planification stratégique
+PLANNER_MODEL_BUILD = "MODEL_PRO"
+PLANNER_MODEL_UPDATE = "MODEL_FLASH"
 
 # Statuts globaux d'un plan (champ `status:` du frontmatter YAML)
 PLAN_STATUS = {
@@ -405,7 +412,7 @@ MAX_TOKENS_DEFAULT = 65535  # Limite universelle — tous modèles, toutes APIs 
 # --- INJECTION ET SMART CONTEXT (MÉMOIRE VECTORISÉE DE SESSION) ---
 MAX_DIRECT_TEXT_INJECT_SIZE   = 32768    # 32 Ko : Plafond d'injection directe pour le texte
 MAX_DIRECT_MMEDIA_INJECT_SIZE = 1048576  # 1 Mo  : Plafond d'injection directe base64 multimédia
-ECHO_SESSION_RAG_CHUNK_SIZE   = 1600     # ~400 tokens bge-m3 : Seuil de densité sémantique pour le RAG
+ECHO_SESSION_RAG_CHUNK_SIZE   = 4000     # ~1000 tokens Harrier : Seuil de densité sémantique pour le RAG (Contexte 32k)
 
 # ----------------------------
 
@@ -526,13 +533,13 @@ MODEL_ENUM_REFERENCE = {"MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"}
 ECHO_QDRANT_URL = "http://echo-qdrant:6333"
 
 # ECHO_PYTHON_WORKER_URL : Utilisée par python_code_executor pour isoler l'exécution de code Python.
-ECHO_PYTHON_WORKER_URL = "http://python-worker:5000/execute"
+ECHO_PYTHON_WORKER_URL = "http://echo-python-worker:5000/execute"
 
 # NAVIGATION_ENGINE_URL : Utilisée par navigation_engine_tool pour le pilotage Playwright/Chrome.
-NAVIGATION_ENGINE_URL = "http://browser-agent:5002"
+NAVIGATION_ENGINE_URL = "http://echo-browser-agent:5002"
 
 # ECHO_SEARXNG_BASE_URL : Utilisée par sovereign_web_search pour les recherches web profond.
-ECHO_SEARXNG_BASE_URL = "http://searxng:8080"
+ECHO_SEARXNG_BASE_URL = "http://echo-searxng:8080"
 
 # Sécurité Réseau (SSRF)
 # ECHO_ALLOWED_DOMAINS : Domaines autorisés pour api_client (* = tous sauf RFC 1918 locaux).

@@ -1,29 +1,28 @@
 """
 ================================================================================
-MODULE : ECHO EMBEDDING WORKER (bge-m3)
-VERSION : 1.5
+MODULE : ECHO EMBEDDING WORKER (Llama.cpp / GGUF)
+VERSION : 2.0
 AUTEUR : Wilfried BARNAVON
-DATE : 2026-06-15
+DATE : 2026-07-03
 
-ROLE : Serveur d'embedding texte compatible OpenAI (BAAI/bge-m3)
+ROLE : Serveur d'embedding texte compatible OpenAI (Harrier-OSS GGUF)
        Multilingue, 1024 dimensions, 8192 tokens max.
        Support de l'Edge Embedding (WebGPU) via WebSocket Proxy.
 
 CHANGELOG :
-  1.1 : Correction truncation=True (SigLIP-2 max 64 tokens).
-  1.2 : Truncation silencieuse (guard-rail).
-  1.3 : Migration BAAI/bge-m3. Suppression SigLIP-2 et branche image.
-        CLS token pooling + normalisation L2.
   1.4 : Stabilisation threadpool.
   1.5 : Support Edge Embedding WebGPU (WebSocket proxy & Fallback).
+  1.6 : Correction critique : passage au CLS Token Pooling (index 0) au lieu du Last-Token.
+  2.0 : Migration majeure vers llama.cpp (GGUF) pour réduire l'empreinte RAM. Suppression de PyTorch.
 ================================================================================
 """
 
 import os
 import logging
 import asyncio
-import torch
-import numpy as np
+import math
+from llama_cpp import Llama
+from huggingface_hub import hf_hub_download
 import pybase64 as base64
 import orjson as json
 import uuid
@@ -31,7 +30,6 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Union, Optional
-from transformers import AutoTokenizer, AutoModel
 import time
 
 # Configuration du logging (Format ECHO)
@@ -48,9 +46,11 @@ app = FastAPI(
 embedding_lock = asyncio.Lock()
 
 # Configuration via variables d'environnement
-MODEL_ID = os.getenv("MODEL_ID", "BAAI/bge-m3")
-# Détection GPU dynamique (WSL2 expose CUDA nativement, VM Hyper-V = CPU only)
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+MODEL_ID = os.getenv("MODEL_ID", "microsoft/Harrier-OSS-v1-0.6B")
+GGUF_REPO = os.getenv("GGUF_REPO", "mradermacher/harrier-oss-v1-0.6b-GGUF")
+GGUF_FILE = os.getenv("GGUF_FILE", "harrier-oss-v1-0.6b.Q8_0.gguf")
+# Llama.cpp CPU
+DEVICE = "cpu"
 
 # Sweet spot qualité/vitesse sur CPU pour bge-m3.
 # Le modèle supporte 8192 tokens, mais les chunks ECHO font ~300-500 tokens.
@@ -126,18 +126,31 @@ async def edge_status(user_id: str):
     """Vérification rapide de l'état Edge pour le filtre ECHO."""
     return {"status": edge_client_status.get(user_id, "unknown")}
 
+def download_gguf_model():
+    """Télécharge le modèle GGUF depuis HuggingFace Hub si non présent localement."""
+    logger.info(f"⏳ Téléchargement ou vérification de {GGUF_FILE} depuis {GGUF_REPO}...")
+    return hf_hub_download(repo_id=GGUF_REPO, filename=GGUF_FILE)
+
 @app.on_event("startup")
 async def load_model():
     """Chargement du modèle au démarrage pour éviter la latence sur la première requête."""
-    logger.info(f"🚀 Initialisation du worker d'embedding : {MODEL_ID}")
+    logger.info(f"🚀 Initialisation du worker d'embedding (GGUF) : {MODEL_ID}")
     logger.info(f"💻 Device : {DEVICE} | Max length : {MAX_LENGTH}")
 
     try:
-        state["tokenizer"] = AutoTokenizer.from_pretrained(MODEL_ID)
-        state["model"] = AutoModel.from_pretrained(MODEL_ID).to(DEVICE)
-        state["model"].eval()
+        # Téléchargement bloquant au démarrage
+        model_path = download_gguf_model()
+        logger.info(f"📦 Modèle localisé à : {model_path}")
+        
+        # Initialisation Llama.cpp avec pooling CLS natif (embedding=True)
+        state["model"] = Llama(
+            model_path=model_path,
+            embedding=True,
+            verbose=False,
+            n_ctx=MAX_LENGTH
+        )
         state["ready"] = True
-        logger.info(f"✅ {MODEL_ID} est prêt à recevoir des requêtes.")
+        logger.info(f"✅ {MODEL_ID} (GGUF) est prêt à recevoir des requêtes.")
     except Exception as e:
         logger.error(f"❌ Échec critique du chargement du modèle : {str(e)}")
         # On ne lève pas d'exception ici pour permettre au conteneur de rester vivant
@@ -148,32 +161,10 @@ class EmbeddingRequest(BaseModel):
     model: Optional[str] = None
     encoding_format: Optional[str] = "float"
 
-def process_single_input(text: str) -> List[float]:
-    """
-    Génère un vecteur d'embedding pour un texte via bge-m3.
-    Utilise CLS token pooling + normalisation L2 (standard sentence-transformers).
-    """
-    if not state["ready"]:
-        raise RuntimeError("Le modèle n'est pas encore chargé.")
-
-    with torch.inference_mode():
-        inputs = state["tokenizer"](
-            text,
-            padding=True,
-            truncation=True,
-            max_length=MAX_LENGTH,
-            return_tensors="pt"
-        ).to(DEVICE)
-
-        outputs = state["model"](**inputs)
-
-        # CLS token pooling : last_hidden_state[:, 0, :] est la représentation globale
-        # C'est le standard bge-m3 / sentence-transformers pour la recherche sémantique.
-        tensor = outputs.last_hidden_state[:, 0, :]
-
-        # Normalisation L2 : rend le produit scalaire équivalent à la similarité cosinus
-        embeddings = tensor / tensor.norm(p=2, dim=-1, keepdim=True)
-        return embeddings.cpu().numpy().flatten().tolist()
+def l2_normalize(vector: List[float]) -> List[float]:
+    """Normalisation L2 manuelle pour remplacer torch.norm"""
+    norm = math.sqrt(sum(v * v for v in vector))
+    return [v / norm for v in vector] if norm > 0 else vector
 
 @app.post("/v1/embeddings")
 @app.post("/embeddings")
@@ -199,6 +190,10 @@ async def create_embeddings(request: EmbeddingRequest, req: Request):
                 # Timeout strict (15s) pour basculer rapidement sur CPU si le navigateur bloque
                 embeddings = await asyncio.wait_for(future, timeout=15.0)
                 
+                # Validation stricte du retour Edge
+                if not embeddings or not isinstance(embeddings, list) or any(e is None or e == [None] or not isinstance(e, list) for e in embeddings):
+                    raise ValueError("Edge client returned null or invalid embeddings")
+                
                 batch_data = []
                 for i, emb in enumerate(embeddings):
                     batch_data.append({
@@ -218,18 +213,27 @@ async def create_embeddings(request: EmbeddingRequest, req: Request):
                 }
             except asyncio.TimeoutError:
                 logger.warning(f"⚠️ Edge Inference Timeout for {user_id}. Fallback -> CPU.")
+            except Exception as e:
+                logger.warning(f"⚠️ Edge Inference Error for {user_id}: {e}. Fallback -> CPU.")
             finally:
                 pending_edge_requests.pop(req_id, None)
 
         # 2. FALLBACK CPU SYNCHRONE
-        def process_batch_sync(inputs_list):
+        def process_batch_sync(inputs_list: List[str]):
+            if not state["ready"]:
+                raise RuntimeError("Le modèle n'est pas encore chargé.")
+                
+            # Llama.cpp gère nativement le batching de requêtes avec `create_embedding`
+            response = state["model"].create_embedding(inputs_list)
+            
             batch_data = []
-            for i, item in enumerate(inputs_list):
-                embedding_vector = process_single_input(item)
+            for i, data_point in enumerate(response["data"]):
+                raw_vector = data_point["embedding"]
+                normalized_vector = l2_normalize(raw_vector)
                 batch_data.append({
                     "object": "embedding",
                     "index": i,
-                    "embedding": embedding_vector
+                    "embedding": normalized_vector
                 })
             return batch_data
 

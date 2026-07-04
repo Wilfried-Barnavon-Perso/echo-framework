@@ -1,9 +1,11 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.21
+version: 192.23
 requirements: asyncssh
-description: 192.21: Fix du silent crash lors de l'auto-escalade. Exclusion fonctionnelle du modèle actif via MODEL_IDENTITY et feedback via functionResponse.
+description: 192.23: Restauration et sauvegarde de l'historique de cascade cognitive via KV store pour le message utilisateur. Amélioration de la gestion des erreurs de streaming de l'API Google avec alertes d'interruption. Correction de la logique de clamping et cascade via MODEL_IDENTITY.
+             192.22: Fix silent cuts in stream generation viaSAFETY exception catch & StreamProcessor logging. Fix cognitive cascade clamping and downward logic due to IDENTITY mismatches. Fix post-cascade amnesia by persisting shadow locally via KV store.
+             192.21: Fix du silent crash lors de l'auto-escalade. Exclusion fonctionnelle du modèle actif via MODEL_IDENTITY et feedback via functionResponse.
              192.20: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
              192.19: Implémentation de la défense passive contextuelle (troncature silencieuse + alertes UI).
              192.18: Utilisation de FILE_INGESTION_STATUS pour la sauvegarde des fichiers.
@@ -82,6 +84,8 @@ try:
     from pydantic import BaseModel, Field
     # Protocole HTTP/2 obligatoire (h2)
     import h2
+    import logging
+    log = logging.getLogger("echo.pipe_engine")
 except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(f"❌ Module critique manquant : '{missing_module}'. ECHO exige httpx, orjson, pybase64 et h2 (HTTP/2).") from e
@@ -351,6 +355,19 @@ class Orchestrator:
                         final_contents.append({"role": role_gemini, "parts": shadow_data})
                         inv_hash = self.user_data_manager.calculate_invariant(role, shadow_data)
                         last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
+                        
+                        if role == "user":
+                            try:
+                                cascade_str = self.user_data_manager.state_manager.get_auth_data(f"cascade_{msg_id}")
+                                if cascade_str:
+                                    cascade_history = std_json.loads(cascade_str)
+                                    for cm_msg in cascade_history:
+                                        final_contents.append(cm_msg)
+                                        cm_inv_hash = self.user_data_manager.calculate_invariant(cm_msg["role"], cm_msg["parts"])
+                                        last_cumul = self.user_data_manager.calculate_cumulative(cm_inv_hash, last_cumul)
+                            except Exception:
+                                pass
+                        
                         i += 1; continue
 
             # --- PRIORITÉ 2 : RECONSTRUCTION NORMALE (Fallback ou Cache Miss Temporel) ---
@@ -426,6 +443,18 @@ class Orchestrator:
             inv_hash = self.user_data_manager.calculate_invariant(role, restored_parts)
             last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
 
+            if role == "user" and msg_id:
+                try:
+                    cascade_str = self.user_data_manager.state_manager.get_auth_data(f"cascade_{msg_id}")
+                    if cascade_str:
+                        cascade_history = std_json.loads(cascade_str)
+                        for cm_msg in cascade_history:
+                            final_contents.append(cm_msg)
+                            cm_inv_hash = self.user_data_manager.calculate_invariant(cm_msg["role"], cm_msg["parts"])
+                            last_cumul = self.user_data_manager.calculate_cumulative(cm_inv_hash, last_cumul)
+                except Exception:
+                    pass
+
         # --- SATURATION ET TRONCATURE ---
         if events:
             size = estimate_token_size(final_contents)
@@ -495,25 +524,35 @@ class StreamProcessor:
                             self.user_data_manager.save_context_stats(self.usage_stats)
                         
                         cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
-                        if cand and cand[0].get("content"):
-                            for part in cand[0]["content"]["parts"]:
-                                if "thoughtSignature" in part: self.captured_sig = part["thoughtSignature"]
-                                if part.get("thought"):
-                                    if not in_think: yield "<think>\n"; in_think = True
-                                    yield part.get("text", "")
-                                elif part.get("functionCall"):
-                                    if in_think: yield "\n</think>\n"; in_think = False
-                                    tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
-                                    if tool_call:
-                                        yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
-                                    else:
-                                        return # Escalade
-                                elif "text" in part:
-                                    if in_think: yield "\n</think>\n"; in_think = False
-                                    raw_t = part["text"]
-                                    if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t: continue
-                                    self.accumulated_text += raw_t; yield raw_t
-                    except: pass
+                        if cand:
+                            finish_reason = cand[0].get("finishReason")
+                            content = cand[0].get("content")
+                            if not content and finish_reason and finish_reason != "STOP":
+                                yield f"\n\n> ⚠️ **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
+                                return
+                            if content:
+                                for part in content["parts"]:
+                                    if "thoughtSignature" in part: self.captured_sig = part["thoughtSignature"]
+                                    if part.get("thought"):
+                                        if not in_think: yield "<think>\n"; in_think = True
+                                        yield part.get("text", "")
+                                    elif part.get("functionCall"):
+                                        if in_think: yield "\n</think>\n"; in_think = False
+                                        tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
+                                        if tool_call:
+                                            yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
+                                        else:
+                                            return # Escalade
+                                    elif "text" in part:
+                                        if in_think: yield "\n</think>\n"; in_think = False
+                                        raw_t = part["text"]
+                                        if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t: continue
+                                        self.accumulated_text += raw_t; yield raw_t
+                    except Exception as e:
+                        if self.logger: self.logger.log("stream_decode_error", {"error": str(e), "chunk": full_json_str})
+                        log.error(f"[StreamProcessor] Erreur de décodage du flux: {e} - Chunk: {full_json_str[:200]}")
+                        if in_think: yield "\n</think>\n"; in_think = False
+                        yield f"\n\n> ❌ **Erreur critique de décodage du flux API** : {str(e)}\n"
         if in_think: yield "\n</think>\n"
         if self.logger: self.logger.log("api_response", self.full_raw_accumulator)
         if self.usage_stats:
@@ -714,7 +753,9 @@ class Pipe:
             if last_model and last_model in [MODEL_LITE, MODEL_FLASH, MODEL_PRO]:
                 # Clamping : le modèle repris ne doit pas dépasser le plafond de la politique
                 from echo_constants import MODEL_HIERARCHY
-                if MODEL_HIERARCHY.get(last_model, 1) > MODEL_HIERARCHY.get(ceiling, 1):
+                last_identity = MODEL_IDENTITY.get(last_model, "MODEL_FLASH")
+                ceiling_identity = MODEL_IDENTITY.get(ceiling, "MODEL_FLASH")
+                if MODEL_HIERARCHY.get(last_identity, 1) > MODEL_HIERARCHY.get(ceiling_identity, 1):
                     target_model = ceiling
                 else:
                     target_model = last_model
@@ -855,14 +896,17 @@ class Pipe:
                     if isinstance(chunk, dict) or not proc.escalation_requested:
                         yield chunk
             except Exception as e:
+                log.error(f"[PipeEngine] Erreur API lors de l'appel Gemini: {e}")
                 # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
                 if is_auto and cascade_attempt < max_cascade_attempts:
                     from echo_constants import MODEL_HIERARCHY
                     # Cascade descendante : PRO → FLASH → LITE
-                    cascade_order = sorted(
-                        [k for k in MODEL_HIERARCHY if MODEL_HIERARCHY[k] < MODEL_HIERARCHY.get(target_model, 0)],
+                    target_identity = MODEL_IDENTITY.get(target_model, "MODEL_FLASH")
+                    cascade_order_keys = sorted(
+                        [k for k in MODEL_HIERARCHY if MODEL_HIERARCHY[k] < MODEL_HIERARCHY.get(target_identity, 0)],
                         key=lambda k: MODEL_HIERARCHY[k], reverse=True
                     )
+                    cascade_order = [MODEL_ROUTING.get(k) for k in cascade_order_keys if MODEL_ROUTING.get(k)]
                     if cascade_order:
                         prev_model = target_model
                         target_model = cascade_order[0]
@@ -1052,6 +1096,13 @@ class Pipe:
             asst_msg_id = kwargs.get("__message_id__")
             if asst_msg_id and cascade_history:
                 orch.user_data_manager.save_shadow(asst_msg_id, int(time.time()), cascade_history, chat_id, "assistant")
+            
+            user_msg_id = __metadata__.get("_echo_user_msg_id") if __metadata__ else None
+            if cascade_history and user_msg_id:
+                try:
+                    orch.user_data_manager.state_manager.save_auth_data(f"cascade_{user_msg_id}", std_json.dumps(cascade_history).decode('utf-8'))
+                except Exception as e:
+                    log.error(f"[PipeEngine] Erreur sauvegarde cascade KV: {e}")
             
             # Sauvegarde des ponts d'outils pour la navigation future
             for c in proc.accumulated_calls: 

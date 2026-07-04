@@ -1,6 +1,8 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.53
+# Version : 9.54
+# --- CHANGELOG 9.54 ---
+# - Docker Compose : Standardisation des noms de services avec le préfixe echo-* et migration vers le worker d'embedding Harrier-OSS GGUF.
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -20,7 +22,7 @@
 services:
 
   # 1. Open WebUI (Le Cœur d'ECHO)
-  open-webui:
+  echo-open-webui:
     image: ghcr.io/open-webui/open-webui:main-slim
     container_name: echo-open-webui
     restart: always
@@ -181,15 +183,15 @@ services:
       retries: 5
       start_period: 180s
     depends_on:
-      qdrant:
+      echo-qdrant:
         condition: service_healthy
-      embedding:
+      echo-embedding:
         condition: service_healthy
-      searxng:
+      echo-searxng:
         condition: service_healthy
 
   # 2. Admin Manager (Dashboard Système ECHO)
-  admin-manager:
+  echo-admin-manager:
     build:
       context: /opt/ECHO/docker-admin-manager
       dockerfile: Dockerfile
@@ -268,14 +270,14 @@ services:
       retries: 5
       start_period: 30s
     depends_on:
-      open-webui:
+      echo-open-webui:
         condition: service_healthy
 
   # ============================================================================
   # SECTION 2 : WORKERS INTERNES (BACKEND)
   # ============================================================================
   
-  python-worker:
+  echo-python-worker:
     build:
       context: /opt/ECHO/docker-python-worker
       dockerfile: Dockerfile
@@ -298,7 +300,7 @@ services:
       retries: 5
       start_period: 30s
 
-  browser-agent:
+  echo-browser-agent:
     image: python:3.14-slim
     container_name: echo-browser-agent
     restart: always
@@ -323,7 +325,7 @@ services:
       retries: 20
       start_period: 120s
 
-  stt-worker:
+  echo-stt-worker:
     build:
       context: /opt/ECHO/docker-stt-worker
       dockerfile: Dockerfile
@@ -343,7 +345,7 @@ services:
       retries: 10
       start_period: 60s
 
-  tts-worker:
+  echo-tts-worker:
     build:
       context: /opt/ECHO/docker-tts-worker
       dockerfile: Dockerfile
@@ -367,7 +369,7 @@ services:
       start_period: 60s
 
   # 3. SearxNG (Métamoteur de recherche souverain)
-  searxng:
+  echo-searxng:
     image: searxng/searxng:latest
     container_name: echo-searxng
     restart: always
@@ -400,7 +402,7 @@ services:
       start_period: 30s
 
   # 5. Watchtower (Auto-Update)
-  watchtower:
+  echo-watchtower:
     image: containrrr/watchtower:latest
     container_name: echo-watchtower
     restart: always
@@ -418,7 +420,7 @@ services:
   # ============================================================================
 
   # 4. Qdrant (Base Vectorielle)
-  qdrant:
+  echo-qdrant:
     image: qdrant/qdrant:v1.17.1
     container_name: echo-qdrant
     restart: always
@@ -437,8 +439,8 @@ services:
       retries: 5
       start_period: 10s
 
-  # 6. ECHO Embedding Worker (BAAI/bge-m3 — Text RAG, multilingue, 1024d)
-  embedding:
+  # 6. ECHO Embedding Worker (microsoft/Harrier-OSS-v1-0.6B — Text RAG, multilingue, 1024d)
+  echo-embedding:
     build:
       context: /opt/ECHO/docker-embedding-worker
       dockerfile: Dockerfile
@@ -448,8 +450,9 @@ services:
       - echo-network
     environment:
       - TZ=Europe/Paris
-      - MODEL_ID=BAAI/bge-m3
-      - MAX_LENGTH=512
+      - MODEL_ID=microsoft/Harrier-OSS-v1-0.6B
+      - GGUF_FILE=harrier-oss-v1-0.6b.f16.gguf
+      - MAX_LENGTH=4096
     volumes:
       - /opt/ECHO/docker-embedding-worker/app.py:/app/app.py:ro
       - echo-embedding-cache:/root/.cache/huggingface
@@ -467,11 +470,11 @@ services:
       retries: 30
       start_period: 300s
     depends_on:
-      qdrant:
+      echo-qdrant:
         condition: service_healthy
 
   # 7. ECHO Download Broker (Ingestion asynchrone Playwright)
-  download-broker:
+  echo-download-broker:
     build:
       context: /opt/ECHO/docker-download-broker
       dockerfile: Dockerfile
@@ -490,7 +493,7 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
     depends_on:
-      browser-agent:
+      echo-browser-agent:
         condition: service_healthy
 
 # ==============================================================================

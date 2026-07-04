@@ -1,8 +1,9 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.13
-description: 1.13: Optim - Nouveaux paramètres SearxNG, résolution du paradoxe logique (docstrings) et suppression algorithmique des appâts de boucle.
+version: 1.14
+description: 1.14: Fix - Ajout de la règle anti-spam dans la docstring de search_web pour interdire le burst (Parallel Function Calling) par le modèle principal.
+             1.13: Optim - Nouveaux paramètres SearxNG, résolution du paradoxe logique (docstrings) et suppression algorithmique des appâts de boucle.
              1.12: Optim - Rééquilibrage cognitif des docstrings de recherche pour prioriser delegate_deep_research sur les requêtes complexes.
              1.11: Optim - Ajout de la suggestion de changement de méthode en cas de blocage SearXNG.
              1.10: Optim - Intégration sous contrainte de delegate_web_browsing dans le Deep Research Agent.
@@ -93,6 +94,7 @@ class Tools:
     ) -> str:
         """
         Permet au Modèle d'effectuer une recherche web simple (one-shot). Retourne des extraits textuels (snippets) limités. Strictement réservé à l'extraction de faits rapides ou d'URLs. Ne permet pas de lire le contenu complet des pages.
+        ANTI-SPAM : Le Modèle a l'INTERDICTION d'exécuter plus de 2 appels à cet outil simultanément lors d'un même tour (Parallel Function Calling). Pour une recherche exhaustive, complexe ou nécessitant de multiples requêtes, le Modèle DOIT utiliser l'outil `delegate_deep_research`.
         
         :param query: La recherche textuelle.
         :param categories: Catégorie spécifique de recherche.

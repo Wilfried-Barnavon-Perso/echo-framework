@@ -1,8 +1,9 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.18
-description: 5.18: Refonte des prompts Council et Supervisor (XML, Few-Shot JSON, ton impersonnel).
+version: 5.19
+description: 5.19: council_id obligatoire, limite [p*r] via UserValve COUNCIL_MAX_PR_COMPLEXITY.
+             5.18: Refonte des prompts Council et Supervisor (XML, Few-Shot JSON, ton impersonnel).
              5.7: Résolution du conflit de nom get_all_skills (shadowing).
              5.8: Centralisation des niveaux de réflexion (THINKING_LEVEL_*) — suppression
              valves FLASH_THINKING et PRO_THINKING. Remplacement par constantes echo_constants.
@@ -29,6 +30,7 @@ import orjson as json
 import asyncio
 import uuid
 import time
+import datetime
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal, Tuple
 
@@ -54,6 +56,7 @@ class Tools:
         COUNCIL_ROUNDS_MAX: int = Field(default=5, description="Limite haute du nombre de tours de parole.")
         COUNCIL_MAX_PARTICIPANTS: int = Field(default=5, description="Nombre maximum de participants au conseil (hors synthétiseur).")
         COUNCIL_EXPERT_MAX_CALLS_PER_ROUND: int = Field(default=3, ge=0, le=10, description="Budget max d'appels d'outils par expert et par tour de conseil.")
+        COUNCIL_MAX_PR_COMPLEXITY: int = Field(default=30, description="Complexité maximale (participants * rounds) d'un conseil.")
         SUPERVISOR_MAX_CORRECTION_ROUNDS: int = Field(default=3, ge=1, le=5, description="Nombre maximum de tours de correction du superviseur.")
 
     def __init__(self):
@@ -110,7 +113,7 @@ class Tools:
         self,
         question: str,
         participants: List[str],
-        council_id: Optional[str] = None,
+        council_id: str,
         target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
         synthesis_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
         rounds: Optional[int] = None,
@@ -122,13 +125,14 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Table ronde (N experts, tours parallèles). Synthèse multi-perspectives. Minimum 2 experts requis. IMPLIQUE appel à `forge_skill` si experts manquants.
+        Table ronde (N experts, tours parallèles). Rapport exhaustif multi-perspectives. Minimum 2 experts requis. IMPLIQUE appel à `forge_skill` si experts manquants.
         Le conseil reste ouvert (close_on_finish=False) pour permettre de le relancer avec le même council_id. Le Modèle DOIT utiliser close_council une fois la délibération définitivement terminée.
+        DIRECTIVE ORCHESTRATEUR: Le résultat n'est pas automatiquement affiché. Le Modèle appelant DOIT restituer l'intégralité du rapport dans sa réponse finale.
         
         :param question: Sujet de délibération.
-        :param participants: Chaîne CSV de `skill_id` (ex: expert_1, dev_py) (min 2, [ p * r ] <= 30).
-        :param rounds: Nombre d'itérations ([ p * r ] <= 30).
-        :param council_id: Identifiant (optionnel) pour conserver et reprendre le conseil plus tard.
+        :param participants: Chaîne CSV de `skill_id` (ex: expert_1, dev_py) (min 2, [ p * r ] <= COUNCIL_MAX_PR_COMPLEXITY).
+        :param council_id: Identifiant obligatoire pour conserver et reprendre le conseil plus tard.
+        :param rounds: Nombre d'itérations ([ p * r ] <= COUNCIL_MAX_PR_COMPLEXITY).
         :param close_on_finish: False par défaut pour reprise de contexte. Mettre à True pour détruire immédiatement.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
@@ -157,6 +161,12 @@ class Tools:
             self.user_valves.COUNCIL_ROUNDS_MAX
         )
 
+        if len(skill_ids) * effective_rounds > self.user_valves.COUNCIL_MAX_PR_COMPLEXITY:
+            return wrap_tool_output(
+                text=f"❌ La complexité (participants * rounds = {len(skill_ids) * effective_rounds}) dépasse la limite autorisée ({self.user_valves.COUNCIL_MAX_PR_COMPLEXITY}).",
+                status={"status": "error"}
+            )
+
         # Chargement et validation de chaque skill
         roster = []
         for i, sid in enumerate(skill_ids):
@@ -174,7 +184,7 @@ class Tools:
             })
 
         # Résolution du council_id
-        cid = council_id or f"ccl_{uuid.uuid4().hex[:8]}"
+        cid = council_id
         max_calls_per_round = self.user_valves.COUNCIL_EXPERT_MAX_CALLS_PER_ROUND
 
         await events.status(
@@ -232,13 +242,34 @@ class Tools:
 
                 # Prompt système enrichi avec le contexte du conseil
                 members = "\n".join(f"- {p['alias']} : {p['name']}" for p in roster)
+                current_time = datetime.datetime.now().isoformat()
                 council_system = (
-                    f"Le Modèle agit en tant que {participant['alias']} dans un conseil de {len(roster)} experts.\n\n"
-                    f"### COMPOSITION DU CONSEIL\n{members}\n\n"
-                    f"Tour {round_num}/{effective_rounds}. "
-                    f"Budget outils ce tour : {max_calls_per_round} appels max.\n\n"
-                    f"Les experts ne connaissent pas les instructions détaillées "
-                    f"des autres participants. Le Modèle ne connait que leur rôle déclaré ci-dessus."
+                    f"<persona>\n"
+                    f"Le Modèle agit en tant que {participant['alias']} au sein d'un conseil composé de {len(roster)} experts.\n"
+                    f"Ton : Professionnel, technique, sec. Le Modèle proscrit toute formule de politesse ou d'introduction (\"Bonjour\", \"Voici mon analyse\").\n"
+                    f"</persona>\n\n"
+                    f"<composition_conseil>\n"
+                    f"{members}\n"
+                    f"- Confidentialité : Le Modèle ignore les instructions détaillées (le code du Skill) des autres participants.\n"
+                    f"</composition_conseil>\n\n"
+                    f"<parametres_tour>\n"
+                    f"- Tour actuel : {round_num}/{effective_rounds}.\n"
+                    f"- Budget d'outils : {max_calls_per_round} appels maximum ce tour.\n"
+                    f"</parametres_tour>\n\n"
+                    f"<directives_rigueur>\n"
+                    f"- Rigueur Factuelle : Le Modèle DOIT asseoir son raisonnement sur des certitudes.\n"
+                    f"- Budget Maîtrisé : Si des outils de recherche sont disponibles, leur utilisation est ABSOLUMENT réservée à la levée d'un doute critique, la mise à jour temporelle d'une connaissance, la validation d'un pivot factuel, ou la réfutation d'une affirmation d'un autre expert. Le Modèle ne doit pas consommer son budget pour des faits triviaux.\n"
+                    f"</directives_rigueur>\n\n"
+                    f"<context_temporel>{current_time}</context_temporel>\n\n"
+                    f"<format_reponse>\n"
+                    f"Le Modèle DOIT structurer sa contribution EXCLUSIVEMENT avec les sections Markdown suivantes :\n\n"
+                    f"### Analyse\n"
+                    f"(Décorticage froid et technique des éléments soumis au conseil).\n\n"
+                    f"### Dialectique\n"
+                    f"(Positionnement critique face aux contributions précédentes : accords, désaccords justifiés, failles logiques identifiées chez les autres experts).\n\n"
+                    f"### Réponse\n"
+                    f"(Recommandation, solution ou conclusion propre à l'expertise du Modèle pour ce tour).\n"
+                    f"</format_reponse>"
                 )
 
                 result = await delegate.delegate_to_agent(
@@ -302,10 +333,14 @@ class Tools:
                     transcript += f"**{p['alias']}** ({p['name']}) :\n{responses[sid]}\n\n"
 
         synthesis_system = (
-            "Le Modèle est le rapporteur du conseil. Il n'est pas un participant. "
-            "Le Modèle DOIT produire une synthèse structurée, objective et actionnable "
-            "de la délibération. Il DOIT identifier les consensus, les divergences et "
-            "les recommandations clés, tout en restant exhaustif mais concis."
+            "<persona>\n"
+            "Le Modèle est le rapporteur officiel du conseil. Il n'est pas un participant, son ton est neutre et factuel.\n"
+            "</persona>\n\n"
+            "<mission>\n"
+            "Le Modèle DOIT produire un rapport exhaustif et détaillé (et non une simple synthèse lissée) de l'ensemble de la délibération.\n"
+            "Il DOIT retranscrire fidèlement l'intégralité de la substance des arguments de chaque expert, en isolant clairement les points d'accord et les zones de friction ou de désaccord.\n"
+            "Le livrable final doit ressembler à un rapport de commission technique complet avant d'énoncer les recommandations finales.\n"
+            "</mission>"
         )
 
         synthesis_payload = {
@@ -458,18 +493,26 @@ class Tools:
             deliverables_text = "\n\n---\n\n".join(
                 f"### WORKER: {w_id}\n{text}" for w_id, text in deliverables.items()
             )
+            import datetime
+            current_time = datetime.datetime.now().isoformat()
+            
             critic_prompt = (
                 "<persona>\n"
-                "Le Modèle est un évaluateur critique expert.\n"
+                "Le Modèle est un évaluateur critique. Ton : Professionnel, analytique, sec. Proscrire toute formule de politesse.\n"
                 "</persona>\n\n"
+                f"<context_temporel>{current_time}</context_temporel>\n\n"
+                "<directives_rigueur>\n"
+                "- Limite d'Expertise : N'étant pas nécessairement l'expert métier, le Modèle DOIT concentrer son évaluation sur la cohérence interne, la logique, et le respect strict des objectifs.\n"
+                "- Exigence d'Évidences : Tout livrable contenant des affirmations vagues, contradictoires, incohérentes ou hors sujet DOIT entraîner un verdict REJECTED avec une consigne claire de clarification pour le travailleur.\n"
+                "</directives_rigueur>\n\n"
                 "<mission>\n"
-                "Le Modèle doit évaluer la qualité, la précision factuelle et la pertinence sémantique de chaque livrable fourni par les travailleurs (workers), par rapport à l'objectif global.\n"
+                "Le Modèle doit évaluer la qualité, la logique formelle et la pertinence sémantique de chaque livrable fourni par les travailleurs (workers), par rapport à l'objectif global.\n"
                 "</mission>\n\n"
                 f"<objective>\n{objective}\n</objective>\n\n"
                 f"<deliverables>\n{deliverables_text}\n</deliverables>\n\n"
                 "<rules>\n"
                 "1. Le Modèle DOIT analyser méticuleusement chaque livrable.\n"
-                "2. Le Modèle DOIT identifier formellement toute erreur, omission ou déviation.\n"
+                "2. Le Modèle DOIT identifier formellement toute erreur logique, omission ou déviation de l'objectif.\n"
                 "3. FORMAT : Le Modèle DOIT retourner UNIQUEMENT un objet JSON valide, SANS bloc Markdown englobant (pas de ```json).\n"
                 "</rules>\n\n"
                 "<output_format>\n"
@@ -588,12 +631,23 @@ class Tools:
         consolidation_text = "\n\n---\n\n".join(
             f"### WORKER: {w_id}\n{text}" for w_id, text in deliverables.items()
         )
+        import datetime
+        current_time = datetime.datetime.now().isoformat()
+        
         consolidation_prompt = (
-            f"### OBJECTIF\n{objective}\n\n"
-            f"### LIVRABLES FINAUX\n{consolidation_text}\n\n"
-            f"### MISSION DU MODÈLE\n"
-            f"Le Modèle DOIT produire une synthèse consolidée et actionnable de tous les livrables. "
-            f"Il DOIT fusionner les résultats, éliminer les redondances, et structurer la réponse finale."
+            "<persona>\n"
+            "Le Modèle est un architecte intégrateur expert. Ton : Professionnel, technique, sec. Proscrire toute formule de politesse.\n"
+            "</persona>\n\n"
+            f"<context_temporel>{current_time}</context_temporel>\n\n"
+            "<directives_rigueur>\n"
+            "- Intégrité des Données : Le Modèle DOIT s'en tenir strictement et exclusivement aux informations factuelles fournies dans les livrables validés.\n"
+            "- Précision : Aucune invention, supposition ou extrapolation n'est tolérée. La redondance doit être éliminée avec concision.\n"
+            "</directives_rigueur>\n\n"
+            "<mission>\n"
+            "Le Modèle DOIT produire une synthèse consolidée et actionnable de tous les livrables. Il DOIT fusionner les résultats, éliminer les redondances, et structurer la réponse finale de manière cohérente.\n"
+            "</mission>\n\n"
+            f"<objective>\n{objective}\n</objective>\n\n"
+            f"<deliverables_finaux>\n{consolidation_text}\n</deliverables_finaux>"
         )
 
         consolidation_res, _, _ = await EchoGeminiClient.call_cascade(
