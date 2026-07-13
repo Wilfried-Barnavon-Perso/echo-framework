@@ -2,16 +2,15 @@
 title: ECHO Browser Lib
 author: ECHO Framework
 version: 1.10
-description: 1.10: Optim - Refonte des descriptions d'outils pour autoriser les appels parallèles (suppression de la notion de niveaux stricts).
-             1.9: Ajout de l'action_type `download` pour supporter le téléchargement de fichiers via Playwright.
-             1.7: Ajout du paramètre optionnel `name` dans `action_interact_a11y` pour le ciblage précis des rôles.
-             1.6: Refonte de l'API avec intégration de l'arbre a11y_tree et hiérarchie stricte.
-             1.5: Unification de l'API en 4 piliers (interact_a11y, interact_dom, inspect_page, browser_control).
-             1.4: Ajout des actions action_refresh et action_reset.
-             1.3: Support des coordonnées de repli (x,y) pour action_click et action_hover.
-             1.2: Ajout de action_request_vision, action_pause, action_search_dom (Navigation 2.0).
-             1.1: Ajout de action_press_key pour permettre la pression de touches spéciales (ex: Entrée).
+description: Composant système interne : ECHO Browser Lib.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.10: Optim - Refonte des descriptions d'outils pour autoriser les appels parallèles (suppression de la notion de niveaux stricts).
+# 1.9: Ajout de l'action_type `download` pour supporter le téléchargement de fichiers via Playwright.
+# 1.7: Ajout du paramètre optionnel `name` dans `action_interact_a11y` pour le ciblage précis des rôles.
+# 1.6: Refonte de l'API avec intégration de l'arbre a11y_tree et hiérarchie stricte.
+# 1.5: Unification de l'API en 4 piliers (interact_a11y, interact_dom, inspect_page, browser_control).
 
 import httpx
 import logging

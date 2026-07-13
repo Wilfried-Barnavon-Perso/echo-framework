@@ -1,3 +1,11 @@
+"""
+================================================================================
+MODULE : ECHO STT WORKER API
+VERSION : 1.0 (Initialisation)
+AUTEUR : Wilfried BARNAVON & ECHO Team
+DATE MAJ : 2026-07-05
+================================================================================
+"""
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from faster_whisper import WhisperModel

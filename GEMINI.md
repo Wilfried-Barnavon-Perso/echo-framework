@@ -22,18 +22,20 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 - **HTTP/2 Stealth Headers :** Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité (`get_stealth_headers`) pour simuler un navigateur réel.
 
 ### 2. La Conscience (`/opt/ECHO/owui-filters/`)
-- **Base vectorielle des souvenirs :** Système RAG vectoriel (Qdrant) avec Distillation Contextuelle automatique par **fenêtre glissante déterministe** (`WINDOW_SIZE`=5 + `WINDOW_OVERLAP`=2, configurable). Nettoyage des messages (role+content+fichiers) pour optimiser le budget tokens de la distillation Cloud.
+- **Base vectorielle des souvenirs :** Système RAG vectoriel (Qdrant) avec Distillation Contextuelle automatique par **fenêtre de tour dynamique**. Nettoyage des messages (role+content+fichiers) pour optimiser le budget tokens de la distillation Cloud.
 - **Gestion de l'importance des souvenirs :** Algorithme de fusion sémantique préservant le score `memory_importance` maximal des souvenirs.
 - **Smart Context :** Injection de faits via des balises XML structurelles (`<smart_context>`) et utilisation de `source_id` natifs (au lieu de slugs) pour la Mémoire Vectorisée de Session. Le filtre intercepte désormais exhaustivement les fichiers globaux du Workspace pour garantir une ingestion totale.
-- **Conversation RAG Filter :** Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG par fenêtre glissante déterministe. Le filtre assure dorénavant l'extraction textuelle stricte des messages multipart pour bloquer l'ingestion accidentelle de payloads Base64 (images) vers la base vectorielle.
+- **Conversation RAG Filter :** Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG par **fenêtre de tour dynamique**. Le filtre assure dorénavant l'extraction textuelle stricte des messages multipart pour bloquer l'ingestion accidentelle de payloads Base64 (images) vers la base vectorielle.
+- **User Native Context Filter :** Filtre Inlet d'interface pure (priorité 10) hébergeant les réglages utilisateur (nom, localisation) et les injectant dans les métadonnées de requête pour protéger le `new_context_filter` (moteur système) de toute désactivation.
+- **App Drawer Filter :** Filtre Inlet silencieux (priorité 1000) injectant un composant Data Island UI (ECHO App Drawer) natif. Il fournit un HUD flottant capable de s'interfacer directement avec les Actions des Modèles de l'utilisateur sans impacter la fenêtre de discussion.
 - **Pipeline d'Ingestion Zéro-RAM :** Architecture asynchrone déportée (`echo_ingestion.py`) pour le traitement mémoire-efficient de masse (batch vector processing). Conversion native des documents Office en Markdown (MarkItDown) et traitement hybride transparent (Mémoire Vectorisée, Codex Git, Fallback SQLite).
 - **Edge Embedding Bridge :** Offload de l'inférence vectorielle (microsoft/Harrier-OSS-v1-0.6B) vers le navigateur client via WebGPU/WASM (WebSocket), réduisant drastiquement la charge CPU avec bascule automatique sur le backend Docker en cas d'inactivité.
 
 ### 3. Contexte Proprioceptif : `environnement_contexte` & `evenement_systeme`
-Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre `new_context_filter.py`.
+Le vecteur d'état global (AEC) est injecté systématiquement par le filtre `new_context_filter.py`.
 - **Contenu Statique (`<environnement_contexte>`) :** Identité (`modèle_actuel`, `modèle_origine`) et grounding géo-temporel.
 - **Évènements Système (`<evenement_systeme>`) :** Bloc XML évènementiel notifiant le Modèle des ressources créées au tour courant ou détectées en asynchrone via le Watermark Delta.
-- **Règle d'Or :** Le modèle **DOIT** utiliser l'outil `query_registry` pour consulter le Registre Unifié V2 (Codex, Plans, Médias, URLs) et valider l'existence ou l'état d'une ressource avant toute manipulation.
+- **Règle d'Or :** Le modèle **DOIT** utiliser l'outil `query_registry` pour consulter le Registre Unifié (Codex, Plans, Médias, URLs) et valider l'existence ou l'état d'une ressource avant toute manipulation.
 
 ### 4. L'Arsenal (`/opt/ECHO/owui-tools/`)
 - **Planification Stratégique :** Construction, modification et gestion de plans d'action via un agent planificateur LLM (`strategic_planner.py`). Les instructions imposent à l'Orchestrateur le suivi tactique chronologique et la mise à jour obligatoire de l'état d'avancement via `update_plan` (modèle FLASH) après création via `build_plan` (modèle PRO). Cascade cognitive centralisée, persistance Markdown dans le Vault et registre SQLite.
@@ -42,15 +44,15 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`) pilotée par **boucle OODA autonome** via une **API à 4 piliers** (A11y, DOM, Inspect, Control). La *Descente Cognitive* (injection dynamique de `action_analyze_page` et `action_archive_page` dans le schéma) rend le Sous-Agent autonome via un Streaming Sémantique natif et un Archivage RAG asynchrone, remplaçant l'ancienne distillation monolithique. Utilise un mode hybride Lidar/Vision (Vision-On-Demand), une intégration multimodale (Gemini 3.x via attribut `parts` pour prévenir l'erreur 400) et le *Parallel Function Calling*. Inclut un mécanisme de *Proactive Context Pruning* (élagage dynamique du DOM via seuil configurable) et proscrit l'usage de moteurs de recherche généralistes.
 - **Sovereign Web Search (`sovereign_web_search.py`) :** Outils de recherche souveraine via SearXNG (recherche classique One-Shot) et DuckDuckGo (réponse instantanée factuelle), avec capacité de délégation à un agent de recherche profonde (Deep Research Agent) autonome pour les requêtes complexes multi-tours.
 - **Agent Engine (`agent_engine_tool.py`) :** Moteur d'exécution d'un agent unique via `delegate_to_agent` (± Skill via `role_name`). Boucle agentique avec outils, escalade cognitive, budget configurable. Depth=1 (pas de récursion), pas d'écriture RAG. Intègre l'injection universelle du contexte temporel (`<context_temporel>`) et des directives de rigueur (`<directives_globales>`) à la volée.
-- **Explorateur de l'Espace Personnel (`file_content_explorer.py`) :** Outil de lecture brute (RAW) et de sondage sémantique des fichiers locaux. Supporte l'extraction textuelle, l'encapsulation Base64 (pour l'injection multimodale) et l'analyse structurelle Hexadécimale. Soumis à validation via le Registre Unifié V2.
-- **Registre Unifié V2 (`query_registry_tool.py`) :** Outil de consultation de l'état cognitif des ressources centralisées (`FILE_INGESTION_STATUS`) indexées par le système.
+- **Explorateur de l'Espace Personnel (`file_content_explorer.py`) :** Outil de lecture brute (RAW) et de sondage sémantique des fichiers locaux. Supporte l'extraction textuelle, l'encapsulation Base64 (pour l'injection multimodale) et l'analyse structurelle Hexadécimale. Soumis à validation via le Registre Unifié.
+- **Registre Unifié (`query_registry_tool.py`) :** Outil de consultation de l'état cognitif des ressources centralisées (`FILE_INGESTION_STATUS`) indexées par le système.
 - **ECHO Codex (`echo_codex_tool.py`) :** Éditeur multi-langage avec Git intégré (dulwich). 9 fonctions (create, edit, read, search, summarize, list, delete, history). Édition assistée par sub-chat `MODEL_FLASH` via `call_cascade`. Registre `codex_docs` dans SQLite par chat. Distillation Cloud pour résumé technique.
 - **Python Code Executor (`python_code_executor.py`) :** Exécution de code Python dans une sandbox sécurisée (docker-python-worker) dédiée à la validation analytique complexe et aux calculs Data Science (pandas, numpy). Pilote l'API distante avec isolation des environnements et gestion native des erreurs OS.
 
 ### 5. Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
-- **ECHO Auth (SSO & MFA) :** IdP autonome (`/opt/ECHO/24-docker-echo-auth/`) gérant l'authentification forte (TOTP). Couplé à BunkerWeb via Forward Auth (`/api/verify`), l'état des sessions et les bannissements IP sont pilotés depuis l'Admin Manager (Révocations granulaires, Kill-Switch).
+- **ECHO Auth (SSO & MFA) :** IdP autonome (`/opt/ECHO/24-docker-echo-auth-manager/`) gérant l'authentification forte (TOTP). Couplé à BunkerWeb via Forward Auth (`/api/verify`), l'état des sessions et les bannissements IP sont pilotés depuis l'Admin Manager (Révocations granulaires, Kill-Switch).
 - **Dashboard Actif :** Interface interactive (Sidebar asynchrone) de monitoring du cluster Docker, gestion renforcée du SSO (révocation, purge dynamique sécurisée des utilisateurs via garde-fous API) et supervision des ressources système.
-- **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec Kill-Switch PWA, routage natif (`location = /ws/edge-embed`) pour le pont WebGPU, et routage sécurisé du service `echo-auth` via proxy inverse.
+- **Sécurité Périmétrique :** Intégration de BunkerWeb (WAF) avec Kill-Switch PWA, routage natif (`location = /ws/edge-embed`) pour le pont WebGPU, et routage sécurisé du service `echo-auth-manager` via proxy inverse.
 - **Régulation & Consolidation :** Optimisation physique SQLite (Vacuum/WAL), gestion des sauvegardes à chaud (incluant les bases IdP) et autosécurité Docker (rotation automatisée des logs pour prévenir la saturation disque).
 - **Purge Vectorielle & SQLite :** Centralisation du processus d'élagage temporel (TTL) et de la purge des orphelins dans les collections Qdrant (`echo_meta_artifacts`, `echo_session_rag`), incluant la purge dynamique utilisateur par introspection SQLite.
 - **Configuration Automatique (Open WebUI) :** Script d'orchestration post-déploiement (`00-echo-scripts/config-owui.sh`) paramétrant dynamiquement l'interface, les modèles et les permissions via API à partir du template statique (`01-config/webui-settings.json`).
@@ -59,6 +61,7 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 - **Cockpit de Rejeu :** Interface de contrôle pour la navigation web (`web_navigation_replay_action.py`).
 - **Print / PDF :** Impression et export PDF de conversations via `print_pdf_action.py`.
 - **Purge Mémoire :** Interface scrollable de suppression sélective de la base vectorielle (`purge_memory_action.py`) avec filtrage par tags, sélection par plage et confirmation.
+- **MCP Identity Vault :** Interface d'authentification centralisée (`echo_mcp_identity_action.py`) se synchronisant dynamiquement avec l'API des schémas du MCP Broker pour sauvegarder de manière isolée les credentials métier dans `mcp_vault` (SQLite).
 - **Agent Monitor :** Action HUD (`agent_monitor_action.py`) offrant une vue arborescente des agents (agents, experts, conseils, superviseurs, **navigateur web avec analyse DOM**) en temps réel via lecture SQLite.
 - **Réinitialisation Auth :** Purge des tokens Google OAuth2 de l'Espace Personnel (`reset_auth_action.py`).
 - **ECHO Codex (`echo_codex_action.py`) :** HUD Monaco Editor draggable avec file tree, mini-chat AI (quick actions), diff view (accept/reject), import/export PC, navigation historique Git (◀ ▶ avec mode read-only), restauration de version.
@@ -66,14 +69,15 @@ Le vecteur d'état global (AEC V2) est injecté systématiquement par le filtre 
 
 ### 7. Infrastructure d'Exécution
 - **Python Worker (`/opt/ECHO/docker-python-worker/`) :** API Flask isolée exécutant du code Python en mémoire protégée via isolation système (`multiprocessing` / dossier temporaire). Conçue pour la validation analytique, elle supporte la restitution graphique en Base64 (`pybase64`) et la sérialisation asynchrone ultra-rapide (`orjson`).
-- **Browser Agent (`/opt/ECHO/docker-browser-agent/`) :** Instance Playwright (Python 3.14) pilotée par API **FastAPI asynchrone**. Intègre un Watchdog d'Auto-Stop pour libération CDP, un streaming Live Long-Polling pour le screencast, et délègue les tâches CPU-bound (WebP/html2text) aux threads OS natifs. Moteur bridé à 9 FPS avec sérialisation asynchrone (`ORJSONResponse`) pour des performances optimales.
+- **Browser Worker (`/opt/ECHO/docker-browser-worker/`) :** Instance Playwright (Python 3.14) pilotée par API **FastAPI asynchrone**. Intègre un Watchdog d'Auto-Stop pour libération CDP, un streaming Live Long-Polling pour le screencast, et délègue les tâches CPU-bound (WebP/html2text) aux threads OS natifs. Moteur bridé à 9 FPS avec sérialisation asynchrone (`ORJSONResponse`) pour des performances optimales.
 - **Embedding Worker (`/opt/ECHO/docker-embedding-worker/`) :** Architecture hybride. Offload prioritaire de l'inférence microsoft/Harrier-OSS-v1-0.6B vers le navigateur client via **Edge Computing (WebGPU)**. Fallback transparent sur le conteneur Docker via **llama.cpp (GGUF)** optimisé CPU pour réduire massivement l'empreinte RAM (suppression de PyTorch).
 - **Download Broker (`/opt/ECHO/docker-download-broker/`) :** Service autonome gérant l'ingestion asynchrone des téléchargements Web. Assure le Garbage Collection et le déplacement atomique vers le Vault utilisateur avec sérialisation SQLite (`PENDING_INGESTION`).
+- **MCP Broker (`/opt/ECHO/docker-mcp-broker/`) :** Serveur natif Model Context Protocol (`FastMCP` via Uvicorn). Expose via ASGI StreamableHTTP des outils dynamiques externes (Omnisearch Jobs, Corporate Sirene/Bodacc, Academic). Intègre un middleware pur ASGI interceptant silencieusement le `x-openwebui-user-id` pour sécuriser l'exécution contextuelle.
 
 ### 8. Orchestration Séquentielle (Docker Compose)
-Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`. Standardisation stricte des hostnames internes avec le préfixe `echo-` (ex: `echo-python-worker`, `echo-browser-agent`, `echo-searxng`) :
+Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`. Standardisation stricte des hostnames internes avec le préfixe `echo-` (ex: `echo-python-worker`, `echo-browser-worker`, `echo-searxng`) :
 - **Tier 1 (Fondations)** : Qdrant, SearXNG, Watchtower — démarrent en parallèle.
-- **Tier 2 (Workers)** : Embedding (après Qdrant), Python Worker, Browser Agent.
+- **Tier 2 (Workers)** : Embedding (après Qdrant), Python Worker, Browser Worker, MCP Broker.
 - **Tier 3** : Open WebUI — attend Qdrant + Embedding + SearXNG.
 - **Tier 4** : Admin Manager — attend Open WebUI (dernier).
 - **Ports internes** : Qdrant (6333), Embedding (7997) ne sont **pas** exposés sur la VM. Accès uniquement via le réseau Docker `echo-network`.
@@ -117,4 +121,4 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.190.19*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.192.14*

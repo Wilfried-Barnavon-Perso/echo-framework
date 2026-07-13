@@ -2,11 +2,14 @@
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
 version: 6.3
-description: 6.0: Validation analytique par calcul empirique. Capacité graphique retirée (Headless).
-             6.1: Alignement du status sur le standard wrap_tool_output ECHO.
-             6.2: Correction d'un bug d'import (ECHO_PYTHON_WORKER_URL) et unbound local error (text_out).
-             6.3: Nettoyage sémantique de la docstring (Retrait de la mention PRAF).
+description: Composant système interne : ECHO Python Code Executor.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.0: Validation analytique par calcul empirique. Capacité graphique retirée (Headless).
+# 6.1: Alignement du status sur le standard wrap_tool_output ECHO.
+# 6.2: Correction d'un bug d'import (ECHO_PYTHON_WORKER_URL) et unbound local error (text_out).
+# 6.3: Nettoyage sémantique de la docstring (Retrait de la mention PRAF).
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
 
@@ -60,13 +63,13 @@ class Tools:
                     echo_status["error"] = worker_res["error"]
 
                 await events.status("Exécution terminée.", done=True)
-                return wrap_tool_output(text=text_out, status=echo_status)
+                return wrap_tool_output(text=text_out, status=echo_status, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             else:
                 err_msg = f"Erreur Worker (HTTP {response.status_code})"
                 await events.status(f"❌ {err_msg}", done=True)
-                return wrap_tool_output(text=err_msg, status={"status": "critical_error", "code": response.status_code})
+                return wrap_tool_output(text=err_msg, status={"status": "critical_error", "code": response.status_code}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         except requests.exceptions.ConnectionError:
-            return wrap_tool_output(text="❌ Service Python Worker injoignable.", status={"status": "error"})
+            return wrap_tool_output(text="❌ Service Python Worker injoignable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         except Exception as e: 
-            return wrap_tool_output(text=f"❌ Erreur Client: {str(e)}", status={"status": "error", "error": str(e)})
+            return wrap_tool_output(text=f"❌ Erreur Client: {str(e)}", status={"status": "error", "error": str(e)}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

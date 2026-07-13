@@ -2,8 +2,11 @@
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
 version: 3.2
-description: 3.2: Alignement sur le standard de retour minimaliste (wrap_tool_output).
+description: Composant système interne : ECHO Context Gauge.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 3.2: Alignement sur le standard de retour minimaliste (wrap_tool_output).
 
 from pydantic import BaseModel, Field
 import os
@@ -46,7 +49,7 @@ class Tools:
         user_id = __user__.get("id")
 
         if not user_id:
-            return wrap_tool_output(text="❌ Erreur : Impossible d'identifier l'utilisateur.", status={"status": "error"})
+            return wrap_tool_output(text="❌ Erreur : Impossible d'identifier l'utilisateur.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         try:
             safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
@@ -63,7 +66,7 @@ class Tools:
                 session_db = identity_db # Fallback sur identity si pas de chat_id
 
             if not os.path.exists(session_db):
-                return wrap_tool_output(text=f"⚠️ Métrique indisponible : Pas de session active pour `{user_id}`.", status={"status": "missing_db"})
+                return wrap_tool_output(text=f"⚠️ Métrique indisponible : Pas de session active pour `{user_id}`.", status={"status": "missing_db"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             # Lecture des stats de tokens (depuis session_db ou identity_db fallback)
             with sqlite3.connect(f"file://{session_db}?mode=ro", uri=True, timeout=5.0) as conn:
@@ -74,10 +77,10 @@ class Tools:
                     real_stats = json.loads(row[0])
                     source = "DB_SESSION" if chat_id else "DB_IDENTITY_FALLBACK"
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur DB : {str(e)}", status={"status": "error", "error": str(e)})
+            return wrap_tool_output(text=f"❌ Erreur DB : {str(e)}", status={"status": "error", "error": str(e)}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         if not real_stats:
-             return wrap_tool_output(text=f"⚠️ Aucune donnée de session pour `{user_id}`.", status={"status": "no_data"})
+             return wrap_tool_output(text=f"⚠️ Aucune donnée de session pour `{user_id}`.", status={"status": "no_data"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         est_tokens = real_stats.get("totalTokenCount", 0)
         p_tok = real_stats.get("promptTokenCount", 0)
@@ -104,4 +107,4 @@ class Tools:
         return wrap_tool_output(
             text=json.dumps(payload, option=json.OPT_INDENT_2).decode('utf-8'), 
             status={"status": "success"}
-        )
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

@@ -2,20 +2,23 @@
 title: ECHO Strategic Planner
 author: ECHO Framework
 version: 1.4
-description: 1.4: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
-             1.0: Outil de planification stratégique — construction, modification et gestion
-             de plans d'action via un agent planificateur LLM (cascade PRO→FLASH→LITE).
-             Plans persistés en Markdown dans le vault, registre de contrôle SQLite par chat,
-             injection automatique dans registre_plan (environnement_contexte).
-             1.1: Docstrings enrichies — instruction de reformulation read_plan, directive
-             tools_summary renforcée dans build_plan, contrainte auto-suppression delete_plan,
-             log diagnostic __tools__.
-             1.2: Centralisation politique modèle Pipe. Suppression _cascade_call() et
-             _get_thinking_level() locaux → call_cascade() centralisé.
-             1.3: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du
-             dossier plans/. save_plan_record → save_resource. Suppression _get_plan_dir
-             et _get_plan_path.
+description: Composant système interne : ECHO Strategic Planner.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.4: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
+# 1.0: Outil de planification stratégique — construction, modification et gestion
+# de plans d'action via un agent planificateur LLM (cascade PRO→FLASH→LITE).
+# Plans persistés en Markdown dans le vault, registre de contrôle SQLite par chat,
+# injection automatique dans registre_plan (environnement_contexte).
+# 1.1: Docstrings enrichies — instruction de reformulation read_plan, directive
+# tools_summary renforcée dans build_plan, contrainte auto-suppression delete_plan,
+# log diagnostic __tools__.
+# 1.2: Centralisation politique modèle Pipe. Suppression _cascade_call() et
+# _get_thinking_level() locaux → call_cascade() centralisé.
+# 1.3: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du
+# dossier plans/. save_plan_record → save_resource. Suppression _get_plan_dir
+# et _get_plan_path.
 
 import sys
 import os
@@ -232,7 +235,7 @@ class Tools:
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.")
+            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         await events.status("🗂️ Préparation du plan stratégique...")
 
@@ -288,13 +291,13 @@ class Tools:
 
         if not res_json:
             await events.status("❌ Échec — tous les modèles sont indisponibles.", done=True)
-            return wrap_tool_output(text="❌ Échec : aucun modèle disponible pour la planification.")
+            return wrap_tool_output(text="❌ Échec : aucun modèle disponible pour la planification.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # Extraction du texte généré
         plan_content = self._extract_llm_text(res_json)
         if not plan_content:
             await events.status("❌ Réponse vide du planificateur.", done=True)
-            return wrap_tool_output(text="❌ Erreur : le planificateur n'a produit aucun contenu.")
+            return wrap_tool_output(text="❌ Erreur : le planificateur n'a produit aucun contenu.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # Remplacement du placeholder author_model dans le frontmatter
         plan_content = plan_content.replace("{author_model}", model_key_used)
@@ -321,7 +324,7 @@ class Tools:
             model_requested=PLANNER_MODEL_BUILD,
             model_used=model_key_used,
             reason=reason
-        )
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def read_plan(
         self,
@@ -340,16 +343,16 @@ class Tools:
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.")
+            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         result = self._read_plan_from_codex(user_id, chat_id, plan_id)
         if not result:
-            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.")
+            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         content = result["content"]
 
         await events.status(f"📖 Plan `{plan_id}` lu.", done=True)
-        return wrap_tool_output(text=content)
+        return wrap_tool_output(text=content, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def update_plan(
         self,
@@ -371,11 +374,11 @@ class Tools:
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.")
+            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         result = self._read_plan_from_codex(user_id, chat_id, plan_id)
         if not result:
-            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.")
+            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # 1. Lecture du plan actuel
         current_content = result["content"]
@@ -413,12 +416,12 @@ class Tools:
 
         if not res_json:
             await events.status("❌ Échec — tous les modèles sont indisponibles.", done=True)
-            return wrap_tool_output(text="❌ Échec : aucun modèle disponible pour la modification.")
+            return wrap_tool_output(text="❌ Échec : aucun modèle disponible pour la modification.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         new_content = self._extract_llm_text(res_json)
         if not new_content:
             await events.status("❌ Réponse vide du planificateur.", done=True)
-            return wrap_tool_output(text="❌ Erreur : le planificateur n'a produit aucun contenu.")
+            return wrap_tool_output(text="❌ Erreur : le planificateur n'a produit aucun contenu.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # 4. Écriture dans le Codex (Git)
         repo = CodexRepo(user_id, chat_id)
@@ -443,7 +446,7 @@ class Tools:
             model_requested=PLANNER_MODEL_UPDATE,
             model_used=model_key_used,
             reason=reason
-        )
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def delete_plan(
         self,
@@ -459,11 +462,11 @@ class Tools:
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.")
+            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         result = self._read_plan_from_codex(user_id, chat_id, plan_id)
         if not result:
-            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.")
+            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         plan_filename = result["filename"]
 
@@ -479,4 +482,4 @@ class Tools:
 
         return wrap_tool_output(
             text=f"✅ Plan `{plan_id}` (`{plan_filename}`) supprimé définitivement."
-        )
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

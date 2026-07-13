@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 4.6
+# VERSION : 4.7
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -163,12 +163,13 @@ sync_resource "$SRC_DIR/14-owui-libs"          "$ECHO_ROOT/owui-libs"
 sync_resource "$SRC_DIR/_assets/images"        "$ECHO_ROOT/echo-images"
 
 # Docker Build Contexts
+sync_resource "$SRC_DIR/23-docker-mcp-broker"       "$ECHO_ROOT/docker-mcp-broker"
 sync_resource "$SRC_DIR/20-docker-admin-manager"    "$ECHO_ROOT/docker-admin-manager"
 sync_resource "$SRC_DIR/21-docker-python-worker"    "$ECHO_ROOT/docker-python-worker"
-sync_resource "$SRC_DIR/22-docker-browser-agent/browser_api.py" "$ECHO_ROOT/docker-browser-agent/browser_api.py"
-sync_resource "$SRC_DIR/23-docker-embedding-worker" "$ECHO_ROOT/docker-embedding-worker"
-sync_resource "$SRC_DIR/24-docker-echo-auth"        "$ECHO_ROOT/docker-echo-auth"
-sync_resource "$SRC_DIR/30-docker-stt-worker"       "$ECHO_ROOT/docker-stt-worker"
+sync_resource "$SRC_DIR/22-docker-browser-worker/browser_api.py" "$ECHO_ROOT/docker-browser-worker/browser_api.py"
+sync_resource "$SRC_DIR/30-docker-embedding-worker" "$ECHO_ROOT/docker-embedding-worker"
+sync_resource "$SRC_DIR/24-docker-echo-auth-manager" "$ECHO_ROOT/docker-echo-auth-manager"
+sync_resource "$SRC_DIR/32-docker-stt-worker"       "$ECHO_ROOT/docker-stt-worker"
 sync_resource "$SRC_DIR/31-docker-tts-worker"       "$ECHO_ROOT/docker-tts-worker"
 sync_resource "$SRC_DIR/25-docker-download-broker"  "$ECHO_ROOT/docker-download-broker"
 
@@ -191,7 +192,7 @@ fi
 # Nettoyage et Permissions
 echo "   🧹 Nettoyage des caractères Windows et permissions..."
 # Liste des dossiers à nettoyer (tous les dossiers de prod sous ECHO_ROOT)
-PROD_DIRS="$ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/docker-admin-manager $ECHO_ROOT/docker-python-worker $ECHO_ROOT/docker-browser-agent $ECHO_ROOT/docker-embedding-worker $ECHO_ROOT/docker-echo-auth $ECHO_ROOT/docker-stt-worker $ECHO_ROOT/docker-tts-worker $ECHO_ROOT/docker-download-broker"
+PROD_DIRS="$ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/docker-admin-manager $ECHO_ROOT/docker-python-worker $ECHO_ROOT/docker-browser-worker $ECHO_ROOT/docker-embedding-worker $ECHO_ROOT/docker-echo-auth-manager $ECHO_ROOT/docker-stt-worker $ECHO_ROOT/docker-tts-worker $ECHO_ROOT/docker-download-broker $ECHO_ROOT/docker-mcp-broker"
 
 find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
 find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec sed -i 's/\r$//' {} +

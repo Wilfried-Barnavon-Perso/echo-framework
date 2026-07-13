@@ -184,9 +184,9 @@ flowchart TD
         <text x="52" y="441" fill="#64748b" font-size="9" font-family="monospace">wrap_tool_output()</text>
         <text x="52" y="455" fill="#64748b" font-size="9" font-family="monospace">index_text_in_ephemeral_rag()</text>
 
-        <!-- echo_auth.py -->
+        <!-- echo_auth.py (auth-manager) -->
         <rect x="208" y="334" width="140" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
-        <text x="224" y="354" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_auth.py</text>
+        <text x="224" y="354" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_auth.py (auth-manager)</text>
         <text x="334" y="354" fill="#4ade80" font-size="8">v7.3</text>
         <text x="224" y="371" fill="#64748b" font-size="9" font-family="monospace">AuthService</text>
         <text x="224" y="385" fill="#64748b" font-size="9" font-family="monospace">initiate_pkce_flow()</text>
@@ -442,7 +442,7 @@ flowchart TD
     <p>
       ECHO opère deux collections Qdrant physiquement isolées, vectorisées par le modèle local
       <strong>microsoft/Harrier-OSS-v1-0.6B</strong> (1024 dimensions, multilingue, 8192 tokens) via l'<em>Embedding Worker</em>
-      (<code>http://echo-embedding:7997</code>). Aucune donnée ne quitte l'infrastructure.
+      (<code>http://echo-embedding-worker:7997</code>). Aucune donnée ne quitte l'infrastructure.
     </p>
 
     <div class="grid-container">
@@ -559,7 +559,7 @@ sequenceDiagram
         Ce schéma représente la topologie réelle du cluster Docker ECHO. Le trafic WAN est filtré
         par BunkerWeb (WAF) <strong>si celui-ci est activé</strong> (optionnel, contrôlé via les scripts <code>enable-bunkerweb.sh</code> et <code>disable-bunkerweb.sh</code>).
         En cas d'activation, BunkerWeb délègue l'authentification (SSO & MFA) au module <strong>ECHO Auth</strong>.
-        L'Arsenal (Browser Agent, Python Worker, SearxNG) s'exécute sur un
+        L'Arsenal (echo-browser-worker, echo-python-worker, SearxNG) s'exécute sur un
         sous-réseau Docker privé sans accès entrant. Les volumes SQLite garantissent la persistance
         des données hors-conteneur. L'Admin Manager accède au Docker Daemon via
         <code>/var/run/docker.sock</code> (socket Unix monté en volume).
@@ -583,7 +583,7 @@ flowchart TB
 
   subgraph APP ["🖥️ ZONE 2 : APPLICATION & KERNEL TIER"]
     direction TB
-    AUTH["🔑 ECHO Auth (SSO IdP)<br/>[:8000 Interne]"]
+    AUTH["🔑 echo-auth-manager (SSO IdP)<br/>[:8000 Interne]"]
     SSH["🚇 ECHO SSH Tunnel (Antigravity)<br/>[:8020-8024]"]
     OWUI["🖥️ Open WebUI<br/>[:3000]"]
     subgraph Kernel ["🧠 ECHO Kernel (In-Process)"]
@@ -604,8 +604,9 @@ flowchart TB
 
   subgraph SANDBOX ["🛠️ ZONE 4 : ARSENAL ISOLÉ (Sans accès entrant)"]
     direction LR
-    BA["🌐 Browser Agent<br/>[:5002]"]
-    PW["🚀 Python Worker<br/>[:5000]"]
+    BA["🌐 echo-browser-worker<br/>[:5002]"]
+    MCP["🔌 echo-mcp-broker<br/>[:8000]"]
+    PW["🚀 echo-python-worker<br/>[:5000]"]
     SNG["🔍 SearxNG Proxy<br/>[:8080]"]
     DL["⬇️ Download Broker<br/>[Daemon]"]
     AUD["🎙️ Audio Workers<br/>[:7995, :7996]"]
@@ -758,7 +759,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

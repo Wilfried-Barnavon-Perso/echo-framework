@@ -1,20 +1,23 @@
 """
 title: ECHO Agent Monitor
 author: Wilfried BARNAVON
-version: 1.5
-description: 1.0: HUD de visualisation arborescente des agents cognitifs ECHO.
-             1.1: Boucle événementielle bidirectionnelle (pattern Codex).
-             Suppression des troncatures Python. Refresh live via Promise.
-             Icône arbre d'orchestration.
-             1.2: Renommage subagent→agent. Classification enrichie par préfixe
-             (agent, expert, council, supervisor). Regroupement des threads de
-             conseil et de supervision sous onglets uniques.
-             1.3: Stratégie multi-agentique : fusion chronologique des conseils (chat)
-             et regroupement arborescent des workers sous le superviseur.
-             1.4: Optimisation du rendu HUD multi-agent et intégration du nouveau moteur EchoUI.
-             1.5: Classification spécifique Navigateur Web et filtrage HUD de la carte DOM.
+version: 1.6
+description: HUD interactif de visualisation arborescente des sous-agents et experts cognitifs ECHO.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxjaXJjbGUgY3g9IjEyIiBjeT0iNCIgcj0iMiIvPjxsaW5lIHgxPSIxMiIgeTE9IjYiIHgyPSIxMiIgeTI9IjkiLz48bGluZSB4MT0iMTIiIHkxPSI5IiB4Mj0iNiIgeTI9IjEzIi8+PGxpbmUgeDE9IjEyIiB5MT0iOSIgeDI9IjE4IiB5Mj0iMTgiLz48Y2lyY2xlIGN4PSI2IiBjeT0iMTUiIHI9IjIiLz48Y2lyY2xlIGN4PSIxOCIgY3k9IjE1IiByPSIyIi8+PGxpbmUgeDE9IjYiIHkxPSIxNyIgeDI9IjYiIHkyPSIyMCIvPjxsaW5lIHgxPSIxOCIgeTE9IjE3IiB4Mj0iMTgiIHkyPSIyMCIvPjxjaXJjbGUgY3g9IjYiIGN5PSIyMSIgcj0iMSIvPjxjaXJjbGUgY3g9IjE4IiBjeT0iMjEiIHI9IjEiLz48L3N2Zz4=
 """
+# Historique des versions :
+# 1.6: Mise à jour de la priorité d'affichage à 50.
+# 1.0: HUD de visualisation arborescente des agents cognitifs ECHO.
+# 1.1: Boucle événementielle bidirectionnelle (pattern Codex).
+# Suppression des troncatures Python. Refresh live via Promise.
+# Icône arbre d'orchestration.
+# 1.2: Renommage subagent→agent. Classification enrichie par préfixe
+# (agent, expert, council, supervisor). Regroupement des threads de
+# conseil et de supervision sous onglets uniques.
+# 1.3: Stratégie multi-agentique : fusion chronologique des conseils (chat)
+# et regroupement arborescent des workers sous le superviseur.
+# 1.4: Optimisation du rendu HUD multi-agent et intégration du nouveau moteur EchoUI.
+# 1.5: Classification spécifique Navigateur Web et filtrage HUD de la carte DOM.
 
 import sys
 import re
@@ -30,7 +33,7 @@ from echo_ui import EchoUI
 
 class Action:
     class Valves(BaseModel):
-        priority: int = Field(default=3, description="Priorité d'affichage dans le menu Actions.")
+        priority: int = Field(default=50, description="Priorité d'affichage dans le menu Actions.")
 
     def __init__(self):
         self.valves = self.Valves()

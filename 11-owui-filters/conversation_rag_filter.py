@@ -1,14 +1,17 @@
 """
 title: ECHO Session RAG Conversation Filter
 author: ECHO Framework
-version: 1.6
-description: 1.6: Architecture Stateless Zéro RAM (Fenêtre de Tour Dynamique) & Bouclier Regex anti-Base64.
-             1.5: Fix UUID collision en RAG éphémère (ajout unique_seed).
-             1.4: Extraction propre du texte dans les messages multipart pour empêcher l'embedding de Base64 massif.
-             1.3: Correction de la sécurité d'importation (ajouts systèmes ECHO pour le filtre).
-             1.1: Suppression de l'overlap de messages pour éviter la redondance dans le RAG.
-             1.0: Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG.
+version: 1.9
+description: Composant système interne : ECHO Session RAG Conversation Filter.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.9: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
+# 1.8: Migration de ENABLE_CONVERSATION_RAG vers les Valves globales.
+# 1.7: Nettoyage du code mort (suppression de la Valve WINDOW_SIZE devenue obsolète avec la V1.6).
+# 1.6: Architecture Stateless Zéro RAM (Fenêtre de Tour Dynamique) & Bouclier Regex anti-Base64.
+# 1.5: Fix UUID collision en RAG éphémère (ajout unique_seed).
+# 1.4: Extraction propre du texte dans les messages multipart pour empêcher l'embedding de Base64 massif.
 
 from typing import Optional, Any
 from pydantic import BaseModel, Field
@@ -22,15 +25,8 @@ from echo_utils import EchoGeminiClient
 from echo_constants import SESSION_RAG_CONVERSATION_SOURCE_ID
 
 class Filter:
-    priority: int = 100
-
     class Valves(BaseModel):
-        WINDOW_SIZE: int = Field(
-            default=1,
-            description="Nombre de messages à attendre avant de déclencher l'indexation de l'historique dans le Session RAG."
-        )
-
-    class UserValves(BaseModel):
+        priority: int = Field(default=100, hidden=True, description="Priorité d'exécution (0 = premier).")
         ENABLE_CONVERSATION_RAG: bool = Field(
             default=True,
             description="Active l'indexation automatique de la conversation dans le Session RAG."
@@ -38,8 +34,6 @@ class Filter:
 
     def __init__(self):
         self.valves = self.Valves()
-        self.user_valves = self.UserValves()
-        self.toggle = True
 
     def _format_messages(self, messages: list) -> str:
         """Formate les messages en texte brut avec protection Base64."""
@@ -77,8 +71,7 @@ class Filter:
         __event_emitter__: Optional[Any] = None
     ) -> dict:
         """Déclenchement asynchrone Stateless sur Fenêtre de Tour Dynamique."""
-        u_v = __user__.get("valves") if __user__ else self.user_valves
-        is_enabled = getattr(u_v, "ENABLE_CONVERSATION_RAG", True)
+        is_enabled = self.valves.ENABLE_CONVERSATION_RAG
         
         if not is_enabled or not __user__:
             return body

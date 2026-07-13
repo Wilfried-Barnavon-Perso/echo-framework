@@ -1,10 +1,13 @@
 """
 title: Réinitialiser Authentification Gemini /!\
 author: Wilfried BARNAVON
-version: 4.6
-description: 4.6: Renommage sémantique du titre UX (revert self.actions incompatible OWUI simple-action).
+version: 4.7
+description: Révocation d'urgence : déconnecte la session et purge les tokens OAuth2 Google.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgeD0iMyIgeT0iMTEiIHJ4PSIyIiByeT0iMiIvPjxwYXRoIGQ9Ik03IDExVjdhNSA1IDAgMCAxIDEwIDB2NCIvPjwvc3ZnPg==
 """
+# Historique des versions :
+# 4.7: Mise à jour de la priorité d'affichage à 10.
+# 4.6: Renommage sémantique du titre UX (revert self.actions incompatible OWUI simple-action).
 
 import os
 import sqlite3
@@ -19,7 +22,7 @@ from echo_constants import ECHO_USERS_ROOT
 
 class Action:
     class Valves(BaseModel):
-        priority: int = Field(default=1, description="Priorité d'affichage (1 = Premier).")
+        priority: int = Field(default=10, description="Priorité d'affichage (10 = Premier).")
 
     def __init__(self):
         self.valves = self.Valves()

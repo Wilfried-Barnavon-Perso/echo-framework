@@ -1,10 +1,13 @@
 """
 title: Print / PDF
 author: Wilfried BARNAVON
-version: 2.3
-description: 2.3: Factorisation de la logique CSS Path-Marking vers echo_ui.py (EchoUI.get_print_isolation_js). Renommage export_pdf -> print_pdf pour refléter le comportement natif.
+version: 2.4
+description: Outil d'exportation de la conversation courante vers un document PDF formaté pour l'impression.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNCAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWOHoiLz48cG9seWxpbmUgcG9pbnRzPSIxNCAyIDE0IDggMjAgOCIvPjxsaW5lIHgxPSIxMiIgeTE9IjEyIiB4Mj0iMTIiIHkyPSIxOCIvPjxwb2x5bGluZSBwb2ludHM9IjkgMTUgMTIgMTggMTUgMTUiLz48L3N2Zz4=
 """
+# Historique des versions :
+# 2.4: Mise à jour de la priorité d'affichage à 100.
+# 2.3: Factorisation de la logique CSS Path-Marking vers echo_ui.py (EchoUI.get_print_isolation_js). Renommage export_pdf -> print_pdf pour refléter le comportement natif.
 
 import sys
 import logging
@@ -35,8 +38,8 @@ class Action:
 
     class Valves(BaseModel):
         priority: int = Field(
-            default=4,
-            description="Priorité d'affichage (4 = Dernier, après Replay Web)."
+            default=100,
+            description="Priorité d'affichage (100 = Tout à la fin)."
         )
 
     def __init__(self):

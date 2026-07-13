@@ -61,7 +61,9 @@
       <div class="mermaid">
 flowchart LR
   U([Utilisateur]) -->|Upload + Texte| OWUI[Open WebUI]
-  OWUI -->|hook.inlet| F["🌒 new_context_filter.py"]
+  OWUI -->|hook.inlet| F5["🌒 app_drawer_filter.py (Filtre 5)"]
+  F5 --> F4["🌒 user_native_context_filter.py (Filtre 4)"]
+  F4 --> F["🌒 new_context_filter.py (Filtre 1)"]
 
   F --> AN{Analyse<br/>MIME + Taille}
 
@@ -155,9 +157,9 @@ flowchart LR
       <em>proprioception</em> du modèle pour le tour courant.
     </p>
 
-    <div class="code-header">Structure du bloc AEC V2 (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
+    <div class="code-header">Structure du bloc AEC (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.188.1"
+version_framework_echo: "5.192.16"
 modèle_actuel:   "##MODEL_ID##"
 modèle_origine:  "##MODEL_ORIGIN##"
 nom_utilisateur: "anonyme"
@@ -181,7 +183,7 @@ timezone:        "Europe/Paris"
 &lt;/smart_context&gt;</code></pre>
 
     <div class="note-box">
-      <h4>Règle d'Or - Registre Unifié V2</h4>
+      <h4>Règle d'Or - Registre Unifié</h4>
       <p>
         Les registres massifs (`registre_fichiers`, etc.) le modèle <strong>doit</strong> utiliser dynamiquement l'outil <code>query_registry</code> pour connaître l'état du système et de ses ressources (Codex, fichiers, plans). Seul un delta évènementiel (<code>&lt;evenement_systeme&gt;</code>) le prévient des actions asynchrones ou des fichiers du tour courant.
       </p>
@@ -202,23 +204,17 @@ timezone:        "Europe/Paris"
       Ce filtre ne traite que la phase <strong>Outlet</strong> (post-génération). Son objectif unique est d'injecter sans latence l'historique conversationnel dans la mémoire de travail vectorisée de la session (<code>echo_session_rag</code>), afin d'alléger le contexte principal et de permettre l'exploration d'historiques profonds via le RAG.
     </p>
 
-    <h3>Fenêtre glissante déterministe et Zéro-Latence</h3>
+    <h3>Fenêtre de tour dynamique et Zéro-Latence</h3>
     <p>
-      Le déclenchement de l'indexation repose sur un paramètre configurable unique (Valve) :
+      Le déclenchement de l'indexation s'effectue automatiquement à chaque fin de tour (lorsque l'assistant a terminé sa réponse et ses actions).
     </p>
-    <table>
-      <thead><tr><th>Valve</th><th>Défaut</th><th>Rôle</th></tr></thead>
-      <tbody>
-        <tr><td><code>WINDOW_SIZE</code></td><td>1</td><td>Nombre de messages à attendre avant de déclencher l'indexation dans le Session RAG</td></tr>
-      </tbody>
-    </table>
     <p>
-      Tous les <code>WINDOW_SIZE</code> messages, le filtre extrait une fenêtre de
-      <code>WINDOW_SIZE</code> messages récents et lance l'indexation
-      en arrière-plan via <code>asyncio.create_task</code>. (L'ancien système d'overlap a été supprimé en v1.1 pour éviter la redondance vectorielle).
+      Le filtre extrait dynamiquement la fenêtre complète du tour courant et lance l'indexation
+      en arrière-plan via <code>asyncio.create_task</code>. L'ancien système de fenêtre glissante (<code>WINDOW_SIZE</code> / <code>WINDOW_OVERLAP</code>) a été totalement supprimé au profit de cette architecture stateless Zéro-RAM.
     </p>
 
-    <h3>Pipeline Zéro-LLM</h3>
+    <h3>Pipeline Zéro-LLM et echo_ingestion.py</h3>
+    <p>L'ingestion de masse est déportée via l'architecture asynchrone <code>echo_ingestion.py</code> (Pipeline Zéro-RAM) qui supporte le traitement vectoriel en batch, la conversion native via MarkItDown, et un fallback SQL/Git.</p>
     <p>
       Le fonctionnement de ce filtre a été radicalement simplifié et optimisé par rapport à son prédécesseur (qui gérait la distillation long terme). Le processus actuel est le suivant :
     </p>
@@ -254,14 +250,29 @@ timezone:        "Europe/Paris"
       Il gère également un mécanisme de blocage actif (conditionné par la valve <code>WAIT_FOR_EDGE_EMBEDDING</code>) avec une tolérance stricte de 3 secondes pour un signe de vie, et une limite globale définie par <code>EDGE_EMBEDDING_TIMEOUT</code>, garantissant que le client s'est connecté au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
     </p>
 
+
+
+    <h2>Filtre 4 - <code>user_native_context_filter.py</code></h2>
+    <p>
+      Filtre d'interception Inlet très précoce (Priorité 10). Son rôle est d'héberger les paramètres spécifiques de l'utilisateur (nom, localisation) et de les injecter de manière sécurisée dans les métadonnées de la requête.
+      Cette mécanique repose sur l'extraction dynamique de l'identité via le WAF BunkerWeb, qui propage l'identité via l'en-tête <code>X-Webui-Name</code>. En déportant ces informations dans ce filtre purement interface, le cœur du système (Filtre 1) est protégé contre toute désactivation accidentelle des paramètres.
+    </p>
+
+    <h2>Filtre 5 - <code>app_drawer_filter.py</code></h2>
+    <p>
+      Filtre silencieux Inlet de très haute priorité (1000). Il a pour mission d'injecter nativement le composant Data Island UI "ECHO App Drawer" dans le DOM.
+      Ce HUD flottant (Heads-Up Display) s'interface de manière asynchrone avec les actions des Modèles, fournissant à l'utilisateur des raccourcis asynchrones et l'accès au Vault MCP, le tout sans jamais saturer ou perturber la fenêtre de discussion active.
+    </p>
+
     <div class="transition-text">
+
       <a href="05_hud_ui.html">&larr; Écosystème HUD & UI</a>
       &nbsp;&nbsp;
       <a href="07_pipe.html">Le Pipe (Cortex) &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

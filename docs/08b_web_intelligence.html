@@ -33,9 +33,9 @@
     <table>
       <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
       <tbody>
-        <tr><td><strong>Conteneur</strong></td><td><code>echo-browser-agent</code></td></tr>
+        <tr><td><strong>Conteneur</strong></td><td><code>echo-browser-worker</code></td></tr>
         <tr><td><strong>Port interne</strong></td><td><strong>5002</strong> (exposé via <code>uvicorn host="0.0.0.0" port=5002</code>)</td></tr>
-        <tr><td><strong>Source</strong></td><td><code>22-docker-browser-agent/browser_api.py</code></td></tr>
+        <tr><td><strong>Source</strong></td><td><code>22-docker-browser-worker/browser_api.py</code></td></tr>
         <tr><td><strong>Version</strong></td><td>9.2 (HEALTHCHECK)</td></tr>
         <tr><td><strong>Moteur</strong></td><td>Playwright Chromium headless, mode Mobile (iPad) ou Desktop configurable</td></tr>
         <tr><td><strong>Bibliothèques</strong></td><td><code>fastapi</code>, <code>playwright</code>, <code>orjson</code>, <code>pybase64</code>, <code>html2text</code></td></tr>
@@ -227,7 +227,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

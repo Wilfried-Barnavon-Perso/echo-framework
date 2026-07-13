@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.61
+# VERSION : 7.65
 # ==============================================================================
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
@@ -148,13 +148,19 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
         for file in "$T"/*.py; do
             [ -e "$file" ] || continue
             ID=$(basename "$file" | cut -d. -f1)
+            NAME=$(grep -m 1 "^title:" "$file" | sed 's/^title:[ \t]*//' | tr -d '\r' | sed 's/^"//;s/"$//' | sed "s/^'//;s/'$//")
+            if [ -z "$NAME" ]; then
+                NAME="$ID"
+            fi
+            
+            DESC_VAL=$(grep -m 1 "^description:" "$file" | sed 's/^description:[ \t]*//' | tr -d '\r' | sed 's/^"//;s/"$//' | sed "s/^'//;s/'$//")
             
             TMP_JSON="/tmp/owui_payload_$$.json"
             if [ "$API_ENDPOINT" == "tools" ]; then
-                jq -n --arg id "$ID" --arg name "${NAME:-$ID}" --rawfile content "$file" '{id: $id, name: $name, content: $content, meta: {}}' > "$TMP_JSON"
+                jq -n --arg id "$ID" --arg name "$NAME" --arg desc "$DESC_VAL" --rawfile content "$file" '{id: $id, name: $name, content: $content, meta: {description: $desc}}' > "$TMP_JSON"
             else
                 TYPE_VAL=$(echo "$DESC" | tr '[:upper:]' '[:lower:]')
-                jq -n --arg id "$ID" --arg name "${NAME:-$ID}" --rawfile content "$file" --arg type "$TYPE_VAL" '{id: $id, name: $name, content: $content, type: $type, meta: {}}' > "$TMP_JSON"
+                jq -n --arg id "$ID" --arg name "$NAME" --arg desc "$DESC_VAL" --rawfile content "$file" --arg type "$TYPE_VAL" '{id: $id, name: $name, content: $content, type: $type, meta: {description: $desc}}' > "$TMP_JSON"
             fi
             
             api_upsert "$API_ENDPOINT" "$ID" "$TMP_JSON" "$DESC"

@@ -1,10 +1,12 @@
 """
 ================================================================================
-MODULE : ECHO BROWSER AGENT API (FASTAPI ASYNC EDITION)
-VERSION : 9.15 (Archivage Sémantique Zéro-RAM)
+MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
+VERSION : 9.16 (Migration vers Worker Standard)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-06-28
+DATE MAJ : 2026-07-05
 
+CHANGELOG 9.16 :
+- MIGRATION: Renommage de l'entité Agent en Worker pour standardisation globale de l'architecture.
 CHANGELOG 9.15 :
 - FEAT: Levée de la bride `read_text` à 2 millions de caractères (~600k tokens) pour libérer la pleine puissance contextuelle de Gemini 3.x lors des RAG et sondages.
 CHANGELOG 9.14 :

@@ -1,19 +1,40 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.7
-description: 5.6: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans le payload de génération via call_cascade.
-             5.5: Optimisation du prompt Architecte Visuel (balises XML, bloc <thinking>, ton impersonnel).
-             5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux). 5.2: Renommage niveau_cognitif→target_model, migration stream→call_cascade() centralisé.
+version: 5.9
+description: Composant système interne : ECHO Visual Engine.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.9: Implémentation de la boucle de rétroaction sémantique (Pydantic) via call_cascade (suppression call_distillation).
+# 5.8: Intégration du moteur cartographique Leaflet (v1.9) et ajout du manuel des moteurs dans la docstring.
+# 5.6: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans le payload de génération via call_cascade.
+# 5.5: Optimisation du prompt Architecte Visuel (balises XML, bloc <thinking>, ton impersonnel).
+# 5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux). 5.2: Renommage niveau_cognitif→target_model, migration stream→call_cascade() centralisé.
+# MOTEURS INTÉGRÉS ET DATAFLOWS :
+# - mermaid (v11) : Syntaxe Mermaid pure
+# - echarts (v5) : JSON ECharts strict
+# - markmap (v0.17) : Markdown hiérarchique
+# - leaflet (v1.9) : JSON {"center": [lat,lng], "zoom": int, "markers": [{"lat": float, "lng": float, "popup": "html"}]}
+# - vega (v5), cytoscape, wavedrom, timeline, aframe, etc.
 
 import os
 import sys
 import re
 import base64
 import orjson as json
-from typing import Optional, Any, Tuple, Union, Literal
-from pydantic import BaseModel, Field
+from typing import Optional, Any, Tuple, Union, Literal, List
+from pydantic import BaseModel, Field, ValidationError
+
+class LeafletMarker(BaseModel):
+    lat: float
+    lng: float
+    popup: Optional[str] = None
+
+class LeafletSchema(BaseModel):
+    center: Tuple[float, float]
+    zoom: int
+    markers: List[LeafletMarker] = []
 from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
@@ -40,7 +61,7 @@ class Tools:
     intention: str,
     donnees_contextuelles: str,
     # [MAINTENANCE_AI] Avertissement: Toujours mettre à jour ce Literal lors de l'ajout/suppression d'un moteur de rendu.
-    moteur: Optional[Literal["markmap", "mermaid", "sketch", "echarts", "vega", "timeline", "bpmn", "gantt", "aframe", "svg", "cytoscape", "wavedrom", "chem", "science", "bio", "astro"]] = None,
+    moteur: Optional[Literal["markmap", "mermaid", "sketch", "echarts", "vega", "timeline", "bpmn", "gantt", "aframe", "svg", "cytoscape", "wavedrom", "chem", "science", "bio", "astro", "leaflet"]] = None,
     niveau_cognitif: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
     __user__: dict = {},
     __metadata__: dict = {},
@@ -88,6 +109,7 @@ class Tools:
         "13. 'svg' : XML SVG complet et valide.\n"
         "14. 'chem' : Chaîne SMILES (ex: 'CC(=O)OC1=CC=CC=C1C(=O)O').\n"
         "15. 'science' : JSON Plotly.js (data: [], layout: {}).\n"
+        "16. 'leaflet' : JSON strict pour carte géographique. Structure imposée: {\"center\": [lat, lng], \"zoom\": int, \"markers\": [{\"lat\": float, \"lng\": float, \"popup\": \"texte html\"}]}.\n"
         "</technical_manual>\n\n"
         "<rules>\n"
         "1. RÉFLEXION : Le Modèle DOIT structurer sa réflexion analytique préalable dans une balise <thinking>.\n"
@@ -124,7 +146,7 @@ class Tools:
           include_thoughts=False,
       )
       if not data:
-          return wrap_tool_output(text="❌ Cascade épuisée : aucun modèle disponible pour la génération visuelle.", status={"status": "error"})
+          return wrap_tool_output(text="❌ Cascade épuisée : aucun modèle disponible pour la génération visuelle.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
       # Extraction texte depuis la réponse
       response_text = ""
       candidates = data.get("candidates", [])
@@ -138,27 +160,58 @@ class Tools:
       payload = code_match.group(1).strip() if code_match else response_text.strip()
 
       if not payload:
-        return wrap_tool_output(text="⚠️ Échec : Le modèle n'a pas généré de payload valide.", status={"status": "empty_response"})
+        return wrap_tool_output(text="⚠️ Échec : Le modèle n'a pas généré de payload valide.", status={"status": "empty_response"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
       # Détermination du moteur final
       final_moteur = moteur
       if not final_moteur:
-        for m in ["bio", "svg", "chem", "science", "astro", "aframe", "cytoscape", "wavedrom", "timeline", "bpmn", "echarts", "vega", "markmap", "gantt", "sketch", "mermaid"]:
+        for m in ["bio", "svg", "chem", "science", "astro", "aframe", "cytoscape", "wavedrom", "timeline", "bpmn", "echarts", "vega", "markmap", "gantt", "sketch", "leaflet", "mermaid"]:
           if m in response_text.lower()[:300]:
             final_moteur = m
             break
       final_moteur = final_moteur or "mermaid"
 
       # --- VALIDATION JSON STRICTE (Moteurs Data) ---
-      moteurs_json = ["echarts", "vega", "timeline", "cytoscape", "wavedrom", "science", "astro"]
+      moteurs_json = ["echarts", "vega", "timeline", "cytoscape", "wavedrom", "science", "astro", "leaflet"]
       if final_moteur in moteurs_json:
           try:
-              json.loads(payload)
-          except Exception:
-              await events.status(f"⚠️ Correction syntaxique JSON ({final_moteur})...")
-              repair_prompt = f"Corrige ce JSON pour le moteur '{final_moteur}' pour qu'il soit valide et sans commentaires :\n\n{payload}"
-              payload_fixed = await EchoGeminiClient.call_distillation(repair_prompt, __user__, __metadata__, is_json=False)
-              if payload_fixed: payload = payload_fixed
+              data = json.loads(payload)
+              if final_moteur == "leaflet":
+                  LeafletSchema(**data)
+          except Exception as e:
+              await events.status(f"⚠️ Rétroaction Syntaxique/Structurelle ({final_moteur})...")
+              repair_prompt = (
+                  "<feedback>\n"
+                  f"Le payload généré pour le moteur '{final_moteur}' a échoué à la validation.\n"
+                  "</feedback>\n\n"
+                  "<error>\n"
+                  f"{str(e)}\n"
+                  "</error>\n\n"
+                  "<instruction>\n"
+                  "Le Modèle DOIT analyser l'erreur ci-dessus et corriger immédiatement ce JSON pour respecter strictement le schéma imposé.\n"
+                  "Le Modèle DOIT renvoyer UNIQUEMENT le bloc de code corrigé.\n"
+                  "</instruction>\n\n"
+                  "<invalid_payload>\n"
+                  f"{payload}\n"
+                  "</invalid_payload>"
+              )
+              payload_fixed_data, _, _ = await EchoGeminiClient.call_cascade(
+                  target_model_key=niveau_cognitif,
+                  payload={
+                      "contents": [{"role": "user", "parts": [{"text": repair_prompt}]}]
+                  },
+                  user_id=user_id,
+                  metadata=__metadata__,
+                  events=events,
+                  timeout=30,
+                  include_thoughts=False
+              )
+              if payload_fixed_data:
+                  candidates = payload_fixed_data.get("candidates", [])
+                  if candidates:
+                      fixed_text = "".join([p["text"] for p in candidates[0].get("content", {}).get("parts", []) if "text" in p])
+                      code_match = re.search(r"```(?:\w+)?\n?(.*?)\n?```", fixed_text, re.DOTALL)
+                      payload = code_match.group(1).strip() if code_match else fixed_text.strip()
 
       await events.status("Génération terminée. Déploiement de l'interface...", done=True)
 
@@ -171,7 +224,7 @@ class Tools:
       )
       
       context.update({"moteur": final_moteur, "intention": intention})
-      return response, wrap_tool_output(text=context["message"], status=context)
+      return response, wrap_tool_output(text=context["message"], status=context, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     except Exception as e:
-      return wrap_tool_output(text=f"❌ Erreur lors de la génération visuelle : {str(e)}", status={"status": "error"})
+      return wrap_tool_output(text=f"❌ Erreur lors de la génération visuelle : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

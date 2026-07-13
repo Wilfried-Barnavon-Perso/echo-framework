@@ -174,9 +174,15 @@ flowchart TD
 
   FLASH --> NCV2{new_cognitive_level ?}
   NCV2 -->|"FLASH est dépassé"| PRO
-  NCV2 -->|"Non"| OUTPUT
+  NCV2 -->|"Non"| ORCH{"Orchestration\nMulti-Agents ?"}
 
-  PRO --> OUTPUT([Génération finale])
+  ORCH -->|"Oui (consult_council)"| COUNCIL["Table Ronde\nDelphi"]
+  ORCH -->|"Oui (consult_supervised)"| SUPERV["Boucle Critique\nSupervisée"]
+  ORCH -->|"Non"| OUTPUT([Génération finale])
+
+  COUNCIL --> OUTPUT
+  SUPERV --> OUTPUT
+  PRO --> OUTPUT
   LITE_OK --> OUTPUT
 
   classDef zone_vert fill:#064e3b,stroke:#10b981,color:#fff
@@ -480,6 +486,11 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     quota_rpd_rem=quota_rpd_rem, quota_rpd_lim=quota_rpd_lim, ...)</code></pre>
 
 
+    <h2>Réseau et Furtivité</h2>
+    <p>
+      Les requêtes web orchestrées par le Cortex s'appuient sur des connexions HTTP/2 strictes (via <code>httpx</code>) couplées à l'injection d'en-têtes de navigation haute fidélité (<code>get_stealth_headers</code>). Cette mécanique simule un navigateur réel et contourne les protections anti-bot de bas niveau lors des investigations agentiques.
+    </p>
+
     <div class="transition-text">
       <a href="06_filtre.html">&larr; Les Filtres (Conscience)</a>
       &nbsp;&nbsp;
@@ -487,7 +498,7 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     </div>
 
     <footer>
-      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

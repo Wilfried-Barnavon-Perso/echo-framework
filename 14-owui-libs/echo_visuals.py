@@ -1,9 +1,15 @@
 """
 title: ECHO Visuals Engine Configuration
 author: Wilfried BARNAVON
-version: 6.0
-description: 6.0: Correction critique de l'affichage Bio/SVG/A-Frame et stabilisation du redimensionnement iFrame.
+version: 6.3
+description: Composant système interne : ECHO Visuals Engine Configuration.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.3: Optimisation du dimensionnement des conteneurs (hauteurs fixes) et correctifs Layout (Cytoscape, Astro).
+# 6.2: Correction erreur Cross-Origin markmap (Désactivation loadJS/loadCSS instables en iframe).
+# 6.1: Intégration du moteur cartographique géographique Leaflet (OpenStreetMap).
+# 6.0: Correction critique de l'affichage Bio/SVG/A-Frame et stabilisation du redimensionnement iFrame.
 
 class VisualEngine:
     @staticmethod
@@ -24,7 +30,7 @@ class VisualEngine:
                         .markmap-node {{ font-size: 14px; fill: #1e293b !important; font-weight: 500; }}
                         .markmap-link {{ stroke: #94a3b8 !important; stroke-width: 1.5px; }}
                         .markmap-node-circle {{ fill: #0ea5e9 !important; stroke: #0284c7 !important; }}
-                        #visual-target {{ width: 100%; min-height: 500px; background: #ffffff; display: block; }}
+                        #visual-target {{ width: 100%; height: 500px; overflow: hidden; background: #ffffff; display: block; }}
                     </style>
                     <div id="visual-payload" style="display:none;">{payload}</div>
                     <svg id="visual-target"></svg>
@@ -41,11 +47,8 @@ class VisualEngine:
                         
                         if (window.markmap && typeof window.markmap.Transformer !== 'undefined') {{
                             target.innerHTML = ''; 
-                            const {{ Transformer, Markmap, loadCSS, loadJS }} = window.markmap;
-                            const {{ root, features }} = new Transformer().transform(rawData);
-                            const {{ styles, scripts }} = new Transformer().getUsedAssets(features);
-                            if (styles) loadCSS(styles);
-                            if (scripts) loadJS(scripts, {{ getMarkmap: () => window.markmap }});
+                            const {{ Transformer, Markmap }} = window.markmap;
+                            const {{ root }} = new Transformer().transform(rawData);
                             Markmap.create(target, null, root);
                         }} else if (retries < maxRetries) {{
                             retries++; setTimeout(run, 100);
@@ -166,7 +169,7 @@ class VisualEngine:
             # --- 5. GRAPHIQUES (ECHARTS) ---
             "echarts": {
                 "scripts": ["https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"],
-                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; min-height:500px; background:#ffffff;"></div>',
+                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:500px; background:#ffffff;"></div>',
                 "init": f"""
                     let retries = 0;
                     const maxRetries = {max_retries};
@@ -210,10 +213,52 @@ class VisualEngine:
                 """
             },
 
+            # --- X. CARTOGRAPHIE (LEAFLET) ---
+            "leaflet": {
+                "scripts": ["https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"],
+                "container": f'''
+                    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+                    <div id="visual-payload" style="display:none;">{payload}</div>
+                    <div id="visual-target" style="width:100%; height:500px; background:#ffffff; z-index: 1;"></div>
+                ''',
+                "init": f"""
+                    let retries = 0;
+                    const maxRetries = {max_retries};
+                    const run = () => {{
+                        const target = document.getElementById('visual-target');
+                        if (!target) return;
+                        
+                        if (typeof L !== 'undefined') {{
+                            const b64 = document.getElementById('visual-payload').textContent;
+                            const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+                            const data = JSON.parse(rawData);
+                            
+                            const map = L.map('visual-target').setView(data.center || [46.603354, 1.888334], data.zoom || 5);
+                            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                                attribution: '&copy; OpenStreetMap contributors'
+                            }}).addTo(map);
+                            
+                            if (data.markers && Array.isArray(data.markers)) {{
+                                data.markers.forEach(m => {{
+                                    if (m.lat && m.lng) {{
+                                        const marker = L.marker([m.lat, m.lng]).addTo(map);
+                                        if (m.popup) marker.bindPopup(m.popup);
+                                    }}
+                                }});
+                            }}
+                            setTimeout(() => map.invalidateSize(), 500);
+                        }} else if (retries < maxRetries) {{
+                            retries++; setTimeout(run, 100);
+                        }}
+                    }};
+                    run();
+                """
+            },
+
             # --- 7. RÉSEAUX (CYTOSCAPE) ---
             "cytoscape": {
                 "scripts": ["https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"],
-                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; min-height:500px; background:#ffffff;"></div>',
+                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:500px; background:#ffffff;"></div>',
                 "init": f"""
                     let retries = 0;
                     const maxRetries = {max_retries};
@@ -226,9 +271,9 @@ class VisualEngine:
                             const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                             try {{
                                 cytoscape({{ container: target, elements: JSON.parse(rawData), 
-                                    style: [{{ selector: 'node', style: {{ 'background-color': '#0ea5e9', 'label': 'data(id)', 'color': '#1e293b', 'font-size': '12px' }}}}, 
+                                    style: [{{ selector: 'node', style: {{ 'width': '40px', 'height': '40px', 'background-color': '#0ea5e9', 'label': 'data(id)', 'color': '#1e293b', 'font-size': '12px' }}}}, 
                                             {{ selector: 'edge', style: {{ 'width': 2, 'line-color': '#cbd5e1', 'target-arrow-color': '#cbd5e1', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' }}}}],
-                                    layout: {{ name: 'cose', padding: 10 }} 
+                                    layout: {{ name: 'cose', padding: 50, fit: true }} 
                                 }});
                             }} catch(e) {{ console.error("Cytoscape Error:", e); }}
                         }} else if (retries < maxRetries) {{
@@ -277,7 +322,7 @@ class VisualEngine:
             # --- 9. PROCESSUS (BPMN) ---
             "bpmn": {
                 "scripts": ["https://cdn.jsdelivr.net/npm/bpmn-js@17/dist/bpmn-viewer.production.min.js"],
-                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; min-height:500px; background:#ffffff;"></div>',
+                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:500px; background:#ffffff;"></div>',
                 "init": f"""
                     let retries = 0;
                     const maxRetries = {max_retries};
@@ -383,7 +428,7 @@ class VisualEngine:
             # --- 13. SCIENCE (PLOTLY) ---
             "science": {
                 "scripts": ["https://cdn.plot.ly/plotly-2.33.0.min.js"],
-                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; min-height:500px; background:#ffffff;"></div>',
+                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:500px; background:#ffffff;"></div>',
                 "init": f"""
                     let retries = 0;
                     const maxRetries = {max_retries};
@@ -457,10 +502,9 @@ class VisualEngine:
                 "scripts": [
                     "https://cdn.jsdelivr.net/npm/d3@3/d3.min.js", 
                     "https://cdn.jsdelivr.net/npm/d3-geo-projection@0.2/d3.geo.projection.min.js",
-                    "https://cdn.jsdelivr.net/npm/d3-celestial@0.7.35/celestial.min.js",
-                    "https://cdn.jsdelivr.net/npm/d3-celestial@0.7.35/celestial.css"
+                    "https://cdn.jsdelivr.net/npm/d3-celestial@0.7.35/celestial.min.js"
                 ],
-                "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="celestial-map" style="width:100%; height:500px; background:#000000;"></div>',
+                "container": f'<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/d3-celestial@0.7.35/celestial.css" /><div id="visual-payload" style="display:none;">{payload}</div><div id="celestial-map" style="width:100%; height:500px; background:#000000;"></div>',
                 "init": f"""
                     let retries = 0;
                     const maxRetries = {max_retries};

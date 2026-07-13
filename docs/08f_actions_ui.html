@@ -481,7 +481,7 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       <tbody>
         <tr><td><strong>File Tree</strong></td><td>Panneau gauche : liste des fichiers du Codex (tri dynamique par <code>mtime</code>). Clic &rarr; chargement dans l'éditeur. Action contextuelle &rarr; Renommage intégré (OS + Git). Bouton &times; &rarr; suppression avec commit. Bouton + &rarr; création fichier.</td></tr>
         <tr><td><strong>Éditeur Monaco</strong></td><td>Monaco Editor 0.52.2 via CDN jsDelivr. Coloration syntaxique 30+ langages. Intègre un <strong>panneau de prévisualisation WYSIWYG</strong>. Bouton de sauvegarde explicite et Ctrl+S &rarr; sauvegarde + commit immédiat.</td></tr>
-        <tr><td><strong>Édition AI</strong></td><td>Instruction libre ou action rapide prédéfinie (shorter, comment, refactor, fix, tests…). Sélecteur LITE/FLASH/PRO. Affiche un diff côte-à-côte Accept/Rejeter.</td></tr>
+        <tr><td><strong>Édition AI</strong></td><td>Instruction libre ou macro-action prédéfinie (shorter, comment, refactor, fix, tests…). Sélecteur LITE/FLASH/PRO. Affiche un diff côte-à-côte Accept/Rejeter.</td></tr>
         <tr><td><strong>Navigation Git &#9664; &#9654;</strong></td><td>Navigation commit par commit pour un fichier. Mode read-only visuel. Bouton Restaurer &rarr; nouveau commit de restauration.</td></tr>
         <tr><td><strong>Import/Export</strong></td><td>Téléchargement depuis le PC vers le Codex (upload), téléchargement du fichier vers le PC (download natif navigateur).</td></tr>
         <tr><td><strong>Reset</strong></td><td>Suppression intégrale du dépôt (confirmation JS + purge SQLite). Irréversible.</td></tr>
@@ -495,21 +495,37 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
         <code>echo_codex_tool.py</code> : le HUD est piloté <strong>par l'utilisateur</strong>
         (bouton sous le message), l'outil LLM est piloté <strong>par Gemini</strong>
         (Tool Call au cours d'une génération). Les deux accèdent au même dépôt Git
-        et au même registre SQLite <code>resources</code> (Registre Unifié V2).
+        et au même registre SQLite <code>resources</code> (Registre Unifié).
       </p>
     </div>
 
     <p>Pour la documentation technique complète (architecture, API JS, protocole Python↔JS),
     voir <a href="08h_codex_editor.html">ECHO Codex &rarr;</a>.</p>
 
+
+    <h2>5. MCP Identity Vault (<code>echo_mcp_identity_action.py</code>)</h2>
+    <p>
+      Cette action déploie une interface d'authentification centralisée se synchronisant dynamiquement avec l'API des schémas du MCP Broker (<code>echo-mcp-broker</code>). 
+      Elle permet à l'utilisateur de configurer les clés et mots de passe requis par divers outils (Corporate Sirene, Academic, etc.).
+      Les <em>credentials</em> métier sont stockés de manière chiffrée et isolée dans une base locale (<code>mcp_vault</code> SQLite), garantissant que le LLM n'a jamais accès aux clés, mais bénéficie indirectement des outils authentifiés.
+    </p>
+
+
+    <h2>6. Résurrection de Contexte (<code>resume_in_new_chat_action.py</code>)</h2>
+    <p>
+      Permet la migration complète d'un contexte saturé vers une nouvelle session. Effectue la duplication du FS Vault, la mutation SQLite (<code>session.db</code>) et le clonage vectoriel Qdrant.
+    </p>
+
     <div class="transition-text">
+
+
       <a href="08e_execution_monitoring.html">&larr; Exécution & Pilotage</a>
       &nbsp;&nbsp;
       <a href="08g_visual_intelligence.html">Visual Intelligence &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

@@ -1,11 +1,14 @@
 """
 title: Purge Mémoire Long Terme /!\
 author: Wilfried BARNAVON
-version: 3.3
-description: 3.2: Confirmation finale scrollable + tri alpha slugs. Dialog périmètre avec explication mémoire long terme (voix ECHO). 3.1: HUD déroulant, sélection vide = TOUT.
-             3.3: Refonte identifiants, remplacement des slugs par memory_id.
+version: 3.4
+description: Console d'administration pour la suppression sélective des souvenirs vectorisés (Qdrant).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5Z29uIHBvaW50cz0iMjIgMyAyIDMgMTAgMTIuNDYgMTAgMTkgMTQgMjEgMTQgMTIuNDYgMjIgMyIvPjwvc3ZnPg==
 """
+# Historique des versions :
+# 3.4: Mise à jour de la priorité d'affichage à 30.
+# 3.2: Confirmation finale scrollable + tri alpha slugs. Dialog périmètre avec explication mémoire long terme (voix ECHO). 3.1: HUD déroulant, sélection vide = TOUT.
+# 3.3: Refonte identifiants, remplacement des slugs par memory_id.
 
 import sys
 import httpx
@@ -21,7 +24,7 @@ from echo_constants import COLLECTION_META_ARTIFACTS, ECHO_QDRANT_URL
 
 class Action:
     class Valves(BaseModel):
-        priority: int = Field(default=2, description="Priorité d'affichage.")
+        priority: int = Field(default=30, description="Priorité d'affichage.")
 
     def __init__(self):
         self.valves = self.Valves()

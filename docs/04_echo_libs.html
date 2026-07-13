@@ -88,7 +88,7 @@
         <tr><td><code>THINKING_LEVEL_PRO</code></td><td><code>"HIGH"</code></td><td>Réflexion maximale pour MODEL_PRO.</td></tr>
         <tr><td><code>THINKING_LEVEL_FLASH</code></td><td><code>"HIGH"</code></td><td>Réflexion standard pour MODEL_FLASH.</td></tr>
         <tr><td><code>THINKING_LEVEL_LITE</code></td><td><code>"HIGH"</code></td><td>Confirmé fonctionnel avec HIGH sur l'API Antigravity.</td></tr>
-        <tr><td><code>THINKING_LEVEL_TOOLS</code></td><td><code>"MINIMAL"</code></td><td>Outils stateless (maps, grounding, distillation rapide).</td></tr>
+        <tr><td><code>THINKING_LEVEL_TOOLS</code></td><td><code>"MINIMAL"</code></td><td>Outils stateless (maps, grounding, distillation basse latence).</td></tr>
         <tr><td><code>TEMP_DEFAULT</code></td><td>1,0</td><td>Température de génération principale.</td></tr>
         <tr><td><code>TOP_P_DEFAULT</code></td><td>0,90</td><td>Nucleus sampling.</td></tr>
         <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.188.1)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
@@ -107,7 +107,7 @@
         <tr><td><code>CODEX_DEFAULT_LANG</code></td><td><code>str</code></td><td>Fallback si l'extension est inconnue (<code>"plaintext"</code>).</td></tr>
         <tr><td><code>CODEX_EDIT_SYSTEM_PROMPT</code></td><td><code>str</code></td><td>System prompt injecté dans le sub-chat d'édition AI. Impose le retour du fichier complet modifié, sans explication ni Markdown enveloppant.</td></tr>
         <tr><td><code>CODEX_SUMMARIZE_PROMPT</code></td><td><code>str</code></td><td>Prompt pour la distillation d'un fichier. Structure en 5 sections : objectif, architecture, dépendances, patterns, dette technique.</td></tr>
-        <tr><td><code>CODEX_QUICK_ACTIONS</code></td><td><code>dict</code></td><td>8 actions rapides prédéfinies (shorter, longer, comment, uncomment, refactor, fix, tests, optimize) affichées comme boutons dans le HUD Monaco.</td></tr>
+        <tr><td><code>CODEX_QUICK_ACTIONS</code></td><td><code>dict</code></td><td>8 macro-actions prédéfinies (shorter, longer, comment, uncomment, refactor, fix, tests, optimize) affichées comme boutons dans le HUD Monaco.</td></tr>
       </tbody>
     </table>
 
@@ -508,7 +508,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

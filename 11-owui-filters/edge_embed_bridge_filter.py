@@ -2,11 +2,16 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-funding_url: https://github.com/echo-framework
-description: 1.4: Migration vers le modèle Harrier-OSS (WebGPU ONNX), implémentation manuelle du pooling CLS et normalisation L2 en JS, et morphing du HUD en pastille avec animation.
-             1.3: Injecte le bridge JavaScript WebGPU pour l'accélération matérielle des embeddings via bge-m3. Gestion intelligente du cache navigateur.
-version: 1.4
+description: Composant système interne : Edge Embedding Bridge Filter.
+version: 1.7
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.7: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
+# 1.6: Fix UI (retrait de funding_url et self.toggle pour invisibilisation globale).
+# 1.5: Migration des configurations globales vers les Valves et suppression des UserValves.
+# 1.4: Migration vers le modèle Harrier-OSS (WebGPU ONNX), implémentation manuelle du pooling CLS et normalisation L2 en JS, et morphing du HUD en pastille avec animation.
+# 1.3: Injecte le bridge JavaScript WebGPU pour l'accélération matérielle des embeddings via bge-m3. Gestion intelligente du cache navigateur.
 
 import os
 import asyncio
@@ -19,13 +24,8 @@ except ImportError:
     DEFAULT_EDGE_EMBEDDING_TIMEOUT = 180
 
 class Filter:
-    # Priorité très haute (0) pour injecter le JS avant tout autre filtre
-    priority: int = 0
-
     class Valves(BaseModel):
-        pass
-
-    class UserValves(BaseModel):
+        priority: int = Field(default=0, hidden=True, description="Priorité d'exécution (0 = premier).")
         ENABLE_EDGE_EMBEDDING: bool = Field(
             default=True,
             description="Activer le pont Edge Embedding (nécessite BunkerWeb ou un proxy WSS configuré)"
@@ -41,10 +41,6 @@ class Filter:
 
     def __init__(self):
         self.valves = self.Valves()
-        self.user_valves = self.UserValves()
-        
-        # --- CONFIGURATION UI OPEN WEBUI ---
-        self.toggle = True  # Affiche le switch dans le menu Intégrations (icône engrenage)
         self.icon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTMgMmwyIDYuNW0tNyAwaDIuNW0tMyA3LjVsMi41LTdtMyA3bC0yLjUtN20tNiA0aDEwbTEgMmEyIDIgMCAwIDEgMiAydjZhMiAyIDAgMCAxLTIgMmgtMTJhMiAyIDAgMCAxLTItMnYtNmEyIDIgMCAwIDEgMi0yaDEyIi8+PC9zdmc+"
 
 
@@ -60,16 +56,10 @@ class Filter:
         Injecte le pont JavaScript (Data Island).
         Bloque jusqu'à la préparation du modèle WebGPU (selon configuration).
         """
-        # --- RÉCUPÉRATION SÉCURISÉE DES VALVES UTILISATEUR ---
-        u_valves = __user__.get("valves") if __user__ and "valves" in __user__ else self.user_valves
-        if isinstance(u_valves, dict):
-            enable_edge = u_valves.get("ENABLE_EDGE_EMBEDDING", getattr(self.user_valves, "ENABLE_EDGE_EMBEDDING", True))
-            wait_edge = u_valves.get("WAIT_FOR_EDGE_EMBEDDING", getattr(self.user_valves, "WAIT_FOR_EDGE_EMBEDDING", True))
-            timeout_edge = u_valves.get("EDGE_EMBEDDING_TIMEOUT", getattr(self.user_valves, "EDGE_EMBEDDING_TIMEOUT", DEFAULT_EDGE_EMBEDDING_TIMEOUT))
-        else:
-            enable_edge = getattr(u_valves, "ENABLE_EDGE_EMBEDDING", getattr(self.user_valves, "ENABLE_EDGE_EMBEDDING", True))
-            wait_edge = getattr(u_valves, "WAIT_FOR_EDGE_EMBEDDING", getattr(self.user_valves, "WAIT_FOR_EDGE_EMBEDDING", True))
-            timeout_edge = getattr(u_valves, "EDGE_EMBEDDING_TIMEOUT", getattr(self.user_valves, "EDGE_EMBEDDING_TIMEOUT", DEFAULT_EDGE_EMBEDDING_TIMEOUT))
+        # --- RÉCUPÉRATION SÉCURISÉE DES VALVES ---
+        enable_edge = self.valves.ENABLE_EDGE_EMBEDDING
+        wait_edge = self.valves.WAIT_FOR_EDGE_EMBEDDING
+        timeout_edge = self.valves.EDGE_EMBEDDING_TIMEOUT
 
         # Si le pont est désactivé par l'utilisateur, on ne fait rien
         if not enable_edge:
@@ -216,9 +206,18 @@ class Filter:
             progressBar.style.cssText = 'width: 0%; height: 100%; background: #38bdf8; transition: width 0.1s linear;';
             
             progressContainer.appendChild(progressBar);
+            
+            const waitRow = document.createElement('div');
+            waitRow.style.color = '#64748b';
+            waitRow.style.fontSize = '11px';
+            waitRow.style.marginTop = '6px';
+            waitRow.style.fontStyle = 'italic';
+            waitRow.innerHTML = 'Cette opération peut prendre quelques instants, merci de patienter...';
+
             hud.appendChild(headerRow);
             hud.appendChild(textRow);
             hud.appendChild(progressContainer);
+            hud.appendChild(waitRow);
             document.body.appendChild(hud);
 
             // Drag & Drop Logic

@@ -1,32 +1,33 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 2.5
-description: 2.5: Fix timeout (augmentation du CODEX_EDIT_TIMEOUT à 600s pour permettre la réflexion prolongée du MODEL_PRO sur des contextes massifs sans échec HTTPX).
-             2.4: Fix du crash silencieux (UnboundLocalError sur files_json), support de l'upload multiple (batch), et correction de la synchronisation UI après une suppression.
-             2.3: Fix du crash silencieux de la boucle asynchrone (get_latest_commit n'existait pas).
-             Remplacement par get_repo_stats().get('last_commit_hash').
-             2.2: Refonte de la boucle événementielle en tâche de fond (asyncio) pour
-             upload, download, historique ◀ ▶, reset). Sub-chat MODEL_FLASH via call_cascade.
-             1.1: Ajout load_file (chargement contenu via echoCodexSetContent), delete_file
-             (suppression individuelle avec refresh tree). Bouton × par fichier dans le tree.
-             1.2: Support sélecteur modèle (Flash/Pro/Lite). Spinner masqué sur erreur AI.
-             1.3: Feedback modèle effectif — repositionnement dropdown après cascade.
-             Bouton copier. _codex_ai_edit retourne (texte, model_key).
-             1.6: Preview Panel WYSIWYG — Panneau latéral droit déployable (toggle 🤖).
-             Rendu Markdown/HTML/CSS/SVG temps réel. Splitter draggable.
-             1.7: Bouton Sauver explicite. Rename fichier via changement de langage.
-             1.8: Rename fichier via handler dédié.
-             2.0: Registre Unifié V2 — save_codex_record → save_resource,
-             delete_codex_record → delete_resource, clear_codex_records →
-             clear_resources_by_type.
-             2.1: Fix Race Condition au chargement initial (Pull au lieu de Push).
-             Affichage direct du contenu vide lors de la création manuelle (new_file).
-             2.2: Refonte de la boucle événementielle en tâche de fond (asyncio) pour 
-             éviter le timeout du proxy (504). Ajout du mécanisme Heartbeat (ping)
-             pour rafraîchissement en direct depuis le chat.
-icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNCAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWOHoiLz48cG9seWxpbmUgcG9pbnRzPSIxNCAyIDE0IDggMjAgOCIvPjxwYXRoIGQ9Ik04IDEzaDgiLz48cGF0aCBkPSJNOCAxN2g4Ii8+PHBhdGggZD0iTTEwIDloLTIiLz48L3N2Zz4=
+version: 2.7
+description: Éditeur de code natif (HUD) avec intégration Git locale et diffusion en direct des modifications.
+icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
+# Historique des versions :
+# 2.7: Remplacement du prompt natif par une interface in-line pour la création, résolution du bug de scoping state (currentFile).
+# 2.6: Mise à jour de la priorité d'affichage à 70.
+# 2.5: Fix timeout (augmentation du CODEX_EDIT_TIMEOUT à 600s pour permettre la réflexion prolongée du MODEL_PRO sur des contextes massifs sans échec HTTPX).
+# 2.4: Fix du crash silencieux (UnboundLocalError sur files_json), support de l'upload multiple (batch), et correction de la synchronisation UI après une suppression.
+# 2.3: Fix du crash silencieux de la boucle asynchrone (get_latest_commit n'existait pas).
+# Remplacement par get_repo_stats().get('last_commit_hash').
+# 2.2: Refonte de la boucle événementielle en tâche de fond (asyncio) pour
+# upload, download, historique ◀ ▶, reset). Sub-chat MODEL_FLASH via call_cascade.
+# 1.1: Ajout load_file (chargement contenu via echoCodexSetContent), delete_file
+# (suppression individuelle avec refresh tree). Bouton × par fichier dans le tree.
+# 1.2: Support sélecteur modèle (Flash/Pro/Lite). Spinner masqué sur erreur AI.
+# 1.3: Feedback modèle effectif — repositionnement dropdown après cascade.
+# Bouton copier. _codex_ai_edit retourne (texte, model_key).
+# 1.6: Preview Panel WYSIWYG — Panneau latéral droit déployable (toggle 🤖).
+# Rendu Markdown/HTML/CSS/SVG temps réel. Splitter draggable.
+# 1.7: Bouton Sauver explicite. Rename fichier via changement de langage.
+# 1.8: Rename fichier via handler dédié.
+# 2.0: Registre Unifié V2 — save_codex_record → save_resource,
+# delete_codex_record → delete_resource, clear_codex_records →
+# clear_resources_by_type.
+# 2.1: Fix Race Condition au chargement initial (Pull au lieu de Push).
+# Affichage direct du contenu vide lors de la création manuelle (new_file).
 
 import sys
 import orjson as json
@@ -50,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 class Action:
     class Valves(BaseModel):
-        priority: int = Field(default=4, description="Priorité d'affichage (4 = Quatrième).")
+        priority: int = Field(default=70, description="Priorité d'affichage (70 = Septième).")
         CODEX_EDIT_TIMEOUT: int = Field(default=300, description="Timeout sub-chat édition (secondes).")
 
     def __init__(self):
@@ -417,8 +418,8 @@ class Action:
                         escaped_name = json.dumps(filename).decode("utf-8")
                 
                         refresh_code = (
+                            f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
                             f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
-                            f"currentFile = {escaped_name};"
                             f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
                         )
                         await __event_call__({"type": "execute", "data": {"code": refresh_code}})
@@ -460,11 +461,11 @@ class Action:
                                 result = repo.read_file(first)
                                 content = result["content"] if result else ""
                                 escaped_content = json.dumps(content).decode("utf-8")
-                                switch_code = f"if(window.echoCodexSetContent) {{ currentFile = {first_escaped}; window.echoCodexSetContent({escaped_content}, {first_escaped}); }}"
+                                switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({first_escaped}); if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {first_escaped});"
                                 await __event_call__({"type": "execute", "data": {"code": switch_code}})
                             else:
                                 empty_escaped = json.dumps("").decode("utf-8")
-                                switch_code = f"if(window.echoCodexSetContent) {{ currentFile = null; window.echoCodexSetContent({empty_escaped}, null); }}"
+                                switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile(null); if(window.echoCodexSetContent) window.echoCodexSetContent({empty_escaped}, null);"
                                 await __event_call__({"type": "execute", "data": {"code": switch_code}})
 
                         await events.status(f"🗑️ {filename} supprimé.", done=True)
@@ -497,8 +498,8 @@ class Action:
                             content = result["content"] if result else ""
                             escaped_content = json.dumps(content).decode("utf-8")
                             combined = (
+                                f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
                                 f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
-                                f"currentFile = {escaped_name};"
                                 f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
                             )
                             await __event_call__({"type": "execute", "data": {"code": combined}})

@@ -70,7 +70,7 @@
 
         <tr><td><strong>Registre de Contrôle</strong></td><td>Base SQLite par chat (<code>identity.db</code> / <code>{chat_id}.db</code> via <code>EchoStateManager</code>)</td></tr>
 
-        <tr><td><strong>Proprioception</strong></td><td>Consultation dynamique via l'outil <code>query_registry</code> (Registre Unifié V2)</td></tr>
+        <tr><td><strong>Proprioception</strong></td><td>Consultation dynamique via l'outil <code>query_registry</code> (Registre Unifié)</td></tr>
 
         <tr><td><strong>Algorithme LLM</strong></td><td>Cascade cognitive descendante résiliente (PRO ? FLASH ? LITE)</td></tr>
 
@@ -98,7 +98,7 @@
 
       <li><strong>MODEL_PRO</strong> (Niveau de réflexion maximal <code>THINKING_LEVEL_PRO</code>) : Utilisé par défaut pour la rédaction initiale d'un plan complexe (via <code>build_plan</code>).</li>
 
-      <li><strong>MODEL_FLASH</strong> (Niveau de réflexion intermédiaire <code>THINKING_LEVEL_FLASH</code>) : Modèle par défaut pour les modifications rapides et la mise à jour des statuts (via <code>update_plan</code>).</li>
+      <li><strong>MODEL_FLASH</strong> (Niveau de réflexion intermédiaire <code>THINKING_LEVEL_FLASH</code>) : Modèle par défaut pour les modifications atomiques et la mise à jour des statuts (via <code>update_plan</code>).</li>
 
       <li><strong>MODEL_LITE</strong> (Niveau minimal) : Modèle de repli final assurant la résilience opérationnelle globale.</li>
 
@@ -334,11 +334,11 @@ status: draft
 
     <div class="audit-note">
 
-      <h4>🧠 Intégration proprioceptive (Registre Unifié V2)</h4>
+      <h4>🧠 Intégration proprioceptive (Registre Unifié)</h4>
 
       <p>
 
-        Le modèle n'est plus notifié passivement des plans existants à chaque tour de discussion, ceci afin d'économiser l'espace contextuel. Le modèle a la responsabilité d'utiliser l'outil <code>query_registry</code> pour interroger activement la base de données (Registre Unifié V2) afin de prendre connaissance de la liste des plans, de leur statut global et de leur identifiant unique sans avoir besoin de lire les fichiers physiques.
+        Le modèle n'est plus notifié passivement des plans existants à chaque tour de discussion, ceci afin d'économiser l'espace contextuel. Le modèle a la responsabilité d'utiliser l'outil <code>query_registry</code> pour interroger activement la base de données (Registre Unifié) afin de prendre connaissance de la liste des plans, de leur statut global et de leur identifiant unique sans avoir besoin de lire les fichiers physiques.
 
       </p>
 
@@ -356,7 +356,7 @@ status: draft
 
     <footer>
 
-      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
 
     </footer>
 

@@ -1,17 +1,17 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 1.5
-description: 1.5: Augmentation du CODEX_EDIT_TIMEOUT à 600s et max_retries=0 pour call_cascade.
-             1.4: [précédent]
-             1.3: Restauration des descriptions de paramètres sémantiques pour create_codex.
-             1.2: Registre Unifié V2 — save_codex_record → save_resource,
-             delete_codex_record → delete_resource.
-             1.1: Correction docstring summarize_codex (distillation cloud Gemini).
-             1.0: Éditeur multi-langage avec Git intégré. 9 fonctions Tool pour le LLM :
-             create, edit (direct + agent), read (plage lignes), search, summarize (distillation),
-             list, delete, history. Sub-chat MODEL_FLASH pour édition assistée via call_cascade.
+version: 1.6
+description: Composant système interne : ECHO Codex Editor.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.6: Nettoyage du code mort (suppression de la Valve KEY_SWITCH_THRESHOLD inutilisée).
+# 1.5: Augmentation du CODEX_EDIT_TIMEOUT à 600s et max_retries=0 pour call_cascade.
+# 1.4: [précédent]
+# 1.3: Restauration des descriptions de paramètres sémantiques pour create_codex.
+# 1.2: Registre Unifié V2 — save_codex_record → save_resource,
+# delete_codex_record → delete_resource.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -36,7 +36,6 @@ from echo_codex_git import CodexRepo
 
 class Tools:
     class Valves(BaseModel):
-        KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_THRESHOLD)
         MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES)
         CODEX_EDIT_TIMEOUT: int = Field(default=600, description="Timeout sub-chat édition (secondes).")
 
@@ -103,10 +102,10 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         if repo.read_file(filename):
-            return wrap_tool_output(text=f"❌ Le fichier `{filename}` existe déjà. IMPLIQUE `edit_codex`.", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Le fichier `{filename}` existe déjà. IMPLIQUE `edit_codex`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         await events.status(f"📝 Création de {filename}...", done=False)
 
@@ -123,8 +122,7 @@ class Tools:
 
         await events.status(f"✅ {filename} créé ({line_count} lignes, commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(
-            text=f"Fichier `{filename}` créé avec succès.\n- Langage : {lang}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`",
-        )
+            text=f"Fichier `{filename}` créé avec succès.\n- Langage : {lang}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def edit_codex(
         self,
@@ -147,12 +145,12 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # Vérification existence
         existing = repo.read_file(filename)
         if not existing:
-            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable. IMPLIQUE `create_codex` ou vérification Registre.", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable. IMPLIQUE `create_codex` ou vérification Registre.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         lang = CodexRepo.detect_language(filename)
 
@@ -169,8 +167,7 @@ class Tools:
 
             await events.status(f"✅ {filename} modifié (commit {commit_hash[:7]}).", done=True)
             return wrap_tool_output(
-                text=f"Fichier `{filename}` modifié.\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`",
-            )
+                text=f"Fichier `{filename}` modifié.\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # Mode 2 : Édition assistée via sub-chat
         if instructions:
@@ -205,12 +202,12 @@ class Tools:
 
             if not data:
                 await events.status("❌ Édition échouée — aucun modèle disponible.", done=True)
-                return wrap_tool_output(text="❌ Échec : aucun modèle disponible pour l'édition.", status={"status": "error"})
+                return wrap_tool_output(text="❌ Échec : aucun modèle disponible pour l'édition.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             modified = self._extract_llm_text(data)
             if not modified:
                 await events.status("❌ L'agent éditeur n'a produit aucun contenu.", done=True)
-                return wrap_tool_output(text="❌ L'agent éditeur n'a pas retourné de contenu exploitable.", status={"status": "error"})
+                return wrap_tool_output(text="❌ L'agent éditeur n'a pas retourné de contenu exploitable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             msg = commit_message or f"AI edit: {instructions[:60]}"
             line_count = modified.count("\n") + 1
@@ -226,10 +223,9 @@ class Tools:
                 text=f"Fichier `{filename}` modifié par agent éditeur.\n- Instructions : {instructions}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`",
                 model_requested=self.user_valves.CODEX_EDIT_MODEL,
                 model_used=model_key or "unknown",
-                reason=reason,
-            )
+                reason=reason, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        return wrap_tool_output(text="❌ Ni `new_content` ni `instructions` fournis.", status={"status": "error"})
+        return wrap_tool_output(text="❌ Ni `new_content` ni `instructions` fournis.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def delete_codex(
         self,
@@ -243,15 +239,15 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         commit_hash = repo.delete_file(filename, f"Delete {filename}")
         if not commit_hash:
-            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         state.delete_resource(filename)
         await events.status(f"🗑️ {filename} supprimé (commit {commit_hash[:7]}).", done=True)
-        return wrap_tool_output(text=f"Fichier `{filename}` supprimé.\n- Commit : `{commit_hash[:12]}`")
+        return wrap_tool_output(text=f"Fichier `{filename}` supprimé.\n- Commit : `{commit_hash[:12]}`", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     # =========================================================================
     # LECTURE
@@ -274,18 +270,17 @@ class Tools:
         """
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         result = repo.read_file(filename, start_line, end_line)
         if not result:
-            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         lang = CodexRepo.detect_language(filename)
         range_info = f"lignes {result['range'][0]}-{result['range'][1]}" if result["range"] else "complet"
 
         return wrap_tool_output(
-            text=f"**{filename}** ({lang}, {result['total_lines']} lignes total, {range_info})\n\n```{lang}\n{result['content']}\n```",
-        )
+            text=f"**{filename}** ({lang}, {result['total_lines']} lignes total, {range_info})\n\n```{lang}\n{result['content']}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def search_codex(
         self,
@@ -303,19 +298,18 @@ class Tools:
         """
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         matches = repo.search_in_file(filename, query, is_regex)
         if not matches:
-            return wrap_tool_output(text=f"Aucun résultat pour `{query}` dans `{filename}`.")
+            return wrap_tool_output(text=f"Aucun résultat pour `{query}` dans `{filename}`.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         lines_text = "\n".join(
             f"L{m['line_number']:>4}: {m['line_content']}"
             for m in matches
         )
         return wrap_tool_output(
-            text=f"**{len(matches)} résultat(s)** pour `{query}` dans `{filename}` :\n\n```\n{lines_text}\n```",
-        )
+            text=f"**{len(matches)} résultat(s)** pour `{query}` dans `{filename}` :\n\n```\n{lines_text}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def summarize_codex(
         self,
@@ -329,11 +323,11 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         result = repo.read_file(filename)
         if not result:
-            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         lang = CodexRepo.detect_language(filename)
         await events.status(f"🔍 Distillation de {filename} ({result['total_lines']} lignes)...", done=False)
@@ -352,8 +346,7 @@ class Tools:
 
         await events.status(f"✅ Synthèse de {filename} terminée.", done=True)
         return wrap_tool_output(
-            text=f"## Synthèse — {filename} ({lang}, {result['total_lines']} lignes)\n\n{summary}",
-        )
+            text=f"## Synthèse — {filename} ({lang}, {result['total_lines']} lignes)\n\n{summary}", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def list_codex(
         self,
@@ -365,11 +358,11 @@ class Tools:
         """Liste tous les fichiers du Codex de la session courante."""
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         files = repo.list_files()
         if not files:
-            return wrap_tool_output(text="Le Codex de cette conversation est vide.")
+            return wrap_tool_output(text="Le Codex de cette conversation est vide.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         lines = [f"| Fichier | Langage | Lignes | Taille |"]
         lines.append("|---|---|---|---|")
@@ -382,7 +375,7 @@ class Tools:
         if stats["last_commit_message"]:
             footer += f", dernier : _{stats['last_commit_message']}_"
 
-        return wrap_tool_output(text="\n".join(lines) + footer)
+        return wrap_tool_output(text="\n".join(lines) + footer, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def history_codex(
         self,
@@ -400,12 +393,12 @@ class Tools:
         """
         uid, cid, repo, state = self._get_context(__user__, __metadata__)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         log = repo.get_log(filename=filename, limit=limit)
         if not log:
             scope = f"de `{filename}`" if filename else "du Codex"
-            return wrap_tool_output(text=f"Aucun historique {scope}.")
+            return wrap_tool_output(text=f"Aucun historique {scope}.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         import time as time_mod
         lines = []
@@ -415,5 +408,4 @@ class Tools:
 
         scope = f"de `{filename}`" if filename else "global"
         return wrap_tool_output(
-            text=f"## Historique {scope} ({len(log)} commits)\n\n" + "\n".join(lines),
-        )
+            text=f"## Historique {scope} ({len(log)} commits)\n\n" + "\n".join(lines), user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

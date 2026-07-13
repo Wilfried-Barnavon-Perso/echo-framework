@@ -1,22 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.11
-description: 1.11: Correction injection PRAF (évite doublon si héritage du Kernel). Suppression acronyme PRAF.
-             1.10: Consolidation de l'injection universelle (date + PRAF ajusté) via <directives_globales>.
-             1.9: Injection universelle du contexte temporel (date iso) à la fin du base_system des agents délégués.
-             1.7: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
-             1.6: Fix - Utilisation stricte de raw_parts dans l'historique pour empêcher le rejet 400 de la thoughtSignature par Gemini 3.x.
-             1.5: Ajout du paramètre allowed_tools à delegate_to_agent pour restreindre l'arsenal.
-             1.4: Fusion expert-consultant / sous-agent. Renommage subagent→agent.
-             Ajout role_name optionnel (Skill via echo_skills) sur delegate_to_agent :
-             sans Skill = agent générique, avec Skill = expert qualifié.
-             Ajout max_calls_override (interne, non exposé au LLM) pour budget bridé
-             dans le conseil et le superviseur. Suppression filtre dlg_ sur list/close
-             (tous préfixes de session supportés : dlg_, thread_, thread_council_,
-             thread_supervisor_).
-             1.7: Ajout de la défense passive (troncature silencieuse) sur le contexte des sous-agents.
+version: 1.13
+description: Composant système interne : ECHO Agent Engine.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.13: Ajout des cas d'usage dans la docstring (protection du contexte de l'Orchestrateur).
+# 1.12: Précision docstring sur l'héritage du système prompt de l'orchestrateur.
+# 1.11: Correction injection PRAF (évite doublon si héritage du Kernel). Suppression acronyme PRAF.
+# 1.10: Consolidation de l'injection universelle (date + PRAF ajusté) via <directives_globales>.
+# 1.9: Injection universelle du contexte temporel (date iso) à la fin du base_system des agents délégués.
 
 import sys
 import orjson as json
@@ -98,8 +92,12 @@ class Tools:
         __event_call__: Any = None,
     ) -> str:
         """
-        Exécution mono-tâche experte par agent autonome. Réservé aux opérations isolées ne nécessitant pas de supervision multi-agents.
-        INFO ORCHESTRATEUR : Sans `skill_id` ni `system_prompt`, le prompt système actuel de l'Orchestrateur (Kernel statique) est cloné et transmis à l'agent.
+        Délégation experte par agent autonome.
+        CAS D'USAGE PRINCIPAUX :
+        1. Exécuter des tâches isolées et spécialisées via des Skills dédiés.
+        2. Protéger et ne pas encombrer inutilement le contexte de l'Orchestrateur (offload cognitif pour les opérations verbeuses ou répétitives).
+        
+        INFO ORCHESTRATEUR : si le système_prompt est vide, ainsi que le skill, alors c'est le système prompt de l'Orchestrateur qui est transmis.
         
         :param task: Mission ou réponse (si reprise).
         :param system_prompt: (Optionnel) Directives comportementales additionnelles.
@@ -117,7 +115,7 @@ class Tools:
             return wrap_tool_output(
                 text="❌ Contexte utilisateur manquant.",
                 status={"status": "error", "message": "user_id requis"}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         if not skill_id and not system_prompt:
             # Fallback : Transfert du system_prompt d'ECHO au sous-agent
@@ -135,7 +133,7 @@ class Tools:
                 return wrap_tool_output(
                     text=f"❌ Skill '{skill_id}' introuvable. IMPLIQUE `forge_skill`.",
                     status={"status": "error", "message": f"Skill '{skill_id}' not found"}
-                )
+                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             
             # Extraction du nom lisible pour l'UI
             skill_meta = parse_skill_metadata(skill_content)
@@ -303,7 +301,7 @@ class Tools:
         """Liste des sessions d'agents actives."""
         user_id = (__user__ or {}).get("id", "system")
         if not __chat_id__:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"})
+            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
         threads = state.list_threads(__chat_id__)
@@ -312,7 +310,7 @@ class Tools:
             return wrap_tool_output(
                 text="ℹ️ Aucune session d'agent active pour cette conversation.",
                 status={"status": "success", "sessions": []}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         md = "### 🤖 SESSIONS D'AGENTS ACTIVES\n\n"
         for t in threads:
@@ -336,7 +334,7 @@ class Tools:
         return wrap_tool_output(
             text=md,
             status={"status": "success", "sessions": [t["sub_sid"] for t in threads]}
-        )
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     # ==========================================================================
     # 3. FERMETURE DE SESSION
@@ -354,7 +352,7 @@ class Tools:
         """
         user_id = (__user__ or {}).get("id", "system")
         if not __chat_id__:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"})
+            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # Garde-fou : vérifier que le thread appartient au chat courant
         state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
@@ -365,13 +363,13 @@ class Tools:
             return wrap_tool_output(
                 text=f"❌ Session `{sub_sid}` introuvable dans ce chat ou accès refusé.",
                 status={"status": "error"}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         state.delete_thread(sub_sid)
         return wrap_tool_output(
             text=f"✅ Session `{sub_sid}` fermée et purgée.",
             status={"status": "success", "sid": sub_sid}
-        )
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     # ==========================================================================
     # 4. RÉSUMÉ DE SESSION
@@ -391,7 +389,7 @@ class Tools:
         events = EchoEvents(__event_emitter__)
         user_id = (__user__ or {}).get("id", "system")
         if not __chat_id__:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"})
+            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # Garde-fou d'appartenance
         state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
@@ -402,7 +400,7 @@ class Tools:
             return wrap_tool_output(
                 text=f"❌ Session `{sub_sid}` introuvable dans ce chat.",
                 status={"status": "error"}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         await events.status(f"🧠 Résumé de la session [{sub_sid}]...")
         history = state.get_thread_history(sub_sid)
@@ -411,7 +409,7 @@ class Tools:
             return wrap_tool_output(
                 text=f"ℹ️ Session `{sub_sid}` vide.",
                 status={"status": "success", "sid": sub_sid}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # Construction du texte brut de l'historique
         raw = ""
@@ -459,7 +457,7 @@ class Tools:
             return wrap_tool_output(
                 text="❌ Échec de la génération du résumé.",
                 status={"status": "error"}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         summary = ""
         candidates = data.get("candidates", [])
@@ -472,7 +470,7 @@ class Tools:
         return wrap_tool_output(
             text=f"### Résumé de la session `{sub_sid}`\n\n{summary}",
             status={"status": "success", "sid": sub_sid, "steps": len(history)}
-        )
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
 
 # ==============================================================================
@@ -545,13 +543,13 @@ async def _run_agent_loop(
             return wrap_tool_output(
                 text=f"❌ Erreur API dans l'agent [{sid}] : {str(e)}",
                 status={"status": "error", "sid": sid, "message": str(e)}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         if not data:
             return wrap_tool_output(
                 text=f"❌ Cascade épuisée pour l'agent [{sid}].",
                 status={"status": "error", "sid": sid, "message": "cascade exhausted"}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # 4. Extraction des parts BRUTES de la réponse
         # Conservation des parts BRUTES (thoughtSignature Gemini 3.x) :
@@ -563,7 +561,7 @@ async def _run_agent_loop(
             return wrap_tool_output(
                 text=f"❌ Réponse vide du modèle pour l'agent [{sid}].",
                 status={"status": "error", "sid": sid}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # Parts brutes — NE PAS EXTRAIRE de sous-dict, conserver intégralement
         raw_parts = candidates[0]["content"].get("parts", [])
@@ -605,7 +603,7 @@ async def _run_agent_loop(
                         "progress": progress or "(en cours)",
                         "calls_used": calls_used,
                     }
-                )
+                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # =====================================================================
         # CAS 3 : Réponse finale (texte pur, pas de tool call)
@@ -628,7 +626,7 @@ async def _run_agent_loop(
                     "calls_used": calls_used,
                     "model_used": model_used,
                 }
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # =====================================================================
         # CAS 4 : Circuit breaker — budget dépassé avant exécution
@@ -688,7 +686,7 @@ async def _run_agent_loop(
                     "calls_used": calls_used,
                     "model_used": model_used,
                 }
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # =====================================================================
         # CAS 5 : Exécution des outils (appels linéaires ou parallèles)
@@ -783,7 +781,7 @@ async def _run_agent_loop(
         state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx + 1, "user", response_parts)
 
 
-def _resolve_sub_tools_from_sys_modules(body_tools_specs: list, __user__: Optional[dict]) -> dict:
+def _resolve_sub_tools_from_sys_modules(body_tools_specs: list, __user__: Optional[dict], __metadata__: dict = None) -> dict:
     """
     Construit sub_tools en combinant specs OpenAI (body_tools_specs) et callables récupérés
     directement depuis sys.modules.

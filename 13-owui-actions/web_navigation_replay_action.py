@@ -1,11 +1,16 @@
 """
 title: Revue Navigation Web
 author: Wilfried BARNAVON
-version: 4.7
-description: 4.7: Hotfix - Lecture des frames via le Registre Unifié V2 (echo_resources) au lieu du scan disque.
-             4.6: Renommage sémantique du titre UX (revert self.actions incompatible OWUI simple-action).
-icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIyOCIgeD0iMyIgeT0iMyIgcng9IjIiLz48cGF0aCBkPSJNNyAzdjE4Ii8+PHBhdGggZD0iTTEyIDN2MTgiLz48cGF0aCBkPSJNMTcgM3YxOCIvPjxwYXRoIGQ9Ik0zIDdoMTgiLz48cGF0aCBkPSJNMyAxMmgyMSIvPjxwYXRoIGQ9Ik0zIDE3aDE4Ii8+PC9zdmc+
+version: 4.10
+description: Cockpit vidéo interactif permettant de visionner et d'extraire des captures de la navigation autonome.
+icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiIC8+PHBhdGggZD0iTTcgM3YxOCIgLz48cGF0aCBkPSJNMyA3LjVoNCIgLz48cGF0aCBkPSJNMyAxMmgxOCIgLz48cGF0aCBkPSJNMyAxNi41aDQiIC8+PHBhdGggZD0iTTE3IDN2MTgiIC8+PHBhdGggZD0iTTE3IDcuNWg0IiAvPjxwYXRoIGQ9Ik0xNyAxNi41aDQiIC8+PC9zdmc+
 """
+# Historique des versions :
+# 4.10: Ajout d'un toast informatif si l'historique visuel est vide.
+# 4.9: Modification de l'icône SVG pour afficher une pellicule de cinéma au lieu d'un quadrillage.
+# 4.8: Mise à jour de la priorité d'affichage à 60.
+# 4.7: Hotfix - Lecture des frames via le Registre Unifié V2 (echo_resources) au lieu du scan disque.
+# 4.6: Renommage sémantique du titre UX (revert self.actions incompatible OWUI simple-action).
 
 import os
 import orjson as json
@@ -360,7 +365,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
 
 class Action:
     class Valves(BaseModel):
-        priority: int = Field(default=3, description="Priorité d'affichage (3 = Troisième).")
+        priority: int = Field(default=60, description="Priorité d'affichage (60 = Sixième).")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -399,6 +404,7 @@ class Action:
 
         if not files:
             await events.status("📭 Aucune archive visuelle dans le Registre.", done=True)
+            await events.toast("ℹ️ Aucune archive de navigation web trouvée pour ce chat.", "info")
             return None
 
         # 1. Installation de la Console

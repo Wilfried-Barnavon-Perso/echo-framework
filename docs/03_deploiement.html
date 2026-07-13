@@ -26,7 +26,7 @@
       <p>
         ECHO supporte trois méthodes de déploiement selon le contexte : <strong>Hyper-V</strong>
         (production souveraine, isolation maximale), <strong>Linux natif</strong> (serveur dédié)
-        et <strong>WSL2</strong> (développement ou test rapide sur Windows).
+        et <strong>WSL2</strong> (développement ou test unitaire sur Windows).
         Toutes convergent vers la même pile Docker et le même état final.
       </p>
     </div>
@@ -77,11 +77,11 @@
         <tr><td><code>14-owui-libs/</code></td><td><code>/opt/ECHO/owui-libs/</code> et <code>/app/backend/echo_libs/</code></td><td>Librairies partagées</td></tr>
         <tr><td><code>20-docker-admin-manager/</code></td><td><code>/opt/ECHO/docker-admin-manager/</code></td><td>Admin Manager</td></tr>
         <tr><td><code>21-docker-python-worker/</code></td><td><code>/opt/ECHO/docker-python-worker/</code></td><td>Sandbox Python</td></tr>
-        <tr><td><code>22-docker-browser-agent/</code></td><td><code>/opt/ECHO/docker-browser-agent/</code></td><td>Browser Agent Playwright</td></tr>
-        <tr><td><code>23-docker-embedding-worker/</code></td><td><code>/opt/ECHO/docker-embedding-worker/</code></td><td>Inférence bge-m3 locale</td></tr>
-        <tr><td><code>24-docker-echo-auth/</code></td><td><code>/opt/ECHO/docker-echo-auth/</code></td><td>ECHO Auth (Serveur SSO & MFA)</td></tr>
+        <tr><td><code>22-docker-browser-worker/</code></td><td><code>/opt/ECHO/docker-browser-worker/</code></td><td>Browser Worker Playwright</td></tr>
+        <tr><td><code>30-docker-embedding-worker/</code></td><td><code>/opt/ECHO/docker-embedding-worker/</code></td><td>Inférence bge-m3 locale</td></tr>
+        <tr><td><code>24-docker-echo-auth-manager-manager/</code></td><td><code>/opt/ECHO/docker-echo-auth-manager-manager/</code></td><td>ECHO Auth (Serveur SSO & MFA)</td></tr>
         <tr><td><code>25-docker-download-broker/</code></td><td><code>/opt/ECHO/docker-download-broker/</code></td><td>Download Broker</td></tr>
-        <tr><td><code>30-docker-stt-worker/</code></td><td><code>/opt/ECHO/docker-stt-worker/</code></td><td>Worker STT (Faster-Whisper)</td></tr>
+        <tr><td><code>32-docker-stt-worker/</code></td><td><code>/opt/ECHO/docker-stt-worker/</code></td><td>Worker STT (Faster-Whisper)</td></tr>
         <tr><td><code>31-docker-tts-worker/</code></td><td><code>/opt/ECHO/docker-tts-worker/</code></td><td>Worker TTS (Kokoro ONNX)</td></tr>
       </tbody>
     </table>
@@ -191,7 +191,7 @@ systemd=true</code></pre>
         <tr><td><strong>Complexité de démarrage</strong></td><td>Élevée (VM + cloud-init)</td><td>Faible</td><td>Faible</td></tr>
         <tr><td><strong>Idempotent</strong></td><td>Non (VM recréée)</td><td>Oui</td><td>Oui</td></tr>
         <tr><td><strong>Accès depuis Windows</strong></td><td>Via IP statique de la VM</td><td>Non direct</td><td><code>localhost</code> natif</td></tr>
-        <tr><td><strong>Usage recommandé</strong></td><td>Production souveraine</td><td>Serveur dédié</td><td>Développement / test rapide</td></tr>
+        <tr><td><strong>Usage recommandé</strong></td><td>Production souveraine</td><td>Serveur dédié</td><td>Développement / test unitaire</td></tr>
       </tbody>
     </table>
 
@@ -233,7 +233,7 @@ systemd=true</code></pre>
 
     <h2>Quickstart depuis sources locales</h2>
 
-    <div class="code-header">Déploiement rapide depuis un clone local du dépôt</div>
+    <div class="code-header">Déploiement automatisé depuis un clone local du dépôt</div>
     <pre><code># Depuis la racine du dépôt git ECHO cloné localement :
 sudo bash 00-echo-scripts/sync-echo.sh --local-only
 sudo bash 00-echo-scripts/install-stack.sh
@@ -247,7 +247,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

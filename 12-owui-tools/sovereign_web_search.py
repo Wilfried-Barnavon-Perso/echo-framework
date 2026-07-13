@@ -2,20 +2,15 @@
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
 version: 1.14
-description: 1.14: Fix - Ajout de la règle anti-spam dans la docstring de search_web pour interdire le burst (Parallel Function Calling) par le modèle principal.
-             1.13: Optim - Nouveaux paramètres SearxNG, résolution du paradoxe logique (docstrings) et suppression algorithmique des appâts de boucle.
-             1.12: Optim - Rééquilibrage cognitif des docstrings de recherche pour prioriser delegate_deep_research sur les requêtes complexes.
-             1.11: Optim - Ajout de la suggestion de changement de méthode en cas de blocage SearXNG.
-             1.10: Optim - Intégration sous contrainte de delegate_web_browsing dans le Deep Research Agent.
-             1.9: Optim - Ajout d'une règle anti-spam cognitif limitant le burst du Parallel Function Calling pour prévenir le bannissement de l'IP.
-             1.8: Redéfinition des docstrings de search_web et delegate_deep_research.
-             1.7: Précision dans la docstring de delegate_deep_research sur le comportement conditionnel du navigateur (dernier recours).
-             1.6: Renommage de search_deep_web en search_web pour dissiper la confusion avec le "Dark Web".
-             1.5: Clarification sémantique des docstrings des outils de recherche pour optimiser le routage.
-             1.4: Amélioration de la docstring de delegate_deep_research pour clarifier son usage.
-             1.3: Ajout de l'outil delegate_deep_research pour la recherche autonome multi-tours.
-             1.2: Refonte de search_instant_answer (force les mots-clés intemporels en anglais).
+description: Composant système interne : ECHO Sovereign Web Search.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.14: Fix - Ajout de la règle anti-spam dans la docstring de search_web pour interdire le burst (Parallel Function Calling) par le modèle principal.
+# 1.13: Optim - Nouveaux paramètres SearxNG, résolution du paradoxe logique (docstrings) et suppression algorithmique des appâts de boucle.
+# 1.12: Optim - Rééquilibrage cognitif des docstrings de recherche pour prioriser delegate_deep_research sur les requêtes complexes.
+# 1.11: Optim - Ajout de la suggestion de changement de méthode en cas de blocage SearXNG.
+# 1.10: Optim - Intégration sous contrainte de delegate_web_browsing dans le Deep Research Agent.
 
 import httpx
 import sys
@@ -74,11 +69,11 @@ class Tools:
                 if answer:
                     output = f"**Source : DuckDuckGo / {data.get('DefinitionSource', 'Wikipédia')}**\n\n{answer}"
                     if source_url: output += f"\n\n[Lire la suite]({source_url})"
-                    return wrap_tool_output(text=output, status={"status": "success"})
+                    return wrap_tool_output(text=output, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                 
-                return wrap_tool_output(text="⚠️ Aucune réponse instantanée. IMPLIQUE `search_web`.", status={"status": "no_result"})
+                return wrap_tool_output(text="⚠️ Aucune réponse instantanée. IMPLIQUE `search_web`.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur DDG: {str(e)}", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Erreur DDG: {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def search_web(
         self,
@@ -124,7 +119,7 @@ class Tools:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(url, data=params, headers=headers)
                 if resp.status_code != 200:
-                    return wrap_tool_output(text=f"❌ SearxNG indisponible ({resp.status_code}). Vérifiez le conteneur Docker.", status={"status": "error"})
+                    return wrap_tool_output(text=f"❌ SearxNG indisponible ({resp.status_code}). Vérifiez le conteneur Docker.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                 
                 data = resp.json()
                 results = data.get("results", [])[:u_valves.MAX_RESULTS]
@@ -132,9 +127,9 @@ class Tools:
                 
                 if not results:
                     if not is_sub_agent:
-                        return wrap_tool_output(text="⚠️ Aucun résultat. Les extraits textuels courts sont insuffisants, IMPLIQUE `delegate_deep_research`.", status={"status": "no_result"})
+                        return wrap_tool_output(text="⚠️ Aucun résultat. Les extraits textuels courts sont insuffisants, IMPLIQUE `delegate_deep_research`.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                     else:
-                        return wrap_tool_output(text="⚠️ Requête sans réponse. Altération des mots-clés requise.", status={"status": "no_result"})
+                        return wrap_tool_output(text="⚠️ Requête sans réponse. Altération des mots-clés requise.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                 
                 formatted_results = []
                 for i, r in enumerate(results, 1):
@@ -152,9 +147,9 @@ class Tools:
                     output += f"\n\n💡 **Suggestions :** {', '.join(suggestions[:5])}"
 
                 await events.status("Recherche terminée.", done=True)
-                return wrap_tool_output(text=output, status={"status": "success"})
+                return wrap_tool_output(text=output, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur SearxNG: {str(e)}", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Erreur SearxNG: {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def delegate_deep_research(
         self,
@@ -182,7 +177,7 @@ class Tools:
             return wrap_tool_output(
                 text="❌ `agent_engine_tool` introuvable. IMPLIQUE notification utilisateur pour activation.",
                 status={"status": "error"}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         
         # Instanciation du Delegate
         delegate = _agent_mod.Tools()

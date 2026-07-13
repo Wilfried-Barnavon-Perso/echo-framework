@@ -2,30 +2,15 @@
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
 version: 11.14
-description: 11.14: Descente Cognitive - Injection dynamique de action_analyze_page et action_archive_page dans BROWSER_TOOLS_SCHEMA pour rendre le Sous-Agent autonome, et correction d'un bug de payload sur inspect_page.
-             11.13: Refonte - Remplacement du distillateur web monolithique par une dichotomie stricte (analyze_web_page via Streaming Sémantique natif ECHO et archive_web_page asynchrone).
-             11.12: Optim - Ajout de la règle interdisant explicitement l'usage des moteurs de recherche généralistes au niveau du navigateur autonome.
-             11.11: Optim - Autorisation du Parallel Function Calling dans les instructions pour accélérer la perception (règle 1) et les actions (règle 3).
-             11.10: Fix - Ajout de la Valve PRUNE_CONTENT_THRESHOLD pour configurer le seuil d'élagage dynamique du contexte.
-             11.9: Fix - Implémentation du Proactive Context Pruning (Élagage dynamique des DOMs obsolètes).
-             11.8: Fix - Implémentation du Multimodal function calling (Gemini 3.x) via l'attribut parts de la functionResponse pour injecter les captures d'écran, évitant l'erreur 400. Suppression des notifications "Traitement de l'affichage".
-             11.7: Redéfinition de la docstring de delegate_web_browsing.
-             11.6: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
-             11.5: Fix - Utilisation stricte de raw_parts dans l'historique pour empêcher le rejet 400 de la thoughtSignature par Gemini 3.x.
-             11.4: Hotfix - Restauration de la persistance Vault et SQLite (echo_resources) des captures de navigation.
-             11.3: Hotfix - Restitution du payload (content/value) pour a11y_tree, read_text et url dans l'orchestrateur.
-             11.2: Refonte Full-Stack API à 4 piliers, Mode Lot Modéré, Hiérarchie A11y.
-             11.1: Mode hybride Lidar/Vision (ajout des coordonnées x,y en fallback) et renforcement de la règle Vision-On-Demand.
-             11.0: Vision-On-Demand (retrait de la vision systématique, ajout de action_request_vision), retrait du hard-limit DOM, intégration du Code de Comportement étendu.
-             10.9: Mise à jour de la docstring de delegate_web_browsing pour exiger la transmission du contexte spatio-temporel (date, heure, lieu) dans l'objectif de la mission.
-             10.4: Registre Unifié V2 — mark_processed → save_resource,
-             requête processed_files → get_resources.
-             10.3: Intégration de la vision multimodale (Base64) native et exposition de la carte DOM à l'agent.
-             10.2: Ajout close_web_thread et purge automatique de session en fin de mission.
-             10.1: Persistance ThoughtSignatures Gemini 3.x — save_thread_step sur chaque tour (model + user) avec extraction de la signature. SID exposé dans le retour.
-             10.0: Architecture multi-agentique. Remplacement de l'interaction manuelle par la boucle OODA autonome (delegate_web_browsing). Intégration Native Gemini Tool Calling et vision multimodale (Base64). Déportation de la logique mécanique dans echo_browser_lib.
-             11.6: Ajout de la défense passive (troncature silencieuse) sur le contexte du navigateur web.
+description: Composant système interne : ECHO Navigation Engine.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 11.14: Descente Cognitive - Injection dynamique de action_analyze_page et action_archive_page dans BROWSER_TOOLS_SCHEMA pour rendre le Sous-Agent autonome, et correction d'un bug de payload sur inspect_page.
+# 11.13: Refonte - Remplacement du distillateur web monolithique par une dichotomie stricte (analyze_web_page via Streaming Sémantique natif ECHO et archive_web_page asynchrone).
+# 11.12: Optim - Ajout de la règle interdisant explicitement l'usage des moteurs de recherche généralistes au niveau du navigateur autonome.
+# 11.11: Optim - Autorisation du Parallel Function Calling dans les instructions pour accélérer la perception (règle 1) et les actions (règle 3).
+# 11.10: Fix - Ajout de la Valve PRUNE_CONTENT_THRESHOLD pour configurer le seuil d'élagage dynamique du contexte.
 
 import os
 import time
@@ -125,7 +110,7 @@ class Tools:
 
         await events.status("📡 Agent Navigateur: Prise de contrôle...")
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
-            return wrap_tool_output(text="❌ Navigateur indisponible.", status={"status": "error"})
+            return wrap_tool_output(text="❌ Navigateur indisponible.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid, vision_grid_step=getattr(u_valves, 'VISION_GRID_STEP', 100))
         registry = browser.get_registry()
@@ -172,7 +157,6 @@ class Tools:
             parts = []
             
             if fn_name:
-                # Structure stricte exigée par Gemini pour répondre à un functionCall
                 parts.append({
                     "functionResponse": {
                         "name": fn_name,
@@ -295,7 +279,7 @@ class Tools:
                 data, _, err = await EchoGeminiClient.call_cascade(model, payload, uid, __metadata__, events, timeout=120)
 
                 if err or not data:
-                    return wrap_tool_output(text=f"❌ Erreur modèle: {err}", status={"status": "error"})
+                    return wrap_tool_output(text=f"❌ Erreur modèle: {err}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
                 candidates = data.get("candidates", [])
                 if not candidates or not candidates[0].get("content"): break
@@ -470,7 +454,7 @@ class Tools:
                         continue  # Relance la boucle while
                 
                     await events.status(f"✅ Mission terminée en {iterations} étapes.", done=True)
-                    return wrap_tool_output(text=f"🤖 Synthèse du Navigateur :\n{text_out}", status={"status": "success", "steps": iterations, "sid": sid})
+                    return wrap_tool_output(text=f"🤖 Synthèse du Navigateur :\n{text_out}", status={"status": "success", "steps": iterations, "sid": sid}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             fallback_msg = "Aucune synthèse (Interrompu en cours d'action)."
             return wrap_tool_output(
@@ -480,14 +464,15 @@ class Tools:
                     f"[SYNTHÈSE_NAVIGATEUR] :\n{text_out if 'text_out' in locals() else fallback_msg}"
                 ), 
                 status={"status": "too_many_tries"}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         finally:
             stop_streaming.set()
             if proxy_task:
                 proxy_task.cancel()
 
     async def analyze_web_page(self, url: str, query: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
-        """[ANALYSE SÉMANTIQUE IMMÉDIATE] Permet au Modèle de déléguer la lecture d'une page Web à un sous-agent pour synthétiser la page, la décrire ou y chercher une donnée précise. Retourne la réponse dans le tour de parole courant sans affecter la mémoire vectorielle.
+        """[ANALYSE SÉMANTIQUE IMMÉDIATE] UTILISER EN PRIORITÉ : Idéal pour trouver une info précise sur une page web identifiée.
+        Délègue la lecture d'une page Web à un sous-agent pour la synthétiser, la décrire ou y chercher une donnée exacte. Retourne la réponse dans le tour de parole courant sans polluer la mémoire vectorielle.
         
         :param url: L'URL absolue de la page à analyser.
         :param query: La directive (ex: 'Résume cet article', 'Trouve le prix', 'Décris le produit').
@@ -498,7 +483,7 @@ class Tools:
         u_valves = __user__.get("valves", self.UserValves())
         
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
-            return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"})
+            return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
         await events.status(f"🌐 Navigation vers {url}...")
@@ -540,7 +525,7 @@ class Tools:
         if os.path.exists(tmp_path): os.remove(tmp_path)
         
         distillate = "".join(p.get("text", "") for p in data.get("candidates", [])[0]["content"].get("parts", []))
-        return wrap_tool_output(text=f"Résultat de l'analyse pour '{query}' :\n{distillate}", status={"status": "success"})
+        return wrap_tool_output(text=f"Résultat de l'analyse pour '{query}' :\n{distillate}", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
 
     async def archive_web_page(self, url: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
@@ -554,7 +539,7 @@ class Tools:
         u_valves = __user__.get("valves", self.UserValves())
         
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
-            return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"})
+            return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
         await events.status(f"🌐 Navigation vers {url}...")
@@ -565,7 +550,7 @@ class Tools:
         markdown_text = res_action.get("content", "")
         
         if not markdown_text:
-            return wrap_tool_output(text="Erreur : Échec de l'extraction du texte.", status={"status": "error"})
+            return wrap_tool_output(text="Erreur : Échec de l'extraction du texte.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             
         domain = urllib.parse.urlparse(url).netloc.replace(".", "_")
         file_id = f"ARCHIVE_{domain}_{uuid.uuid4().hex[:6]}"
@@ -589,7 +574,7 @@ class Tools:
         return wrap_tool_output(
             text=f"Succès : La page {url} a été archivée physiquement ({filename}). Le processus d'ingestion vectorielle s'exécutera silencieusement en arrière-plan. Le Modèle peut poursuivre son analyse courante.", 
             status={"status": "success"}
-        )
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def web_browse_reset(self, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """Réinitialise la session du navigateur (Fermeture et Nettoyage)."""
@@ -597,7 +582,7 @@ class Tools:
         uid = __user__.get("id", "anonymous")
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
         res = await browser.reset_session()
-        return wrap_tool_output(text="🚀 Navigateur réinitialisé.", status=res)
+        return wrap_tool_output(text="🚀 Navigateur réinitialisé.", status=res, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def close_web_thread(self, sub_sid: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """
@@ -615,7 +600,7 @@ class Tools:
             return wrap_tool_output(
                 text=f"❌ Session `{sub_sid}` introuvable dans ce chat ou de type invalide.",
                 status={"status": "error"}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             
         state.delete_thread(sub_sid)
         
@@ -626,7 +611,7 @@ class Tools:
         return wrap_tool_output(
             text=f"✅ Session web `{sub_sid}` fermée et purgée de l'historique.",
             status={"status": "success", "sid": sub_sid}
-        )
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def get_browser_frames_history(self, depth: Optional[int] = 10, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None) -> dict:
         """
@@ -650,6 +635,6 @@ class Tools:
                 history.append({"file_id": r['id'], "date": dt, "frame": r['name']})
                 nouveaux.append({"nom": r['name'], "id": r['id'], "mime": r.get('mime') or 'image/png', "statut": r['status']})
 
-            return wrap_tool_output(text=json.dumps(history, option=json.OPT_INDENT_2).decode('utf-8'), status={"status": "success"}, nouveaux_fichiers=nouveaux)
+            return wrap_tool_output(text=json.dumps(history, option=json.OPT_INDENT_2).decode('utf-8'), status={"status": "success"}, nouveaux_fichiers=nouveaux, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur: {str(e)}", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Erreur: {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

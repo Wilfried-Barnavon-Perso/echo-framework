@@ -1,61 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.28
-description: 5.28: Mise à jour des hostnames Python Worker et Browser Agent (préfixe echo-).
-             5.27: Mise à jour hostname SearxNG (http://echo-searxng:8080) suite à la standardisation du docker-compose.
-             5.26: Passage à microsoft/Harrier-OSS-v1-0.6B comme modèle d'embedding par défaut (dimension 1024) et ajustement de la taille des chunks RAG à 4000.
-             5.25: Suppression des constantes Map-Reduce obsolètes (ECHO_MR_*).
-             5.24: Correction sécurité DELEGATE_AGENT_BLACKLIST (identifiants RAG et jauge de contexte).
-             5.23: Ajout de SESSION_RAG_CONVERSATION_SOURCE_ID pour le filtre d'historique.
-             5.22: Ajout des seuils de troncature du contexte (CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, CHARS_PER_TOKEN).
-             5.21: Ajout de PENDING_INGESTION pour le Data Broker (Auto-Ingestion Playwright).
-             5.20: Ajout ECHO_MAX_WAIT_TIMER pour la limite du Timer Généraliste.
-             5.19: Ajout DEFAULT_EDGE_EMBEDDING_TIMEOUT pour le Edge Embedding WebGPU.
-             5.18: Ajout de DEEP_RESEARCH_MAX_CALLS_DEFAULT pour l'agent de recherche profonde.
-             5.17: Ajout du dictionnaire FILE_INGESTION_STATUS pour centraliser les états d'ingestion.
-             5.16: Réduction de MAX_DIRECT_MMEDIA_INJECT_SIZE de 5Mo à 1Mo pour optimisation de contexte.
-             4.4: redirect_uri localhost (loopback RFC 8252).
-             4.5: Suppression redirect_uri et callback_port fixes — dynamiques via
-             echo_ssh_tunnel.py. Ajout constantes SSH Tunnel éphémère PKCE
-             (plage ports, user, timeout). Multi-user natif par allocation dynamique.
-             4.6: Correction noms modèles certifiés par diagnostic live API.
-             4.7: Mapping modèles AGY ↔ AI Studio (AGY_MODEL_MAP).
-             Fix MODEL_ROUTING (ajout clé MODEL_DISTILLATION). Fix noms canoniques
-             AI Studio : MODEL_FLASH=gemini-3.5-flash, MODEL_PRO=gemini-3.1-pro-preview.
-             5.3: MODEL_HIERARCHY, MODEL_ENUM_BY_POLICY, MODEL_ENUM_REFERENCE pour centralisation
-             politique modèle Pipe → outils (clamp_model, convert_owui_tools enum dynamiques).
-             4.8: Centralisation des paramètres de génération (THINKING_LEVEL_*, MAX_TOKENS_DEFAULT).
-             Suppression des valves TEMPERATURE/TOP_P/THINKING_LEVEL dans pipe_engine et
-             les tools cognitifs — point de vérité unique pour tout le framework ECHO.
-             4.9: Ajout MODEL_MAP_CA (capacités AGY certifiées, diag v2.1 2026-05-25).
-             AGY_MODEL_MAP devient alias auto-généré depuis MODEL_MAP_CA.
-             5.7: Ajout des constantes globales Smart Context (Map-Reduce RAG V2).
-             5.8: Update MODEL_DISTILLATION to gemini-3.1-flash-lite.
-             MAX_TOKENS_DEFAULT 65536→65535 (limite universelle AI Studio + AGY).
-             5.0: Renommage des identifiants Code Assist → AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
-             CODE_ASSIST_BASE_URL→AGY_BASE_URL, CODE_ASSIST_MODEL_MAP→AGY_MODEL_MAP (alias rétrocompat conservé).
-             5.1: Ajout constantes Strategic Planner (PLAN_STATUS, PLAN_TASK_STATUS, PLAN_EXECUTABLE_STATUSES).
-             5.2: Ajout ECHO_GEMMA_URL, MODEL_LOCAL_GEMMA (distillation locale Gemma 4 E4B).
-                  Ajout entrée LOCAL_GEMMA dans MODEL_ROUTING.
-             5.4: Ajout section ECHO Codex (CODEX_DIR_NAME, CODEX_LANG_MAP, CODEX_EDIT_SYSTEM_PROMPT,
-                  CODEX_SUMMARIZE_PROMPT, CODEX_QUICK_ACTIONS, CODEX_DEFAULT_LANG).
-              5.6: Ajout section 1.5 — DELEGATE_AGENT_BLACKLIST (frozenset) et DELEGATE_SYSTEM_APPENDIX.
-                   Centralise les règles de filtrage des outils transmis à l'agent delegate.
-              5.10: Renommage DELEGATE_SUBAGENT_BLACKLIST → DELEGATE_AGENT_BLACKLIST.
-                    Renommage des fonctions blacklistées (subagent→agent). Ajout des
-                    nouvelles fonctions : consult_council, consult_supervised_workers,
-                    list_councils, close_council, list_supervised_tasks, close_supervised_task.
-              5.11: Mise à jour de DELEGATE_SYSTEM_APPENDIX (instructions d'optimisation et
-                    vérification web).
-              5.12: Suppression de MODEL_DISTILLATION dans MODEL_MAP_CA pour résoudre la
-                    collision de clés avec MODEL_LITE (les deux valaient "gemini-3.1-flash-lite").
-              5.13: Ajout section 1.7 — CONVERTIBLE_OFFICE_EXTENSIONS, OOXML_IMAGE_EXTENSIONS,
-                    DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB pour conversion Office → Markdown (MarkItDown).
-              5.14: Registre Unifié V2 — Ajout RESOURCE_TYPES (types de ressources echo_resources).
-                    Ajout étape 1b dans get_gemini_mime() pour attribution MIME accélérée
-                    des fichiers Office convertibles (court-circuite le crible binaire).
+version: 5.29
+description: Composant système interne : ECHO Constants.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.29: Renommage global echo-browser-agent en echo-browser-worker.
+# 5.28: Mise à jour des hostnames Python Worker et Browser Agent (préfixe echo-).
+# 5.27: Mise à jour hostname SearxNG (http://echo-searxng:8080) suite à la standardisation du docker-compose.
+# 5.26: Passage à microsoft/Harrier-OSS-v1-0.6B comme modèle d'embedding par défaut (dimension 1024) et ajustement de la taille des chunks RAG à 4000.
+# 5.25: Suppression des constantes Map-Reduce obsolètes (ECHO_MR_*).
 
 import os
 import base64
@@ -298,7 +253,7 @@ PLAN_TASK_STATUS = {
 # Statuts autorisant l'exécution des tâches d'un plan
 PLAN_EXECUTABLE_STATUSES = {"ready", "executing"}
 
-# Types de ressources du Registre Unifié V2 (echo_resources)
+# Types de ressources du Registre Unifié (echo_resources)
 RESOURCE_TYPES = {
     "codex":  "codex",   # Fichiers texte/code (Git)
     "plan":   "plan",    # Plans stratégiques
@@ -536,7 +491,7 @@ ECHO_QDRANT_URL = "http://echo-qdrant:6333"
 ECHO_PYTHON_WORKER_URL = "http://echo-python-worker:5000/execute"
 
 # NAVIGATION_ENGINE_URL : Utilisée par navigation_engine_tool pour le pilotage Playwright/Chrome.
-NAVIGATION_ENGINE_URL = "http://echo-browser-agent:5002"
+NAVIGATION_ENGINE_URL = "http://echo-browser-worker:5002"
 
 # ECHO_SEARXNG_BASE_URL : Utilisée par sovereign_web_search pour les recherches web profond.
 ECHO_SEARXNG_BASE_URL = "http://echo-searxng:8080"

@@ -93,10 +93,10 @@ flowchart TD
     <h3>Registre SQLite - <code>codex_docs</code></h3>
 
     <p>
-      Chaque fichier créé ou modifié est enregistré dans la base SQLite unifiée (Registre V2) de la base
+      Chaque fichier créé ou modifié est enregistré dans la base SQLite unifiée (Registre) de la base
       <code>{chat_id}.db</code> (<code>EchoStateManager</code>). Ce registre permet au modèle 
       de consulter la liste de ses fichiers à tout moment via l'outil <code>query_registry</code> 
-      et d'obtenir des statistiques rapides sans accès disque.
+      et d'obtenir des métriques sans accès I/O sans accès disque.
     </p>
 
     <table>
@@ -330,7 +330,7 @@ flowchart TD
         </tr>
         <tr>
           <td><strong>Panneau AI (bas)</strong></td>
-          <td>Champ instruction, sélecteur modèle (LITE/FLASH/PRO), boutons d'actions rapides prédéfinies, bouton <em>Appliquer</em>.</td>
+          <td>Champ instruction, sélecteur modèle (LITE/FLASH/PRO), boutons d'macro-actions prédéfinies, bouton <em>Appliquer</em>.</td>
         </tr>
         <tr>
           <td><strong>Barre de navigation historique</strong></td>
@@ -402,7 +402,7 @@ flowchart TD
       LITE/FLASH/PRO selon la disponibilité des modèles.
     </p>
 
-    <h3>Actions rapides prédéfinies (<code>CODEX_QUICK_ACTIONS</code>)</h3>
+    <h3>Macro-actions prédéfinies (<code>CODEX_QUICK_ACTIONS</code>)</h3>
 
     <p>
       L'utilisateur peut déclencher des transformations courantes via des boutons dans le panneau AI,
@@ -447,10 +447,10 @@ flowchart TD
       </tbody>
     </table>
 
-    <h2>Proprioception - Registre Unifié V2</h2>
+    <h2>Proprioception - Registre Unifié</h2>
 
     <p>
-      L'ancien système d'injection passive (registre_codex) ayant été déprécié (AEC V2) pour économiser des tokens,
+      L'ancien système d'injection passive (registre_codex) ayant été déprécié (AEC) pour économiser des tokens,
       Gemini doit interroger l'état du Codex de manière active.
     </p>
 
@@ -504,7 +504,7 @@ flowchart TD
           <td>Constantes Codex</td>
           <td><code>14-owui-libs/echo_constants.py</code> §1.4</td>
           <td>5.4</td>
-          <td><code>CODEX_DIR_NAME</code>, <code>CODEX_LANG_MAP</code>, prompts, actions rapides</td>
+          <td><code>CODEX_DIR_NAME</code>, <code>CODEX_LANG_MAP</code>, prompts, macro-actions</td>
         </tr>
         <tr>
           <td>Table <code>codex_docs</code></td>
@@ -540,7 +540,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

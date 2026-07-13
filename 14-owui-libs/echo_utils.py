@@ -1,64 +1,16 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.9
-description: 8.9: Augmentation du timeout de l'embedding worker à 300s, intégration d'une graine unique (unique_seed) pour index_text_in_ephemeral_rag pour éviter les collisions UUID, et migration EMBEDDING_DIM.
-             8.8: Renforcement de la regex _prepare_zero_ram_content (hook inviolable).
-             8.7: Fix majeur Streaming Zéro-RAM (blocage SQLite). Offload du streamer asynchrone via asyncio.to_thread pour éviter la famine de l'Event Loop.
-             8.6: Log explicite de l'exception réseau dans docker logs pour EchoGeminiClient.call.
-             8.5: Fix `call_cascade` : Interception explicite des exceptions `httpx.TimeoutException` et `asyncio.TimeoutError` pour afficher un statut clair "Allocated time elapsed (Timeout)" au lieu d'une erreur silencieuse `()`.
-             8.4: Amélioration de `estimate_token_size` avec heuristiques dynamiques basées sur le `mimeType` pour évaluer les coûts des médias (Images haute résolution, Vidéo, Audio, PDF).
-             8.3: Fix de `estimate_token_size` (calcul heuristique correct pour la donnée base64, 258 tokens constants) pour prévenir la troncature prématurée.
-             8.2: Ajout de smart_truncate_history pour préserver l'intégrité des blocs d'outils Gemini.
-             8.1: Ajout de estimate_token_size pour le calcul heuristique du poids cognitif.
-             7.6: Ajout EchoGeminiClient.index_text_in_ephemeral_rag. 7.7: Migration Antigravity 2.1 —
-             7.8: Fix UUID collision dans index_text_in_ephemeral_rag (ajout du paramètre unique_seed).
-             Mise à jour User-Agent Code Assist, header x-goog-api-client, préfixe user_prompt_id.
-             Mise à jour credentials refresh token. Migration douce table auth_pkce_context.
-             7.8: Fix mismatch client OAuth2 dans refresh_google_oauth_token().
-             7.9: CODE_ASSIST_MODEL_MAP dans _prepare_request_context (CAS 1).
-             7.10: Strip thinkingConfig sur route Code Assist — thinking encodé dans le nom du
-             modèle. L'API l'accepte (diag 200) mais le champ est redondant.
-             7.11: Délégation → echo_protocol.py (get_ca_model_id, build_ca_generation_config).
-             MAX_TOKENS_DEFAULT 65536→65535 (universel AI Studio+CA). call_distillation
-             default max_tokens 65000→MAX_TOKENS_DEFAULT.
-             7.12: EchoAuth.get_model_quota() — lecture quota par modèle CA depuis identity.db.
-             Correction commentaire _prepare_request_context (thinkingConfig non strippé depuis v1.1).
-             7.13: Propagation renommage AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
-             CODE_ASSIST_BASE_URL→AGY_BASE_URL (echo_constants v5.0). Variables is_code_assist→is_agy.
-             7.14: Routage LOCAL_GEMMA dans call_distillation — distillation locale par défaut
-             (Gemma 4 E4B via echo-gemma-distiller). Fallback API transparent si service indisponible.
-             Ajout méthode _call_local_distiller (pattern generate_embedding).
-             7.15: Crédits OAuth2 opt-in via UserValve pipe (persistance identity.db).
-             enabled_credit_types omis par défaut (alignement AGY-IDE).
-              7.16: generate_embedding() retry (1 retry, 2s backoff) + timeouts relaxés
-              pour absorber les environnements contraints (Hyper-V sous charge) :
-              7.23: Suppression 'target_model != MODEL_DISTILLATION' dans call_distillation pour autoriser le routage.
-              embedding 30→60s, distiller 60→120s, index_rag 120→180s.
-               7.17: Centralisation politique modèle Pipe → outils. resolve_model_policy(),
-               clamp_model(), call_cascade(). Crédits via enable_paid_credits paramètre
-               (suppression lecture identity.db). call_distillation : suppression fallback
-               API Gemini 2.5 Flash (Gemma local uniquement).
-               7.18: wrap_cascade_output() — retour enrichi pour rendre le modèle effectif
-               visible au LLM orchestrateur. Status clamping (🔒) et cascade (⚡) dans
-               call_cascade().
-               7.19: Fallback SQLite echo_settings pour propagation politique Pipe → outils
-               (OWUI ne propage pas __metadata__ custom). Table echo_settings + get_setting/
-               save_setting. Retrait thought_archive (write-only, jamais lu).
-               7.20: Refactoring status tri-état (success/warning/error). wrap_cascade_output :
-               suppression clamped:true, ajout param reason. call_cascade : retour tuple à 3
-               (data, model_key, reason) avec reason contextuel (policy/API error/exhausted).
-               7.21: Ajout table codex_docs et méthodes CRUD (save_codex_record, delete_codex_record,
-               get_codex_docs, clear_codex_records) pour le Codex ECHO.
-               7.22: Fix OSError dans move_to_vault (création du dossier session manquante).
-               7.25: Retrait définitif de l'import obsolète ECHO_GEMMA_URL suite à la dépréciation
-               du distiller local. Corrige les HTTP 400/401 lors de l'import des libs partagées.
-               8.0: Registre Unifié V2 — Ajout table echo_resources et méthodes CRUD
-               (save_resource, get_resource, get_resources, update_resource_status,
-               update_resource_fields, delete_resource, clear_resources_by_type,
-               get_next_codex_name). Remplacement futur des tables processed_files,
-               plans, codex_docs par une source unique.
+version: 8.12
+description: Composant système interne : ECHO Shared Utils (Core).
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 8.12: Suppression globale de l'arrondi int(time.time()) sur les registres annexes (plans, codex) et remplacement par float(last_check) dans wrap_tool_output pour garantir une exactitude milliseconde et corriger la cascade AEC.
+# 8.11: Fix silence AEC lors des exécutions parallèles (suppression du cast int(time.time()) dans save_resource pour corriger la troncature SQLite).
+# 8.9: Augmentation du timeout de l'embedding worker à 300s, intégration d'une graine unique (unique_seed) pour index_text_in_ephemeral_rag pour éviter les collisions UUID, et migration EMBEDDING_DIM.
+# 8.8: Renforcement de la regex _prepare_zero_ram_content (hook inviolable).
+# 8.7: Fix majeur Streaming Zéro-RAM (blocage SQLite). Offload du streamer asynchrone via asyncio.to_thread pour éviter la famine de l'Event Loop.
 
 import copy
 import os
@@ -75,6 +27,11 @@ import httpx
 import random
 import shutil
 from typing import Optional, Tuple, List, Set, Any, Union, Dict, AsyncGenerator, Literal
+from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    import pytz as ZoneInfo # fallback simple
 
 # Alias pour json standard si besoin
 import orjson as std_json
@@ -303,14 +260,88 @@ def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
             return clean_text, thoughts
     return text, None
 
-def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[dict] = None, nouveaux_fichiers: List[dict] = None) -> dict:
-    if nouveaux_fichiers:
-        json_str = json.dumps(nouveaux_fichiers, option=json.OPT_INDENT_2).decode('utf-8')
-        text += f"\n\n```json:nouveaux_artefacts\n{json_str}\n```"
+def _dict_to_yaml_aec(d: Any, indent: int = 0) -> str:
+    """Helper local pour la sérialisation YAML de l'AEC (factorisé depuis new_context_filter)."""
+    lines = []
+    space = "  " * indent
+    if isinstance(d, list):
+        for item in d:
+            if isinstance(item, dict):
+                lines.append(f"{space}-")
+                lines.append(_dict_to_yaml_aec(item, indent + 1))
+            else:
+                lines.append(f"{space}- {item}")
+    elif isinstance(d, dict):
+        for k, v in d.items():
+            if isinstance(v, dict):
+                if not v: lines.append(f"{space}{k}: {{}}")
+                else:
+                    lines.append(f"{space}{k}:")
+                    lines.append(_dict_to_yaml_aec(v, indent + 1))
+            elif isinstance(v, list):
+                if not v: lines.append(f"{space}{k}: []")
+                else:
+                    lines.append(f"{space}{k}:")
+                    for item in v:
+                        if isinstance(item, dict):
+                            lines.append(f"{space}  -")
+                            lines.append(_dict_to_yaml_aec(item, indent + 2))
+                        else:
+                            lines.append(f"{space}  - {item}")
+            else:
+                val = str(v).replace("\n", " ") if v is not None else ""
+                lines.append(f"{space}{k}: {val}")
+    return "\n".join(lines)
+
+def build_aec_system_events(sys_events: list = None, error_events: list = None) -> str:
+    """Génère la balise <evenement_systeme> standardisée pour l'AEC"""
+    if not sys_events and not error_events:
+        return ""
+        
+    events_text = "<evenement_systeme>\n"
+    if sys_events:
+        events_text += _dict_to_yaml_aec(sys_events) + "\n"
+        events_text += "> Utilisez `query_registry` pour consulter l'état complet des ressources.\n"
+    if error_events:
+        events_text += "\n[ERREURS D'INGESTION]\n" + _dict_to_yaml_aec(error_events) + "\n"
+        events_text += "> Ces fichiers ont échoué et ne sont pas exploitables.\n"
+    events_text += "</evenement_systeme>\n\n"
+    return events_text
+
+def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[dict] = None, user_id: str = None, chat_id: str = None, metadata: dict = None) -> dict:
+    if user_id and chat_id and metadata is not None:
+        last_check = metadata.get("_echo_last_event_check_at")
+        if last_check:
+            try:
+                state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
+                delta = state_manager.get_resources(created_after=float(last_check))
+                if delta:
+                    # Résolution du fuseau horaire de l'utilisateur depuis les variables OWUI
+                    user_tz_str = metadata.get("variables", {}).get("{{CURRENT_TIMEZONE}}", "UTC")
+                    try:
+                        user_tz = ZoneInfo(user_tz_str)
+                    except Exception:
+                        user_tz = ZoneInfo("UTC")
+
+                    events = [{
+                        "type": r.get("status", "unknown"),
+                        "name": r.get("name", "unnamed"),
+                        "mime": r.get("mime"),
+                        "date": datetime.fromtimestamp(r.get("created_at", time.time()), tz=user_tz).strftime("%Y-%m-%d %H:%M:%S"),
+                        "source": "outil/HUD"
+                    } for r in delta]
+                    
+                    # Appel de la fonction factorisée
+                    events_text = build_aec_system_events(sys_events=events)
+                    if events_text:
+                        text += f"\n\n{events_text}"
+                        metadata["_echo_last_event_check_at"] = time.time()
+            except Exception as e:
+                print(f"[wrap_tool_output] Erreur Delta SQLite: {e}")
+                
     return {"text": text, "status": status or {"status": "success"}, "echo_tool_multiparts": echo_tool_multiparts or []}
 
-
-def wrap_cascade_output(text: str, model_requested: str, model_used: str, status: dict = None, echo_tool_multiparts: List[dict] = None, reason: str = None) -> dict:
+def wrap_cascade_output(text: str, model_requested: str, model_used: str, status: dict = None, echo_tool_multiparts: List[dict] = None, reason: str = None, user_id: str = None, chat_id: str = None, metadata: dict = None) -> dict:
     """
     Enrichit wrap_tool_output avec les métadonnées de cascade.
     Le LLM orchestrateur voit model_used dans le status dict ET dans un préfixe texte si le modèle a changé.
@@ -323,7 +354,7 @@ def wrap_cascade_output(text: str, model_requested: str, model_used: str, status
         s["status"] = "warning"
         s["warning"] = reason or f"{model_requested} unavailable"
         text = f"[Modèle effectif : {model_used} (demandé : {model_requested})]\n\n{text}"
-    return {"text": text, "status": s, "echo_tool_multiparts": echo_tool_multiparts or []}
+    return wrap_tool_output(text, status=s, echo_tool_multiparts=echo_tool_multiparts, user_id=user_id, chat_id=chat_id, metadata=metadata)
 
 # ==============================================================================
 # SECTION 2 : RÉSOLUTION DE FICHIERS & VERSIONS
@@ -1416,7 +1447,7 @@ class EchoStateManager:
                     updated_at   INTEGER NOT NULL
                 )""")
 
-                # Registre Unifié V2 (v8.0) — Remplace à terme processed_files, plans, codex_docs
+                # Registre Unifié (v8.0) — Remplace à terme processed_files, plans, codex_docs
                 conn.execute("""CREATE TABLE IF NOT EXISTS echo_resources (
                     id            TEXT PRIMARY KEY,
                     name          TEXT NOT NULL,
@@ -1734,7 +1765,7 @@ class EchoStateManager:
     def save_plan_record(self, plan_id: str, filename: str, goal: str,
                          status: str, author_model: str = None):
         """Enregistre un nouveau plan dans le registre de contrôle du chat."""
-        ts = int(time.time())
+        ts = time.time()
         try:
             with self._get_connection() as conn:
                 conn.execute(
@@ -1752,7 +1783,7 @@ class EchoStateManager:
             with self._get_connection() as conn:
                 conn.execute(
                     "UPDATE plans SET status = ?, updated_at = ? WHERE plan_id = ?",
-                    (status, int(time.time()), plan_id)
+                    (status, time.time(), plan_id)
                 )
                 conn.commit()
         except: pass
@@ -1787,7 +1818,7 @@ class EchoStateManager:
     def save_codex_record(self, filename: str, language: str, lines: int,
                           last_commit: str, commit_msg: str):
         """Enregistre ou met à jour un document Codex dans le registre."""
-        ts = int(time.time())
+        ts = time.time()
         try:
             with self._get_connection() as conn:
                 conn.execute(
@@ -1835,7 +1866,7 @@ class EchoStateManager:
         except: pass
 
     # ==========================================================================
-    # REGISTRE UNIFIÉ V2 — echo_resources (v8.0)
+    # REGISTRE UNIFIÉ — echo_resources (v8.0)
     # ==========================================================================
 
     def save_resource(self, id: str, name: str, resource_type: str, status: str,
@@ -1847,7 +1878,7 @@ class EchoStateManager:
         """Crée ou met à jour une ressource dans le registre unifié.
         Utilise INSERT ... ON CONFLICT pour préserver created_at lors des mises à jour.
         """
-        ts = int(time.time())
+        ts = time.time()
         try:
             with self._get_connection() as conn:
                 conn.execute(
@@ -1879,7 +1910,7 @@ class EchoStateManager:
             with self._get_connection() as conn:
                 conn.execute(
                     "UPDATE echo_resources SET status = ?, updated_at = ? WHERE id = ?",
-                    (status, int(time.time()), id)
+                    (status, time.time(), id)
                 )
                 conn.commit()
         except Exception as e:
@@ -1895,7 +1926,7 @@ class EchoStateManager:
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return
-        updates["updated_at"] = int(time.time())
+        updates["updated_at"] = time.time()
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [id]
         try:
@@ -1931,7 +1962,7 @@ class EchoStateManager:
         return None
 
     def get_resources(self, resource_type: str = None, status: str = None,
-                      search: str = None, created_after: int = None,
+                      search: str = None, created_after: float = None,
                       message_ids: List[str] = None) -> List[dict]:
         """Liste les ressources avec filtres combinés (AND).
         

@@ -2,13 +2,16 @@
 title: ECHO Resource Registry
 author: Wilfried BARNAVON
 version: 1.4
-description: 1.0: Outil de consultation du registre unifié des ressources (echo_resources).
-             Permet au modèle de requêter l'état complet des fichiers, plans, documents Codex
-             et pages web de la session.
-             1.1: Fix troncature ID UUID dans le tableau ([:20] supprimé).
-             Fix fallback partiel dans get_resource (LIKE si ID exact échoue).
-             1.2: Suppression des Valves inutilisées (code mort).
+description: Composant système interne : ECHO Resource Registry.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.0: Outil de consultation du registre unifié des ressources (echo_resources).
+# Permet au modèle de requêter l'état complet des fichiers, plans, documents Codex
+# et pages web de la session.
+# 1.1: Fix troncature ID UUID dans le tableau ([:20] supprimé).
+# Fix fallback partiel dans get_resource (LIKE si ID exact échoue).
+# 1.2: Suppression des Valves inutilisées (code mort).
 
 # ECHO CONFIG NAME : ECHO Registry
 
@@ -45,7 +48,7 @@ class Tools:
         cid = (__metadata__ or {}).get("chat_id")
 
         if not cid:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"})
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         state = EchoStateManager(user_id=uid, chat_id=cid)
 
@@ -53,8 +56,8 @@ class Tools:
         if resource_id:
             resource = state.get_resource(resource_id)
             if not resource:
-                return wrap_tool_output(text=f"❌ Ressource `{resource_id}` introuvable.")
-            return wrap_tool_output(text=self._format_resource_detail(resource))
+                return wrap_tool_output(text=f"❌ Ressource `{resource_id}` introuvable.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=self._format_resource_detail(resource), user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # Mode liste : filtres combinés
         resources = state.get_resources(
@@ -69,7 +72,7 @@ class Tools:
             if status: filters.append(f"status={status}")
             if search_term: filters.append(f"search={search_term}")
             filter_str = ", ".join(filters) if filters else "aucun filtre"
-            return wrap_tool_output(text=f"Aucune ressource trouvée ({filter_str}).")
+            return wrap_tool_output(text=f"Aucune ressource trouvée ({filter_str}).", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # Formatage en tableau compact
         lines = [f"**{len(resources)} ressource(s) trouvée(s)**\n"]
@@ -78,7 +81,7 @@ class Tools:
         for r in resources:
             lines.append(f"| `{r['id']}` | {r['name'][:60]} | {r['resource_type']} | {r['status']} | {r.get('mime') or '—'} |")
 
-        return wrap_tool_output(text="\n".join(lines))
+        return wrap_tool_output(text="\n".join(lines), user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     @staticmethod
     def _format_resource_detail(r: dict) -> str:

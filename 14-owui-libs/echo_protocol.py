@@ -2,15 +2,14 @@
 title: ECHO Protocol Adapter
 author: Wilfried BARNAVON
 version: 1.1
-description: Couche de traduction parametres ECHO -> format API Gemini.
-             Deux backends : AI Studio (cle API) et Code Assist v1internal (OAuth2).
-             Fonctions pures -- aucun appel reseau, aucun etat.
-             Point de modification unique pour adapter les requetes CA.
-             1.0: Creation initiale (migration Gemini-CI -> AGY, 2026-05-25).
-             1.1: CA_EXCLUDED_GEN_CONF_FIELDS vide -- thinkingConfig doit passer
-             integralement vers CA (includeThoughts=True requis pour visibilite
-             des pensees dans pipe_engine). Confirme OK par diag D/D-bis/D-ter.
+description: Couche de traduction parametres ECHO -> format API Gemini. Deux backends : AI Studio (cle API) et Code Assist v1internal (OAuth2). Fonctions pures -- aucun appel reseau, aucun etat. Point de modification unique pour adapter les requetes CA.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.0: Creation initiale (migration Gemini-CI -> AGY, 2026-05-25).
+# 1.1: CA_EXCLUDED_GEN_CONF_FIELDS vide -- thinkingConfig doit passer
+# integralement vers CA (includeThoughts=True requis pour visibilite
+# des pensees dans pipe_engine). Confirme OK par diag D/D-bis/D-ter.
 
 from echo_constants import MODEL_MAP_CA, MAX_TOKENS_DEFAULT
 

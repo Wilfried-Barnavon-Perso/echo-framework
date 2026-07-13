@@ -2,8 +2,11 @@
 title: ECHO Skills Manager
 author: ECHO Framework
 version: 1.3
-description: 1.3: Alignement avec le Hotfix Core 6.9.
+description: Composant système interne : ECHO Skills Manager.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.3: Alignement avec le Hotfix Core 6.9.
 
 import os
 import re

@@ -3,19 +3,21 @@ title: ECHO Auth Service
 author: Wilfried BARNAVON
 version: 7.3
 description: 5.x: PKCE flow avec serveur asyncio TCP sur port fixe 8765.
-             6.0: Tentative FastAPI callback endpoint (annulée).
-             7.0: Tunnel SSH éphémère via asyncssh (echo_ssh_tunnel.py).
-             Ports dynamiques dans la plage ECHO_AUTH_PORT_RANGE_*.
-             Callback TCP via echo_pkce_server.py (localhost uniquement).
-             get_auth_prompt() : commande SSH complète avec IP/ports détectés.
-             7.1: Fix fetchAvailableModels : parsing défensif (type-check avant .get("models"))
-             pour éviter 'str' object has no attribute 'get' si format API inattendu.
-             7.2: Fix fetchAvailableModels : l'API retourne models comme dict {id: data},
-             non une liste. Capture quotaInfo par modèle → google_quota_by_model (JSON).
-             fetch_user_quota : capture tous les types de crédits → google_credits_total.
-             7.3: Propagation renommage AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
-             AGY_BASE_URL→AGY_BASE_URL (echo_constants v5.0).
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.0: Tentative FastAPI callback endpoint (annulée).
+# 7.0: Tunnel SSH éphémère via asyncssh (echo_ssh_tunnel.py).
+# Ports dynamiques dans la plage ECHO_AUTH_PORT_RANGE_*.
+# Callback TCP via echo_pkce_server.py (localhost uniquement).
+# get_auth_prompt() : commande SSH complète avec IP/ports détectés.
+# 7.1: Fix fetchAvailableModels : parsing défensif (type-check avant .get("models"))
+# pour éviter 'str' object has no attribute 'get' si format API inattendu.
+# 7.2: Fix fetchAvailableModels : l'API retourne models comme dict {id: data},
+# non une liste. Capture quotaInfo par modèle → google_quota_by_model (JSON).
+# fetch_user_quota : capture tous les types de crédits → google_credits_total.
+# 7.3: Propagation renommage AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
+# AGY_BASE_URL→AGY_BASE_URL (echo_constants v5.0).
 
 import time
 import orjson as std_json

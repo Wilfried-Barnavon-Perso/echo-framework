@@ -2,11 +2,14 @@
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
 version: 13.4
-description: 13.4: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans generationConfig.
-             13.3: Ajout argument optionnel print_map et lecture de _echo_suppress_map_ui pour blocage du rendu UI.
-             13.2: Fix commentaires : MODEL_LITE est le plancher de la cascade (pas de fallback
-             descendant possible). Aucune cascade automatique vers un modèle inférieur.
+description: Composant système interne : ECHO Maps Grounding.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 13.4: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans generationConfig.
+# 13.3: Ajout argument optionnel print_map et lecture de _echo_suppress_map_ui pour blocage du rendu UI.
+# 13.2: Fix commentaires : MODEL_LITE est le plancher de la cascade (pas de fallback
+# descendant possible). Aucune cascade automatique vers un modèle inférieur.
 
 import orjson as json
 import sys
@@ -106,14 +109,14 @@ class Tools:
                     text="❌ Google Maps : aucun modèle disponible (cascade épuisée). "
                          "Vérifiez vos quotas API.",
                     status={"status": "cascade_exhausted"}
-                )
+                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             candidates = data.get("candidates", [])
             if not candidates:
                 return wrap_tool_output(
                     text="⚠️ Google Maps n'a renvoyé aucun résultat. Le Modèle DOIT demander à l'utilisateur de préciser sa recherche.",
                     status={"status": "no_results"}
-                )
+                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             # Extraction du texte enrichi retourné par le grounding Gemini
             cand = candidates[0]
@@ -128,7 +131,7 @@ class Tools:
                     text="⚠️ Recherche Maps complétée mais aucune information textuelle "
                          "n'a été fournie par l'API.",
                     status={"status": "empty_response"}
-                )
+                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             await events.status("Carte interactive prête.", done=True)
 
@@ -136,12 +139,12 @@ class Tools:
             suppress_ui = (__metadata__ or {}).get("_echo_suppress_map_ui", False)
             if print_map and not suppress_ui:
                 response = EchoUI.map_viewer(query=query, title=f"ECHO Maps : {query}")
-                return response, wrap_tool_output(text=full_text)
+                return response, wrap_tool_output(text=full_text, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             
-            return wrap_tool_output(text=full_text)
+            return wrap_tool_output(text=full_text, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         except Exception as e:
             return wrap_tool_output(
                 text=f"❌ Erreur Maps: {str(e)}",
                 status={"status": "error"}
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

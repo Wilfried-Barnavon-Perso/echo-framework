@@ -3,45 +3,15 @@ title: ECHO Engine
 author: Wilfried BARNAVON
 version: 192.23
 requirements: asyncssh
-description: 192.23: Restauration et sauvegarde de l'historique de cascade cognitive via KV store pour le message utilisateur. Amélioration de la gestion des erreurs de streaming de l'API Google avec alertes d'interruption. Correction de la logique de clamping et cascade via MODEL_IDENTITY.
-             192.22: Fix silent cuts in stream generation viaSAFETY exception catch & StreamProcessor logging. Fix cognitive cascade clamping and downward logic due to IDENTITY mismatches. Fix post-cascade amnesia by persisting shadow locally via KV store.
-             192.21: Fix du silent crash lors de l'auto-escalade. Exclusion fonctionnelle du modèle actif via MODEL_IDENTITY et feedback via functionResponse.
-             192.20: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
-             192.19: Implémentation de la défense passive contextuelle (troncature silencieuse + alertes UI).
-             192.18: Utilisation de FILE_INGESTION_STATUS pour la sauvegarde des fichiers.
-             192.17: Antigravity 2.1 — Refonte architecture Auth via EchoAuth (OAuth2 PKCE multi-user).
-             191.1: Fix regression auth - callback PKCE background task.
-             192.0: Tunnel SSH ephemere asyncssh pour callback OAuth2 PKCE.
-             Ports dynamiques multi-user. __request__ injecte pour detection IP.
-             192.1: Centralisation des paramètres de génération — suppression valves
-             TEMPERATURE/TOP_P/THINKING_LEVEL. Remplacement par constantes echo_constants.
-             192.2: import get_ca_model_id, HUD quota par modèle CA courant, crédits réels, reset en minutes.
-             192.3: HUD : RPD, RPM et modèle CA ajoutés au tooltip quota. Extraction RPD, RPM et modèle CA depuis model_quota, passage à deploy_context_gauge.
-             192.5: Fix docstring new_cognitive_level : escalade FLASH systématique pour tâches
-             agentiques, reference save_memory/save_session_context, PRO assoupli.
-             Valence de la Mort atténuée par la Mémoire Vectorisée de Session (save_session_context).
-             192.6: UserValve ENABLE_PAID_CREDITS (défaut False) — crédits Google One AI
-             désactivés par défaut. Persistance write-on-change dans identity.db.
-             192.7: Fix multimodal — guard isinstance sur content liste. Sécurisation scellement shadow.
-             192.8: Centralisation politique modèle Pipe → outils via __metadata__. Injection
-             _echo_model_policy et _echo_enable_paid_credits. convert_owui_tools : filtrage
-             dynamique enum modèle. Suppression write-on-change identity.db pour crédits.
-             192.9: Persistance echo_settings (fallback SQLite) — OWUI ne propage pas
-             __metadata__ custom du pipe aux outils. save_setting model_policy + enable_paid_credits.
-             192.10: Clamping du modèle orchestrateur sur reprise de contexte (last_model).
-             Empêche la réutilisation d'un modèle PRO en mode AUTO (plafond FLASH).
-             192.11: Cascade descendante du modèle orchestrateur (stream) en cas d'indisponibilité
-             (429/503). PRO→FLASH→LITE avec toast warning et HUD. Aligné sur call_cascade.
-             192.12: Mutation AEC (modèle_actuel/modèle_origine) dans le contexte lors de
-             la cascade descendante. Cohérence proprioceptive après fallback.
-             192.13: Factorisation _mutate_context_identity() — mutation AEC unifiée pour
-             escalade (new_cognitive_level) et cascade descendante (indisponibilité).
-             192.14: functionResponse de new_cognitive_level structurée avec status dict
-             (model_requested/model_used) aligné sur wrap_cascade_output.
-             Message factuel de repli. Suppression du ton défensif.
-             192.15: Refactoring status tri-état (success/warning/error). Suppression clamped:true.
-             Denied → error + struct. Cascade reason propagée via tuple à 3.
+description: Composant système interne : ECHO Engine.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 192.23: Restauration et sauvegarde de l'historique de cascade cognitive via KV store pour le message utilisateur. Amélioration de la gestion des erreurs de streaming de l'API Google avec alertes d'interruption. Correction de la logique de clamping et cascade via MODEL_IDENTITY.
+# 192.22: Fix silent cuts in stream generation viaSAFETY exception catch & StreamProcessor logging. Fix cognitive cascade clamping and downward logic due to IDENTITY mismatches. Fix post-cascade amnesia by persisting shadow locally via KV store.
+# 192.21: Fix du silent crash lors de l'auto-escalade. Exclusion fonctionnelle du modèle actif via MODEL_IDENTITY et feedback via functionResponse.
+# 192.20: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
+# 192.19: Implémentation de la défense passive contextuelle (troncature silencieuse + alertes UI).
 
 # ==============================================================================
 # SECTION 0 : IMPORTS & CONFIGURATION
@@ -1060,7 +1030,7 @@ class Pipe:
                     full_user_parts.append({"text": orch._resolve_placeholders(user_text, target_model)})
                 orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
 
-            # 2. Scellement du Registre Unifié V2 et Rangement
+            # 2. Scellement du Registre Unifié et Rangement
             files_to_seal = meta.get("_echo_files_to_seal", [])
             for f in files_to_seal:
                 if f.get("status") == "success":

@@ -2,8 +2,11 @@
 title: ECHO Universal API Client
 author: Wilfried BARNAVON
 version: 1.5
-description: 1.4: Switched complex objects to JSON strings to avoid 400 errors with strict Gemini REST schemas.
+description: Composant système interne : ECHO Universal API Client.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.4: Switched complex objects to JSON strings to avoid 400 errors with strict Gemini REST schemas.
 
 import requests
 import orjson as json
@@ -62,7 +65,7 @@ class Tools:
         :param body: (Optionnel) Corps de requête format Object.
         """
         if not self._is_safe_url(url):
-             return wrap_tool_output(text="❌ Accès réseau non autorisé (SSRF ou domaine non whitelisté).", status={"status": "error", "domain": url})
+             return wrap_tool_output(text="❌ Accès réseau non autorisé (SSRF ou domaine non whitelisté).", status={"status": "error", "domain": url}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         actual_headers = headers if headers else {}
         actual_body = body if body else None
@@ -87,7 +90,7 @@ class Tools:
             if response.status_code >= 400:
                 text_out = f"❌ Erreur API {response.status_code}\n\n{text_out}"
             
-            return wrap_tool_output(text=text_out, status=status_meta)
+            return wrap_tool_output(text=text_out, status=status_meta, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Exception API : {str(e)}", status={"status": "error", "error": str(e)})
+            return wrap_tool_output(text=f"❌ Exception API : {str(e)}", status={"status": "error", "error": str(e)}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

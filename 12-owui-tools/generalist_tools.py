@@ -2,8 +2,11 @@
 title: ECHO Generalist Tools
 author: Antigravity
 version: 1.1
-description: 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
+description: Composant système interne : ECHO Generalist Tools.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -123,4 +126,4 @@ class Tools:
         await asyncio.sleep(sec_val)
 
         await events.status("⏱️ Timer terminé.", done=True)
-        return wrap_tool_output(text=f"Le timer de {sec_val} secondes est terminé avec succès.")
+        return wrap_tool_output(text=f"Le timer de {sec_val} secondes est terminé avec succès.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

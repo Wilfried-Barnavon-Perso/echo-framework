@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.24
-description: 5.109.24: Correction 400 Bad Request (inlineData -> inline_data) et interception robuste des exceptions sondes.
-             5.109.17: Suppression de la classe UserValves vide pour éviter le bug UI Open WebUI (Aucune vanne trouvée).
-             5.109.16: Transformation de show_image_to_user en Sonde Visuelle pour les URL distantes (3 états: success, warning, error). 5.109.15: Délégation des URLs distantes au Markdown, WebPlayer limité au Base64 local. 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade(). 5.109.12: Injection __metadata__ et chat_id pour respect isolation fichiers par session. 5.109.13: Fix hallucination ID fichiers via docstring explicite et résolution résiliente. 5.109.14: Registre Unifié V2 — mark_processed → save_resource.
-             5.109.18: Suppression de download_from_url (redondant, court-circuitage Registre V2).
-             5.109.20: Blocage de la lecture textuelle brute sur fichiers binaires (PDF) pour empêcher les boucles LLM infinies (silent crash).
-             5.109.21: Restauration de la lecture textuelle des binaires avec injection d'une directive anti-boucle (warning_msg) pour le LLM.
-             5.109.22: Fix critique OverflowError (orjson) lié à f.tell() retournant un entier de plus de 64-bits sur Windows.
-             5.109.23: Fix ALGORITHMIQUE MAJEUR : Le saut de lignes (start_line) était ignoré, provoquant une boucle infinie de relecture du début du fichier.
+version: 5.109.25
+description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.109.25: Ajout de la sécurité de taille maximale (MAX_MULTIMODAL_SIZE_KB) dans semantic_probe et read_multimedia_file.
+# 5.109.24: Correction 400 Bad Request (inlineData -> inline_data) et interception robuste des exceptions sondes.
+# 5.109.17: Suppression de la classe UserValves vide pour éviter le bug UI Open WebUI (Aucune vanne trouvée).
+# 5.109.16: Transformation de show_image_to_user en Sonde Visuelle pour les URL distantes (3 états: success, warning, error). 5.109.15: Délégation des URLs distantes au Markdown, WebPlayer limité au Base64 local. 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade(). 5.109.12: Injection __metadata__ et chat_id pour respect isolation fichiers par session. 5.109.13: Fix hallucination ID fichiers via docstring explicite et résolution résiliente. 5.109.14: Registre Unifié V2 — mark_processed → save_resource.
+# 5.109.18: Suppression de download_from_url (redondant, court-circuitage Registre V2).
 
 import os
 import sys
@@ -44,7 +44,7 @@ class Tools:
     class Valves(BaseModel):
         PROBE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour le sondage sémantique.")
         MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW).")
-        MAX_MULTIMODAL_SIZE_KB: int = Field(default=102400, description="Taille maximale (en Ko) pour l'injection multimédia.")
+        MAX_MULTIMODAL_SIZE_KB: int = Field(default=30720, description="Taille maximale (en Ko) pour l'injection multimédia (défaut: 30 Mo).")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -74,10 +74,10 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
-        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
+        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         size = os.path.getsize(fpath)
-        if byte_offset > size: return wrap_tool_output(text=f"❌ Offset invalide.", status={"status": "error"})
+        if byte_offset > size: return wrap_tool_output(text=f"❌ Offset invalide.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         MAX_CHARS = self.valves.MAX_READ_SIZE_KB * 1024
         safe_name = os.path.basename(fpath)
@@ -128,9 +128,9 @@ class Tools:
                 res_text = f"--- CONTENU HEXADECIMAL ---\n\n{content}"
 
             await events.status("Lecture terminée.", done=True)
-            return wrap_tool_output(text=res_text, status={"status": "success", "new_offset": str(new_offset), "total_size": str(size)})
+            return wrap_tool_output(text=res_text, status={"status": "success", "new_offset": str(new_offset), "total_size": str(size)}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def semantic_probe(
         self, 
@@ -148,10 +148,17 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
         fpath = resolve_upload_file_path(user_id, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
-        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
+        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         mime, supported = get_gemini_mime(fpath)
         if not supported: return wrap_tool_output(text=f"❌ Type {mime} non supporté.", status={"status": "error"})
+
+        file_size_kb = os.path.getsize(fpath) / 1024
+        if file_size_kb > self.valves.MAX_MULTIMODAL_SIZE_KB:
+            return wrap_tool_output(
+                text=f"❌ Max Size Exceeded : Le fichier ({file_size_kb / 1024:.1f} Mo) dépasse la limite autorisée de {self.valves.MAX_MULTIMODAL_SIZE_KB / 1024:.1f} Mo pour l'analyse multimédia.", 
+                status={"status": "error"}
+            )
 
         safe_name = os.path.basename(fpath)
         if "_" in safe_name and len(safe_name.split("_")[0]) >= 32: safe_name = safe_name.split("_", 1)[1]
@@ -189,12 +196,12 @@ class Tools:
                     break
 
             if cascade_task.exception():
-                return wrap_tool_output(text=f"❌ Erreur Sonde : {str(cascade_task.exception())}", status={"status": "error"})
+                return wrap_tool_output(text=f"❌ Erreur Sonde : {str(cascade_task.exception())}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             data, model_used, reason = cascade_task.result()
 
             if not data:
-                return wrap_tool_output(text="❌ Cascade épuisée : aucun modèle disponible pour le sondage sémantique.", status={"status": "error"})
+                return wrap_tool_output(text="❌ Cascade épuisée : aucun modèle disponible pour le sondage sémantique.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             target = data.get("response", {}) if "response" in data else data
             cand = target.get("candidates", [])[0]
             full_text = "".join([p["text"] for p in cand["content"]["parts"] if "text" in p])
@@ -206,9 +213,9 @@ class Tools:
                 status={"status": "success"},
                 echo_tool_multiparts=[{"type": "thought", "content": thought}] if thought else [],
                 reason=reason
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur Sonde : {str(e)}", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Erreur Sonde : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def read_multimedia_file(
         self, 
@@ -222,10 +229,17 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
-        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
+        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         mime, supported = get_gemini_mime(fpath)
         if not supported: return wrap_tool_output(text=f"❌ Type {mime} non supporté.", status={"status": "error"})
+
+        file_size_kb = os.path.getsize(fpath) / 1024
+        if file_size_kb > self.valves.MAX_MULTIMODAL_SIZE_KB:
+            return wrap_tool_output(
+                text=f"❌ Max Size Exceeded : Le fichier ({file_size_kb / 1024:.1f} Mo) dépasse la limite autorisée de {self.valves.MAX_MULTIMODAL_SIZE_KB / 1024:.1f} Mo pour l'analyse multimédia.", 
+                status={"status": "error"}
+            )
 
         safe_name = os.path.basename(fpath)
         if "_" in safe_name and len(safe_name.split("_")[0]) >= 32: safe_name = safe_name.split("_", 1)[1]
@@ -259,11 +273,11 @@ class Tools:
                     break
 
             if cascade_task.exception():
-                return wrap_tool_output(text=f"❌ Erreur de l'agent sensoriel : {str(cascade_task.exception())}", status={"status": "error"})
+                return wrap_tool_output(text=f"❌ Erreur de l'agent sensoriel : {str(cascade_task.exception())}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             data, model_used, reason = cascade_task.result()
             
-            if not data: return wrap_tool_output(text="❌ Échec de l'agent sensoriel.", status={"status": "error"})
+            if not data: return wrap_tool_output(text="❌ Échec de l'agent sensoriel.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             target = data.get("response", {}) if "response" in data else data
             cand = target.get("candidates", [])[0]
@@ -278,9 +292,9 @@ class Tools:
                 status={"status": "success"},
                 echo_tool_multiparts=[{"type": "thought", "content": thought}] if thought else [],
                 reason=reason
-            )
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def show_image_to_user(
         self, 
@@ -297,7 +311,7 @@ class Tools:
         
         # Sécurité anti-chemins absolus
         if not is_url and (target.startswith("/") or (len(target) > 1 and target[1] == ":")):
-             return wrap_tool_output(text="❌ Sécurité : Accès restreint.", status={"status": "error"})
+             return wrap_tool_output(text="❌ Sécurité : Accès restreint.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         try:
             if is_url:
@@ -317,33 +331,33 @@ class Tools:
                             return wrap_tool_output(
                                 text=f"❌ Le lien pointe vers un contenu '{content_type}', pas une image. Le Modèle DOIT s'interdire d'utiliser la syntaxe MD.",
                                 status={"status": "error"}
-                            )
+                            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                             
                         return wrap_tool_output(
                             text=f"✅ L'image est valide et accessible. Le Modèle DOIT utiliser ce code exact dans sa réponse : `![Description]({target})`",
                             status={"status": "success"}
-                        )
+                        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                         
                 except httpx.HTTPStatusError as e:
                     if e.response.status_code == 404:
                         return wrap_tool_output(
                             text=f"❌ L'image n'existe pas (Erreur 404). Lien mort. Ne l'affichez pas.",
                             status={"status": "error"}
-                        )
+                        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                     else:
                         return wrap_tool_output(
                             text=f"⚠️ La vérification serveur est bloquée (Erreur {e.response.status_code}). Le navigateur de l'utilisateur y parviendra peut-être. Tentez le code en dernier recours : `![Description]({target})`",
                             status={"status": "warning"}
-                        )
+                        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                 except Exception:
                     return wrap_tool_output(
                         text=f"⚠️ La vérification serveur a échoué (Réseau/Timeout). Le navigateur client y parviendra peut-être. Tentez le code : `![Description]({target})`",
                         status={"status": "warning"}
-                    )
+                    , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             else:
                 fpath = resolve_upload_file_path(uid, target, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
                 if not fpath:
-                    return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"})
+                    return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                 mime, _ = mimetypes.guess_type(fpath)
                 mime = mime or 'image/png'
                 with open(fpath, 'rb') as f:
@@ -356,20 +370,20 @@ class Tools:
                 await events.call("execute", {"code": js_code})
             
             await events.status("✅ Image affichée.", done=True)
-            return wrap_tool_output(text=f"✅ Image affichée dans le viewer ECHO.\n\n**Titre :** {title}", status={"status": "success"})
+            return wrap_tool_output(text=f"✅ Image affichée dans le viewer ECHO.\n\n**Titre :** {title}", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Échec affichage : {str(e)}", status={"status": "error"})
+            return wrap_tool_output(text=f"❌ Échec affichage : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
 
     async def get_file_metadata(self, file_id: str, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> str:
         """Récupère les métadonnées techniques d'un fichier."""
         uid = __user__.get("id", "anonymous")
         fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
-        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"})
+        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         stat = os.stat(fpath)
         mime, _ = get_gemini_mime(fpath)
-        return wrap_tool_output(text=f"📊 **{os.path.basename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}", status={"status": "success"})
+        return wrap_tool_output(text=f"📊 **{os.path.basename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def calculate_file_hashes(
         self, 
@@ -399,4 +413,4 @@ class Tools:
                     with open(p, 'rb') as f:
                         for chunk in iter(lambda: f.read(65536), b""): h.update(chunk)
                     res.append(f"{os.path.basename(p)} ({algorithm.upper()}): {h.hexdigest()}")
-        return wrap_tool_output(text="\n".join(res), status={"status": "success"})
+        return wrap_tool_output(text="\n".join(res), status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

@@ -2,7 +2,25 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.105 (Ablation RefCounting & Purge Fichiers)
+VERSION : 5.113 (Resolution Desync UI Noms)
+--- CHANGELOG 5.113 ---
+- UI/UX : Correction de l'affichage désynchronisé des noms entre l'onglet SSO et l'onglet OWUI en forçant la lecture dynamique depuis webui.db pour le rendu visuel.
+- Fix : Le bouton "Importer DB" met désormais à jour de force les noms dans le SSO (auth.db) pour les utilisateurs existants si leur nom a été modifié manuellement dans Open WebUI.
+--- CHANGELOG 5.112 ---
+- UI/UX : Remplacement de la durée par défaut (Infinie) des sessions SSO par 3 mois (2160 heures) pour les nouvelles installations.
+- Securité : Ajout du bouton "Purge Globale" dans le panneau Admin pour déconnecter de force tous les utilisateurs.
+--- CHANGELOG 5.111 ---
+- Fix : Synchronisation forte et synchrone du nom utilisateur depuis l'Admin Manager vers la base de données d'Open WebUI (webui.db) pour les comptes existants.
+--- CHANGELOG 5.110 ---
+- Fix (Critique) : Inversion de la logique du wait-for-it (Sleep-First) dans l'élagage sémantique pour désamorcer définitivement la race condition de 03:00 avec la tâche de sauvegarde.
+--- CHANGELOG 5.109 ---
+- UI/UX : Regroupement des IPs d'une même session SSO au sein d'une seule ligne dans l'Admin Manager pour éviter les doublons lors des changements de réseau, avec support multi-GeoIP.
+--- CHANGELOG 5.108 ---
+- Fix (Critique) : Ajout de la validation explicite du endpoint /health d'Open WebUI dans la boucle wait-for-it de run_semantic_pruning pour empêcher l'erreur [Errno 111] lors du redémarrage post-sauvegarde.
+--- CHANGELOG 5.107 ---
+- Mod: Achèvement de la gestion des noms depuis Admin Manager et Auth Manager.
+--- CHANGELOG 5.106 ---
+- Mod: Intégration de la propagation du champ Name (ECHO Auth) depuis le SSO vers OWUI.
 --- CHANGELOG 5.105 ---
 - Architecture : Ablation totale de la purge temporelle des fichiers et du RefCounting (A.bis) devenu dangereux avec MarkItDown (fichiers convertis .md vus comme orphelins). Le nettoyage est désormais exclusivement assuré par la purge stricte des chats/utilisateurs (avec synchronisation instantanée Qdrant).
 --- CHANGELOG 5.104 ---
@@ -268,7 +286,7 @@ DEFAULT_AUTH_SETTINGS = {
     "pwd_require_special": True,
     "temp_pass_hours": 24,
     "totp_tolerance": 1,
-    "session_timeout": 0
+    "session_timeout": 2160
 }
 
 def get_auth_settings():
@@ -456,8 +474,13 @@ def run_semantic_pruning():
     # 0. Wait-for-it (Asynchrone 1h max) : Attente de dispo post-backup
     services_ready = False
     for _ in range(60):
+        # Sommeil immédiat d'une minute pour laisser le temps à l'orchestrateur
+        # de stopper l'infrastructure lors d'une sauvegarde planifiée à la même heure.
+        time.sleep(60)
+
         db_ok = False
         qdrant_ok = False
+        owui_ok = False
         
         # Check SQLite
         try:
@@ -467,8 +490,6 @@ def run_semantic_pruning():
                 conn.execute("SELECT id FROM user LIMIT 1").fetchone()
                 conn.close()
                 db_ok = True
-            else:
-                pass
         except Exception:
             pass
             
@@ -483,11 +504,20 @@ def run_semantic_pruning():
         else:
             qdrant_ok = True
             
-        if db_ok and qdrant_ok:
+        # Check Open WebUI API
+        if HAS_HTTPX:
+            try:
+                r_owui = httpx.get(f"{WEBUI_URL}/health", timeout=5.0)
+                if r_owui.status_code == 200:
+                    owui_ok = True
+            except Exception:
+                pass
+        else:
+            owui_ok = True
+            
+        if db_ok and qdrant_ok and owui_ok:
             services_ready = True
             break
-            
-        time.sleep(60)
         
     if not services_ready:
         err_msg = "Pruning annulé : Délai d'attente dépassé (1h) pour la disponibilité de SQLite/Qdrant."
@@ -1414,19 +1444,33 @@ def passwd_change():
 def auth_users():
     if not session.get('logged_in'): return jsonify([])
     try:
+        owui_names = {}
+        try:
+            if os.path.exists(WEBUI_DB_PATH):
+                with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True) as conn2:
+                    for r in conn2.execute("SELECT email, name FROM user").fetchall():
+                        owui_names[r[0]] = r[1]
+        except: pass
+        
         with sqlite3.connect("/app/auth-data/auth.db", uri=True) as conn:
             try: conn.execute("ALTER TABLE users ADD COLUMN temp_pass_expires INTEGER DEFAULT 0")
             except: pass
             try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
             except: pass
-            users = conn.execute("SELECT email, must_enroll, temp_pass_expires, last_enrollment FROM users").fetchall()
-            return jsonify([{"email": u[0], "status": "Pending" if u[1] else "Active", "expires": u[2], "last_enrollment": u[3]} for u in users])
+            users = conn.execute("SELECT email, must_enroll, temp_pass_expires, last_enrollment, name FROM users").fetchall()
+            
+            result = []
+            for u in users:
+                display_name = owui_names.get(u[0]) or u[4]
+                result.append({"email": u[0], "status": "Pending" if u[1] else "Active", "expires": u[2], "last_enrollment": u[3], "name": display_name})
+            return jsonify(result)
     except Exception: return jsonify([])
 
 @app.route('/action/auth/create', methods=['POST'])
 def auth_create_user():
     if not session.get('logged_in'): return redirect(url_for('index'))
     email = request.form.get('email', '').strip()
+    name = request.form.get('name', '').strip()
     if not email or (email.endswith('@echo.local') and email != SYSTEM_ADMIN_EMAIL):
         flash("Email invalide ou réservé au système.", "danger")
         return redirect(url_for('index'))
@@ -1440,12 +1484,12 @@ def auth_create_user():
         pass_hash = argon2.hash(temp_pwd)
         os.makedirs("/app/auth-data", exist_ok=True)
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, pass_hash TEXT, totp_secret TEXT, security_question TEXT, security_answer_hash TEXT, must_enroll INTEGER DEFAULT 1, temp_pass_expires INTEGER DEFAULT 0, last_enrollment INTEGER DEFAULT 0)")
+            conn.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, name TEXT, pass_hash TEXT, totp_secret TEXT, security_question TEXT, security_answer_hash TEXT, must_enroll INTEGER DEFAULT 1, temp_pass_expires INTEGER DEFAULT 0, last_enrollment INTEGER DEFAULT 0)")
             try: conn.execute("ALTER TABLE users ADD COLUMN temp_pass_expires INTEGER DEFAULT 0")
             except: pass
             try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
             except: pass
-            conn.execute("INSERT INTO users (email, pass_hash, must_enroll, temp_pass_expires) VALUES (?, ?, 1, ?)", (email, pass_hash, expire_timestamp))
+            conn.execute("INSERT INTO users (email, name, pass_hash, must_enroll, temp_pass_expires) VALUES (?, ?, ?, 1, ?)", (email, name, pass_hash, expire_timestamp))
             conn.commit()
         expire_str = datetime.datetime.fromtimestamp(expire_timestamp).strftime('%d/%m/%Y à %H:%M')
         flash(f"Utilisateur {email} créé. Mot de passe temporaire (valable {settings.get('temp_pass_hours', 24)} heures, jusqu'au {expire_str}) : <b>{temp_pwd}</b>", "success")
@@ -1461,7 +1505,7 @@ def auth_import_users():
     try:
         from passlib.hash import argon2
         with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True) as conn:
-            webui_users = conn.execute("SELECT email FROM user").fetchall()
+            webui_users = conn.execute("SELECT email, name FROM user").fetchall()
         
         imported = 0
         already_exist = 0
@@ -1469,19 +1513,22 @@ def auth_import_users():
         settings = get_auth_settings()
         expire_timestamp = int(time.time()) + (int(settings.get("temp_pass_hours", 24)) * 3600)
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, pass_hash TEXT, totp_secret TEXT, security_question TEXT, security_answer_hash TEXT, must_enroll INTEGER DEFAULT 1, temp_pass_expires INTEGER DEFAULT 0, last_enrollment INTEGER DEFAULT 0)")
+            conn.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, name TEXT, pass_hash TEXT, totp_secret TEXT, security_question TEXT, security_answer_hash TEXT, must_enroll INTEGER DEFAULT 1, temp_pass_expires INTEGER DEFAULT 0, last_enrollment INTEGER DEFAULT 0)")
             try: conn.execute("ALTER TABLE users ADD COLUMN temp_pass_expires INTEGER DEFAULT 0")
             except: pass
             try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
             except: pass
-            for (email,) in webui_users:
+            for (email, name) in webui_users:
                 if email.endswith('@echo.local'):
                     continue
                 if conn.execute("SELECT email FROM users WHERE email=?", (email,)).fetchone():
+                    if name:
+                        conn.execute("UPDATE users SET name = ? WHERE email = ? AND (name IS NULL OR name = '' OR name != ?)", (name, email, name))
                     already_exist += 1
                 else:
                     pass_hash = argon2.hash("ECHO_IMPORTED_PENDING_RESET")
-                    conn.execute("INSERT INTO users (email, pass_hash, must_enroll, temp_pass_expires) VALUES (?, ?, 1, ?)", (email, pass_hash, expire_timestamp))
+                    if not name: name = email.split('@')[0]
+                    conn.execute("INSERT INTO users (email, name, pass_hash, must_enroll, temp_pass_expires) VALUES (?, ?, ?, 1, ?)", (email, name, pass_hash, expire_timestamp))
                     imported += 1
             conn.commit()
             
@@ -1507,7 +1554,7 @@ def auth_import_admin():
         expire_timestamp = int(time.time()) + (int(settings.get("temp_pass_hours", 24)) * 3600)
         
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, pass_hash TEXT, totp_secret TEXT, security_question TEXT, security_answer_hash TEXT, must_enroll INTEGER DEFAULT 1, temp_pass_expires INTEGER DEFAULT 0, last_enrollment INTEGER DEFAULT 0)")
+            conn.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, name TEXT, pass_hash TEXT, totp_secret TEXT, security_question TEXT, security_answer_hash TEXT, must_enroll INTEGER DEFAULT 1, temp_pass_expires INTEGER DEFAULT 0, last_enrollment INTEGER DEFAULT 0)")
             try: conn.execute("ALTER TABLE users ADD COLUMN temp_pass_expires INTEGER DEFAULT 0")
             except: pass
             try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
@@ -1518,13 +1565,38 @@ def auth_import_admin():
             else:
                 temp_pwd = generate_complex_temp_password()
                 pass_hash = argon2.hash(temp_pwd)
-                conn.execute("INSERT INTO users (email, pass_hash, must_enroll, temp_pass_expires) VALUES (?, ?, 1, ?)", (SYSTEM_ADMIN_EMAIL, pass_hash, expire_timestamp))
+                conn.execute("INSERT INTO users (email, name, pass_hash, must_enroll, temp_pass_expires) VALUES (?, ?, ?, 1, ?)", (SYSTEM_ADMIN_EMAIL, "Administrateur Système", pass_hash, expire_timestamp))
                 conn.commit()
                 expire_str = datetime.datetime.fromtimestamp(expire_timestamp).strftime('%d/%m/%Y à %H:%M')
                 flash(f"Compte {SYSTEM_ADMIN_EMAIL} importé avec succès ! Mot de passe temporaire (valable {settings.get('temp_pass_hours', 24)} heures, jusqu'au {expire_str}) : <b>{temp_pwd}</b>", "success")
                 
     except Exception as e:
         flash(f"Erreur Importation Admin: {e}", "danger")
+    return redirect(url_for('index'))
+
+@app.route('/action/auth/rename', methods=['POST'])
+def auth_rename_user():
+    if not session.get('logged_in'): return redirect(url_for('index'))
+    email = request.form.get('email', '').strip()
+    name = request.form.get('name', '').strip()
+    if not email:
+        return redirect(url_for('index'))
+    try:
+        # 1. Mise à jour dans le SSO
+        with sqlite3.connect("/app/auth-data/auth.db", uri=True) as conn:
+            conn.execute("UPDATE users SET name = ? WHERE email = ?", (name if name else None, email))
+            
+        # 2. Mise à jour synchrone dans Open WebUI
+        try:
+            if os.path.exists(WEBUI_DB_PATH):
+                with sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True) as conn2:
+                    conn2.execute("UPDATE user SET name = ? WHERE email = ?", (name if name else "", email))
+        except Exception as e:
+            pass
+            
+        flash(f"Nom de l'utilisateur {email} mis à jour dans le SSO et synchronisé.", "success")
+    except Exception as e:
+        flash(f"Erreur DB globale : {str(e)}", "danger")
     return redirect(url_for('index'))
 
 @app.route('/action/auth/reset', methods=['POST'])
@@ -1594,18 +1666,28 @@ def api_auth_sessions():
     if not session.get('logged_in'): return jsonify({"error": "Unauthorized"}), 401
     try:
         settings = get_auth_settings()
-        timeout_h = int(settings.get("session_timeout", 0))
-        sessions_list = []
+        timeout_h = int(settings.get("session_timeout", 2160))
+        sessions_dict = {}
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
             conn.row_factory = sqlite3.Row
             for row in conn.execute("SELECT * FROM sessions"):
                 s = dict(row)
-                s['created_dt'] = datetime.datetime.fromtimestamp(s['created_at']).strftime('%d/%m/%Y %H:%M')
-                s['expires_at'] = s['created_at'] + (timeout_h * 3600) if timeout_h > 0 else None
-                s['expires_dt'] = datetime.datetime.fromtimestamp(s['expires_at']).strftime('%d/%m/%Y %H:%M') if s['expires_at'] else "Infini"
-                s['time_remaining_sec'] = s['expires_at'] - int(time.time()) if s['expires_at'] else None
-                sessions_list.append(s)
-        return jsonify({"sessions": sessions_list})
+                sid = s['session_id']
+                if sid in sessions_dict:
+                    existing_ips = sessions_dict[sid].get('ip_address') or ''
+                    new_ip = s.get('ip_address') or ''
+                    if new_ip and new_ip not in [ip.strip() for ip in existing_ips.split(',')]:
+                        if existing_ips:
+                            sessions_dict[sid]['ip_address'] = existing_ips + ", " + new_ip
+                        else:
+                            sessions_dict[sid]['ip_address'] = new_ip
+                else:
+                    s['created_dt'] = datetime.datetime.fromtimestamp(s['created_at']).strftime('%d/%m/%Y %H:%M')
+                    s['expires_at'] = s['created_at'] + (timeout_h * 3600) if timeout_h > 0 else None
+                    s['expires_dt'] = datetime.datetime.fromtimestamp(s['expires_at']).strftime('%d/%m/%Y %H:%M') if s['expires_at'] else "Infini"
+                    s['time_remaining_sec'] = s['expires_at'] - int(time.time()) if s['expires_at'] else None
+                    sessions_dict[sid] = s
+        return jsonify({"sessions": list(sessions_dict.values())})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1619,6 +1701,17 @@ def auth_revoke_session():
         session_id = data['session_id']
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
             conn.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+            conn.commit()
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/action/auth/session/revoke_all', methods=['POST'])
+def auth_revoke_all_sessions():
+    if not session.get('logged_in'): return jsonify({"error": "Unauthorized"}), 401
+    try:
+        with sqlite3.connect("/app/auth-data/auth.db") as conn:
+            conn.execute("DELETE FROM sessions")
             conn.commit()
         return jsonify({"status": "success"})
     except Exception as e:
@@ -1839,7 +1932,7 @@ HTML_DASHBOARD = """
                 <div class="tab-content" id="v-pills-tabContent">
                     
                     <div class="tab-pane fade show active" id="v-pills-identity" role="tabpanel">
-                        <div class="card border-primary mb-3"><div class="card-header text-primary d-flex justify-content-between align-items-center"><span><i class="bi bi-person-badge"></i> Identités & Sessions (SSO / WebUI)</span><div class="btn-group"><button class="btn btn-sm btn-outline-primary" onclick="refreshAuthUsers(); refreshUsers(); refreshAuthSessions();"><i class="bi bi-arrow-repeat"></i></button><button class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#authSettingsModal" title="Paramètres de Sécurité"><i class="bi bi-gear"></i></button></div></div><div class="card-body p-2 d-flex flex-column"><ul class="nav nav-pills nav-fill mb-2" id="identityPills" role="tablist"><li class="nav-item" role="presentation"><button class="nav-link active py-1 x-small text-info" data-bs-toggle="pill" data-bs-target="#webuiActivityPane" type="button" role="tab" onclick="refreshUsers()">💬 Activité Open WebUI</button></li><li class="nav-item" role="presentation"><button class="nav-link py-1 x-small" data-bs-toggle="pill" data-bs-target="#ssoAccountsPane" type="button" role="tab">👤 Comptes SSO (ECHO Auth)</button></li><li class="nav-item" role="presentation"><button class="nav-link py-1 x-small text-warning" data-bs-toggle="pill" data-bs-target="#ssoSessionsPane" type="button" role="tab" onclick="refreshAuthSessions()">🛡️ Connexions SSO Actives</button></li></ul><div class="tab-content flex-grow-1"><div class="tab-pane fade show active" id="webuiActivityPane" role="tabpanel"><table class="table table-sm table-hover mb-0"><thead><tr><th class="ps-3">Nom</th><th>Email</th><th class="text-center">Sessions</th><th class="text-end pe-3">Actions</th></tr></thead><tbody id="user-list"></tbody></table></div><div class="tab-pane fade" id="ssoAccountsPane" role="tabpanel"><div class="d-flex justify-content-between mb-2"><form action="/action/auth/create" method="post" class="d-flex gap-2" onsubmit="showLoader('Création...')"><input type="email" name="email" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Nouvel Email Utilisateur" required><button type="submit" class="btn btn-sm btn-primary">Créer</button></form><div class="d-flex"><form action="/action/auth/import" method="post" onsubmit="showLoader('Importation...')"><button type="submit" class="btn btn-sm btn-outline-info" data-bs-toggle="tooltip" title="Importer les emails depuis Open WebUI"><i class="bi bi-box-arrow-in-down"></i> Importer DB</button></form><form action="/action/auth/import_admin" method="post" onsubmit="showLoader('Importation Admin...')"><button type="submit" class="btn btn-sm btn-warning ms-1" data-bs-toggle="tooltip" title="Importer le compte système Admin"><i class="bi bi-person-badge-fill"></i> Import Admin</button></form></div></div><table class="table table-sm table-dark table-hover mb-0"><thead><tr><th>Email</th><th>Statut</th><th class="text-end">Actions</th></tr></thead><tbody id="auth-users-list"></tbody></table></div><div class="tab-pane fade" id="ssoSessionsPane" role="tabpanel"><table class="table table-sm table-dark table-hover mb-0"><thead><tr><th>Compte / ID</th><th>Appareil & Navigateur</th><th>IP & Lieu</th><th>Dates</th><th class="text-end">Actions</th></tr></thead><tbody id="auth-sessions-list"><tr><td colspan="5" class="text-center text-muted">Chargement...</td></tr></tbody></table></div></div></div></div>
+                        <div class="card border-primary mb-3"><div class="card-header text-primary d-flex justify-content-between align-items-center"><span><i class="bi bi-person-badge"></i> Identités & Sessions (SSO / WebUI)</span><div class="btn-group"><button class="btn btn-sm btn-outline-primary" onclick="refreshAuthUsers(); refreshUsers(); refreshAuthSessions();"><i class="bi bi-arrow-repeat"></i></button><button class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#authSettingsModal" title="Paramètres de Sécurité"><i class="bi bi-gear"></i></button></div></div><div class="card-body p-2 d-flex flex-column"><ul class="nav nav-pills nav-fill mb-2" id="identityPills" role="tablist"><li class="nav-item" role="presentation"><button class="nav-link active py-1 x-small text-info" data-bs-toggle="pill" data-bs-target="#webuiActivityPane" type="button" role="tab" onclick="refreshUsers()">💬 Activité Open WebUI</button></li><li class="nav-item" role="presentation"><button class="nav-link py-1 x-small" data-bs-toggle="pill" data-bs-target="#ssoAccountsPane" type="button" role="tab">👤 Comptes SSO (ECHO Auth)</button></li><li class="nav-item" role="presentation"><button class="nav-link py-1 x-small text-warning" data-bs-toggle="pill" data-bs-target="#ssoSessionsPane" type="button" role="tab" onclick="refreshAuthSessions()">🛡️ Connexions SSO Actives</button></li></ul><div class="tab-content flex-grow-1"><div class="tab-pane fade show active" id="webuiActivityPane" role="tabpanel"><table class="table table-sm table-hover mb-0"><thead><tr><th class="ps-3">Nom</th><th>Email</th><th class="text-center">Sessions</th><th class="text-end pe-3">Actions</th></tr></thead><tbody id="user-list"></tbody></table></div><div class="tab-pane fade" id="ssoAccountsPane" role="tabpanel"><div class="d-flex justify-content-between mb-2"><form action="/action/auth/create" method="post" class="d-flex gap-2" onsubmit="showLoader('Création...')"><input type="text" name="name" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Nom (Optionnel)"><input type="email" name="email" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Nouvel Email Utilisateur" required><button type="submit" class="btn btn-sm btn-primary">Créer</button></form><div class="d-flex"><form action="/action/auth/import" method="post" onsubmit="showLoader('Importation...')"><button type="submit" class="btn btn-sm btn-outline-info" data-bs-toggle="tooltip" title="Importer les emails depuis Open WebUI"><i class="bi bi-box-arrow-in-down"></i> Importer DB</button></form><form action="/action/auth/import_admin" method="post" onsubmit="showLoader('Importation Admin...')"><button type="submit" class="btn btn-sm btn-warning ms-1" data-bs-toggle="tooltip" title="Importer le compte système Admin"><i class="bi bi-person-badge-fill"></i> Import Admin</button></form></div></div><table class="table table-sm table-dark table-hover mb-0"><thead><tr><th>Email</th><th>Statut</th><th class="text-end">Actions</th></tr></thead><tbody id="auth-users-list"></tbody></table></div><div class="tab-pane fade" id="ssoSessionsPane" role="tabpanel"><div class="d-flex justify-content-between align-items-center mb-2 mt-1"><h6 class="mb-0 text-warning"><i class="bi bi-shield-check"></i> Connexions Actives</h6><button class="btn btn-sm btn-outline-danger" onclick="revokeAllAuthSessions()" title="Purger toutes les sessions actives"><i class="bi bi-shield-x"></i> Purge Globale</button></div><table class="table table-sm table-dark table-hover mb-0"><thead><tr><th>Compte / ID</th><th>Appareil & Navigateur</th><th>IP & Lieu</th><th>Dates</th><th class="text-end">Actions</th></tr></thead><tbody id="auth-sessions-list"><tr><td colspan="5" class="text-center text-muted">Chargement...</td></tr></tbody></table></div></div></div></div>
                     </div>
 
                     <div class="tab-pane fade" id="v-pills-maint" role="tabpanel">
@@ -2027,7 +2120,7 @@ HTML_DASHBOARD = """
             f.appendChild(i); document.body.appendChild(f); f.submit();
         }
         function showLoader(m='Action en cours...'){document.getElementById('loader-msg').innerText=m;document.getElementById('loader').style.display='flex'}
-        async function refreshAuthUsers(){try{const r=await fetch('/api/auth/users');const d=await r.json();document.getElementById('auth-users-list').innerHTML=d.map(u=>{let t='';if(u.status==='Pending'&&u.expires){const e=new Date(u.expires*1000);t=`<br><small class="${e<new Date()?'text-danger':'text-info'}">⏳ Exp. ${e.toLocaleDateString()} ${e.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</small>`;}else if(u.status==='Active'&&u.last_enrollment){const l=new Date(u.last_enrollment*1000);t=`<br><small class="text-success">✅ Enrôlé le ${l.toLocaleDateString()}</small>`;}const statusBadge=u.status==='Pending'?'<span class="badge bg-warning text-dark">En attente d\\'enrôlement</span>':'<span class="badge bg-success">Actif (MFA)</span>';const disableMsg = u.email === 'admin@echo.local' ? 'DANGER : La désactivation coupera l\\'accès externe à admin@echo.local. Seul un accès local via le Fallback (Port 3001) permettra de le réimporter. Confirmer ?' : 'Désactiver l\\'accès externe de ce compte ? Son historique interne ECHO sera conservé.';return `<tr><td class="align-middle">${u.email}</td><td class="align-middle">${statusBadge}${t}</td><td class="text-end align-middle"><form action="/action/auth/reset" method="post" class="d-inline" onsubmit="return confirm('Forcer la réinitialisation MFA pour cet utilisateur ?')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-warning py-0 me-1" title="Réinitialiser MFA">🔑</button></form><form action="/action/auth/disable" method="post" class="d-inline" onsubmit="return confirm('${disableMsg}')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-outline-warning py-0 me-1" title="Désactiver l'accès WAN">🚫</button></form><form action="/action/auth/delete" method="post" class="d-inline" onsubmit="return confirm('ATTENTION : Supprimer définitivement cet accès ET purger ses chats de l\\'espace ECHO ?')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-danger py-0" title="Supprimer Totalement">🗑️</button></form></td></tr>`}).join('')}catch(e){console.error('Erreur AuthUsers:',e)}}
+        async function refreshAuthUsers(){try{const r=await fetch('/api/auth/users');const d=await r.json();document.getElementById('auth-users-list').innerHTML=d.map(u=>{let t='';if(u.status==='Pending'&&u.expires){const e=new Date(u.expires*1000);t=`<br><small class="${e<new Date()?'text-danger':'text-info'}">⏳ Exp. ${e.toLocaleDateString()} ${e.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</small>`;}else if(u.status==='Active'&&u.last_enrollment){const l=new Date(u.last_enrollment*1000);t=`<br><small class="text-success">✅ Enrôlé le ${l.toLocaleDateString()}</small>`;}const statusBadge=u.status==='Pending'?'<span class="badge bg-warning text-dark">En attente d\\'enrôlement</span>':'<span class="badge bg-success">Actif (MFA)</span>';const disableMsg = u.email === 'admin@echo.local' ? 'DANGER : La désactivation coupera l\\'accès externe à admin@echo.local. Seul un accès local via le Fallback (Port 3001) permettra de le réimporter. Confirmer ?' : 'Désactiver l\\'accès externe de ce compte ? Son historique interne ECHO sera conservé.';const nameDisplay = u.name ? u.name : 'Aucun nom défini';return `<tr><td class="align-middle">${u.email}<br><small class="text-secondary">${nameDisplay}</small></td><td class="align-middle">${statusBadge}${t}</td><td class="text-end align-middle"><form action="/action/auth/rename" method="post" class="d-inline" onsubmit="let n=prompt('Nouveau nom pour ${u.email}:', '${u.name||''}'); if(n!==null){this.name.value=n; return true;} return false;"><input type="hidden" name="email" value="${u.email}"><input type="hidden" name="name" value=""><button class="btn btn-sm btn-outline-info py-0 me-1" title="Modifier le Nom">✏️</button></form><form action="/action/auth/reset" method="post" class="d-inline" onsubmit="return confirm('Forcer la réinitialisation MFA pour cet utilisateur ?')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-warning py-0 me-1" title="Réinitialiser MFA">🔑</button></form><form action="/action/auth/disable" method="post" class="d-inline" onsubmit="return confirm('${disableMsg}')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-outline-warning py-0 me-1" title="Désactiver l'accès WAN">🚫</button></form><form action="/action/auth/delete" method="post" class="d-inline" onsubmit="return confirm('ATTENTION : Supprimer définitivement cet accès ET purger ses chats de l\\'espace ECHO ?')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-danger py-0" title="Supprimer Totalement">🗑️</button></form></td></tr>`}).join('')}catch(e){console.error('Erreur AuthUsers:',e)}}
         
         // Cache GeoIP en mémoire pour ne pas appeler l'API à chaque rafraîchissement
         const geoIpCache = {};
@@ -2049,23 +2142,22 @@ HTML_DASHBOARD = """
                     const idShort = s.session_id.substring(0, 8) + '...';
                     const dev = s.device ? s.device : '?';
                     const osb = s.os ? `${s.browser} sur ${s.os}` : 'Inconnu';
-                    const ip = s.ip_address || 'N/A';
-                    let trClass = ''; let expTxt = s.expires_dt;
-                    if (s.time_remaining_sec !== null) {
-                        if (s.time_remaining_sec <= 0) { trClass = 'opacity-50 text-danger'; expTxt = 'Expirée'; }
-                        else if (s.time_remaining_sec < 3600) expTxt = `Dans ${Math.floor(s.time_remaining_sec/60)} min`;
-                    }
-                    
-                    html += `<tr class="${trClass}" id="session-${s.session_id}"><td class="align-middle fw-bold text-info">${s.email}<br><small class="text-muted fw-normal font-monospace">${idShort}</small></td><td class="align-middle">${dev}<br><small class="text-muted">${osb}</small></td><td class="align-middle font-monospace">${ip}<br><small class="text-muted" id="geo-${s.session_id}">Recherche...</small></td><td class="align-middle"><small>Créé: ${s.created_dt}<br>Exp: <span class="text-warning">${expTxt}</span></small></td><td class="text-end align-middle"><button class="btn btn-sm btn-outline-danger py-0" onclick="revokeAuthSession('${s.session_id}')" title="Révoquer cette session"><i class="bi bi-trash"></i></button></td></tr>`;
+                    const ip = s.ip_address ? s.ip_address.split(',').map(i => i.trim()).join('<br>') : 'N/A';
+                    const expTxt = s.time_remaining_sec !== null ? 
+                        (s.time_remaining_sec > 0 ? `<span class="text-success">${s.expires_dt}</span>` : `<span class="text-danger">Expiré</span>`) 
+                        : `<span class="text-success">Infinie</span>`;
+                    const trClass = s.time_remaining_sec !== null && s.time_remaining_sec <= 0 ? 'opacity-50' : '';
+                    html += `<tr class="${trClass}" id="session-${s.session_id}"><td class="align-middle fw-bold text-info">${s.email}<br><small class="text-muted fw-normal font-monospace">${idShort}</small></td><td class="align-middle">${dev}<br><small class="text-muted font-monospace">${osb}</small></td><td class="align-middle font-monospace">${ip}<br><small class="text-muted" id="geo-${s.session_id}">Recherche...</small></td><td class="align-middle"><small>Créé: ${s.created_dt}<br>Exp: <span>${expTxt}</span></small></td><td class="text-end align-middle"><button class="btn btn-sm btn-danger py-0" onclick="revokeAuthSession('${s.session_id}')" title="Révoquer cette session"><i class="bi bi-trash"></i></button></td></tr>`;
                 }
                 document.getElementById('auth-sessions-list').innerHTML = html;
                 
                 // Fetch GeoIPs asynchronously
                 for (const s of d.sessions) {
                     if (s.ip_address) {
-                        fetchGeoIp(s.ip_address).then(loc => {
+                        const ips = s.ip_address.split(',').map(i => i.trim());
+                        Promise.all(ips.map(fetchGeoIp)).then(locs => {
                             const el = document.getElementById(`geo-${s.session_id}`);
-                            if (el) el.innerText = loc;
+                            if (el) el.innerHTML = locs.join('<br>');
                         });
                     } else {
                         const el = document.getElementById(`geo-${s.session_id}`);
@@ -2085,6 +2177,20 @@ HTML_DASHBOARD = """
                     if (row) row.remove();
                 } else { alert('Erreur: ' + d.error); }
             } catch(e) { alert('Erreur réseau'); }
+        }
+        
+        async function revokeAllAuthSessions() {
+            if (!confirm("DANGER : Vous allez déconnecter de force absolument TOUT LE MONDE (toutes les sessions SSO) de l'infrastructure ECHO. Confirmez-vous cette action ?")) return;
+            showLoader('Purge globale des sessions...');
+            try {
+                const r = await fetch('/action/auth/session/revoke_all', { method: 'POST' });
+                const d = await r.json();
+                if (d.error) alert('Erreur: ' + d.error);
+            } catch(e) { alert('Erreur réseau'); }
+            finally {
+                document.getElementById('loader').style.display = 'none';
+                refreshAuthSessions();
+            }
         }
 
         async function refreshUsers(){const r=await fetch('/api/user_stats');const d=await r.json();document.getElementById('user-list').innerHTML=d.map(u=>{const isSys=u.email.endsWith('@echo.local');const roleBtn=isSys?(u.role==='admin'?'<span class="badge bg-danger me-2">Admin Sys</span>':'<span class="badge bg-secondary me-2">System</span>'):`<form action="/action/user_role/${u.id}" method="post" class="d-inline me-2" onsubmit="return confirm('Confirmer la bascule du rôle Administrateur pour ${u.name} ?')"><input type="hidden" name="new_role" value="${u.role==='admin'?'user':'admin'}"><button type="submit" class="btn btn-sm py-0 ${u.role==='admin'?'btn-danger':'btn-outline-secondary'}" style="font-size:0.7rem;" data-bs-toggle="tooltip" title="Basculer le rôle">${u.role==='admin'?'Admin':'User'}</button></form>`;const purgeBtn=isSys?'':`<form action="/action/auth_reset/${u.id}" method="post" class="d-inline" onsubmit="return confirm('Purger les accès distants (Google/API) de ${u.name} ?')"><button type="submit" class="btn btn-sm btn-link text-danger p-0" data-bs-toggle="tooltip" title="Purger Tokens/Clés"><i class="bi bi-shield-lock"></i></button></form>`;return `<tr><td class="ps-3">${u.name}</td><td>${u.email}</td><td class="text-center"><span class="badge bg-primary">${u.chat_count}</span></td><td class="text-end pe-3">${roleBtn}${purgeBtn}</td></tr>`}).join('');var t=[].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));t.map(function(e){return new bootstrap.Tooltip(e)})}

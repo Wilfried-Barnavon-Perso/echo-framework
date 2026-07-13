@@ -1,406 +1,306 @@
 {
   "version": 0,
-  "ui": {
-    "enable_signup": false,
-    "default_user_role": "user",
-    "default_group_id": "",
-    "enable_community_sharing": false,
-    "enable_message_rating": false,
-    "enable_user_webhooks": true,
-    "pending_user_overlay_title": "",
-    "pending_user_overlay_content": "",
-    "watermark": "",
-    "prompt_suggestions": [],
-    "banners": [],
-    "default_models": "pipe_engine",
-    "default_pinned_models": "pipe_engine",
-    "model_order_list": [
-      "pipe_engine"
-    ]
-  },
+  "tool_server.connections": [
+    {
+      "url": "http://echo-mcp-broker:8000/mcp",
+      "path": "",
+      "type": "mcp",
+      "auth_type": "none",
+      "key": "",
+      "config": {
+        "enable": true,
+        "access_grants": [
+          {
+            "principal_type": "user",
+            "principal_id": "*",
+            "permission": "read"
+          }
+        ]
+      },
+      "info": {
+        "id": "echo-mcp-broker",
+        "name": "ECHO MCP Broker"
+      }
+    }
+  ],
+  "ui.enable_signup": false,
+  "ui.default_user_role": "user",
+  "ui.default_group_id": "",
+  "ui.enable_community_sharing": false,
+  "ui.enable_message_rating": false,
+  "ui.enable_user_webhooks": true,
+  "ui.pending_user_overlay_title": "",
+  "ui.pending_user_overlay_content": "",
+  "ui.watermark": "",
+  "ui.prompt_suggestions": [],
+  "ui.banners": [],
+  "ui.default_models": "pipe_engine",
+  "ui.default_pinned_models": "pipe_engine",
+  "ui.model_order_list": [
+    "pipe_engine"
+  ],
   "webhook_url": "",
-  "auth": {
-    "admin": {
-      "show": true,
-      "email": null
-    },
-    "enable_api_keys": false,
-    "api_key": {
-      "endpoint_restrictions": false,
-      "allowed_endpoints": ""
-    },
-    "jwt_expiry": "4w"
-  },
-  "webui": {
-    "url": ""
-  },
-  "folders": {
-    "enable": true,
-    "max_file_count": ""
-  },
-  "channels": {
-    "enable": false
-  },
-  "memories": {
-    "enable": true
-  },
-  "notes": {
-    "enable": true
-  },
-  "users": {
-    "enable_status": true
-  },
-  "ldap": {
-    "enable": false
-  },
-  "openai": {
-    "enable": false,
-    "api_base_urls": [
-      "https://api.openai.com/v1"
-    ],
-    "api_keys": [
-      ""
-    ],
-    "api_configs": {
-      "0": {}
-    }
-  },
-  "ollama": {
-    "enable": false,
-    "base_urls": [
-      "http://host.docker.internal:11434"
-    ],
-    "api_configs": {
-      "0": {}
-    }
-  },
-  "evaluation": {
-    "arena": {
-      "enable": false,
-      "models": []
-    }
-  },
-  "code_execution": {
-    "enable": false,
-    "engine": "pyodide",
-    "jupyter": {
-      "url": "",
-      "auth": "",
-      "auth_token": "",
-      "auth_password": "",
-      "timeout": 60
-    }
-  },
-  "code_interpreter": {
-    "enable": false,
-    "engine": "pyodide",
-    "prompt_template": "",
-    "jupyter": {
-      "url": "",
-      "auth": "",
-      "auth_token": "",
-      "auth_password": "",
-      "timeout": 60
-    }
-  },
-  "task": {
-    "model": {
-      "default": "",
-      "external": ""
-    },
-    "title": {
-      "enable": false,
-      "prompt_template": ""
-    },
-    "follow_up": {
-      "enable": false,
-      "prompt_template": ""
-    },
-    "image": {
-      "prompt_template": ""
-    },
-    "autocomplete": {
-      "enable": false,
-      "input_max_length": -1
-    },
-    "tags": {
-      "prompt_template": "",
-      "enable": false
-    },
-    "query": {
-      "search": {
-        "enable": false
-      },
-      "retrieval": {
-        "enable": false
-      },
-      "prompt_template": ""
-    },
-    "tools": {
-      "prompt_template": ""
-    },
-    "voice": {
-      "prompt_template": null
-    }
-  },
-  "audio": {
-    "tts": {
-      "openai": {
-        "api_base_url": "http://echo-tts-worker:7996/v1",
-        "api_key": "sk-dummy",
-        "params": {}
-      },
-      "api_key": "",
-      "engine": "openai",
-      "model": "",
-      "voice": "",
-      "split_on": "punctuation",
-      "azure": {
-        "speech_region": "",
-        "speech_base_url": "",
-        "speech_output_format": "audio-24khz-160kbitrate-mono-mp3"
-      }
-    },
-    "stt": {
-      "openai": {
-        "api_base_url": "http://echo-stt-worker:7995/v1",
-        "api_key": "sk-dummy"
-      },
-      "engine": "openai",
-      "model": "base",
-      "supported_content_types": [
-        ""
-      ],
-      "whisper_model": "base",
-      "deepgram": {
-        "api_key": ""
-      },
-      "azure": {
-        "api_key": "",
-        "region": "",
-        "locales": "",
-        "base_url": "",
-        "max_speakers": ""
-      },
-      "mistral": {
-        "api_key": "",
-        "api_base_url": "https://api.mistral.ai/v1",
-        "use_chat_completions": false
-      }
-    }
-  },
-  "rag": {
-    "embedding_engine": "openai",
-    "embedding_model": "dummy_model",
-    "embedding_batch_size": 1,
-    "enable_async_embedding": false,
-    "template": "",
-    "top_k": 0,
-    "bypass_embedding_and_retrieval": true,
-    "full_context": false,
-    "enable_hybrid_search": false,
-    "enable_hybrid_search_enriched_texts": false,
-    "top_k_reranker": 3,
-    "relevance_threshold": 0,
-    "hybrid_bm25_weight": 0.5,
-    "CONTENT_EXTRACTION_ENGINE": "",
-    "pdf_extract_images": false,
-    "pdf_loader_mode": "page",
-    "datalab_marker_api_key": "",
-    "datalab_marker_api_base_url": "",
-    "datalab_marker_additional_config": "",
-    "datalab_marker_skip_cache": false,
-    "datalab_marker_force_ocr": false,
-    "datalab_marker_paginate": false,
-    "datalab_marker_strip_existing_ocr": false,
-    "datalab_marker_disable_image_extraction": false,
-    "datalab_marker_format_lines": false,
-    "datalab_marker_output_format": "markdown",
-    "DATALAB_MARKER_USE_LLM": false,
-    "external_document_loader_url": "",
-    "external_document_loader_api_key": "",
-    "tika_server_url": "http://tika:9998",
-    "docling_server_url": "http://docling:5001",
-    "docling_api_key": "",
-    "docling_params": {},
-    "document_intelligence_endpoint": "",
-    "document_intelligence_key": "",
-    "document_intelligence_model": "prebuilt-layout",
-    "MISTRAL_OCR_API_BASE_URL": "https://api.mistral.ai/v1",
-    "mistral_ocr_api_key": "",
-    "mineru_api_mode": "local",
-    "mineru_api_url": "http://localhost:8000",
-    "mineru_api_key": "",
-    "mineru_api_timeout": "300",
-    "mineru_params": {},
-    "reranking_engine": "",
-    "external_reranker_url": "",
-    "external_reranker_api_key": "",
-    "external_reranker_timeout": "",
-    "reranking_model": "",
-    "text_splitter": "",
-    "enable_markdown_header_text_splitter": true,
-    "chunk_size": 1000,
-    "chunk_min_size_target": 0,
-    "chunk_overlap": 100,
-    "file": {
-      "max_size": null,
-      "max_count": null,
-      "allowed_extensions": []
-    },
-    "web": {
-      "search": {
-        "enable": false,
-        "engine": "",
-        "trust_env": false,
-        "result_count": 3,
-        "concurrent_requests": 0,
-        "domain": {
-          "filter_list": []
-        },
-        "bypass_embedding_and_retrieval": true,
-        "bypass_web_loader": true,
-        "ollama_cloud_api_key": "",
-        "searxng_query_url": "",
-        "searxng_language": "all",
-        "yacy_query_url": "",
-        "yacy_username": "",
-        "yacy_password": "",
-        "google_pse_api_key": "",
-        "google_pse_engine_id": "",
-        "brave_search_api_key": "",
-        "kagi_search_api_key": "",
-        "mojeek_search_api_key": "",
-        "bocha_search_api_key": "",
-        "serpstack_api_key": "",
-        "serpstack_https": true,
-        "serper_api_key": "",
-        "serply_api_key": "",
-        "ddgs_backend": "auto",
-        "tavily_api_key": "",
-        "searchapi_api_key": "",
-        "searchapi_engine": "",
-        "serpapi_api_key": "",
-        "serpapi_engine": "",
-        "jina_api_key": "",
-        "jina_api_base_url": "",
-        "bing_search_v7_endpoint": "https://api.bing.microsoft.com/v7.0/search",
-        "bing_search_v7_subscription_key": "",
-        "exa_api_key": "",
-        "perplexity_api_key": "",
-        "perplexity_model": "sonar",
-        "perplexity_search_context_usage": "medium",
-        "perplexity_search_api_url": "https://api.perplexity.ai/search",
-        "sougou_api_sid": "",
-        "sougou_api_sk": "",
-        "external_web_search_url": "",
-        "external_web_search_api_key": "",
-        "tavily_extract_depth": "basic",
-        "yandex_web_search_url": "",
-        "yandex_web_search_api_key": "",
-        "yandex_web_search_config": ""
-      },
-      "loader": {
-        "concurrent_requests": 10,
-        "engine": "",
-        "timeout": "",
-        "ssl_verification": true,
-        "playwright_ws_url": "",
-        "playwright_timeout": 10000,
-        "firecrawl_api_key": "",
-        "firecrawl_api_url": "https://api.firecrawl.dev",
-        "firecrawl_timeout": "",
-        "external_web_loader_url": "",
-        "external_web_loader_api_key": ""
-      }
-    },
-    "youtube_loader_language": [
-      "en"
-    ],
-    "youtube_loader_proxy_url": ""
-  },
-  "file": {
-    "image_compression_width": null,
-    "image_compression_height": null
-  },
-  "google_drive": {
-    "enable": false
-  },
-  "onedrive": {
-    "enable": false
-  },
-  "user": {
-    "permissions": {
-      "workspace": {
-        "models": false,
-        "knowledge": false,
-        "prompts": true,
-        "tools": false,
-        "skills": false,
-        "models_import": false,
-        "models_export": false,
-        "prompts_import": true,
-        "prompts_export": true,
-        "tools_import": false,
-        "tools_export": false
-      },
-      "sharing": {
-        "models": false,
-        "public_models": false,
-        "knowledge": false,
-        "public_knowledge": false,
-        "prompts": false,
-        "public_prompts": false,
-        "tools": false,
-        "public_tools": false,
-        "skills": false,
-        "public_skills": false,
-        "notes": false,
-        "public_notes": false,
-        "public_chats": false,
-        "public_calendars": false
-      },
-      "access_grants": {
-        "allow_users": false
-      },
-      "chat": {
-        "controls": true,
-        "valves": true,
-        "system_prompt": true,
-        "params": true,
-        "file_upload": true,
-        "web_upload": true,
-        "delete": true,
-        "delete_message": true,
-        "continue_response": true,
-        "regenerate_response": true,
-        "rate_response": false,
-        "edit": true,
-        "share": true,
-        "export": true,
-        "stt": true,
-        "tts": true,
-        "call": true,
-        "multiple_models": true,
-        "temporary": true,
-        "temporary_enforced": false
-      },
-      "features": {
-        "api_keys": false,
-        "notes": false,
-        "channels": true,
-        "folders": true,
-        "direct_tool_servers": true,
-        "web_search": false,
-        "image_generation": false,
-        "code_interpreter": false,
-        "memories": false,
-        "automations": true,
-        "calendar": true
-      },
-      "settings": {
-        "interface": true
-      }
-    }
-  }
+  "auth.admin.show": true,
+  "auth.admin.email": null,
+  "auth.enable_api_keys": false,
+  "auth.api_key.endpoint_restrictions": false,
+  "auth.api_key.allowed_endpoints": "",
+  "auth.jwt_expiry": "4w",
+  "webui.url": "",
+  "folders.enable": true,
+  "folders.max_file_count": "",
+  "channels.enable": false,
+  "memories.enable": true,
+  "notes.enable": true,
+  "users.enable_status": true,
+  "ldap.enable": false,
+  "openai.enable": false,
+  "openai.api_base_urls": [
+    "https://api.openai.com/v1"
+  ],
+  "openai.api_keys": [
+    ""
+  ],
+  "ollama.enable": false,
+  "ollama.base_urls": [
+    "http://host.docker.internal:11434"
+  ],
+  "evaluation.arena.enable": false,
+  "evaluation.arena.models": [],
+  "code_execution.enable": false,
+  "code_execution.engine": "pyodide",
+  "code_execution.jupyter.url": "",
+  "code_execution.jupyter.auth": "",
+  "code_execution.jupyter.auth_token": "",
+  "code_execution.jupyter.auth_password": "",
+  "code_execution.jupyter.timeout": 60,
+  "code_interpreter.enable": false,
+  "code_interpreter.engine": "pyodide",
+  "code_interpreter.prompt_template": "",
+  "code_interpreter.jupyter.url": "",
+  "code_interpreter.jupyter.auth": "",
+  "code_interpreter.jupyter.auth_token": "",
+  "code_interpreter.jupyter.auth_password": "",
+  "code_interpreter.jupyter.timeout": 60,
+  "task.model.default": "",
+  "task.model.external": "",
+  "task.title.enable": false,
+  "task.title.prompt_template": "",
+  "task.follow_up.enable": false,
+  "task.follow_up.prompt_template": "",
+  "task.image.prompt_template": "",
+  "task.autocomplete.enable": false,
+  "task.autocomplete.input_max_length": -1,
+  "task.tags.prompt_template": "",
+  "task.tags.enable": false,
+  "task.query.search.enable": false,
+  "task.query.retrieval.enable": false,
+  "task.query.prompt_template": "",
+  "task.tools.prompt_template": "",
+  "task.voice.prompt_template": null,
+  "audio.tts.openai.api_base_url": "http://echo-tts-worker:7996/v1",
+  "audio.tts.openai.api_key": "sk-dummy",
+  "audio.tts.api_key": "",
+  "audio.tts.engine": "openai",
+  "audio.tts.model": "",
+  "audio.tts.voice": "",
+  "audio.tts.split_on": "punctuation",
+  "audio.tts.azure.speech_region": "",
+  "audio.tts.azure.speech_base_url": "",
+  "audio.tts.azure.speech_output_format": "audio-24khz-160kbitrate-mono-mp3",
+  "audio.stt.openai.api_base_url": "http://echo-stt-worker:7995/v1",
+  "audio.stt.openai.api_key": "sk-dummy",
+  "audio.stt.engine": "openai",
+  "audio.stt.model": "base",
+  "audio.stt.supported_content_types": [
+    ""
+  ],
+  "audio.stt.whisper_model": "base",
+  "audio.stt.deepgram.api_key": "",
+  "audio.stt.azure.api_key": "",
+  "audio.stt.azure.region": "",
+  "audio.stt.azure.locales": "",
+  "audio.stt.azure.base_url": "",
+  "audio.stt.azure.max_speakers": "",
+  "audio.stt.mistral.api_key": "",
+  "audio.stt.mistral.api_base_url": "https://api.mistral.ai/v1",
+  "audio.stt.mistral.use_chat_completions": false,
+  "rag.embedding_engine": "openai",
+  "rag.embedding_model": "dummy_model",
+  "rag.embedding_batch_size": 1,
+  "rag.enable_async_embedding": false,
+  "rag.template": "",
+  "rag.top_k": 0,
+  "rag.bypass_embedding_and_retrieval": true,
+  "rag.full_context": false,
+  "rag.enable_hybrid_search": false,
+  "rag.enable_hybrid_search_enriched_texts": false,
+  "rag.top_k_reranker": 3,
+  "rag.relevance_threshold": 0,
+  "rag.hybrid_bm25_weight": 0.5,
+  "rag.CONTENT_EXTRACTION_ENGINE": "",
+  "rag.pdf_extract_images": false,
+  "rag.pdf_loader_mode": "page",
+  "rag.datalab_marker_api_key": "",
+  "rag.datalab_marker_api_base_url": "",
+  "rag.datalab_marker_additional_config": "",
+  "rag.datalab_marker_skip_cache": false,
+  "rag.datalab_marker_force_ocr": false,
+  "rag.datalab_marker_paginate": false,
+  "rag.datalab_marker_strip_existing_ocr": false,
+  "rag.datalab_marker_disable_image_extraction": false,
+  "rag.datalab_marker_format_lines": false,
+  "rag.datalab_marker_output_format": "markdown",
+  "rag.DATALAB_MARKER_USE_LLM": false,
+  "rag.external_document_loader_url": "",
+  "rag.external_document_loader_api_key": "",
+  "rag.tika_server_url": "http://tika:9998",
+  "rag.docling_server_url": "http://docling:5001",
+  "rag.docling_api_key": "",
+  "rag.document_intelligence_endpoint": "",
+  "rag.document_intelligence_key": "",
+  "rag.document_intelligence_model": "prebuilt-layout",
+  "rag.MISTRAL_OCR_API_BASE_URL": "https://api.mistral.ai/v1",
+  "rag.mistral_ocr_api_key": "",
+  "rag.mineru_api_mode": "local",
+  "rag.mineru_api_url": "http://localhost:8000",
+  "rag.mineru_api_key": "",
+  "rag.mineru_api_timeout": "300",
+  "rag.reranking_engine": "",
+  "rag.external_reranker_url": "",
+  "rag.external_reranker_api_key": "",
+  "rag.external_reranker_timeout": "",
+  "rag.reranking_model": "",
+  "rag.text_splitter": "",
+  "rag.enable_markdown_header_text_splitter": true,
+  "rag.chunk_size": 1000,
+  "rag.chunk_min_size_target": 0,
+  "rag.chunk_overlap": 100,
+  "rag.file.max_size": null,
+  "rag.file.max_count": null,
+  "rag.file.allowed_extensions": [],
+  "rag.web.search.enable": false,
+  "rag.web.search.engine": "",
+  "rag.web.search.trust_env": false,
+  "rag.web.search.result_count": 3,
+  "rag.web.search.concurrent_requests": 0,
+  "rag.web.search.domain.filter_list": [],
+  "rag.web.search.bypass_embedding_and_retrieval": true,
+  "rag.web.search.bypass_web_loader": true,
+  "rag.web.search.ollama_cloud_api_key": "",
+  "rag.web.search.searxng_query_url": "",
+  "rag.web.search.searxng_language": "all",
+  "rag.web.search.yacy_query_url": "",
+  "rag.web.search.yacy_username": "",
+  "rag.web.search.yacy_password": "",
+  "rag.web.search.google_pse_api_key": "",
+  "rag.web.search.google_pse_engine_id": "",
+  "rag.web.search.brave_search_api_key": "",
+  "rag.web.search.kagi_search_api_key": "",
+  "rag.web.search.mojeek_search_api_key": "",
+  "rag.web.search.bocha_search_api_key": "",
+  "rag.web.search.serpstack_api_key": "",
+  "rag.web.search.serpstack_https": true,
+  "rag.web.search.serper_api_key": "",
+  "rag.web.search.serply_api_key": "",
+  "rag.web.search.ddgs_backend": "auto",
+  "rag.web.search.tavily_api_key": "",
+  "rag.web.search.searchapi_api_key": "",
+  "rag.web.search.searchapi_engine": "",
+  "rag.web.search.serpapi_api_key": "",
+  "rag.web.search.serpapi_engine": "",
+  "rag.web.search.jina_api_key": "",
+  "rag.web.search.jina_api_base_url": "",
+  "rag.web.search.bing_search_v7_endpoint": "https://api.bing.microsoft.com/v7.0/search",
+  "rag.web.search.bing_search_v7_subscription_key": "",
+  "rag.web.search.exa_api_key": "",
+  "rag.web.search.perplexity_api_key": "",
+  "rag.web.search.perplexity_model": "sonar",
+  "rag.web.search.perplexity_search_context_usage": "medium",
+  "rag.web.search.perplexity_search_api_url": "https://api.perplexity.ai/search",
+  "rag.web.search.sougou_api_sid": "",
+  "rag.web.search.sougou_api_sk": "",
+  "rag.web.search.external_web_search_url": "",
+  "rag.web.search.external_web_search_api_key": "",
+  "rag.web.search.tavily_extract_depth": "basic",
+  "rag.web.search.yandex_web_search_url": "",
+  "rag.web.search.yandex_web_search_api_key": "",
+  "rag.web.search.yandex_web_search_config": "",
+  "rag.web.loader.concurrent_requests": 10,
+  "rag.web.loader.engine": "",
+  "rag.web.loader.timeout": "",
+  "rag.web.loader.ssl_verification": true,
+  "rag.web.loader.playwright_ws_url": "",
+  "rag.web.loader.playwright_timeout": 10000,
+  "rag.web.loader.firecrawl_api_key": "",
+  "rag.web.loader.firecrawl_api_url": "https://api.firecrawl.dev",
+  "rag.web.loader.firecrawl_timeout": "",
+  "rag.web.loader.external_web_loader_url": "",
+  "rag.web.loader.external_web_loader_api_key": "",
+  "rag.youtube_loader_language": [
+    "en"
+  ],
+  "rag.youtube_loader_proxy_url": "",
+  "file.image_compression_width": null,
+  "file.image_compression_height": null,
+  "google_drive.enable": false,
+  "onedrive.enable": false,
+  "user.permissions.workspace.models": false,
+  "user.permissions.workspace.knowledge": false,
+  "user.permissions.workspace.prompts": true,
+  "user.permissions.workspace.tools": false,
+  "user.permissions.workspace.skills": false,
+  "user.permissions.workspace.models_import": false,
+  "user.permissions.workspace.models_export": false,
+  "user.permissions.workspace.prompts_import": true,
+  "user.permissions.workspace.prompts_export": true,
+  "user.permissions.workspace.tools_import": false,
+  "user.permissions.workspace.tools_export": false,
+  "user.permissions.sharing.models": false,
+  "user.permissions.sharing.public_models": false,
+  "user.permissions.sharing.knowledge": false,
+  "user.permissions.sharing.public_knowledge": false,
+  "user.permissions.sharing.prompts": false,
+  "user.permissions.sharing.public_prompts": false,
+  "user.permissions.sharing.tools": false,
+  "user.permissions.sharing.public_tools": false,
+  "user.permissions.sharing.skills": false,
+  "user.permissions.sharing.public_skills": false,
+  "user.permissions.sharing.notes": false,
+  "user.permissions.sharing.public_notes": false,
+  "user.permissions.sharing.public_chats": false,
+  "user.permissions.sharing.public_calendars": false,
+  "user.permissions.access_grants.allow_users": false,
+  "user.permissions.chat.controls": true,
+  "user.permissions.chat.valves": true,
+  "user.permissions.chat.system_prompt": true,
+  "user.permissions.chat.params": true,
+  "user.permissions.chat.file_upload": true,
+  "user.permissions.chat.web_upload": true,
+  "user.permissions.chat.delete": true,
+  "user.permissions.chat.delete_message": true,
+  "user.permissions.chat.continue_response": true,
+  "user.permissions.chat.regenerate_response": true,
+  "user.permissions.chat.rate_response": false,
+  "user.permissions.chat.edit": true,
+  "user.permissions.chat.share": true,
+  "user.permissions.chat.export": true,
+  "user.permissions.chat.stt": true,
+  "user.permissions.chat.tts": true,
+  "user.permissions.chat.call": true,
+  "user.permissions.chat.multiple_models": true,
+  "user.permissions.chat.temporary": true,
+  "user.permissions.chat.temporary_enforced": false,
+  "user.permissions.features.api_keys": false,
+  "user.permissions.features.notes": false,
+  "user.permissions.features.channels": true,
+  "user.permissions.features.folders": true,
+  "user.permissions.features.direct_tool_servers": true,
+  "user.permissions.features.web_search": false,
+  "user.permissions.features.image_generation": false,
+  "user.permissions.features.code_interpreter": false,
+  "user.permissions.features.memories": false,
+  "user.permissions.features.automations": true,
+  "user.permissions.features.calendar": true,
+  "user.permissions.settings.interface": true
 }

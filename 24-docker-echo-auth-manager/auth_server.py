@@ -1,3 +1,11 @@
+"""
+================================================================================
+MODULE : ECHO AUTH MANAGER
+VERSION : 1.2 (Intégration Name SSO achevée)
+AUTEUR : Wilfried BARNAVON & ECHO Team
+DATE MAJ : 2026-07-13
+================================================================================
+"""
 import os
 import sqlite3
 import pyotp
@@ -48,6 +56,7 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 email TEXT PRIMARY KEY,
+                name TEXT,
                 pass_hash TEXT,
                 totp_secret TEXT,
                 security_question TEXT,
@@ -91,15 +100,15 @@ def get_user(email: str):
         cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
         return cursor.fetchone()
 
-def update_user_enrollment(email: str, pass_hash: str, totp_secret: str, security_question: str, security_answer_hash: str):
+def update_user_enrollment(email: str, pass_hash: str, totp_secret: str, security_question: str, security_answer_hash: str, name: str = None):
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         current_time = int(time.time())
         cursor.execute("""
             UPDATE users 
-            SET pass_hash = ?, totp_secret = ?, security_question = ?, security_answer_hash = ?, must_enroll = 0, last_enrollment = ?
+            SET pass_hash = ?, totp_secret = ?, security_question = ?, security_answer_hash = ?, must_enroll = 0, last_enrollment = ?, name = ?
             WHERE email = ?
-        """, (pass_hash, totp_secret, security_question, security_answer_hash, current_time, email))
+        """, (pass_hash, totp_secret, security_question, security_answer_hash, current_time, name, email))
         conn.commit()
 
 def update_user_password(email: str, pass_hash: str):
@@ -197,7 +206,7 @@ def get_current_user_email(echo_auth_session: Optional[str] = Cookie(None)):
         return None
         
     settings = get_auth_settings()
-    timeout_h = int(settings.get("session_timeout", 0))
+    timeout_h = int(settings.get("session_timeout", 2160))
     
     if timeout_h > 0:
         if time.time() - row["created_at"] > timeout_h * 3600:
@@ -265,9 +274,14 @@ async def verify_auth(request: Request, echo_auth_session: Optional[str] = Cooki
         
     email = get_current_user_email(echo_auth_session)
     if email:
+        user = get_user(email)
         # Utilisateur authentifié : On injecte l'entête
         response = Response(status_code=200)
         response.headers["X-Webui-User"] = email
+        if user and "name" in user.keys() and user["name"]:
+            response.headers["X-Webui-Name"] = user["name"]
+        else:
+            response.headers["X-Webui-Name"] = email.split('@')[0]
         response.headers["X-Echo-Sso-Secret"] = os.environ.get("ECHO_SSO_SECRET", "")
         return response
     
@@ -326,7 +340,7 @@ async def login_post(request: Request, email: str = Form(...), password: str = F
     response = RedirectResponse(url=safe_next, status_code=status.HTTP_302_FOUND)
     
     settings = get_auth_settings()
-    session_timeout_h = int(settings.get("session_timeout", 0))
+    session_timeout_h = int(settings.get("session_timeout", 2160))
     max_age = session_timeout_h * 3600 if session_timeout_h > 0 else None
     
     # Configuration Cross-Domain pour auth.DOMAINE lisible par ui.DOMAINE
@@ -342,7 +356,8 @@ async def enroll_post(
     new_password: str = Form(...), 
     totp_code: str = Form(...),
     security_question: str = Form(...),
-    security_answer: str = Form(...)
+    security_answer: str = Form(...),
+    name: Optional[str] = Form(None)
 ):
     user = get_user(email)
     if not user or user["must_enroll"] == 0:
@@ -384,7 +399,7 @@ async def enroll_post(
     # Sauvegarde
     pass_hash = hash_password(new_password)
     ans_hash = hash_password(security_answer.lower().strip())
-    update_user_enrollment(email, pass_hash, totp_secret, security_question, ans_hash)
+    update_user_enrollment(email, pass_hash, totp_secret, security_question, ans_hash, name)
     
     return templates.TemplateResponse(request=request, name="login.html", context={"request": request, "success": "Enrôlement réussi. Vous pouvez vous connecter."})
 

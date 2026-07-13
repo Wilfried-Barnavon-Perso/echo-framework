@@ -1,42 +1,17 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.41
-description: 5.41: Fix Codex file tree actions (batch upload, state sync on delete).
-             5.40: Scroll automatique vers le bas du Cognitive Monitor lors du refresh (manuel ou auto).
-             5.39: Refonte show_image_js pour passer le Base64 explicite au lieu de l'URL.
-             5.38: Ajout des boutons de copie universelle (Code Brut et Rendu Preview) avec fallback HTTP.
-             5.37: Fix Race condition au démarrage du Codex (polling sur echoCodexResolve pour Pull).
-             5.36: Fix Python SyntaxError (échappement des f-strings pour editorRatio/previewRatio).
-             5.35: Redimensionnement proportionnel (ratio 33/67) pour le preview Codex.
-             5.34: Fix redimensionnement du preview Codex (min-width:0 sur flex item) empêchant la perte du bouton PDF et l'ascenseur horizontal.
-             5.33: Bascule de monitor_ECHO vers events.emit pour compatibilité universelle avec les Outils.
-             5.16: UI Moderne - Icône globe, minimisation HUD corrigée (min-height fix) et Équilibre Souverain Pro. 5.17: Ajout show_image_js (injection JS sans HTMLResponse).
-             5.18: Tooltip AUTHENTIFICATION refondu : section QUOTAS détaillée (Crédits, Quota modèle, Reset, Type).
-             5.19: Nouveaux paramètres quota (quota_model, RPD, RPM) dans la signature et le tooltip.
-             5.20: Refonte show_image_js — réutilise le moteur WebPlayer (HUD navigateur) avec
-             paramètres direct_url et icon. Icône par défaut 👁️ (image), 🌐 pour le navigateur.
-             5.21: Migration map_viewer() — Remplacement embed Google Maps par carte interactive
-             Leaflet.js + tuiles OSM. Signature enrichie (lat, lon, zoom, lieux). Marqueur custom
-             ECHO, popup élégante multi-résultats, CTRL+molette, contrôles stylisés.
-             5.22: Retour embed Google Maps (googleMaps grounding natif Gemini) —
-             suppression Leaflet/OSM. Signature simplifiée (query, title uniquement).
-             5.23: Ajout _generate_codex_js() — Moteur HUD Monaco Codex.
-             5.25: Ajout mécanisme Heartbeat (ping) dans _generate_codex_js() pour
-             rafraîchissement en direct de l'Action Codex.
-             File tree, mini-chat AI, quick actions, diff view, upload/download,
-             navigation historique ◀ ▶, détection thème dark/light.
-             5.24: Spinner AI, refresh post-diff via load_file, sélecteur modèle
-             (Flash/Pro/Lite), bouton × suppression par fichier.
-             5.28: Preview Panel WYSIWYG — Panneau latéral droit déployable (toggle 🤖).
-             Rendu temps réel debounced pour Markdown (marked.js), HTML (iframe srcdoc),
-             CSS (iframe + template), SVG (DOM inline). Splitter draggable.
-             Ajout _generate_agent_monitor_js() — HUD Cognitive Monitor.
-             Visualisation arborescente des agents cognitifs, onglets verticaux,
-             refresh manuel + auto-refresh slider 2-15s, clampHud viewport.
-             5.32: Rendu multi-agentique : fusion chronologique (alias d'experts) 
-             et arborescence de superviseur (worker_branch et indent_override).
+version: 5.47
+description: Composant système interne : ECHO UI Rendering Engine.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.47: Remplacement du prompt natif par une interface in-line pour la création, résolution du bug de scoping state (currentFile).
+# 5.46: Ajout d'une icône "œil" cliquable pour afficher/masquer les mots de passe.
+# 5.45: Désactivation de l'autocomplétion navigateur et du spellcheck sur le formulaire dynamique.
+# 5.41: Fix Codex file tree actions (batch upload, state sync on delete).
+# 5.40: Scroll automatique vers le bas du Cognitive Monitor lors du refresh (manuel ou auto).
+# 5.39: Refonte show_image_js pour passer le Base64 explicite au lieu de l'URL.
 
 from fastapi.responses import HTMLResponse
 import sys
@@ -1028,8 +1003,27 @@ return new Promise(function(resolve) {{
         newBtn.style.cssText = `padding:6px 10px; cursor:pointer; font-size:12px; color:${{accentColor}};`;
         newBtn.textContent = '+ Cr\u00e9er';
         newBtn.onclick = () => {{
-          const name = prompt('Nom du fichier (ex: main.py)');
-          if (name) window.echoCodexResolve({{action:'new_file', filename:name}});
+          newBtn.textContent = '';
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.placeholder = 'ex: main.py';
+          input.style.cssText = `width:100%; background:rgba(0,0,0,0.2); border:1px solid ${{borderColor}}; color:${{textColor}}; padding:2px 4px; border-radius:3px; font-size:11px; outline:none;`;
+          
+          const submitFile = () => {{
+            const name = input.value.trim();
+            if (name) window.echoCodexResolve({{action:'new_file', filename:name}});
+            else renderFileTree();
+          }};
+          
+          input.onkeydown = (e) => {{
+            if (e.key === 'Enter') submitFile();
+            if (e.key === 'Escape') renderFileTree();
+          }};
+          input.onblur = () => submitFile();
+          
+          newBtn.appendChild(input);
+          input.focus();
+          newBtn.onclick = null;
         }};
         sb.appendChild(newBtn);
         // Reset
@@ -1395,6 +1389,10 @@ return new Promise(function(resolve) {{
       }};
 
       window.echoCodexReset = () => {{ hud.remove(); }};
+
+      window.echoCodexSetCurrentFile = (filename) => {{
+        currentFile = filename;
+      }};
 
       // Chargement de contenu depuis le backend Python
       window.echoCodexSetContent = (content, filename) => {{
@@ -2171,3 +2169,218 @@ return new Promise(function(resolve) {{
       "})();\n"
     )
 
+
+
+  # =====================================================================
+  # ECHO MCP IDENTITY VAULT — HUD Visualization
+  # =====================================================================
+
+  @staticmethod
+  def _generate_mcp_identity_js(accounts_json: str, schemas_json: str = "{}") -> str:
+    """Génère le script JS complet du HUD MCP Identity Vault avec schémas dynamiques."""
+    
+    return (
+      "(function() {\n"
+      "  const HUD_ID = 'echo-mcp-identity';\n"
+      "  if (document.getElementById(HUD_ID)) document.getElementById(HUD_ID).remove();\n"
+      "  let accounts = JSON.parse('" + accounts_json.replace("\\\\", "\\\\\\\\").replace("'", "\\'") + "');\n"
+      "  let schemas = JSON.parse('" + schemas_json.replace("\\\\", "\\\\\\\\").replace("'", "\\'") + "');\n"
+      "  const isDark = document.documentElement.classList.contains('dark') || document.documentElement.classList.contains('oled-dark');\n"
+      "  \n"
+      "  const css = `\n"
+      "    #${HUD_ID} { position: fixed; top: 15vh; left: calc(50vw - 250px); width: 500px; max-height: 80vh; background: ${isDark ? '#262626' : '#f9f9f9'}; color: ${isDark ? '#ececec' : '#171717'}; border: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; border-radius: 8px; z-index: 10000; display: flex; flex-direction: column; font-family: system-ui, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.5); overflow: hidden; }\n"
+      "    #${HUD_ID}-header { padding: 12px 16px; background: ${isDark ? '#171717' : '#e5e5e5'}; border-bottom: 1px solid ${isDark ? '#404040' : '#d1d5db'}; display: flex; justify-content: space-between; align-items: center; cursor: move; user-select: none; font-weight: bold; font-size: 14px; }\n"
+      "    #${HUD_ID}-close { cursor: pointer; color: #ef4444; font-size: 18px; line-height: 1; }\n"
+      "    #${HUD_ID}-content { padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }\n"
+      "    .mcp-table { width: 100%; border-collapse: collapse; font-size: 13px; }\n"
+      "    .mcp-table th, .mcp-table td { text-align: left; padding: 8px; border-bottom: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; }\n"
+      "    .mcp-table th { color: ${isDark ? '#a3a3a3' : '#6b7280'}; font-weight: 500; }\n"
+      "    .mcp-badge { padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }\n"
+      "    .mcp-badge.RO { background: rgba(34, 197, 94, 0.2); color: #22c55e; }\n"
+      "    .mcp-badge.RW { background: rgba(239, 68, 68, 0.2); color: #ef4444; }\n"
+      "    .mcp-btn-del { color: #ef4444; cursor: pointer; background: none; border: none; font-size: 14px; }\n"
+      "    .mcp-btn-del:hover { color: #b91c1c; }\n"
+      "    .mcp-form { display: flex; flex-direction: column; gap: 8px; background: ${isDark ? '#1a1a1a' : '#ffffff'}; padding: 12px; border: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; border-radius: 6px; }\n"
+      "    .mcp-form input, .mcp-form select { width: 100%; padding: 6px 8px; background: ${isDark ? '#262626' : '#f3f4f6'}; border: 1px solid ${isDark ? '#404040' : '#d1d5db'}; color: inherit; border-radius: 4px; box-sizing: border-box; font-size: 13px; }\n"
+      "    .mcp-form select { appearance: auto; }\n"
+      "    .mcp-btn { background: #3b82f6; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; transition: 0.2s; }\n"
+      "    .mcp-btn:hover { background: #2563eb; }\n"
+      "  `;\n"
+      "  \n"
+      "  const style = document.createElement('style');\n"
+      "  style.textContent = css;\n"
+      "  document.head.appendChild(style);\n"
+      "  \n"
+      "  const container = document.createElement('div');\n"
+      "  container.id = HUD_ID;\n"
+      "  \n"
+      "  container.innerHTML = `\n"
+      "    <div id=\"${HUD_ID}-header\">\n"
+      "      <span>🔐 MCP Identity Vault</span>\n"
+      "      <span id=\"${HUD_ID}-close\">&times;</span>\n"
+      "    </div>\n"
+      "    <div id=\"${HUD_ID}-content\">\n"
+      "      <div id=\"${HUD_ID}-list\"></div>\n"
+      "      <div class=\"mcp-form\">\n"
+      "        <div style=\"font-weight:bold; margin-bottom:4px;\">➕ Configurer un service</div>\n"
+      "        <div style=\"display:flex; gap:8px;\">\n"
+      "          <select id=\"mcp-input-service\" style=\"flex:1;\"></select>\n"
+      "        </div>\n"
+      "        <div id=\"mcp-dynamic-fields\" style=\"display:flex; flex-direction:column; gap:8px;\"></div>\n"
+      "        <div style=\"display:flex; gap:8px;\">\n"
+      "          <select id=\"mcp-input-access\" style=\"flex:1;\">\n"
+      "            <option value=\"RO\">🟢 Lecture Seule (RO)</option>\n"
+      "            <option value=\"RW\">🔴 Lecture/Écriture (RW)</option>\n"
+      "          </select>\n"
+      "          <button class=\"mcp-btn\" id=\"mcp-btn-add\" style=\"flex:1;\">Enregistrer</button>\n"
+      "        </div>\n"
+      "      </div>\n"
+      "    </div>\n"
+      "  `;\n"
+      "  \n"
+      "  document.body.appendChild(container);\n"
+      "  \n"
+      "  // Populate Select Service & Dynamic Fields\n"
+      "  const serviceSelect = document.getElementById('mcp-input-service');\n"
+      "  const dynamicFieldsContainer = document.getElementById('mcp-dynamic-fields');\n"
+      "  \n"
+      "  Object.keys(schemas).forEach(key => {\n"
+      "    const opt = document.createElement('option');\n"
+      "    opt.value = key;\n"
+      "    opt.textContent = schemas[key].name || key;\n"
+      "    serviceSelect.appendChild(opt);\n"
+      "  });\n"
+      "  \n"
+      "  function renderDynamicFields() {\n"
+      "    const serviceKey = serviceSelect.value;\n"
+      "    dynamicFieldsContainer.innerHTML = '';\n"
+      "    if(serviceKey && schemas[serviceKey] && schemas[serviceKey].fields) {\n"
+      "      schemas[serviceKey].fields.forEach(f => {\n"
+      "        let helpIcon = '';\n"
+      "        if(f.help) {\n"
+      "          helpIcon = `<span title=\"${f.help.replace(/\"/g, '&quot;')}\" style=\"cursor:help; margin-left:4px; font-size:12px;\" onclick=\"alert(this.getAttribute('title'))\">ℹ️</span>`;\n"
+      "        }\n"
+      "        let inputHtml = '';\n"
+      "        if (f.type === 'select') {\n"
+      "          inputHtml = `<select class=\"mcp-dynamic-input\" data-key=\"${f.id}\">`;\n"
+      "          if(f.options) {\n"
+      "            f.options.forEach(opt => {\n"
+      "              const val = opt.value !== undefined ? opt.value : opt;\n"
+      "              const lbl = opt.label !== undefined ? opt.label : opt;\n"
+      "              inputHtml += `<option value=\"${val}\">${lbl}</option>`;\n"
+      "            });\n"
+      "          }\n"
+      "          inputHtml += `</select>`;\n"
+      "        } else if (f.type === 'password') {\n"
+      "          inputHtml = `\n"
+      "            <div style=\"position:relative; display:flex; align-items:center;\">\n"
+      "              <input type=\"password\" class=\"mcp-dynamic-input\" data-key=\"${f.id}\" placeholder=\"${f.placeholder || ''}\" autocomplete=\"new-password\" spellcheck=\"false\" style=\"width:100%; padding-right:24px; box-sizing:border-box;\" />\n"
+      "              <span onclick=\"const i=this.previousElementSibling; if(i.type==='password'){i.type='text'; this.style.opacity='1';} else {i.type='password'; this.style.opacity='0.5';}\" style=\"position:absolute; right:8px; cursor:pointer; opacity:0.5; font-size:14px; user-select:none;\" title=\"Afficher/Masquer\">👁️</span>\n"
+      "            </div>\n"
+      "          `;\n"
+      "        } else {\n"
+      "          inputHtml = `<input type=\"${f.type || 'text'}\" class=\"mcp-dynamic-input\" data-key=\"${f.id}\" placeholder=\"${f.placeholder || ''}\" autocomplete=\"off\" spellcheck=\"false\" />`;\n"
+      "        }\n"
+      "        const fieldHtml = `\n"
+      "          <div style=\"display:flex; flex-direction:column; gap:2px;\">\n"
+      "            <label style=\"font-size:11px; font-weight:bold; color: ${isDark ? '#a3a3a3' : '#6b7280'};\">${f.label} ${helpIcon}</label>\n"
+      "            ${inputHtml}\n"
+      "          </div>\n"
+      "        `;\n"
+      "        dynamicFieldsContainer.insertAdjacentHTML('beforeend', fieldHtml);\n"
+      "      });\n"
+      "    }\n"
+      "  }\n"
+      "  serviceSelect.addEventListener('change', renderDynamicFields);\n"
+      "  if(Object.keys(schemas).length > 0) renderDynamicFields();\n"
+      "  \n"
+      "  // Drag logic\n"
+      "  let isDragging = false, startX, startY, initialX, initialY;\n"
+      "  const header = document.getElementById(HUD_ID + '-header');\n"
+      "  header.addEventListener('mousedown', function(e) {\n"
+      "    if(e.target.id === HUD_ID + '-close') return;\n"
+      "    isDragging = true;\n"
+      "    startX = e.clientX; startY = e.clientY;\n"
+      "    const rect = container.getBoundingClientRect();\n"
+      "    initialX = rect.left; initialY = rect.top;\n"
+      "    document.addEventListener('mousemove', onMouseMove);\n"
+      "    document.addEventListener('mouseup', onMouseUp);\n"
+      "  });\n"
+      "  function onMouseMove(e) {\n"
+      "    if(!isDragging) return;\n"
+      "    const dx = e.clientX - startX;\n"
+      "    const dy = e.clientY - startY;\n"
+      "    container.style.left = (initialX + dx) + 'px';\n"
+      "    container.style.top = (initialY + dy) + 'px';\n"
+      "    container.style.bottom = 'auto';\n"
+      "    container.style.right = 'auto';\n"
+      "  }\n"
+      "  function onMouseUp() {\n"
+      "    isDragging = false;\n"
+      "    document.removeEventListener('mousemove', onMouseMove);\n"
+      "    document.removeEventListener('mouseup', onMouseUp);\n"
+      "  }\n"
+      "  \n"
+      "  // Render List\n"
+      "  function renderList() {\n"
+      "    const listDiv = document.getElementById(HUD_ID + '-list');\n"
+      "    if(accounts.length === 0) {\n"
+      "      listDiv.innerHTML = '<div style=\"text-align:center; padding:16px; opacity:0.6;\"><i>Aucun identifiant enregistré.</i></div>';\n"
+      "      return;\n"
+      "    }\n"
+      "    let html = '<table class=\"mcp-table\"><thead><tr><th>Service</th><th>Accès</th><th width=\"30\"></th></tr></thead><tbody>';\n"
+      "    accounts.forEach(acc => {\n"
+      "      html += `<tr>\n"
+      "        <td>${acc.service}</td>\n"
+      "        <td><span class=\"mcp-badge ${acc.access_level}\">${acc.access_level}</span></td>\n"
+      "        <td style=\"text-align:right;\"><button class=\"mcp-btn-del\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || 'default'}\" onclick=\"window.echoMCPDelete(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Supprimer\">🗑️</button></td>\n"
+      "      </tr>`;\n"
+      "    });\n"
+      "    html += '</tbody></table>';\n"
+      "    listDiv.innerHTML = html;\n"
+      "  }\n"
+      "  renderList();\n"
+      "  \n"
+      "  // Events\n"
+      "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
+      "    container.remove();\n"
+      "    if(window.echoMCPResolve) window.echoMCPResolve({action: 'close'});\n"
+      "  };\n"
+      "  \n"
+      "  document.getElementById('mcp-btn-add').onclick = function() {\n"
+      "    const service = serviceSelect.value;\n"
+      "    const access = document.getElementById('mcp-input-access').value;\n"
+      "    \n"
+      "    if(!service) { alert('Veuillez sélectionner un Service.'); return; }\n"
+      "    \n"
+      "    const account_id = 'default';\n"
+      "    \n"
+      "    const credObj = {};\n"
+      "    let missingField = false;\n"
+      "    document.querySelectorAll('.mcp-dynamic-input').forEach(input => {\n"
+      "      if(!input.value.trim()) missingField = true;\n"
+      "      credObj[input.dataset.key] = input.value.trim();\n"
+      "    });\n"
+      "    \n"
+      "    if(missingField) {\n"
+      "      if(!confirm('Certains champs sont vides. Voulez-vous continuer ?')) return;\n"
+      "    }\n"
+      "    \n"
+      "    const credStr = JSON.stringify(credObj);\n"
+      "    \n"
+      "    // Clear form\n"
+      "    document.querySelectorAll('.mcp-dynamic-input').forEach(input => input.value = '');\n"
+      "    \n"
+      "    if(window.echoMCPResolve) window.echoMCPResolve({action: 'add_account', service: service, account_id: account_id, credentials: credStr, access_level: access});\n"
+      "  };\n"
+      "  \n"
+      "  window.echoMCPDelete = function(service, alias) {\n"
+      "    if(window.echoMCPResolve) window.echoMCPResolve({action: 'delete_account', service: service, account_id: alias});\n"
+      "  };\n"
+      "  \n"
+      "  window.echoMCPUpdate = function(newAccountsJson) {\n"
+      "    accounts = JSON.parse(newAccountsJson);\n"
+      "    renderList();\n"
+      "  }\n"
+      "})();\n"
+      )

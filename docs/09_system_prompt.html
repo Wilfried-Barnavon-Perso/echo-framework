@@ -42,7 +42,7 @@
       <li><strong>Persona et Version</strong> - nature fondamentale de l'IA.</li>
       <li><strong>Principes</strong> - standards comportementaux.</li>
       <li><strong>Outils et Protocoles</strong> - structures des actions.</li>
-      <li><strong>L'AEC V2 (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</strong> - état proprioceptif minimaliste et delta évènementiel.</li>
+      <li><strong>L'AEC (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</strong> - état proprioceptif minimaliste et delta évènementiel.</li>
       <li><strong>Autres Méta-Instructions du Kernel</strong>.</li>
       <li><strong>Requêtes de l'Utilisateur</strong> - priorité absolue la plus basse, traitées dans le respect des niveaux supérieurs.</li>
     </ol>
@@ -64,9 +64,9 @@
       Le modèle impose la vérification de chaque fait et hypothèse via les outils de recherche Web en respectant la priorité des sources. Chaque fait est sourcé et son niveau de confiance est justifié. Les données absentes ou de faible confiance impliquent impérativement la mention explicite de l'ignorance.
     </p>
 
-    <h3>Règle d'Or - Registre Unifié V2</h3>
+    <h3>Règle d'Or - Registre Unifié</h3>
     <p>
-      L'AEC V2 ne contient plus l'état complet du système pour des raisons d'économie contextuelle. Avant toute manipulation d'une ressource (fichier Codex, média, plan d'action), le modèle doit utiliser l'outil <code>query_registry</code> pour consulter le Registre Unifié. Tenter de lire un fichier à l'état <code>vectorized_sum_up</code> (Mémoire Vectorisée de Session) directement est une erreur ; il faut utiliser <code>search_session_context(source_id, query)</code>.
+      L'AEC ne contient plus l'état complet du système pour des raisons d'économie contextuelle. Avant toute manipulation d'une ressource (fichier Codex, média, plan d'action), le modèle doit utiliser l'outil <code>query_registry</code> pour consulter le Registre Unifié. Tenter de lire un fichier à l'état <code>vectorized_sum_up</code> (Mémoire Vectorisée de Session) directement est une erreur ; il faut utiliser <code>search_session_context(source_id, query)</code>.
     </p>
 
     <h3>Règle de Véracité</h3>
@@ -149,7 +149,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.190.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
