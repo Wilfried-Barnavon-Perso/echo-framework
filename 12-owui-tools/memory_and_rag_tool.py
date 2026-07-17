@@ -161,7 +161,7 @@ class Tools:
 
     async def search_meta_artifacts(
         self,
-        query: str,
+        query: Optional[str] = None,
         artifact_name: Optional[Literal["Profil d'Alignement", "Hypothèses d'Apprentissage"]] = None,
         limit: int = 20,
         start_date: str = "",
@@ -172,13 +172,16 @@ class Tools:
         __event_call__: Optional[Any] = None
     ) -> dict:
         """
-        Recherche sémantique vectorielle dans les Méta-Artéfacts (PACP / PRAC).
-        [INFO SNR] Le Modèle DOIT distinguer : 1) RAG Éphémère (Session courante) = Flux chronologique continu, mémoire de travail (infini). 2) Méta-Artéfacts = Faits persistants inter-sessions soumis au TTL.
-        Utilise le concept pour extraire des faits pertinents. Pour une lecture globale ou temporelle, utiliser l'outil consult_* correspondant.
+        Interface de lecture de la mémoire vectorielle persistante (Méta-Artéfacts inter-sessions).
+        Retourne systématiquement le contenu détaillé des faits mémorisés. Le mode d'extraction s'adapte selon la présence de 'query'.
 
-        :param query: Obligatoire. Le concept, l'idée ou le mot-clé à retrouver.
-        :param artifact_name: Optionnel. Restreint la recherche vectorielle à un Méta-Artéfact spécifique.
-        :param limit: Optionnel. Nombre maximum de résultats. Défaut: 20.
+        Règle de résolution :
+        - Mode "Recherche Ciblée" (query renseigné) : Extraction sémantique vectorielle. Renvoie les souvenirs les plus pertinents par rapport au concept, pondérés par leur niveau d'importance.
+        - Mode "Lecture Globale" (query omis) : Extraction chronologique neutre. Renvoie les N derniers faits mémorisés dans leur intégralité pour s'imprégner du contexte général sans biais sémantique.
+
+        :param query: Optionnel. Le concept ou mot-clé ciblé. Omettre pour une lecture globale et temporelle.
+        :param artifact_name: Optionnel. Restreint la lecture à un Méta-Artéfact spécifique.
+        :param limit: Optionnel. Nombre maximum de faits retournés. Défaut: 20.
         :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
         :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
         """
@@ -203,145 +206,111 @@ class Tools:
                     if ts_end: rng["lte"] = ts_end
                     qdrant_filter["must"].append({"key": "timestamp", "range": rng})
 
-                # RECHERCHE SÉMANTIQUE
-                await events.status("🧠 Recherche sémantique...")
-                vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)
-                if not vector:
-                    return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                if query:
+                    # RECHERCHE SÉMANTIQUE
+                    await events.status("🧠 Recherche sémantique ciblée...")
+                    vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)
+                    if not vector:
+                        return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-                search_payload = {
-                    "vector": vector,
-                    "limit": limit * 3,
-                    "with_payload": True,
-                    "score_threshold": 0.35,
-                    "filter": qdrant_filter
-                }
-                resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/search",
-                    json=search_payload
-                )
-                if resp.status_code != 200:
-                    return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-                candidates = resp.json().get("result", [])
+                    search_payload = {
+                        "vector": vector,
+                        "limit": limit * 3,
+                        "with_payload": True,
+                        "score_threshold": 0.35,
+                        "filter": qdrant_filter
+                    }
+                    resp = await client.post(
+                        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/search",
+                        json=search_payload
+                    )
+                    if resp.status_code != 200:
+                        return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    candidates = resp.json().get("result", [])
 
-            if not candidates:
-                return wrap_tool_output(text="Aucun souvenir trouvé.", status={"status": "success", "results": []}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    if not candidates:
+                        return wrap_tool_output(text="Aucun souvenir trouvé.", status={"status": "success", "results": []}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-            # --- RERANKING PAR IMPORTANCE ---
-            for r in candidates:
-                imp = int(r["payload"].get("memory_importance",
-                                           r["payload"].get("importance", 3)))
-                r["_weighted"] = r["score"] * MEMORY_IMPORTANCE_WEIGHTS.get(imp, 1.0)
+                    # --- RERANKING PAR IMPORTANCE ---
+                    for r in candidates:
+                        imp = int(r["payload"].get("memory_importance",
+                                                   r["payload"].get("importance", 3)))
+                        r["_weighted"] = r["score"] * MEMORY_IMPORTANCE_WEIGHTS.get(imp, 1.0)
 
-            reranked = sorted(
-                [r for r in candidates if r["_weighted"] >= self.valves.SCORE_THRESHOLD],
-                key=lambda x: x["_weighted"],
-                reverse=True
-            )[:limit]
+                    reranked = sorted(
+                        [r for r in candidates if r["_weighted"] >= self.valves.SCORE_THRESHOLD],
+                        key=lambda x: x["_weighted"],
+                        reverse=True
+                    )[:limit]
 
-            if not reranked:
-                if self.valves.DEBUG_MODE:
-                    print(f"[ECHO-MEMORY] search_memory : Aucun souvenir pour '{query}' après reranking (seuil {self.valves.SCORE_THRESHOLD}).", flush=True)
-                return wrap_tool_output(
-                    text="Aucun souvenir pertinent après reranking.",
-                    status={"status": "success", "results": []}
-                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    if not reranked:
+                        if self.valves.DEBUG_MODE:
+                            print(f"[ECHO-MEMORY] search_memory : Aucun souvenir pour '{query}' après reranking (seuil {self.valves.SCORE_THRESHOLD}).", flush=True)
+                        return wrap_tool_output(
+                            text="Aucun souvenir pertinent après reranking.",
+                            status={"status": "success", "results": []}
+                        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-            if self.valves.DEBUG_MODE:
-                print(f"[ECHO-MEMORY] search_memory : {len(reranked)} résultats retournés pour '{query}' après reranking.", flush=True)
+                    if self.valves.DEBUG_MODE:
+                        print(f"[ECHO-MEMORY] search_memory : {len(reranked)} résultats retournés pour '{query}' après reranking.", flush=True)
 
-            md = "🧠 **Souvenirs retrouvés**\n\n"
-            for r in reranked:
-                p = r["payload"]
-                imp = int(p.get("memory_importance", p.get("importance", 3)))
-                label = MEMORY_IMPORTANCE_LABELS.get(imp, "?")
-                
-                ts = p.get("timestamp")
-                date_str = f" | {datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}" if ts else ""
-                
-                md += (
-                    f"- **{p.get('memory_id', p.get('slug', 'Note'))}** "
-                    f"[{label} / score: {r['_weighted']:.2f}{date_str}]\n"
-                    f"  > {p.get('summary', '')}\n\n"
-                )
+                    md = "🧠 **Souvenirs retrouvés (Recherche)**\n\n"
+                    for r in reranked:
+                        p = r["payload"]
+                        imp = int(p.get("memory_importance", p.get("importance", 3)))
+                        label = MEMORY_IMPORTANCE_LABELS.get(imp, "?")
+                        
+                        ts = p.get("timestamp")
+                        date_str = f" | {datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}" if ts else ""
+                        
+                        md += (
+                            f"- **{p.get('memory_id', p.get('slug', 'Note'))}** "
+                            f"[{label} / score: {r['_weighted']:.2f}{date_str}]\n"
+                            f"  > {p.get('summary', '')}\n\n"
+                        )
 
-            await events.status("🧠 Recherche terminée.", done=True)
-            return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    await events.status("🧠 Recherche terminée.", done=True)
+                    return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                else:
+                    # LECTURE GLOBALE CHRONOLOGIQUE
+                    await events.status("🧠 Lecture globale de la mémoire...")
+                    scroll_payload = {
+                        "filter": qdrant_filter,
+                        "limit": limit,
+                        "with_payload": True
+                    }
+                    resp = await client.post(
+                        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/scroll",
+                        json=scroll_payload
+                    )
+                    if resp.status_code != 200:
+                        return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-    # ==========================================================================
-    # LECTURE : Index des sujets mémorisés
-    # ==========================================================================
+                    points = resp.json().get("result", {}).get("points", [])
+                    if not points:
+                        return wrap_tool_output(text="La base vectorielle des souvenirs est actuellement vide pour ce contexte.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-    async def consult_meta_artifacts(
-        self,
-        artifact_name: Optional[Literal["Profil d'Alignement", "Hypothèses d'Apprentissage"]] = None,
-        limit: int = 20,
-        start_date: str = "",
-        end_date: str = "",
-        __user__: Optional[dict] = None,
-        __event_emitter__: Optional[Any] = None
-    ) -> dict:
-        """
-        Aspiration chronologique des Méta-Artéfacts.
-        Sert à balayer aveuglément le contexte sans biais thématique (lecture temporelle).
-        Renvoie la liste des derniers faits mémorisés triés par date décroissante.
+                    if self.valves.DEBUG_MODE:
+                        print(f"[ECHO-MEMORY] read_memory_global : {len(points)} souvenirs trouvés pour {user_id}.", flush=True)
 
-        :param artifact_name: Optionnel. Filtre pour ne remonter que les faits d'un Méta-Artéfact spécifique.
-        :param limit: Optionnel. Nombre maximum de souvenirs à lister. Défaut: 20.
-        :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
-        :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
-        """
-        events = EchoEvents(__event_emitter__)
-        if not __user__ or not __user__.get("id"):
-            return wrap_tool_output(text="❌ Erreur : Utilisateur non identifié.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    md = "### 🧠 Contenu de la Base Vectorielle (Lecture Globale)\n\n"
+                    for p in points:
+                        pay = p.get("payload", {})
+                        ts = pay.get("timestamp")
+                        date_str = f" | {datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}" if ts else ""
+                        pay_tags = pay.get('tags') or []
+                        imp = int(pay.get("memory_importance", pay.get("importance", 1)))
+                        label = MEMORY_IMPORTANCE_LABELS.get(imp, "?")
+                        
+                        md += (
+                            f"- **{pay.get('memory_id', pay.get('slug', 'Note'))}** "
+                            f"({pay.get('artifact_name', 'Global')}) | [{label}{date_str}] | `{', '.join(pay_tags)}`\n"
+                            f"  > {pay.get('summary', '')}\n\n"
+                        )
 
-        user_id = __user__.get("id")
-        await events.status("🧠 Consultation de l'index de la mémoire...")
-        try:
-            async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
-                await self._ensure_collection(client)
-                qdrant_filter = {"must": [{"key": "user_id", "match": {"value": user_id}}]}
-                if artifact_name:
-                    qdrant_filter["must"].append({"key": "artifact_name", "match": {"value": artifact_name}})
-                
-                ts_start = self._parse_iso_date(start_date, False)
-                ts_end = self._parse_iso_date(end_date, True)
-                if ts_start or ts_end:
-                    rng = {}
-                    if ts_start: rng["gte"] = ts_start
-                    if ts_end: rng["lte"] = ts_end
-                    qdrant_filter["must"].append({"key": "timestamp", "range": rng})
-
-                scroll_payload = {
-                    "filter": qdrant_filter,
-                    "limit": limit,
-                    "with_payload": ["memory_id", "slug", "tags", "memory_importance", "timestamp", "artifact_name"]
-                }
-                resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/scroll",
-                    json=scroll_payload
-                )
-                if resp.status_code != 200:
-                    return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
-                points = resp.json().get("result", {}).get("points", [])
-                if not points:
-                    return wrap_tool_output(text="La base vectorielle des souvenirs est actuellement vide.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
-                if self.valves.DEBUG_MODE:
-                    print(f"[ECHO-MEMORY] list_memory_topics : {len(points)} sujets trouvés pour {user_id}.", flush=True)
-
-                md = "### 🧠 Index de la Base Vectorielle des Souvenirs\n\n"
-                for p in points:
-                    pay = p.get("payload", {})
-                    ts = pay.get("timestamp")
-                    date_str = f" | {datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}" if ts else ""
-                    pay_tags = pay.get('tags') or []
-                    md += f"- **{pay.get('memory_id', pay.get('slug', 'Note'))}** ({pay.get('artifact_name', 'Global')}) | Lvl {pay.get('memory_importance', pay.get('importance', 1))}{date_str} | `{', '.join(pay_tags)}`\n"
-                return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    await events.status("🧠 Lecture globale terminée.", done=True)
+                    return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -395,10 +364,11 @@ class Tools:
         source_id: str,
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
-        __event_emitter__: Optional[Any] = None
+        __event_emitter__: Optional[Any] = None,
+        __event_call__: Optional[Any] = None
     ) -> dict:
         """Sauvegarde éphémère dans le RAG Temporaire (Contexte de la session en cours)."""
-        events = EchoEvents(__event_emitter__)
+        events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -429,101 +399,13 @@ class Tools:
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-    async def consult_session_context(
-        self,
-        limit: int = 20,
-        start_date: str = "",
-        end_date: str = "",
-        global_search: bool = False,
-        __user__: Optional[dict] = None,
-        __metadata__: Optional[dict] = None,
-        __event_emitter__: Optional[Any] = None
-    ) -> dict:
-        """
-        Aspiration exhaustive de la Mémoire Vectorisée de Session.
-        Sert à balayer aveuglément le contexte sans biais thématique (lecture temporelle).
-        Renvoie la liste détaillée de toutes les sources (fichiers, URLs, notes) actuellement actives.
-
-        :param limit: Optionnel. Nombre maximal de sources à lister. Défaut: 20.
-        :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
-        :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
-        :param global_search: Optionnel. True, pour lister les sources de toutes les sessions de l'Utilisateur.
-        """
-        events = EchoEvents(__event_emitter__)
-        if not __user__ or not __user__.get("id") or not __metadata__:
-            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
-        user_id = __user__.get("id")
-        chat_id = __metadata__.get("chat_id")
-        scope = "globale" if global_search else "locale"
-        await events.status(f"🧠 Cartographie du RAG Session ({scope})...")
-
-        try:
-            from echo_constants import COLLECTION_SESSION_RAG
-            async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
-                must_filters = [{"key": "user_id", "match": {"value": user_id}}]
-                if not global_search:
-                    must_filters.append({"key": "chat_id", "match": {"value": chat_id}})
-                
-                ts_start = self._parse_iso_date(start_date, False)
-                ts_end = self._parse_iso_date(end_date, True)
-                if ts_start or ts_end:
-                    rng = {}
-                    if ts_start: rng["gte"] = ts_start
-                    if ts_end: rng["lte"] = ts_end
-                    must_filters.append({"key": "timestamp", "range": rng})
-
-                scroll_payload = {
-                    "filter": {"must": must_filters},
-                    "limit": limit,
-                    "with_payload": ["source_id", "tags", "timestamp", "text"]
-                }
-                resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/scroll",
-                    json=scroll_payload
-                )
-                if resp.status_code != 200:
-                    return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
-                points = resp.json().get("result", {}).get("points", [])
-                if not points:
-                    return wrap_tool_output(text="Aucune ressource indexée trouvée.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
-                sources = {}
-                tags = set()
-                for p in points:
-                    pay = p.get("payload", {})
-                    if "source_id" in pay:
-                        sid = pay["source_id"]
-                        ts = pay.get("timestamp", 0)
-                        if sid not in sources or ts > sources[sid]["timestamp"]:
-                            sources[sid] = {
-                                "timestamp": ts,
-                                "preview": pay.get("text", "")[:60].replace("\n", " ") + "..."
-                            }
-                    pay_tags = pay.get("tags") or []
-                    for t in pay_tags:
-                        tags.add(t)
-
-                md = f"### 🧠 Cartographie du RAG Session ({scope})\n\n"
-                md += f"**Sources disponibles (avec aperçu) :**\n"
-                # Tri par timestamp décroissant
-                sorted_sources = sorted(sources.items(), key=lambda x: x[1]["timestamp"], reverse=True)
-                for sid, data in sorted_sources:
-                    ts_str = datetime.fromtimestamp(data["timestamp"], timezone.utc).strftime('%Y-%m-%d %H:%M UTC') if data["timestamp"] else "Inconnu"
-                    md += f"- **`{sid}`** [{ts_str}] : _{data['preview']}_\n"
-                md += f"\n**Tags détectés :** `{', '.join(sorted(tags))}`"
-                return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
-        except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
     async def delete_session_context_source(
         self,
         source_id: str,
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
-        __event_emitter__: Optional[Any] = None
+        __event_emitter__: Optional[Any] = None,
+        __event_call__: Optional[Any] = None
     ) -> dict:
         """
         Suppression intégrale et irréversible d'une source du RAG Éphémère.
@@ -532,7 +414,7 @@ class Tools:
 
         :param source_id: Obligatoire. L'identifiant strict de la source (ex: nom de fichier, UUID de session, slug libre) à purger de la mémoire.
         """
-        events = EchoEvents(__event_emitter__)
+        events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -583,7 +465,7 @@ class Tools:
 
     async def search_session_context(
         self,
-        query: str,
+        query: Optional[str] = None,
         source_id: str = "",
         global_search: bool = False,
         limit: int = 20,
@@ -591,26 +473,32 @@ class Tools:
         end_date: str = "",
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
-        __event_emitter__: Optional[Any] = None
+        __event_emitter__: Optional[Any] = None,
+        __event_call__: Optional[Any] = None
     ) -> dict:
         """
-        Recherche sémantique vectorielle dans la mémoire de travail de la session courante.
-        [INFO SNR] Le Modèle DOIT distinguer : 1) RAG Éphémère (Session courante) = Flux chronologique continu, mémoire de travail (infini). 2) Méta-Artéfacts = Faits persistants inter-sessions soumis au TTL.
-        Renvoie les extraits textuels complets correspondant au concept recherché.
+        Interface d'exploration de la mémoire vectorielle de travail (RAG de Session).
+        Adapte l'extraction pour protéger le budget contextuel selon la présence du paramètre 'query'.
 
-        :param query: Obligatoire. Concept textuel ou mots-clés de la recherche sémantique.
-        :param source_id: Optionnel. UUID de la source pour restreindre la recherche à un document ou une session spécifique.
-        :param global_search: Optionnel. True pour étendre la recherche à toutes les sessions de l'Utilisateur. Défaut: False.
+        Règle de résolution :
+        - Mode "Recherche Sémantique" (query renseigné) : Extrait les fragments textuels complets correspondant au concept ciblé.
+        - Mode "Index des Sources" (query omis) : Cartographie la session. Renvoie la liste des sources actives (Fichiers, URLs) avec un simple aperçu tronqué (60 caractères) pour ne pas saturer le contexte.
+
+        :param query: Optionnel. Concept ciblé. Omettre pour lister simplement les sources indexées.
+        :param source_id: Optionnel. UUID de la source pour restreindre la recherche.
+        :param global_search: Optionnel. True pour étendre la recherche ou le listing à TOUTES les sessions de l'Utilisateur. Défaut: False (restreint au chat courant).
         :param limit: Optionnel. Nombre maximum de résultats. Défaut: 20.
         :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
         :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
         """
-        events = EchoEvents(__event_emitter__)
+        events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
+        scope = "globale" if global_search else "locale"
+
         try:
             from echo_constants import COLLECTION_SESSION_RAG
             async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
@@ -628,45 +516,93 @@ class Tools:
                     if ts_end: rng["lte"] = ts_end
                     must_filters.append({"key": "timestamp", "range": rng})
 
-                # RECHERCHE SÉMANTIQUE
-                await events.status(f"🧠 Recherche dans la Mémoire Vectorisée de Session ({source_id})...")
-                vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)
-                if not vector:
-                    return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                if query:
+                    # RECHERCHE SÉMANTIQUE
+                    await events.status(f"🧠 Recherche dans la Mémoire Vectorisée de Session ({scope})...")
+                    vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)
+                    if not vector:
+                        return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-                search_payload = {
-                    "vector": vector, "limit": limit, "with_payload": True,
-                    "filter": {
-                        "must": must_filters
+                    search_payload = {
+                        "vector": vector, "limit": limit, "with_payload": True,
+                        "filter": {
+                            "must": must_filters
+                        }
                     }
-                }
-                resp = await client.post(
-                    f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/search",
-                    json=search_payload
-                )
-                
-                if resp.status_code == 404:
-                    return wrap_tool_output(text=f"❌ Erreur: Aucune donnée indexée pour la source {source_id}.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-                if resp.status_code != 200:
-                    return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-                
-                results = resp.json().get("result", [])
+                    resp = await client.post(
+                        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/search",
+                        json=search_payload
+                    )
+                    
+                    if resp.status_code == 404:
+                        return wrap_tool_output(text=f"❌ Erreur: Aucune donnée indexée.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    if resp.status_code != 200:
+                        return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    
+                    results = resp.json().get("result", [])
 
-            # Tri chronologique inverse (le plus récent en premier)
-            results.sort(key=lambda x: x["payload"].get("timestamp", 0), reverse=True)
+                    # Tri chronologique inverse (le plus récent en premier)
+                    results.sort(key=lambda x: x["payload"].get("timestamp", 0), reverse=True)
 
-            if not results:
-                return wrap_tool_output(text="Aucune information trouvée dans cette source.", status={"status": "success", "results": []}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    if not results:
+                        return wrap_tool_output(text="Aucune information trouvée.", status={"status": "success", "results": []}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-            md = f"### 📖 Extraits trouvés dans `{source_id}`\n\n"
-            for r in results:
-                if r["score"] < self.valves.SCORE_THRESHOLD:
-                    continue
-                p = r["payload"]
-                md += f"**Extrait (Score: {r['score']:.2f})**\n> {p.get('text', '')}\n\n"
+                    md = f"### 📖 Extraits RAG trouvés ({scope})\n\n"
+                    for r in results:
+                        if r["score"] < self.valves.SCORE_THRESHOLD:
+                            continue
+                        p = r["payload"]
+                        src = p.get('source_id', 'Inconnu')
+                        md += f"**Source `{src}` (Score: {r['score']:.2f})**\n> {p.get('text', '')}\n\n"
 
-            await events.status("🧠 Recherche RAG terminée.", done=True)
-            return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    await events.status("🧠 Recherche RAG terminée.", done=True)
+                    return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+                else:
+                    # LECTURE INDEX (Anciennement consult_session_context)
+                    await events.status(f"🧠 Cartographie du RAG Session ({scope})...")
+                    scroll_payload = {
+                        "filter": {"must": must_filters},
+                        "limit": limit,
+                        "with_payload": ["source_id", "tags", "timestamp", "text"]
+                    }
+                    resp = await client.post(
+                        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/scroll",
+                        json=scroll_payload
+                    )
+                    if resp.status_code != 200:
+                        return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+                    points = resp.json().get("result", {}).get("points", [])
+                    if not points:
+                        return wrap_tool_output(text="Aucune ressource indexée trouvée.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+                    sources = {}
+                    tags = set()
+                    for p in points:
+                        pay = p.get("payload", {})
+                        if "source_id" in pay:
+                            sid = pay["source_id"]
+                            ts = pay.get("timestamp", 0)
+                            if sid not in sources or ts > sources[sid]["timestamp"]:
+                                sources[sid] = {
+                                    "timestamp": ts,
+                                    "preview": pay.get("text", "")[:60].replace("\n", " ") + "..."
+                                }
+                        pay_tags = pay.get("tags") or []
+                        for t in pay_tags:
+                            tags.add(t)
+
+                    md = f"### 🧠 Cartographie du RAG Session ({scope})\n\n"
+                    md += f"**Sources disponibles (avec aperçu) :**\n"
+                    sorted_sources = sorted(sources.items(), key=lambda x: x[1]["timestamp"], reverse=True)
+                    for sid, data in sorted_sources:
+                        ts_str = datetime.fromtimestamp(data["timestamp"], timezone.utc).strftime('%Y-%m-%d %H:%M UTC') if data["timestamp"] else "Inconnu"
+                        md += f"- **`{sid}`** [{ts_str}] : _{data['preview']}_\n"
+                    md += f"\n**Tags détectés :** `{', '.join(sorted(tags))}`"
+                    
+                    await events.status("🧠 Cartographie terminée.", done=True)
+                    return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

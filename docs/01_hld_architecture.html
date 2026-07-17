@@ -448,7 +448,7 @@ flowchart TD
     <div class="grid-container">
       <div class="card">
         <h3>🧠 RAG Organique (<code>echo_meta_artifacts</code>)</h3>
-        <p><strong>Outils :</strong> <code>update_meta_artifact</code>, <code>search_meta_artifacts</code>, <code>consult_meta_artifacts</code>, <code>delete_meta_artifact_item</code></p>
+        <p><strong>Outils :</strong> <code>update_meta_artifact</code>, <code>search_meta_artifacts</code>, <code>delete_meta_artifact_item</code></p>
         <p><strong>Scope :</strong> <code>user_id</code> - permanent, survit aux sessions.</p>
         <p><strong>Usage :</strong> Préférences, contraintes techniques, décisions structurelles, règles personnelles.</p>
         <p>
@@ -460,7 +460,7 @@ flowchart TD
       </div>
       <div class="card">
         <h3>⏱️ Mémoire Vectorisée de Session (<code>echo_session_rag</code>)</h3>
-        <p><strong>Outils :</strong> <code>save_session_context</code>, <code>search_session_context</code></p>
+        <p><strong>Outils :</strong> <code>save_session_context</code>, <code>search_session_context</code>, <code>delete_session_context_source</code></p>
         <p><strong>Scope :</strong> <code>user_id + chat_id + source_id</code> - session courante uniquement.</p>
         <p><strong>Usage :</strong> Distillats de fichiers volumineux, résultats de navigation web, données intermédiaires d'analyse.</p>
         <p><strong>Purge :</strong> Automatique en fin de session par l'Admin Manager (suppression filtrée par <code>chat_id</code>).</p>
@@ -759,7 +759,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

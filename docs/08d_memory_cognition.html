@@ -41,11 +41,7 @@
         </tr>
         <tr>
           <td><code>search_meta_artifacts(query, artifact_name, limit, start_date, end_date)</code></td>
-          <td>Recherche sémantique dans <code>echo_meta_artifacts</code>. <em>Over-fetch</em> ×3 puis reranking par <code>cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code>. Paramètre <code>limit</code> (défaut 20). Filtres temporels disponibles. Horodatage UTC inclus dans les retours.</td>
-        </tr>
-        <tr>
-          <td><code>consult_meta_artifacts(artifact_name, limit, start_date, end_date)</code></td>
-          <td>Liste les thèmes mémorisés avec filtres temporels (<code>start_date/end_date</code>). Utile avant un <code>delete_meta_artifact_item</code> pour retrouver l'identifiant exact.</td>
+          <td>Outil hybride : Recherche sémantique ciblée (si <code>query</code> présent) avec <em>Over-fetch</em> ×3 et reranking pondéré (<code>cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code>), ou <strong>Lecture d'Index/Cartographie</strong> globale (si <code>query</code> absent) pour lister les thèmes mémorisés. Filtres temporels disponibles.</td>
         </tr>
         <tr>
           <td><code>delete_meta_artifact_item(memory_id)</code></td>
@@ -72,11 +68,7 @@
         </tr>
         <tr>
           <td><code>search_session_context(query, source_id, global_search, limit, start_date, end_date)</code></td>
-          <td>Recherche sémantique dans la partition du <code>source_id</code> courant ou globalement avec l'option <code>global_search</code>. Retourne les chunks les plus pertinents au-dessus du <code>SCORE_THRESHOLD</code> (défaut 0.45).</td>
-        </tr>
-        <tr>
-          <td><code>consult_session_context(limit, start_date, end_date, global_search)</code></td>
-          <td>Aspiration exhaustive de la Mémoire Vectorisée de Session avec filtrage par date.</td>
+          <td>Outil hybride : Recherche RAG sémantique dans la partition du <code>source_id</code> ou globalement, OU <strong>Cartographie globale</strong> des sources inter-sessions (si <code>query</code> absent) retournant les sources disponibles, leurs timestamps et tags.</td>
         </tr>
         <tr>
           <td><code>delete_session_context_source(source_id)</code></td>
@@ -140,7 +132,7 @@
         <div class="mermaid">
 flowchart TD
   O["Outils Cognitifs<br/>(memory_and_rag_tool)"] --> |update_meta_artifact<br/>search_meta_artifacts| COL1
-  O --> |save_session_context<br/>search_session_context<br/>consult_session_context| COL2
+  O --> |save_session_context<br/>search_session_context<br/>delete_session_context_source| COL2
 
   subgraph Q["Qdrant Engine (Port 6333)"]
     COL1[("🧠 echo_meta_artifacts<br/>Mémoire long terme<br/>TTL, Consolidation, Importance")]
@@ -251,7 +243,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>
