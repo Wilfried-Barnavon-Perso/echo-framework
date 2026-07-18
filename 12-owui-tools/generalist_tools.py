@@ -1,12 +1,13 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.1
+version: 1.2
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
 # 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
+# 1.2: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -35,7 +36,8 @@ class Tools:
         seconds: int,
         __user__: dict = {},
         __event_emitter__: Any = None,
-        __event_call__: Any = None
+        __event_call__: Any = None,
+        __metadata__: dict = {},
     ) -> str:
         """
         Met en pause l'exécution du Modèle. Strictement limité à 1 seule tentative pour éviter les boucles infinies.

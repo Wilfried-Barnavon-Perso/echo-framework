@@ -1,7 +1,7 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.14
+version: 1.16
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -11,18 +11,18 @@ description: Composant système interne : ECHO Sovereign Web Search.
 # 1.12: Optim - Rééquilibrage cognitif des docstrings de recherche pour prioriser delegate_deep_research sur les requêtes complexes.
 # 1.11: Optim - Ajout de la suggestion de changement de méthode en cas de blocage SearXNG.
 # 1.10: Optim - Intégration sous contrainte de delegate_web_browsing dans le Deep Research Agent.
+# 1.15: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
+# 1.16: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import httpx
 import sys
-import os
-import re
 import uuid
-from typing import Optional, Any, List, Literal
+from typing import Optional, Any, Literal
 from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoAuth, EchoStateManager
+from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager
 from echo_constants import ECHO_USER_AGENT, ECHO_SEARXNG_BASE_URL, DEEP_RESEARCH_MAX_CALLS_DEFAULT
 
 class Tools:
@@ -44,7 +44,8 @@ class Tools:
         self,
         query: str,
         __user__: dict = {},
-        __event_emitter__: Any = None
+        __event_emitter__: Any = None,
+        __metadata__: dict = {},
     ) -> str:
         """
         Permet au Modèle d'obtenir des définitions de concepts, biographies ou dates via DuckDuckGo (type Wikipédia). Actualité ou événements récents proscrits. Les requêtes doivent utiliser des mots-clés stricts.
@@ -139,7 +140,7 @@ class Tools:
                     engine = r.get("engine", "web")
                     formatted_results.append(f"{i}. **[{title}]({link})** (via {engine})\n   _{snippet}_")
                 
-                output = f"## 🔎 Résultats de recherche Web\n\n" + "\n\n".join(formatted_results)
+                output = "## 🔎 Résultats de recherche Web\n\n" + "\n\n".join(formatted_results)
                 
                 # Capture des suggestions de recherche si présentes (masqué pour le modèle principal pour éviter les boucles)
                 suggestions = data.get("suggestions", [])

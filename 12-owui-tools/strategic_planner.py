@@ -1,7 +1,7 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.4
+version: 1.5
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -19,26 +19,23 @@ description: Composant système interne : ECHO Strategic Planner.
 # 1.3: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du
 # dossier plans/. save_plan_record → save_resource. Suppression _get_plan_dir
 # et _get_plan_path.
+# 1.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import sys
-import os
 import re
-import glob
 import time
 import unicodedata
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
-from typing import Optional, Any, Literal
+from typing import Optional, Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager, clamp_model
+from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager
 from echo_codex_git import CodexRepo
 from echo_constants import (
-    MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING,
-    TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
-    THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
-    PLAN_STATUS, PLAN_TASK_STATUS, PLAN_EXECUTABLE_STATUSES,
+    TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT, THINKING_LEVEL_PRO,
+    THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE, PLAN_STATUS,
     PLANNER_MODEL_BUILD, PLANNER_MODEL_UPDATE,
 )
 

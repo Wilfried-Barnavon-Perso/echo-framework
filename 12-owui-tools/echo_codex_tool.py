@@ -1,7 +1,7 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 1.6
+version: 1.7
 description: Composant système interne : ECHO Codex Editor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -12,24 +12,23 @@ description: Composant système interne : ECHO Codex Editor.
 # 1.3: Restauration des descriptions de paramètres sémantiques pour create_codex.
 # 1.2: Registre Unifié V2 — save_codex_record → save_resource,
 # delete_codex_record → delete_resource.
+# 1.7: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 # ECHO CONFIG NAME : ECHO Codex
 
 import sys
-import orjson as json
 from pydantic import BaseModel, Field
-from typing import Optional, Any, List
+from typing import Optional, Any
 
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import (
     wrap_tool_output, wrap_cascade_output, EchoEvents,
-    EchoGeminiClient, EchoStateManager, split_thought_process,
+    EchoGeminiClient, EchoStateManager,
 )
 from echo_constants import (
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
-    CODEX_EDIT_SYSTEM_PROMPT, CODEX_SUMMARIZE_PROMPT, CODEX_DEFAULT_LANG,
-    FILE_INGESTION_STATUS
+    ECHO_API_MAX_RETRIES, TEMP_DEFAULT,
+    TOP_P_DEFAULT, MAX_TOKENS_DEFAULT, CODEX_EDIT_SYSTEM_PROMPT,
+    CODEX_SUMMARIZE_PROMPT, FILE_INGESTION_STATUS
 )
 from echo_codex_git import CodexRepo
 
@@ -364,7 +363,7 @@ class Tools:
         if not files:
             return wrap_tool_output(text="Le Codex de cette conversation est vide.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        lines = [f"| Fichier | Langage | Lignes | Taille |"]
+        lines = ["| Fichier | Langage | Lignes | Taille |"]
         lines.append("|---|---|---|---|")
         for f in files:
             size_kb = f["size_bytes"] / 1024

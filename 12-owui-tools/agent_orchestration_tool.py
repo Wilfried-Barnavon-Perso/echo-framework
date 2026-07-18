@@ -1,7 +1,7 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.23
+version: 5.25
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -11,23 +11,23 @@ description: Composant système interne : ECHO Agent Orchestration.
 # 5.21: Ajout du cas d'usage et de l'objectif dans la docstring de consult_supervised_workers.
 # 5.20: Ajout du cas d'usage (sujets complexes/multidimensionnels) dans la docstring de consult_council.
 # 5.19: council_id obligatoire, limite [p*r] via UserValve COUNCIL_MAX_PR_COMPLEXITY.
+# 5.24: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
+# 5.25: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import sys
 import orjson as json
 import asyncio
 import uuid
-import time
 import datetime
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal, Tuple
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager
+from echo_utils import wrap_tool_output, EchoEvents, EchoGeminiClient, EchoStateManager
 from echo_constants import (
-    MODEL_LITE, MODEL_FLASH, MODEL_PRO,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    TEMP_DEFAULT, TOP_P_DEFAULT, TEMP_DISTILLATION, TOP_P_DISTILLATION,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, TEMP_DISTILLATION,
+    TOP_P_DISTILLATION,
 )
 from echo_skills import get_all_skills, get_skill_content, save_skill, parse_skill_metadata
 
@@ -692,6 +692,7 @@ class Tools:
         self,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
+        __metadata__: dict = {},
     ) -> str:
         """
         Liste les conseils d'experts actifs (non clôturés) pour ce chat.
@@ -730,6 +731,7 @@ class Tools:
         council_id: str,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
+        __metadata__: dict = {},
     ) -> str:
         """
         Ferme définitivement un conseil et purge toutes les sessions de ses participants.
@@ -760,6 +762,7 @@ class Tools:
         self,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
+        __metadata__: dict = {},
     ) -> str:
         """
         Liste les tâches supervisées actives pour ce chat.
@@ -797,6 +800,7 @@ class Tools:
         task_id: str,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
+        __metadata__: dict = {},
     ) -> str:
         """
         Ferme définitivement une tâche supervisée et purge toutes les sessions de ses workers.

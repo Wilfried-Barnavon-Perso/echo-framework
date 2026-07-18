@@ -1,12 +1,14 @@
 """
 title: ECHO Universal API Client
 author: Wilfried BARNAVON
-version: 1.5
+version: 1.7
 description: Composant système interne : ECHO Universal API Client.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
 # 1.4: Switched complex objects to JSON strings to avoid 400 errors with strict Gemini REST schemas.
+# 1.6: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
+# 1.7: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import requests
 import orjson as json
@@ -14,8 +16,7 @@ import sys
 import socket
 import ipaddress
 from urllib.parse import urlparse
-from pydantic import BaseModel, Field
-from typing import Dict, Optional, Any, Literal
+from typing import Optional, Literal
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
@@ -56,6 +57,8 @@ class Tools:
         method: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] = "GET",
         headers: Optional[dict] = None,
         body: Optional[dict] = None,
+        __user__: dict = {},
+        __metadata__: dict = {},
     ) -> str:
         """
         Requête HTTP universelle. Optionnel : headers, body.

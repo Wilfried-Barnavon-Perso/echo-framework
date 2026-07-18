@@ -1,7 +1,7 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 13.4
+version: 13.5
 description: Composant système interne : ECHO Maps Grounding.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -10,10 +10,10 @@ description: Composant système interne : ECHO Maps Grounding.
 # 13.3: Ajout argument optionnel print_map et lecture de _echo_suppress_map_ui pour blocage du rendu UI.
 # 13.2: Fix commentaires : MODEL_LITE est le plancher de la cascade (pas de fallback
 # descendant possible). Aucune cascade automatique vers un modèle inférieur.
+# 13.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
-import orjson as json
 import sys
-from typing import Optional, Any, Tuple, Union
+from typing import Any, Tuple, Union
 from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
 

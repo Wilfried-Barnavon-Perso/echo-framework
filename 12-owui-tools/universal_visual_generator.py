@@ -1,7 +1,7 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.9
+version: 5.12
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -17,14 +17,16 @@ description: Composant système interne : ECHO Visual Engine.
 # - markmap (v0.17) : Markdown hiérarchique
 # - leaflet (v1.9) : JSON {"center": [lat,lng], "zoom": int, "markers": [{"lat": float, "lng": float, "popup": "html"}]}
 # - vega (v5), cytoscape, wavedrom, timeline, aframe, etc.
+# 5.10: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 5.11: Nettoyage PEP8 : F841 (Variables locales inutilisées préfixées par _ ou retirées).
+# 5.12: Suppression d'assignations obsolètes.
 
-import os
 import sys
 import re
 import base64
 import orjson as json
 from typing import Optional, Any, Tuple, Union, Literal, List
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 class LeafletMarker(BaseModel):
     lat: float
@@ -39,10 +41,9 @@ from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, wrap_cascade_output, EchoGeminiClient, clamp_model
+from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_ui import EchoUI
 from echo_constants import (
-    MODEL_FLASH, MODEL_ROUTING,
     TEMP_DEFAULT, TOP_P_DEFAULT
 )
 
@@ -78,7 +79,6 @@ class Tools:
     events = EchoEvents(__event_emitter__, __event_call__)
     await events.status(f"🧠 Rendu Visuel : Orchestration {moteur or 'Auto'}...")
     user_id = __user__.get("id", "system") if __user__ else "system"
-    target_model = niveau_cognitif
 
     # 1. Manuel Technique de l'Architecte
     directive_moteur = f"Le Modèle DOIT impérativement utiliser le moteur : '{moteur}'." if moteur else "Le Modèle DOIT choisir le moteur le plus adapté."

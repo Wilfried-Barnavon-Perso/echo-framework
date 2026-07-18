@@ -1,7 +1,7 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.18
+version: 2.20
 description: Composant système interne : ECHO Memory & RAG Tool.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -11,11 +11,11 @@ description: Composant système interne : ECHO Memory & RAG Tool.
 # 2.16: Fix Gemini API 400 Bad Request sur l'enum vide de l'artifact_name.
 # 2.10: Migration complète vers la nomenclature Méta-Artéfacts et ajout du drapeau global_search.
 # 1.2: Ajout forget_memory. 1.3: Mémoire Vectorisée de Session. 1.4: Mise à jour version. 1.5: Reranking par importance (MEMORY_IMPORTANCE_WEIGHTS) dans recall_memories.
+# 2.19: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
+# 2.20: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
-from typing import Optional, List, Any, Dict, Literal
+from typing import Optional, Any, Literal
 from datetime import datetime, timezone
-import orjson as json
-import os
 import sys
 import logging
 import time
@@ -27,7 +27,6 @@ from pydantic import BaseModel, Field
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_constants import (
-    MODEL_DISTILLATION, MODEL_EMBEDDING,
     COLLECTION_META_ARTIFACTS, EMBEDDING_DIM,
     MEMORY_IMPORTANCE_WEIGHTS, MEMORY_IMPORTANCE_LABELS,
     ECHO_QDRANT_URL
@@ -323,7 +322,8 @@ class Tools:
         self,
         memory_id: str,
         __user__: Optional[dict] = None,
-        __event_emitter__: Optional[Any] = None
+        __event_emitter__: Optional[Any] = None,
+        __metadata__: dict = {},
     ) -> dict:
         """Supprime une information obsolète ou erronée d'un Méta-Artéfact par son memory_id."""
         events = EchoEvents(__event_emitter__)
@@ -535,7 +535,7 @@ class Tools:
                     )
                     
                     if resp.status_code == 404:
-                        return wrap_tool_output(text=f"❌ Erreur: Aucune donnée indexée.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return wrap_tool_output(text="❌ Erreur: Aucune donnée indexée.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                     if resp.status_code != 200:
                         return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                     
@@ -594,7 +594,7 @@ class Tools:
                             tags.add(t)
 
                     md = f"### 🧠 Cartographie du RAG Session ({scope})\n\n"
-                    md += f"**Sources disponibles (avec aperçu) :**\n"
+                    md += "**Sources disponibles (avec aperçu) :**\n"
                     sorted_sources = sorted(sources.items(), key=lambda x: x[1]["timestamp"], reverse=True)
                     for sid, data in sorted_sources:
                         ts_str = datetime.fromtimestamp(data["timestamp"], timezone.utc).strftime('%Y-%m-%d %H:%M UTC') if data["timestamp"] else "Inconnu"

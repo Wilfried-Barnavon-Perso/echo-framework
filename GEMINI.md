@@ -2,7 +2,7 @@
 - **Terminal :** PowerShell (Admin requis pour Hyper-V).
 - **Infrastructure Cible :** Machine Virtuelle Ubuntu 24.04 sur Hyper-V (Allouée à 8Go RAM et 70Go VHD dynamiques).
 - **Orchestration :** Docker Compose (Standardisé version 9.3+ avec WAF ModSecurity granulaire).
-- **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `install-hyperv.ps1` (injection ZIP via disque Seed), `sync-echo.sh` (distribution), et `upgrade-echo.sh` (mise à niveau majeure de l'infrastructure).
+- **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `install-hyperv.ps1` (injection ZIP via disque Seed, pointant désormais par défaut sur la branche `dev` en version 5.147.43), `sync-echo.sh` (distribution), et `upgrade-echo.sh` (mise à niveau majeure de l'infrastructure).
 
 ## 🏗️ Architecture V5 : Le Triptyque Fondamental
 
@@ -110,6 +110,8 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **API Resilience :** `EchoGeminiClient` gère le multi-provider, le basculement sur erreur 429/500 et le backoff exponentiel.
 - **Politique Modèle Centralisée :** `call_cascade()` dans `echo_utils.py` gère le clamping (politique Pipe via UserValve `MODEL_SELECTION`), l'injection `thinkingConfig` automatique, la cascade descendante PRO→FLASH→LITE et la signalisation (🔒 clamping, ⚡ cascade, ❌ épuisement). `wrap_cascade_output()` rend le modèle effectif visible au LLM orchestrateur.
 - **Règle d'Énonciation :** Le Kernel statique et les docstrings des outils doivent impérativement adopter un ton impersonnel (ex: "Le Modèle doit", "Permet au Modèle de"). L'utilisation de la 2ème personne ("Tu es...", "Tu DOIS") est STRICTEMENT réservée aux prompts internes (`system_prompt`) destinés aux sous-agents pour définir leur persona.
+- **OWUI Injection & PEP8 :** L'intégralité des outils de l'Arsenal doit strictement déclarer les arguments `__user__` et `__metadata__` dans leur interface pour garantir l'injection native du contexte par Open WebUI, tout en observant un code exempt de variables/imports inutilisés (norme PEP8).
+- **OWUI Tool Multiparts :** Les outils générant ou retournant des médias doivent encapsuler les fichiers dans la réponse via le mot-clé standardisé `echo_tool_multiparts` (remplaçant `nouveaux_fichiers`) pour assurer le rendu multimodal natif.
 
 ## 📚 Documentation Technique
 
@@ -121,4 +123,4 @@ Démarrage ordonné via `healthcheck` + `depends_on: condition: service_healthy`
 - **Auto-Hébergement :** Les données sensibles (clés API dans l'Espace Personnel) ne sortent jamais de l'infrastructure Docker.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.192.14*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.192.28*

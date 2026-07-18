@@ -1,7 +1,7 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.13
+version: 1.15
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -11,10 +11,10 @@ description: Composant système interne : ECHO Agent Engine.
 # 1.11: Correction injection PRAF (évite doublon si héritage du Kernel). Suppression acronyme PRAF.
 # 1.10: Consolidation de l'injection universelle (date + PRAF ajusté) via <directives_globales>.
 # 1.9: Injection universelle du contexte temporel (date iso) à la fin du base_system des agents délégués.
+# 1.14: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
+# 1.15: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import sys
-import orjson as json
-import asyncio
 import uuid
 import re
 import time
@@ -24,17 +24,16 @@ from typing import Optional, Any, List
 
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import (
-    wrap_tool_output, wrap_cascade_output,
-    EchoEvents, EchoGeminiClient, EchoStateManager,
-    clamp_model, estimate_token_size, smart_truncate_history
+    wrap_tool_output, EchoEvents,
+    EchoGeminiClient, EchoStateManager, clamp_model,
+    estimate_token_size, smart_truncate_history
 )
 from echo_constants import (
-    MODEL_LITE, MODEL_FLASH, MODEL_PRO,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
-    TEMP_DISTILLATION, TOP_P_DISTILLATION,
-    DELEGATE_AGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX,
-    CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, TEMP_DEFAULT,
+    TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
+    TEMP_DISTILLATION, TOP_P_DISTILLATION, DELEGATE_AGENT_BLACKLIST,
+    DELEGATE_SYSTEM_APPENDIX, CONTEXT_TRUNCATE_THRESHOLD,
+    ECHO_MAX_CONTEXT_SIZE
 )
 from echo_skills import get_skill_content, parse_skill_metadata
 
@@ -297,6 +296,7 @@ class Tools:
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
         __event_emitter__: Any = None,
+        __metadata__: dict = {},
     ) -> str:
         """Liste des sessions d'agents actives."""
         user_id = (__user__ or {}).get("id", "system")
@@ -346,6 +346,7 @@ class Tools:
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
         __event_emitter__: Any = None,
+        __metadata__: dict = {},
     ) -> str:
         """Ferme définitivement une session d'agent et purge son historique (irréversible).
         :param sub_sid: Identifiant strict de la session.

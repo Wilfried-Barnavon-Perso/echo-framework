@@ -1,7 +1,7 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 6.3
+version: 6.5
 description: Composant système interne : ECHO Python Code Executor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -10,14 +10,15 @@ description: Composant système interne : ECHO Python Code Executor.
 # 6.1: Alignement du status sur le standard wrap_tool_output ECHO.
 # 6.2: Correction d'un bug d'import (ECHO_PYTHON_WORKER_URL) et unbound local error (text_out).
 # 6.3: Nettoyage sémantique de la docstring (Retrait de la mention PRAF).
+# 6.4: Ajout de l'argument __metadata__ dans l'interface de l'outil pour assurer la compatibilité OWUI.
+# 6.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
 
 import requests
-import orjson as json
 import sys
 from pydantic import BaseModel, Field
-from typing import Optional, Any
+from typing import Any
 
 
 # Importation ECHO Standard
@@ -37,7 +38,8 @@ class Tools:
         code: str,
         __user__: dict = {},
         __event_emitter__: Any = None,
-        __event_call__: Any = None
+        __event_call__: Any = None,
+        __metadata__: dict = {}
     ) -> str:
         """Exécution isolée de code Python (Worker distant). Idéal pour validation analytique (math, dates, data). Aucun accès direct aux fichiers locaux (injecter les données textuellement). IMPLIQUE Python 3."""
         events = EchoEvents(__event_emitter__, __event_call__)

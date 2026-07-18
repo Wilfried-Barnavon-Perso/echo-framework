@@ -1,7 +1,7 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.14
+version: 11.21
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -11,6 +11,13 @@ description: Composant système interne : ECHO Navigation Engine.
 # 11.12: Optim - Ajout de la règle interdisant explicitement l'usage des moteurs de recherche généralistes au niveau du navigateur autonome.
 # 11.11: Optim - Autorisation du Parallel Function Calling dans les instructions pour accélérer la perception (règle 1) et les actions (règle 3).
 # 11.10: Fix - Ajout de la Valve PRUNE_CONTENT_THRESHOLD pour configurer le seuil d'élagage dynamique du contexte.
+# 11.15: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 11.16: Nettoyage PEP8 : F841 (Variables locales inutilisées préfixées par _ ou retirées).
+# 11.17: Suppression d'assignations obsolètes.
+# 11.18: Ajout de **kwargs à get_browser_frames_history pour ignorer les arguments hallucinés.
+# 11.19: Correction de l'appel wrap_tool_output (nouveaux_fichiers) et retrait de **kwargs.
+# 11.20: Correction du bug EchoStateManager: passage de chat_id manquant.
+# 11.21: Correction architecturale: injection des images via echo_tool_multiparts.
 
 import os
 import time
@@ -20,13 +27,13 @@ import uuid
 import urllib.parse
 import pybase64 as base64
 from pydantic import BaseModel, Field
-from typing import Optional, Literal, Dict, Any, List
+from typing import Optional, Literal, Any
 
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, clamp_model, get_echo_session_path, estimate_token_size, smart_truncate_history
 from echo_ui import EchoUI
 from echo_browser_lib import EchoBrowserLib, BROWSER_TOOLS_SCHEMA, req_to_browser
-from echo_constants import FILE_INGESTION_STATUS, CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
+from echo_constants import FILE_INGESTION_STATUS, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
 
 async def _verify_engine_status(timeout: int, chat_id: str, user_id: str, u_valves: Any, events: EchoEvents) -> bool:
     res = await req_to_browser(timeout, "/action", {"session_id": chat_id, "action": "ping"}, user_id)
@@ -60,7 +67,7 @@ async def _deploy_navigation_monitor(res_view: dict, chat_id: str, uid: str, u_v
                 status=FILE_INGESTION_STATUS['INDEXED'], mime='image/png',
                 storage_path=filepath
             )
-        except Exception as e:
+        except Exception:
             pass
 
     if not getattr(u_valves, 'SHOW_BROWSER_HUD', True) or not events:
@@ -618,12 +625,11 @@ class Tools:
         Consultation de l'historique des captures d'écran (Vision multimodale).
         """
         import orjson as json
-        chat_id = __metadata__.get("chat_id", "default_session")
+        chat_id = (__metadata__ or {}).get("chat_id")
         uid = __user__.get("id", "anonymous")
-        state_manager = EchoStateManager(user_id=uid)
+        state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
         try:
             conn = state_manager._get_connection()
-            cursor = conn.cursor()
             resources = state_manager.get_resources(resource_type='media')
             # Filtrer uniquement les captures de navigation web (ID pattern U_*_C_*_T_*)
             nav_resources = [r for r in resources if r['id'].startswith('U_') and '_C_' in r['id'] and '_T_' in r['id']]
@@ -635,6 +641,6 @@ class Tools:
                 history.append({"file_id": r['id'], "date": dt, "frame": r['name']})
                 nouveaux.append({"nom": r['name'], "id": r['id'], "mime": r.get('mime') or 'image/png', "statut": r['status']})
 
-            return wrap_tool_output(text=json.dumps(history, option=json.OPT_INDENT_2).decode('utf-8'), status={"status": "success"}, nouveaux_fichiers=nouveaux, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=json.dumps(history, option=json.OPT_INDENT_2).decode('utf-8'), status={"status": "success"}, echo_tool_multiparts=nouveaux, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur: {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

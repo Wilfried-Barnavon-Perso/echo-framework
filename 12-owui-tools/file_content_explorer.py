@@ -1,7 +1,7 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.25
+version: 5.109.26
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -11,17 +11,16 @@ description: Composant système interne : ECHO Explorateur de l'Espace Personnel
 # 5.109.17: Suppression de la classe UserValves vide pour éviter le bug UI Open WebUI (Aucune vanne trouvée).
 # 5.109.16: Transformation de show_image_to_user en Sonde Visuelle pour les URL distantes (3 états: success, warning, error). 5.109.15: Délégation des URLs distantes au Markdown, WebPlayer limité au Base64 local. 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade(). 5.109.12: Injection __metadata__ et chat_id pour respect isolation fichiers par session. 5.109.13: Fix hallucination ID fichiers via docstring explicite et résolution résiliente. 5.109.14: Registre Unifié V2 — mark_processed → save_resource.
 # 5.109.18: Suppression de download_from_url (redondant, court-circuitage Registre V2).
+# 5.109.26: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import os
 import sys
 import base64
 import httpx
-import orjson as json
 import mimetypes
 import hashlib
 import asyncio
-from urllib.parse import urlparse, quote
-from typing import Optional, List, Dict, Any, Literal
+from typing import List, Any, Literal
 from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
@@ -29,14 +28,12 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import (
     EchoEvents, wrap_tool_output, wrap_cascade_output,
     resolve_upload_file_path, split_thought_process,
-    EchoGeminiClient, EchoStateManager, generate_echo_file_id,
-    get_stealth_headers, clamp_model
+    EchoGeminiClient, get_stealth_headers
 )
 from echo_ui import EchoUI
 from echo_constants import (
-    ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, MODEL_FLASH,
-    MODEL_ROUTING, ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    TEMP_DEFAULT, TOP_P_DEFAULT, FILE_INGESTION_STATUS,
+    ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, ECHO_API_KEY_THRESHOLD,
+    ECHO_API_MAX_RETRIES, TEMP_DEFAULT, TOP_P_DEFAULT,
     PROMPT_SENSORY_DISTILLATION
 )
 
@@ -77,7 +74,7 @@ class Tools:
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         size = os.path.getsize(fpath)
-        if byte_offset > size: return wrap_tool_output(text=f"❌ Offset invalide.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        if byte_offset > size: return wrap_tool_output(text="❌ Offset invalide.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         MAX_CHARS = self.valves.MAX_READ_SIZE_KB * 1024
         safe_name = os.path.basename(fpath)
@@ -341,7 +338,7 @@ class Tools:
                 except httpx.HTTPStatusError as e:
                     if e.response.status_code == 404:
                         return wrap_tool_output(
-                            text=f"❌ L'image n'existe pas (Erreur 404). Lien mort. Ne l'affichez pas.",
+                            text="❌ L'image n'existe pas (Erreur 404). Lien mort. Ne l'affichez pas.",
                             status={"status": "error"}
                         , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                     else:

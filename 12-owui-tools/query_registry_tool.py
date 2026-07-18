@@ -1,7 +1,7 @@
 """
 title: ECHO Resource Registry
 author: Wilfried BARNAVON
-version: 1.4
+version: 1.6
 description: Composant système interne : ECHO Resource Registry.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -12,6 +12,8 @@ description: Composant système interne : ECHO Resource Registry.
 # 1.1: Fix troncature ID UUID dans le tableau ([:20] supprimé).
 # Fix fallback partiel dans get_resource (LIKE si ID exact échoue).
 # 1.2: Suppression des Valves inutilisées (code mort).
+# 1.5: Nettoyage PEP8 : F841 (Variables locales inutilisées préfixées par _ ou retirées).
+# 1.6: Suppression d'assignations obsolètes.
 
 # ECHO CONFIG NAME : ECHO Registry
 
@@ -43,7 +45,6 @@ class Tools:
         """
         Consultation centralisée de l'état des ressources du Registre (fichiers, URLs, agents, Codex, plans, etc.). Étape de validation obligatoire AVANT toute manipulation.
         """
-        events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
         cid = (__metadata__ or {}).get("chat_id")
 
@@ -92,7 +93,7 @@ class Tools:
         lines.append(f"- **Statut** : {r['status']}")
         if r.get("mime"): lines.append(f"- **MIME** : {r['mime']}")
         if r.get("storage_path"): lines.append(f"- **Chemin** : `{r['storage_path']}`")
-        if r.get("git_tracked"): lines.append(f"- **Git** : ✅ Versionné")
+        if r.get("git_tracked"): lines.append("- **Git** : ✅ Versionné")
         if r.get("message_id"): lines.append(f"- **Message** : `{r['message_id']}`")
 
         # Métadonnées Plan

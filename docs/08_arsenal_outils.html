@@ -222,14 +222,26 @@
       </p>
     </div>
 
+
+    <h2>Standards de Développement (Injection & PEP8)</h2>
+    <p>
+      L'arsenal des outils respecte des standards de développement rigoureux :
+    </p>
+    <ul>
+      <li><strong>Injection OWUI :</strong> L'intégralité des outils doit déclarer les arguments <code>__user__</code> et <code>__metadata__</code> dans leur interface pour garantir l'injection native du contexte (identité, chat id) par Open WebUI.</li>
+      <li><strong>Conformité PEP8 :</strong> Le code doit être exempt de variables ou d'imports inutilisés pour maximiser la sécurité et l'efficacité de l'exécution.</li>
+      <li><strong>Protocoles Multiparts :</strong> Les outils retournant ou générant des médias au format image/vidéo utilisent désormais la clé standardisée <code>echo_tool_multiparts</code> (remplaçant <code>nouveaux_fichiers</code>) pour assurer un rendu multimodal sans friction.</li>
+    </ul>
+
     <div class="transition-text">
+
       <a href="07_pipe.html">&larr; Le Pipe (Cortex)</a>
       &nbsp;&nbsp;
       <a href="08a_strategic_planner.html">Planification Stratégique &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.19 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.28 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
