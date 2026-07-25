@@ -2,7 +2,7 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-Version: 1.3 (Correction 400 Bad Request, Fix OOM Texte, Alignement EMBEDDING_DIM et Robustesse Smart Context Multimédia)
+Version: 1.4 (Injection de THINKING_LEVEL_DISTILLATION pour accélérer l'analyse multimodale)
 """
 
 import os
@@ -323,9 +323,10 @@ class EchoIngestionPipeline:
     ) -> dict:
         """Pipeline RAG Streamé End-to-End."""
         from echo_constants import (
-            MODEL_DISTILLATION, TEMP_DISTILLATION, TOP_P_DISTILLATION
+            MODEL_DISTILLATION, ECHO_MODELS_REGISTRY
         )
-        from echo_utils import EchoAuth
+        import copy
+        from echo_utils import EchoAuth, EchoGeminiClient
         import json
         
         u_ctx = {"id": user_id}
@@ -367,13 +368,12 @@ class EchoIngestionPipeline:
                 "la description doit être précise, détaillée, complète, couvrant autant, le textuel, le visuel que l'audio, et parfaitement horosynchronisé."
             )
             
+            import copy
+            base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(MODEL_DISTILLATION, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
+            
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": extraction_prompt}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{filepath}___"}}]}],
-                "generationConfig": {
-                    "temperature": TEMP_DISTILLATION,
-                    "topP": TOP_P_DISTILLATION,
-                    "maxOutputTokens": 65535,
-                }
+                "generationConfig": base_gen
             }
             
             providers = await EchoAuth(user_id=user_id).get_ordered_auth_providers(user_id)

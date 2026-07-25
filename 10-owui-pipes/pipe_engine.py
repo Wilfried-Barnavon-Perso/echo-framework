@@ -39,10 +39,8 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient, _get_global_client, get_ca_model_id
 from echo_ui import EchoUI
 from echo_constants import (
-    MODEL_LITE, MODEL_FLASH, MODEL_PRO, MODEL_ROUTING, MODEL_IDENTITY,
-    TEMP_DEFAULT, TOP_P_DEFAULT,
-    THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
-    MAX_TOKENS_DEFAULT, FILE_INGESTION_STATUS,
+    MODEL_LITE, MODEL_FLASH, MODEL_PRO,
+    FILE_INGESTION_STATUS,
     CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
 )
 from echo_utils import estimate_token_size, smart_truncate_history
@@ -158,7 +156,8 @@ class Orchestrator:
 
     def _build_identity(self, m_id: str) -> str:
         if m_id == "aucun": return "aucun"
-        cat = MODEL_IDENTITY.get(m_id, "UNKNOWN")
+        from echo_constants import get_model_identity
+        cat = get_model_identity(m_id)
         return f"{cat} ({m_id})"
 
     def _mutate_context_identity(self, context: list, new_model: str, old_model: str):
@@ -438,10 +437,12 @@ class Orchestrator:
             
             if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                 system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
-                while estimate_token_size(final_contents) > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(final_contents) > 3:
+                while size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(final_contents) > 3:
                     idx = 1 if (system_parts and final_contents[0].get("role") == "system") else 0
-                    if not smart_truncate_history(final_contents, idx):
+                    removed = smart_truncate_history(final_contents, idx)
+                    if not removed:
                         break
+                    size -= removed
                 try:
                     await events.toast("🚨 Troncature active : les messages les plus anciens sont ignorés pour éviter le crash.", "error")
                 except AttributeError:
@@ -716,16 +717,23 @@ class Pipe:
         # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
         model_selection = user_valves.MODEL_SELECTION
         last_model = orch.user_data_manager.get_last_active_model()
+        from echo_constants import ECHO_MODELS_REGISTRY
         
+        # Reverse-lookup (Auto-heal SQLite)
+        if last_model and last_model not in ECHO_MODELS_REGISTRY:
+            for logical_key, config in ECHO_MODELS_REGISTRY.items():
+                if last_model in [config.get("ai_studio_id"), config.get("ca_model_id")]:
+                    last_model = logical_key
+                    break
+                    
         if model_selection in ["AUTO", "AUTO_PRO"]:
             # Plafond : AUTO → FLASH max, AUTO_PRO → PRO max
             ceiling = MODEL_PRO if model_selection == "AUTO_PRO" else MODEL_FLASH
-            if last_model and last_model in [MODEL_LITE, MODEL_FLASH, MODEL_PRO]:
-                # Clamping : le modèle repris ne doit pas dépasser le plafond de la politique
-                from echo_constants import MODEL_HIERARCHY
-                last_identity = MODEL_IDENTITY.get(last_model, "MODEL_FLASH")
-                ceiling_identity = MODEL_IDENTITY.get(ceiling, "MODEL_FLASH")
-                if MODEL_HIERARCHY.get(last_identity, 1) > MODEL_HIERARCHY.get(ceiling_identity, 1):
+            if last_model and last_model != "aucun":
+                # Clamping dynamique via la hiérarchie du SSOT
+                last_hierarchy = ECHO_MODELS_REGISTRY.get(last_model, {}).get("hierarchy", 1)
+                ceiling_hierarchy = ECHO_MODELS_REGISTRY.get(ceiling, {}).get("hierarchy", 1)
+                if last_hierarchy > ceiling_hierarchy:
                     target_model = ceiling
                 else:
                     target_model = last_model
@@ -736,8 +744,7 @@ class Pipe:
                 origine_model = "aucun"
                 await events.status(f"🧠 Initialisation de session (MODEL_LITE)...")
         else:
-            # Résolution de l'étiquette UI vers le modèle technique via le Registre Global
-            target_model = MODEL_ROUTING.get(model_selection, MODEL_LITE)
+            target_model = model_selection
             origine_model = last_model if last_model else "aucun"
             await events.status(f"Model Fixé : {target_model}")
 
@@ -770,26 +777,15 @@ class Pipe:
             resolved_sys = orch._resolve_placeholders(sys_instr_raw, target_model)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
-            # Sélection du niveau de réflexion par constante ECHO (echo_constants.py v4.8)
-            if target_model == MODEL_PRO:
-                think = THINKING_LEVEL_PRO
-            elif target_model == MODEL_LITE:
-                think = THINKING_LEVEL_LITE
-            else:
-                think = THINKING_LEVEL_FLASH
+            import copy
+            gen_config = copy.deepcopy(ECHO_MODELS_REGISTRY.get(target_model, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
+            if "thinkingConfig" in gen_config:
+                gen_config["thinkingConfig"]["includeThoughts"] = True
 
             payload = {
                 "contents": context,
                 "systemInstruction": sys_instr,
-                "generationConfig": {
-                    "temperature": TEMP_DEFAULT,
-                    "topP": TOP_P_DEFAULT,
-                    "maxOutputTokens": MAX_TOKENS_DEFAULT,
-                    "thinkingConfig": {
-                        "includeThoughts": True,
-                        "thinkingLevel": think
-                    }
-                }
+                "generationConfig": gen_config
             }
 
             tools = orch.convert_owui_tools(body.get("tools"), user_valves.MODEL_SELECTION)
@@ -800,7 +796,8 @@ class Pipe:
                 menu_escalade = ["MODEL_LITE", "MODEL_FLASH"]
                 if user_valves.MODEL_SELECTION == "AUTO_PRO":
                     menu_escalade.append("MODEL_PRO")
-                target_identity = MODEL_IDENTITY.get(target_model)
+                from echo_constants import get_model_identity
+                target_identity = get_model_identity(target_model)
                 if target_identity in menu_escalade:
                     menu_escalade.remove(target_identity)
                 
@@ -869,14 +866,14 @@ class Pipe:
                 log.error(f"[PipeEngine] Erreur API lors de l'appel Gemini: {e}")
                 # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
                 if is_auto and cascade_attempt < max_cascade_attempts:
-                    from echo_constants import MODEL_HIERARCHY
-                    # Cascade descendante : PRO → FLASH → LITE
-                    target_identity = MODEL_IDENTITY.get(target_model, "MODEL_FLASH")
+                    from echo_constants import ECHO_MODELS_REGISTRY, get_model_identity
+                    target_identity = get_model_identity(target_model)
+                    if target_identity == 'UNKNOWN': target_identity = 'MODEL_FLASH'
                     cascade_order_keys = sorted(
-                        [k for k in MODEL_HIERARCHY if MODEL_HIERARCHY[k] < MODEL_HIERARCHY.get(target_identity, 0)],
-                        key=lambda k: MODEL_HIERARCHY[k], reverse=True
+                        [k for k in ECHO_MODELS_REGISTRY if ECHO_MODELS_REGISTRY[k].get("hierarchy", 1) < ECHO_MODELS_REGISTRY.get(target_identity, {}).get("hierarchy", 0)],
+                        key=lambda k: ECHO_MODELS_REGISTRY[k].get("hierarchy", 1), reverse=True
                     )
-                    cascade_order = [MODEL_ROUTING.get(k) for k in cascade_order_keys if MODEL_ROUTING.get(k)]
+                    cascade_order = cascade_order_keys
                     if cascade_order:
                         prev_model = target_model
                         target_model = cascade_order[0]
@@ -903,7 +900,8 @@ class Pipe:
                 target_req = req.get("niveau_requis")
                 
                 # Mapping explicite pour gérer la montée ET la redescente
-                new_target = MODEL_ROUTING.get(target_req)
+                from echo_constants import get_model_identity
+                new_target = get_model_identity(target_req)
                 
                 if not new_target:
                     # Signalement d'erreur de paramètre au modèle actuel

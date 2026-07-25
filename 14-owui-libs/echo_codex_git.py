@@ -141,8 +141,16 @@ class CodexRepo:
         if not os.path.exists(self.repo_path):
             return files
 
+        try:
+            index = self.repo.open_index()
+            tracked_files = {f.decode("utf-8") for f in index}
+        except Exception:
+            tracked_files = set()
+
         for entry in os.listdir(self.repo_path):
             if entry.startswith("."):
+                continue
+            if entry not in tracked_files:
                 continue
             filepath = os.path.join(self.repo_path, entry)
             if not os.path.isfile(filepath):

@@ -43,9 +43,7 @@ from fastapi.responses import HTMLResponse
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_ui import EchoUI
-from echo_constants import (
-    TEMP_DEFAULT, TOP_P_DEFAULT
-)
+from echo_constants import get_generation_config
 
 
 
@@ -137,7 +135,7 @@ class Tools:
           payload={
               "contents": [{"role": "user", "parts": [{"text": f"INTENTION : {intention}\nDONNÉES : {donnees_contextuelles}"}]}],
               "systemInstruction": {"parts": [{"text": system_prompt}]},
-              "generationConfig": {"temperature": TEMP_DEFAULT, "topP": TOP_P_DEFAULT}
+              "generationConfig": get_generation_config("MODEL_FLASH")
           },
           user_id=user_id,
           metadata=__metadata__,

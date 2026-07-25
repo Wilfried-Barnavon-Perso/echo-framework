@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 
 sys.path.append("/app/backend/echo_libs")
 from echo_constants import (
-    TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
+    get_generation_config,
     CODEX_EDIT_SYSTEM_PROMPT, CODEX_QUICK_ACTIONS,
     FILE_INGESTION_STATUS
 )
@@ -540,11 +540,7 @@ class Action:
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": {
-                "temperature": TEMP_DEFAULT,
-                "topP": TOP_P_DEFAULT,
-                "maxOutputTokens": MAX_TOKENS_DEFAULT,
-            },
+            "generationConfig": get_generation_config("MODEL_FLASH"),
             "systemInstruction": {
                 "parts": [{"text": CODEX_EDIT_SYSTEM_PROMPT.format(filename=filename, language=lang)}]
             },

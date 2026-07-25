@@ -1,16 +1,16 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.12
+version: 8.19
 description: Composant système interne : ECHO Shared Utils (Core).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 8.12: Suppression globale de l'arrondi int(time.time()) sur les registres annexes (plans, codex) et remplacement par float(last_check) dans wrap_tool_output pour garantir une exactitude milliseconde et corriger la cascade AEC.
-# 8.11: Fix silence AEC lors des exécutions parallèles (suppression du cast int(time.time()) dans save_resource pour corriger la troncature SQLite).
-# 8.9: Augmentation du timeout de l'embedding worker à 300s, intégration d'une graine unique (unique_seed) pour index_text_in_ephemeral_rag pour éviter les collisions UUID, et migration EMBEDDING_DIM.
-# 8.8: Renforcement de la regex _prepare_zero_ram_content (hook inviolable).
-# 8.7: Fix majeur Streaming Zéro-RAM (blocage SQLite). Offload du streamer asynchrone via asyncio.to_thread pour éviter la famine de l'Event Loop.
+# 8.19: Injection de THINKING_LEVEL_DISTILLATION (LOW) dans call_distillation pour optimiser la latence.
+# 8.18: Nettoyage du code mort (original_target_model) et restauration complète de la logique de routage CA string (alignement sur a10fadf6f...).
+# 8.17: Retrait définitif de requestedModel (rejeté par le schéma JSON strict du transcodeur REST v1internal).
+# 8.16: Correction critique (400) : Déplacement de l'injection requestedModel du request_body vers wrapped_payload (racine).
+# 8.15: Restauration de l'injection requestedModel via la nouvelle clé protobuf_enum suite au besoin du routeur REST (404 Not Found avec ID entier).
 
 import copy
 import os
@@ -48,7 +48,6 @@ from echo_constants import (
     ANTIGRAVITY_DESKTOP_CLIENT_ID, ANTIGRAVITY_DESKTOP_CLIENT_SECRET, # client Desktop (1071006060591)
     GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, AGY_BASE_URL,
     GOOGLE_OAUTH_TOKEN_LIFETIME, AUTH_DATA_USER_TIER,
-    MAX_TOKENS_DEFAULT,  # Utilisé comme valeur par défaut de call_distillation.max_tokens
     CHARS_PER_TOKEN,
     ECHO_HTTP_CLIENT_TIMEOUT, ECHO_HTTP_MAX_CONNECTIONS,
     ECHO_HTTP_MAX_KEEPALIVE, ECHO_HTTP_KEEPALIVE_EXPIRY,
@@ -222,20 +221,23 @@ def estimate_token_size(content: Any) -> int:
 
     return len(str(content)) // CHARS_PER_TOKEN
 
-def smart_truncate_history(history: list, start_index: int = 0) -> bool:
+def smart_truncate_history(history: list, start_index: int = 0) -> int:
     """
     Supprime le bloc le plus ancien de l'historique de manière intelligente.
     Garantit l'intégrité structurelle des appels d'outils (functionCall + functionResponse).
-    Retourne True si un élément a été supprimé, False si l'historique est trop petit.
+    Retourne la taille en tokens des éléments supprimés (0 si rien n'a été supprimé).
     """
     if len(history) <= start_index:
-        return False
+        return 0
         
     msg = history[start_index]
     parts = msg.get("parts", [])
+    
+    removed_size = estimate_token_size(msg)
+    
     if not isinstance(parts, list):
         history.pop(start_index)
-        return True
+        return removed_size
         
     is_call = any(isinstance(p, dict) and "functionCall" in p for p in parts)
     is_response = any(isinstance(p, dict) and "functionResponse" in p for p in parts)
@@ -245,9 +247,10 @@ def smart_truncate_history(history: list, start_index: int = 0) -> bool:
     if is_call and start_index < len(history):
         next_parts = history[start_index].get("parts", [])
         if isinstance(next_parts, list) and any(isinstance(p, dict) and "functionResponse" in p for p in next_parts):
+            removed_size += estimate_token_size(history[start_index])
             history.pop(start_index)
             
-    return True
+    return removed_size
 
 def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
     if not isinstance(text, str): return text, None
@@ -410,7 +413,7 @@ def resolve_model_policy(metadata: dict, user_id: str = None) -> tuple:
     - mode "fixed" + plafond = modèle forcé
     - mode "auto"/"auto_pro" + plafond = choix libre jusqu'au plafond
     """
-    from echo_constants import MODEL_HIERARCHY
+    from echo_constants import ECHO_MODELS_REGISTRY
     selection = (metadata or {}).get("_echo_model_policy")
 
     # Fallback SQLite (echo_settings) si absent de metadata
@@ -428,7 +431,7 @@ def resolve_model_policy(metadata: dict, user_id: str = None) -> tuple:
         return ("auto", "MODEL_FLASH")
     elif selection == "AUTO_PRO":
         return ("auto_pro", "MODEL_PRO")
-    elif selection in MODEL_HIERARCHY:
+    elif selection in ECHO_MODELS_REGISTRY:
         return ("fixed", selection)
     return ("auto", "MODEL_FLASH")
 
@@ -440,14 +443,14 @@ def clamp_model(requested: str, metadata: dict, user_id: str = None) -> str:
     Mode auto → min(demandé, plafond).
     Fallback SQLite si la politique est absente de metadata.
     """
-    from echo_constants import MODEL_HIERARCHY
+    from echo_constants import ECHO_MODELS_REGISTRY
     # user_id depuis metadata si non fourni
     uid = user_id or (metadata or {}).get("user_id")
     mode, ceiling = resolve_model_policy(metadata, user_id=uid)
     if mode == "fixed":
         return ceiling
-    req_level = MODEL_HIERARCHY.get(requested, 1)
-    ceil_level = MODEL_HIERARCHY.get(ceiling, 1)
+    req_level = ECHO_MODELS_REGISTRY.get(requested, {}).get("hierarchy", 1)
+    ceil_level = ECHO_MODELS_REGISTRY.get(ceiling, {}).get("hierarchy", 1)
     return ceiling if req_level > ceil_level else requested
 
 # ==============================================================================
@@ -707,10 +710,17 @@ class EchoGeminiClient:
         is_generation = method in ["generateContent", "streamGenerateContent", "embedContent"]
         headers = await EchoGeminiClient._get_auth_headers(provider, is_agy=is_agy, is_generation=is_generation)
 
+        # --- CAS 1 & 2 : RÉSOLUTION DU MODÈLE TECHNIQUE VIA LE SSOT ---
+        from echo_constants import ECHO_MODELS_REGISTRY
+        model_config = ECHO_MODELS_REGISTRY.get(target_model)
+        if model_config:
+            target_model = model_config["ca_model_id"] if is_agy else model_config["ai_studio_id"]
+
         # --- CAS 1 : PROTOCOLE API ANTIGRAVITY (OAuth2) ---
         if is_agy:
-            # Traduction nom AI Studio → ID interne Code Assist (les namespaces sont distincts)
-            target_model = get_ca_model_id(target_model)
+            if not model_config:
+                from echo_protocol import get_ca_model_id
+                target_model = get_ca_model_id(target_model)
 
             project_id = provider.get("project_id")
             tier_id = provider.get("tier_id")
@@ -759,6 +769,7 @@ class EchoGeminiClient:
                     "toolConfig": t_conf,
                     "session_id": chat_id
                 }
+                
                 # Suppression des valeurs None (L'API Code Assist rejette les nulls explicites)
                 request_body = {k: v for k, v in request_body.items() if v is not None}
 
@@ -768,6 +779,7 @@ class EchoGeminiClient:
                 "user_prompt_id": prompt_id, # Correction : snake_case requis ici
                 "request": request_body
             }
+
             # CRÉDITS AI — opt-in via UserValve pipe (propagé __metadata__ → enable_paid_credits)
             if enable_paid_credits:
                 enabled_credits = None
@@ -847,31 +859,32 @@ class EchoGeminiClient:
         __metadata__: dict, 
         is_json: bool = True,
         parts: Optional[List[Dict]] = None,
-        max_tokens: int = MAX_TOKENS_DEFAULT,  # 65535. Surchargeable : ex. 8192 (RAG), 2048 (brief).
+        max_tokens: int = 65535,  # 65535. Surchargeable : ex. 8192 (RAG), 2048 (brief).
         target_model: Optional[str] = None
     ) -> Union[Dict, str]:
         """
         Exécute une tâche de distillation (extraction sémantique).
         Route exclusivement vers l'API Gemini (MODEL_DISTILLATION) suite à la rationalisation (suppression Gemma).
         """
-        from echo_constants import MODEL_DISTILLATION, MODEL_ROUTING, TEMP_DISTILLATION, TOP_P_DISTILLATION
+        from echo_constants import MODEL_DISTILLATION, ECHO_MODELS_REGISTRY
+        import copy
+        
         user_id = __user__.get("id", "system")
         chat_id = __metadata__.get("chat_id")
         
         # Résolution du modèle
-        actual_model = MODEL_ROUTING.get(target_model, MODEL_DISTILLATION) if target_model else MODEL_DISTILLATION
+        actual_model = target_model if target_model else MODEL_DISTILLATION
 
         # 1. Préparation du contenu
         contents = parts if parts else [{"role": "user", "parts": [{"text": prompt}]}]
 
-        # --- ROUTAGE API (Gemini 2.5 Flash ou modèle explicite) ---
+        # --- ROUTAGE API ---
+        base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(actual_model, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
+        base_gen["maxOutputTokens"] = max_tokens
+        
         payload = {
             "contents": contents,
-            "generationConfig": {
-                "temperature": TEMP_DISTILLATION,
-                "topP": TOP_P_DISTILLATION,
-                "maxOutputTokens": max_tokens
-            }
+            "generationConfig": base_gen
         }
         if is_json:
             payload["generationConfig"]["response_mime_type"] = "application/json"
@@ -1155,10 +1168,6 @@ class EchoGeminiClient:
         Retourne (response_data, model_key_used, reason).
         reason est None si nominal, sinon chaîne expliquant la divergence modèle.
         """
-        from echo_constants import (
-            MODEL_ROUTING,
-            THINKING_LEVEL_PRO, THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE,
-        )
         # 1. Clamping via politique Pipe (lecture __metadata__ → fallback identity.db)
         clamped_key = clamp_model(target_model_key, metadata, user_id=user_id)
         reason = None  # Tracker de raison pour le warning
@@ -1176,24 +1185,16 @@ class EchoGeminiClient:
         start_idx = cascade_order.index(clamped_key) if clamped_key in cascade_order else 1
         cascade = cascade_order[start_idx:]
 
-        thinking_map = {
-            "MODEL_PRO": THINKING_LEVEL_PRO,
-            "MODEL_FLASH": THINKING_LEVEL_FLASH,
-            "MODEL_LITE": THINKING_LEVEL_LITE,
-        }
-
         # 3. Tentatives en cascade
         for model_key in cascade:
-            actual_model = MODEL_ROUTING[model_key]
-            thinking_level = thinking_map.get(model_key, THINKING_LEVEL_FLASH)
+            actual_model = model_key
 
-            # Injection automatique thinkingConfig
-            gen_config = payload.get("generationConfig", {})
-            gen_config["thinkingConfig"] = {
-                "includeThoughts": include_thoughts,
-                "thinkingLevel": thinking_level.lower(),
-            }
-            payload["generationConfig"] = gen_config
+            import copy
+            from echo_constants import ECHO_MODELS_REGISTRY
+            base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(model_key, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
+            if "thinkingConfig" in base_gen:
+                base_gen["thinkingConfig"]["includeThoughts"] = include_thoughts
+            payload["generationConfig"] = base_gen
 
             try:
                 data = await EchoGeminiClient.call(

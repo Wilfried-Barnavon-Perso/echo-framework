@@ -177,7 +177,7 @@ flowchart TD
   NCV2 -->|"Non"| ORCH{"Orchestration\nMulti-Agents ?"}
 
   ORCH -->|"Oui (consult_council)"| COUNCIL["Table Ronde\nDelphi"]
-  ORCH -->|"Oui (consult_supervised)"| SUPERV["Boucle Critique\nSupervisée"]
+  ORCH -->|"Oui (consult_supervised_workers)"| SUPERV["Boucle Critique\nSupervisée"]
   ORCH -->|"Non"| OUTPUT([Génération finale])
 
   COUNCIL --> OUTPUT
@@ -377,7 +377,7 @@ Content-Type: application/json</code></pre>
       OWUI injecte le dictionnaire <code>__tools__</code> (contenant les callables Python réels
       des outils associés au modèle) dans le <code>Pipe</code>, mais <strong>ne le propage pas</strong>
       aux tool callables (chaque outil reçoit un <code>__metadata__</code> indépendant).
-      Cette contrainte architecturale empêche <code>delegate_to_subagent</code> d'accéder aux
+      Cette contrainte architecturale empêche <code>delegate_to_agent</code> d'accéder aux
       callables des autres outils pour les exécuter au nom du sous-agent.
     </p>
 
@@ -498,7 +498,7 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.28 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.55 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

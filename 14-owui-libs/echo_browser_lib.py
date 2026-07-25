@@ -1,16 +1,16 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 1.10
+version: 1.11
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.11: Précision sur les vérifications humaines pour l'usage des coordonnées X/Y et grille vision.
 # 1.10: Optim - Refonte des descriptions d'outils pour autoriser les appels parallèles (suppression de la notion de niveaux stricts).
 # 1.9: Ajout de l'action_type `download` pour supporter le téléchargement de fichiers via Playwright.
 # 1.7: Ajout du paramètre optionnel `name` dans `action_interact_a11y` pour le ciblage précis des rôles.
 # 1.6: Refonte de l'API avec intégration de l'arbre a11y_tree et hiérarchie stricte.
-# 1.5: Unification de l'API en 4 piliers (interact_a11y, interact_dom, inspect_page, browser_control).
 
 import httpx
 import logging
@@ -45,7 +45,7 @@ BROWSER_TOOLS_SCHEMA = [
             "properties": {
                 "action_type": {"type": "string", "enum": ["click", "type", "hover", "download", "save_target"], "description": "Le type d'interaction (download force un clic et attend le fichier, save_target extrait l'URL et la télécharge furtivement)."},
                 "index": {"type": "integer", "description": "L'ID numérique de l'élément (indiqué entre crochets sur la carte du DOM). À utiliser en priorité absolue."},
-                "x": {"type": "integer", "description": "Coordonnée X en pixels (à n'utiliser QUE si l'index est introuvable, suite à une action_inspect_page avec target='vision')."},
+                "x": {"type": "integer", "description": "Coordonnée X en pixels (à n'utiliser QUE si l'index est introuvable ou en cas de vérification humaine, suite à une action_inspect_page avec target='vision')."},
                 "y": {"type": "integer", "description": "Coordonnée Y en pixels (à n'utiliser QUE si l'index est introuvable)."},
                 "text_to_type": {"type": "string", "description": "(Optionnel) Le texte à insérer si action_type='type'."}
             },
@@ -61,7 +61,7 @@ BROWSER_TOOLS_SCHEMA = [
                 "target": {"type": "string", "enum": ["a11y_tree", "dom_map", "vision", "read_text", "read_html", "search_dom", "url"], "description": "L'information à extraire."},
                 "index": {"type": "integer", "description": "(Optionnel) L'ID de l'élément si target='url'."},
                 "value": {"type": "string", "description": "(Optionnel) Le texte court à rechercher si target='search_dom'."},
-                "vision_grid": {"type": "boolean", "description": "(Optionnel) True pour calquer une grille orthonormée si target='vision'."}
+                "vision_grid": {"type": "boolean", "description": "(Optionnel) True pour calquer une grille orthonormée si target='vision' (requis pour résoudre des vérifications humaines)."}
             },
             "required": ["target"]
         }
@@ -80,14 +80,26 @@ BROWSER_TOOLS_SCHEMA = [
     }
 ]
 
+_browser_http_client = None
+
+def _get_browser_client(timeout: int) -> httpx.AsyncClient:
+    global _browser_http_client
+    if _browser_http_client is None or _browser_http_client.is_closed:
+        _browser_http_client = httpx.AsyncClient(
+            timeout=timeout,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100)
+        )
+    return _browser_http_client
+
 async def req_to_browser(timeout: int, endpoint: str, data: dict = None, user_id: str = "anonymous") -> dict:
     """Effectue une requête POST asynchrone vers le Browser Agent."""
     url = f"{NAVIGATION_ENGINE_URL}{endpoint}"
     headers = {"Content-Type": "application/json", "X-OpenWebUI-User-Id": str(user_id)}
+    client = _get_browser_client(timeout)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=data or {}, headers=headers)
-            return resp.json()
+        # Le timeout doit être passé par requête pour overrider le timeout d'initialisation du Singleton
+        resp = await client.post(url, json=data or {}, headers=headers, timeout=timeout)
+        return resp.json()
     except Exception as e:
         return {"status": "error", "message": f"Worker inaccessible : {str(e)}"}
 

@@ -29,11 +29,10 @@ from echo_utils import (
     estimate_token_size, smart_truncate_history
 )
 from echo_constants import (
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, TEMP_DEFAULT,
-    TOP_P_DEFAULT, MAX_TOKENS_DEFAULT,
-    TEMP_DISTILLATION, TOP_P_DISTILLATION, DELEGATE_AGENT_BLACKLIST,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
+    DELEGATE_AGENT_BLACKLIST,
     DELEGATE_SYSTEM_APPENDIX, CONTEXT_TRUNCATE_THRESHOLD,
-    ECHO_MAX_CONTEXT_SIZE
+    ECHO_MAX_CONTEXT_SIZE, get_generation_config
 )
 from echo_skills import get_skill_content, parse_skill_metadata
 
@@ -440,11 +439,7 @@ class Tools:
             target_model_key="MODEL_FLASH",
             payload={
                 "contents": [{"role": "user", "parts": [{"text": distill_prompt}]}],
-                "generationConfig": {
-                    "temperature": TEMP_DISTILLATION,
-                    "topP": TOP_P_DISTILLATION,
-                    "maxOutputTokens": 8192,
-                },
+                "generationConfig": {**get_generation_config("MODEL_DISTILLATION"), "maxOutputTokens": 8192},
             },
             user_id=user_id,
             metadata=__metadata__,
@@ -502,26 +497,24 @@ async def _run_agent_loop(
         fn_decls = _build_function_declarations(sub_tools, body_tools_specs)
 
         # 1.5. Défense passive : Troncature de l'historique de l'agent
-        size = estimate_token_size(history) + estimate_token_size(final_system)
+        current_size = estimate_token_size(history) + estimate_token_size(final_system)
         max_tokens = ECHO_MAX_CONTEXT_SIZE
-        if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
+        if current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
             try:
-                await events.toast(f"⚠️ Agent [{sid}] : saturation contextuelle ({int(size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
+                await events.toast(f"⚠️ Agent [{sid}] : saturation contextuelle ({int(current_size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
             except AttributeError:
                 if __event_emitter__: await __event_emitter__({"type": "toast", "data": {"title": "ECHO Agent", "message": f"⚠️ Agent [{sid}] : saturation contextuelle. Troncature silencieuse active.", "type": "warning"}})
-            while estimate_token_size(history) + estimate_token_size(final_system) > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
-                if not smart_truncate_history(history, 0):
+            while current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
+                removed = smart_truncate_history(history, 0)
+                if not removed:
                     break
+                current_size -= removed
 
         # 2. Payload Gemini complet
         payload: dict = {
             "contents": history,
             "systemInstruction": {"parts": [{"text": final_system}]},
-            "generationConfig": {
-                "temperature": TEMP_DEFAULT,
-                "topP": TOP_P_DEFAULT,
-                "maxOutputTokens": MAX_TOKENS_DEFAULT,
-            },
+            "generationConfig": get_generation_config(current_model_key)
         }
         if fn_decls:
             payload["tools"] = [{"function_declarations": fn_decls}]
@@ -646,11 +639,7 @@ async def _run_agent_loop(
                 forced_payload: dict = {
                     "contents": history,
                     "systemInstruction": {"parts": [{"text": final_system}]},
-                    "generationConfig": {
-                        "temperature": TEMP_DEFAULT,
-                        "topP": TOP_P_DEFAULT,
-                        "maxOutputTokens": MAX_TOKENS_DEFAULT,
-                    },
+                    "generationConfig": get_generation_config("MODEL_FLASH"),
                 }
                 data2, _, _ = await EchoGeminiClient.call_cascade(
                     target_model_key=current_model_key,

@@ -1,19 +1,22 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.29
+version: 5.37
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.29: Renommage global echo-browser-agent en echo-browser-worker.
-# 5.28: Mise à jour des hostnames Python Worker et Browser Agent (préfixe echo-).
-# 5.27: Mise à jour hostname SearxNG (http://echo-searxng:8080) suite à la standardisation du docker-compose.
-# 5.26: Passage à microsoft/Harrier-OSS-v1-0.6B comme modèle d'embedding par défaut (dimension 1024) et ajustement de la taille des chunks RAG à 4000.
-# 5.25: Suppression des constantes Map-Reduce obsolètes (ECHO_MR_*).
+# 5.37: Ajout de THINKING_LEVEL_DISTILLATION fixé à LOW.
+# 5.36: Renommage de THINKING_LEVEL_TOOLS en THINKING_LEVEL_GROUNDING_TOOLS pour plus de clarté.
+# 5.35: Nettoyage définitif des variables protobuf_enum (l'API REST v1internal rejette ce champ Protobuf).
+# 5.34: Découplage de model_id (string REST) et protobuf_enum (int gRPC) suite aux erreurs 404 de l'API.
+# 5.33: Implémentation du mapping natif des Enums Protobuf (gRPC) pour l'API AGY et alias 3.6-flash.
 
 import os
-import base64
+try:
+    import pybase64 as base64
+except ImportError:
+    import base64
 import mimetypes
 try:
     import filetype
@@ -108,9 +111,9 @@ ECHO_OAUTH_SCOPES = [
 ]
 
 # --- CONFIGURATION API ANTIGRAVITY (PROVISIONING) ---
-# Standalone Antigravity → cloudcode-pa (sans "daily-")
+# Standalone Antigravity → cloudcode-pa ( "daily-" temporairement)
+# AGY_BASE_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal"
 AGY_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal"
-
 # Metadata client envoyée dans loadCodeAssist — pluginType "GEMINI" confirmé stable (RE §10)
 ECHO_CLIENT_METADATA = {
     "ideType":    "IDE_UNSPECIFIED",
@@ -156,63 +159,86 @@ ECHO_RETRY_JITTER_MAX    = 1.3
 # VERSION : 5.999.1
 # ==============================================================================
 
-# 1. IDENTIFIANTS TECHNIQUES — référence AI Studio (canonique).
-#    La traduction vers les ID AGY est gérée par MODEL_MAP_CA ci-dessous.
-#    Certifiés par diagnostic live 2026-05-24.
-MODEL_PRO   = "gemini-3.1-pro-preview"  # PRO   — AI Studio ⚠️ 429 free | CA → gemini-pro-agent
-MODEL_FLASH = "gemini-3.5-flash"        # FLASH — AI Studio ✅ 200      | CA → gemini-3-flash-agent
-MODEL_LITE  = "gemini-3.1-flash-lite"   # LITE  — identique sur les deux APIs ✅ 200
 
-# --- MÉMOIRE ORGANIQUE V2 ---
-MODEL_DISTILLATION = "gemini-3.1-flash-lite"  # identique sur les deux APIs ✅ 200
-MODEL_EMBEDDING    = "microsoft/Harrier-OSS-v1-0.6B" # Modèle texte-first, multilingue, 1024d, 32k tokens
-
-# Table de capacités Code Assist — source de vérité documentaire.
-# max_output_tokens : limites réelles certifiées par diagnostic live v2.1 (2026-05-25).
-# Le cap appliqué en production est MAX_TOKENS_DEFAULT (65535 universel, décision D1).
-# Modèles supportés : exclusivement Gemini (Claude, GPT, OpenAI-Vertex exclus du scope ECHO).
-MODEL_MAP_CA: dict = {
-    MODEL_PRO: {
-        "model_id":          "gemini-pro-agent",      # Gemini 3.1 Pro (High) — thinkingBudget=10001
-        "max_output_tokens": 65535,                   # Certifié : 400 si 65536 (diag C-quart v2.0)
-        "supports_thinking": True,
+# ==============================================================================
+# REGISTRE COGNITIF ECHO (SINGLE SOURCE OF TRUTH)
+# ==============================================================================
+ECHO_MODELS_REGISTRY = {
+    "MODEL_PRO": {
+        "ai_studio_id": "gemini-3.1-pro-preview",
+        "ca_model_id":  "gemini-pro-agent",
+        "hierarchy": 2,
+        "generationConfig": {
+            "temperature": 1.0,
+            "topP": 0.9,
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "high"}
+        }
     },
-    MODEL_FLASH: {
-        "model_id":          "gemini-3-flash-agent",  # Gemini 3.5 Flash (High) — thinkingBudget=-1
-        "max_output_tokens": 65536,                   # Certifié : 200 avec 65536 (diag C-quart v2.0)
-        "supports_thinking": True,                    # includeThoughts=True → thought=True lisible (diag H3)
+    "MODEL_FLASH": {
+        "ai_studio_id": "gemini-3.6-flash",
+        "ca_model_id":  "gemini-3.6-flash-high",
+        "hierarchy": 1,
+        "generationConfig": {
+            "temperature": 1.0,
+            "topP": 0.9,
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "high"}
+        }
     },
-    MODEL_LITE: {
-        "model_id":          "gemini-3.1-flash-lite", # Identique sur les deux APIs
-        "max_output_tokens": 65535,                   # Certifié : 400 si 65536 (diag C-quart v2.0)
-        "supports_thinking": False,                   # supportsThinking absent (diag section 6c v2.0)
+    "MODEL_LITE": {
+        "ai_studio_id": "gemini-3.5-flash-lite",
+        "ca_model_id":  "gemini-3.1-flash-lite",
+        "hierarchy": 0,
+        "generationConfig": {
+            "temperature": 1.0,
+            "topP": 0.9,
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "high"}
+        }
     },
+    "MODEL_DISTILLATION": {
+        "ai_studio_id": "gemini-3.5-flash-lite",
+        "ca_model_id":  "gemini-3.1-flash-lite",
+        "hierarchy": None,
+        "generationConfig": {
+            "temperature": 0.0,
+            "topP": 0.1,
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "low"}
+        }
+    }
 }
 
-# Alias rétrocompatible — conservé pour ne pas casser les imports existants dans les scripts.
-# Déprécié : remplacé par MODEL_MAP_CA dans echo_protocol.py.
-AGY_MODEL_MAP: dict[str, str] = {
-    k: v["model_id"] for k, v in MODEL_MAP_CA.items()
+# L'Abstraction pure
+MODEL_PRO          = "MODEL_PRO"
+MODEL_FLASH        = "MODEL_FLASH"
+MODEL_LITE         = "MODEL_LITE"
+MODEL_DISTILLATION = "MODEL_DISTILLATION"
+
+# Unique survivant : la politique métier UI (qui reste statique)
+MODEL_ENUM_BY_POLICY = {
+    "MODEL_LITE":  ["MODEL_LITE"],
+    "MODEL_FLASH": ["MODEL_FLASH"],
+    "MODEL_PRO":   ["MODEL_PRO"],
+    "AUTO":        ["MODEL_LITE", "MODEL_FLASH"],
+    "AUTO_PRO":    ["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"],
 }
-# Alias de compatibilité ascendante
-CODE_ASSIST_MODEL_MAP = AGY_MODEL_MAP
+
 EMBEDDING_DIM      = 1024               # Dimension Harrier-OSS (remplace bge-m3)
 COLLECTION_META_ARTIFACTS = "echo_meta_artifacts"
 COLLECTION_SESSION_RAG    = "echo_session_rag"
 SESSION_RAG_CONVERSATION_SOURCE_ID = "conversation_history"
 
 # Poids de reranking par niveau d'importance mémorielle.
-# Appliqués dans recall_memories : score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]
-# Un Axiome (5) à cos=0.60 bat un Trivial (1) à cos=0.85 : 0.60×1.70 > 0.85×0.55
 MEMORY_IMPORTANCE_WEIGHTS: dict[int, float] = {
-    1: 0.55,   # Trivial — pénalisé (bruit probable)
+    1: 0.55,   # Trivial
     2: 0.75,   # Mineur
-    3: 1.00,   # Utile — référence neutre
+    3: 1.00,   # Utile
     4: 1.30,   # Majeur
-    5: 1.70,   # Axiome — fortement boosté (remonte toujours)
+    5: 1.70,   # Axiome
 }
 
-# Labels sémantiques des 5 niveaux — point de vérité unique pour UI, logs et LLM.
 MEMORY_IMPORTANCE_LABELS: dict[int, str] = {
     1: "Trivial",
     2: "Mineur",
@@ -220,6 +246,28 @@ MEMORY_IMPORTANCE_LABELS: dict[int, str] = {
     4: "Majeur",
     5: "Axiome",
 }
+
+def get_model_identity(model_str: str) -> str:
+    """Retourne la clé abstraite (ex: MODEL_PRO) à partir de n'importe quel ID."""
+    registry = globals().get("ECHO_MODELS_REGISTRY", {})
+    if model_str in registry: return model_str
+    for k, v in registry.items():
+        if model_str in (v.get("ai_studio_id"), v.get("ca_model_id")): return k
+    return "UNKNOWN"
+
+def get_generation_config(model_key: str = "MODEL_LITE", override_thinking: str = None) -> dict:
+    """
+    Extrait le generationConfig depuis le SSOT.
+    Permet de surcharger dynamiquement le thinkingLevel (ex: MINIMAL pour le grounding).
+    """
+    import copy
+    # Récupération sécurisée du dictionnaire global
+    registry = globals().get("ECHO_MODELS_REGISTRY", {})
+    base_gen = copy.deepcopy(registry.get(model_key, registry.get("MODEL_LITE", {})).get("generationConfig", {}))
+    if override_thinking and "thinkingConfig" in base_gen:
+        base_gen["thinkingConfig"]["thinkingLevel"] = override_thinking
+    return base_gen
+
 # ----------------------------
 
 # ==============================================================================
@@ -343,27 +391,6 @@ CODEX_QUICK_ACTIONS = {
 
 # ----------------------------
 
-# --- PARAMÈTRES DE GÉNÉRATION ---
-TEMP_DEFAULT       = 1.0
-TEMP_DISTILLATION  = 0.0
-
-TOP_P_DEFAULT      = 0.90
-TOP_P_DISTILLATION = 0.10
-
-# --- NIVEAUX DE RÉFLEXION (THINKING) — Point de vérité unique pour tout le framework ---
-# Confirmés fonctionnels sur Code Assist + AI Studio par diagnostic live 2026-05-24.
-# HIGH = réflexion complète (Gemini 3.x) ; MINIMAL = réflexion nulle (outils légers, grounding).
-THINKING_LEVEL_PRO   = "HIGH"     # MODEL_PRO : réflexion maximale
-THINKING_LEVEL_FLASH = "HIGH"     # MODEL_FLASH : réflexion standard
-THINKING_LEVEL_LITE  = "HIGH"     # MODEL_LITE : confirmé 200 avec HIGH sur Code Assist
-THINKING_LEVEL_TOOLS = "MINIMAL"  # Outils stateless (maps, grounding, distillation rapide)
-
-# --- LIMITE DE TOKENS (GÉNÉRATION PRINCIPALE) ---
-MAX_TOKENS_DEFAULT = 65535  # Limite universelle — tous modèles, toutes APIs (AI Studio + CA).
-                             # 65535 : aligné sur les modèles Gemini 3.1 sur CA (Pro, Lite, 2.5-flash).
-                             # Gemini 3 Flash CA supporte 65536 mais on aligne sur le plus restrictif.
-                             # Utilisé par : pipe_engine (stream), call_distillation, echo_protocol.
-
 # --- INJECTION ET SMART CONTEXT (MÉMOIRE VECTORISÉE DE SESSION) ---
 MAX_DIRECT_TEXT_INJECT_SIZE   = 32768    # 32 Ko : Plafond d'injection directe pour le texte
 MAX_DIRECT_MMEDIA_INJECT_SIZE = 1048576  # 1 Mo  : Plafond d'injection directe base64 multimédia
@@ -444,26 +471,8 @@ SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
 # 2. REGISTRE COGNITIF ECHO (UNIFIÉ & STATIQUE)
 
 # ROUTAGE : Clé Entrée (UI ou Cascade) -> ID Technique
-MODEL_ROUTING = {
-    "MODEL_LITE":         MODEL_LITE,
-    "MODEL_FLASH":        MODEL_FLASH,
-    "MODEL_PRO":          MODEL_PRO,
-    "MODEL_DISTILLATION": MODEL_DISTILLATION,  # Fix : résout la clé string dans call_distillation
-}
 
-# IDENTITÉ : ID Technique -> Label de Catégorie (Pour le badge ##MODEL_ID##)
-MODEL_IDENTITY = {
-    MODEL_LITE:  "MODEL_LITE",
-    MODEL_FLASH: "MODEL_FLASH",
-    MODEL_PRO:   "MODEL_PRO"
-}
 
-# HIÉRARCHIE COGNITIVE — ordonnance pour clamp_model() (propagation modèle Pipe → outils)
-MODEL_HIERARCHY = {
-    "MODEL_LITE": 0,
-    "MODEL_FLASH": 1,
-    "MODEL_PRO": 2,
-}
 
 # ENUM MODÈLES PAR POLITIQUE — utilisé par convert_owui_tools() pour filtrage dynamique
 MODEL_ENUM_BY_POLICY = {

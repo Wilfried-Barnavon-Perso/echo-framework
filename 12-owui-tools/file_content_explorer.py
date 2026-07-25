@@ -33,7 +33,7 @@ from echo_utils import (
 from echo_ui import EchoUI
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, ECHO_API_KEY_THRESHOLD,
-    ECHO_API_MAX_RETRIES, TEMP_DEFAULT, TOP_P_DEFAULT,
+    ECHO_API_MAX_RETRIES, get_generation_config,
     PROMPT_SENSORY_DISTILLATION
 )
 
@@ -163,10 +163,7 @@ class Tools:
         try:
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": query}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}],
-                "generationConfig": {
-                    "temperature": TEMP_DEFAULT,
-                    "topP": TOP_P_DEFAULT,
-                }
+                "generationConfig": get_generation_config("MODEL_FLASH")
             }
             cascade_task = asyncio.create_task(EchoGeminiClient.call_cascade(
                 target_model_key="MODEL_FLASH",

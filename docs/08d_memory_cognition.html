@@ -161,12 +161,8 @@ flowchart TD
       <thead><tr><th>Outil</th><th>Description</th></tr></thead>
       <tbody>
         <tr>
-          <td><code>delegate_to_subagent(task, system_prompt, sub_sid)</code></td>
+          <td><code>delegate_to_agent(task, system_prompt, sub_sid)</code></td>
           <td>Délégation cognitive <strong>stateful</strong>. Boucle agentique complète avec accès aux outils, budget d'appels configurable, montée cognitive LITE&rarr;FLASH&rarr;PRO. Persistance de l'historique de thread dans SQLite (<code>cognitive_threads</code>). Protocole <code>QUESTION:</code> pour les clarifications.</td>
-        </tr>
-        <tr>
-          <td><code>consult_expert_consultant(role_name, prompt, sub_sid, target_model)</code></td>
-          <td>Consultation d'un expert Skill avec <strong>mémoire de thread persistante</strong>. Si <code>sub_sid</code> est fourni, reprend le fil de discussion existant. Le contexte est distillé depuis la branche active du chat principal avant chaque appel. Boucle itérative jusqu'à la balise <code>&lt;FINAL_ANSWER&gt;</code>.</td>
         </tr>
         <tr>
           <td><code>consult_council(question, participants, target_model, synthesis_model)</code></td>
@@ -178,26 +174,14 @@ flowchart TD
         </tr>
         <tr>
           <td><code>list_skills()</code></td>
-          <td>Liste les expertises (Skills) disponibles pour le Conseil courant, avec leurs identifiants et descriptions. Utile pour découvrir les rôles déjà forgés avant un <code>consult_expert_consultant</code> ou un <code>consult_council</code>.</td>
+          <td>Liste les expertises (Skills) disponibles pour le Conseil courant, avec leurs identifiants et descriptions. Utile pour découvrir les rôles déjà forgés avant un <code>consult_council</code>.</td>
         </tr>
         <tr>
-          <td><code>list_sub_chats()</code></td>
+          <td><code>list_agent_sessions()</code></td>
           <td>Liste les fils de discussion cognitifs actifs pour le chat courant, avec leur <code>sub_sid</code>, rôle et résumé du dernier échange. Permet à l'orchestrateur de choisir quel fil reprendre.</td>
         </tr>
       </tbody>
     </table>
-
-    <div class="tech-spec">
-      <h4>⚙️ Boucle itérative du Conseil (1:1)</h4>
-      <p>
-        <code>consult_expert_consultant</code> distille d'abord la branche active du chat via <code>MODEL_DISTILLATION</code>,
-        puis entre dans une boucle (<code>ITERATION_DEFAULT</code> tours, max <code>ITERATION_MAX</code>).
-        À chaque tour, la <code>thoughtSignature</code> de la réponse précédente est sauvegardée
-        dans <code>EchoStateManager</code> et réinjectée au tour suivant, évitant de propager les
-        pensées en clair dans le contexte. La boucle s'arrête dès que l'expert émet
-        la balise <code>&lt;FINAL_ANSWER&gt;</code>.
-      </p>
-    </div>
 
     <div class="tech-spec">
       <h4>⚙️ Table Ronde Multi-Experts - Protocole Delphi (N:N)</h4>
@@ -243,7 +227,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.28 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.55 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

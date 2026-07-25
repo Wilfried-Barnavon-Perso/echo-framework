@@ -22,8 +22,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_ui import EchoUI
 from echo_constants import (
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
-    THINKING_LEVEL_TOOLS, TEMP_DEFAULT, TOP_P_DEFAULT
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, get_generation_config
 )
 
 
@@ -68,11 +67,7 @@ class Tools:
             "contents": [{"role": "user", "parts": [{"text": query}]}],
             # Grounding natif Google Maps — active l'outil googleMaps du modèle Gemini
             "tools": [{"googleMaps": {"enableWidget": True}}],
-            "generationConfig": {
-                "temperature": TEMP_DEFAULT,
-                "topP": TOP_P_DEFAULT,
-                "thinkingConfig": {"thinkingLevel": THINKING_LEVEL_TOOLS}
-            }
+            "generationConfig": get_generation_config("MODEL_LITE", override_thinking="minimal")
         }
 
         # Contextualisation géographique si les coordonnées sont fournies

@@ -26,8 +26,7 @@ from echo_utils import (
     EchoGeminiClient, EchoStateManager,
 )
 from echo_constants import (
-    ECHO_API_MAX_RETRIES, TEMP_DEFAULT,
-    TOP_P_DEFAULT, MAX_TOKENS_DEFAULT, CODEX_EDIT_SYSTEM_PROMPT,
+    ECHO_API_MAX_RETRIES, get_generation_config, CODEX_EDIT_SYSTEM_PROMPT,
     CODEX_SUMMARIZE_PROMPT, FILE_INGESTION_STATUS
 )
 from echo_codex_git import CodexRepo
@@ -177,11 +176,7 @@ class Tools:
 
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-                "generationConfig": {
-                    "temperature": TEMP_DEFAULT,
-                    "topP": TOP_P_DEFAULT,
-                    "maxOutputTokens": MAX_TOKENS_DEFAULT,
-                },
+                "generationConfig": get_generation_config("MODEL_FLASH"),
                 "systemInstruction": {
                     "parts": [{"text": CODEX_EDIT_SYSTEM_PROMPT.format(filename=filename, language=lang)}]
                 },

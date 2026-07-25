@@ -34,8 +34,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager
 from echo_codex_git import CodexRepo
 from echo_constants import (
-    TEMP_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT, THINKING_LEVEL_PRO,
-    THINKING_LEVEL_FLASH, THINKING_LEVEL_LITE, PLAN_STATUS,
+    PLAN_STATUS, get_generation_config,
     PLANNER_MODEL_BUILD, PLANNER_MODEL_UPDATE,
 )
 
@@ -186,15 +185,6 @@ class Tools:
         return match.group(1) if match else None
 
     @staticmethod
-    def _get_thinking_level(model_key: str) -> str:
-        """DEPRECATED — géré par call_cascade. Conservé pour compatibilité."""
-        if model_key == "MODEL_PRO":
-            return THINKING_LEVEL_PRO
-        elif model_key == "MODEL_FLASH":
-            return THINKING_LEVEL_FLASH
-        return THINKING_LEVEL_LITE
-
-    @staticmethod
     def _extract_llm_text(res_json: dict) -> Optional[str]:
         """Extrait le texte de la réponse Gemini (après déballage enveloppe CA)."""
         candidates = res_json.get("candidates", [])
@@ -266,11 +256,7 @@ class Tools:
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": {
-                "temperature": TEMP_DEFAULT,
-                "topP": TOP_P_DEFAULT,
-                "maxOutputTokens": MAX_TOKENS_DEFAULT,
-            },
+            "generationConfig": get_generation_config(PLANNER_MODEL_BUILD),
             "systemInstruction": {"parts": [{"text": system_prompt}]},
         }
 
@@ -391,11 +377,7 @@ class Tools:
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": {
-                "temperature": TEMP_DEFAULT,
-                "topP": TOP_P_DEFAULT,
-                "maxOutputTokens": MAX_TOKENS_DEFAULT,
-            },
+            "generationConfig": get_generation_config(PLANNER_MODEL_UPDATE),
             "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT_UPDATE}]},
         }
 

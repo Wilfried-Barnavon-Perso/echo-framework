@@ -44,3 +44,7 @@ i_internal_project.txtt
 # Audit technique & Reverse Engineering (jamais synchronisé)
 # Contient des données sensibles (clés, secrets, plans d'implémentation).
 .tmp_audit/
+
+# --- Scratch & Temporaires ---
+scratch/
+scratch_openwebui/

@@ -11,7 +11,7 @@ description: Couche de traduction parametres ECHO -> format API Gemini. Deux bac
 # integralement vers CA (includeThoughts=True requis pour visibilite
 # des pensees dans pipe_engine). Confirme OK par diag D/D-bis/D-ter.
 
-from echo_constants import MODEL_MAP_CA, MAX_TOKENS_DEFAULT
+from echo_constants import get_generation_config
 
 
 # Champs de generationConfig exclus du payload Code Assist v1internal.
@@ -34,19 +34,11 @@ CA_EXCLUDED_GEN_CONF_FIELDS: frozenset = frozenset()
 
 def get_ca_model_id(echo_model: str) -> str:
     """
-    Traduit un nom de modele canonique ECHO vers l'ID interne Code Assist.
-
-    Exemples :
-      "gemini-3.5-flash"       -> "gemini-3-flash-agent"
-      "gemini-3.1-pro-preview" -> "gemini-pro-agent"
-      "gemini-3.1-flash-lite"  -> "gemini-3.1-flash-lite"  (meme nom sur les deux APIs)
-      "gemini-2.5-flash"       -> "gemini-2.5-flash"        (meme nom sur les deux APIs)
-
-    Fallback : retourne echo_model inchange. Safe pour les modeles a nom identique
-    sur les deux APIs (LITE, DISTILLATION).
+    Traduit un nom abstrait ECHO vers l'ID interne Code Assist.
     """
-    entry = MODEL_MAP_CA.get(echo_model)
-    return entry["model_id"] if entry else echo_model
+    from echo_constants import ECHO_MODELS_REGISTRY
+    config = ECHO_MODELS_REGISTRY.get(echo_model)
+    return config["ca_model_id"] if config else ECHO_MODELS_REGISTRY.get("MODEL_LITE", {}).get("ca_model_id", "gemini-3.1-flash-lite")
 
 
 def build_ca_generation_config(raw_gen_conf: dict) -> dict:
@@ -77,6 +69,6 @@ def build_ca_generation_config(raw_gen_conf: dict) -> dict:
 
     # 2. Cap universel maxOutputTokens (meme valeur AI Studio et CA -- decision D1)
     if "maxOutputTokens" in gen:
-        gen["maxOutputTokens"] = min(gen["maxOutputTokens"], MAX_TOKENS_DEFAULT)
+        gen["maxOutputTokens"] = min(gen["maxOutputTokens"], get_generation_config("MODEL_FLASH").get("maxOutputTokens", 65535))
 
     return gen

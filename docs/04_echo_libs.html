@@ -38,7 +38,10 @@
       doit le lire depuis ce fichier - jamais le coder en dur localement.
     </p>
 
-    <h3>Identifiants de modèles Gemini</h3>
+    
+    <h3>Registre Central des Modèles (<code>ECHO_MODELS_REGISTRY</code>)</h3>
+    <p>Ce dictionnaire abstrait (situé dans <code>echo_constants.py</code>) gouverne centralement toutes les capacités LLM de l'écosystème en mappant les identifiants métiers vers les identifiants API, avec une hiérarchie cognitive stricte.</p>
+<h3>Identifiants de modèles Gemini</h3>
     <table>
       <thead>
         <tr><th>Constante ECHO</th><th>Nom AI Studio</th><th>Nom API Antigravity</th><th>Usage</th></tr>
@@ -84,13 +87,6 @@
         <tr><th>Constante</th><th>Valeur</th><th>Rôle</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>MAX_TOKENS_DEFAULT</code></td><td>65 535</td><td>Limite universelle (AI Studio + API Antigravity). 65 536 provoque une erreur 400 sur Gemini 3.1 Pro et Lite API Antigravity.</td></tr>
-        <tr><td><code>THINKING_LEVEL_PRO</code></td><td><code>"HIGH"</code></td><td>Réflexion maximale pour MODEL_PRO.</td></tr>
-        <tr><td><code>THINKING_LEVEL_FLASH</code></td><td><code>"HIGH"</code></td><td>Réflexion standard pour MODEL_FLASH.</td></tr>
-        <tr><td><code>THINKING_LEVEL_LITE</code></td><td><code>"HIGH"</code></td><td>Confirmé fonctionnel avec HIGH sur l'API Antigravity.</td></tr>
-        <tr><td><code>THINKING_LEVEL_TOOLS</code></td><td><code>"MINIMAL"</code></td><td>Outils stateless (maps, grounding, distillation basse latence).</td></tr>
-        <tr><td><code>TEMP_DEFAULT</code></td><td>1,0</td><td>Température de génération principale.</td></tr>
-        <tr><td><code>TOP_P_DEFAULT</code></td><td>0,90</td><td>Nucleus sampling.</td></tr>
         <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.188.1)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
       </tbody>
     </table>
@@ -122,11 +118,7 @@
           <td><code>DELEGATE_AGENT_BLACKLIST</code></td>
           <td><code>frozenset</code></td>
           <td>
-            Ensemble des noms de fonctions interdites au sous-agent. 4 catégories d'exclusion :<br>
-            &bull; <strong>Récursion</strong> : <code>delegate_to_subagent</code> (guard depth=1 absolu)<br>
-            &bull; <strong>Écriture RAG</strong> : <code>save_memory</code>, <code>forget_memory</code>, <code>save_session_context</code><br>
-            &bull; <strong>Rendu UI</strong> : <code>generate_rich_visualization</code><br>
-            &bull; <strong>Méta-session</strong> : <code>list_subagent_sessions</code>, <code>close_subagent_session</code>, <code>summarize_subagent_session</code>, <code>context_gauge</code>
+            Ensemble des noms de fonctions interdites au sous-agent. Il inclut les outils suivants, extraits dynamiquement : <code>close_council</code>, <code>delegate_to_agent</code>, <code>update_meta_artifact</code>, <code>summarize_agent_session</code>, <code>consult_supervised_workers</code>, <code>save_session_context</code>, <code>close_agent_session</code>, <code>close_supervised_task</code>, <code>get_context_load</code>, <code>list_supervised_tasks</code>, <code>delete_meta_artifact_item</code>, <code>list_councils</code>, <code>delete_session_context_source</code>, <code>generate_rich_visualization</code>, <code>consult_council</code>, <code>list_agent_sessions</code>.
           </td>
         </tr>
         <tr>
@@ -425,7 +417,7 @@
     <h3><code>get_ca_model_id(echo_model)</code></h3>
     <p>
       Traduit un nom de modèle canonique ECHO (AI Studio) vers l'ID interne API Antigravity.
-      La correspondance est définie dans <code>MODEL_MAP_CA</code> (source de vérité dans
+      La correspondance est définie dans <code>ECHO_MODELS_REGISTRY</code> (source de vérité dans
       <code>echo_constants.py</code>).
       <em>Note : le préfixe <code>_ca_</code> dans les noms de fonctions est l'abréviation interne
       de « cloudcode-pa API » et est conservé tel quel dans le code source.</em>
@@ -501,14 +493,20 @@
       </p>
     </div>
 
+    
+    <h2 id="echo-constants"><code>echo_constants.py</code></h2>
+    <p>
+      Ce fichier agit comme le registre central des configurations du framework. Il unifie la topologie système (adresses internes Docker), les protocoles d'authentification (Antigravity 2.1), et les configurations par défaut des modèles IA.
+    </p>
     <div class="transition-text">
+
       <a href="03_deploiement.html">&larr; Déploiement & Infra</a>
       &nbsp;&nbsp;
       <a href="05_hud_ui.html">Écosystème HUD & UI &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.28 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.55 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

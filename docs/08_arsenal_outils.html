@@ -178,8 +178,7 @@
       </div>
       <div class="card">
         <h3>🧠 Agents Cognitifs (Conseil d'Experts)</h3>
-        <p>Consultation d'experts persistants par rôle (<code>consult_expert_consultant</code>),
-        <strong>Table Ronde Delphi</strong> (<code>consult_council</code> - N experts en
+        <p><strong>Table Ronde Delphi</strong> (<code>consult_council</code> - N experts en
         tours parallélisés avec thoughtSignatures, synthèse par modèle dédié),
         forge et gestion des Skills (<code>forge_skill</code>, <code>list_skills</code>),
         <strong>Agent stateful</strong> (<code>delegate_to_agent</code> dans
@@ -195,7 +194,7 @@
         <p>Recherche géographique avec rendu interactif Google Maps natif via
         l'outil <code>googleMaps</code> de l'API Gemini (grounding natif). Route sur
         <code>MODEL_LITE</code> via <code>call_cascade()</code> avec
-        <code>THINKING_LEVEL_TOOLS</code> (MINIMAL).
+        <code>THINKING_LEVEL_GROUNDING_TOOLS</code> (MINIMAL).
         Contexte géographique optionnel (<code>latitude</code>,
         <code>longitude</code>).</p>
         <p><strong>Source :</strong> <code>12-owui-tools/gemini_maps_grounding.py</code></p>
@@ -241,7 +240,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.28 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.55 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

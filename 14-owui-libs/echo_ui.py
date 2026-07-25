@@ -809,6 +809,32 @@ return new Promise(function(resolve) {{
         document.head.appendChild(scrollStyle);
       }}
 
+      // --- Custom Confirm Dialog ---
+      window.echoCustomConfirm = (msg, callback) => {{
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:20000; display:flex; align-items:center; justify-content:center; font-family:"Segoe UI",system-ui,sans-serif;';
+        const dialog = document.createElement('div');
+        dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:20px; border-radius:8px; text-align:center; box-shadow:0 10px 40px rgba(0,0,0,0.5); max-width:80%; color:' + textColor + '; min-width:250px;';
+        dialog.innerHTML = '<div style="margin-bottom:20px; font-size:14px; white-space:pre-wrap;">' + msg.replace(/</g, "&lt;") + '</div>';
+        const btnContainer = document.createElement('div');
+        btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px;';
+        const btnCancel = document.createElement('button');
+        btnCancel.textContent = 'Annuler';
+        btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:13px;';
+        const btnOk = document.createElement('button');
+        btnOk.textContent = 'Confirmer';
+        btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';
+        
+        btnCancel.onclick = () => {{ overlay.remove(); callback && callback(false); }};
+        btnOk.onclick = () => {{ overlay.remove(); callback && callback(true); }};
+        
+        btnContainer.appendChild(btnCancel);
+        btnContainer.appendChild(btnOk);
+        dialog.appendChild(btnContainer);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+      }};
+
       // --- HUD Container ---
       const hud = document.createElement('div');
       hud.id = CODEX_ID;
@@ -991,9 +1017,11 @@ return new Promise(function(resolve) {{
           item.onmouseleave = () => delBtn.style.opacity = '0';
           delBtn.onclick = (e) => {{
             e.stopPropagation();
-            if (confirm('Supprimer ' + f.filename + ' ?')) {{
-              window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
-            }}
+            window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
+              if (agreed) {{
+                window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
+              }}
+            }});
           }};
           item.appendChild(delBtn);
           sb.appendChild(item);
@@ -1031,16 +1059,24 @@ return new Promise(function(resolve) {{
         resetBtn.style.cssText = `padding:6px 10px; cursor:pointer; font-size:12px; color:#f38ba8; margin-top:auto;`;
         resetBtn.textContent = '🗑 Reset';
         resetBtn.onclick = () => {{
-          if (confirm('⚠️ Supprimer tout le d\u00e9p\u00f4t Codex de cette conversation ? Irr\u00e9versible.')) {{
-            window.echoCodexResolve({{action:'reset'}});
-          }}
+          window.echoCustomConfirm('⚠️ Supprimer tout le dépôt Codex de cette conversation ? Irréversible.', (agreed) => {{
+            if (agreed) {{
+              window.echoCodexResolve({{action:'reset'}});
+            }}
+          }});
         }};
         sb.appendChild(resetBtn);
       }}
 
       function switchFile(filename) {{
         if (modified && currentFile) {{
-          if (!confirm('Modifications non sauvegard\u00e9es. Continuer ?')) return;
+          window.echoCustomConfirm('Modifications non sauvegardées. Continuer ?', (agreed) => {{
+            if (agreed) {{
+              modified = false;
+              switchFile(filename);
+            }}
+          }});
+          return;
         }}
         currentFile = filename;
         modified = false;
@@ -1732,9 +1768,11 @@ return new Promise(function(resolve) {{
             const newExt = LANG_TO_EXT[newLang];
             const newFilename = baseName + newExt;
             if (newFilename !== currentFile) {{
-              if (confirm('Renommer ' + currentFile + ' \u2192 ' + newFilename + ' ?')) {{
-                window.echoCodexResolve({{action:'rename_file', old_name:currentFile, new_name:newFilename}});
-              }}
+              window.echoCustomConfirm('Renommer ' + currentFile + ' \u2192 ' + newFilename + ' ?', (agreed) => {{
+                if (agreed) {{
+                  window.echoCodexResolve({{action:'rename_file', old_name:currentFile, new_name:newFilename}});
+                }}
+              }});
             }}
           }}
           // Mise à jour preview
@@ -2187,6 +2225,32 @@ return new Promise(function(resolve) {{
       "  let schemas = JSON.parse('" + schemas_json.replace("\\\\", "\\\\\\\\").replace("'", "\\'") + "');\n"
       "  const isDark = document.documentElement.classList.contains('dark') || document.documentElement.classList.contains('oled-dark');\n"
       "  \n"
+      "  const mcpConfirm = function(msg, callback) {\n"
+      "    const overlay = document.createElement('div');\n"
+      "    overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:20000; display:flex; align-items:center; justify-content:center;';\n"
+      "    const dialog = document.createElement('div');\n"
+      "    dialog.style.cssText = 'background:' + (isDark ? '#262626' : '#f9f9f9') + '; border:1px solid ' + (isDark ? '#404040' : '#e5e5e5') + '; padding:20px; border-radius:8px; text-align:center; box-shadow:0 10px 40px rgba(0,0,0,0.5); color:' + (isDark ? '#ececec' : '#171717') + '; min-width:250px; font-family:system-ui,sans-serif;';\n"
+      "    dialog.innerHTML = '<div style=\"margin-bottom:20px; font-size:14px; white-space:pre-wrap;\">' + msg.replace(/</g, '&lt;') + '</div>';\n"
+      "    const btnContainer = document.createElement('div');\n"
+      "    btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px;';\n"
+      "    const btnCancel = document.createElement('button');\n"
+      "    btnCancel.textContent = 'Annuler';\n"
+      "    btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + (isDark ? '#404040' : '#e5e5e5') + '; background:transparent; color:' + (isDark ? '#ececec' : '#171717') + '; cursor:pointer; font-size:13px;';\n"
+      "    const btnOk = document.createElement('button');\n"
+      "    btnOk.textContent = 'Confirmer';\n"
+      "    btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:#89b4fa; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';\n"
+      "    btnCancel.onclick = function() { overlay.remove(); if(callback) callback(false); };\n"
+      "    btnOk.onclick = function() { overlay.remove(); if(callback) callback(true); };\n"
+      "    btnContainer.appendChild(btnCancel);\n"
+      "    btnContainer.appendChild(btnOk);\n"
+      "    dialog.appendChild(btnContainer);\n"
+      "    overlay.appendChild(dialog);\n"
+      "    document.body.appendChild(overlay);\n"
+      "  };\n"
+      "  const mcpAlert = function(msg) {\n"
+      "    mcpConfirm(msg, function(){});\n"
+      "  };\n"
+      "  \n"
       "  const css = `\n"
       "    #${HUD_ID} { position: fixed; top: 15vh; left: calc(50vw - 250px); width: 500px; max-height: 80vh; background: ${isDark ? '#262626' : '#f9f9f9'}; color: ${isDark ? '#ececec' : '#171717'}; border: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; border-radius: 8px; z-index: 10000; display: flex; flex-direction: column; font-family: system-ui, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.5); overflow: hidden; }\n"
       "    #${HUD_ID}-header { padding: 12px 16px; background: ${isDark ? '#171717' : '#e5e5e5'}; border-bottom: 1px solid ${isDark ? '#404040' : '#d1d5db'}; display: flex; justify-content: space-between; align-items: center; cursor: move; user-select: none; font-weight: bold; font-size: 14px; }\n"
@@ -2351,7 +2415,7 @@ return new Promise(function(resolve) {{
       "    const service = serviceSelect.value;\n"
       "    const access = document.getElementById('mcp-input-access').value;\n"
       "    \n"
-      "    if(!service) { alert('Veuillez sélectionner un Service.'); return; }\n"
+      "    if(!service) { mcpAlert('Veuillez sélectionner un Service.'); return; }\n"
       "    \n"
       "    const account_id = 'default';\n"
       "    \n"
@@ -2362,20 +2426,25 @@ return new Promise(function(resolve) {{
       "      credObj[input.dataset.key] = input.value.trim();\n"
       "    });\n"
       "    \n"
+      "    const processForm = function() {\n"
+      "      const credStr = JSON.stringify(credObj);\n"
+      "      document.querySelectorAll('.mcp-dynamic-input').forEach(input => input.value = '');\n"
+      "      if(window.echoMCPResolve) window.echoMCPResolve({action: 'add_account', service: service, account_id: account_id, credentials: credStr, access_level: access});\n"
+      "    };\n"
+      "    \n"
       "    if(missingField) {\n"
-      "      if(!confirm('Certains champs sont vides. Voulez-vous continuer ?')) return;\n"
+      "      mcpConfirm('Certains champs sont vides. Voulez-vous continuer ?', function(agreed) {\n"
+      "        if (agreed) processForm();\n"
+      "      });\n"
+      "    } else {\n"
+      "      processForm();\n"
       "    }\n"
-      "    \n"
-      "    const credStr = JSON.stringify(credObj);\n"
-      "    \n"
-      "    // Clear form\n"
-      "    document.querySelectorAll('.mcp-dynamic-input').forEach(input => input.value = '');\n"
-      "    \n"
-      "    if(window.echoMCPResolve) window.echoMCPResolve({action: 'add_account', service: service, account_id: account_id, credentials: credStr, access_level: access});\n"
       "  };\n"
       "  \n"
       "  window.echoMCPDelete = function(service, alias) {\n"
-      "    if(window.echoMCPResolve) window.echoMCPResolve({action: 'delete_account', service: service, account_id: alias});\n"
+      "    mcpConfirm('Supprimer les identifiants pour ' + service + ' ?', function(agreed) {\n"
+      "      if(agreed && window.echoMCPResolve) window.echoMCPResolve({action: 'delete_account', service: service, account_id: alias});\n"
+      "    });\n"
       "  };\n"
       "  \n"
       "  window.echoMCPUpdate = function(newAccountsJson) {\n"

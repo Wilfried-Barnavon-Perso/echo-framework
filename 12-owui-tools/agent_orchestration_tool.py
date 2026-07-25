@@ -26,8 +26,8 @@ from typing import Optional, List, Dict, Any, Literal, Tuple
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, EchoEvents, EchoGeminiClient, EchoStateManager
 from echo_constants import (
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, TEMP_DISTILLATION,
-    TOP_P_DISTILLATION,
+    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, get_generation_config,
+    FILE_INGESTION_STATUS
 )
 from echo_skills import get_all_skills, get_skill_content, save_skill, parse_skill_metadata
 
@@ -336,11 +336,7 @@ class Tools:
         synthesis_payload = {
             "contents": [{"role": "user", "parts": [{"text": transcript}]}],
             "systemInstruction": {"parts": [{"text": synthesis_system}]},
-            "generationConfig": {
-                "temperature": TEMP_DISTILLATION,
-                "topP": TOP_P_DISTILLATION,
-                "maxOutputTokens": 16000,
-            }
+            "generationConfig": {**get_generation_config("MODEL_DISTILLATION"), "maxOutputTokens": 16000}
         }
 
         res, _, _ = await EchoGeminiClient.call_cascade(
@@ -525,15 +521,11 @@ class Tools:
                 "</example>\n"
                 "</output_format>"
             )
-
             critic_res, _, _ = await EchoGeminiClient.call_cascade(
                 target_model_key=critic_model,
                 payload={
                     "contents": [{"role": "user", "parts": [{"text": critic_prompt}]}],
-                    "generationConfig": {
-                        "temperature": TEMP_DISTILLATION,
-                        "topP": TOP_P_DISTILLATION,
-                    }
+                    "generationConfig": get_generation_config("MODEL_DISTILLATION"),
                 },
                 user_id=user_id,
                 metadata=(__metadata__ or {}),
@@ -648,11 +640,7 @@ class Tools:
             target_model_key=critic_model,
             payload={
                 "contents": [{"role": "user", "parts": [{"text": consolidation_prompt}]}],
-                "generationConfig": {
-                    "temperature": TEMP_DISTILLATION,
-                    "topP": TOP_P_DISTILLATION,
-                    "maxOutputTokens": 16000,
-                }
+                "generationConfig": {**get_generation_config("MODEL_DISTILLATION"), "maxOutputTokens": 16000},
             },
             user_id=user_id,
             metadata=(__metadata__ or {}),

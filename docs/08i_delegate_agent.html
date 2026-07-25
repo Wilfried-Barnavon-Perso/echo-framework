@@ -129,7 +129,7 @@ flowchart TD
 
   S3 --> FILTER
 
-  FILTER --> LOOP["Boucle agentique\n_run_subagent_loop()"]
+  FILTER --> LOOP["Boucle agentique\n_run_agent_loop()"]
 
   classDef optimal fill:#064e3b,stroke:#10b981,color:#fff
   classDef fallback fill:#78350f,stroke:#f59e0b,color:#fff
@@ -170,7 +170,7 @@ flowchart TD
       </p>
     </div>
 
-    <h2>Boucle agentique - <code>_run_subagent_loop()</code></h2>
+    <h2>Boucle agentique - <code>_run_agent_loop()</code></h2>
 
     <p>
       La boucle principale du agent est structurée en 5 cas mutuellement exclusifs,
@@ -182,7 +182,7 @@ flowchart TD
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
         <span>Boucle agentique - 5 cas de sortie</span>
-        <span>[_run_subagent_loop]</span>
+        <span>[_run_agent_loop]</span>
       </div>
       <div class="mermaid">
 flowchart TD
@@ -339,14 +339,6 @@ QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le c
 
     <div class="note-box">
       <h4>Comptage du budget</h4>
-      <p>
-        La UserValve <code>MAX_AGENT_FUNCTION_CALLS</code> (défaut : 25, plage : 5–50) contrôle
-        le budget d'appels. Ce budget compte les <strong>décisions d'appel du agent</strong>
-        uniquement - pas les opérations internes des outils appelés. Appeler
-        <code>consult_council</code> (qui itère lui-même N experts) = 1 unité de budget.
-        Les escalades via <code>new_cognitive_level</code> ne consomment <strong>pas</strong>
-        de budget.
-      </p>
     </div>
 
     <h2>Défense Passive : Troncature Silencieuse (Smart Pop)</h2>
@@ -410,7 +402,7 @@ SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.28 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.192.55 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

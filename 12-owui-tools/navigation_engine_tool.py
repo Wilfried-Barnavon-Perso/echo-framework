@@ -56,11 +56,14 @@ async def _deploy_navigation_monitor(res_view: dict, chat_id: str, uid: str, u_v
             filename = f"{file_id}_frame.png"
             state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
             vault_path = get_echo_session_path(uid, chat_id, "files")
-            
-            img_data = base64.b64decode(b64)
             filepath = os.path.join(vault_path, filename)
-            with open(filepath, "wb") as f: 
-                f.write(img_data)
+            
+            def _write_img(b64_str, path):
+                img_data = base64.b64decode(b64_str)
+                with open(path, "wb") as f: 
+                    f.write(img_data)
+            
+            await asyncio.to_thread(_write_img, b64, filepath)
             
             state_manager.save_resource(
                 id=file_id, name=filename, resource_type='media',
@@ -144,7 +147,7 @@ class Tools:
             f"<objective>\n{task_objective}\n</objective>\n\n"
             "<rules>\n"
             "1. PERCEPTION GLOBALE : Le Modèle PEUT demander simultanément plusieurs extractions de l'état de la page en un seul tour via `action_inspect_page` pour accélérer sa compréhension.\n"
-            "2. HIÉRARCHIE D'INTERACTION : 1) Tenter d'abord `action_interact_a11y` sur l'arbre A11y (utiliser `method='role'` ET `name` pour cibler précisément un bouton/lien, ou `method='text'` pour du texte). 2) Si l'élément est complexe, utiliser l'index de la `dom_map` avec `action_interact_dom`. 3) En dernier recours, utiliser les coordonnées (x, y) d'une inspection vision.\n"
+            "2. HIÉRARCHIE D'INTERACTION : 1) Tenter d'abord `action_interact_a11y` sur l'arbre A11y (utiliser `method='role'` ET `name` pour cibler précisément un bouton/lien, ou `method='text'` pour du texte). 2) Si l'élément est complexe, utiliser l'index de la `dom_map` avec `action_interact_dom`. 3) En dernier recours ou pour des vérifications humaines (captchas, anti-bots), utiliser les coordonnées (x, y) d'une inspection vision avec grille.\n"
             "3. ACTIONS GROUPÉES : Le Modèle PEUT grouper plusieurs actions non-mutantes (ex: remplir plusieurs champs). Cependant, il NE DOIT PAS enchaîner une action si la précédente risque de modifier drastiquement la page (soumission, navigation). Une action mutante DOIT être la dernière du lot.\n"
             "4. OVERLAYS & POP-UPS : Si une bannière bloque la navigation (cookies, popup), la priorité absolue du Modèle est d'utiliser `action_interact_dom(action_type='click')` ou `action_interact_a11y` pour s'en débarrasser.\n"
             "5. FORMULAIRES : Remplir les champs avec `action_interact_dom(action_type='type')`. Exécuter `action_browser_control(command='pause')` pour attendre une liste d'autocomplétion. Si la liste apparaît, cliquer dessus. Sinon, valider avec `action_browser_control(command='press_key', value='Enter')`.\n"
@@ -174,7 +177,8 @@ class Tools:
                     }
                 })
             else:
-                dom_text = str(dom_data)[:30000]
+                import orjson as json
+                dom_text = json.dumps(dom_data).decode('utf-8')[:60000]
                 parts.append({"text": f"Voici les éléments interactifs actuels (Carte DOM) :\n{dom_text}"})
                 
             nonlocal vision_requested
@@ -199,14 +203,16 @@ class Tools:
                         resp = fr.get("response", {})
                         if isinstance(resp, dict):
                             if "dom_map" in resp and resp["dom_map"] != "[PURGED]":
-                                resp["dom_map"] = "[PURGED]"
+                                if len(str(resp["dom_map"])) > threshold:
+                                    resp["dom_map"] = "[PURGED]"
                             # Préservation intégrale des gros blocs de texte (content) pour éviter l'amnésie sémantique.
                                 
                     # Purge du DOM initial en texte brut (push_state)
                     if "text" in part:
                         text = part["text"]
                         if text.startswith("Voici les éléments interactifs actuels") and "[PURGED" not in text:
-                            part["text"] = "Voici les éléments interactifs actuels (Carte DOM) :\n[PURGED]"
+                            if len(text) > threshold:
+                                part["text"] = "Voici les éléments interactifs actuels (Carte DOM) :\n[PURGED]"
 
         push_state(res_view)
 
@@ -232,7 +238,7 @@ class Tools:
                     break
                 except Exception:
                     pass
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.1)
                 
         if getattr(u_valves, 'SHOW_BROWSER_HUD', True):
             proxy_task = asyncio.create_task(stream_proxy())
@@ -246,16 +252,18 @@ class Tools:
                 await events.status(f"🤖 Agent Navigateur: Analyse en cours (Étape {iterations})...", done=False)
             
                 # Défense passive : Troncature de l'historique du navigateur
-                size = estimate_token_size(history)
+                current_size = estimate_token_size(history)
                 max_tokens = ECHO_MAX_CONTEXT_SIZE
-                if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
+                if current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                     try:
-                        await events.toast(f"⚠️ Navigateur [{sid}] : saturation contextuelle ({int(size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
+                        await events.toast(f"⚠️ Navigateur [{sid}] : saturation contextuelle ({int(current_size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
                     except AttributeError:
                         if __event_emitter__: await __event_emitter__({"type": "toast", "data": {"title": "ECHO Browser", "message": f"⚠️ Navigateur [{sid}] : saturation contextuelle. Troncature silencieuse active.", "type": "warning"}})
-                    while estimate_token_size(history) > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
-                        if not smart_truncate_history(history, 1):
+                    while current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
+                        removed_size = smart_truncate_history(history, 1)
+                        if not removed_size:
                             break
+                        current_size -= removed_size
             
                 schema_extensions = [
                     {
@@ -354,7 +362,11 @@ class Tools:
                                 
                                 elif action_res.get("status") != "error":
                                     if is_last_tool:
-                                        last_view = await browser.highlight()
+                                        if "metadata" in action_res and "screenshot_b64" in action_res:
+                                            last_view = action_res
+                                        else:
+                                            last_view = await browser.highlight()
+                                            
                                         try:
                                             sc_res = await browser.stop_screencast(last_view.get("screenshot_b64"))
                                             if sc_res and sc_res.get("webp_b64"):
@@ -509,17 +521,14 @@ class Tools:
             
         await events.status("🧠 Analyse par le sous-agent...")
         
-        from echo_constants import TEMP_DEFAULT, TOP_P_DEFAULT
+        from echo_constants import get_generation_config
         
         payload = {
             "contents": [{"role": "user", "parts": [
                 {"text": f"<instruction>\nLe Modèle doit analyser ce document Web pour accomplir cette tâche : {query}\nLa réponse doit être factuelle, précise et issue du texte.\n</instruction>"},
                 {"inline_data": {"mime_type": "text/plain", "data": f"___ECHO_STREAM_FILE___{tmp_path}___"}}
             ]}],
-            "generationConfig": {
-                "temperature": TEMP_DEFAULT,
-                "topP": TOP_P_DEFAULT
-            }
+            "generationConfig": get_generation_config("MODEL_FLASH")
         }
         
         analyse_model = clamp_model("MODEL_FLASH", __metadata__, user_id=uid)
