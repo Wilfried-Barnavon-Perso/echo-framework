@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.23
+version: 192.24
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.24: Correction systémique des vieux identifiants orphelins (Auto-heal vers MODEL_LITE) et formatage UI avec clés techniques (ai_studio_id/ca_model_id).
 # 192.23: Restauration et sauvegarde de l'historique de cascade cognitive via KV store pour le message utilisateur. Amélioration de la gestion des erreurs de streaming de l'API Google avec alertes d'interruption. Correction de la logique de clamping et cascade via MODEL_IDENTITY.
 # 192.22: Fix silent cuts in stream generation viaSAFETY exception catch & StreamProcessor logging. Fix cognitive cascade clamping and downward logic due to IDENTITY mismatches. Fix post-cascade amnesia by persisting shadow locally via KV store.
 # 192.21: Fix du silent crash lors de l'auto-escalade. Exclusion fonctionnelle du modèle actif via MODEL_IDENTITY et feedback via functionResponse.
 # 192.20: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
-# 192.19: Implémentation de la défense passive contextuelle (troncature silencieuse + alertes UI).
 
 # ==============================================================================
 # SECTION 0 : IMPORTS & CONFIGURATION
@@ -720,12 +720,26 @@ class Pipe:
         from echo_constants import ECHO_MODELS_REGISTRY
         
         # Reverse-lookup (Auto-heal SQLite)
-        if last_model and last_model not in ECHO_MODELS_REGISTRY:
+        if last_model and last_model != "aucun" and last_model not in ECHO_MODELS_REGISTRY:
+            _found_model = False
             for logical_key, config in ECHO_MODELS_REGISTRY.items():
                 if last_model in [config.get("ai_studio_id"), config.get("ca_model_id")]:
                     last_model = logical_key
+                    _found_model = True
                     break
-                    
+            if not _found_model:
+                last_model = MODEL_LITE  # Fallback sécurisé pour les orphelins
+                
+        def _get_ui_display(model_key: str) -> str:
+            config = ECHO_MODELS_REGISTRY.get(model_key, {})
+            ai_id = config.get("ai_studio_id")
+            ca_id = config.get("ca_model_id")
+            if ai_id and ca_id and ai_id != ca_id:
+                tech_str = f"{ai_id} | {ca_id}"
+            else:
+                tech_str = ai_id or ca_id or ""
+            return f"{model_key} [{tech_str}]" if tech_str else model_key
+
         if model_selection in ["AUTO", "AUTO_PRO"]:
             # Plafond : AUTO → FLASH max, AUTO_PRO → PRO max
             ceiling = MODEL_PRO if model_selection == "AUTO_PRO" else MODEL_FLASH
@@ -738,15 +752,15 @@ class Pipe:
                 else:
                     target_model = last_model
                 origine_model = last_model
-                await events.status(f"🧠 Reprise du contexte ({target_model})...")
+                await events.status(f"🧠 Reprise du contexte ({_get_ui_display(target_model)})...")
             else:
                 target_model = MODEL_LITE
                 origine_model = "aucun"
-                await events.status(f"🧠 Initialisation de session (MODEL_LITE)...")
+                await events.status(f"🧠 Initialisation de session ({_get_ui_display(MODEL_LITE)})...")
         else:
             target_model = model_selection
             origine_model = last_model if last_model else "aucun"
-            await events.status(f"Model Fixé : {target_model}")
+            await events.status(f"Model Fixé : {_get_ui_display(target_model)}")
 
         # L'origine est passée à l'Orchestrateur pour la résolution des placeholders
         orch.model_origin = origine_model

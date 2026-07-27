@@ -26,7 +26,7 @@ Le système nerveux central d'ECHO repose sur le `pipe_engine.py` et les bibliot
 
 - **Suture Bit-Perfect des Métadonnées :** Reconstruction de l'historique via SQLite (`message_shadows`) pour une continuité absolue. Garantit une reprise de session identique au bit près via l'ID de message et le timestamp (Verrou de Version). Suivi de la branche active et état de session garanti par un hash cumulatif (Cumulative Hash).
 - **Registre Cognitif Unifié (SSOT) :** Toutes les capacités LLM sont désormais gouvernées centralement par `ECHO_MODELS_REGISTRY`. Ce dictionnaire abstrait mappe les identifiants métiers (`MODEL_PRO`, `MODEL_FLASH`, `MODEL_LITE`, `MODEL_DISTILLATION`) vers leurs identifiants API (AI Studio / Code Assist), leur `hierarchy` cognitive stricte (0, 1, 2), et leur `generationConfig` détaillée (température, `maxOutputTokens=65535`, et `thinkingConfig`).
-- **Routage Dynamique & Fluctuation Continue :** Les modes (AUTO, AUTO_PRO) interrogent dynamiquement la hiérarchie du Registre Cognitif. Lors de la reprise d'une session ou en cas d'erreur API, le système applique un *Clamping Dynamique* et une cascade descendante (PRO → FLASH → LITE) calculés algorithmiquement sur les valeurs entières de la hiérarchie.
+- **Routage Dynamique & Fluctuation Continue :** Les modes (AUTO, AUTO_PRO) interrogent dynamiquement la hiérarchie du Registre Cognitif. Lors de la reprise d'une session ou en cas d'erreur API, le système applique un *Clamping Dynamique* et une cascade descendante (PRO → FLASH → LITE) calculés algorithmiquement sur les valeurs entières de la hiérarchie. Inclut une logique d'**Auto-heal SQLite** : si un modèle orphelin est détecté, le système effectue un reverse-lookup ou force le `MODEL_LITE` pour prévenir tout crash.
 - **Orchestration Multi-Agents (`agent_orchestration_tool.py`) :** `consult_council` (Table Ronde Delphi, N experts agentiques avec outils, tours parallélisés exigeant une dialectique structurée : Analyse/Dialectique/Réponse) et `consult_supervised_workers` (boucle critique/correction récursive).
 - **HTTP/2 Stealth Headers :** Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité pour simuler un navigateur réel.
 
@@ -66,7 +66,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 - **ECHO Auth (SSO & MFA) :** IdP autonome gérant l'authentification forte (TOTP) couplé à BunkerWeb.
 - **Dashboard Actif :** Interface interactive de monitoring du cluster Docker (Révocations granulaires, Kill-Switch, stats).
 - **Sécurité Périmétrique :** BunkerWeb (WAF) protégeant le WebSocket WebGPU et l'API IdP.
-- **Régulation & Consolidation :** Optimisation SQLite (Vacuum/WAL), sauvegardes à chaud, rotation logs.
+- **Régulation & Consolidation :** Optimisation SQLite (Vacuum/WAL) et sauvegardes à chaud. Le script d'installation centralise désormais l'**Autosafety Docker** : configuration d'une politique de logs stricte (max 10 Mo) et mise en place d'un cron hebdomadaire de nettoyage (`docker system prune`) pour éradiquer tout risque de saturation disque.
 - **Purge Vectorielle & SQLite :** Élagage temporel (TTL) automatisé des orphelins dans Qdrant et SQLite.
 - **Configuration OWUI :** Script de post-déploiement automatisé des modèles et permissions.
 
@@ -118,4 +118,4 @@ Démarrage ordonné par hostnames stricts (`echo-*`) :
 - **Auto-Hébergement :** Les clés API ne sortent jamais du cluster.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.192.28*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.192.59*

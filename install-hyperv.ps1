@@ -1,8 +1,8 @@
 # ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.147.46
-# DATE    : 2026-06-12
+# VERSION : 5.192.59
+# DATE    : 2026-07-27
 
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -59,7 +59,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.147.46"
+$SCRIPT_VERSION = "5.192.59"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
@@ -189,17 +189,6 @@ autoinstall:
       - path: /etc/chrony/conf.d/hyperv.conf
         content: |
           refclock PHC /dev/ptp0 poll 3 dpoll -2 offset 0
-
-      # Configuration de la rotation des logs Docker (Sécurité Disque)
-      - path: /etc/docker/daemon.json
-        content: |
-          {
-            "log-driver": "json-file",
-            "log-opts": {
-              "max-size": "10m",
-              "max-file": "3"
-            }
-          }
 
 $WriteFilesBlock
     runcmd:

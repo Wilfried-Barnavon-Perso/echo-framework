@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-wsl2.sh
-# VERSION : 1.1
+# VERSION : 1.3
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE :
@@ -26,6 +26,8 @@
 #     puis relancer WSL2 : wsl --shutdown (depuis PowerShell)
 #
 # CHANGELOG :
+#   1.3 : Retrait de la configuration Docker redondante (déplacée dans install-stack.sh).
+#   1.2 : Ajout de la rotation des logs Docker et du prune hebdomadaire.
 #   1.1 : Dépôt Docker officiel (docker-ce + docker-compose-plugin).
 #         Fix parsing --branch (while loop).
 #         Ajout ports SSH PKCE (8020-8024) dans le récap final.
