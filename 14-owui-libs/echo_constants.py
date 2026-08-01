@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.37
+version: 5.38
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.38: Ajout de MODEL_EMBEDDING pour la génération de vecteurs RAG.
 # 5.37: Ajout de THINKING_LEVEL_DISTILLATION fixé à LOW.
 # 5.36: Renommage de THINKING_LEVEL_TOOLS en THINKING_LEVEL_GROUNDING_TOOLS pour plus de clarté.
 # 5.35: Nettoyage définitif des variables protobuf_enum (l'API REST v1internal rejette ce champ Protobuf).
 # 5.34: Découplage de model_id (string REST) et protobuf_enum (int gRPC) suite aux erreurs 404 de l'API.
-# 5.33: Implémentation du mapping natif des Enums Protobuf (gRPC) pour l'API AGY et alias 3.6-flash.
 
 import os
 try:
@@ -45,6 +45,7 @@ ECHO_AGY_USER_AGENT = "antigravity/2.1.0 (language_server; os_type=Windows; os_v
 
 # Points d'accès Locaux (Souveraineté)
 ECHO_EMBEDDING_URL = "http://echo-embedding:7997/v1"
+MODEL_EMBEDDING = "microsoft/Harrier-OSS-v1-0.6B"
 
 # ==============================================================================
 # 1. PROTOCOLE ANTIGRAVITY 2.1 — AUTH UNIFIÉE

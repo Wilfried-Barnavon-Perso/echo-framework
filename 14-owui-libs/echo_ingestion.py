@@ -490,7 +490,7 @@ class EchoIngestionPipeline:
             f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\" mode=\"vectorized_sum_up\"\n"
             f"                source_id=\"{file_id}\">\n"
             f"{brief_summary}\n\n"
-            f"> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_session_context`\n"
+            f"> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_sessions_context`\n"
             f"</smart_context>"
         )
         return {"status": "success", "type": FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"], "source_id": file_id, "fid": file_id, "name": filename, "mime": mime, "content": res_text}

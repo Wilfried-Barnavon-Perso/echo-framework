@@ -460,7 +460,7 @@ flowchart TD
       </div>
       <div class="card">
         <h3>⏱️ Mémoire Vectorisée de Session (<code>echo_session_rag</code>)</h3>
-        <p><strong>Outils :</strong> <code>save_session_context</code>, <code>search_session_context</code>, <code>delete_session_context_source</code></p>
+        <p><strong>Outils :</strong> <code>save_session_context</code>, <code>search_sessions_context</code>, <code>delete_session_context_source</code></p>
         <p><strong>Scope :</strong> <code>user_id + chat_id + source_id</code> - session courante uniquement.</p>
         <p><strong>Usage :</strong> Distillats de fichiers volumineux, résultats de navigation web, données intermédiaires d'analyse.</p>
         <p><strong>Purge :</strong> Automatique en fin de session par l'Admin Manager (suppression filtrée par <code>chat_id</code>).</p>
@@ -473,7 +473,7 @@ flowchart TD
         Lorsque le contexte dépasse ~30 % de la fenêtre maximale, les informations des premiers tours
         deviennent effectivement inaccessibles au mécanisme d'attention. Les deux RAG constituent la
         réponse architecturale : <code>save_session_context</code> indexe proactivement avant saturation,
-        <code>search_session_context</code> permet une lecture sémantique précise indépendante de la
+        <code>search_sessions_context</code> permet une lecture sémantique précise indépendante de la
         position dans l'historique. <code>search_meta_artifacts</code> couvre les préférences de l'Utilisateur et l'expérience du Modèle découvertes au cours des différentes sessions,
         totalement absentes du contexte actif.
       </p>
@@ -759,7 +759,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.55 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.193.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

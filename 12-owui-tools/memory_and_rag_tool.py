@@ -1,18 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.20
+version: 2.21
 description: Composant système interne : ECHO Memory & RAG Tool.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.21: Renommage search_session_context -> search_sessions_context et maximisation du SNR de sa docstring.
+# 2.20: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 2.19: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
 # 2.18: Alignement sur Harrier-OSS (EMBEDDING_DIM), tri chronologique inverse pour search_session_context, directives de mise à jour de faits via memory_id et notes SNR RAG éphémère vs méta-artéfacts.
 # 2.17: Ajout start_date/end_date dans consult_session_context. Clarification SNR purge.
-# 2.16: Fix Gemini API 400 Bad Request sur l'enum vide de l'artifact_name.
-# 2.10: Migration complète vers la nomenclature Méta-Artéfacts et ajout du drapeau global_search.
-# 1.2: Ajout forget_memory. 1.3: Mémoire Vectorisée de Session. 1.4: Mise à jour version. 1.5: Reranking par importance (MEMORY_IMPORTANCE_WEIGHTS) dans recall_memories.
-# 2.19: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
-# 2.20: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -463,7 +461,7 @@ class Tools:
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur lors de la suppression : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-    async def search_session_context(
+    async def search_sessions_context(
         self,
         query: Optional[str] = None,
         source_id: str = "",
@@ -477,16 +475,15 @@ class Tools:
         __event_call__: Optional[Any] = None
     ) -> dict:
         """
-        Interface d'exploration de la mémoire vectorielle de travail (RAG de Session).
-        Adapte l'extraction pour protéger le budget contextuel selon la présence du paramètre 'query'.
+        Interface d'exploration de la mémoire vectorielle de travail (RAG).
+        Mode sémantique (query défini) : Extraction de fragments textuels complets.
+        Mode index (query omis) : Cartographie des sources indexées (aperçu 60 chars).
 
-        Règle de résolution :
-        - Mode "Recherche Sémantique" (query renseigné) : Extrait les fragments textuels complets correspondant au concept ciblé.
-        - Mode "Index des Sources" (query omis) : Cartographie la session. Renvoie la liste des sources actives (Fichiers, URLs) avec un simple aperçu tronqué (60 caractères) pour ne pas saturer le contexte.
-
-        :param query: Optionnel. Concept ciblé. Omettre pour lister simplement les sources indexées.
-        :param source_id: Optionnel. UUID de la source pour restreindre la recherche.
-        :param global_search: Optionnel. True pour étendre la recherche ou le listing à TOUTES les sessions de l'Utilisateur. Défaut: False (restreint au chat courant).
+        :param query: Optionnel. Concept ciblé. Omettre pour cartographier l'index.
+        :param source_id: Optionnel. UUID de la source pour filtrage strict.
+        :param global_search: Optionnel. Booléen. Défaut: False (restreint à la session active).
+                              Définir sur True pour étendre la recherche à l'intégralité de l'historique inter-sessions.
+                              Déclencheur d'activation : référence explicite de l'utilisateur à des données antérieures ("hier", "précédemment", "autre session").
         :param limit: Optionnel. Nombre maximum de résultats. Défaut: 20.
         :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
         :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).

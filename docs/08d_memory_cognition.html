@@ -67,7 +67,7 @@
           <td>Indexe du texte dans <code>echo_session_rag</code>, partitioné par <code>user_id + chat_id + source_id</code>. Le texte est découpé automatiquement en chunks sémantiques. Paramètre <code>text</code> en premier, <code>source_id</code> en second (identifiant natif du fichier).</td>
         </tr>
         <tr>
-          <td><code>search_session_context(query, source_id, global_search, limit, start_date, end_date)</code></td>
+          <td><code>search_sessions_context(query, source_id, global_search, limit, start_date, end_date)</code></td>
           <td>Outil hybride : Recherche RAG sémantique dans la partition du <code>source_id</code> ou globalement, OU <strong>Cartographie globale</strong> des sources inter-sessions (si <code>query</code> absent) retournant les sources disponibles, leurs timestamps et tags.</td>
         </tr>
         <tr>
@@ -83,7 +83,7 @@
         Lorsque le Filtre effectue l'extraction transmodale et le Synthèse Guidée par RAG (O(1)) d'un fichier volumineux, il utilise le
         <code>source_id</code> natif (ex. <code>U_abc123_C_xyz789_T_1748246400</code>) et indexe les chunks bruts
         dans <code>echo_session_rag</code>. Le modèle reçoit ce <code>source_id</code> dans l'AEC (via <code>evenement_systeme</code> s'il vient d'être soumis, ou via l'outil <code>query_registry</code>) et l'utilise pour
-        interroger les détails précis de la source brute : <code>search_session_context("U_abc123_C_xyz789...", "...")</code>.
+        interroger les détails précis de la source brute : <code>search_sessions_context("U_abc123_C_xyz789...", "...")</code>.
         Ce mécanisme de <strong>Smart Context (Synthèse Guidée par RAG (O(1)) RAG)</strong> injecte des balises <code>&lt;smart_context&gt;</code> structurelles dans le prompt, remplaçant l'injection du fichier complet dans le contexte,
         qui serait prohibitive en tokens.
       </p>
@@ -132,7 +132,7 @@
         <div class="mermaid">
 flowchart TD
   O["Outils Cognitifs<br/>(memory_and_rag_tool)"] --> |update_meta_artifact<br/>search_meta_artifacts| COL1
-  O --> |save_session_context<br/>search_session_context<br/>delete_session_context_source| COL2
+  O --> |save_session_context<br/>search_sessions_context<br/>delete_session_context_source| COL2
 
   subgraph Q["Qdrant Engine (Port 6333)"]
     COL1[("🧠 echo_meta_artifacts<br/>Mémoire long terme<br/>TTL, Consolidation, Importance")]
@@ -227,7 +227,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.55 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.193.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

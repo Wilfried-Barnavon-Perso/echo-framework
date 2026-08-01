@@ -1,17 +1,16 @@
 """
 title: ECHO Session RAG Conversation Filter
 author: ECHO Framework
-version: 1.9
+version: 1.10
 description: Composant système interne : ECHO Session RAG Conversation Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.10: Self-Healing RAG Filter (auto-réparation avec last_rag_message_id).
 # 1.9: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
 # 1.8: Migration de ENABLE_CONVERSATION_RAG vers les Valves globales.
 # 1.7: Nettoyage du code mort (suppression de la Valve WINDOW_SIZE devenue obsolète avec la V1.6).
 # 1.6: Architecture Stateless Zéro RAM (Fenêtre de Tour Dynamique) & Bouclier Regex anti-Base64.
-# 1.5: Fix UUID collision en RAG éphémère (ajout unique_seed).
-# 1.4: Extraction propre du texte dans les messages multipart pour empêcher l'embedding de Base64 massif.
 
 from typing import Optional, Any
 from pydantic import BaseModel, Field
@@ -21,7 +20,7 @@ import time
 # Importations ECHO Standard
 import sys
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoGeminiClient
+from echo_utils import EchoGeminiClient, EchoStateManager
 from echo_constants import SESSION_RAG_CONVERSATION_SOURCE_ID
 
 class Filter:
@@ -83,22 +82,10 @@ class Filter:
         if not chat_id or not user_id or not messages:
             return body
             
-        # Extraction de la Fenêtre Dynamique du Tour Courant
-        last_user_idx = len(messages) - 1
-        while last_user_idx >= 0:
-            if messages[last_user_idx].get("role") == "user":
-                break
-            last_user_idx -= 1
-            
-        if last_user_idx < 0:
-            last_user_idx = 0
-            
-        current_turn_messages = messages[last_user_idx:]
-        
         # --- DEBOUNCE SÉMANTIQUE (Économie CPU) ---
         # Si le dernier message n'est pas l'assistant final (ex: c'est un outil en cours, 
         # ou un assistant qui appelle un outil), on ignore l'indexation pour ne pas saturer le CPU.
-        last_msg = current_turn_messages[-1]
+        last_msg = messages[-1]
         is_turn_finished = (
             last_msg.get("role") == "assistant" and 
             not last_msg.get("tool_calls")
@@ -107,24 +94,62 @@ class Filter:
         if not is_turn_finished:
             return body
             
-        # Le formatage agrège tout le tour dans une seule bulle de contexte pour le RAG
-        formatted_text = self._format_messages(current_turn_messages)
+        # --- SELF-HEALING RAG ARCHITECTURE ---
+        # Instanciation de l'état SQLite pour ce chat_id
+        state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        last_rag_message_id = state_mgr.get_setting("last_rag_message_id")
         
-        # Upsert Idempotent sur le message initial du tour
-        # (L'écrasement écrase l'ancien passage du filtre s'il y a des outils asynchrones)
-        unique_seed = current_turn_messages[0].get("id") or str(current_turn_messages[0].get("timestamp"))
-        
-        # Injection asynchrone Zéro-Latence via echo-embedding (bge-m3)
-        asyncio.create_task(
-            EchoGeminiClient.index_text_in_ephemeral_rag(
-                distillate=formatted_text,
-                source_id=SESSION_RAG_CONVERSATION_SOURCE_ID,
-                uid=user_id,
-                chat_id=chat_id,
-                __user__=__user__,
-                __metadata__=__metadata__,
-                unique_seed=str(unique_seed) if unique_seed else None
+        # Découpage du delta de messages manquants
+        start_idx = 0
+        if last_rag_message_id:
+            for i, msg in enumerate(messages):
+                msg_id = msg.get("id") or str(msg.get("timestamp"))
+                if msg_id == last_rag_message_id:
+                    start_idx = i + 1
+                    break
+                    
+        messages_to_process = messages[start_idx:]
+        if not messages_to_process:
+            return body
+            
+        # Découpage en tours de parole (chaque tour commence par un 'user')
+        turns = []
+        current_turn = []
+        for msg in messages_to_process:
+            if msg.get("role") == "user" and current_turn:
+                turns.append(current_turn)
+                current_turn = []
+            current_turn.append(msg)
+        if current_turn:
+            turns.append(current_turn)
+            
+        # Traitement asynchrone de chaque tour manquant (ou du tour courant)
+        for turn in turns:
+            if not turn: continue
+            
+            # Le formatage agrège tout le tour dans une seule bulle de contexte pour le RAG
+            formatted_text = self._format_messages(turn)
+            
+            # Upsert Idempotent sur le message initial du tour (user)
+            unique_seed = turn[0].get("id") or str(turn[0].get("timestamp"))
+            
+            # Injection asynchrone Zéro-Latence
+            asyncio.create_task(
+                EchoGeminiClient.index_text_in_ephemeral_rag(
+                    distillate=formatted_text,
+                    source_id=SESSION_RAG_CONVERSATION_SOURCE_ID,
+                    uid=user_id,
+                    chat_id=chat_id,
+                    __user__=__user__,
+                    __metadata__=__metadata__,
+                    unique_seed=str(unique_seed) if unique_seed else None
+                )
             )
-        )
+            
+        # Mise à jour du point de reprise avec le TOUT DERNIER message indexé (assistant)
+        final_msg = messages_to_process[-1]
+        final_msg_id = final_msg.get("id") or str(final_msg.get("timestamp"))
+        if final_msg_id:
+            state_mgr.save_setting("last_rag_message_id", final_msg_id)
 
         return body

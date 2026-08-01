@@ -141,7 +141,7 @@ flowchart LR
     </p>
     <p>
       Le modèle principal reçoit uniquement le résumé exhaustif et le <code>source_id</code>, son statut devenant <code>vectorized_sum_up</code>.
-      Il peut interroger la donnée brute avec précision via l'outil <code>search_session_context(source_id, query)</code> 
+      Il peut interroger la donnée brute avec précision via l'outil <code>search_sessions_context(source_id, query)</code> 
       sans saturer sa fenêtre de contexte.
     </p>
 
@@ -159,7 +159,7 @@ flowchart LR
 
     <div class="code-header">Structure du bloc AEC (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.192.55"
+version_framework_echo: "5.193.0"
 modèle_actuel:   "##MODEL_ID##"
 modèle_origine:  "##MODEL_ORIGIN##"
 nom_utilisateur: "anonyme"
@@ -179,7 +179,7 @@ timezone:        "Europe/Paris"
 &lt;smart_context filename="rapport.pdf" mime_type="application/pdf" mode="vectorized_sum_up" source_id="U_abc123_C_xyz789_T_1748246400"&gt;
 [Résumé exhaustif et structuré généré par Synthèse Guidée par RAG]
 
-> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_session_context`
+> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_sessions_context`
 &lt;/smart_context&gt;</code></pre>
 
     <div class="note-box">
@@ -230,7 +230,7 @@ timezone:        "Europe/Paris"
       </li>
     </ol>
     <p>
-      Il n'y a <strong>aucun appel LLM</strong> pour résumer ces messages. L'exécution est quasi-instantanée et préserve la latence de la réponse utilisateur, rendant le RAG de session continuellement à jour pour l'agent de planification ou d'autres outils d'analyse (ex: <code>search_session_context</code>).
+      Il n'y a <strong>aucun appel LLM</strong> pour résumer ces messages. L'exécution est quasi-instantanée et préserve la latence de la réponse utilisateur, rendant le RAG de session continuellement à jour pour l'agent de planification ou d'autres outils d'analyse (ex: <code>search_sessions_context</code>).
     </p>
 
     <div class="audit-note">
@@ -272,7 +272,7 @@ timezone:        "Europe/Paris"
     </div>
 
     <footer>
-      ECHO Framework - Version 5.192.55 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.193.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

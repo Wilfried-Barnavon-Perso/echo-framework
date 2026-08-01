@@ -1,17 +1,18 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.47
+version: 5.58
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.47: Remplacement du prompt natif par une interface in-line pour la création, résolution du bug de scoping state (currentFile).
-# 5.46: Ajout d'une icône "œil" cliquable pour afficher/masquer les mots de passe.
-# 5.45: Désactivation de l'autocomplétion navigateur et du spellcheck sur le formulaire dynamique.
-# 5.41: Fix Codex file tree actions (batch upload, state sync on delete).
-# 5.40: Scroll automatique vers le bas du Cognitive Monitor lors du refresh (manuel ou auto).
-# 5.39: Refonte show_image_js pour passer le Base64 explicite au lieu de l'URL.
+# 5.58: Ajout d'un splitter redimensionnable pour la barre latérale (fichiers) du Codex.
+# 5.57: Refonte de l'impression PDF pour les previews HTML/CSS (utilisation native de window.print dans l'iframe via postMessage).
+# 5.56: Correction de l'impression partielle du Codex PDF en forçant overflow: visible sur html et body.
+# 5.55: Modification du comportement du bouton Plein Écran (retour à 25% de la surface centrée au lieu de l'état précédent).
+# 5.54: Correction du bug d'impression de l'ECHO Codex et ajout de la fonctionnalité Plein Écran contraint.
+# 5.53: Fix backspace (suppression de mots entiers) dans Monaco Editor en forçant accessibilitySupport à 'off'.
+
 
 from fastapi.responses import HTMLResponse
 import sys
@@ -645,10 +646,22 @@ return new Promise(function(resolve) {{
         return;
     }}
 
+    var iframe = chatContainer.querySelector('iframe');
+    if (iframe && iframe.contentWindow) {{
+        iframe.contentWindow.postMessage('echo-print', '*');
+        resolve({{ success: true, method: 'iframe_postMessage' }});
+        return;
+    }}
+
     var printStyle = document.createElement('style');
     printStyle.id = STYLE_ID;
     printStyle.textContent =
         '@media print {{\\n' +
+        '  html, body.echo-printing {{\\n' +
+        '    overflow: visible !important;\\n' +
+        '    height: auto !important;\\n' +
+        '    max-height: none !important;\\n' +
+        '  }}\\n' +
         '  body.echo-printing > *:not(.echo-print-ancestor):not(.echo-print-target) {{\\n' +
         '    display: none !important;\\n' +
         '  }}\\n' +
@@ -667,6 +680,7 @@ return new Promise(function(resolve) {{
         '    margin: 0 !important;\\n' +
         '    border: none !important;\\n' +
         '    box-shadow: none !important;\\n' +
+        '    transform: none !important;\\n' +
         '  }}\\n' +
         '  .echo-print-target {{\\n' +
         '    display: block !important;\\n' +
@@ -780,6 +794,7 @@ return new Promise(function(resolve) {{
       if (savedState.previewOpen !== undefined) previewOpen = savedState.previewOpen;
       if (savedState.editorRatio) editorRatio = savedState.editorRatio;
       if (savedState.previewRatio) previewRatio = savedState.previewRatio;
+      let sidebarWidth = savedState.sidebarWidth || 150;
 
       // --- Theme Detection ---
       const isDark = document.documentElement.classList.contains('dark') ||
@@ -862,6 +877,7 @@ return new Promise(function(resolve) {{
         <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
         <button id="${{CODEX_ID}}-save" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button>
         <button id="${{CODEX_ID}}-preview-toggle" title="Prévisualisation" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px; opacity:0.4;">👁️</button>
+        <button id="${{CODEX_ID}}-fullscreen" title="Plein écran" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;">⛶</button>
         <button id="${{CODEX_ID}}-minimize" title="Minimiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;">—</button>
         <button id="${{CODEX_ID}}-close" title="Fermer" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:18px;">×</button>`;
       hud.appendChild(header);
@@ -873,8 +889,15 @@ return new Promise(function(resolve) {{
       // Sidebar (file tree)
       const sidebar = document.createElement('div');
       sidebar.id = CODEX_ID + '-sidebar';
-      sidebar.style.cssText = `width:150px; background:${{sidebarBg}}; border-right:1px solid ${{borderColor}};
+      sidebar.style.cssText = `width:${{sidebarWidth}}px; background:${{sidebarBg}}; border-right:1px solid ${{borderColor}};
         overflow-y:auto; flex-shrink:0; display:flex; flex-direction:column; padding:6px 0;`;
+
+      // Sidebar Splitter
+      const sidebarSplitter = document.createElement('div');
+      sidebarSplitter.id = CODEX_ID + '-sidebar-splitter';
+      sidebarSplitter.style.cssText = `width:5px; cursor:col-resize; background:${{borderColor}}; flex-shrink:0; transition:background 0.15s;`;
+      sidebarSplitter.onmouseenter = () => sidebarSplitter.style.background = accentColor;
+      sidebarSplitter.onmouseleave = () => sidebarSplitter.style.background = borderColor;
 
       // Editor container
       const editorWrap = document.createElement('div');
@@ -906,6 +929,7 @@ return new Promise(function(resolve) {{
       `;
 
       body.appendChild(sidebar);
+      body.appendChild(sidebarSplitter);
       body.appendChild(editorWrap);
       body.appendChild(splitter);
       body.appendChild(previewPanel);
@@ -1175,6 +1199,23 @@ return new Promise(function(resolve) {{
         hud.style.minHeight = isMinimized ? '0' : '400px';
       }};
 
+      // Fullscreen Toggle
+      let isFullscreen = false;
+      let preFsState = {{}};
+      const fsBtn = document.getElementById(CODEX_ID + '-fullscreen');
+      if (fsBtn) {{
+        fsBtn.onclick = () => {{
+          if (!isFullscreen) {{
+            preFsState = {{ w: hud.style.width, h: hud.style.height, t: hud.style.top, l: hud.style.left, tx: hud.style.transform }};
+            hud.style.width = '95vw'; hud.style.height = '95vh'; hud.style.top = '2.5vh'; hud.style.left = '2.5vw'; hud.style.transform = 'none'; hud.style.resize = 'none';
+            isFullscreen = true;
+          }} else {{
+            hud.style.width = '50vw'; hud.style.height = '50vh'; hud.style.top = '25vh'; hud.style.left = '25vw'; hud.style.transform = 'none'; hud.style.resize = 'both';
+            isFullscreen = false;
+          }}
+        }};
+      }};
+
       // Import (PC → Codex)
       document.getElementById(CODEX_ID + '-import').onclick = () => {{
         const inp = document.createElement('input');
@@ -1313,6 +1354,7 @@ return new Promise(function(resolve) {{
             previewOpen: previewOpen,
             editorRatio: editorRatio,
             previewRatio: previewRatio,
+            sidebarWidth: sidebarWidth,
           }}));
         }} catch(e) {{}}
       }}
@@ -1379,6 +1421,7 @@ return new Promise(function(resolve) {{
         diffEditor = monaco.editor.createDiffEditor(editorWrap, {{
           theme: theme, readOnly: false, renderSideBySide: true,
           automaticLayout: true, minimap: {{enabled: false}},
+          accessibilitySupport: 'off'
         }});
         const originalModel = monaco.editor.createModel(editor ? editor.getValue() : '', files.find(f=>f.filename===currentFile)?.lang||'plaintext');
         const modifiedModel = monaco.editor.createModel(modifiedContent, files.find(f=>f.filename===currentFile)?.lang||'plaintext');
@@ -1612,11 +1655,11 @@ return new Promise(function(resolve) {{
         if (!iframe) {{
           container.innerHTML = '';
           iframe = document.createElement('iframe');
-          iframe.sandbox = 'allow-scripts';
+          iframe.sandbox = 'allow-scripts allow-modals';
           iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';
           container.appendChild(iframe);
         }}
-        iframe.srcdoc = content;
+        iframe.srcdoc = '<script>window.addEventListener("message", function(e) {{ if (e.data === "echo-print") window.print(); }});</script>' + content;
       }}
 
       function renderCSS(content, container) {{
@@ -1625,11 +1668,11 @@ return new Promise(function(resolve) {{
         if (!iframe) {{
           container.innerHTML = '';
           iframe = document.createElement('iframe');
-          iframe.sandbox = 'allow-scripts';
+          iframe.sandbox = 'allow-scripts allow-modals';
           iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';
           container.appendChild(iframe);
         }}
-        iframe.srcdoc = '<!DOCTYPE html><html><head><style>' + content + '</style></head><body>' +
+        iframe.srcdoc = '<!DOCTYPE html><html><head><script>window.addEventListener("message", function(e) {{ if (e.data === "echo-print") window.print(); }});</script><style>' + content + '</style></head><body>' +
           '<h1>Heading 1</h1><h2>Heading 2</h2><h3>Heading 3</h3>' +
           '<p>Paragraph with <strong>bold</strong>, <em>italic</em>, and <a href="#">link</a>.</p>' +
           '<ul><li>Item 1</li><li>Item 2</li><li>Item 3</li></ul>' +
@@ -1644,7 +1687,7 @@ return new Promise(function(resolve) {{
         container.style.padding = '12px';
         const oldIframe = container.querySelector('iframe');
         if (oldIframe) oldIframe.remove();
-        const cleaned = content.replace(/<script[\s\S]*?<\/script>/gi, '');
+        const cleaned = content.replace(/<script[\\s\\S]*?<\\/script>/gi, '');
         container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; min-height:200px;">' + cleaned + '</div>';
         const svg = container.querySelector('svg');
         if (svg) {{
@@ -1685,6 +1728,7 @@ return new Promise(function(resolve) {{
 
       // Splitter drag logic
       let isDraggingSplit = false;
+      let isDraggingSidebarSplit = false;
       document.getElementById(CODEX_ID + '-splitter').onmousedown = (e) => {{
         e.preventDefault();
         isDraggingSplit = true;
@@ -1694,22 +1738,39 @@ return new Promise(function(resolve) {{
         document.getElementById(CODEX_ID + '-preview').style.pointerEvents = 'none';
         editorWrap.style.pointerEvents = 'none';
       }};
+      document.getElementById(CODEX_ID + '-sidebar-splitter').onmousedown = (e) => {{
+        e.preventDefault();
+        isDraggingSidebarSplit = true;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        document.getElementById(CODEX_ID + '-preview').style.pointerEvents = 'none';
+        editorWrap.style.pointerEvents = 'none';
+      }};
       document.addEventListener('mousemove', (e) => {{
-        if (!isDraggingSplit) return;
-        const hudRect = hud.getBoundingClientRect();
-        const sidebarW = document.getElementById(CODEX_ID + '-sidebar').offsetWidth;
-        const avail = hudRect.width - sidebarW - 5;
-        let edW = e.clientX - (hudRect.left + sidebarW);
-        edW = Math.max(200, Math.min(edW, avail - 200));
-        const prevW = avail - edW;
-        editorRatio = (edW / avail) * 100;
-        previewRatio = (prevW / avail) * 100;
-        editorWrap.style.flex = `${{editorRatio}} 1 0%`;
-        document.getElementById(CODEX_ID + '-preview').style.flex = `${{previewRatio}} 1 0%`;
+        if (isDraggingSidebarSplit) {{
+          const hudRect = hud.getBoundingClientRect();
+          let newW = e.clientX - hudRect.left;
+          newW = Math.max(50, Math.min(newW, hudRect.width / 2));
+          sidebarWidth = newW;
+          document.getElementById(CODEX_ID + '-sidebar').style.width = newW + 'px';
+        }}
+        if (isDraggingSplit) {{
+          const hudRect = hud.getBoundingClientRect();
+          const sidebarW = document.getElementById(CODEX_ID + '-sidebar').offsetWidth;
+          const avail = hudRect.width - sidebarW - 10;
+          let edW = e.clientX - (hudRect.left + sidebarW + 5);
+          edW = Math.max(200, Math.min(edW, avail - 200));
+          const prevW = avail - edW;
+          editorRatio = (edW / avail) * 100;
+          previewRatio = (prevW / avail) * 100;
+          editorWrap.style.flex = `${{editorRatio}} 1 0%`;
+          document.getElementById(CODEX_ID + '-preview').style.flex = `${{previewRatio}} 1 0%`;
+        }}
       }});
       document.addEventListener('mouseup', () => {{
-        if (isDraggingSplit) {{
+        if (isDraggingSplit || isDraggingSidebarSplit) {{
           isDraggingSplit = false;
+          isDraggingSidebarSplit = false;
           document.body.style.cursor = '';
           document.body.style.userSelect = '';
           document.getElementById(CODEX_ID + '-preview').style.pointerEvents = '';
@@ -1738,6 +1799,7 @@ return new Promise(function(resolve) {{
           automaticLayout: true, minimap: {{enabled: true}},
           fontSize: 13, lineNumbers: 'on', wordWrap: 'on',
           scrollBeyondLastLine: false, renderWhitespace: 'selection',
+          accessibilitySupport: 'off'
         }});
         editor.onDidChangeModelContent(() => {{
           modified = true; renderFileTree(); updateSaveButton();
@@ -1764,7 +1826,7 @@ return new Promise(function(resolve) {{
           if (editor) monaco.editor.setModelLanguage(editor.getModel(), newLang);
           // Proposer le rename si l'extension correspond à un langage connu
           if (currentFile && LANG_TO_EXT[newLang]) {{
-            const baseName = currentFile.replace(/\.[^.]+$/, '');
+            const baseName = currentFile.replace(/\\.[^.]+$/, '');
             const newExt = LANG_TO_EXT[newLang];
             const newFilename = baseName + newExt;
             if (newFilename !== currentFile) {{
@@ -1856,8 +1918,10 @@ return new Promise(function(resolve) {{
       "  var hudH = saved.h || '500px';\n"
       "  var autoInterval = saved.interval || 5;\n"
       "  var autoEnabled = saved.autoOn || false;\n"
-      "  isMinimized = saved.min || false;\n"
+      "  // Forcé à false au lancement pour éviter le bug de la fenêtre vide après restauration\n"
+      "  isMinimized = false;\n"
       "  if (saved.activeIdx !== undefined) activeThreadIdx = saved.activeIdx;\n"
+      "  if (activeThreadIdx >= threads.length) activeThreadIdx = Math.max(0, threads.length - 1);\n"
       "  if (saved.expanded) try { expandedNodes = JSON.parse(saved.expanded); } catch(e) {}\n"
       "\n"
       "  var isDark = document.documentElement.classList.contains('dark') ||\n"
@@ -1882,7 +1946,8 @@ return new Promise(function(resolve) {{
       "  function fmtTime(ts) {\n"
       "    if (!ts) return '';\n"
       "    var d = new Date(ts * 1000);\n"
-      "    return d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});\n"
+      "    var p = function(n){return ('0'+n).slice(-2);};\n"
+      "    return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());\n"
       "  }\n"
       "  function saveState() {\n"
       "    var hud = document.getElementById(HUD_ID);\n"

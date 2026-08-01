@@ -35,7 +35,7 @@ Le système nerveux central d'ECHO repose sur le `pipe_engine.py` et les bibliot
 - **Base Vectorielle des Souvenirs :** Système RAG vectoriel (Qdrant).
 - **Gestion de l'Importance :** Algorithme de fusion sémantique préservant le score `memory_importance` maximal des souvenirs lors de l'ingestion.
 - **Smart Context :** Injection de faits via balises XML (`<smart_context>`) et `source_id` natifs. Le filtre intercepte exhaustivement les fichiers du Workspace.
-- **Conversation RAG Filter :** Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG (par fenêtre de tour dynamique). Extraction textuelle stricte pour bloquer les payloads Base64 (images).
+- **Conversation RAG Filter :** Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG (par fenêtre de tour dynamique). Extraction textuelle stricte pour bloquer les payloads Base64 (images). Le filtre applique désormais un mécanisme d'**Upsert Idempotent Zéro-Latence** par tour de parole, garantissant l'intégrité de l'indexation asynchrone sans bloquer le flux, en utilisant l'ID du message comme `unique_seed`.
 - **User Native Context Filter :** Filtre Inlet (priorité 10) hébergeant les réglages utilisateur (nom, localisation) pour protéger le moteur système.
 - **App Drawer Filter :** Filtre Inlet silencieux (priorité 1000) injectant un composant Data Island UI (ECHO App Drawer) natif. Fournit un HUD flottant qui s'interface avec l'API WebUI pour déclencher directement les Actions sans rechargement.
 - **Pipeline d'Ingestion Zéro-RAM :** Architecture asynchrone déportée pour le traitement de masse. Conversion MarkItDown et traitement hybride (Vectoriel, Codex Git, SQLite).
@@ -51,7 +51,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 ## 5. 🛠️ L'Arsenal (`/opt/ECHO/owui-tools/`)
 
 - **Planification Stratégique :** Agent planificateur LLM (`strategic_planner.py`). Suivi tactique obligatoire de l'état d'avancement (`update_plan`). Persistance Markdown dans le Codex Git et SQLite.
-- **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites RAG : `update_meta_artifact`, `search_meta_artifacts` (fusionne recherche sémantique ciblée et cartographie d'index avec reranking), `delete_meta_artifact_item`, `save_session_context`, `delete_session_context_source`, et `search_session_context` (fusionne recherche RAG et cartographie globale).
+- **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites RAG : `update_meta_artifact`, `search_meta_artifacts` (fusionne recherche sémantique ciblée et cartographie d'index avec reranking), `delete_meta_artifact_item`, `save_session_context`, `delete_session_context_source`, et `search_sessions_context` (fusionne recherche RAG et cartographie globale). Le paramètre `global_search` permet d'étendre la recherche à l'intégralité de l'historique inter-sessions, déclenché par des marqueurs temporels (ex: "hier").
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes, Leaflet) via `universal_visual_generator.py` isolé en Data Island.
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`). Boucle OODA, Descente Cognitive via injection de schémas, mode Lidar/Vision hybride, Proactive Context Pruning et streaming sémantique.
 - **Sovereign Web Search :** Recherche souveraine via SearXNG et DuckDuckGo, avec capacité de délégation à un agent de recherche profonde multi-tours.
@@ -88,7 +88,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 - **Embedding Worker :** Offload WebGPU/WASM prioritaire, fallback sur llama.cpp (GGUF CPU) sous Docker.
 - **Download Broker :** Service de collecte asynchrone des téléchargements.
 - **MCP Broker :** Serveur natif Model Context Protocol (`FastMCP` via Uvicorn). Expose via ASGI StreamableHTTP des outils externes (Omnisearch Jobs, Corporate Sirene/Bodacc, Academic). Intègre un middleware pur ASGI interceptant silencieusement le `x-openwebui-user-id`.
-- **UI HUD & Sécurité DOM (`echo_ui.py`) :** Le moteur de rendu de l'interface injecte désormais ses propres modales asynchrones natives (`window.echoCustomConfirm`, `window.mcpAlert`) qui respectent le mode sombre/clair. Ceci remplace strictement les `confirm()` natifs du navigateur afin de ne jamais bloquer l'Event Loop du client et d'assurer une parfaite fluidité des flux WebUI.
+- **UI HUD & Sécurité DOM (`echo_ui.py`) :** Le moteur de rendu de l'interface injecte désormais ses propres modales asynchrones natives (`window.echoCustomConfirm`, `window.mcpAlert`) qui respectent le mode sombre/clair pour ne jamais bloquer l'Event Loop. L'interface ECHO Codex intègre des redimensionnements fluides de la Sidebar (`splitter`), une impression PDF native (`allow-modals`), et une protection contre les états d'affichage corrompus au chargement.
 
 ## 9. 🚦 Orchestration Séquentielle (Docker Compose)
 
@@ -118,4 +118,4 @@ Démarrage ordonné par hostnames stricts (`echo-*`) :
 - **Auto-Hébergement :** Les clés API ne sortent jamais du cluster.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.192.59*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.193.0*
