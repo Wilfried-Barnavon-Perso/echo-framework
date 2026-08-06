@@ -1,18 +1,14 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.16
+version: 1.17
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.14: Fix - Ajout de la règle anti-spam dans la docstring de search_web pour interdire le burst (Parallel Function Calling) par le modèle principal.
-# 1.13: Optim - Nouveaux paramètres SearxNG, résolution du paradoxe logique (docstrings) et suppression algorithmique des appâts de boucle.
-# 1.12: Optim - Rééquilibrage cognitif des docstrings de recherche pour prioriser delegate_deep_research sur les requêtes complexes.
-# 1.11: Optim - Ajout de la suggestion de changement de méthode en cas de blocage SearXNG.
-# 1.10: Optim - Intégration sous contrainte de delegate_web_browsing dans le Deep Research Agent.
 # 1.15: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
 # 1.16: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 1.17: Optim - Ajout de la priorisation des informations récentes via consignes et utilisation proactive de time_range.
 
 import httpx
 import sys
@@ -90,6 +86,7 @@ class Tools:
     ) -> str:
         """
         Permet au Modèle d'effectuer une recherche web simple (one-shot). Retourne des extraits textuels (snippets) limités. Strictement réservé à l'extraction de faits rapides ou d'URLs. Ne permet pas de lire le contenu complet des pages.
+        Pour prioriser l'actualité ou les informations récentes, définissez TOUJOURS time_range (ex: 'year', 'month' ou 'week'). Par défaut aucune limite temporelle n'est appliquée.
         ANTI-SPAM : Le Modèle a l'INTERDICTION d'exécuter plus de 2 appels à cet outil simultanément lors d'un même tour (Parallel Function Calling). Pour une recherche exhaustive, complexe ou nécessitant de multiples requêtes, le Modèle DOIT utiliser l'outil `delegate_deep_research`.
         
         :param query: La recherche textuelle.
@@ -197,9 +194,10 @@ class Tools:
             "<rules>\n"
             "1. ITÉRATION : Le Modèle DOIT poursuivre sa recherche tant que son analyse globale n'est pas complète et factuellement vérifiée.\n"
             "2. OUTILS : Le Modèle DOIT privilégier 'search_web' et 'search_instant_answer'.\n"
-            "3. CARTOGRAPHIE : Si l'outil 'search_maps' est mobilisé, le Modèle DOIT obligatoirement définir l'argument 'print_map=False'.\n"
-            "4. ANTI-SPAM : Le Modèle a l'INTERDICTION d'exécuter plus de 2 appels à 'search_web' simultanément lors d'un même tour. Il DOIT agréger ses mots-clés en requêtes denses.\n"
-            "5. NAVIGATION ('delegate_web_browsing') : Cet outil est STRICTEMENT réservé à l'extraction sur une URL absolue précise obtenue précédemment. INTERDICTION FORMELLE de l'utiliser sur un moteur de recherche. L'argument 'max_iterations=20' est OBLIGATOIRE.\n"
+            "3. RÉCENCE : Pour toute requête nécessitant des informations récentes, le Modèle DOIT utiliser le paramètre 'time_range' de 'search_web' (ex: 'year', 'month').\n"
+            "4. CARTOGRAPHIE : Si l'outil 'search_maps' est mobilisé, le Modèle DOIT obligatoirement définir l'argument 'print_map=False'.\n"
+            "5. ANTI-SPAM : Le Modèle a l'INTERDICTION d'exécuter plus de 2 appels à 'search_web' simultanément lors d'un même tour. Il DOIT agréger ses mots-clés en requêtes denses.\n"
+            "6. NAVIGATION ('delegate_web_browsing') : Cet outil est STRICTEMENT réservé à l'extraction sur une URL absolue précise obtenue précédemment. INTERDICTION FORMELLE de l'utiliser sur un moteur de recherche. L'argument 'max_iterations=20' est OBLIGATOIRE.\n"
             "</rules>\n\n"
             "<output_format>\n"
             "Le Modèle doit produire une synthèse finale structurée en Markdown, en citant rigoureusement chaque source consultée.\n"

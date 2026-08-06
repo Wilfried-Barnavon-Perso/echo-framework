@@ -1,13 +1,14 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.58
+version: 5.61
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.58: Ajout d'un splitter redimensionnable pour la barre latérale (fichiers) du Codex.
-# 5.57: Refonte de l'impression PDF pour les previews HTML/CSS (utilisation native de window.print dans l'iframe via postMessage).
+# 5.61: Amélioration critique UX Mobile : Flex-wrap sur le header et transformation de la sidebar en nuage de tags (wrap) pour accessibilité de tous les fichiers.
+# 5.60: Correction critique du Codex sur mobile (IDs manquants sur le header et le body empêchant le CSS responsive de s'appliquer).
+# 5.59: Refonte responsive globale des HUDs, désactivation du drag tactile et intégration pinch-to-zoom (WebPlayer).
 # 5.56: Correction de l'impression partielle du Codex PDF en forçant overflow: visible sur html et body.
 # 5.55: Modification du comportement du bouton Plein Écran (retour à 25% de la surface centrée au lieu de l'état précédent).
 # 5.54: Correction du bug d'impression de l'ECHO Codex et ajout de la fonctionnalité Plein Écran contraint.
@@ -169,7 +170,33 @@ class EchoUI(EchoRichUI):
       return f"""
       const isMobile = window.matchMedia('(max-width: 768px)').matches || /Mobi|Android/i.test(navigator.userAgent);
       if (isMobile) {{
-          {f"window.parent.postMessage({{ type: 'toast', message: `{error_msg}`, level: 'warning' }}, '*'); return;" if block_execution else f"const styleId = '{hud_id}-mobile-style'; if (!document.getElementById(styleId)) {{ const styleEl = document.createElement('style'); styleEl.id = styleId; styleEl.innerHTML = `#{hud_id} {{ position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100dvh !important; max-width: none !important; max-height: none !important; min-width: 0 !important; min-height: 0 !important; border-radius: 0 !important; z-index: 10005 !important; transform: none !important; }} #{hud_id}-resizer, .cp {{ display: none !important; }}`; document.head.appendChild(styleEl); }}"}
+          {f"window.parent.postMessage({{ type: 'toast', message: `{error_msg}`, level: 'warning' }}, '*'); return;" if block_execution else f'''
+          const styleId = '{hud_id}-mobile-style';
+          if (!document.getElementById(styleId)) {{
+              const styleEl = document.createElement('style');
+              styleEl.id = styleId;
+              styleEl.innerHTML = `
+                  #{hud_id} {{ position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100dvh !important; max-width: none !important; max-height: none !important; min-width: 0 !important; min-height: 0 !important; border-radius: 0 !important; z-index: 10005 !important; transform: none !important; }}
+                  #{hud_id}-resizer, .cp {{ display: none !important; }}
+                  /* Factorisation du Responsive pour les structures classiques (Codex, Agent Monitor) */
+                  #{hud_id}-header {{ flex-wrap: wrap !important; height: auto !important; min-height: 40px !important; padding: 6px !important; gap: 4px !important; }}
+                  #{hud_id}-body {{ flex-direction: column !important; }}
+                  #{hud_id}-sidebar {{ width: 100% !important; height: auto !important; max-height: 140px !important; flex-direction: row !important; flex-wrap: wrap !important; overflow-y: auto !important; overflow-x: hidden !important; border-right: none !important; border-bottom: 1px solid var(--border-color, #444) !important; padding: 4px !important; align-content: flex-start !important; }}
+                  #{hud_id}-sidebar > div {{ flex: 0 0 auto !important; margin: 2px !important; border: 1px solid var(--border-color, #444) !important; border-radius: 6px !important; }}
+                  #{hud_id}-sidebar-splitter {{ display: none !important; }}
+              `;
+              document.head.appendChild(styleEl);
+          }}
+          // Factorisation : Désactivation passive du drag&drop après initialisation du DOM
+          setTimeout(() => {{
+              const header = document.getElementById('{hud_id}-header');
+              if (header) {{
+                  header.onmousedown = null;
+                  header.ontouchstart = null;
+                  header.style.cursor = 'default';
+              }}
+          }}, 100);
+          '''}
       }}
       """
 
@@ -196,7 +223,7 @@ class EchoUI(EchoRichUI):
     return f"""
   (function() {{
     const HUD_ID = '{hud_id}';
-    {EchoUI.get_mobile_guard_js(hud_id, block_execution=True, error_msg="Le WebPlayer est indisponible sur mobile.")}
+    {EchoUI.get_mobile_guard_js(hud_id)}
     const STATE_KEY = '{state_key}';
     const ENGINE_KEY = 'echoWebPlayer_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_');
 
@@ -294,6 +321,35 @@ class EchoUI(EchoRichUI):
             this.imgScale = Math.min(Math.max(0.02, this.imgScale * delta), 15);
             this.syncLayout();
           }}, {{ passive: false }});
+
+          // Gestion native Pinch-to-zoom
+          let initialPinchDistance = null;
+          let initialPinchScale = null;
+          const matrix = document.getElementById(HUD_ID + "-matrix");
+
+          matrix.addEventListener('touchstart', (e) => {{
+            if (e.touches.length === 2) {{
+              initialPinchDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+              initialPinchScale = this.imgScale;
+              e.preventDefault();
+            }}
+          }}, {{passive: false}});
+
+          matrix.addEventListener('touchmove', (e) => {{
+            if (e.touches.length === 2 && initialPinchDistance) {{
+              const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+              this.imgScale = Math.max(0.1, Math.min(10, initialPinchScale * (dist / initialPinchDistance)));
+              this.syncLayout();
+              e.preventDefault();
+            }}
+          }}, {{passive: false}});
+
+          matrix.addEventListener('touchend', (e) => {{
+            if (e.touches.length < 2) {{
+              initialPinchDistance = null;
+              initialPinchScale = null;
+            }}
+          }});
 
           area.onmousedown = (e) => {{
             if (e.button === 0 || e.button === 1) {{
@@ -752,7 +808,7 @@ return new Promise(function(resolve) {{
     return f"""
     (function() {{
       const CODEX_ID = 'echo-codex-hud';
-      {EchoUI.get_mobile_guard_js("echo-codex-hud", block_execution=True, error_msg="Le Codex ECHO requiert un navigateur de bureau.")}
+      {EchoUI.get_mobile_guard_js("echo-codex-hud")}
       const CID = '{chat_id}';
       const STATE_KEY = 'echo_codex_' + CID;
       const MONACO_CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min';
@@ -863,6 +919,7 @@ return new Promise(function(resolve) {{
 
       // --- HEADER (draggable) ---
       const header = document.createElement('div');
+      header.id = CODEX_ID + '-header';
       header.style.cssText = `display:flex; align-items:center; padding:8px 12px; gap:8px;
         background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; cursor:move;
         user-select:none; flex-shrink:0;`;
@@ -884,6 +941,7 @@ return new Promise(function(resolve) {{
 
       // --- BODY (sidebar + editor) ---
       const body = document.createElement('div');
+      body.id = CODEX_ID + '-body';
       body.style.cssText = 'display:flex; flex:1; overflow:hidden;';
 
       // Sidebar (file tree)
@@ -1896,7 +1954,7 @@ return new Promise(function(resolve) {{
     return (
       "(function() {\n"
       "  const HUD_ID = 'echo-cognitive-monitor';\n"
-      + EchoUI.get_mobile_guard_js('echo-cognitive-monitor', block_execution=True, error_msg="Agent Monitor requiert un navigateur de bureau.") + "\n"
+      + EchoUI.get_mobile_guard_js('echo-cognitive-monitor') + "\n"
       "  const CID = '" + chat_id + "';\n"
       "  const STATE_KEY = 'echo_cogmon_' + CID;\n"
       "\n"
@@ -2275,16 +2333,17 @@ return new Promise(function(resolve) {{
 
 
   # =====================================================================
-  # ECHO MCP IDENTITY VAULT — HUD Visualization
+  # ECHO IDENTITY VAULT — HUD Visualization
   # =====================================================================
 
   @staticmethod
-  def _generate_mcp_identity_js(accounts_json: str, schemas_json: str = "{}") -> str:
-    """Génère le script JS complet du HUD MCP Identity Vault avec schémas dynamiques."""
+  def _generate_identity_vault_js(accounts_json: str, schemas_json: str = "{}") -> str:
+    """Génère le script JS complet du HUD ECHO Identity Vault avec schémas dynamiques."""
     
     return (
       "(function() {\n"
       "  const HUD_ID = 'echo-mcp-identity';\n"
+      + EchoUI.get_mobile_guard_js('echo-mcp-identity') + "\n"
       "  if (document.getElementById(HUD_ID)) document.getElementById(HUD_ID).remove();\n"
       "  let accounts = JSON.parse('" + accounts_json.replace("\\\\", "\\\\\\\\").replace("'", "\\'") + "');\n"
       "  let schemas = JSON.parse('" + schemas_json.replace("\\\\", "\\\\\\\\").replace("'", "\\'") + "');\n"
@@ -2345,7 +2404,7 @@ return new Promise(function(resolve) {{
       "  \n"
       "  container.innerHTML = `\n"
       "    <div id=\"${HUD_ID}-header\">\n"
-      "      <span>🔐 MCP Identity Vault</span>\n"
+      "      <span>🔐 ECHO Identity Vault</span>\n"
       "      <span id=\"${HUD_ID}-close\">&times;</span>\n"
       "    </div>\n"
       "    <div id=\"${HUD_ID}-content\">\n"

@@ -2,7 +2,7 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-Version: 1.4 (Injection de THINKING_LEVEL_DISTILLATION pour accélérer l'analyse multimodale)
+Version: 1.5 (Correction de l'instruction système du smart_context pour guider vers semantic_probe sur les binaires)
 """
 
 import os
@@ -368,7 +368,6 @@ class EchoIngestionPipeline:
                 "la description doit être précise, détaillée, complète, couvrant autant, le textuel, le visuel que l'audio, et parfaitement horosynchronisé."
             )
             
-            import copy
             base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(MODEL_DISTILLATION, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
             
             payload = {
@@ -486,11 +485,13 @@ class EchoIngestionPipeline:
             if not brief_summary or brief_summary == "Analyse indisponible.":
                 brief_summary = "L'indexation a été réalisée sans erreur, mais le résumé a échoué."
                 
+        sys_msg = "> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_sessions_context`" if is_text else "> ⚙️ INFORMATION SYSTÈME : Le document complexe est vectorisé, mais pour une analyse structurelle/visuelle profonde, privilégiez l'outil `semantic_probe`"
+        
         res_text = (
             f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\" mode=\"vectorized_sum_up\"\n"
             f"                source_id=\"{file_id}\">\n"
             f"{brief_summary}\n\n"
-            f"> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_sessions_context`\n"
+            f"{sys_msg}\n"
             f"</smart_context>"
         )
         return {"status": "success", "type": FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"], "source_id": file_id, "fid": file_id, "name": filename, "mime": mime, "content": res_text}

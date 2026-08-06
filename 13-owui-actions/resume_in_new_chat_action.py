@@ -1,11 +1,12 @@
 """
 title: Resume in New Chat
 author: ECHO Framework
-version: 1.4
+version: 1.5
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMSAxNnYuNWExLjUgMS41IDAgMCAxLTEuNSAxLjVoLTZMMTIgMjBsLTIuNS0yLjVoLTZBMS41IDEuNSAwIDAgMSAyIDE2LjVWNGExLjUgMS41IDAgMCAxIDEuNS0xLjVoMTVBMS41IDEuNSAwIDAgMSAyMCA0djciLz48cGF0aCBkPSJtMTggMjIgMy0zLTMtMyIvPjxwb2x5bGluZSBwb2ludHM9IjIxIDE5IDEzIDE5Ii8+PC9zdmc+
 """
 # Historique des versions :
+# 1.5: Ajout d'une demande de confirmation explicite avant le déclenchement de la migration.
 # 1.4: Mise à jour de la priorité d'affichage à 20.
 # 1.3: Préservation des liens symboliques lors du clonage du Vault (compatibilité ingestion).
 # 1.2: Nettoyage tokens (fichiers + balises proprioceptives) pour distillation optimisée.
@@ -72,6 +73,12 @@ class Action:
             except AttributeError:
                 if __event_emitter__:
                     await __event_emitter__({"type": "toast", "data": {"title": "ECHO", "message": "❌ Migration impossible : API Open WebUI non disponible.", "type": "error"}})
+            return None
+
+        if not await events.confirm(
+            "🚀 Migration de Session",
+            "Voulez-vous clôturer cette session et migrer le contexte saturé vers une nouvelle conversation (Distillation) ?"
+        ):
             return None
 
         # 1. Déploiement du HUD

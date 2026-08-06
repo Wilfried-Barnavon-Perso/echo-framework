@@ -1,8 +1,8 @@
 """
-title: MCP Identity Vault
+title: ECHO Identity Vault
 author: ECHO
-version: 1.4
-description: Interface de gestion sécurisée de l'identité et de l'authentification unique (MCP).
+version: 2.0
+description: Coffre-fort universel pour l'authentification des agents (MCP et N8N).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xMiAyMnM4LTQgOC0xMFY1bC04LTMtOCAzdjdjMCA2IDggMTAgOCAxMHoiLz48L3N2Zz4=
 """
 # Historique des versions :
@@ -31,7 +31,7 @@ class Action:
         state = EchoStateManager(user_id=user_id)
         with state._get_connection() as conn:
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS mcp_vault (
+                CREATE TABLE IF NOT EXISTS identity_vault (
                     user_id TEXT, 
                     service TEXT, 
                     account_id TEXT, 
@@ -45,14 +45,14 @@ class Action:
 
     def _get_accounts(self, state: EchoStateManager) -> List[Dict]:
         with state._get_connection() as conn:
-            cursor = conn.execute("SELECT service, account_id, access_level FROM mcp_vault WHERE user_id = ?", (state.user_id,))
+            cursor = conn.execute("SELECT service, account_id, access_level FROM identity_vault WHERE user_id = ?", (state.user_id,))
             rows = cursor.fetchall()
             return [{"service": r[0], "account_id": r[1], "access_level": r[2]} for r in rows]
 
     def _save_account(self, state: EchoStateManager, service: str, account_id: str, credentials: str, access_level: str):
         with state._get_connection() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO mcp_vault (user_id, service, account_id, credentials, access_level) VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials, access_level) VALUES (?, ?, ?, ?, ?)",
                 (state.user_id, service, account_id, credentials, access_level)
             )
             conn.commit()
@@ -60,7 +60,7 @@ class Action:
     def _delete_account(self, state: EchoStateManager, service: str, account_id: str):
         with state._get_connection() as conn:
             conn.execute(
-                "DELETE FROM mcp_vault WHERE user_id = ? AND service = ? AND account_id = ?",
+                "DELETE FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ?",
                 (state.user_id, service, account_id)
             )
             conn.commit()
@@ -86,7 +86,17 @@ class Action:
                 if resp.status_code == 200:
                     schemas = resp.json()
         except Exception as e:
-            # Fallback en cas d'indisponibilité du broker
+            pass
+        
+        # Injection du schéma générique N8N
+        schemas["n8n_workflows"] = {
+            "name": "N8N Orchestration",
+            "fields": [
+                {"id": "credentials", "label": "N8N Secret", "type": "text", "help": "Saisissez la valeur de __ECHO_SECRET_*__"}
+            ]
+        }
+        
+        if not schemas:
             schemas = {
                 "default": {
                     "name": "Service Défaut",
@@ -99,9 +109,9 @@ class Action:
         accounts = self._get_accounts(state)
         accounts_json = json.dumps(accounts).decode("utf-8")
         
-        hud_js = EchoUI._generate_mcp_identity_js(accounts_json, schemas_json)
+        hud_js = EchoUI._generate_identity_vault_js(accounts_json, schemas_json)
         await __event_call__({"type": "execute", "data": {"code": hud_js}})
-        await events.status("🔐 MCP Identity Vault actif.", True)
+        await events.status("🔐 ECHO Identity Vault actif.", True)
 
         # 2. Boucle d'événements asynchrones
         while True:

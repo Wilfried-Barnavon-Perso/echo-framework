@@ -27,7 +27,7 @@ async def get_credentials(user_id: str, service: str) -> dict:
 
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
-            "SELECT credentials, access_level FROM mcp_vault WHERE user_id = ? AND service = ? LIMIT 1",
+            "SELECT credentials, access_level FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
             (user_id, service)
         ) as cursor:
             row = await cursor.fetchone()

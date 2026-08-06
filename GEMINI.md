@@ -75,7 +75,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 - **Cockpit de Rejeu :** Interface pour la navigation web.
 - **Print / PDF :** Export des conversations.
 - **Purge Mémoire :** Interface scrollable de suppression vectorielle ciblée.
-- **MCP Identity Vault :** Interface centralisée (`echo_mcp_identity_action.py`) se synchronisant dynamiquement avec l'API des schémas du MCP Broker (Port 8000) pour sauvegarder les credentials dans SQLite (`mcp_vault`).
+- **ECHO Identity Vault :** Interface centralisée (`echo_identity_vault_action.py`) se synchronisant dynamiquement avec l'API des schémas du MCP Broker (Port 8000) et les besoins locaux (N8N) pour sauvegarder les credentials dans SQLite (`identity_vault`).
 - **Agent Monitor :** HUD offrant une vue arborescente des agents (y compris navigateur web Playwright) en temps réel.
 - **Réinitialisation Auth :** Purge des tokens OAuth2.
 - **ECHO Codex :** HUD Monaco Editor, file tree, historique Git, restauration de version.
