@@ -92,7 +92,7 @@ class Action:
         schemas["n8n_workflows"] = {
             "name": "N8N Orchestration",
             "fields": [
-                {"id": "credentials", "label": "N8N Secret", "type": "text", "help": "Saisissez la valeur de __ECHO_SECRET_*__"}
+                {"id": "credentials", "label": "N8N Secret", "type": "text", "help": "Valeur du secret."}
             ]
         }
         
@@ -115,7 +115,7 @@ class Action:
 
         # 2. Boucle d'événements asynchrones
         while True:
-            wait_code = "return new Promise(r => window.echoMCPResolve = r);"
+            wait_code = "return new Promise(r => window.echoVaultResolve = r);"
             response = await __event_call__({"type": "execute", "data": {"code": wait_code}})
 
             if not response or not isinstance(response, dict):
@@ -140,7 +140,7 @@ class Action:
                 # Refresh list
                 accounts = self._get_accounts(state)
                 accounts_json = json.dumps(accounts).decode("utf-8")
-                update_js = f"if(window.echoMCPUpdate) window.echoMCPUpdate('{accounts_json}');"
+                update_js = f"if(window.echoVaultUpdate) window.echoVaultUpdate('{accounts_json}');"
                 await __event_call__({"type": "execute", "data": {"code": update_js}})
 
             elif action_type == "delete_account":
@@ -154,7 +154,7 @@ class Action:
                 # Refresh list
                 accounts = self._get_accounts(state)
                 accounts_json = json.dumps(accounts).decode("utf-8")
-                update_js = f"if(window.echoMCPUpdate) window.echoMCPUpdate('{accounts_json}');"
+                update_js = f"if(window.echoVaultUpdate) window.echoVaultUpdate('{accounts_json}');"
                 await __event_call__({"type": "execute", "data": {"code": update_js}})
 
             else:

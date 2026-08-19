@@ -1,9 +1,9 @@
 """
 ================================================================================
 MODULE : ECHO EMBEDDING WORKER (Llama.cpp / GGUF)
-VERSION : 2.0
+VERSION : 2.1 (Rate-Limit Healthcheck)
 AUTEUR : Wilfried BARNAVON
-DATE : 2026-07-03
+DATE : 2026-08-19
 
 ROLE : Serveur d'embedding texte compatible OpenAI (Harrier-OSS GGUF)
        Multilingue, 1024 dimensions, 8192 tokens max.
@@ -14,6 +14,7 @@ CHANGELOG :
   1.5 : Support Edge Embedding WebGPU (WebSocket proxy & Fallback).
   1.6 : Correction critique : passage au CLS Token Pooling (index 0) au lieu du Last-Token.
   2.0 : Migration majeure vers llama.cpp (GGUF) pour réduire l'empreinte RAM. Suppression de PyTorch.
+  2.1 : Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
 ================================================================================
 """
 
@@ -35,6 +36,34 @@ import time
 # Configuration du logging (Format ECHO)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("echo-embedding")
+
+class RateLimitHealthCheckFilter(logging.Filter):
+    def __init__(self, rate_limit_seconds=300):
+        super().__init__()
+        self.rate_limit_seconds = rate_limit_seconds
+        self.last_logged = 0
+
+    def filter(self, record):
+        if hasattr(record, 'args') and isinstance(record.args, tuple) and len(record.args) >= 3:
+            if record.args[2] in ('/health', '/health/'):
+                now = time.time()
+                if now - self.last_logged >= self.rate_limit_seconds:
+                    self.last_logged = now
+                    return True
+                return False
+        try:
+            msg = record.getMessage()
+            if "GET /health" in msg:
+                now = time.time()
+                if now - self.last_logged >= self.rate_limit_seconds:
+                    self.last_logged = now
+                    return True
+                return False
+        except Exception:
+            pass
+        return True
+
+logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 
 app = FastAPI(
     title="ECHO bge-m3 Embedding Worker",

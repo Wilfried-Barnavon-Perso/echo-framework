@@ -1,23 +1,24 @@
 """
 title: ECHO Auth Service
 author: Wilfried BARNAVON
-version: 7.3
+version: 7.9
 description: 5.x: PKCE flow avec serveur asyncio TCP sur port fixe 8765.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.0: Tentative FastAPI callback endpoint (annulée).
-# 7.0: Tunnel SSH éphémère via asyncssh (echo_ssh_tunnel.py).
-# Ports dynamiques dans la plage ECHO_AUTH_PORT_RANGE_*.
-# Callback TCP via echo_pkce_server.py (localhost uniquement).
-# get_auth_prompt() : commande SSH complète avec IP/ports détectés.
-# 7.1: Fix fetchAvailableModels : parsing défensif (type-check avant .get("models"))
-# pour éviter 'str' object has no attribute 'get' si format API inattendu.
+# 7.9: Alignement endpoint quota sur AGY IDE (retrieveUserQuota→retrieveUserQuotaSummary),
+#      parsing adapté du format Protobuf groups[] (remplacement de buckets[]).
+# 7.8: Résolution Silent Failures clés API (concaténation erreurs), correction Label mismatch, et purge "Clé Fantôme".
+# 7.7: Support du format de clé API AQ.
+# 7.6: Fast-Failover sur AGY_BASE_URLS pour l'authentification et provisionnement.
+# 7.5: Restauration de ECHO_AGY_USER_AGENT (Sécurité Anti-Spoofing).
+# 7.4: Suppression de ECHO_AGY_USER_AGENT, unification sur ECHO_USER_AGENT.
+# 7.3: Propagation renommage AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
+# AGY_BASE_URL→AGY_BASE_URLS (echo_constants v5.0).
 # 7.2: Fix fetchAvailableModels : l'API retourne models comme dict {id: data},
 # non une liste. Capture quotaInfo par modèle → google_quota_by_model (JSON).
 # fetch_user_quota : capture tous les types de crédits → google_credits_total.
-# 7.3: Propagation renommage AGY : ECHO_CODE_ASSIST_USER_AGENT→ECHO_AGY_USER_AGENT,
-# AGY_BASE_URL→AGY_BASE_URL (echo_constants v5.0).
+# pour éviter 'str' object has no attribute 'get' si format API inattendu.
 
 import time
 import orjson as std_json
@@ -37,7 +38,7 @@ import httpx
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoAuth, _get_global_client
+from echo_utils import EchoAuth, _get_global_client, EchoStateManager
 # Note : echo_ssh_tunnel et echo_pkce_server sont importés en lazy loading
 # dans initiate_pkce_flow() / await_pkce_callback() pour éviter l'échec au
 # chargement si asyncssh n'est pas encore installé (premier démarrage du pipe).
@@ -57,7 +58,7 @@ from echo_constants import (
     AUTH_METHOD_KEY_PRIMARY,
     AUTH_METHOD_KEY_SECONDARY,
     AUTH_METHOD_OAUTH2,
-    AGY_BASE_URL,
+    AGY_BASE_URLS,
     ECHO_CLIENT_METADATA,
     AUTH_DATA_PROJECT_ID,
     AUTH_DATA_USER_EMAIL,
@@ -313,7 +314,7 @@ class AuthService:
             f"{pkce_section}\n"
             f"2. **Clés d'API Google AI Studio** : [Créez vos clés ici]({GOOGLE_AI_STUDIO_WEB_URL}). "
             "*(L'ordre de saisie définit la priorité Principale/Secondaire)*\n\n"
-            "**Action :** Collez directement une clé `AIza\u2026` dans ce chat \u2014 "
+            "**Action :** Collez directement une clé `AIza\u2026` ou `AQ.\u2026` dans ce chat \u2014 "
             "ECHO la détecte, la valide et l'enregistre automatiquement.\n\n"
             "*(ECHO_SESSION_AUTH_PENDING)*"
         )
@@ -354,45 +355,77 @@ class AuthService:
             "metadata": {**ECHO_CLIENT_METADATA, "duetProject": project_id},
             "mode": "HEALTH_CHECK"
         }
-        try:
-            h_resp = await client.post(
-                f"{AGY_BASE_URL}:loadCodeAssist",
-                json=health_payload, headers=headers, timeout=15
-            )
-            if h_resp.status_code == 200:
-                data  = h_resp.json()
-                t_obj = data.get("paidTier") or data.get("currentTier")
-                if isinstance(t_obj, dict):
-                    avail = t_obj.get("availableCredits") or []
-                    # Capture de tous les crédits disponibles
-                    total = sum(int(c.get("creditAmount", 0)) for c in avail if c.get("creditAmount"))
-                    if total > 0:
-                        self.echo_auth.save_api_key("google_credits_total", str(total))
-                    # Backward compat : clé spécifique GOOGLE_ONE_AI
-                    for c in avail:
-                        if c.get("creditType") == "GOOGLE_ONE_AI":
-                            self.echo_auth.save_api_key("google_g1_credits", str(c.get("creditAmount", "0")))
-                            break
-        except: pass
+        state_mgr = EchoStateManager(user_id=self.user_id)
+        
+        for attempt in range(len(AGY_BASE_URLS)):
+            idx, base_url = state_mgr.get_agy_endpoint()
+            try:
+                h_resp = await client.post(
+                    f"{base_url}:loadCodeAssist",
+                    json=health_payload, headers=headers, timeout=15
+                )
 
-        # 2. RAFRAÎCHISSEMENT DES QUOTAS (retrieveUserQuota)
-        try:
-            q_resp = await client.post(
-                f"{AGY_BASE_URL}:retrieveUserQuota",
-                json={"project": project_id}, headers=headers, timeout=15
-            )
-            if q_resp.status_code == 200:
-                data    = q_resp.json()
-                buckets = data.get("buckets", [])
-                if buckets:
-                    b = buckets[0]
-                    self.echo_auth.save_api_key("google_quota_amount",   str(b.get("remainingAmount", "N/A")))
-                    self.echo_auth.save_api_key("google_quota_fraction",  str(b.get("remainingFraction", "1.0")))
-                    self.echo_auth.save_api_key("google_quota_reset",     str(b.get("resetTime", "N/A")))
-                    self.echo_auth.save_api_key("google_quota_type",      str(b.get("tokenType", "UNKNOWN")))
-                    self.echo_auth.save_api_key("google_quota_last_fetch", str(time.time()))
-        except Exception as e:
-            print(f"[AuthService] Erreur récupération quota: {e}")
+                if h_resp.status_code in [429, 500, 503]:
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+                    continue
+
+                if h_resp.status_code == 200:
+                    data  = h_resp.json()
+                    t_obj = data.get("paidTier") or data.get("currentTier")
+                    if isinstance(t_obj, dict):
+                        avail = t_obj.get("availableCredits") or []
+                        # Capture de tous les crédits disponibles
+                        total = sum(int(c.get("creditAmount", 0)) for c in avail if c.get("creditAmount"))
+                        if total > 0:
+                            self.echo_auth.save_api_key("google_credits_total", str(total))
+                        # Backward compat : clé spécifique GOOGLE_ONE_AI
+                        for c in avail:
+                            if c.get("creditType") == "GOOGLE_ONE_AI":
+                                self.echo_auth.save_api_key("google_g1_credits", str(c.get("creditAmount", "0")))
+                                break
+            except: pass
+            
+            # 2. RAFRAÎCHISSEMENT DES QUOTAS (retrieveUserQuotaSummary — aligné AGY IDE)
+            try:
+                q_resp = await client.post(
+                    f"{base_url}:retrieveUserQuotaSummary",
+                    json={"project": project_id}, headers=headers, timeout=15
+                )
+
+                if q_resp.status_code in [429, 500, 503]:
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+                    continue
+
+                if q_resp.status_code == 200:
+                    data    = q_resp.json()
+                    # Format AGY IDE (Protobuf JSON) :
+                    #   { response?: { groups: [ { remaining: { case, value }, description, disabled } ] } }
+                    response = data.get("response", data)  # Fallback si pas de wrapper
+                    groups = response.get("groups", [])
+                    if groups:
+                        g = groups[0]
+                        # remaining est un oneof Protobuf : extraire remainingFraction
+                        remaining = g.get("remaining", {})
+                        if isinstance(remaining, dict) and remaining.get("case") == "remainingFraction":
+                            fraction = remaining.get("value", 1.0)
+                        elif isinstance(remaining, (int, float)):
+                            # Fallback JSON simple (pas proto-json)
+                            fraction = remaining
+                        else:
+                            fraction = g.get("remainingFraction", 1.0)
+                        self.echo_auth.save_api_key("google_quota_fraction",  str(fraction))
+                        # description est un texte libre (ex: "Resets in 2h"), pas un ISO timestamp
+                        self.echo_auth.save_api_key("google_quota_reset",     str(g.get("description", "N/A")))
+                        self.echo_auth.save_api_key("google_quota_type",      "CODE_ASSIST")
+                        self.echo_auth.save_api_key("google_quota_last_fetch", str(time.time()))
+                    break
+            except Exception as e:
+                print(f"[AuthService] Erreur récupération quota: {e}")
+                pass
 
     async def fetch_available_models(self, access_token: str, project_id: str) -> list:
         """
@@ -407,57 +440,67 @@ class AuthService:
             "Content-Type":  "application/json",
             "User-Agent":    ECHO_AGY_USER_AGENT,
         }
-        try:
-            resp = await client.post(
-                f"{AGY_BASE_URL}:fetchAvailableModels",
-                json={"project": project_id},
-                headers=headers, timeout=15
-            )
-            if resp.status_code == 200:
-                raw = resp.json()
-                print(f"[AuthService] fetchAvailableModels raw response: {str(raw)[:300]}")
+        
+        state_mgr = EchoStateManager(user_id=self.user_id)
+        for attempt in range(len(AGY_BASE_URLS)):
+            idx, base_url = state_mgr.get_agy_endpoint()
+            try:
+                resp = await client.post(
+                    f"{base_url}:fetchAvailableModels",
+                    json={"project": project_id},
+                    headers=headers, timeout=15
+                )
+                
+                if resp.status_code in [429, 500, 503]:
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+                    continue
 
-                # L'API retourne {"models": {ca_model_id: {...}}} (dict, pas liste)
-                models_raw = raw.get("models") or raw.get("availableModels") or {}
+                if resp.status_code == 200:
+                    raw = resp.json()
+                    print(f"[AuthService] fetchAvailableModels raw response: {str(raw)[:300]}")
 
-                if isinstance(models_raw, dict):
-                    model_ids = list(models_raw.keys())
-                    # Capture quotaInfo par modèle CA
-                    quota_map = {
-                        mid: {
-                            "remainingFraction": float(mdata.get("quotaInfo", {}).get("remainingFraction", 1.0)),
-                            "resetTime": str(mdata.get("quotaInfo", {}).get("resetTime", "N/A"))
+                    # L'API retourne {"models": {ca_model_id: {...}}} (dict, pas liste)
+                    models_raw = raw.get("models") or raw.get("availableModels") or {}
+
+                    if isinstance(models_raw, dict):
+                        model_ids = list(models_raw.keys())
+                        # Capture quotaInfo par modèle CA
+                        quota_map = {
+                            mid: {
+                                "remainingFraction": float(mdata.get("quotaInfo", {}).get("remainingFraction", 1.0)),
+                                "resetTime": str(mdata.get("quotaInfo", {}).get("resetTime", "N/A"))
+                            }
+                            for mid, mdata in models_raw.items()
+                            if isinstance(mdata, dict) and mdata.get("quotaInfo")
                         }
-                        for mid, mdata in models_raw.items()
-                        if isinstance(mdata, dict) and mdata.get("quotaInfo")
-                    }
-                elif isinstance(models_raw, list):
-                    # Format liste (compaté future)
-                    model_ids = [
-                        m.get("id") or m.get("name") or m.get("model")
-                        for m in models_raw
-                        if isinstance(m, dict) and (m.get("id") or m.get("name") or m.get("model"))
-                    ]
-                    quota_map = {}
-                else:
-                    model_ids = []
-                    quota_map = {}
+                    elif isinstance(models_raw, list):
+                        # Format liste (compaté future)
+                        model_ids = [
+                            m.get("id") or m.get("name") or m.get("model")
+                            for m in models_raw
+                            if isinstance(m, dict) and (m.get("id") or m.get("name") or m.get("model"))
+                        ]
+                        quota_map = {}
+                    else:
+                        model_ids = []
+                        quota_map = {}
 
-                # Persistance du quota par modèle
-                if quota_map:
-                    self.echo_auth.save_api_key("google_quota_by_model", _j.dumps(quota_map))
-                    # Legacy : premier modèle avec quotaInfo comme référence globale
-                    first_qi = next(iter(quota_map.values()))
-                    self.echo_auth.save_api_key("google_quota_fraction",   str(first_qi["remainingFraction"]))
-                    self.echo_auth.save_api_key("google_quota_reset",      first_qi["resetTime"])
-                    self.echo_auth.save_api_key("google_quota_type",       "CODE_ASSIST")
-                    self.echo_auth.save_api_key("google_quota_last_fetch", str(time.time()))
+                    # Persistance du quota par modèle
+                    if quota_map:
+                        self.echo_auth.save_api_key("google_quota_by_model", _j.dumps(quota_map))
+                        # Legacy : premier modèle avec quotaInfo comme référence globale
+                        first_qi = next(iter(quota_map.values()))
+                        self.echo_auth.save_api_key("google_quota_fraction",   str(first_qi["remainingFraction"]))
+                        self.echo_auth.save_api_key("google_quota_reset",      first_qi["resetTime"])
+                        self.echo_auth.save_api_key("google_quota_type",       "CODE_ASSIST")
+                        self.echo_auth.save_api_key("google_quota_last_fetch", str(time.time()))
 
-                return [mid for mid in model_ids if mid]
-            else:
-                print(f"[AuthService] fetchAvailableModels HTTP {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            print(f"[AuthService] fetchAvailableModels erreur: {e}")
+                    return [mid for mid in model_ids if mid]
+            except Exception as e:
+                print(f"[AuthService] Erreur fetch_available_models: {e}")
+                pass
         return []
 
     async def refresh_quota_if_needed(self):
@@ -510,75 +553,86 @@ class AuthService:
                         except: pass
             return tier_id, credits
 
-        try:
-            # 1. DÉCOUVERTE (loadCodeAssist)
-            load_payload = {"metadata": {**ECHO_CLIENT_METADATA, "duetProject": None}}
-            resp = await client.post(
-                f"{AGY_BASE_URL}:loadCodeAssist",
-                json=load_payload, headers=headers, timeout=20
-            )
-
-            if resp.status_code == 200:
-                data       = resp.json()
-                project_id = _extract_project_id(data)
-                tier_id, g1_credits = await _extract_tier_info(data)
-
-                if g1_credits > 0:
-                    self.echo_auth.save_api_key("google_g1_credits", str(g1_credits))
-
-                if project_id:
-                    return project_id, tier_id or "standard-tier"
-
-                # 2. SÉLECTION DU TIER PAR DÉFAUT
-                allowed_tiers = data.get("allowedTiers") or data.get("allowed_tiers") or []
-                selected_tier = None
-                for t in allowed_tiers:
-                    if t.get("isDefault") or t.get("is_default"):
-                        selected_tier = t.get("id")
-                        break
-
-                tier_id = selected_tier or "free-tier"
-
-                # 3. ONBOARDING CHIRURGICAL
-                onboard_payload = {
-                    "tierId":   tier_id,
-                    "metadata": {**ECHO_CLIENT_METADATA, "duetProject": project_id}
-                }
-                if tier_id != "free-tier":
-                    onboard_payload["cloudaicompanionProject"] = None
-
-                onboard_resp = await client.post(
-                    f"{AGY_BASE_URL}:onboardUser",
-                    json=onboard_payload, headers=headers, timeout=20
+        state_mgr = EchoStateManager(user_id=self.user_id)
+        
+        for attempt in range(len(AGY_BASE_URLS)):
+            idx, base_url = state_mgr.get_agy_endpoint()
+            try:
+                # 1. DÉCOUVERTE (loadCodeAssist)
+                load_payload = {"metadata": {**ECHO_CLIENT_METADATA, "duetProject": None}}
+                resp = await client.post(
+                    f"{base_url}:loadCodeAssist",
+                    json=load_payload, headers=headers, timeout=20
                 )
 
-                if onboard_resp.status_code == 200:
-                    lro = onboard_resp.json()
-                    if lro.get("done") and lro.get("response"):
-                        project_id = _extract_project_id(lro["response"])
-                        return project_id, tier_id
+                if resp.status_code in [429, 500, 503]:
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+                    continue
 
-                    # 4. RÉSOLUTION DE L'OPÉRATION (Long Running Operation)
-                    op_name = lro.get("name")
-                    if op_name:
-                        for _ in range(12):
-                            await asyncio.sleep(5)
-                            op_resp = await client.get(
-                                f"{AGY_BASE_URL}/{op_name}",
-                                headers=headers, timeout=10
-                            )
-                            if op_resp.status_code == 200:
-                                op_data = op_resp.json()
-                                if op_data.get("done"):
-                                    res_obj = op_data.get("response", {})
-                                    project_id = _extract_project_id(res_obj)
-                                    final_tier, final_credits = await _extract_tier_info(res_obj)
-                                    if final_credits > 0:
-                                        self.echo_auth.save_api_key("google_g1_credits", str(final_credits))
-                                    return project_id, final_tier or tier_id
+                if resp.status_code == 200:
+                    data       = resp.json()
+                    project_id = _extract_project_id(data)
+                    tier_id, g1_credits = await _extract_tier_info(data)
 
-        except Exception as e:
-            print(f"[AuthService] Erreur Provisioning Critique: {e}")
+                    if g1_credits > 0:
+                        self.echo_auth.save_api_key("google_g1_credits", str(g1_credits))
+
+                    if project_id:
+                        return project_id, tier_id or "standard-tier"
+
+                    # 2. SÉLECTION DU TIER PAR DÉFAUT
+                    allowed_tiers = data.get("allowedTiers") or data.get("allowed_tiers") or []
+                    selected_tier = None
+                    for t in allowed_tiers:
+                        if t.get("isDefault") or t.get("is_default"):
+                            selected_tier = t.get("id")
+                            break
+
+                    tier_id = selected_tier or "free-tier"
+
+                    # 3. ONBOARDING CHIRURGICAL
+                    onboard_payload = {
+                        "tierId":   tier_id,
+                        "metadata": {**ECHO_CLIENT_METADATA, "duetProject": project_id}
+                    }
+                    if tier_id != "free-tier":
+                        onboard_payload["cloudaicompanionProject"] = None
+
+                    onboard_resp = await client.post(
+                        f"{base_url}:onboardUser",
+                        json=onboard_payload, headers=headers, timeout=20
+                    )
+
+                    if onboard_resp.status_code == 200:
+                        lro = onboard_resp.json()
+                        if lro.get("done") and lro.get("response"):
+                            project_id = _extract_project_id(lro["response"])
+                            return project_id, tier_id
+
+                        # 4. RÉSOLUTION DE L'OPÉRATION (Long Running Operation)
+                        op_name = lro.get("name")
+                        if op_name:
+                            for _ in range(12):
+                                await asyncio.sleep(5)
+                                op_resp = await client.get(
+                                    f"{base_url}/{op_name}",
+                                    headers=headers, timeout=10
+                                )
+                                if op_resp.status_code == 200:
+                                    op_data = op_resp.json()
+                                    if op_data.get("done"):
+                                        res_obj = op_data.get("response", {})
+                                        project_id = _extract_project_id(res_obj)
+                                        final_tier, final_credits = await _extract_tier_info(res_obj)
+                                        if final_credits > 0:
+                                            self.echo_auth.save_api_key("google_g1_credits", str(final_credits))
+                                        return project_id, final_tier or tier_id
+                    return project_id, tier_id
+            except Exception as e:
+                print(f"[AuthService] Erreur Provisioning Critique: {e}")
+                pass
 
         return project_id, tier_id
 
@@ -600,7 +654,7 @@ class AuthService:
                     found_keys.append(t)
 
         if not found_keys:
-            return False, "Aucune clé API valide détectée (format attendu : `AIza…`). Pour l'authentification OAuth2, tapez `/auth start`."
+            return False, "Aucune clé API valide détectée (format attendu : `AIza…` ou `AQ.…`). Pour l'authentification OAuth2, tapez `/auth start`."
 
         # Validation des clés API
         success_msgs = []
@@ -617,8 +671,8 @@ class AuthService:
                         timeout=10
                     )
                     if resp.status_code == 200:
+                        label = "Primaire" if len(valid_keys) == 0 else "Secondaire"
                         valid_keys.append(k)
-                        label = "Primaire" if i == 0 else "Secondaire"
                         success_msgs.append(f"Clé d'API {label} validée.")
                     else:
                         error_msgs.append(f"Clé {i+1} rejetée (HTTP {resp.status_code}).")
@@ -628,11 +682,19 @@ class AuthService:
         if valid_keys:
             self.echo_auth.save_api_key(AUTH_METHOD_KEY_PRIMARY, valid_keys[0])
             priority = [AUTH_METHOD_KEY_PRIMARY]
+            
             if len(valid_keys) > 1:
                 self.echo_auth.save_api_key(AUTH_METHOD_KEY_SECONDARY, valid_keys[1])
                 priority.append(AUTH_METHOD_KEY_SECONDARY)
+            else:
+                self.echo_auth.delete_api_key(AUTH_METHOD_KEY_SECONDARY)
+                
             self.echo_auth.save_api_key("google_auth_priority", ",".join(priority))
 
-            return True, "✅ Clé(s) d'API activée(s). | " + " | ".join(success_msgs)
+            msg_final = "✅ Clé(s) d'API activée(s). | " + " | ".join(success_msgs)
+            if error_msgs:
+                msg_final += " | ⚠️ Avertissements : " + " | ".join(error_msgs)
+                
+            return True, msg_final
 
         return False, "Échec de la validation. " + " | ".join(error_msgs)

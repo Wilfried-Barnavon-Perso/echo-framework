@@ -1,16 +1,23 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.38
+version: 5.51
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.38: Ajout de MODEL_EMBEDDING pour la génération de vecteurs RAG.
-# 5.37: Ajout de THINKING_LEVEL_DISTILLATION fixé à LOW.
-# 5.36: Renommage de THINKING_LEVEL_TOOLS en THINKING_LEVEL_GROUNDING_TOOLS pour plus de clarté.
-# 5.35: Nettoyage définitif des variables protobuf_enum (l'API REST v1internal rejette ce champ Protobuf).
-# 5.34: Découplage de model_id (string REST) et protobuf_enum (int gRPC) suite aux erreurs 404 de l'API.
+# 5.51: Alignement protocole OAuth2 sur AGY IDE 2.5.5 (audit binaire main.js) :
+#       - ECHO_CLIENT_METADATA : ideType ANTIGRAVITY, ajout ideName/ideVersion/platform
+#       - ECHO_OAUTH_SCOPES : +experimentsandconfigs, -openid, -aicode
+#       - User-Agent : format natif "{app}/{version} {os}/{arch}"
+#       - Documentation dual-client (Desktop=perso, LS=Enterprise GCP TOS)
+# 5.50: Réduction du backoff exponentiel (base 5.0→3.0s, max_retries 5→3, mult 2.0→1.5)
+#       pour prévenir les crashes silencieux SSE via SIGKILL Gunicorn (backoff cumulatif
+#       ~155s > GUNICORN_TIMEOUT 60s). Total max post-fix : ~14s.
+# 5.49: Mise à jour de MODEL_FLASH vers Gemini 3.7 Flash (ai_studio_id: gemini-3.7-flash, ca_model_id: gemini-3.7-flash-high).
+# 5.48: Ajout de GEMINI_ALLOWED_SCHEMA_KEYS pour la factorisation de la sanitization (Allowlist) des outils (évite l'erreur HTTP 400).
+# 5.47: Support du nouveau format de clé API Google (AQ.) en plus de AIza.
+# 5.46: Failover algorithmique (Circuit Breaker) pour AGY_BASE_URLS avec gestion de reset_time par URL.
 
 import os
 try:
@@ -36,15 +43,19 @@ ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
-ECHO_SESSION_DOMAINS = ["codex", "files", "db"]
-ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats"]
+ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows"]
+ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 
-# Identité Réseau (Antigravity 2.1)
-ECHO_USER_AGENT             = "antigravity/2.1.0"
-ECHO_AGY_USER_AGENT = "antigravity/2.1.0 (language_server; os_type=Windows; os_version=10.0.26100; arch=x64)"
+# Identité Réseau (Antigravity 2.5.5 — aligné sur AGY IDE product.json:ideVersion)
+# Format natif AGY IDE : "{app}/{ideVersion} {os}/{arch}" (cloudCodeMainService.js)
+# ECHO tourne sous Docker Linux — on émet l'identité réelle de la plateforme hôte.
+_AGY_IDE_VERSION = "2.5.5"  # Miroir de product.json:ideVersion — à synchroniser lors des mises à jour
+ECHO_USER_AGENT             = f"antigravity/{_AGY_IDE_VERSION}"
+ECHO_AGY_USER_AGENT         = f"antigravity/{_AGY_IDE_VERSION} linux/amd64"
 
 # Points d'accès Locaux (Souveraineté)
 ECHO_EMBEDDING_URL = "http://echo-embedding:7997/v1"
+ECHO_N8N_WORKER_URL = "http://echo-n8n-worker:5003"
 MODEL_EMBEDDING = "microsoft/Harrier-OSS-v1-0.6B"
 
 # ==============================================================================
@@ -59,16 +70,31 @@ AUTH_METHOD_KEY_SECONDARY = "google_api_key_secondary"
 # --- IDENTIFIANTS ANTIGRAVITY 2.1 (certifiés source : main.js — out-build/vs/platform/cloudCode/common/oauthClient.js) ---
 # Encodage : base64(reversed(value)) — casse les signatures connues de GitHub Secret Scanning.
 # Décodage : base64.b64decode(b).decode()[::-1]
+#
+# ARCHITECTURE DUAL-CLIENT AGY :
+#   - Desktop (z9e/1071...) : comptes Google PERSONNELS (isGcpTos=false). Utilisé par ECHO.
+#   - LS      (Fze/884...)  : comptes ENTERPRISE GCP TOS (isGcpTos=true). Non supporté par ECHO.
+#   Le language_server.exe (Go, 142 Mo) embarque les deux en clair. AGY IDE bascule via isGcpTos.
+#   ECHO utilise exclusivement le client Desktop pour le flow PKCE (comptes personnels).
 _d = lambda b: base64.b64decode(b).decode()[::-1]
 
-# Client Desktop (variable Rge/yge — oauthClient.js) — utilisé pour le flow PKCE
-# ⚠️ CORRECTION v2 : 1071006060591 (13 chiffres)
+# Client Desktop (variable z9e/$9e — oauthClient.js) — SEUL client utilisé par ECHO (comptes perso)
 ANTIGRAVITY_DESKTOP_CLIENT_ID     = _d("bW9jLnRuZXRub2NyZXN1ZWxnb29nLnNwcGEucGUzMDRnNGhqb2xvdHY1MzJlcmNsMTJoMm5pc3NobXQtMTk1MDYwNjAwMTcwMQ==")
 ANTIGRAVITY_DESKTOP_CLIENT_SECRET = _d("ZkFEcTZ6NENYczhCTG0xSkxkTDY4NFJXRjg1Sy1YUFNDT0c=")
 
-# Client Language Server (variable WZe/OZe — oauthClient.js)
-ANTIGRAVITY_OAUTH_CLIENT_ID     = _d("bW9jLnRuZXRub2NyZXN1ZWxnb29nLnNwcGEuaGxiNWM4NjJkb2M2dm8yM2NhaXVndDNiamoxY3J0NjMtMjUwOTE5NDUzNDg4")
-ANTIGRAVITY_OAUTH_CLIENT_SECRET = _d("WHN0WjBSd01LeFktamRUUTBDRFdSN0ZwV1FZOS1YUFNDT0c=")
+# Client Language Server (variable Fze/Vze — oauthClient.js) — comptes Enterprise GCP TOS uniquement.
+# Conservé pour traçabilité. NON UTILISÉ dans les flows ECHO (aucun branchement isGcpTos).
+ANTIGRAVITY_OAUTH_CLIENT_ID       = _d("bW9jLnRuZXRub2NyZXN1ZWxnb29nLnNwcGEuaGxiNWM4NjJkb2M2dm8yM2NhaXVndDNiamoxY3J0NjMtMjUwOTE5NDUzNDg4")
+ANTIGRAVITY_OAUTH_CLIENT_SECRET   = _d("WHN0WjBSd01LeFktamRUUTBDRFdSN0ZwV1FZOS1YUFNDT0c=")
+
+# Scopes exigés par Google pour Cloud Code — alignement strict sur AGY IDE oauthClient.js (variable Ats)
+ECHO_OAUTH_SCOPES = [
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/cclog",                    # Télémétrie completion log
+    "https://www.googleapis.com/auth/experimentsandconfigs",    # Feature flags et config serveur
+]
 
 # --- PKCE + AUTHORIZATION CODE FLOW (RFC 7636) ---
 # redirect_uri : générée dynamiquement dans initiate_pkce_flow().
@@ -101,24 +127,22 @@ ECHO_CALLBACK_PORT_RANGE_END   = 8034  # Dernier port callback interne (10 slots
 GOOGLE_OAUTH_TOKEN_URL  = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL     = "https://www.googleapis.com/oauth2/v2/userinfo"
 
-# --- SCOPES ANTIGRAVITY 2.1 (certifiés section 4 du RE — binaire language_server.exe) ---
-ECHO_OAUTH_SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/cloud-platform",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/aicode",   # CRITIQUE — scope spécifique Antigravity/Code Assist
-    "https://www.googleapis.com/auth/cclog",    # Télémétrie completion log
-]
-
 # --- CONFIGURATION API ANTIGRAVITY (PROVISIONING) ---
-# Standalone Antigravity → cloudcode-pa ( "daily-" temporairement)
-# AGY_BASE_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal"
-AGY_BASE_URL = "https://cloudcode-pa.googleapis.com/v1internal"
-# Metadata client envoyée dans loadCodeAssist — pluginType "GEMINI" confirmé stable (RE §10)
+# Standalone Antigravity — cloudcode-pa (Circuit Breaker Pool)
+AGY_BASE_URLS = [
+    "https://cloudcode-pa.googleapis.com/v1internal",       # Standard (Prod)
+    "https://daily-cloudcode-pa.googleapis.com/v1internal"  # Canary (Daily)
+]
+# Metadata client envoyée dans loadCodeAssist
+# Alignement sur AGY IDE main.js (clientMetadata getter) :
+#   ideName="antigravity", ideType=TTe.ANTIGRAVITY (enum 9), pluginType=GEMINI (enum 2)
+#   platform calculé dynamiquement — ECHO tourne sous Linux (Docker).
+#   ideVersion = version AGY IDE émulée (product.json:ideVersion).
 ECHO_CLIENT_METADATA = {
-    "ideType":    "IDE_UNSPECIFIED",
-    "platform":   "PLATFORM_UNSPECIFIED",
+    "ideName":    "antigravity",
+    "ideType":    "ANTIGRAVITY",
+    "ideVersion": _AGY_IDE_VERSION,
+    "platform":   "LINUX_AMD64",
     "pluginType": "GEMINI"
 }
 
@@ -129,7 +153,7 @@ AUTH_DATA_USER_TIER   = "google_user_tier"
 # --- CONFIGURATION AI STUDIO (Fallback clés API) ---
 GOOGLE_API_BASE_URL      = "https://generativelanguage.googleapis.com/v1beta"
 GOOGLE_AI_STUDIO_WEB_URL = "https://aistudio.google.com/app/apikey"
-GOOGLE_API_KEY_REGEX     = r"AIza[0-9A-Za-z_-]{35}"
+GOOGLE_API_KEY_REGEX     = r"(?:AIza|AQ\.)[0-9A-Za-z_-]{35,}"
 GOOGLE_API_KEY_PATTERN   = GOOGLE_API_KEY_REGEX
 
 # --- TIMING (certifiés par logs natifs IDE) ---
@@ -144,14 +168,16 @@ PKCE_CALLBACK_TIMEOUT = 300  # secondes
 # ==============================================================================
 
 ECHO_API_KEY_THRESHOLD   = 2
-ECHO_API_MAX_RETRIES     = 5
-ECHO_RETRY_BASE_DELAY    = 5.0   # Base backoff exponentiel — augmenté de 2.0 à 5.0 (v5.166.6)
-                                  # Raison : le gateway Code Assist retourne des 400 transients quand
-                                  # plusieurs outils cognitifs (consult_council, consult_expert)
-                                  # déclenchent une rafale de requêtes Gemini simultanées.
-                                  # Avec base=5.0 : 4 essais suffisent à couvrir la fenêtre de throttle
-                                  # (~62s) tout en réduisant la pression sur l'API entre les essais.
-ECHO_RETRY_MULTIPLIER    = 2.0
+ECHO_API_MAX_RETRIES     = 3
+ECHO_RETRY_BASE_DELAY    = 3.0   # Base backoff exponentiel — réduit de 5.0 à 3.0 (v5.50)
+                                  # Raison : avec base=5.0 et 5 retries, le backoff cumulé (~155s)
+                                  # dépassait GUNICORN_TIMEOUT (60s) et causait des crashes SSE
+                                  # silencieux via SIGKILL du worker uvicorn.
+                                  # Avec base=3.0 et 3 retries : total max ~14s.
+                                  # Historique : base augmentée à 5.0 (v5.166.6) pour les rafales
+                                  # consult_council sur Code Assist. Ces appels passent par call()
+                                  # non-streaming, non impactés par ce changement.
+ECHO_RETRY_MULTIPLIER    = 1.5
 ECHO_RETRY_JITTER_MIN    = 0.7
 ECHO_RETRY_JITTER_MAX    = 1.3
 
@@ -177,8 +203,8 @@ ECHO_MODELS_REGISTRY = {
         }
     },
     "MODEL_FLASH": {
-        "ai_studio_id": "gemini-3.6-flash",
-        "ca_model_id":  "gemini-3.6-flash-high",
+        "ai_studio_id": "gemini-3.7-flash",
+        "ca_model_id":  "gemini-3.7-flash-high",
         "hierarchy": 1,
         "generationConfig": {
             "temperature": 1.0,
@@ -299,9 +325,6 @@ PLAN_TASK_STATUS = {
     "skipped":  "[-]",   # Ignorée/passée
 }
 
-# Statuts autorisant l'exécution des tâches d'un plan
-PLAN_EXECUTABLE_STATUSES = {"ready", "executing"}
-
 # Types de ressources du Registre Unifié (echo_resources)
 RESOURCE_TYPES = {
     "codex":  "codex",   # Fichiers texte/code (Git)
@@ -309,6 +332,8 @@ RESOURCE_TYPES = {
     "media":  "media",   # Images, vidéos, PDF
     "binary": "binary",  # Fichiers non assimilables
     "weburl": "weburl",  # Pages web distillées
+    "n8n_template": "n8n_template", # Modèles N8N
+    "n8n_workflow": "n8n_workflow", # Workflows N8N
 }
 
 # ==============================================================================
@@ -320,6 +345,25 @@ FILE_INGESTION_STATUS = {
     "VECTORIZED_SUM_UP": "vectorized_sum_up", # Résumé via Smart Context (RAG)
     "INDEXED":           "indexed",           # Stockage SQLite seul (Fallback ou Image Web)
     "PENDING_INGESTION": "pending_ingestion", # En attente d'ingestion (ex: Téléchargements Playwright)
+}
+
+# Cycle de vie strict d'un workflow N8N en session
+N8N_WORKFLOW_STATUS = {
+    "READY":     "ready",       # Installé, prêt
+    "EXECUTING": "executing",   # En cours d'appel API
+    "ERROR":     "error",       # Échec de l'appel
+    "DEPLOYED":  "deployed"     # Démon persistant
+}
+
+# Mapping Ultime : Quel type supporte quels statuts ?
+RESOURCE_STATUS_MAP = {
+    "media":        list(FILE_INGESTION_STATUS.values()),
+    "binary":       list(FILE_INGESTION_STATUS.values()),
+    "weburl":       list(FILE_INGESTION_STATUS.values()), # Flux d'ingestion textuelle
+    "codex":        list(FILE_INGESTION_STATUS.values()), # Utilisé par echo_codex_tool (PUT_IN_CONTEXT)
+    "plan":         list(PLAN_STATUS.values()),
+    "n8n_workflow": list(N8N_WORKFLOW_STATUS.values()),
+    "n8n_template": [], # Hub global statique, pas de statut
 }
 
 # ==============================================================================
@@ -667,3 +711,19 @@ PROMPT_SENSORY_DISTILLATION = (
     "3. RIGUEUR : Aucune supposition ou interprétation. Description strictement factuelle et exhaustive.\n"
     "</directives_synchronisation>"
 )
+
+# ==============================================================================
+# 11. SCHÉMAS GEMINI (API Validation)
+# ==============================================================================
+# Dictionnaire des clés JSON Schema autorisées par le validateur Protobuf de l'API Gemini.
+# Utilisé par clean_gemini_schema() dans echo_utils.py pour purger les objets Pydantic générés.
+GEMINI_ALLOWED_SCHEMA_KEYS = {
+    "type", 
+    "format", 
+    "description", 
+    "nullable", 
+    "enum", 
+    "properties", 
+    "required", 
+    "items"
+}

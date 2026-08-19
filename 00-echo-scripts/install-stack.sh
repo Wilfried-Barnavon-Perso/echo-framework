@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.26
+# VERSION : 6.27
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 6.27 : Redémarrage parallèle des services Python lors du Hot Reload.
 # CHANGELOG 6.26 : Centralisation du cron de nettoyage Docker et ajustement des logs à 10 Mo.
 # CHANGELOG 6.25 : Ajout de ensure_docker_autosafety() pour rotation logs globale (idempotent).
 # CHANGELOG 6.24 : Génération dynamique de ECHO_SSO_SECRET pour le Forward Auth hybride.
@@ -171,6 +172,20 @@ generate_secret() {
 generate_secret "BW_DB_PASSWORD" 24
 generate_secret "SEARXNG_SECRET" 64
 generate_secret "ECHO_SSO_SECRET" 32
+generate_secret "N8N_ENCRYPTION_KEY" 64
+
+# Configuration N8N Headless (Propriétaire)
+if ! grep -q "^N8N_INSTANCE_OWNER_MANAGED_BY_ENV=" "$ENV_FILE"; then
+    echo "N8N_INSTANCE_OWNER_MANAGED_BY_ENV=true" >> "$ENV_FILE"
+    echo "N8N_INSTANCE_OWNER_EMAIL=system@echo.local" >> "$ENV_FILE"
+    echo "N8N_INSTANCE_OWNER_FIRST_NAME=ECHO" >> "$ENV_FILE"
+    echo "N8N_INSTANCE_OWNER_LAST_NAME=System" >> "$ENV_FILE"
+    
+    # Mot de passe généré aléatoirement pour sécuriser l'instance
+    generate_secret "N8N_INSTANCE_OWNER_PASSWORD" 32
+    
+    echo "   👤 Configuration N8N Owner injectée dans l'environnement."
+fi
 
 # 2.1 Réseaux Externes
 echo "🔍 Recherche des réseaux externes définis dans $COMPOSE_FILE..."
@@ -253,10 +268,11 @@ fi
 echo "⚡ Hot Reload des services Python..."
 CONTAINERS_TO_RELOAD=$(docker ps \
     --filter "label=echo.hot-reload=true" \
-    --format "{{.Names}}" | tr '\n' ' ')
+    --format "{{.Names}}")
 if [ -n "$CONTAINERS_TO_RELOAD" ]; then
-    docker restart $CONTAINERS_TO_RELOAD
-    echo "   ✅ Services rechargés : $CONTAINERS_TO_RELOAD"
+    echo "$CONTAINERS_TO_RELOAD" | xargs -n 1 -P 0 docker restart >/dev/null 2>&1
+    FORMATTED_LIST=$(echo "$CONTAINERS_TO_RELOAD" | tr '\n' ' ')
+    echo "   ✅ Services rechargés : $FORMATTED_LIST"
 else
     echo "   ⚠️  Aucun service marqué echo.hot-reload=true trouvé."
 fi

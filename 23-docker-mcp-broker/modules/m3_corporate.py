@@ -1,8 +1,8 @@
 import json
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
-def register_corporate_tools(mcp: FastMCP):
+def register_corporate_tools(mcp: MCPServer):
     
     @mcp.tool()
     async def search_french_company(query: str) -> str:

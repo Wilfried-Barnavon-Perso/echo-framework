@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>ECHO v5 - 8k. Orchestrateur N8N</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+</script>
+
+  <div class="sidebar"></div>
+
+  <main>
+    <h1>8k. Orchestrateur N8N</h1>
+
+    <h2>Orchestrateur N8N (Headless)</h2>
+    <p>L'outil <code>n8n_orchestrator_tool.py</code> est le pont entre l'agent ECHO et le sous-système N8N Worker (Tier 2). N8N s'exécute de manière "Headless" sur SQLite (volume <code>echo-n8n-data</code>).</p>
+    
+    <h3>Règles d'Architecture strictes</h3>
+    <ul>
+      <li><strong>Sandbox Éphémère :</strong> Tout workflow testé dynamiquement via CLI doit OBLIGATOIREMENT démarrer par le nœud <code>Execute Workflow Trigger</code>. Le mocking de payload asynchrone est impératif pour simuler les Webhooks/Emails.</li>
+      <li><strong>Déploiements Permanents :</strong> Réservés aux webhooks de production et crons.</li>
+      <li><strong>Child Chats :</strong> Les workflows N8N en mode Démon agissent comme des clients MCP, requêtant les services d'ECHO et ouvrant asynchronement de nouveaux "Child Chats".</li>
+    </ul>
+
+    <footer>
+      ECHO v5 Documentation - Version <span class="version-badge">5.199.23</span>
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+  
+</body>
+</html>

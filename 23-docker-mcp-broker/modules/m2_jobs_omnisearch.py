@@ -11,7 +11,7 @@ import re
 from typing import Optional, List
 import httpx
 from bs4 import BeautifulSoup
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +223,7 @@ async def _details_apec(job_id: str) -> str:
 # ==========================================
 # MAIN ROUTER
 # ==========================================
-def setup_jobs_omnisearch_mcp(mcp: FastMCP):
+def setup_jobs_omnisearch_mcp(mcp: MCPServer):
     
     @mcp.tool()
     async def search_jobs(

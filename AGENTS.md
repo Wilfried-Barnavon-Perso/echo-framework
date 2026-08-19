@@ -10,6 +10,15 @@
 
 ---
 
+## 0. 🗺️ Cartographie Fractale de la Connaissance
+
+Ce document racine édicte les **Règles Globales** et l'architecture transversale du système.
+Cependant, la base de connaissances d'ECHO est **distribuée et fractale**. Chaque sous-dossier majeur du projet contient son propre fichier `AGENTS.md` agissant comme une "Mémoire Sémantique Locale". 
+
+> **Règle d'Investigation Absolue** : Lorsqu'un agent intervient sur un composant spécifique (ex: `10-owui-pipes`, `26-docker-n8n-worker`), il **DOIT obligatoirement** lire le fichier `AGENTS.md` situé dans ce dossier pour acquérir la connaissance chirurgicale locale (algorithmes, rôles, dépendances) *avant* de lire ou modifier le code.
+
+---
+
 ## 1. 🏗️ Le Triptyque Fondamental
 
 L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véracité, Autonomie) articulés autour du Kernel ECHO (dont la partie statique est définie dans `01-config/system-prompt.md`) :
@@ -27,7 +36,7 @@ Le système nerveux central d'ECHO repose sur le `pipe_engine.py` et les bibliot
 - **Suture Bit-Perfect des Métadonnées :** Reconstruction de l'historique via SQLite (`message_shadows`) pour une continuité absolue. Garantit une reprise de session identique au bit près via l'ID de message et le timestamp (Verrou de Version). Suivi de la branche active et état de session garanti par un hash cumulatif (Cumulative Hash).
 - **Registre Cognitif Unifié (SSOT) :** Toutes les capacités LLM sont désormais gouvernées centralement par `ECHO_MODELS_REGISTRY`. Ce dictionnaire abstrait mappe les identifiants métiers (`MODEL_PRO`, `MODEL_FLASH`, `MODEL_LITE`, `MODEL_DISTILLATION`) vers leurs identifiants API (AI Studio / Code Assist), leur `hierarchy` cognitive stricte (0, 1, 2), et leur `generationConfig` détaillée (température, `maxOutputTokens=65535`, et `thinkingConfig`).
 - **Routage Dynamique & Fluctuation Continue :** Les modes (AUTO, AUTO_PRO) interrogent dynamiquement la hiérarchie du Registre Cognitif. Lors de la reprise d'une session ou en cas d'erreur API, le système applique un *Clamping Dynamique* et une cascade descendante (PRO → FLASH → LITE) calculés algorithmiquement sur les valeurs entières de la hiérarchie. Inclut une logique d'**Auto-heal SQLite** : si un modèle orphelin est détecté, le système effectue un reverse-lookup ou force le `MODEL_LITE` pour prévenir tout crash.
-- **Orchestration Multi-Agents (`agent_orchestration_tool.py`) :** `consult_council` (Table Ronde Delphi, N experts agentiques avec outils, tours parallélisés exigeant une dialectique structurée : Analyse/Dialectique/Réponse) et `consult_supervised_workers` (boucle critique/correction récursive).
+- **Orchestration Multi-Agents (`agent_orchestration_tool.py`) :** `consult_council` (Table Ronde Delphi, N experts agentiques avec outils, tours parallélisés exigeant une dialectique structurée : Analyse/Dialectique/Réponse) et `consult_supervised_workers` (boucle critique/correction récursive). L'orchestration gère également les **Child Chats** déclenchés asynchronement par les flux N8N pour garantir une traçabilité totale.
 - **HTTP/2 Stealth Headers :** Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité pour simuler un navigateur réel.
 
 ## 3. 👁️ La Conscience (`/opt/ECHO/owui-filters/`)
@@ -50,6 +59,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 
 ## 5. 🛠️ L'Arsenal (`/opt/ECHO/owui-tools/`)
 
+- **Orchestration Headless N8N (`n8n_orchestrator_tool.py`) :** [NOUVEAU] Moteur d'interaction direct avec l'API locale N8N d'ECHO permettant de déployer, tester, modifier et supprimer des workflows d'automatisation. Il implémente les directives strictes de `n8n_architecture.md` (distinction radicale entre Sandbox Éphémère imposant un `Execute Workflow Trigger` et Déploiement Permanent Démon pour les webhooks/crons).
 - **Planification Stratégique :** Agent planificateur LLM (`strategic_planner.py`). Suivi tactique obligatoire de l'état d'avancement (`update_plan`). Persistance Markdown dans le Codex Git et SQLite.
 - **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites RAG : `update_meta_artifact`, `search_meta_artifacts` (fusionne recherche sémantique ciblée et cartographie d'index avec reranking), `delete_meta_artifact_item`, `save_session_context`, `delete_session_context_source`, et `search_sessions_context` (fusionne recherche RAG et cartographie globale). Le paramètre `global_search` permet d'étendre la recherche à l'intégralité de l'historique inter-sessions, déclenché par des marqueurs temporels (ex: "hier").
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes, Leaflet) via `universal_visual_generator.py` isolé en Data Island.
@@ -63,11 +73,11 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 
 ## 6. 🛡️ Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
 
-- **ECHO Auth (SSO & MFA) :** IdP autonome gérant l'authentification forte (TOTP) couplé à BunkerWeb.
-- **Dashboard Actif :** Interface interactive de monitoring du cluster Docker (Révocations granulaires, Kill-Switch, stats).
+- **ECHO Auth (SSO & MFA) :** IdP autonome gérant l'authentification forte (TOTP) couplé à BunkerWeb. Prise en charge des comptes locaux et OAuth2. La suppression d'une identité entraîne désormais la **purge atomique totale** sur toutes les bases SQLite associées (chat, identity, MCP, N8N).
+- **Dashboard Actif :** Interface interactive de monitoring du cluster Docker (Révocations granulaires, Kill-Switch, stats). Intègre désormais le monitoring de l'élagage vectoriel asynchrone (Background Task) via long-polling API (`/api/task_status`).
 - **Sécurité Périmétrique :** BunkerWeb (WAF) protégeant le WebSocket WebGPU et l'API IdP.
 - **Régulation & Consolidation :** Optimisation SQLite (Vacuum/WAL) et sauvegardes à chaud. Le script d'installation centralise désormais l'**Autosafety Docker** : configuration d'une politique de logs stricte (max 10 Mo) et mise en place d'un cron hebdomadaire de nettoyage (`docker system prune`) pour éradiquer tout risque de saturation disque.
-- **Purge Vectorielle & SQLite :** Élagage temporel (TTL) automatisé des orphelins dans Qdrant et SQLite.
+- **Purge Vectorielle & SQLite (Asynchrone) :** Élagage temporel (TTL) automatisé des orphelins dans Qdrant et SQLite. L'élagage se fait dorénavant via un thread dédié en arrière-plan (`run_semantic_pruning`) pour ne jamais bloquer l'interface d'administration.
 - **Configuration OWUI :** Script de post-déploiement automatisé des modèles et permissions.
 
 ## 7. 🖱️ Actions Interactives (`/opt/ECHO/owui-actions/`)
@@ -75,7 +85,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 - **Cockpit de Rejeu :** Interface pour la navigation web.
 - **Print / PDF :** Export des conversations.
 - **Purge Mémoire :** Interface scrollable de suppression vectorielle ciblée.
-- **ECHO Identity Vault :** Interface centralisée (`echo_identity_vault_action.py`) se synchronisant dynamiquement avec l'API des schémas du MCP Broker (Port 8000) et les besoins locaux (N8N) pour sauvegarder les credentials dans SQLite (`identity_vault`).
+- **ECHO Identity Vault :** Interface centralisée (`echo_identity_vault_action.py` fusionnant MCP et N8N) se synchronisant dynamiquement avec l'API des schémas du MCP Broker et de N8N pour sauvegarder les credentials dans SQLite. Elle orchestre la distribution des secrets via `ECHO_N8N_VAULT_KEY` et maintient une étanchéité stricte.
 - **Agent Monitor :** HUD offrant une vue arborescente des agents (y compris navigateur web Playwright) en temps réel.
 - **Réinitialisation Auth :** Purge des tokens OAuth2.
 - **ECHO Codex :** HUD Monaco Editor, file tree, historique Git, restauration de version.
@@ -83,18 +93,20 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 
 ## 8. 🏭 Infrastructure d'Exécution
 
+L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N pilotés par l'LLM :
 - **Python Worker :** API Flask pour exécution Python isolée.
 - **Browser Worker :** Instance Playwright pilotée par FastAPI asynchrone (bridée à 9 FPS).
 - **Embedding Worker :** Offload WebGPU/WASM prioritaire, fallback sur llama.cpp (GGUF CPU) sous Docker.
 - **Download Broker :** Service de collecte asynchrone des téléchargements.
 - **MCP Broker :** Serveur natif Model Context Protocol (`FastMCP` via Uvicorn). Expose via ASGI StreamableHTTP des outils externes (Omnisearch Jobs, Corporate Sirene/Bodacc, Academic). Intègre un middleware pur ASGI interceptant silencieusement le `x-openwebui-user-id`.
+- **[NOUVEAU] N8N Worker :** Sous-système Headless (`26-docker-n8n-worker`) encapsulant le moteur N8N (utilisant nativement SQLite via le volume `echo-n8n-data`). API Python (Port 5003) interfaçant l'LLM avec l'orchestrateur de workflow. Les workflows N8N (Mode Démon) peuvent agir comme clients MCP (pour requêter des services d'ECHO) tout en déclenchant de nouveaux "Child Chats" dans le système ECHO pour exécuter des tâches LLM complexes avec traçabilité.
 - **UI HUD & Sécurité DOM (`echo_ui.py`) :** Le moteur de rendu de l'interface injecte désormais ses propres modales asynchrones natives (`window.echoCustomConfirm`, `window.mcpAlert`) qui respectent le mode sombre/clair pour ne jamais bloquer l'Event Loop. L'interface ECHO Codex intègre des redimensionnements fluides de la Sidebar (`splitter`), une impression PDF native (`allow-modals`), et une protection contre les états d'affichage corrompus au chargement.
 
 ## 9. 🚦 Orchestration Séquentielle (Docker Compose)
 
-Démarrage ordonné par hostnames stricts (`echo-*`) :
+Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depends_on: condition: service_healthy` :
 - **Tier 1 (Fondations)** : Qdrant, SearXNG, Watchtower.
-- **Tier 2 (Workers)** : Embedding, Python Worker, Browser Worker, MCP Broker.
+- **Tier 2 (Workers)** : Embedding, Python Worker, Browser Worker, MCP Broker, **N8N Worker**.
 - **Tier 3** : Open WebUI.
 - **Tier 4** : Admin Manager.
 
@@ -110,12 +122,13 @@ Démarrage ordonné par hostnames stricts (`echo-*`) :
 
 ## 12. 📜 Standards de Développement (Rigueur Absolue)
 
+- **Architecture N8N (Règles strictes) :** Tout workflow éphémère de Sandbox testé via le CLI doit **obligatoirement** démarrer par le nœud `Execute Workflow Trigger`. Le Mocking de payload asynchrone via des nœuds "Code" ou "Set" est impératif pour simuler les Webhooks/Emails lors de tests LLM. L'usage en dur de tokens d'API dans les nœuds est proscrit.
 - **OWUI Injection & PEP8 :** L'intégralité des outils de l'Arsenal doit strictement déclarer les arguments `__user__` et `__metadata__` dans leur interface pour garantir l'injection native du contexte par Open WebUI. Le code doit respecter strictement la norme PEP8 (les variables locales inutilisées sont impérativement préfixées par un underscore `_` ou supprimées, et les imports inutiles purgés).
 - **OWUI Tool Multiparts :** Les outils générant ou retournant des fichiers médias doivent encapsuler la réponse dans la directive `wrap_tool_output` via le mot-clé standardisé `echo_tool_multiparts` (remplaçant toute ancienne nomenclature) pour assurer le rendu multimodal natif d'Open WebUI.
-- **Async-First :** Utilisation impérative d'`asyncio` et `httpx`.
+- **Async-First :** Utilisation impérative d'`asyncio` et `httpx`. L'API Admin utilise désormais des tâches en arrière-plan (`threading.Thread` + polling API) pour les opérations longues (élagage Qdrant).
 - **Règle d'Énonciation :** Le Kernel statique et les docstrings doivent adopter un ton impersonnel ("Permet au modèle de"). L'utilisation de la 2ème personne ("Tu es...") est réservée aux `system_prompt` des agents.
-- **Persistence :** Accès base de données uniquement via `EchoStateManager` (SQLite).
+- **Persistence :** Accès base de données uniquement via `EchoStateManager` (SQLite) ou la base native SQLite de N8N.
 - **Auto-Hébergement :** Les clés API ne sortent jamais du cluster.
 
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.193.0*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.199.23*

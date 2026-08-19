@@ -367,6 +367,40 @@ services:
       retries: 20
       start_period: 120s
 
+  echo-n8n-worker:
+    build:
+      context: /opt/ECHO/docker-n8n-worker
+      dockerfile: Dockerfile
+    container_name: echo-n8n-worker
+    restart: always
+    networks:
+      - echo-network
+    environment:
+      - TZ=Europe/Paris
+      - N8N_ENCRYPTION_KEY
+      - N8N_INSTANCE_OWNER_MANAGED_BY_ENV
+      - N8N_INSTANCE_OWNER_EMAIL
+      - N8N_INSTANCE_OWNER_FIRST_NAME
+      - N8N_INSTANCE_OWNER_LAST_NAME
+      - N8N_INSTANCE_OWNER_PASSWORD
+      # Figeage des futures dépréciations pour maintenir la compatibilité ECHO
+      - N8N_UNVERIFIED_PACKAGES_ENABLED=true
+      - N8N_RUNNERS_TASK_TIMEOUT=300
+      - N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES=2147483648
+      - N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES=5000
+    volumes:
+      - echo-browser-data:/app/browser-data:rw
+      - echo-n8n-data:/home/node/.n8n:rw
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5003/health\")' 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   echo-stt-worker:
     build:
       context: /opt/ECHO/docker-stt-worker
@@ -563,4 +597,6 @@ volumes:
   echo-embedding-cache:
     external: true
   echo-auth-data:
+    external: true
+  echo-n8n-data:
     external: true

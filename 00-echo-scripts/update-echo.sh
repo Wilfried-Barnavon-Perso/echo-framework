@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : update-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.3
+# VERSION : 6.3.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR RAPIDE (CODE ONLY) + HOT RELOAD
@@ -57,10 +57,11 @@ fi
 echo "⚡ [UPDATE] Redémarrage des services Python..."
 CONTAINERS_TO_RELOAD=$(docker ps \
     --filter "label=echo.hot-reload=true" \
-    --format "{{.Names}}" | tr '\n' ' ')
+    --format "{{.Names}}")
 if [ -n "$CONTAINERS_TO_RELOAD" ]; then
-    docker restart $CONTAINERS_TO_RELOAD
-    echo "   ✅ Services rechargés : $CONTAINERS_TO_RELOAD"
+    echo "$CONTAINERS_TO_RELOAD" | xargs -n 1 -P 0 docker restart >/dev/null 2>&1
+    FORMATTED_LIST=$(echo "$CONTAINERS_TO_RELOAD" | tr '\n' ' ')
+    echo "   ✅ Services rechargés : $FORMATTED_LIST"
 else
     echo "   ⚠️  Aucun service marqué echo.hot-reload=true trouvé."
 fi

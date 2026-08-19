@@ -7,10 +7,12 @@ import pybase64 as base64
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : 1.6 (DATA SCIENCE HEADLESS)
+VERSION : 1.7 (Rate-Limit Healthcheck)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-06-15
+DATE MAJ : 2026-08-19
 
+CHANGELOG 1.7 :
+- FIX: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
 CHANGELOG 1.6 :
 - Correction d'un risque de deadlock IPC (utilisation de queue.get avec timeout au lieu de p.join bloquant).
 CHANGELOG 1.5 :
@@ -28,6 +30,29 @@ CHANGELOG 1.2 :
 # Configuration des logs pour voir qui fait quoi dans la console Docker
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+import time
+
+class RateLimitHealthCheckFilter(logging.Filter):
+    def __init__(self, rate_limit_seconds=300):
+        super().__init__()
+        self.rate_limit_seconds = rate_limit_seconds
+        self.last_logged = 0
+
+    def filter(self, record):
+        try:
+            msg = record.getMessage()
+            if "GET /health" in msg:
+                now = time.time()
+                if now - self.last_logged >= self.rate_limit_seconds:
+                    self.last_logged = now
+                    return True
+                return False
+        except Exception:
+            pass
+        return True
+
+logging.getLogger("werkzeug").addFilter(RateLimitHealthCheckFilter())
 
 app = Flask(__name__)
 

@@ -1,9 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO STT WORKER API
-VERSION : 1.0 (Initialisation)
+VERSION : 1.1 (Rate-Limit Healthcheck)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-07-05
+DATE MAJ : 2026-08-19
+
+CHANGELOG 1.1 :
+- FIX: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
 ================================================================================
 """
 from fastapi import FastAPI, UploadFile, File, Form
@@ -11,6 +14,36 @@ from fastapi.responses import JSONResponse
 from faster_whisper import WhisperModel
 import os
 import tempfile
+import logging
+import time
+
+class RateLimitHealthCheckFilter(logging.Filter):
+    def __init__(self, rate_limit_seconds=300):
+        super().__init__()
+        self.rate_limit_seconds = rate_limit_seconds
+        self.last_logged = 0
+
+    def filter(self, record):
+        if hasattr(record, 'args') and isinstance(record.args, tuple) and len(record.args) >= 3:
+            if record.args[2] in ('/health', '/health/'):
+                now = time.time()
+                if now - self.last_logged >= self.rate_limit_seconds:
+                    self.last_logged = now
+                    return True
+                return False
+        try:
+            msg = record.getMessage()
+            if "GET /health" in msg:
+                now = time.time()
+                if now - self.last_logged >= self.rate_limit_seconds:
+                    self.last_logged = now
+                    return True
+                return False
+        except Exception:
+            pass
+        return True
+
+logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 
 app = FastAPI(title="ECHO STT Worker", description="Faster-Whisper CPU optimized API")
 

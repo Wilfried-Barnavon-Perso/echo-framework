@@ -2,7 +2,24 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.113 (Resolution Desync UI Noms)
+VERSION : 5.119 (Réactivation N8N Safeguard)
+--- CHANGELOG 5.119 ---
+- Fix : Réactivation du N8N Safeguard (Whitelist GC) désactivé en v5.118 suite
+  au changement N8N 2.34.6. L'API Worker /prune est opérationnelle depuis
+  n8n_api.py v2.16 (timeout=30s, authentification API Key validée).
+- Fix : Timeout aligné de 120s à 60s (worker interne = 30s).
+- Fix : Le Safeguard N8N est désormais non-bloquant. Un échec de communication
+  N8N ne paralyse plus le pruning global (FS + Qdrant).
+--- CHANGELOG 5.118 ---
+- Fix (Contournement) : Désactivation temporaire du N8N Safeguard lors de la purge sémantique suite à la mise à jour N8N 2.34.6 (Erreur Timeout API Worker).
+--- CHANGELOG 5.117 ---
+- Fix (Critique) : Résolution du "UnboundLocalError" SQLite dans la sonde db_ok de run_semantic_pruning.
+--- CHANGELOG 5.116 ---
+- Fix : Modification de get_dir_stats pour utiliser os.lstat() sur les liens symboliques (afin de ne pas surfacturer artificiellement la taille du Transit/Uploads causée par ECHO).
+--- CHANGELOG 5.115 ---
+- Fix (Critique) : Modification de la sonde Qdrant dans run_semantic_pruning pour interroger /collections au lieu d'une collection spécifique, empêchant l'erreur HTTP 404 de paralyser la purge lorsque la base vectorielle est vide.
+--- CHANGELOG 5.114 ---
+- Fix (Critique) : Implémentation du N8N Safeguard et d'une logique Garbage Collection (Whitelist) pour effacer les staticData orphelines dans la base interne N8N avant la destruction des dossiers de chats.
 --- CHANGELOG 5.113 ---
 - UI/UX : Correction de l'affichage désynchronisé des noms entre l'onglet SSO et l'onglet OWUI en forçant la lecture dynamique depuis webui.db pour le rendu visuel.
 - Fix : Le bouton "Importer DB" met désormais à jour de force les noms dans le SSO (auth.db) pour les utilisateurs existants si leur nom a été modifié manuellement dans Open WebUI.
@@ -229,6 +246,12 @@ app = Flask(__name__, static_folder='/app/static')
 app.secret_key = secrets.token_hex(32)
 app.config['JSON_AS_ASCII'] = False
 
+# Traqueur d'État Global pour les tâches asynchrones (ex: Pruning)
+MAINTENANCE_STATE = {
+    "is_running": False,
+    "status": "",
+    "start_time": None
+}
 SYSTEM_ADMIN_EMAIL = "admin@echo.local"
 TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'echo-open-webui')
 BACKUP_DIR = "/backups"
@@ -240,6 +263,10 @@ ECHO_USERS_ROOT = os.path.join(OWUI_DATA_ROOT, "users")
 UPLOADS_DIR = os.path.join(OWUI_DATA_ROOT, "uploads")
 WEBUI_DB_PATH = os.path.join(OWUI_DATA_ROOT, "webui.db")
 RCLONE_CONF_DIR = os.path.join(OWUI_DATA_ROOT, "rclone")
+
+@app.route('/api/task_status')
+def get_task_status():
+    return jsonify(MAINTENANCE_STATE)
 RCLONE_CONF_PATH = os.path.join(RCLONE_CONF_DIR, "rclone.conf")
 OWUI_ADMIN_SECRET_PATH = "/app/secrets/.owui-admin-secret"
 
@@ -390,7 +417,11 @@ def get_dir_stats(path, filter_ext=None):
         for f in files:
             if filter_ext and not f.endswith(filter_ext): continue
             try:
-                t_size += os.path.getsize(os.path.join(root, f))
+                filepath = os.path.join(root, f)
+                if os.path.islink(filepath):
+                    t_size += os.lstat(filepath).st_size
+                else:
+                    t_size += os.path.getsize(filepath)
                 t_count += 1
             except Exception: pass
     return {"count": t_count, "size": t_size, "size_fmt": human_size(t_size)}
@@ -468,12 +499,27 @@ def save_maint_report(report_str):
     except Exception: pass
 
 def run_semantic_pruning():
-    """Purge Temporelle des Souvenirs (v5.51 + Qdrant Sync & TTL)."""
+    """Wrapper pour la Purge Temporelle gérant l'état global asynchrone."""
+    if MAINTENANCE_STATE["is_running"]:
+        print("⚠️ [ECHO-LIFECYCLE] Purge déjà en cours, annulation.")
+        return "Déjà en cours"
+    
+    MAINTENANCE_STATE["is_running"] = True
+    MAINTENANCE_STATE["start_time"] = time.time()
+    MAINTENANCE_STATE["status"] = "Démarrage (Attente des services)..."
+    try:
+        return _run_semantic_pruning()
+    finally:
+        MAINTENANCE_STATE["is_running"] = False
+        MAINTENANCE_STATE["status"] = ""
+
+def _run_semantic_pruning():
     print("🧬 [ECHO-LIFECYCLE] Démarrage...")
     
     # 0. Wait-for-it (Asynchrone 1h max) : Attente de dispo post-backup
     services_ready = False
     for _ in range(60):
+        MAINTENANCE_STATE["status"] = f"Attente des services (Itération {_+1}/60)..."
         # Sommeil immédiat d'une minute pour laisser le temps à l'orchestrateur
         # de stopper l'infrastructure lors d'une sauvegarde planifiée à la même heure.
         time.sleep(60)
@@ -483,20 +529,20 @@ def run_semantic_pruning():
         owui_ok = False
         
         # Check SQLite
-        try:
-            if os.path.exists(WEBUI_DB_PATH):
-                # mode=ro évite les WAL locks pendant le boot d'Open WebUI
+        if os.path.exists(WEBUI_DB_PATH):
+            try:
                 conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True, timeout=5.0)
                 conn.execute("SELECT id FROM user LIMIT 1").fetchone()
                 conn.close()
                 db_ok = True
-        except Exception:
-            pass
-            
+            except Exception as e:
+                print(f"⚠️ [ECHO-LIFECYCLE] Probe SQLite Error: {e}")
+        else:
+            print(f"⚠️ [ECHO-LIFECYCLE] Probe SQLite: Fichier introuvable {WEBUI_DB_PATH}")
         # Check Qdrant
         if HAS_HTTPX:
             try:
-                r = httpx.get(f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}", timeout=5.0)
+                r = httpx.get(f"{QDRANT_URL}/collections", timeout=5.0)
                 if r.status_code == 200:
                     qdrant_ok = True
             except Exception:
@@ -520,13 +566,15 @@ def run_semantic_pruning():
             break
         
     if not services_ready:
-        err_msg = "Pruning annulé : Délai d'attente dépassé (1h) pour la disponibilité de SQLite/Qdrant."
+        err_msg = f"Pruning annulé : Délai d'attente dépassé (1h). Diag: db_ok={db_ok}, qdrant_ok={qdrant_ok}, owui_ok={owui_ok}"
         print(f"❌ [ECHO-LIFECYCLE] {err_msg}")
         save_maint_report(err_msg)
         return err_msg
 
     report = []
     config = load_maint_config()
+    
+    MAINTENANCE_STATE["status"] = "API Safeguard (OWUI)..."
     
     # 1. API Safeguard (Garde-fou)
     if HAS_HTTPX:
@@ -577,6 +625,8 @@ def run_semantic_pruning():
             save_maint_report(err_msg)
             return err_msg
 
+    MAINTENANCE_STATE["status"] = "SQLite Safeguard & Inspection (Dossiers/Qdrant)..."
+
     # 2. Garde-fous BDD SQLite & Orphelins (Dossiers Utilisateurs et Mémoire Qdrant)
     orphans = 0
     qdrant_synced = False
@@ -605,6 +655,58 @@ def run_semantic_pruning():
                 save_maint_report(err_msg)
                 return err_msg
             
+            MAINTENANCE_STATE["status"] = "Génération liste blanche N8N..."
+            
+            # --- A0. N8N Safeguard & Garbage Collection ---
+            n8n_active_ids = []
+            for folder in valid_ids:
+                user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
+                if os.path.exists(user_chats_dir):
+                    for cdir in os.listdir(user_chats_dir):
+                        if cdir in db_valid_chats:
+                            wf_dir = os.path.join(user_chats_dir, cdir, "n8n_workflows")
+                            if os.path.exists(wf_dir):
+                                for f in os.listdir(wf_dir):
+                                    if f.endswith('.json'):
+                                        n8n_active_ids.append(f.split('.')[0])
+                            session_db_path = os.path.join(user_chats_dir, cdir, "session.db")
+                            if os.path.exists(session_db_path):
+                                try:
+                                    with sqlite3.connect(session_db_path) as s_conn:
+                                        cur = s_conn.execute("SELECT status FROM echo_resources WHERE resource_type = 'n8n_workflow' AND status LIKE 'deployed_as_%'")
+                                        for row in cur.fetchall():
+                                            st = row[0]
+                                            real_id = st.replace("deployed_as_", "")
+                                            n8n_active_ids.append(real_id)
+                                except sqlite3.OperationalError as e:
+                                    if "no such table" not in str(e):
+                                        print(f"Erreur SQL session.db pour {folder}/{cdir}: {e}")
+                                except Exception as e:
+                                    print(f"Erreur session.db N8N daemon parse pour {folder}/{cdir}: {e}")
+                                    
+                tpl_dir = os.path.join(ECHO_USERS_ROOT, folder, "n8n_workflow_templates")
+                if os.path.exists(tpl_dir):
+                    for f in os.listdir(tpl_dir):
+                        if f.endswith('.json'):
+                            n8n_active_ids.append(f.split('.')[0])
+                            
+                            
+            if HAS_HTTPX:
+                try:
+                    r = httpx.post(
+                        "http://echo-n8n-worker:5003/prune",
+                        json={"active_ids": n8n_active_ids},
+                        timeout=60.0
+                    )
+                    if r.status_code != 200:
+                        raise Exception(f"HTTP {r.status_code}: {r.text}")
+                    print(f"✅ [ECHO-LIFECYCLE] N8N Safeguard: Purge exécutée ({len(n8n_active_ids)} IDs whitelist).")
+                except Exception as e:
+                    # Non-bloquant : un N8N down ne doit pas paralyser le pruning global
+                    print(f"⚠️ [ECHO-LIFECYCLE] N8N Safeguard: {e}. Purge N8N ignorée (non bloquant).")
+
+            MAINTENANCE_STATE["status"] = "Purge des dossiers de l'Espace Personnel (FS)..."
+
             # --- A. Purge des dossiers de l'Espace Personnel ---
             if config.get("purge_orphaned_users", False):
                 for folder in os.listdir(ECHO_USERS_ROOT):
@@ -626,6 +728,7 @@ def run_semantic_pruning():
 
             
             # --- B. Purge Temporelle des Souvenirs & Garbage Collection (Qdrant) ---
+            MAINTENANCE_STATE["status"] = "Purge Vectorielle (Qdrant)..."
             if HAS_HTTPX and valid_ids:
                 try:
                     # Test de disponibilité Qdrant
@@ -1170,14 +1273,14 @@ def handle_action(action):
     elif action == 'docker_prune':
         def _docker_prune():
             freed_msg = ""
-            try:
-                result = subprocess.run(['docker', 'builder', 'prune', '-a', '-f'],
-                    capture_output=True, text=True, timeout=120)
-                for line in result.stdout.splitlines():
-                    if 'reclaimed' in line.lower():
-                        freed_msg = line.strip()
-            except Exception as e:
-                print(f"[ECHO-PRUNE] Erreur builder prune: {e}")
+            if DOCKER_AVAILABLE:
+                try:
+                    client = docker.from_env()
+                    res = client.api.prune_builds(all=True)
+                    if res and res.get('SpaceReclaimed'):
+                        freed_msg = f"Libéré: {res.get('SpaceReclaimed') / 1024**2:.2f} MB"
+                except Exception as e:
+                    print(f"[ECHO-PRUNE] Erreur API Docker prune_builds: {e}")
             try:
                 subprocess.run(['apt-get', 'clean'], capture_output=True, timeout=30)
             except Exception:
@@ -1937,7 +2040,7 @@ HTML_DASHBOARD = """
 
                     <div class="tab-pane fade" id="v-pills-maint" role="tabpanel">
                         <div class="card border-info mb-3"><div class="card-header text-info"><i class="bi bi-scissors"></i> Élagage & Cycle de Vie (Jours)</div><div class="card-body small">
-                            <form action="/settings/maintenance" method="post" class="mb-3"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Durée de conservation de la mémoire (TTL par niveau) :</label></div><div class="col text-center"><label class="x-small text-secondary mb-1">Trivial</label><input type="number" name="ttl_lvl1" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl1}}" title="Lv1 (Trivial)"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Mineur</label><input type="number" name="ttl_lvl2" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl2}}" title="Lv2"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Utile</label><input type="number" name="ttl_lvl3" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl3}}" title="Lv3"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Majeur</label><input type="number" name="ttl_lvl4" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl4}}" title="Lv4"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Axiome</label><input type="number" name="ttl_lvl5" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl5}}" title="Lv5 (Axiome/Critique)"></div></div><label class="x-small">Heure d'élagage automatique</label><input type="time" name="cleanup_hour" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Consolidation mémoire lvl1 → lvl2 :</label></div><div class="col-6"><label class="x-small text-secondary mb-1">Seuil (nb lvl1)</label><input type="number" name="consol_threshold" class="form-control form-control-sm text-center" value="{{maint.consolidation.trigger_threshold}}" title="Nb de souvenirs Triviaux par user avant consolidation" min="3" max="50"></div><div class="col-6"><label class="x-small text-secondary mb-1">Cluster min</label><input type="number" name="consol_min_cluster" class="form-control form-control-sm text-center" value="{{maint.consolidation.min_cluster_size}}" title="Nb minimum de souvenirs similaires pour fusionner" min="2" max="10"></div><div class="col-12 mt-1"><label class="x-small text-secondary mb-1">Seuil cosinus (0.0-1.0)</label><input type="number" name="consol_similarity" class="form-control form-control-sm text-center" value="{{maint.consolidation.similarity_threshold}}" title="Score cosinus minimal pour regrouper deux souvenirs dans un même cluster (0.75 = très similaires, 0.5 = assez proches)" min="0.4" max="0.99" step="0.05"></div></div><div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" name="purge_orphaned_chats" id="sw_purge_chats" {{ 'checked' if maint.purge_orphaned_chats }}><label class="form-check-label x-small" for="sw_purge_chats" data-bs-toggle="tooltip" title="Si activé, supprime les fichiers d'un chat dans l'Espace Personnel ECHO si le chat n'existe plus dans Open WebUI.">Purger les chats orphelins</label></div><div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="purge_orphaned_users" id="sw_purge_users" {{ 'checked' if maint.purge_orphaned_users }}><label class="form-check-label x-small" for="sw_purge_users" data-bs-toggle="tooltip" title="Si activé, détruit l'Espace Personnel complet (fichiers, bases, mémoires vectorielles) d'un utilisateur supprimé d'Open WebUI.">Purger les utilisateurs orphelins</label></div><button class="btn btn-sm btn-info w-100">Programmer le Cycle</button></form><hr><p class="m-0 mb-1">Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p><div class="d-flex gap-2"><form action="/action/pruning" method="post" onsubmit="showLoader('Élagage profond...')" class="flex-grow-1"><button class="btn btn-outline-info btn-sm w-100">Lancer l'Élagage</button></form><button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#historyLog"><i class="bi bi-journal-text"></i> Logs</button></div><form action="/action/consolidate" method="post" onsubmit="showLoader('Consolidation lvl1 → lvl2...')" class="mt-2"><button class="btn btn-outline-warning btn-sm w-100" title="Fusionne les souvenirs Triviaux similaires en souvenirs Mineurs (centroïde vectoriel).">🧬 Consolider Mémoires Lvl1</button></form><form action="/action/docker_prune" method="post" onsubmit="return confirm('Purger le cache de build Docker et le cache APT système ?') && (showLoader('Purge en cours...'), true)"><button class="btn btn-outline-danger btn-sm w-100 mt-1" title="Libère l'espace du build cache Docker (~4 Go) et du cache APT système.">🧹 Purge Cache Docker</button></form><div class="collapse mt-3" id="historyLog"><div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;"><h6 class="x-small text-uppercase text-muted border-bottom border-secondary pb-1">Historique 1 an</h6>{% for entry in history %}<div class="mb-2 pb-1 border-bottom border-secondary last-child-border-0"><span class="x-small text-info">{{ entry.timestamp }}</span><br><span style="font-size: 0.75rem;">{{ entry.report }}</span></div>{% endfor %}{% if not history %}<span class="x-small text-muted">Aucun log disponible.</span>{% endif %}</div></div>
+                            <form action="/settings/maintenance" method="post" class="mb-3"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Durée de conservation de la mémoire (TTL par niveau) :</label></div><div class="col text-center"><label class="x-small text-secondary mb-1">Trivial</label><input type="number" name="ttl_lvl1" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl1}}" title="Lv1 (Trivial)"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Mineur</label><input type="number" name="ttl_lvl2" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl2}}" title="Lv2"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Utile</label><input type="number" name="ttl_lvl3" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl3}}" title="Lv3"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Majeur</label><input type="number" name="ttl_lvl4" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl4}}" title="Lv4"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Axiome</label><input type="number" name="ttl_lvl5" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl5}}" title="Lv5 (Axiome/Critique)"></div></div><label class="x-small">Heure d'élagage automatique</label><input type="time" name="cleanup_hour" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Consolidation mémoire lvl1 → lvl2 :</label></div><div class="col-6"><label class="x-small text-secondary mb-1">Seuil (nb lvl1)</label><input type="number" name="consol_threshold" class="form-control form-control-sm text-center" value="{{maint.consolidation.trigger_threshold}}" title="Nb de souvenirs Triviaux par user avant consolidation" min="3" max="50"></div><div class="col-6"><label class="x-small text-secondary mb-1">Cluster min</label><input type="number" name="consol_min_cluster" class="form-control form-control-sm text-center" value="{{maint.consolidation.min_cluster_size}}" title="Nb minimum de souvenirs similaires pour fusionner" min="2" max="10"></div><div class="col-12 mt-1"><label class="x-small text-secondary mb-1">Seuil cosinus (0.0-1.0)</label><input type="number" name="consol_similarity" class="form-control form-control-sm text-center" value="{{maint.consolidation.similarity_threshold}}" title="Score cosinus minimal pour regrouper deux souvenirs dans un même cluster (0.75 = très similaires, 0.5 = assez proches)" min="0.4" max="0.99" step="0.05"></div></div><div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" name="purge_orphaned_chats" id="sw_purge_chats" {{ 'checked' if maint.purge_orphaned_chats }}><label class="form-check-label x-small" for="sw_purge_chats" data-bs-toggle="tooltip" title="Si activé, supprime les fichiers d'un chat dans l'Espace Personnel ECHO si le chat n'existe plus dans Open WebUI.">Purger les chats orphelins</label></div><div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="purge_orphaned_users" id="sw_purge_users" {{ 'checked' if maint.purge_orphaned_users }}><label class="form-check-label x-small" for="sw_purge_users" data-bs-toggle="tooltip" title="Si activé, détruit l'Espace Personnel complet (fichiers, bases, mémoires vectorielles) d'un utilisateur supprimé d'Open WebUI.">Purger les utilisateurs orphelins</label></div><button class="btn btn-sm btn-info w-100">Programmer le Cycle</button></form><hr><p class="m-0 mb-1">Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p><div class="d-flex gap-2"><form action="/action/pruning" method="post" id="pruning-form" onsubmit="showLoader('Élagage profond...')" class="flex-grow-1"><button id="pruning-btn" class="btn btn-outline-info btn-sm w-100"><span id="pruning-status-text">Lancer l'Élagage</span></button></form><button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#historyLog"><i class="bi bi-journal-text"></i> Logs</button></div><form action="/action/consolidate" method="post" onsubmit="showLoader('Consolidation lvl1 → lvl2...')" class="mt-2"><button class="btn btn-outline-warning btn-sm w-100" title="Fusionne les souvenirs Triviaux similaires en souvenirs Mineurs (centroïde vectoriel).">🧬 Consolider Mémoires Lvl1</button></form><form action="/action/docker_prune" method="post" onsubmit="return confirm('Purger le cache de build Docker et le cache APT système ?') && (showLoader('Purge en cours...'), true)"><button class="btn btn-outline-danger btn-sm w-100 mt-1" title="Libère l'espace du build cache Docker (~4 Go) et du cache APT système.">🧹 Purge Cache Docker</button></form><div class="collapse mt-3" id="historyLog"><div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;"><h6 class="x-small text-uppercase text-muted border-bottom border-secondary pb-1">Historique 1 an</h6>{% for entry in history %}<div class="mb-2 pb-1 border-bottom border-secondary last-child-border-0"><span class="x-small text-info">{{ entry.timestamp }}</span><br><span style="font-size: 0.75rem;">{{ entry.report }}</span></div>{% endfor %}{% if not history %}<span class="x-small text-muted">Aucun log disponible.</span>{% endif %}</div></div>
                         </div></div>
                     </div>
 
@@ -2119,6 +2222,30 @@ HTML_DASHBOARD = """
             i.type = 'hidden'; i.name = 'remote_name'; i.value = name;
             f.appendChild(i); document.body.appendChild(f); f.submit();
         }
+        async function pollTaskStatus() {
+            try {
+                const r = await fetch('/api/task_status');
+                const state = await r.json();
+                const btn = document.getElementById('pruning-btn');
+                const statusText = document.getElementById('pruning-status-text');
+                if (state.is_running && btn) {
+                    btn.disabled = true;
+                    btn.classList.remove('btn-outline-info');
+                    btn.classList.add('btn-info', 'text-white');
+                    statusText.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>' + (state.status || 'Élagage en cours...');
+                } else if (btn && btn.disabled) {
+                    btn.disabled = false;
+                    btn.classList.add('btn-outline-info');
+                    btn.classList.remove('btn-info', 'text-white');
+                    alert("Élagage terminé avec succès ! Consultez les statistiques mises à jour.");
+                    location.reload();
+                    statusText.innerText = "Lancer l'Élagage";
+                }
+            } catch (e) {}
+        }
+        setInterval(pollTaskStatus, 3000);
+        pollTaskStatus();
+
         function showLoader(m='Action en cours...'){document.getElementById('loader-msg').innerText=m;document.getElementById('loader').style.display='flex'}
         async function refreshAuthUsers(){try{const r=await fetch('/api/auth/users');const d=await r.json();document.getElementById('auth-users-list').innerHTML=d.map(u=>{let t='';if(u.status==='Pending'&&u.expires){const e=new Date(u.expires*1000);t=`<br><small class="${e<new Date()?'text-danger':'text-info'}">⏳ Exp. ${e.toLocaleDateString()} ${e.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</small>`;}else if(u.status==='Active'&&u.last_enrollment){const l=new Date(u.last_enrollment*1000);t=`<br><small class="text-success">✅ Enrôlé le ${l.toLocaleDateString()}</small>`;}const statusBadge=u.status==='Pending'?'<span class="badge bg-warning text-dark">En attente d\\'enrôlement</span>':'<span class="badge bg-success">Actif (MFA)</span>';const disableMsg = u.email === 'admin@echo.local' ? 'DANGER : La désactivation coupera l\\'accès externe à admin@echo.local. Seul un accès local via le Fallback (Port 3001) permettra de le réimporter. Confirmer ?' : 'Désactiver l\\'accès externe de ce compte ? Son historique interne ECHO sera conservé.';const nameDisplay = u.name ? u.name : 'Aucun nom défini';return `<tr><td class="align-middle">${u.email}<br><small class="text-secondary">${nameDisplay}</small></td><td class="align-middle">${statusBadge}${t}</td><td class="text-end align-middle"><form action="/action/auth/rename" method="post" class="d-inline" onsubmit="let n=prompt('Nouveau nom pour ${u.email}:', '${u.name||''}'); if(n!==null){this.name.value=n; return true;} return false;"><input type="hidden" name="email" value="${u.email}"><input type="hidden" name="name" value=""><button class="btn btn-sm btn-outline-info py-0 me-1" title="Modifier le Nom">✏️</button></form><form action="/action/auth/reset" method="post" class="d-inline" onsubmit="return confirm('Forcer la réinitialisation MFA pour cet utilisateur ?')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-warning py-0 me-1" title="Réinitialiser MFA">🔑</button></form><form action="/action/auth/disable" method="post" class="d-inline" onsubmit="return confirm('${disableMsg}')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-outline-warning py-0 me-1" title="Désactiver l'accès WAN">🚫</button></form><form action="/action/auth/delete" method="post" class="d-inline" onsubmit="return confirm('ATTENTION : Supprimer définitivement cet accès ET purger ses chats de l\\'espace ECHO ?')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-danger py-0" title="Supprimer Totalement">🗑️</button></form></td></tr>`}).join('')}catch(e){console.error('Erreur AuthUsers:',e)}}
         

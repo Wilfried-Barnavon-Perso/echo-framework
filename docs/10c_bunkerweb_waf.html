@@ -41,7 +41,7 @@
     </p>
     <p>
       Lorsqu'une mise à jour de l'interface ou une modification de sécurité nécessite un rafraîchissement des clients, BunkerWeb intercepte les requêtes vers <code>/_app/version.json</code> et les surcharge avec un cache-busting dynamique. 
-      Cette méthode force le rechargement des assets SvelteKit sans utiliser l'en-tête destructif <code>Clear-Site-Data</code>. Cela garantit la préservation absolue du cookie JWT de session, évitant ainsi l'erreur 401 sur les flux audio en cours de lecture.
+      Cette méthode force le rechargement des assets SvelteKit sans utiliser l'en-tête destructif <code>Clear-Site-Data</code>. Cela garantit la préservation stricte du cookie JWT de session, évitant ainsi l'erreur 401 sur les flux audio en cours de lecture.
     </p>
 
     <h2>Routage Edge WebGPU</h2>
@@ -64,7 +64,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.193.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.199.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

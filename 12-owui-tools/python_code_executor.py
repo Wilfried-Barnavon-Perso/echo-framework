@@ -1,17 +1,16 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 6.5
+version: 6.6
 description: Composant système interne : ECHO Python Code Executor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.0: Validation analytique par calcul empirique. Capacité graphique retirée (Headless).
-# 6.1: Alignement du status sur le standard wrap_tool_output ECHO.
-# 6.2: Correction d'un bug d'import (ECHO_PYTHON_WORKER_URL) et unbound local error (text_out).
-# 6.3: Nettoyage sémantique de la docstring (Retrait de la mention PRAF).
-# 6.4: Ajout de l'argument __metadata__ dans l'interface de l'outil pour assurer la compatibilité OWUI.
+# 6.6: Précision de la version (Python 3.14) et rappel d'isolation dans la docstring.
 # 6.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 6.4: Ajout de l'argument __metadata__ dans l'interface de l'outil pour assurer la compatibilité OWUI.
+# 6.3: Nettoyage sémantique de la docstring (Retrait de la mention PRAF).
+# 6.2: Correction d'un bug d'import (ECHO_PYTHON_WORKER_URL) et unbound local error (text_out).
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
 
@@ -41,7 +40,8 @@ class Tools:
         __event_call__: Any = None,
         __metadata__: dict = {}
     ) -> str:
-        """Exécution isolée de code Python (Worker distant). Idéal pour validation analytique (math, dates, data). Aucun accès direct aux fichiers locaux (injecter les données textuellement). IMPLIQUE Python 3."""
+        """Exécution isolée de code Python (Worker distant). Idéal pour validation analytique (math, dates, data).
+        ATTENTION: Cette sandbox n'a AUCUN accès à l'infrastructure d'outils d'ECHO ni aux fichiers de l'utilisateur (injecter les données textuellement dans le code). IMPLIQUE Python 3.14."""
         events = EchoEvents(__event_emitter__, __event_call__)
 
         await events.status("🐍 Exécution Python en cours...")

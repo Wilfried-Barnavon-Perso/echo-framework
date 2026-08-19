@@ -8,14 +8,30 @@ from echo_constants import FILE_INGESTION_STATUS, ECHO_USERS_ROOT, get_gemini_mi
 
 async def process_downloads():
     dl_root = Path("/app/browser-data/downloads")
-    if not dl_root.exists(): return
+    if not dl_root.exists(): 
+        dl_root.mkdir(parents=True, exist_ok=True)
+        
+    try:
+        os.chmod(str(dl_root), 0o777)
+    except:
+        pass
     
     for uid_dir in dl_root.iterdir():
         if not uid_dir.is_dir(): continue
+        try:
+            os.chmod(str(uid_dir), 0o777)
+        except:
+            pass
+            
         uid = uid_dir.name
         
         for cid_dir in uid_dir.iterdir():
             if not cid_dir.is_dir(): continue
+            try:
+                os.chmod(str(cid_dir), 0o777)
+            except:
+                pass
+            
             cid = cid_dir.name
             
             # Garbage Collection : Vérification Vault

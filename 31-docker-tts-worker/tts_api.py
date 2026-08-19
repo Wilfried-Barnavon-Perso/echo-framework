@@ -1,3 +1,15 @@
+"""
+================================================================================
+MODULE : ECHO TTS WORKER API
+VERSION : 1.1 (Standardisation & Rate-Limit Healthcheck)
+AUTEUR : ECHO Team
+DATE MAJ : 2026-08-19
+
+CHANGELOG 1.1 :
+- FEAT: Standardisation de l'en-tête du module.
+- FIX: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
+================================================================================
+"""
 from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
@@ -21,6 +33,37 @@ dictionaries = {
     "pt": SpellChecker(language='pt'),
 }
 print("✅ Dictionaries loaded.")
+
+import logging
+import time
+
+class RateLimitHealthCheckFilter(logging.Filter):
+    def __init__(self, rate_limit_seconds=300):
+        super().__init__()
+        self.rate_limit_seconds = rate_limit_seconds
+        self.last_logged = 0
+
+    def filter(self, record):
+        if hasattr(record, 'args') and isinstance(record.args, tuple) and len(record.args) >= 3:
+            if record.args[2] in ('/health', '/health/'):
+                now = time.time()
+                if now - self.last_logged >= self.rate_limit_seconds:
+                    self.last_logged = now
+                    return True
+                return False
+        try:
+            msg = record.getMessage()
+            if "GET /health" in msg:
+                now = time.time()
+                if now - self.last_logged >= self.rate_limit_seconds:
+                    self.last_logged = now
+                    return True
+                return False
+        except Exception:
+            pass
+        return True
+
+logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 
 app = FastAPI(title="ECHO TTS Worker", description="Kokoro ONNX CPU API")
 

@@ -1,8 +1,8 @@
 import json
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
-def register_academic_tools(mcp: FastMCP):
+def register_academic_tools(mcp: MCPServer):
     
     @mcp.tool()
     async def search_academic_papers(query: str, domain: str = "computer_science") -> str:

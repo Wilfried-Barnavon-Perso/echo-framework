@@ -159,7 +159,7 @@ flowchart LR
 
     <div class="code-header">Structure du bloc AEC (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.193.0"
+version_framework_echo: "5.199.23"
 modèle_actuel:   "##MODEL_ID##"
 modèle_origine:  "##MODEL_ORIGIN##"
 nom_utilisateur: "anonyme"
@@ -192,7 +192,7 @@ timezone:        "Europe/Paris"
     <h3>Phase Outlet - Masquage chirurgical des secrets</h3>
     <p>
       Après la génération, le filtre balaie le texte de la réponse via une expression régulière
-      correspondant au format des clés API Google (<code>AIza[0-9A-Za-z_-]{35}</code>).
+      correspondant au format des clés API Google (<code>(?:AIza|AQ\.)[0-9A-Za-z_-]{35,}</code>).
       Toute clé détectée est remplacée par la chaîne
       <code>[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]</code>. Ce mécanisme garantit qu'aucun
       secret ne « fuit » vers l'interface visuelle quelle que soit la réponse du modèle.
@@ -272,7 +272,7 @@ timezone:        "Europe/Paris"
     </div>
 
     <footer>
-      ECHO Framework - Version 5.193.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.199.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,6 +1,6 @@
 import inspect
 from functools import wraps
-from mcp.server.fastmcp import Context
+from mcp.server.context import Context
 from .database import get_credentials
 import contextvars
 
@@ -28,12 +28,10 @@ def require_rw_access(service: str):
                             ctx = arg
                             break
 
-                if ctx and hasattr(ctx, "request_context") and ctx.request_context:
-                    request = ctx.request_context
-                    if hasattr(request, "headers"):
-                        user_id = request.headers.get("x-openwebui-user-id")
-                        if not user_id:
-                            user_id = request.headers.get("x-echo-user-id")
+                if ctx and hasattr(ctx, "headers"):
+                    user_id = ctx.headers.get("x-openwebui-user-id")
+                    if not user_id:
+                        user_id = ctx.headers.get("x-echo-user-id")
 
             if not user_id:
                 raise RuntimeError("User ID not found in context. Authentication via Open WebUI headers is required.")

@@ -1,12 +1,13 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.24
+version: 192.25
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.25: Support du format de clé API Google AQ.
 # 192.24: Correction systémique des vieux identifiants orphelins (Auto-heal vers MODEL_LITE) et formatage UI avec clés techniques (ai_studio_id/ca_model_id).
 # 192.23: Restauration et sauvegarde de l'historique de cascade cognitive via KV store pour le message utilisateur. Amélioration de la gestion des erreurs de streaming de l'API Google avec alertes d'interruption. Correction de la logique de clamping et cascade via MODEL_IDENTITY.
 # 192.22: Fix silent cuts in stream generation viaSAFETY exception catch & StreamProcessor logging. Fix cognitive cascade clamping and downward logic due to IDENTITY mismatches. Fix post-cascade amnesia by persisting shadow locally via KV store.
@@ -685,7 +686,7 @@ class Pipe:
                         f"Le lien est toujours valide.\n\n"
                         f"[\U0001f517 **Autoriser ECHO avec Google**]({stored_url})\n\n"
                         f"---\n"
-                        f"*Ou collez directement une cl\u00e9 `AIza\u2026` pour utiliser AI Studio.*"
+                        f"*Ou collez directement une cl\u00e9 `AIza\u2026` / `AQ.\u2026` pour utiliser AI Studio.*"
                     )
                     return
 
@@ -1122,7 +1123,6 @@ class Pipe:
                                float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)))
             q_reset_raw = str(model_quota.get("resetTime",
                               echo_auth.get_auth_data("google_quota_reset") or "N/A"))
-            q_amount  = echo_auth.get_auth_data("google_quota_amount") or "N/A"
             q_type    = echo_auth.get_auth_data("google_quota_type") or "CODE_ASSIST"
 
             # Crédits AI (source : loadCodeAssist HEALTH_CHECK)
@@ -1162,7 +1162,7 @@ class Pipe:
                 cache_pct=cache_pct, prompt_pct=prompt_pct, gen_pct=gen_pct,
                 user_email=email, user_tier=tier, project_id=proj,
                 auth_sources=sources,
-                quota_amount=q_amount, quota_fraction=q_fraction, quota_reset=q_reset, quota_type=q_type,
+                quota_fraction=q_fraction, quota_reset=q_reset, quota_type=q_type,
                 quota_model=q_model_label,
                 quota_rpd_rem=q_rpd_rem, quota_rpd_lim=q_rpd_lim,
                 quota_rpm_rem=q_rpm_rem, quota_rpm_lim=q_rpm_lim,

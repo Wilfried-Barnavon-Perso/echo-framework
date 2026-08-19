@@ -19,6 +19,10 @@
       Il opère indépendamment du flux cognitif principal pour prévenir tout blocage IO.
     </p>
 
+    
+    <h3>Pont de Permissions N8N (V5.199)</h3>
+    <p>Depuis les dernières évolutions architecturales (commit 0af8162), le Download Broker assume le rôle de <strong>pont de sécurité inter-conteneurs</strong>. Il accorde explicitement l'accès en écriture à l'utilisateur système <code>node</code> (qui propulse le Worker N8N) sur le volume partagé <code>browser-data/downloads</code>. Cette mécanique autorise N8N à modifier ou générer des fichiers en toute fluidité avec l'Agent Navigateur Playwright.</p>
+
     <h2>Architecture et Fonctionnement</h2>
 
     <p>

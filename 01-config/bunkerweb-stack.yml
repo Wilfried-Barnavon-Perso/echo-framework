@@ -1,11 +1,13 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.25
+# VERSION : 1.26
 # ==============================================================================
+#                  1.26: GUNICORN_TIMEOUT 60 → 120s : évite le SIGKILL des workers
+#                        uvicorn en cours de retry backoff SSE (asyncio.sleep).
+#                        60s déclenchait un crash silencieux lors de surcharges API.
 #                  1.25: Renommage du service echo-auth en echo-auth-manager.
-#                  Bump MariaDB 10.11 -> 11.4 (LTS, EOL 2029)
-#                  Ajout healthcheck bw-db + depends_on ordonné
-#                  Suppression directive version (deprecated Compose V2)
+#                  1.24: Bump MariaDB 10.11 -> 11.4 (LTS, EOL 2029)
+#                  1.23: Ajout healthcheck bw-db + depends_on ordonné
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
 # ==============================================================================
@@ -19,7 +21,9 @@ x-bw-config: &bw-config
   API_WHITELIST_IP: "127.0.0.0/8 10.20.30.0/24 172.16.0.0/12 192.168.0.0/16"
   
   # Optimisations
-  GUNICORN_TIMEOUT: "60"
+  GUNICORN_TIMEOUT: "120"   # Augmenté de 60 → 120s (v1.26) : couvre le backoff SSE
+                             # max (~15s post-fix echo_constants) avec marge ×8.
+                             # 60s déclenchait SIGKILL du worker uvicorn en cours de retry.
   GUNICORN_WORKERS: "2"
   USE_BUNKERNET: "no"
   SEND_ANONYMOUS_REPORT: "no"

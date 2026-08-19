@@ -1,26 +1,23 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 1.5 (Infobulle Pappers)
+VERSION : 1.6 (Migration MCP V2)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-07-06
+DATE MAJ : 2026-08-09
 ================================================================================
 """
 from core.security import user_id_var
 from starlette.responses import PlainTextResponse, JSONResponse
 from modules.m4_academic import register_academic_tools
 from modules.m3_corporate import register_corporate_tools
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 import uvicorn
 
 from mcp.server.transport_security import TransportSecuritySettings
 
 # Initialisation du serveur MCP avec protection DNS Rebinding désactivée
 # (Docker interne)
-mcp = FastMCP(
-    "ECHO_MCP_Broker",
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=False))
+mcp = MCPServer("ECHO_MCP_Broker")
 
 # Importation des modules pour enregistrer les outils
 
@@ -37,7 +34,9 @@ async def ping() -> str:
 
 # FastMCP et Open WebUI communiquent via StreamableHTTP (et non SSE standard)
 # Nous utiliserons Uvicorn pour exposer l'application ASGI générée par mcp.
-app = mcp.streamable_http_app()
+app = mcp.streamable_http_app(
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False))
 
 # Route HTTP pour le Docker Healthcheck
 

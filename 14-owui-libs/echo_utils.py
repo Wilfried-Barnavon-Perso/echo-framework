@@ -1,16 +1,20 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.19
+version: 8.28
 description: Composant système interne : ECHO Shared Utils (Core).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 8.19: Injection de THINKING_LEVEL_DISTILLATION (LOW) dans call_distillation pour optimiser la latence.
-# 8.18: Nettoyage du code mort (original_target_model) et restauration complète de la logique de routage CA string (alignement sur a10fadf6f...).
-# 8.17: Retrait définitif de requestedModel (rejeté par le schéma JSON strict du transcodeur REST v1internal).
-# 8.16: Correction critique (400) : Déplacement de l'injection requestedModel du request_body vers wrapped_payload (racine).
-# 8.15: Restauration de l'injection requestedModel via la nouvelle clé protobuf_enum suite au besoin du routeur REST (404 Not Found avec ID entier).
+# 8.28: Alignement OAuth2 AGY IDE : suppression header x-goog-api-client (absent du
+#       protocole natif) et purge import mort client LS (ANTIGRAVITY_OAUTH_CLIENT_ID/SECRET).
+# 8.27: Annulation du fast-failover immédiat clé API (8.26) : contre-productif avec
+#       clé primaire gratuite / clé secondaire payante. Le threshold existant (2 échecs
+#       + backoff court ~3s) est optimal pour protéger la clé payante.
+# 8.26: Fix crash silencieux SSE : catch httpx.RemoteProtocolError/ReadError sur
+#       aiter_bytes et process_callback (CancelledError re-propagé).
+# 8.25: Factorisation globale de la sanitization JSON Schema (Allowlist via consts) dans _prepare_request_context et alignement strict du Payload CAS 2.
+# 8.24: Fast-Failover intra-retry pour streamGenerateContent et generateContent (429/500/503).
 
 import copy
 import os
@@ -44,9 +48,8 @@ from echo_constants import (
     ECHO_RETRY_BASE_DELAY, ECHO_RETRY_MULTIPLIER,
     ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX,
     AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_OAUTH2, AUTH_METHOD_KEY_SECONDARY,
-    ANTIGRAVITY_OAUTH_CLIENT_ID, ANTIGRAVITY_OAUTH_CLIENT_SECRET,   # client LS (884354919052)
     ANTIGRAVITY_DESKTOP_CLIENT_ID, ANTIGRAVITY_DESKTOP_CLIENT_SECRET, # client Desktop (1071006060591)
-    GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, AGY_BASE_URL,
+    GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, AGY_BASE_URLS,
     GOOGLE_OAUTH_TOKEN_LIFETIME, AUTH_DATA_USER_TIER,
     CHARS_PER_TOKEN,
     ECHO_HTTP_CLIENT_TIMEOUT, ECHO_HTTP_MAX_CONNECTIONS,
@@ -656,7 +659,6 @@ class EchoGeminiClient:
     async def _get_auth_headers(provider: Dict, is_agy: bool = False, is_generation: bool = False) -> Dict[str, str]:
         """Génère les en-têtes d'authentification selon le type de fournisseur (Agnostique)."""
         if is_agy:
-            # User-Agent Antigravity 2.1 (Language Server)
             ua = ECHO_AGY_USER_AGENT
         else:
             ua = ECHO_USER_AGENT
@@ -664,7 +666,6 @@ class EchoGeminiClient:
         headers = {
             "Content-Type":       "application/json",
             "User-Agent":         ua,
-            "x-goog-api-client": "antigravity/2.1.0"
         }
         p_type = provider.get("type")
 
@@ -700,11 +701,29 @@ class EchoGeminiClient:
         return headers
 
     @staticmethod
-    async def _prepare_request_context(provider: Dict, target_model: str, payload: Dict, method: str = "generateContent", chat_id: str = None, enable_paid_credits: bool = False) -> Optional[Dict]:
+    async def _prepare_request_context(provider: Dict, target_model: str, payload: Dict, method: str = "generateContent", chat_id: str = None, enable_paid_credits: bool = False, base_url: str = None) -> Optional[Dict]:
         """
         Sélecteur de Protocole Symétrique : Prépare URL, Headers et Payload selon le backend.
         Retourne un dictionnaire de configuration ou None si le fournisseur est invalide.
         """
+        # --- CAS 0 : BOUCLIER UNIVERSEL DES OUTILS (ALLOWLIST VIA CONSTANTES) ---
+        from echo_constants import GEMINI_ALLOWED_SCHEMA_KEYS
+        
+        def clean_gemini_schema(schema: dict):
+            if not isinstance(schema, dict): return
+            keys_to_remove = [k for k in schema.keys() if k not in GEMINI_ALLOWED_SCHEMA_KEYS]
+            for k in keys_to_remove: schema.pop(k, None)
+            if "properties" in schema and isinstance(schema["properties"], dict):
+                for v in schema["properties"].values(): clean_gemini_schema(v)
+            if "items" in schema and isinstance(schema["items"], dict):
+                clean_gemini_schema(schema["items"])
+
+        if "tools" in payload and isinstance(payload["tools"], list):
+            for t in payload["tools"]:
+                for fn in t.get("function_declarations", []):
+                    if "parameters" in fn:
+                        clean_gemini_schema(fn["parameters"])
+
         p_type = provider.get("type")
         is_agy = (p_type == AUTH_METHOD_OAUTH2)
         is_generation = method in ["generateContent", "streamGenerateContent", "embedContent"]
@@ -729,7 +748,7 @@ class EchoGeminiClient:
             if not project_id:
                 return None
 
-            api_url = f"{AGY_BASE_URL}:{method}"
+            api_url = f"{base_url}:{method}"
             if method == "streamGenerateContent":
                 api_url += "?alt=sse"
 
@@ -798,7 +817,20 @@ class EchoGeminiClient:
             if method == "streamGenerateContent":
                 api_url += "?alt=sse"
 
-            return {"url": api_url, "headers": headers, "payload": payload}
+            # Harmonisation stricte pour l'API publique AI Studio
+            t_conf = payload.get("toolConfig") or payload.get("tool_config")
+            
+            request_body = {
+                "contents": payload.get("contents", []),
+                "systemInstruction": payload.get("systemInstruction"),
+                "generationConfig": payload.get("generationConfig", {}),
+                "tools": payload.get("tools"),
+                "toolConfig": t_conf,
+            }
+
+            request_body = {k: v for k, v in request_body.items() if v is not None}
+
+            return {"url": api_url, "headers": headers, "payload": request_body}
 
     @staticmethod
     async def generate_embedding(
@@ -1071,13 +1103,16 @@ class EchoGeminiClient:
         consecutive_errors = 0
         current_delay = ECHO_RETRY_BASE_DELAY
 
+        state_mgr = EchoStateManager(user_id=user_id)
+        current_url_idx, base_url = state_mgr.get_agy_endpoint()
+
         for attempt in range(max_retries + 1):
             provider = auth_providers[active_idx]
 
             # Préparation symétrique de la requête
             # MESSAGE_SHADOWS: Injection de contexte persistant (RAG-lite)
             try:
-                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "generateContent", chat_id=chat_id, enable_paid_credits=enable_paid_credits)
+                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "generateContent", chat_id=chat_id, enable_paid_credits=enable_paid_credits, base_url=base_url)
                 if not req_ctx:
                     # Fail-over immédiat si configuration incomplète (ex: Project ID manquant)
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
@@ -1122,20 +1157,41 @@ class EchoGeminiClient:
                         if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
                         continue
                     
-                    if attempt < max_retries:
-                        # [NOUVEAU] Amélioration du feedback Quota
-                        wait_msg = f"⚠️ Surcharge API Google ({resp.status_code})."
-                        if resp.status_code == 429 and provider.get("type") == AUTH_METHOD_OAUTH2:
+                    # --- FAST-FAILOVER INTRA-RETRY ---
+                    if provider.get("type") == AUTH_METHOD_OAUTH2 and resp.status_code in [429, 500, 503]:
+                        from datetime import datetime, timedelta, timezone
+                        reset_time = None
+                        if resp.status_code == 429:
                             auth = EchoAuth(user_id=user_id)
                             reset_time = auth.get_auth_data("google_quota_reset", user_id)
-                            if reset_time and reset_time != "N/A":
-                                wait_msg = f"⏳ API Google : limite de débit atteinte. Reprise à : {reset_time}."
+                        if not reset_time or reset_time == "N/A":
+                            reset_time = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+                        
+                        # Verrouillage de l'URL actuelle
+                        state_mgr.lock_agy_endpoint(current_url_idx, reset_time)
+                        new_idx, new_url = state_mgr.get_agy_endpoint()
+                        
+                        # Si on obtient une nouvelle URL, on bascule immédiatement
+                        if new_idx != current_url_idx:
+                            if events: await events.status(f"⚠️ Surcharge ({resp.status_code}). Bascule immédiate sur l'environnement de secours...", done=False)
+                            current_url_idx = new_idx
+                            base_url = new_url
+                            continue # Fast-failover sans backoff ni incrément d'attempt
+                    
+                    # --- BACKOFF CLASSIQUE (Toutes les URLs bloquées) ---
+                    if attempt < max_retries:
+                        wait_msg = f"⚠️ Surcharge API ({resp.status_code})."
+                        if resp.status_code == 429 and provider.get("type") == AUTH_METHOD_OAUTH2:
+                            auth = EchoAuth(user_id=user_id)
+                            r_time = auth.get_auth_data("google_quota_reset", user_id)
+                            if r_time and r_time != "N/A": wait_msg = f"⏳ API limite de débit. Reprise à : {r_time}."
 
                         wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                         if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s....", done=False)
                         await asyncio.sleep(wait_time)
                         current_delay *= ECHO_RETRY_MULTIPLIER
                         continue
+
                 resp.raise_for_status()
             except Exception as e:
                 if attempt < max_retries:
@@ -1272,11 +1328,14 @@ class EchoGeminiClient:
         consecutive_errors = 0
         current_delay = ECHO_RETRY_BASE_DELAY
 
+        state_mgr = EchoStateManager(user_id=user_id)
+        current_url_idx, base_url = state_mgr.get_agy_endpoint()
+
         for attempt in range(max_retries + 1):
             provider = auth_providers[active_idx]
 
             try:
-                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "streamGenerateContent", chat_id=chat_id, enable_paid_credits=enable_paid_credits)
+                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "streamGenerateContent", chat_id=chat_id, enable_paid_credits=enable_paid_credits, base_url=base_url)
                 if not req_ctx:
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
                     if active_idx < len(auth_providers) - 1:
@@ -1304,46 +1363,83 @@ class EchoGeminiClient:
                             consecutive_errors = 0
                             if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
                             continue
-                        if attempt < max_retries:
-                            # [NOUVEAU] Amélioration du feedback Quota
-                            wait_msg = f"⚠️ Surcharge API Google ({r.status_code})."
-                            if r.status_code == 429 and provider.get("type") == AUTH_METHOD_OAUTH2:
+                        # --- FAST-FAILOVER INTRA-RETRY (OAuth2 uniquement) ---
+                        if provider.get("type") == AUTH_METHOD_OAUTH2 and r.status_code in [429, 500, 503]:
+                            from datetime import datetime, timedelta, timezone
+                            reset_time = None
+                            if r.status_code == 429:
                                 auth = EchoAuth(user_id=user_id)
                                 reset_time = auth.get_auth_data("google_quota_reset", user_id)
-                                if reset_time and reset_time != "N/A":
-                                    wait_msg = f"⏳ API Google : limite de débit atteinte. Reprise à : {reset_time}."
+                            if not reset_time or reset_time == "N/A":
+                                reset_time = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+                            
+                            # Verrouillage de l'URL actuelle
+                            state_mgr.lock_agy_endpoint(current_url_idx, reset_time)
+                            new_idx, new_url = state_mgr.get_agy_endpoint()
+                            
+                            # Si on obtient une nouvelle URL, on bascule immédiatement
+                            if new_idx != current_url_idx:
+                                if events: await events.status(f"⚠️ Surcharge ({r.status_code}). Bascule immédiate sur l'environnement de secours...", done=False)
+                                current_url_idx = new_idx
+                                base_url = new_url
+                                continue # Fast-failover sans backoff ni incrément d'attempt
+                        
+                        # --- BACKOFF CLASSIQUE (Toutes les URLs bloquées) ---
+                        if attempt < max_retries:
+                            wait_msg = f"⚠️ Surcharge API ({r.status_code})."
+                            if r.status_code == 429 and provider.get("type") == AUTH_METHOD_OAUTH2:
+                                auth = EchoAuth(user_id=user_id)
+                                r_time = auth.get_auth_data("google_quota_reset", user_id)
+                                if r_time and r_time != "N/A": wait_msg = f"⏳ API limite de débit. Reprise à : {r_time}."
 
                             wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                             if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s....", done=False)
                             await asyncio.sleep(wait_time)
                             current_delay *= ECHO_RETRY_MULTIPLIER
                             continue
+
                     r.raise_for_status()
                     if process_callback:
-                        async for chunk in process_callback(r): yield chunk
+                        try:
+                            async for chunk in process_callback(r): yield chunk
+                        except asyncio.CancelledError:
+                            # Annulation uvicorn (shutdown container) — doit se propager.
+                            print(f"[EchoGemini] ⚠️ Tâche SSE annulée (shutdown). Re-propagation.")
+                            raise
+                        except (httpx.RemoteProtocolError, httpx.ReadError):
+                            # Déconnexion propre du client SSE (timeout navigateur, reload UI).
+                            # Sortie sans retry — pas une erreur API.
+                            print(f"[EchoGemini] ℹ️ Client SSE déconnecté (process_callback). Abandon propre.")
+                            return
                     else:
                         # Processeur par défaut pour les outils (Extraction Texte et Objets JSON)
                         buffer = ""
                         import codecs
                         decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
                         buffered_lines = []
+                        try:
+                            async for chunk in r.aiter_bytes():
+                                buffer += decoder.decode(chunk, final=False)
+                                while "\n" in buffer:
+                                    line, buffer = buffer.split("\n", 1)
+                                    line = line.strip()
 
-                        async for chunk in r.aiter_bytes():
-                            buffer += decoder.decode(chunk, final=False)
-                            while "\n" in buffer:
-                                line, buffer = buffer.split("\n", 1)
-                                line = line.strip()
-                                
-                                if line.startswith("data: "):
-                                    buffered_lines.append(line[6:].strip())
-                                elif line == "" and buffered_lines:
-                                    # Fin d'un bloc SSE : accumulation et parsing du JSON complet
-                                    full_json_str = "\n".join(buffered_lines)
-                                    try:
-                                        data = json.loads(full_json_str)
-                                        yield data 
-                                    except: pass
-                                    buffered_lines = []
+                                    if line.startswith("data: "):
+                                        buffered_lines.append(line[6:].strip())
+                                    elif line == "" and buffered_lines:
+                                        # Fin d'un bloc SSE : accumulation et parsing du JSON complet
+                                        full_json_str = "\n".join(buffered_lines)
+                                        try:
+                                            data = json.loads(full_json_str)
+                                            yield data
+                                        except: pass
+                                        buffered_lines = []
+                        except asyncio.CancelledError:
+                            print(f"[EchoGemini] ⚠️ Tâche SSE annulée (shutdown). Re-propagation.")
+                            raise
+                        except (httpx.RemoteProtocolError, httpx.ReadError):
+                            print(f"[EchoGemini] ℹ️ Client SSE déconnecté (aiter_bytes). Abandon propre.")
+                            return
                     break
             except Exception as e:
                 if attempt < max_retries:
@@ -1648,6 +1744,24 @@ class EchoStateManager:
                 return row[0] if row else None
         except: pass
         return None
+
+    def get_agy_endpoint(self) -> tuple[int, str]:
+        """Analyse les verrous temporels de chaque URL. Retourne (index, url_saine)."""
+        from echo_constants import AGY_BASE_URLS
+        from datetime import datetime, timezone
+        
+        now = datetime.now(timezone.utc).isoformat()
+        for idx, url in enumerate(AGY_BASE_URLS):
+            reset_time = self.get_setting(f"agy_locked_url_{idx}")
+            if not reset_time or now > reset_time:
+                return idx, url # URL saine
+                
+        # Si tout est bloqué, fallback sur l'URL standard (0) par défaut.
+        return 0, AGY_BASE_URLS[0]
+
+    def lock_agy_endpoint(self, idx: int, reset_time_utc: str):
+        """Verrouille une URL jusqu'à son reset_time."""
+        self.save_setting(f"agy_locked_url_{idx}", reset_time_utc)
 
     def save_context_stats(self, stats: dict):
         try:

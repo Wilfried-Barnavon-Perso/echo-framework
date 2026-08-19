@@ -68,7 +68,11 @@ flowchart TD
     direction LR
     Tools["🛠️ Outils Sensoriels & Exécutifs"]
     V[("📂 Vault Local")]
+    N8N["⚡ N8N Worker<br/>(Headless SQLite)"]
+    MCP["🔌 MCP Broker"]
     Tools <--> V
+    Tools <--> N8N
+    Tools <--> MCP
   end
 
   subgraph CLOUD ["☁️ ZONE 4 : INFÉRENCE"]
@@ -759,7 +763,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.193.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.199.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

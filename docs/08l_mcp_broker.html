@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>ECHO v5 - 8l. Serveur MCP Broker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+</script>
+
+  <div class="sidebar"></div>
+
+  <main>
+    <h1>8l. Serveur MCP Broker</h1>
+
+    <h2>Serveur MCP Broker</h2>
+    <p>Le Model Context Protocol (MCP) Broker expose via ASGI des outils externes à l'architecture ECHO. Il est géré via <code>FastMCP</code> sous Uvicorn.</p>
+    
+    <h3>Modules Actifs</h3>
+    <ul>
+      <li><strong>Corporate (Sirene/Bodacc) :</strong> Outils de recherche de données d'entreprise.</li>
+      <li><strong>Academic :</strong> Interfaçage avec des bases de connaissances scientifiques.</li>
+      <li><strong>Omnisearch Jobs :</strong> Moteur de recherche d'offres d'emploi.</li>
+    </ul>
+    
+    <p>L'Identity Vault fusionne dynamiquement les schémas de ce Broker avec l'API locale N8N pour la distribution sécurisée des secrets.</p>
+
+    <footer>
+      ECHO v5 Documentation - Version <span class="version-badge">5.199.23</span>
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+  
+</body>
+</html>

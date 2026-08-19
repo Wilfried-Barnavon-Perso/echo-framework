@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.16 (Migration vers Worker Standard)
+VERSION : 9.17 (Rate-Limit Healthcheck)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-07-05
+DATE MAJ : 2026-08-19
 
+CHANGELOG 9.17 :
+- FIX: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
 CHANGELOG 9.16 :
 - MIGRATION: Renommage de l'entité Agent en Worker pour standardisation globale de l'architecture.
 CHANGELOG 9.15 :
@@ -91,7 +93,39 @@ from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("echo-browser")
+
+import time
+
+class RateLimitHealthCheckFilter(logging.Filter):
+    def __init__(self, rate_limit_seconds=300):
+        super().__init__()
+        self.rate_limit_seconds = rate_limit_seconds
+        self.last_logged = 0
+
+    def filter(self, record):
+        if hasattr(record, 'args') and isinstance(record.args, tuple) and len(record.args) >= 3:
+            if record.args[2] in ('/health', '/health/'):
+                now = time.time()
+                if now - self.last_logged >= self.rate_limit_seconds:
+                    self.last_logged = now
+                    return True
+                return False
+        try:
+            msg = record.getMessage()
+            if "GET /health" in msg:
+                now = time.time()
+                if now - self.last_logged >= self.rate_limit_seconds:
+                    self.last_logged = now
+                    return True
+                return False
+        except Exception:
+            pass
+        return True
+
+logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
+
+app = FastAPI()
 
 # --- ETAT GLOBAL ---
 IDLE_TIMEOUT_DEFAULT = 3600 # 1 heure de survie par defaut

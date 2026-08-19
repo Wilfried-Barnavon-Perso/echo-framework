@@ -25,7 +25,7 @@
     <ul>
       <li><strong>Résolution Multi-Provider :</strong> L'authentification est priorisée au sein du module <code>EchoAuth.get_ordered_auth_providers()</code>. Le système tente en priorité de s'authentifier par OAuth2, puis bascule sur les clés API statiques si l'OAuth2 n'est pas configuré.</li>
       <li><strong>Le protocole d'authentification PKCE :</strong> ECHO utilise le flux <strong>Authorization Code + PKCE (RFC 7636)</strong> pour l'authentification OAuth2 headless dans Docker. PKCE (<em>Proof Key for Code Exchange</em>) est une extension du flux OAuth2 empêchant l'interception du code d'autorisation. Il génère une paire de secrets éphémères (<em>code_verifier</em> et <em>code_challenge</em>) à usage unique.</li>
-      <li><strong>Clés API :</strong> En solution de repli (ou par choix utilisateur), de simples clés API AI Studio (commençant par <code>AIza…</code>) peuvent être définies dans l'interface et utilisées directement.</li>
+      <li><strong>Clés API :</strong> En solution de repli (ou par choix utilisateur), de simples clés API AI Studio (commençant par <code>AIza…</code> ou <code>AQ.…</code>) peuvent être définies dans l'interface et utilisées directement.</li>
     </ul>
 
     <p>
@@ -44,6 +44,10 @@
         <li><strong>Clé API secondaire</strong> - fallback de secours (<code>google_api_key_secondary</code>).</li>
       </ol>
     </div>
+
+    
+    <h3>Fast-Failover Intra-Retry (OAuth2)</h3>
+    <p>Le routage intègre un mécanisme de <em>Fast-Failover</em> exclusif à OAuth2. Lors d'une surcharge (HTTP 429), le système verrouille instantanément l'URL en cause via <code>state_mgr.lock_agy_endpoint</code> et pivote sur une nouvelle URL saine issue du pool <code>AGY_BASE_URLS</code>, annulant la nécessité du backoff exponentiel lent. Les déconnexions inattendues de flux SSE (timeouts) sont par ailleurs gérées sans provoquer de Retry API inutiles.</p>
 
     <h2>Méthodes Factorisées d'Appel (EchoGeminiClient)</h2>
 
@@ -92,7 +96,7 @@ else:
     </div>
 
     <footer>
-      ECHO Framework - Version 5.193.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.199.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
