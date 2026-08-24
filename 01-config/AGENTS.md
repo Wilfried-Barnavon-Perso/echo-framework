@@ -17,7 +17,7 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 **Rôle** : Le manifeste d'orchestration Docker Compose principal.
 - **Sémantique** : Définit la topologie du cluster sur 4 Tiers séquentiels (Fondations > Workers > OWUI > Admin).
 - **Réseau & Persistance** : Monte les volumes nommés (`echo-qdrant-data`, `echo-n8n-data`, etc.) et orchestre la communication inter-conteneurs sur le réseau bridgé `echo-network`.
-- **Règles d'Exécution** : Gère les `healthcheck` stricts pour s'assurer que les fondations (Qdrant, SearXNG) soient actives avant de lancer les Workers IA et l'Orchestrateur N8N.
+- **Règles d'Exécution** : Gère les `healthcheck` stricts pour s'assurer que les fondations (Qdrant, SearXNG) soient actives avant de lancer les Workers IA et l'ECHO N8N Orchestrator.
 
 ### `bunkerweb-stack.yml`
 **Rôle** : L'enveloppe de sécurité périmétrique (WAF).

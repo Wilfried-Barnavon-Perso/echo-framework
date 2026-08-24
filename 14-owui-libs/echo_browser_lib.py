@@ -1,7 +1,7 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 1.11
+version: 1.12
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -14,7 +14,7 @@ description: Composant système interne : ECHO Browser Lib.
 
 import httpx
 import logging
-from typing import Dict, Any, Callable
+from typing import Dict, Callable
 
 # On suppose que echo_constants est disponible dans le chemin PYTHONPATH (/app/backend/echo_libs)
 from echo_constants import NAVIGATION_ENGINE_URL

@@ -1,27 +1,22 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.28
+version: 8.35
 description: Composant système interne : ECHO Shared Utils (Core).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 8.28: Alignement OAuth2 AGY IDE : suppression header x-goog-api-client (absent du
-#       protocole natif) et purge import mort client LS (ANTIGRAVITY_OAUTH_CLIENT_ID/SECRET).
-# 8.27: Annulation du fast-failover immédiat clé API (8.26) : contre-productif avec
-#       clé primaire gratuite / clé secondaire payante. Le threshold existant (2 échecs
-#       + backoff court ~3s) est optimal pour protéger la clé payante.
-# 8.26: Fix crash silencieux SSE : catch httpx.RemoteProtocolError/ReadError sur
-#       aiter_bytes et process_callback (CancelledError re-propagé).
-# 8.25: Factorisation globale de la sanitization JSON Schema (Allowlist via consts) dans _prepare_request_context et alignement strict du Payload CAS 2.
-# 8.24: Fast-Failover intra-retry pour streamGenerateContent et generateContent (429/500/503).
+# 8.35: Correction: Invalidation des dates google_quota_reset obsolètes empêchant le Fast-Failover.
+# 8.34: (Mise à jour précédente)
+# 8.33: Correction: Résolution NameError (max_retries) dans call_raw remplacé par len(auth_providers).
+# 8.32: Résolution Fork Bomb RAG : Ajout migration 'is_embedded' et méthodes O(1) de vérification.
+# 8.31: Migration intégrale du générateur AEC (YAML vers XML hiérarchique pur).
+# 8.30: Refonte résilience: Conversion de la boucle `for` globale en `while` dynamique.
 
-import copy
 import os
 import sqlite3
 import orjson as json
 import pybase64 as base64
-import requests
 import time
 import asyncio
 import glob
@@ -30,7 +25,7 @@ import re
 import httpx
 import random
 import shutil
-from typing import Optional, Tuple, List, Set, Any, Union, Dict, AsyncGenerator, Literal
+from typing import Optional, Tuple, List, Any, Union, Dict, AsyncGenerator, Literal
 from datetime import datetime
 try:
     from zoneinfo import ZoneInfo
@@ -49,13 +44,13 @@ from echo_constants import (
     ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX,
     AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_OAUTH2, AUTH_METHOD_KEY_SECONDARY,
     ANTIGRAVITY_DESKTOP_CLIENT_ID, ANTIGRAVITY_DESKTOP_CLIENT_SECRET, # client Desktop (1071006060591)
-    GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID, AGY_BASE_URLS,
+    GOOGLE_OAUTH_TOKEN_URL, AUTH_DATA_PROJECT_ID,
     GOOGLE_OAUTH_TOKEN_LIFETIME, AUTH_DATA_USER_TIER,
     CHARS_PER_TOKEN,
     ECHO_HTTP_CLIENT_TIMEOUT, ECHO_HTTP_MAX_CONNECTIONS,
     ECHO_HTTP_MAX_KEEPALIVE, ECHO_HTTP_KEEPALIVE_EXPIRY,
 )
-from echo_protocol import get_ca_model_id, build_ca_generation_config
+from echo_protocol import build_ca_generation_config
 
 # ==============================================================================
 # ROUTAGE D'ARCHITECTURE (Session & Global)
@@ -266,51 +261,78 @@ def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
             return clean_text, thoughts
     return text, None
 
-def _dict_to_yaml_aec(d: Any, indent: int = 0) -> str:
-    """Helper local pour la sérialisation YAML de l'AEC (factorisé depuis new_context_filter)."""
+def _dict_to_xml_aec(d: Any, root_tag: str = None, indent: int = 0) -> str:
+    """Helper local pour la sérialisation XML de l'AEC avec échappement minimal (factorisé depuis new_context_filter)."""
+    import xml.sax.saxutils as saxutils
+    
+    def _escape(text: str) -> str:
+        return saxutils.escape(str(text), {'"': "&quot;", "'": "&apos;"})
+
     lines = []
     space = "  " * indent
+    
     if isinstance(d, list):
         for item in d:
-            if isinstance(item, dict):
-                lines.append(f"{space}-")
-                lines.append(_dict_to_yaml_aec(item, indent + 1))
+            tag = root_tag if root_tag else "item"
+            lines.append(f"{space}<{tag}>")
+            if isinstance(item, (dict, list)):
+                lines.append(_dict_to_xml_aec(item, indent=indent + 1))
             else:
-                lines.append(f"{space}- {item}")
+                lines.append(f"{space}  {_escape(item)}")
+            lines.append(f"{space}</{tag}>")
     elif isinstance(d, dict):
+        if root_tag and indent == 0:
+            lines.append(f"{space}<{root_tag}>")
+            indent += 1
+            space = "  " * indent
+            
         for k, v in d.items():
+            safe_k = str(k).replace(" ", "_").lower()
             if isinstance(v, dict):
-                if not v: lines.append(f"{space}{k}: {{}}")
+                if not v:
+                    lines.append(f"{space}<{safe_k}></{safe_k}>")
                 else:
-                    lines.append(f"{space}{k}:")
-                    lines.append(_dict_to_yaml_aec(v, indent + 1))
+                    lines.append(f"{space}<{safe_k}>")
+                    lines.append(_dict_to_xml_aec(v, indent=indent + 1))
+                    lines.append(f"{space}</{safe_k}>")
             elif isinstance(v, list):
-                if not v: lines.append(f"{space}{k}: []")
+                if not v:
+                    lines.append(f"{space}<{safe_k}></{safe_k}>")
                 else:
-                    lines.append(f"{space}{k}:")
-                    for item in v:
-                        if isinstance(item, dict):
-                            lines.append(f"{space}  -")
-                            lines.append(_dict_to_yaml_aec(item, indent + 2))
-                        else:
-                            lines.append(f"{space}  - {item}")
+                    lines.append(f"{space}<{safe_k}>")
+                    singular = safe_k[:-1] if safe_k.endswith('s') else "item"
+                    lines.append(_dict_to_xml_aec(v, root_tag=singular, indent=indent + 1))
+                    lines.append(f"{space}</{safe_k}>")
             else:
-                val = str(v).replace("\n", " ") if v is not None else ""
-                lines.append(f"{space}{k}: {val}")
+                val = _escape(v).replace("\n", " ") if v is not None else ""
+                lines.append(f"{space}<{safe_k}>{val}</{safe_k}>")
+                
+        if root_tag and indent == 1:
+            indent -= 1
+            space = "  " * indent
+            lines.append(f"{space}</{root_tag}>")
+            
     return "\n".join(lines)
 
 def build_aec_system_events(sys_events: list = None, error_events: list = None) -> str:
-    """Génère la balise <evenement_systeme> standardisée pour l'AEC"""
+    """Génère la balise <evenement_systeme> standardisée et intégralement typée XML pour l'AEC"""
     if not sys_events and not error_events:
         return ""
         
     events_text = "<evenement_systeme>\n"
+    
     if sys_events:
-        events_text += _dict_to_yaml_aec(sys_events) + "\n"
-        events_text += "> Utilisez `query_registry` pour consulter l'état complet des ressources.\n"
+        events_text += "  <succes>\n"
+        events_text += _dict_to_xml_aec(sys_events, root_tag="evenement", indent=2) + "\n"
+        events_text += "  </succes>\n"
+        events_text += "  <directive>Utilisez `query_registry` pour consulter l'état complet des ressources.</directive>\n"
+        
     if error_events:
-        events_text += "\n[ERREURS D'INGESTION]\n" + _dict_to_yaml_aec(error_events) + "\n"
-        events_text += "> Ces fichiers ont échoué et ne sont pas exploitables.\n"
+        events_text += "  <echecs_ingestion>\n"
+        events_text += _dict_to_xml_aec(error_events, root_tag="erreur", indent=2) + "\n"
+        events_text += "  </echecs_ingestion>\n"
+        events_text += "  <directive>Ces fichiers ont échoué et ne sont pas exploitables.</directive>\n"
+        
     events_text += "</evenement_systeme>\n\n"
     return events_text
 
@@ -1077,7 +1099,7 @@ class EchoGeminiClient:
             except Exception as e: 
                 print(f"[EchoGemini] ⚠️ Exception sur provider {provider.get('type')} : {str(e)}")
                 continue
-        raise Exception(f"Aucune identité d'accès fonctionnelle après {max_retries} tentatives ({method}).")
+        raise Exception(f"Aucune identité d'accès fonctionnelle après {len(auth_providers)} tentatives ({method}).")
 
     @staticmethod
     async def call(
@@ -1100,13 +1122,13 @@ class EchoGeminiClient:
         if not auth_providers: raise ValueError(f"Aucune identité d'accès aux modèles configurée pour l'utilisateur {user_id}.")
         client = await _get_global_client()
         active_idx = 0
-        consecutive_errors = 0
         current_delay = ECHO_RETRY_BASE_DELAY
 
         state_mgr = EchoStateManager(user_id=user_id)
         current_url_idx, base_url = state_mgr.get_agy_endpoint()
 
-        for attempt in range(max_retries + 1):
+        attempt = 0
+        while attempt <= max_retries:
             provider = auth_providers[active_idx]
 
             # Préparation symétrique de la requête
@@ -1117,7 +1139,9 @@ class EchoGeminiClient:
                     # Fail-over immédiat si configuration incomplète (ex: Project ID manquant)
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
                     if active_idx < len(auth_providers) - 1:
-                        active_idx += 1; continue
+                        active_idx += 1
+                        attempt = 0
+                        continue
                     else: raise Exception(f"Configuration d'authentification {provider['type']} invalide (Project ID manquant).")
 
                 stream_content, content_length = EchoGeminiClient._prepare_zero_ram_content(req_ctx["payload"])
@@ -1146,24 +1170,19 @@ class EchoGeminiClient:
                     if active_idx < len(auth_providers) - 1:
                         if events: await events.status(f"⚠️ Modèle non autorisé ou indisponible sur {provider['type']}. Bascule immédiate...", done=False)      
                         active_idx += 1
-                        consecutive_errors = 0
+                        attempt = 0
                         continue
 
                 if resp.status_code in [429, 500, 503]:
-                    consecutive_errors += 1
-                    if consecutive_errors >= threshold and active_idx < len(auth_providers) - 1:
-                        active_idx += 1
-                        consecutive_errors = 0
-                        if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
-                        continue
-                    
-                    # --- FAST-FAILOVER INTRA-RETRY ---
-                    if provider.get("type") == AUTH_METHOD_OAUTH2 and resp.status_code in [429, 500, 503]:
+                    # 1. --- FAST-FAILOVER INTRA-RETRY (OAuth2 uniquement) ---
+                    if provider.get("type") == AUTH_METHOD_OAUTH2:
                         from datetime import datetime, timedelta, timezone
                         reset_time = None
                         if resp.status_code == 429:
                             auth = EchoAuth(user_id=user_id)
                             reset_time = auth.get_auth_data("google_quota_reset", user_id)
+                            if reset_time and reset_time != "N/A" and reset_time < datetime.now(timezone.utc).isoformat():
+                                reset_time = None
                         if not reset_time or reset_time == "N/A":
                             reset_time = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
                         
@@ -1176,20 +1195,33 @@ class EchoGeminiClient:
                             if events: await events.status(f"⚠️ Surcharge ({resp.status_code}). Bascule immédiate sur l'environnement de secours...", done=False)
                             current_url_idx = new_idx
                             base_url = new_url
-                            continue # Fast-failover sans backoff ni incrément d'attempt
-                    
-                    # --- BACKOFF CLASSIQUE (Toutes les URLs bloquées) ---
+                            attempt = 0
+                            continue
+
+                    # 2. --- BACKOFF CLASSIQUE ---
                     if attempt < max_retries:
                         wait_msg = f"⚠️ Surcharge API ({resp.status_code})."
                         if resp.status_code == 429 and provider.get("type") == AUTH_METHOD_OAUTH2:
                             auth = EchoAuth(user_id=user_id)
                             r_time = auth.get_auth_data("google_quota_reset", user_id)
+                            from datetime import datetime, timezone
+                            if r_time and r_time != "N/A" and r_time < datetime.now(timezone.utc).isoformat():
+                                r_time = None
                             if r_time and r_time != "N/A": wait_msg = f"⏳ API limite de débit. Reprise à : {r_time}."
 
                         wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                         if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s....", done=False)
                         await asyncio.sleep(wait_time)
                         current_delay *= ECHO_RETRY_MULTIPLIER
+                        attempt += 1
+                        continue
+
+                    # 3. --- CHANGEMENT DE PROVIDER (Si Backoff épuisé) ---
+                    if active_idx < len(auth_providers) - 1:
+                        active_idx += 1
+                        attempt = 0
+                        current_delay = ECHO_RETRY_BASE_DELAY
+                        if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
                         continue
 
                 resp.raise_for_status()
@@ -1200,9 +1232,18 @@ class EchoGeminiClient:
                     if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
+                    attempt += 1
                     continue
+                else:
+                    # 3. --- CHANGEMENT DE PROVIDER AUSSI EN CAS D'ERREUR RÉSEAU FATALE ---
+                    if active_idx < len(auth_providers) - 1:
+                        active_idx += 1
+                        attempt = 0
+                        current_delay = ECHO_RETRY_BASE_DELAY
+                        if events: await events.status(f"🔄 Erreur fatale sur source {provider['type']}. Bascule sur la suivante...", done=False)
+                        continue
                 raise e
-        raise Exception(f"Échec après {max_retries} tentatives.")
+        raise Exception(f"Échec après épuisement total.")
 
     @staticmethod
     async def call_cascade(
@@ -1325,13 +1366,13 @@ class EchoGeminiClient:
 
         client = await _get_global_client()
         active_idx = 0
-        consecutive_errors = 0
         current_delay = ECHO_RETRY_BASE_DELAY
 
         state_mgr = EchoStateManager(user_id=user_id)
         current_url_idx, base_url = state_mgr.get_agy_endpoint()
 
-        for attempt in range(max_retries + 1):
+        attempt = 0
+        while attempt <= max_retries:
             provider = auth_providers[active_idx]
 
             try:
@@ -1339,7 +1380,9 @@ class EchoGeminiClient:
                 if not req_ctx:
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
                     if active_idx < len(auth_providers) - 1:
-                        active_idx += 1; continue
+                        active_idx += 1
+                        attempt = 0
+                        continue
                     else: yield f"🚫 Erreur : Configuration d'authentification {provider['type']} invalide (Project ID manquant)."; return
 
                 async with client.stream("POST", req_ctx["url"], content=json.dumps(req_ctx["payload"]), headers=req_ctx["headers"], timeout=timeout) as r:     
@@ -1353,23 +1396,19 @@ class EchoGeminiClient:
                         if active_idx < len(auth_providers) - 1:
                             if events: await events.status(f"⚠️ Modèle non autorisé ou indisponible sur {provider['type']}. Bascule immédiate...", done=False)  
                             active_idx += 1
-                            consecutive_errors = 0
+                            attempt = 0
                             continue
 
                     if r.status_code in [429, 500, 503]:
-                        consecutive_errors += 1
-                        if consecutive_errors >= threshold and active_idx < len(auth_providers) - 1:
-                            active_idx += 1
-                            consecutive_errors = 0
-                            if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
-                            continue
-                        # --- FAST-FAILOVER INTRA-RETRY (OAuth2 uniquement) ---
-                        if provider.get("type") == AUTH_METHOD_OAUTH2 and r.status_code in [429, 500, 503]:
+                        # 1. --- FAST-FAILOVER INTRA-RETRY (OAuth2 uniquement) ---
+                        if provider.get("type") == AUTH_METHOD_OAUTH2:
                             from datetime import datetime, timedelta, timezone
                             reset_time = None
                             if r.status_code == 429:
                                 auth = EchoAuth(user_id=user_id)
                                 reset_time = auth.get_auth_data("google_quota_reset", user_id)
+                                if reset_time and reset_time != "N/A" and reset_time < datetime.now(timezone.utc).isoformat():
+                                    reset_time = None
                             if not reset_time or reset_time == "N/A":
                                 reset_time = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
                             
@@ -1382,20 +1421,33 @@ class EchoGeminiClient:
                                 if events: await events.status(f"⚠️ Surcharge ({r.status_code}). Bascule immédiate sur l'environnement de secours...", done=False)
                                 current_url_idx = new_idx
                                 base_url = new_url
-                                continue # Fast-failover sans backoff ni incrément d'attempt
-                        
-                        # --- BACKOFF CLASSIQUE (Toutes les URLs bloquées) ---
+                                attempt = 0
+                                continue
+
+                        # 2. --- BACKOFF CLASSIQUE ---
                         if attempt < max_retries:
                             wait_msg = f"⚠️ Surcharge API ({r.status_code})."
                             if r.status_code == 429 and provider.get("type") == AUTH_METHOD_OAUTH2:
                                 auth = EchoAuth(user_id=user_id)
                                 r_time = auth.get_auth_data("google_quota_reset", user_id)
+                                from datetime import datetime, timezone
+                                if r_time and r_time != "N/A" and r_time < datetime.now(timezone.utc).isoformat():
+                                    r_time = None
                                 if r_time and r_time != "N/A": wait_msg = f"⏳ API limite de débit. Reprise à : {r_time}."
 
                             wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                             if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s....", done=False)
                             await asyncio.sleep(wait_time)
                             current_delay *= ECHO_RETRY_MULTIPLIER
+                            attempt += 1
+                            continue
+
+                        # 3. --- CHANGEMENT DE PROVIDER (Si Backoff épuisé) ---
+                        if active_idx < len(auth_providers) - 1:
+                            active_idx += 1
+                            attempt = 0
+                            current_delay = ECHO_RETRY_BASE_DELAY
+                            if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
                             continue
 
                     r.raise_for_status()
@@ -1447,8 +1499,17 @@ class EchoGeminiClient:
                     if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
+                    attempt += 1
                     continue
-                else: yield f"🚫 Erreur système : {str(e)}"; return
+                else: 
+                    # 3. --- CHANGEMENT DE PROVIDER AUSSI EN CAS D'ERREUR RÉSEAU FATALE ---
+                    if active_idx < len(auth_providers) - 1:
+                        active_idx += 1
+                        attempt = 0
+                        current_delay = ECHO_RETRY_BASE_DELAY
+                        if events: await events.status(f"🔄 Erreur fatale sur source {provider['type']}. Bascule sur la suivante...", done=False)
+                        continue
+                    yield f"🚫 Erreur système : {str(e)}"; return
 
     @staticmethod
     async def embed(
@@ -1508,6 +1569,9 @@ class EchoStateManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_id ON suture_index (chat_id)")
                 conn.execute("CREATE TABLE IF NOT EXISTS cognitive_signatures (cumulative_hash TEXT PRIMARY KEY, thought_signature TEXT NOT NULL, message_id TEXT, model_id TEXT, updated_at INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS tool_journal (cumulative_hash TEXT PRIMARY KEY, io_json TEXT NOT NULL, updated_at INTEGER)")
+
+                try: conn.execute("ALTER TABLE message_shadows ADD COLUMN is_embedded INTEGER DEFAULT 0")
+                except: pass
 
                 conn.execute("CREATE TABLE IF NOT EXISTS processed_files (chat_id TEXT, file_id TEXT, filename TEXT, mime TEXT, mode TEXT, timestamp INTEGER, file_content TEXT, message_id TEXT, PRIMARY KEY (chat_id, file_id))")
                 conn.execute("CREATE TABLE IF NOT EXISTS call_bridge (call_id TEXT PRIMARY KEY, signature TEXT NOT NULL, function_name TEXT NOT NULL, args_json TEXT, timestamp INTEGER)")
@@ -2210,3 +2274,19 @@ class EchoStateManager:
             print(f"[EchoStateManager] Error in genealogy: {e}")
         return shadows
 
+    def is_message_embedded(self, message_id: str) -> bool:
+        if not message_id: return False
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute("SELECT is_embedded FROM message_shadows WHERE message_id = ?", (message_id,)).fetchone()
+                return bool(row[0]) if row else False
+        except: pass
+        return False
+
+    def mark_message_embedded(self, message_id: str):
+        if not message_id: return
+        try:
+            with self._get_connection() as conn:
+                conn.execute("UPDATE message_shadows SET is_embedded = 1 WHERE message_id = ?", (message_id,))
+                conn.commit()
+        except: pass

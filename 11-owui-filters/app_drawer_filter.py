@@ -1,7 +1,7 @@
 """
 title: ECHO App Drawer Filter
 author: Wilfried BARNAVON
-version: 1.7
+version: 1.8
 description: Composant système interne : ECHO App Drawer Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -13,7 +13,6 @@ description: Composant système interne : ECHO App Drawer Filter.
 # 1.2: Correction de l'endpoint API des actions (OWUI V0.3.x) vers /api/chat/actions.
 
 import logging
-from typing import Optional
 from pydantic import BaseModel, Field
 
 # Configuration du logging

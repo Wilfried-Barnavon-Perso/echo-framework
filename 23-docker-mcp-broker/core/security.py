@@ -1,4 +1,3 @@
-import inspect
 from functools import wraps
 from mcp.server.context import Context
 from .database import get_credentials

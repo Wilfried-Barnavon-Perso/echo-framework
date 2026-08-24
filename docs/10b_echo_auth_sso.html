@@ -37,6 +37,15 @@
       Ce tunnel permet de capter le <em>callback</em> d'autorisation renvoyé par Google (sur les ports internes <code>8025-8034</code>) et de finaliser la chaîne PKCE en toute autonomie (<code>initiate_pkce_flow</code> → <code>await_pkce_callback</code>). Une fois le token d'accès obtenu (ou au bout de 120s de timeout), la session SSH jetable se referme, refermant ainsi la fenêtre d'exposition réseau.
     </p>
 
+    <h2>Gestion OAuth2 et Résilience</h2>
+    <p>
+      La gestion des tokens Google bénéficie d'un mécanisme de protection avancé :
+    </p>
+    <ul>
+      <li><strong>OAuth2 Circuit Breaker (Fast-Failover Intra-Retry) :</strong> En cas d'erreurs liées à des limitations de quota (429) ou de surcharge (503), le système bascule de manière transparente sur un environnement de secours au sein même de la tentative de requête, avant d'évincer le fournisseur.</li>
+      <li><strong>Reset Auth Action :</strong> L'interface graphique permet le déclenchement d'une purge via une Action HUD dédiée. Cette commande invalide les tokens OAuth2 et sollicite silencieusement un rafraîchissement sans intervention directe en base SQLite.</li>
+    </ul>
+
 
     <div class="transition-text">
       <a href="10a_admin_manager.html">&larr; Admin Manager</a>

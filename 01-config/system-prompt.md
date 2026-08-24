@@ -110,11 +110,11 @@ Licence : Apache 2.0
 <description>Les AEC constituent la composante dynamique du Framework. Ils utilisent une syntaxe XML `<nom_aec>...</nom_aec>` pour isoler strictement les données environnementales du flux conversationnel. Seuls les AEC définis dans le Kernel sont certifiés.</description>
 
 <artifact id="environnement_contexte">
-Instantané de session (format YAML). Fournit la configuration cognitive active, l'identité des parties et les références géo-temporelles. Permet au Modèle de se situer dans son contexte géo-temporel et d'adapter son discours en conséquence.
+Instantané de session (format hiérarchique XML). Fournit la configuration cognitive active, l'identité des parties et les références géo-temporelles. Permet au Modèle de se situer dans son contexte géo-temporel et d'adapter son discours en conséquence.
 </artifact>
 
 <artifact id="evenement_systeme">
-Vecteur évènementiel (format YAML). Signal présent exclusivement lorsque des ressources ont été ajoutées ou créées (dynamiquement ou asynchroniquement) par les outils, le HUD ou l'Utilisateur. Pour consulter l'état complet de toutes les ressources de session (fichiers, plans, documents Codex, pages web), le Modèle DOIT IMPÉRATIVEMENT utiliser l'outil `query_registry`.
+Vecteur évènementiel (format hiérarchique XML). Signal présent exclusivement lorsque des ressources ont été ajoutées ou créées (dynamiquement ou asynchroniquement) par les outils, le HUD ou l'Utilisateur. Pour consulter l'état complet de toutes les ressources de session (fichiers, plans, documents Codex, pages web), le Modèle DOIT IMPÉRATIVEMENT utiliser l'outil `query_registry`.
 </artifact>
 
 <artifact id="smart_context">

@@ -4,7 +4,7 @@
 
 ## 1. Rôle du Dossier
 
-Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégration LLM dans ECHO, à savoir le moteur `pipe_engine.py`. Ce composant est un Pipe (Manifold) Open WebUI conçu pour intercepter, formater, gérer la mémoire et router toutes les requêtes utilisateur vers l'API Gemini ou l'Orchestrateur N8N, tout en préservant une intégrité bit-perfect des métadonnées (Suture State).
+Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégration LLM dans ECHO, à savoir le moteur `pipe_engine.py`. Ce composant est un Pipe (Manifold) Open WebUI conçu pour intercepter, formater, gérer la mémoire et router toutes les requêtes utilisateur vers l'API Gemini ou l'ECHO N8N Orchestrator, tout en préservant une intégrité bit-perfect des métadonnées (Suture State).
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
@@ -21,6 +21,7 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 - **`convert_owui_tools()`** : Parse les schémas d'outils OWUI et les traduit dans le format strict Gemini (OpenAPI), en appliquant les politiques de sécurité (Tool Forcing, Model Policy) via `ECHO_MODELS_REGISTRY`.
 - **`_mutate_context_identity()`** : Modifie à la volée le System Prompt ou l'identité si un *reverse-lookup* (Auto-heal) impose un changement de modèle (ex: Fallback vers MODEL_LITE en cas de surcharge).
 - **`_unbox_tool_output()`** : Extrait et normalise les réponses asynchrones des outils (comme la réception multimédia issue de `echo_tool_multiparts`).
+- **Routage HTTP/2 (`EchoGeminiClient`)** : S'appuie désormais intégralement sur le client consolidé `EchoGeminiClient` (provenant de `echo_utils.py`) pour bénéficier du Circuit Breaker OAuth2 et du multiplexage H2, déportant ainsi la logique réseau hors du Pipe.
 
 #### C. Classe `StreamProcessor`
 **Rôle** : Moteur de flux temps-réel asynchrone.

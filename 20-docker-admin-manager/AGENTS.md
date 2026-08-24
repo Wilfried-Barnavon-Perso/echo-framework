@@ -16,7 +16,7 @@ Fichier monolithique (plus de 160Ko) contenant l'ensemble de la logique serveur 
 - **Autosafety & Maintenance** : Lance de manière programmatique des commandes de nettoyage (`docker system prune`) ou l'optimisation des bases de données SQLite (requêtes `VACUUM`, `PRAGMA wal_checkpoint`).
 
 #### B. Purge Vectorielle Asynchrone
-- **`run_semantic_pruning`** : Algorithme critique d'élagage temporel (TTL) qui purge automatiquement les vecteurs orphelins dans Qdrant et les vieilles sessions SQLite.
+- **`run_semantic_pruning`** : Algorithme critique d'élagage temporel (TTL) qui purge automatiquement les vecteurs orphelins dans Qdrant et les vieilles sessions SQLite. Gère la découverte dynamique et la vérification d'existence des collections Qdrant pour éviter les crashs.
 - **Multithreading** : Afin de ne jamais bloquer l'interface web Flask, cet élagage est exécuté en arrière-plan via `threading.Thread(target=run_semantic_pruning)`.
 - **API `pollTaskStatus()`** : L'interface web (JavaScript) utilise le *long-polling* (`setInterval` à 3000ms) en requêtant `/api/task_status` pour mettre à jour la barre de progression en temps réel pendant que le thread d'élagage tourne.
 

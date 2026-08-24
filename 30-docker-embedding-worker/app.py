@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO EMBEDDING WORKER (Llama.cpp / GGUF)
-VERSION : 2.1 (Rate-Limit Healthcheck)
+VERSION : 2.2 (Rate-Limit Healthcheck)
 AUTEUR : Wilfried BARNAVON
 DATE : 2026-08-19
 
@@ -27,7 +27,7 @@ from huggingface_hub import hf_hub_download
 import pybase64 as base64
 import orjson as json
 import uuid
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Union, Optional

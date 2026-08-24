@@ -152,7 +152,7 @@
       </div>
       <div class="card">
         <h3>⏱️ Jauge de Contexte</h3>
-        <p>Lecture en temps réel de l'utilisation du contexte (tokens prompt/candidats) via la base <code>context_stats</code> SQLite. Utilisé pour évaluer l'approche de la limite de mémoire de travail de la session.</p>
+        <p>Lecture en temps réel de l'utilisation du contexte (tokens prompt/candidats) via la base <code>context_stats</code> SQLite. Le système utilise des seuils stricts (Alerte à 40.0%, Critique à 60.0%) pour déclencher une recommandation d'escalade d'architecture indépendamment du toast visuel.</p>
         <p><strong>Source :</strong> <code>12-owui-tools/context_gauge.py</code></p>
       </div>
       <div class="card">
@@ -165,7 +165,7 @@
       <div class="card">
         <h3>🎮 Actions UI (Cockpits)</h3>
         <p>Boutons de contrôle manuel et interfaces riches (HUDs) injectés dans l'UI Open WebUI : Cockpit de purge sélective 
-        (Mémoire long terme), Print / PDF export, Sub-Agent Monitor (visualisation arborescente des threads cognitifs), Reset Auth, Replay Web.</p>
+        (Mémoire long terme), Print / PDF export, Sub-Agent Monitor (visualisation arborescente des threads cognitifs), Réinitialisation Auth (Google/PKCE), Replay Web.</p>
         <p><strong>Source :</strong> <code>13-owui-actions/</code></p>
         <a href="08f_actions_ui.html">Explorer ➔</a>
       </div>
@@ -210,7 +210,7 @@
         <a href="08h_codex_editor.html">Explorer →</a>
       </div>
       <div class="card">
-        <h3>⚡ Orchestrateur N8N</h3>
+        <h3>⚡ ECHO N8N Orchestrator</h3>
         <p>Pont asynchrone entre l'agent ECHO et le Worker N8N. Permet d'exécuter des workflows Headless, de mocker des payloads asynchrones et d'initier des Child Chats (Mode Démon).</p>
         <p><strong>Source :</strong> <code>12-owui-tools/n8n_orchestrator_tool.py</code></p>
         <a href="08k_n8n_orchestrator.html">Explorer ➔</a>

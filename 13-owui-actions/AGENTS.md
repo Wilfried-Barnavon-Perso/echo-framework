@@ -19,7 +19,7 @@ Ce dossier gère les **Actions Interactives (Boutons sous les messages)**. Dans 
 - **`echo_identity_vault_action.py`** : ECHO Identity Vault. C'est l'interface centralisée de gestion des secrets. 
   - **Sémantique** : Elle se synchronise dynamiquement avec l'API du MCP Broker et de N8N (via les schémas) pour collecter et sauvegarder les identifiants (Credentials) directement dans la base SQLite locale.
   - **Étanchéité** : Elle orchestre la distribution des secrets via des *namespaces* (domaines de session) sans jamais exposer les clés en clair.
-- **`reset_auth_action.py`** : Action rapide pour purger les tokens OAuth2 liés à l'authentification PKCE.
+- **`reset_auth_action.py`** : Action rapide d'urgence pour purger spécifiquement les tokens et clés liés à l'authentification **Google/PKCE** et OAuth2 en cas de désynchronisation.
 
 ### Gestion Contextuelle (Saturation & Vectoriel)
 - **`resume_in_new_chat_action.py`** : Mécanisme de migration d'état ("Resume in New Chat"). Il transfère de manière propre l'historique pertinent vers une nouvelle conversation pour lutter contre la saturation contextuelle et alléger le LLM.

@@ -30,7 +30,7 @@
       </p>
     </div>
 
-    <h2><code>echo_constants.py</code> - Constantes et Topologie (v5.6)</h2>
+    <h2><code>echo_constants.py</code> - Constantes et Topologie</h2>
 
     <p>
       Registre unique de toutes les vérités immuables du système. Tout composant qui a besoin
@@ -87,7 +87,9 @@
         <tr><th>Constante</th><th>Valeur</th><th>Rôle</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong> (augmenté de 2.0 en v5.188.1)</td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales (ex: <code>consult_council</code>). 4 essais couvrent ~62s de fenêtre de throttle.</td></tr>
+        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td><strong>5.0</strong></td><td>Base du backoff exponentiel (<code>base × jitter × 2^attempt</code>). Augmenté pour absorber les 400 transiants du gateway Code Assist lors de rafales.</td></tr>
+        <tr><td><code>CONTEXT_LOAD_WARNING_THRESHOLD</code></td><td><strong>40.0</strong></td><td>Seuil d'alerte déclenchant l'escalade préventive de modèle via l'outil <code>context_gauge</code>.</td></tr>
+        <tr><td><code>CONTEXT_LOAD_CRITICAL_THRESHOLD</code></td><td><strong>60.0</strong></td><td>Seuil critique imposant une dégradation ou une transition de contexte immédiate.</td></tr>
       </tbody>
     </table>
 
@@ -143,7 +145,7 @@
       <li>Fallback sécuritaire : <code>application/octet-stream</code>, non supporté.</li>
     </ol>
 
-    <h2><code>echo_utils.py</code> - Moteur Asynchrone et Fonctions Communes (v7.21)</h2>
+    <h2><code>echo_utils.py</code> - Moteur Asynchrone et Fonctions Communes</h2>
 
     <h3>EchoStateManager - Persistance Bit-Perfect</h3>
     <p>
@@ -174,9 +176,8 @@
 
     <h3>EchoGeminiClient - Moteur d'Appel API</h3>
     <p>
-      <code>EchoGeminiClient</code> est le <strong>sélecteur de protocole symétrique</strong> :
-      il gère de manière transparente les deux backends d'inférence selon la méthode d'authentification
-      disponible pour l'utilisateur.
+      <code>EchoGeminiClient</code> centralise la logique réseau en agissant comme un <strong>sélecteur de protocole symétrique</strong>. Il gère de manière transparente les deux backends d'inférence selon la méthode d'authentification disponible. 
+      La couche de transport utilise exclusivement <code>httpx</code> avec un <strong>multiplexage HTTP/2 natif</strong> couplé à des stealth headers de haute fidélité. Cette implémentation prévient activement les blocages par les pare-feux applicatifs (WAF).
     </p>
 
     <table>

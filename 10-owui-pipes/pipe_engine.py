@@ -1,7 +1,7 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.25
+version: 192.27
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
@@ -28,16 +28,14 @@ import pybase64 as base64
 import codecs
 import asyncio
 import orjson as std_json 
-import sqlite3
-import zlib
-import mgzip as gzip
 import ast
 from datetime import datetime
-from typing import List, Dict, Optional, AsyncGenerator, Literal, Tuple, Any, Union
+from typing import List, Dict, Optional, AsyncGenerator, Literal, Any, Union
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient, _get_global_client, get_ca_model_id
+from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient
+from echo_protocol import get_ca_model_id
 from echo_ui import EchoUI
 from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO,
@@ -49,10 +47,10 @@ from echo_auth import AuthService
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
 try:
-    import httpx
+    import httpx  # noqa: F401
     from pydantic import BaseModel, Field
     # Protocole HTTP/2 obligatoire (h2)
-    import h2
+    import h2  # noqa: F401
     import logging
     log = logging.getLogger("echo.pipe_engine")
 except ImportError as e:

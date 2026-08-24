@@ -11,12 +11,12 @@ Ce dossier représente la **Conscience et l'Injection Contextuelle** de l'agent.
 ### `conversation_rag_filter.py` (Outlet)
 **Rôle** : Pipeline d'Ingestion Conversationnelle Zéro-Latence.
 - **Sémantique** : Filtre asynchrone qui s'exécute après la génération de la réponse. Il découpe l'historique en fenêtres de tours de parole (turns) et les envoie au système d'Embedding (Qdrant).
-- **Algorithme Clé** : Implémente l'**Upsert Idempotent Zéro-Latence**. Il utilise un `unique_seed` basé sur l'ID du message ou son timestamp pour garantir que le rechargement de la page ne génère pas de doublons dans la base vectorielle. Bloque les payloads Base64 (images).
+- **Algorithme Clé** : Implémente l'**Upsert Idempotent Zéro-Latence**. Pour garantir une performance **O(1)** et empêcher la réindexation redondante, il interroge systématiquement la méthode `EchoStateManager.is_message_embedded()` (qui vérifie le flag booléen `is_embedded` dans SQLite) *avant* d'initier toute communication avec Qdrant. Il utilise également un `unique_seed` pour éviter les doublons et bloque fermement les payloads Base64 (images).
 
 ### `new_context_filter.py` (Inlet)
 **Rôle** : Smart Context RAG Injector.
 - **Sémantique** : Intercepte la requête entrante et interroge Qdrant pour récupérer les souvenirs persistants.
-- **Algorithme Clé** : Fusion sémantique qui préserve le score `memory_importance`. Injecte les mémoires récupérées dans un bloc XML natif `<smart_context>` et associe des `source_id` pour la traçabilité.
+- **Algorithme Clé** : Fusion sémantique qui préserve le score `memory_importance`. Injecte les mémoires récupérées ainsi que les événements systèmes formatés en **XML strict** (via `_dict_to_xml_aec` de `echo_utils`) dans la balise native `<smart_context>`, associant des `source_id` pour la traçabilité.
 
 ### `app_drawer_filter.py` (Inlet - Priorité 1000)
 **Rôle** : Interface Homme-Machine Flottante.

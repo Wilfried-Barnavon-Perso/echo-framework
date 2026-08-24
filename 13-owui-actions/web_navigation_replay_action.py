@@ -1,7 +1,7 @@
 """
 title: Revue Navigation Web
 author: Wilfried BARNAVON
-version: 4.10
+version: 4.11
 description: Cockpit vidéo interactif permettant de visionner et d'extraire des captures de la navigation autonome.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiIC8+PHBhdGggZD0iTTcgM3YxOCIgLz48cGF0aCBkPSJNMyA3LjVoNCIgLz48cGF0aCBkPSJNMyAxMmgxOCIgLz48cGF0aCBkPSJNMyAxNi41aDQiIC8+PHBhdGggZD0iTTE3IDN2MTgiIC8+PHBhdGggZD0iTTE3IDcuNWg0IiAvPjxwYXRoIGQ9Ik0xNyAxNi41aDQiIC8+PC9zdmc+
 """
@@ -12,19 +12,16 @@ icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAw
 # 4.7: Hotfix - Lecture des frames via le Registre Unifié V2 (echo_resources) au lieu du scan disque.
 # 4.6: Renommage sémantique du titre UX (revert self.actions incompatible OWUI simple-action).
 
-import os
 import orjson as json
 import pybase64 as base64
-import time
 import logging
 import sys
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 
 # Importations ECHO
 sys.path.append("/app/backend/echo_libs")
-from echo_constants import ECHO_USERS_ROOT
-from echo_utils import EchoEvents, EchoAuth, wrap_tool_output
+from echo_utils import EchoEvents
 from echo_ui import EchoUI
 
 # --- CONFIGURATION LOGGING ---

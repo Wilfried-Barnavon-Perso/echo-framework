@@ -2,7 +2,7 @@
 """
 ================================================================================
 MODULE : ECHO N8N WORKER API
-VERSION : 2.17 (Rate-Limit Healthcheck)
+VERSION : 2.18 (Rate-Limit Healthcheck)
 --- CHANGELOG 2.17 ---
 - Fix : Ajout d'un filtre de logs (RateLimitHealthCheckFilter) limitant l'affichage des requêtes /health à 1/5min.
 --- CHANGELOG 2.16 ---
@@ -78,7 +78,6 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 import sys
 import httpx
 import time
-import sqlite3
 import logging
 
 class RateLimitHealthCheckFilter(logging.Filter):

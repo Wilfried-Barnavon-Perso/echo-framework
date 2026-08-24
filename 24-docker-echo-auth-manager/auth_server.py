@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 1.2 (Intégration Name SSO achevée)
+VERSION : 1.3 (Intégration Name SSO achevée)
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-07-13
 ================================================================================
@@ -10,19 +10,18 @@ import os
 import sqlite3
 import pyotp
 import base64
-import uuid
 import secrets
 import qrcode
 import io
 import json
 import time
 from urllib.parse import urlparse
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, Response, Cookie
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import FastAPI, Request, Form, HTTPException, status, Response, Cookie
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from passlib.hash import argon2
-from typing import Optional, Dict
+from typing import Optional
 
 # ==============================================================================
 # CONFIGURATION

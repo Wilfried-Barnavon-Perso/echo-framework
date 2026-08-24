@@ -30,7 +30,7 @@ Ce dossier constitue **l'Arsenal** du modèle. Il contient l'ensemble des Outils
 - **`strategic_planner.py`** : Gère la planification tactique des sous-agents avec un suivi obligatoire (`update_plan`) et une persistance dans le Codex.
 - **`universal_visual_generator.py`** : Génération de diagrammes (Mindmaps, Graphes) et cartes (Leaflet) injectés directement sous forme de Data Islands isolés.
 - **`gemini_maps_grounding.py`** : Interface avec l'API Google Maps Grounding pour des résultats géospatiaux enrichis.
-- **`context_gauge.py`** : Mesure l'état de saturation de la fenêtre de contexte du modèle.
+- **`context_gauge.py`** : Jauge de contexte intelligente. Mesure l'état de saturation de la fenêtre de contexte du modèle et implémente des seuils de monitoring dynamiques (définis dans `echo_constants.py`) pour alerter l'agent avant saturation complète.
 
 ## 3. Dépendances Logiques
 - Ces outils exploitent les variables injectées par l'API Open WebUI (ID du chat, informations de l'utilisateur).

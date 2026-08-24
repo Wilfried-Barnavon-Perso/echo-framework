@@ -1,7 +1,7 @@
 """
 title: Purge Mémoire Long Terme /!\
 author: Wilfried BARNAVON
-version: 3.4
+version: 3.5
 description: Console d'administration pour la suppression sélective des souvenirs vectorisés (Qdrant).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5Z29uIHBvaW50cz0iMjIgMyAyIDMgMTAgMTIuNDYgMTAgMTkgMTQgMjEgMTQgMTIuNDYgMjIgMyIvPjwvc3ZnPg==
 """
@@ -12,7 +12,6 @@ icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAw
 
 import sys
 import httpx
-import orjson as json
 from pydantic import BaseModel, Field
 from typing import Any, Optional, List, Set, Dict
 from datetime import datetime, timezone

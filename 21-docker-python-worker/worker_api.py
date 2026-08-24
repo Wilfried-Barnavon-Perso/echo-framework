@@ -1,13 +1,10 @@
 from flask import Flask, request, jsonify # pyright: ignore[reportMissingImports]
-import sys, io, contextlib, traceback, multiprocessing, tempfile, os, queue
+import io, contextlib, traceback, multiprocessing, tempfile, os, queue
 import logging
-import orjson as json
-import pybase64 as base64
-
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : 1.7 (Rate-Limit Healthcheck)
+VERSION : 1.8 (Rate-Limit Healthcheck)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-08-19
 

@@ -1,5 +1,4 @@
 import json
-import httpx
 from mcp.server import MCPServer
 
 def register_academic_tools(mcp: MCPServer):

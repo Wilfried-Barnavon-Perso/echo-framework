@@ -1,11 +1,13 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.51
+version: 5.52
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.52: Création des constantes CONTEXT_LOAD_WARNING_THRESHOLD (40) et CONTEXT_LOAD_CRITICAL_THRESHOLD (60)
+#       pour gérer l'escalade de modèle dans l'outil get_context_load de façon découplée du toast UI.
 # 5.51: Alignement protocole OAuth2 sur AGY IDE 2.5.5 (audit binaire main.js) :
 #       - ECHO_CLIENT_METADATA : ideType ANTIGRAVITY, ajout ideName/ideVersion/platform
 #       - ECHO_OAUTH_SCOPES : +experimentsandconfigs, -openid, -aicode
@@ -633,6 +635,10 @@ CHARS_PER_TOKEN = 4
 ECHO_MAX_CONTEXT_SIZE = 1000000  # Limite technique 1M (on peut cibler plus bas si Gemini Flash/Pro a des limites strictes pour ECHO)
 CONTEXT_WARNING_THRESHOLD = 0.80  # 80% : Toast d'alerte jaune (Resume in New Chat conseillé)
 CONTEXT_TRUNCATE_THRESHOLD = 0.90 # 90% : Troncature silencieuse
+
+# Seuils de saturation pour l'outil context_gauge (déclencheurs d'escalade)
+CONTEXT_LOAD_WARNING_THRESHOLD = 40.0
+CONTEXT_LOAD_CRITICAL_THRESHOLD = 60.0
 
 
 def get_gemini_mime(file_path: str) -> tuple[str, bool]:

@@ -152,20 +152,29 @@ flowchart LR
 
     <h3>Le bloc AEC (<code>environnement_contexte</code>)</h3>
     <p>
-      À la fin de la phase Inlet, le filtre génère et injecte un bloc YAML dans les métadonnées
-      du message. Ce bloc, délimité par <code>&lt;environnement_contexte&gt;</code>, constitue la
+      À la fin de la phase Inlet, le filtre génère et injecte un bloc XML hiérarchique dans les métadonnées
+      du message (via <code>_dict_to_xml_aec</code>). Ce bloc, délimité par <code>&lt;environnement_contexte&gt;</code>, constitue la
       <em>proprioception</em> du modèle pour le tour courant.
     </p>
 
     <div class="code-header">Structure du bloc AEC (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
     <pre><code>&lt;environnement_contexte&gt;
-version_framework_echo: "5.199.23"
-modèle_actuel:   "##MODEL_ID##"
-modèle_origine:  "##MODEL_ORIGIN##"
-nom_utilisateur: "anonyme"
-date_et_heure:   "2026-05-31 14:00"
-localisation:    "Paris, France"
-timezone:        "Europe/Paris"
+ &lt;systeme&gt;
+  &lt;version_framework_echo&gt;5.199.35&lt;/version_framework_echo&gt;
+ &lt;/systeme&gt;
+ &lt;modeles&gt;
+  &lt;actuel&gt;##MODEL_ID##&lt;/actuel&gt;
+  &lt;origine&gt;##MODEL_ORIGIN##&lt;/origine&gt;
+ &lt;/modeles&gt;
+ &lt;utilisateur&gt;
+  &lt;nom&gt;anonyme&lt;/nom&gt;
+  &lt;localisation&gt;Paris, France&lt;/localisation&gt;
+  &lt;timezone&gt;Europe/Paris&lt;/timezone&gt;
+ &lt;/utilisateur&gt;
+ &lt;session&gt;
+  &lt;tour_conversation&gt;1&lt;/tour_conversation&gt;
+  &lt;date_et_heure&gt;2026-08-24 14:00&lt;/date_et_heure&gt;
+ &lt;/session&gt;
 &lt;/environnement_contexte&gt;
 
 &lt;evenement_systeme&gt;
@@ -204,13 +213,13 @@ timezone:        "Europe/Paris"
       Ce filtre ne traite que la phase <strong>Outlet</strong> (post-génération). Son objectif unique est d'injecter sans latence l'historique conversationnel dans la mémoire de travail vectorisée de la session (<code>echo_session_rag</code>), afin d'alléger le contexte principal et de permettre l'exploration d'historiques profonds via le RAG.
     </p>
 
-    <h3>Fenêtre de tour dynamique et Zéro-Latence</h3>
+    <h3>Fenêtre de tour dynamique et Validation O(1) Zéro-Latence</h3>
     <p>
       Le déclenchement de l'indexation s'effectue automatiquement à chaque fin de tour (lorsque l'assistant a terminé sa réponse et ses actions).
     </p>
     <p>
       Le filtre extrait dynamiquement la fenêtre complète du tour courant et lance l'indexation
-      en arrière-plan via <code>asyncio.create_task</code>. L'ancien système de fenêtre glissante a été totalement supprimé au profit de cette architecture stateless Zéro-RAM.
+      en arrière-plan via <code>asyncio.create_task</code>. Pour empêcher la réindexation redondante sans bloquer le flux, le système applique un mécanisme de <strong>Validation O(1) en amont</strong> : il interroge directement le flag booléen <code>is_embedded</code> de la table SQLite <code>message_shadows</code>. L'ancien système de fenêtre glissante a été totalement supprimé au profit de cette architecture stateless Zéro-RAM.
     </p>
 
     <h3>Pipeline Zéro-LLM et echo_ingestion.py</h3>

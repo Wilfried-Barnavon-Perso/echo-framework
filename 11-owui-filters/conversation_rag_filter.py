@@ -1,21 +1,20 @@
 """
 title: ECHO Session RAG Conversation Filter
 author: ECHO Framework
-version: 1.10
+version: 1.12
 description: Composant système interne : ECHO Session RAG Conversation Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.11: Résolution Fork Bomb (Branching) : Itération à rebours O(1) via SQLite is_embedded.
 # 1.10: Self-Healing RAG Filter (auto-réparation avec last_rag_message_id).
 # 1.9: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
 # 1.8: Migration de ENABLE_CONVERSATION_RAG vers les Valves globales.
 # 1.7: Nettoyage du code mort (suppression de la Valve WINDOW_SIZE devenue obsolète avec la V1.6).
-# 1.6: Architecture Stateless Zéro RAM (Fenêtre de Tour Dynamique) & Bouclier Regex anti-Base64.
 
 from typing import Optional, Any
 from pydantic import BaseModel, Field
 import asyncio
-import time
 
 # Importations ECHO Standard
 import sys
@@ -97,25 +96,11 @@ class Filter:
         # --- SELF-HEALING RAG ARCHITECTURE ---
         # Instanciation de l'état SQLite pour ce chat_id
         state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        last_rag_message_id = state_mgr.get_setting("last_rag_message_id")
         
-        # Découpage du delta de messages manquants
-        start_idx = 0
-        if last_rag_message_id:
-            for i, msg in enumerate(messages):
-                msg_id = msg.get("id") or str(msg.get("timestamp"))
-                if msg_id == last_rag_message_id:
-                    start_idx = i + 1
-                    break
-                    
-        messages_to_process = messages[start_idx:]
-        if not messages_to_process:
-            return body
-            
         # Découpage en tours de parole (chaque tour commence par un 'user')
         turns = []
         current_turn = []
-        for msg in messages_to_process:
+        for msg in messages:
             if msg.get("role") == "user" and current_turn:
                 turns.append(current_turn)
                 current_turn = []
@@ -123,17 +108,27 @@ class Filter:
         if current_turn:
             turns.append(current_turn)
             
-        # Traitement asynchrone de chaque tour manquant (ou du tour courant)
-        for turn in turns:
+        # Itération à rebours pour s'arrêter au premier ancêtre vectorisé
+        turns_to_process = []
+        for turn in reversed(turns):
             if not turn: continue
-            
-            # Le formatage agrège tout le tour dans une seule bulle de contexte pour le RAG
-            formatted_text = self._format_messages(turn)
-            
-            # Upsert Idempotent sur le message initial du tour (user)
             unique_seed = turn[0].get("id") or str(turn[0].get("timestamp"))
             
-            # Injection asynchrone Zéro-Latence
+            # Dès qu'on trouve un message déjà marqué, l'historique antérieur est valide
+            if state_mgr.is_message_embedded(str(unique_seed)):
+                break
+                
+            # Sinon, on empile le tour (par le haut pour conserver la chronologie)
+            turns_to_process.insert(0, turn)
+            
+        if not turns_to_process:
+            return body
+            
+        # Traitement asynchrone des nouveaux tours
+        for turn in turns_to_process:
+            formatted_text = self._format_messages(turn)
+            unique_seed = turn[0].get("id") or str(turn[0].get("timestamp"))
+            
             asyncio.create_task(
                 EchoGeminiClient.index_text_in_ephemeral_rag(
                     distillate=formatted_text,
@@ -146,10 +141,8 @@ class Filter:
                 )
             )
             
-        # Mise à jour du point de reprise avec le TOUT DERNIER message indexé (assistant)
-        final_msg = messages_to_process[-1]
-        final_msg_id = final_msg.get("id") or str(final_msg.get("timestamp"))
-        if final_msg_id:
-            state_mgr.save_setting("last_rag_message_id", final_msg_id)
+            # Marquage immédiat pour court-circuiter le RAG au prochain appel
+            if unique_seed:
+                state_mgr.mark_message_embedded(str(unique_seed))
 
         return body

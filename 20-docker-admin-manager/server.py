@@ -2,7 +2,9 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.119 (Réactivation N8N Safeguard)
+VERSION : 5.121 (Fix Sonde Qdrant)
+--- CHANGELOG 5.120 ---
+- Fix (Critique) : Assouplissement de la sonde Qdrant dans run_semantic_pruning pour interroger `/collections` de manière globale. Cela empêche l'inhibition silencieuse de la purge vectorielle si la collection META_ARTIFACTS n'est pas encore créée (ex: lors de l'usage exclusif du RAG conversationnel).
 --- CHANGELOG 5.119 ---
 - Fix : Réactivation du N8N Safeguard (Whitelist GC) désactivé en v5.118 suite
   au changement N8N 2.34.6. L'API Worker /prune est opérationnelle depuis
@@ -187,7 +189,7 @@ Architecture ECHO-Native avec distinction entre stockage et sessions.
 """
 
 from flask import Flask, request, jsonify, render_template_string, send_file, redirect, url_for, flash, session # pyright: ignore[reportMissingImports]
-from typing import Optional, List, Dict, Tuple
+
 import os
 import subprocess
 import datetime
@@ -731,8 +733,8 @@ def _run_semantic_pruning():
             MAINTENANCE_STATE["status"] = "Purge Vectorielle (Qdrant)..."
             if HAS_HTTPX and valid_ids:
                 try:
-                    # Test de disponibilité Qdrant
-                    r = httpx.get(f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}", timeout=5)
+                    # Test de disponibilité globale Qdrant
+                    r = httpx.get(f"{QDRANT_URL}/collections", timeout=5)
                     if r.status_code == 200:
                         # 1) Utilisateurs orphelins
                         if config.get("purge_orphaned_users", False):

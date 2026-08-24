@@ -1,8 +1,10 @@
 """
-title: N8N Orchestrator
+title: ECHO N8N Orchestrator
 author: ECHO
-version: 1.7
+version: 1.9
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3).
+--- CHANGELOG 1.8 ---
+- Renommage d'affichage : N8N Orchestrator vers ECHO N8N Orchestrator.
 --- CHANGELOG 1.7 ---
 - Fix : Gestion du status "warning" retourné par le worker v2.16 (workflow créé
   mais activation partielle). Mise à jour du State Manager dans les deux cas.
@@ -16,7 +18,7 @@ import uuid
 import re
 import httpx
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional
 
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoStateManager, wrap_tool_output

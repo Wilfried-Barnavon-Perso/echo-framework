@@ -1,19 +1,19 @@
 """
 title: Réinitialiser Authentification Gemini /!\
 author: Wilfried BARNAVON
-version: 4.7
+version: 4.9
 description: Révocation d'urgence : déconnecte la session et purge les tokens OAuth2 Google.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgeD0iMyIgeT0iMTEiIHJ4PSIyIiByeT0iMiIvPjxwYXRoIGQ9Ik03IDExVjdhNSA1IDAgMCAxIDEwIDB2NCIvPjwvc3ZnPg==
 """
 # Historique des versions :
+# 4.9: Ajout de la purge des clés d'authentification PKCE.
+# 4.8: Nettoyage et mise à jour.
 # 4.7: Mise à jour de la priorité d'affichage à 10.
-# 4.6: Renommage sémantique du titre UX (revert self.actions incompatible OWUI simple-action).
 
 import os
 import sqlite3
 import sys
 from pydantic import BaseModel, Field
-from typing import Any
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
@@ -50,6 +50,7 @@ class Action:
                 cursor = conn.cursor()
                 # Purge de toutes les données d'authentification Google (Clés, OAuth, Priorité, Identité, Tier)
                 cursor.execute("DELETE FROM auth_data WHERE key LIKE 'google_%'")
+                cursor.execute("DELETE FROM auth_data WHERE key LIKE 'pkce_%'")
                 rows = cursor.rowcount
                 # Note : auth_pkce_context supprimée (migration Antigravity 2.1 — Device Flow)
                 conn.commit()

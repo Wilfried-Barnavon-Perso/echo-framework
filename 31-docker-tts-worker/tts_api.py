@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO TTS WORKER API
-VERSION : 1.1 (Standardisation & Rate-Limit Healthcheck)
+VERSION : 1.2 (Standardisation & Rate-Limit Healthcheck)
 AUTEUR : ECHO Team
 DATE MAJ : 2026-08-19
 
@@ -14,7 +14,6 @@ from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from kokoro_onnx import Kokoro
-import soundfile as sf
 import io
 import langid
 langid.set_languages(['fr', 'en', 'es', 'it', 'pt', 'ja', 'zh', 'hi']) # Restriction des langues pour éviter les faux positifs

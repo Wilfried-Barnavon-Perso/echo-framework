@@ -2,11 +2,12 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.47
+version: 7.49
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.48: Typage hiérarchique XML de l'AEC et suppression du formateur YAML.
 # 7.47: Délégation des UserValves vers user_native_context_filter et verrouillage de la désactivation.
 # 7.46: Nettoyage des mentions "V2" du registre et de l'AEC.
 # 7.45: Migration des configurations globales vers les Valves (SMART_CONTEXT, OFFICE_CONVERSION).
@@ -16,8 +17,7 @@ description: Composant système interne : ECHO New Context Filter.
 
 
 from pydantic import BaseModel, Field
-from typing import Optional, List, Union, Dict, Any
-import orjson as json
+from typing import Optional, Dict, Any
 import pybase64 as base64
 import os
 import sys
@@ -25,22 +25,14 @@ import re
 import asyncio
 import logging
 import time
-import uuid as _uuid_module
-import hashlib
-import shutil
-import httpx
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import resolve_upload_file_path, EchoStateManager, EchoGeminiClient, EchoEvents, EchoAuth
+from echo_utils import resolve_upload_file_path, EchoAuth
 from echo_constants import (
-    get_gemini_mime, ECHO_USERS_ROOT, 
-    GOOGLE_API_KEY_REGEX, MODEL_FLASH,
-    ECHO_QDRANT_URL,
-    CONVERTIBLE_OFFICE_EXTENSIONS, DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB, OOXML_IMAGE_EXTENSIONS,
-    FILE_INGESTION_STATUS
+    GOOGLE_API_KEY_REGEX,
+    DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB
 )
 
 # Configuration du Logger
@@ -260,16 +252,24 @@ class Filter:
                 
                 tour_conversation = sum(1 for m in msgs if m.get("role") == "user")
                 
-                # === AEC : Snapshot minimaliste (sans registres) ===
+                # === AEC : Snapshot hiérarchisé XML ===
                 env_snapshot = {
-                    "version_framework_echo": get_echo_version() or "##ECHO_VERSION##",
-                    "modèle_actuel": "##MODEL_ID##",
-                    "modèle_origine": "##MODEL_ORIGIN##",
-                    "nom_utilisateur": display_name,
-                    "tour_conversation": tour_conversation,
-                    "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
-                    "localisation": final_loc,
-                    "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC"),
+                    "systeme": {
+                        "version_framework_echo": get_echo_version() or "##ECHO_VERSION##"
+                    },
+                    "modeles": {
+                        "actuel": "##MODEL_ID##",
+                        "origine": "##MODEL_ORIGIN##"
+                    },
+                    "utilisateur": {
+                        "nom": display_name,
+                        "localisation": final_loc,
+                        "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
+                    },
+                    "session": {
+                        "tour_conversation": tour_conversation,
+                        "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu")
+                    }
                 }
 
                 body.setdefault("metadata", {})
@@ -279,11 +279,11 @@ class Filter:
                     "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                 }
                 
-                from echo_utils import _dict_to_yaml_aec, build_aec_system_events
+                from echo_utils import _dict_to_xml_aec, build_aec_system_events
                 
                 rich_parts = []
-                yaml_str = _dict_to_yaml_aec(env_snapshot)
-                rich_parts.append({"text": f"<environnement_contexte>\n{yaml_str}\n</environnement_contexte>\n\n"})
+                xml_str = _dict_to_xml_aec(env_snapshot, indent=1)
+                rich_parts.append({"text": f"<environnement_contexte>\n{xml_str}\n</environnement_contexte>\n\n"})
 
                 # === Configuration ZoneInfo ===
                 try:

@@ -1,7 +1,7 @@
 """
 title: ECHO Agent Monitor
 author: Wilfried BARNAVON
-version: 1.6
+version: 1.7
 description: HUD interactif de visualisation arborescente des sous-agents et experts cognitifs ECHO.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxjaXJjbGUgY3g9IjEyIiBjeT0iNCIgcj0iMiIvPjxsaW5lIHgxPSIxMiIgeTE9IjYiIHgyPSIxMiIgeTI9IjkiLz48bGluZSB4MT0iMTIiIHkxPSI5IiB4Mj0iNiIgeTI9IjEzIi8+PGxpbmUgeDE9IjEyIiB5MT0iOSIgeDI9IjE4IiB5Mj0iMTgiLz48Y2lyY2xlIGN4PSI2IiBjeT0iMTUiIHI9IjIiLz48Y2lyY2xlIGN4PSIxOCIgY3k9IjE1IiByPSIyIi8+PGxpbmUgeDE9IjYiIHkxPSIxNyIgeDI9IjYiIHkyPSIyMCIvPjxsaW5lIHgxPSIxOCIgeTE9IjE3IiB4Mj0iMTgiIHkyPSIyMCIvPjxjaXJjbGUgY3g9IjYiIGN5PSIyMSIgcj0iMSIvPjxjaXJjbGUgY3g9IjE4IiBjeT0iMjEiIHI9IjEiLz48L3N2Zz4=
 """
@@ -23,7 +23,6 @@ import sys
 import re
 import orjson as json
 from pydantic import BaseModel, Field
-from typing import Any, Optional
 
 # Importations ECHO
 sys.path.append("/app/backend/echo_libs")

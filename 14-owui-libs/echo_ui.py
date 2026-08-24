@@ -1,7 +1,7 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.61
+version: 5.62
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -17,8 +17,6 @@ description: Composant système interne : ECHO UI Rendering Engine.
 
 from fastapi.responses import HTMLResponse
 import sys
-import os
-import hashlib
 import orjson as std_json
 from typing import Optional, Any, List, Dict
 

@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
           { href: '08h_codex_editor.html',      text: '8h. ECHO Codex (Éditeur)' },
           { href: '08i_delegate_agent.html', text: '8i. Delegate Agent' },
           { href: '08j_agent_orchestration.html', text: '8j. Orchestration Multi-Agents' },
-          { href: '08k_n8n_orchestrator.html', text: '8k. Orchestrateur N8N' },
+          { href: '08k_n8n_orchestrator.html', text: '8k. ECHO N8N Orchestrator' },
           { href: '08l_mcp_broker.html', text: '8l. Serveur MCP Broker' }
         ]
       },

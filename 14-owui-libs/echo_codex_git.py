@@ -1,7 +1,7 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.2
+version: 1.3
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -14,11 +14,10 @@ description: Composant système interne : ECHO Codex Git Engine.
 import os
 import re
 import shutil
-import time
 from typing import Optional, List
 
 from dulwich.repo import Repo
-from dulwich.objects import Blob, Tree, Commit
+from dulwich.objects import Tree
 from dulwich import porcelain
 
 from echo_constants import CODEX_LANG_MAP, CODEX_DEFAULT_LANG
@@ -249,7 +248,6 @@ class CodexRepo:
     def get_diff(self, commit_a: str, commit_b: str = None) -> str:
         """Diff entre deux commits. Si commit_b=None, diff commit_a vs son parent."""
         try:
-            from dulwich.diff_tree import tree_changes
             from dulwich.patch import write_tree_diff
             import io
 

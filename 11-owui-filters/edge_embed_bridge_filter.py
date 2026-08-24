@@ -3,7 +3,7 @@ title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
 description: Composant système interne : Edge Embedding Bridge Filter.
-version: 1.7
+version: 1.8
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
@@ -13,9 +13,7 @@ version: 1.7
 # 1.4: Migration vers le modèle Harrier-OSS (WebGPU ONNX), implémentation manuelle du pooling CLS et normalisation L2 en JS, et morphing du HUD en pastille avec animation.
 # 1.3: Injecte le bridge JavaScript WebGPU pour l'accélération matérielle des embeddings via bge-m3. Gestion intelligente du cache navigateur.
 
-import os
 import asyncio
-from typing import Optional
 from pydantic import BaseModel, Field
 
 try:

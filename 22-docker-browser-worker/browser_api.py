@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.17 (Rate-Limit Healthcheck)
+VERSION : 9.18 (Rate-Limit Healthcheck)
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-08-19
 
@@ -75,19 +75,13 @@ CHANGELOG 8.4 :
 import asyncio
 import pybase64 as base64
 import os
-import secrets
-import shutil
 import time
 import random
-import httpx
-import uuid
 import logging
 import orjson as json
 import html2text
-import io
-from PIL import Image
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.responses import ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright

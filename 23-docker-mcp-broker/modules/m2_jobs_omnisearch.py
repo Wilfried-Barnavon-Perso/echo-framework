@@ -1,14 +1,13 @@
 """
 title: Jobs Omnisearch MCP Module
-version: 1.1
+version: 1.2
 description: 1.1: Fix APEC job details extraction by parsing HTML via BeautifulSoup instead of deprecated JSON fields.
 """
 import asyncio
 import random
 import logging
-import json
 import re
-from typing import Optional, List
+from typing import Optional
 import httpx
 from bs4 import BeautifulSoup
 from mcp.server import MCPServer

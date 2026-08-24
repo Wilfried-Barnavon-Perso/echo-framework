@@ -1,11 +1,12 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 3.2
+version: 3.3
 description: Composant système interne : ECHO Context Gauge.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 3.3: Bascule des seuils cognitifs (WARNING/CRITICAL) sur les constantes définies dans echo_constants.py.
 # 3.2: Alignement sur le standard de retour minimaliste (wrap_tool_output).
 
 from pydantic import BaseModel, Field
@@ -18,7 +19,7 @@ from typing import Any
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output
-from echo_constants import ECHO_BASE_DATA_DIR
+from echo_constants import ECHO_BASE_DATA_DIR, CONTEXT_LOAD_WARNING_THRESHOLD, CONTEXT_LOAD_CRITICAL_THRESHOLD
 
 class Tools:
     class Valves(BaseModel):
@@ -41,7 +42,7 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Surveillance de la saturation du contexte (Tokens). Déclencheur d'escalade cognitive : si >50%, RECOMMANDE l'usage de 'new_cognitive_level' (PRO). Retourne un JSON détaillé (context_load_percent, used_tokens, status).
+        Surveillance de la saturation du contexte (Tokens). Déclencheur d'escalade cognitive : si statut CRITICAL, RECOMMANDE l'usage de 'new_cognitive_level' (PRO). Retourne un JSON détaillé (context_load_percent, used_tokens, status).
         """
         limit = self.valves.context_limit
         real_stats = None
@@ -89,8 +90,8 @@ class Tools:
         percent = round((est_tokens / limit) * 100, 2)
         
         status_load = "SAFE"
-        if percent > 25: status_load = "WARNING"
-        if percent > 50: status_load = "CRITICAL"
+        if percent > CONTEXT_LOAD_WARNING_THRESHOLD: status_load = "WARNING"
+        if percent > CONTEXT_LOAD_CRITICAL_THRESHOLD: status_load = "CRITICAL"
 
         payload = {
             "context_load_percent": percent,

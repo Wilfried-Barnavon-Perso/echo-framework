@@ -1,7 +1,7 @@
 """
 title: ECHO Auth Service
 author: Wilfried BARNAVON
-version: 7.9
+version: 7.10
 description: 5.x: PKCE flow avec serveur asyncio TCP sur port fixe 8765.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -27,11 +27,8 @@ import sys
 import asyncio
 import hashlib
 import os
-import uuid
-import sqlite3
-import random
-from typing import Optional, Tuple, Any, List, Dict
-from urllib.parse import urlencode, urlparse, parse_qs
+from typing import Optional, Tuple, Dict
+from urllib.parse import urlencode
 import base64
 
 import httpx
