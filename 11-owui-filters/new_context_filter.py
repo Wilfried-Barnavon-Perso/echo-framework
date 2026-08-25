@@ -2,15 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.49
+version: 7.51
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.51: Correction d'un bug critique (NameError) bloquant l'injection de l'AEC via l'import de FILE_INGESTION_STATUS.
+# 7.50: Rollback Zéro-Hallucination : Restauration du snapshot plat AEC et abandon du format XML.
 # 7.48: Typage hiérarchique XML de l'AEC et suppression du formateur YAML.
 # 7.47: Délégation des UserValves vers user_native_context_filter et verrouillage de la désactivation.
 # 7.46: Nettoyage des mentions "V2" du registre et de l'AEC.
-# 7.45: Migration des configurations globales vers les Valves (SMART_CONTEXT, OFFICE_CONVERSION).
 # 7.44: Ajout du tour de conversation dans le snapshot AEC (<environnement_contexte>).
 # 7.43: Nettoyage du code mort (suppression de la Valve DEBUG_MODE inutilisée).
 # 7.42: Factorisation de l'AEC et de l'horodatage zoné, retrait de _dict_to_yaml.
@@ -32,7 +33,8 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import resolve_upload_file_path, EchoAuth
 from echo_constants import (
     GOOGLE_API_KEY_REGEX,
-    DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB
+    DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB,
+    FILE_INGESTION_STATUS
 )
 
 # Configuration du Logger
@@ -252,24 +254,16 @@ class Filter:
                 
                 tour_conversation = sum(1 for m in msgs if m.get("role") == "user")
                 
-                # === AEC : Snapshot hiérarchisé XML ===
+                # === AEC : Snapshot minimaliste (sans registres) ===
                 env_snapshot = {
-                    "systeme": {
-                        "version_framework_echo": get_echo_version() or "##ECHO_VERSION##"
-                    },
-                    "modeles": {
-                        "actuel": "##MODEL_ID##",
-                        "origine": "##MODEL_ORIGIN##"
-                    },
-                    "utilisateur": {
-                        "nom": display_name,
-                        "localisation": final_loc,
-                        "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
-                    },
-                    "session": {
-                        "tour_conversation": tour_conversation,
-                        "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu")
-                    }
+                    "version_framework_echo": get_echo_version() or "##ECHO_VERSION##",
+                    "modèle_actuel": "##MODEL_ID##",
+                    "modèle_origine": "##MODEL_ORIGIN##",
+                    "nom_utilisateur": display_name,
+                    "tour_conversation": tour_conversation,
+                    "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
+                    "localisation": final_loc,
+                    "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC"),
                 }
 
                 body.setdefault("metadata", {})
@@ -279,11 +273,11 @@ class Filter:
                     "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                 }
                 
-                from echo_utils import _dict_to_xml_aec, build_aec_system_events
+                from echo_utils import _dict_to_yaml_aec, build_aec_system_events
                 
                 rich_parts = []
-                xml_str = _dict_to_xml_aec(env_snapshot, indent=1)
-                rich_parts.append({"text": f"<environnement_contexte>\n{xml_str}\n</environnement_contexte>\n\n"})
+                yaml_str = _dict_to_yaml_aec(env_snapshot)
+                rich_parts.append({"text": f"<environnement_contexte>\n{yaml_str}\n</environnement_contexte>\n\n"})
 
                 # === Configuration ZoneInfo ===
                 try:

@@ -1,12 +1,14 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.27
+version: 192.29
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.29: Rollback Zéro-Hallucination : Restauration de la mutation simple (YAML plat) pour l'AEC.
+# 192.28: Support du nouveau format AEC XML hiérarchisé dans _mutate_context_identity (auto-escalade/cascade) avec regex de substitution durcie et rétrocompatibilité YAML.
 # 192.25: Support du format de clé API Google AQ.
 # 192.24: Correction systémique des vieux identifiants orphelins (Auto-heal vers MODEL_LITE) et formatage UI avec clés techniques (ai_studio_id/ca_model_id).
 # 192.23: Restauration et sauvegarde de l'historique de cascade cognitive via KV store pour le message utilisateur. Amélioration de la gestion des erreurs de streaming de l'API Google avec alertes d'interruption. Correction de la logique de clamping et cascade via MODEL_IDENTITY.
@@ -157,9 +159,9 @@ class Orchestrator:
         if m_id == "aucun": return "aucun"
         from echo_constants import get_model_identity
         cat = get_model_identity(m_id)
-        return f"{cat} ({m_id})"
+        return cat
 
-    def _mutate_context_identity(self, context: list, new_model: str, old_model: str):
+    def _mutate_context_identity(self, context: List[Dict], new_model: str, old_model: str):
         """
         Mutation chirurgicale de l'AEC dans le contexte.
         Patche modèle_actuel et modèle_origine via regex (support JSON/YAML hybride).
@@ -169,7 +171,7 @@ class Orchestrator:
         old_identity = self._build_identity(old_model)
         for msg in context:
             for part in msg.get("parts", []):
-                if "text" in part and "modèle_actuel" in part["text"]:
+                if "text" in part and "<environnement_contexte>" in part["text"]:
                     part["text"] = re.sub(
                         r'("?modèle_actuel"?\s*:\s*"?)([^"\n]+)("?)',
                         rf'\g<1>{new_identity}\g<3>', part["text"]

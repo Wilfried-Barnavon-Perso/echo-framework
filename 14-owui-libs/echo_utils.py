@@ -1,11 +1,12 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.35
+version: 8.36
 description: Composant système interne : ECHO Shared Utils (Core).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 8.36: Rollback Zéro-Hallucination : Restauration de _dict_to_yaml_aec (YAML plat pur) pour l'AEC et les évènements systèmes au lieu de XML.
 # 8.35: Correction: Invalidation des dates google_quota_reset obsolètes empêchant le Fast-Failover.
 # 8.34: (Mise à jour précédente)
 # 8.33: Correction: Résolution NameError (max_retries) dans call_raw remplacé par len(auth_providers).
@@ -261,78 +262,51 @@ def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
             return clean_text, thoughts
     return text, None
 
-def _dict_to_xml_aec(d: Any, root_tag: str = None, indent: int = 0) -> str:
-    """Helper local pour la sérialisation XML de l'AEC avec échappement minimal (factorisé depuis new_context_filter)."""
-    import xml.sax.saxutils as saxutils
-    
-    def _escape(text: str) -> str:
-        return saxutils.escape(str(text), {'"': "&quot;", "'": "&apos;"})
-
+def _dict_to_yaml_aec(d: Any, indent: int = 0) -> str:
+    """Helper local pour la sérialisation YAML de l'AEC (factorisé depuis new_context_filter)."""
     lines = []
     space = "  " * indent
-    
     if isinstance(d, list):
         for item in d:
-            tag = root_tag if root_tag else "item"
-            lines.append(f"{space}<{tag}>")
-            if isinstance(item, (dict, list)):
-                lines.append(_dict_to_xml_aec(item, indent=indent + 1))
+            if isinstance(item, dict):
+                lines.append(f"{space}-")
+                lines.append(_dict_to_yaml_aec(item, indent + 1))
             else:
-                lines.append(f"{space}  {_escape(item)}")
-            lines.append(f"{space}</{tag}>")
+                lines.append(f"{space}- {item}")
     elif isinstance(d, dict):
-        if root_tag and indent == 0:
-            lines.append(f"{space}<{root_tag}>")
-            indent += 1
-            space = "  " * indent
-            
         for k, v in d.items():
-            safe_k = str(k).replace(" ", "_").lower()
             if isinstance(v, dict):
-                if not v:
-                    lines.append(f"{space}<{safe_k}></{safe_k}>")
+                if not v: lines.append(f"{space}{k}: {{}}")
                 else:
-                    lines.append(f"{space}<{safe_k}>")
-                    lines.append(_dict_to_xml_aec(v, indent=indent + 1))
-                    lines.append(f"{space}</{safe_k}>")
+                    lines.append(f"{space}{k}:")
+                    lines.append(_dict_to_yaml_aec(v, indent + 1))
             elif isinstance(v, list):
-                if not v:
-                    lines.append(f"{space}<{safe_k}></{safe_k}>")
+                if not v: lines.append(f"{space}{k}: []")
                 else:
-                    lines.append(f"{space}<{safe_k}>")
-                    singular = safe_k[:-1] if safe_k.endswith('s') else "item"
-                    lines.append(_dict_to_xml_aec(v, root_tag=singular, indent=indent + 1))
-                    lines.append(f"{space}</{safe_k}>")
+                    lines.append(f"{space}{k}:")
+                    for item in v:
+                        if isinstance(item, dict):
+                            lines.append(f"{space}  -")
+                            lines.append(_dict_to_yaml_aec(item, indent + 2))
+                        else:
+                            lines.append(f"{space}  - {item}")
             else:
-                val = _escape(v).replace("\n", " ") if v is not None else ""
-                lines.append(f"{space}<{safe_k}>{val}</{safe_k}>")
-                
-        if root_tag and indent == 1:
-            indent -= 1
-            space = "  " * indent
-            lines.append(f"{space}</{root_tag}>")
-            
+                val = str(v).replace("\n", " ") if v is not None else ""
+                lines.append(f"{space}{k}: {val}")
     return "\n".join(lines)
 
 def build_aec_system_events(sys_events: list = None, error_events: list = None) -> str:
-    """Génère la balise <evenement_systeme> standardisée et intégralement typée XML pour l'AEC"""
+    """Génère la balise <evenement_systeme> standardisée dont le contenu est au format YAML pour l'AEC"""
     if not sys_events and not error_events:
         return ""
         
     events_text = "<evenement_systeme>\n"
-    
     if sys_events:
-        events_text += "  <succes>\n"
-        events_text += _dict_to_xml_aec(sys_events, root_tag="evenement", indent=2) + "\n"
-        events_text += "  </succes>\n"
-        events_text += "  <directive>Utilisez `query_registry` pour consulter l'état complet des ressources.</directive>\n"
-        
+        events_text += _dict_to_yaml_aec(sys_events) + "\n"
+        events_text += "> Utilisez `query_registry` pour consulter l'état complet des ressources.\n"
     if error_events:
-        events_text += "  <echecs_ingestion>\n"
-        events_text += _dict_to_xml_aec(error_events, root_tag="erreur", indent=2) + "\n"
-        events_text += "  </echecs_ingestion>\n"
-        events_text += "  <directive>Ces fichiers ont échoué et ne sont pas exploitables.</directive>\n"
-        
+        events_text += "\n[ERREURS D'INGESTION]\n" + _dict_to_yaml_aec(error_events) + "\n"
+        events_text += "> Ces fichiers ont échoué et ne sont pas exploitables.\n"
     events_text += "</evenement_systeme>\n\n"
     return events_text
 

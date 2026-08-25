@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v5.175.3
+  # 🧠 ECHO Framework v5.199.39
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-5.175.3-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-5.199.39-blue.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -18,24 +18,25 @@
 ## 👋 Qu'est-ce qu'ECHO ?
 
 Imaginez **Open WebUI sous stéroïdes**. 
-**ECHO** (Espace Cognitif Heuristique Opérationnel) est une infrastructure d'intelligence artificielle souveraine, conçue pour orchestrer les modèles Gemini de Google au-dessus d'Open WebUI. Ce n'est pas un simple wrapper d'API, mais un framework de contrôle autonome.
+**ECHO** (Espace Cognitif Heuristique Opérationnel) est une infrastructure d'intelligence artificielle souveraine, conçue pour orchestrer les modèles Gemini de Google au-dessus d'Open WebUI. Ce n'est pas un simple wrapper d'API, mais un framework de contrôle autonome de niveau entreprise.
 
-ECHO agit comme un **Kernel** : il impose ses règles méthodologiques au modèle via un système de "Pipes" et de "Filtres". L'IA devient un collaborateur technique capable de structure, de persistance et d'action.
+ECHO agit comme un **Kernel** : il impose ses règles méthodologiques au modèle via un écosystème de "Pipes", "Filtres" et de "Workers" spécialisés. L'IA devient un collaborateur technique capable de structure, de persistance et d'action.
 
 ## ✨ Fonctionnalités Clés
 
-- 🔒 **Souveraineté des Données** : Vos bases vectorielles (Qdrant), votre historique (SQLite) et vos fichiers (Codex) restent intégralement confinés dans votre infrastructure locale. Zéro dépendance à un cloud tiers pour le stockage.
-- 🧠 **Mémoire Organique V4** : Une fenêtre glissante déterministe avec distillation Cloud automatisée. L'historique des requêtes est nettoyé et synthétisé pour maintenir un budget token optimal tout en préservant le contexte long-terme.
-- ⚡ **Suture Sémantique (Bit-perfect)** : Le Pipe Engine d'ECHO garantit une reprise de session identique au bit près, en restaurant dynamiquement les états de raisonnement (Thought Signatures) via SQLite.
-- 🛠️ **Sovereign Toolbox** :
-  - **Strategic Planner** : Planification et exécution autonome avec persistance en Markdown.
-  - **Python & Browser Agents** : Sandbox d'exécution de code isolée et pilotage web via Playwright.
-  - **ECHO Codex** : Éditeur multi-langage intégré avec gestion Git automatisée.
-  - **Delphi Protocol** : Consultation multi-experts (agents cognitifs) parallélisée.
+- 🔒 **Souveraineté et Sécurité** : Vos bases vectorielles (Qdrant), votre historique (SQLite) et vos fichiers (Codex) restent intégralement confinés localement. Le système intègre **ECHO Auth** (IdP natif avec MFA/TOTP) couplé à un WAF **BunkerWeb** pour une protection périmétrique absolue.
+- 🧠 **Mémoire Vectorisée & RAG O(1)** : Abandon de la fenêtre glissante obsolète au profit d'une indexation stateless Zéro-Latence et d'un instantané contextuel plat (YAML). Les documents lourds sont synthétisés via un système de RAG (Retrieval-Augmented Generation) avancé préservant le budget de contexte.
+- ⚡ **Suture Sémantique (Bit-perfect)** : Le Pipe Engine garantit une reprise de session identique au bit près, en restaurant dynamiquement les états via un routage cognitif et un **OAuth2 Circuit Breaker** assurant la résilience de l'API (Fast-Failover Intra-Retry) via multiplexage HTTP/2.
+- 🛠️ **Sovereign Toolbox & Workers** :
+  - **ECHO N8N Orchestrator** : Pont asynchrone natif pour le déploiement et le pilotage de workflows d'automatisation headless (Daemon/Webhook).
+  - **MCP Broker** : Serveur FastMCP pour une intégration fluide et normée des données Corporate et Academic.
+  - **Python & Browser Workers** : Sandbox d'exécution de code isolée et navigation web autonome (Playwright).
+  - **ECHO Codex & Delphi** : Éditeur multi-langage (Monaco) avec gestion Git intégrée (dulwich) et consultation multi-agents parallélisée.
+  - **Edge Inference** : Déchargement de l'inférence vectorielle directement sur le GPU client (WebGPU/WASM) ou le worker local `bge-m3`.
 
 ## 🚀 Déploiement Rapide
 
-L'infrastructure s'installe via un script unique qui orchestre la stack Docker complète (Open WebUI, Qdrant, Workers Audio/Python/Web).
+L'infrastructure s'installe via des scripts idempotents orchestrant la stack Docker complète (plus de 10 conteneurs spécialisés).
 
 **Sur Linux Natif (Ubuntu/Debian) :**
 ```bash
@@ -48,12 +49,10 @@ curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framew
 ```
 
 **Sur Hyper-V (Windows) :**
-*(Crée et configure automatiquement une VM Linux dédiée)*
+*(Crée et configure automatiquement une VM Linux dédiée avec Cloud-Init)*
 ```powershell
 .\install-hyperv.ps1
 ```
-
-*(Note : Les scripts d'installation sont idempotents et gèrent nativement les mises à jour de version).*
 
 ## 📚 Documentation Technique
 

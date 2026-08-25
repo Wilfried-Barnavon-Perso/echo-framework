@@ -53,8 +53,8 @@ Le système nerveux central d'ECHO repose sur le `pipe_engine.py` et les bibliot
 ## 4. 🧭 Contexte Proprioceptif
 
 Le vecteur d'état global (AEC) est injecté systématiquement :
-- **Contenu Statique (`<environnement_contexte>`) :** Identité et grounding géo-temporel.
-- **Évènements Système (`<evenement_systeme>`) :** Bloc XML évènementiel notifiant le Modèle des ressources asynchrones ou nouvellement créées.
+- **Contenu Statique (`<environnement_contexte>`) :** Balise XML dont le contenu est au format YAML contenant l'identité et le grounding géo-temporel.
+- **Évènements Système (`<evenement_systeme>`) :** Balise XML évènementielle dont le contenu est au format YAML notifiant le Modèle des ressources asynchrones ou nouvellement créées.
 - **Règle d'Or :** Le modèle **DOIT** utiliser l'outil `query_registry` pour consulter le Registre Unifié avant toute manipulation de fichiers ou processus.
 
 ## 5. 🛠️ L'Arsenal (`/opt/ECHO/owui-tools/`)
@@ -132,4 +132,4 @@ Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depend
 
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.199.35*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.199.38*

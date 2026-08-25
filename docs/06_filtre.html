@@ -152,34 +152,26 @@ flowchart LR
 
     <h3>Le bloc AEC (<code>environnement_contexte</code>)</h3>
     <p>
-      À la fin de la phase Inlet, le filtre génère et injecte un bloc XML hiérarchique dans les métadonnées
-      du message (via <code>_dict_to_xml_aec</code>). Ce bloc, délimité par <code>&lt;environnement_contexte&gt;</code>, constitue la
+      À la fin de la phase Inlet, le filtre génère un instantané plat au format YAML et l'encapsule dans les métadonnées
+      du message (via <code>_dict_to_yaml_aec</code>). Ce bloc, délimité par des balises XML structurelles <code>&lt;environnement_contexte&gt;</code>, constitue la
       <em>proprioception</em> du modèle pour le tour courant.
     </p>
 
     <div class="code-header">Structure du bloc AEC (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
     <pre><code>&lt;environnement_contexte&gt;
- &lt;systeme&gt;
-  &lt;version_framework_echo&gt;5.199.35&lt;/version_framework_echo&gt;
- &lt;/systeme&gt;
- &lt;modeles&gt;
-  &lt;actuel&gt;##MODEL_ID##&lt;/actuel&gt;
-  &lt;origine&gt;##MODEL_ORIGIN##&lt;/origine&gt;
- &lt;/modeles&gt;
- &lt;utilisateur&gt;
-  &lt;nom&gt;anonyme&lt;/nom&gt;
-  &lt;localisation&gt;Paris, France&lt;/localisation&gt;
-  &lt;timezone&gt;Europe/Paris&lt;/timezone&gt;
- &lt;/utilisateur&gt;
- &lt;session&gt;
-  &lt;tour_conversation&gt;1&lt;/tour_conversation&gt;
-  &lt;date_et_heure&gt;2026-08-24 14:00&lt;/date_et_heure&gt;
- &lt;/session&gt;
+version_framework_echo: "5.199.38"
+modèle_actuel: "##MODEL_ID##"
+modèle_origine: "##MODEL_ORIGIN##"
+nom_utilisateur: "anonyme"
+localisation: "Paris, France"
+timezone: "Europe/Paris"
+tour_conversation: 1
+date_et_heure: "2026-08-24 14:00"
 &lt;/environnement_contexte&gt;
 
 &lt;evenement_systeme&gt;
-- type: "vectorized_sum_up"
-  name: "rapport.pdf"
+- nom: "rapport.pdf"
+  type: "vectorized_sum_up"
   mime: "application/pdf"
   source_id: "U_abc123_C_xyz789_T_1748246400"
 > Utilisez `query_registry` pour consulter l'état complet des ressources.
@@ -281,7 +273,7 @@ flowchart LR
     </div>
 
     <footer>
-      ECHO Framework - Version 5.199.23 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.199.39 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
