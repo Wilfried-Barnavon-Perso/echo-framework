@@ -106,11 +106,13 @@ class Tools:
     async def delegate_web_browsing(
         self, task_objective: str, start_url: Optional[str] = None, 
         target_model_key: Literal["MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH", 
-        max_iterations: int = Field(default=30, description="Nombre max d'itérations. À augmenter pour les tâches longues (ex: 60 questions). Max: 100."),
+        max_iterations: int = 30,
         __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None
     ) -> dict:
         """
         Interactions web complexes (formulaires, clics, lecture intégrale d'URL). Recherche d'informations simples proscrite (utiliser `search_web`). La requête (task_objective) DOIT INCLURE le contexte général et spatio-temporel si judicieux.
+        
+        :param max_iterations: Nombre max d'itérations. À augmenter pour les tâches longues (ex: 60 questions). Max: 100.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = __metadata__.get("chat_id", "default_session")
