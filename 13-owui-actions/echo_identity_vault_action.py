@@ -130,8 +130,39 @@ class Action:
             elif action_type == "add_account":
                 service = response.get("service")
                 account_id = response.get("account_id")
-                credentials = response.get("credentials")
                 access_level = response.get("access_level")
+                
+                # Encodage JSON des champs dynamiques générés par le Schéma
+                if "credentials" in response:
+                    credentials = response["credentials"]
+                else:
+                    reserved = {"action", "service", "account_id", "access_level"}
+                    dynamic_data = {k: v for k, v in response.items() if k not in reserved}
+                    
+                    # Auto-provisionnement Sémantique si la description est vide
+                    if service == "remote_mcp" and not dynamic_data.get("description"):
+                        try:
+                            url = dynamic_data.get("url", "")
+                            async with httpx.AsyncClient() as client:
+                                rpc = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
+                                resp = await client.post(url, json=rpc, timeout=5.0)
+                                tools_schema = resp.text
+                                
+                            from echo_utils import EchoGeminiClient
+                            prompt = (
+                                "Objectif : Rédiger une description sémantique d'UNE SEULE PHRASE (maximum 15 mots) "
+                                "définissant le cas d'usage d'un serveur MCP distant, à partir de ses capacités brutes.\n"
+                                f"Capacités extraites : {tools_schema}\n"
+                                "Contrainte : Style impersonnel, direct et technique (ex: 'Fournit la météo et les prévisions mondiales.'). "
+                                "Aucun texte additionnel n'est autorisé."
+                            )
+                            dynamic_data["description"] = await EchoGeminiClient.call_distillation(
+                                prompt=prompt, __user__=__user__, __metadata__={}, is_json=False
+                            )
+                        except Exception as _e:
+                            dynamic_data["description"] = "Serveur MCP distant (Auto-provisionnement échoué)."
+                            
+                    credentials = json.dumps(dynamic_data).decode("utf-8") if dynamic_data else ""
                 
                 if service and account_id and credentials and access_level:
                     self._save_account(state, service, account_id, credentials, access_level)

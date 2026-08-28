@@ -23,8 +23,13 @@ Ce dossier représente la **Conscience et l'Injection Contextuelle** de l'agent.
 - **Sémantique** : Filtre Inlet silencieux. Il n'altère pas la requête LLM mais injecte dans le DOM de l'interface Open WebUI un composant *Data Island* (le HUD ECHO App Drawer). Ce HUD communique en temps réel avec l'API WebUI pour déclencher des actions interactives (ECHO Codex, Agent Monitor) sans rechargement de la page.
 
 ### `edge_embed_bridge_filter.py` (Inlet/Outlet)
-**Rôle** : Déport de la puissance de calcul (Offload).
-- **Sémantique** : Intercepte les requêtes nécessitant une vectorisation massive et déporte l'inférence (Harrier-OSS) vers le navigateur client via la technologie WebGPU/WASM et WebSocket, allégeant ainsi le CPU du serveur.
+**Rôle** : Déport de la puissance de calcul (Offload) et WebUI Bridge.
+- **Sémantique** : Intercepte les requêtes nécessitant une vectorisation massive et déporte l'inférence (Harrier-OSS) vers le navigateur client via la technologie WebGPU/WASM et WebSocket.
+- **Algorithme Clé** : Injecte un **HUD d'initialisation WebGPU** natif dans l'interface. Gère rigoureusement l'état asynchrone des **onglets multiples** via des `client_id` uniques et la détection de visibilité (`visibility`). Il implémente un mécanisme de **Fallback CPU asynchrone instantané** en annulant les requêtes `asyncio.Future` dès la perte de connexion WebSocket.
+
+### `tcp_keepalive_filter.py` (Inlet)
+**Rôle** : Maintien de connexion.
+- **Sémantique** : Filtre Inlet dédié au maintien des sessions (Keep-Alive) sur les connexions WebSocket longues, empêchant le WAF (BunkerWeb) de couper silencieusement la connexion.
 
 ### `user_native_context_filter.py` (Inlet - Priorité 10)
 **Rôle** : Grounding Utilisateur.

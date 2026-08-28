@@ -1,28 +1,6 @@
 {
   "version": 0,
-  "tool_server.connections": [
-    {
-      "url": "http://echo-mcp-broker:8000/mcp",
-      "path": "",
-      "type": "mcp",
-      "auth_type": "none",
-      "key": "",
-      "config": {
-        "enable": true,
-        "access_grants": [
-          {
-            "principal_type": "user",
-            "principal_id": "*",
-            "permission": "read"
-          }
-        ]
-      },
-      "info": {
-        "id": "echo-mcp-broker",
-        "name": "ECHO MCP Broker"
-      }
-    }
-  ],
+  "tool_server.connections": [],
   "ui.enable_signup": false,
   "ui.default_user_role": "user",
   "ui.default_group_id": "",

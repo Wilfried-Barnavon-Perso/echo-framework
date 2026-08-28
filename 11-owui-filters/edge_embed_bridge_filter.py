@@ -2,16 +2,16 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
+version: 1.12
 description: Composant système interne : Edge Embedding Bridge Filter.
-version: 1.8
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.12: Implémentation du Dual-Versioning (Modèle vs Script) et Auto-Reload (Idempotence intelligente).\n# 1.11: Correction du Self-Healing (Infinite Loop WebGPU) et du crash DOM (TypeError Morphing).
+# 1.10: Ajout d'un avertissement visuel explicite recommandant le chargement du modèle.
+# 1.9: Modification de la priorité (0 -> 1) pour permettre l'exécution préalable du TCP Keep-Alive Filter.
+# 1.8: Implémentation du pont asynchrone matériel et des mécanismes de Self-Healing WebGPU.
 # 1.7: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
-# 1.6: Fix UI (retrait de funding_url et self.toggle pour invisibilisation globale).
-# 1.5: Migration des configurations globales vers les Valves et suppression des UserValves.
-# 1.4: Migration vers le modèle Harrier-OSS (WebGPU ONNX), implémentation manuelle du pooling CLS et normalisation L2 en JS, et morphing du HUD en pastille avec animation.
-# 1.3: Injecte le bridge JavaScript WebGPU pour l'accélération matérielle des embeddings via bge-m3. Gestion intelligente du cache navigateur.
 
 import asyncio
 from pydantic import BaseModel, Field
@@ -23,7 +23,7 @@ except ImportError:
 
 class Filter:
     class Valves(BaseModel):
-        priority: int = Field(default=0, hidden=True, description="Priorité d'exécution (0 = premier).")
+        priority: int = Field(default=1, hidden=True, description="Priorité d'exécution (0 = premier).")
         ENABLE_EDGE_EMBEDDING: bool = Field(
             default=True,
             description="Activer le pont Edge Embedding (nécessite BunkerWeb ou un proxy WSS configuré)"
@@ -74,16 +74,30 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        # 5. Gestion des requêtes
+        SCRIPT_VERSION = "1.12"
         js_code = """
         (async function initEdgeEmbedding() {
-            const EDGE_VERSION = "2.0";
-            console.log("🚀 Initialisation ECHO Edge Embedding Bridge v" + EDGE_VERSION);
+            const INJECTED_SCRIPT_VERSION = "__INJECTED_SCRIPT_VERSION__";
+            const MODEL_CACHE_VERSION = "2.1";
+            
+            // 1. Verrou Singleton Intelligent & Auto-Reload SPA
+            if (window._echoEdgeScriptVersion) {
+                if (window._echoEdgeScriptVersion !== INJECTED_SCRIPT_VERSION) {
+                    console.warn(`🔄 [ECHO] Mise à jour du script détectée (${window._echoEdgeScriptVersion} -> ${INJECTED_SCRIPT_VERSION}). Hard Reload de la SPA en cours...`);
+                    location.reload();
+                    return;
+                }
+                return; // Idempotence respectée
+            }
+            window._echoEdgeScriptVersion = INJECTED_SCRIPT_VERSION;
+            
+            const clientId = crypto.randomUUID();
+            console.log(`🚀 Initialisation ECHO Edge Bridge | Script v${INJECTED_SCRIPT_VERSION} | Modèle v${MODEL_CACHE_VERSION} | Client: ${clientId}`);
 
-            // 1. GESTION DU CACHE CONDITIONNELLE
-            const storedVersion = localStorage.getItem('ECHO_EDGE_VERSION');
-            if (storedVersion !== EDGE_VERSION) {
-                console.log(`🔄 Nouvelle version détectée (${storedVersion} -> ${EDGE_VERSION}). Purge du cache...`);
+            // GESTION DU CACHE CONDITIONNELLE (Basée sur le Modèle)
+            const storedVersion = localStorage.getItem('ECHO_EDGE_MODEL_VERSION');
+            if (storedVersion !== MODEL_CACHE_VERSION) {
+                console.log(`🔄 Nouveau modèle détecté (${storedVersion} -> ${MODEL_CACHE_VERSION}). Purge du cache...`);
                 if (window.caches) {
                     try {
                         await caches.delete('transformers-cache');
@@ -92,24 +106,16 @@ class Filter:
                         console.warn("Impossible de vider le cache:", e);
                     }
                 }
-                localStorage.setItem('ECHO_EDGE_VERSION', EDGE_VERSION);
+                localStorage.setItem('ECHO_EDGE_MODEL_VERSION', MODEL_CACHE_VERSION);
             }
 
-            // 2. HARDWARE CHECK
+            // HARDWARE CHECK
             const isMobile = /Mobi|Android/i.test(navigator.userAgent);
             const ram = navigator.deviceMemory || 8;
             if (isMobile || ram < 4) {
                 console.log("⚠️ ECHO Edge: Appareil mobile ou RAM < 4GB détecté.");
-                return; // Le backend fera un fallback CPU via timeout (ou on peut le bypasser si l'API est exposée)
+                return;
             }
-
-            // Vérification de version et d'état
-            if (window._echoEdgeReady || window._echoEdgeConnecting) {
-                if (window._echoEdgeVersion === EDGE_VERSION) return;
-                console.log("🔄 Mise à jour du pont Edge détectée.");
-            }
-            window._echoEdgeVersion = EDGE_VERSION;
-            window._echoEdgeConnecting = true;
 
             // Injection CSS pour l'animation
             const styleId = 'echo-edge-styles';
@@ -132,7 +138,7 @@ class Filter:
                 document.head.appendChild(style);
             }
 
-            // 3. CREATION DU HUD DISCRET (TOAST)
+            // CREATION DU HUD DISCRET (TOAST)
             const hudId = 'echo-edge-hud-' + Date.now();
             const hud = document.createElement('div');
             hud.id = hudId;
@@ -159,7 +165,7 @@ class Filter:
                 user-select: none;
             `;
             
-            // Header Row (Title + Close Button)
+            // Header Row (Title)
             const headerRow = document.createElement('div');
             headerRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; width: 100%;';
             
@@ -181,20 +187,13 @@ class Filter:
                 <span>ECHO VRAM Loader</span>
             `;
 
-            const closeBtn = document.createElement('div');
-            closeBtn.innerHTML = '✕';
-            closeBtn.style.cssText = 'cursor: pointer; color: #94a3b8; font-size: 14px; padding: 0 4px; font-weight: bold; transition: color 0.2s;';
-            closeBtn.onmouseover = () => closeBtn.style.color = '#ef4444';
-            closeBtn.onmouseout = () => closeBtn.style.color = '#94a3b8';
-
             headerRow.appendChild(titleBox);
-            headerRow.appendChild(closeBtn);
             
             const textRow = document.createElement('div');
             textRow.id = hudId + '-text';
             textRow.style.color = '#94a3b8';
             textRow.style.lineHeight = '1.4';
-            textRow.innerHTML = 'Connexion WSS...';
+            textRow.innerHTML = 'Initialisation WSS...';
             
             const progressContainer = document.createElement('div');
             progressContainer.style.cssText = 'width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; margin-top: 2px;';
@@ -202,7 +201,6 @@ class Filter:
             const progressBar = document.createElement('div');
             progressBar.id = hudId + '-bar';
             progressBar.style.cssText = 'width: 0%; height: 100%; background: #38bdf8; transition: width 0.1s linear;';
-            
             progressContainer.appendChild(progressBar);
             
             const waitRow = document.createElement('div');
@@ -210,7 +208,7 @@ class Filter:
             waitRow.style.fontSize = '11px';
             waitRow.style.marginTop = '6px';
             waitRow.style.fontStyle = 'italic';
-            waitRow.innerHTML = 'Cette opération peut prendre quelques instants, merci de patienter...';
+            waitRow.innerHTML = 'Cette opération peut prendre quelques instants...<br><strong style="color:#38bdf8">Il est fortement recommandé de laisser le modèle charger.</strong>';
 
             hud.appendChild(headerRow);
             hud.appendChild(textRow);
@@ -228,281 +226,217 @@ class Filter:
             let yOffset = 0;
 
             function dragStart(e) {
-                if (e.target === closeBtn || e.target.tagName.toLowerCase() === 'a') return;
+                if (e.target.tagName.toLowerCase() === 'a') return;
                 initialX = e.clientX - xOffset;
                 initialY = e.clientY - yOffset;
                 isDragging = true;
                 hud.style.cursor = 'grabbing';
             }
-
             function dragEnd(e) {
                 initialX = currentX;
                 initialY = currentY;
                 isDragging = false;
                 hud.style.cursor = 'grab';
             }
-
             function drag(e) {
                 if (isDragging) {
                     e.preventDefault();
                     currentX = e.clientX - initialX;
                     currentY = e.clientY - initialY;
-                    
-                    const rect = hud.getBoundingClientRect();
-                    
-                    // Constrain within window
-                    const maxRight = 20; // Allow returning to initial
-                    const maxLeft = -(window.innerWidth - rect.width - 20); 
-                    const maxTop = -45; // 65px is initial top, allow moving up to 20px from top
-                    const maxBottom = window.innerHeight - rect.height - 65; 
-                    
-                    xOffset = Math.min(Math.max(currentX, maxLeft), maxRight);
-                    yOffset = Math.min(Math.max(currentY, maxTop), maxBottom);
-
-                    hud.style.transform = `translate3d(${xOffset}px, ${yOffset}px, 0)`;
+                    xOffset = currentX;
+                    yOffset = currentY;
+                    hud.style.transform = "translate3d(" + currentX + "px, " + currentY + "px, 0)";
                 }
             }
-
             hud.addEventListener('mousedown', dragStart);
             document.addEventListener('mouseup', dragEnd);
             document.addEventListener('mousemove', drag);
 
-            // Cancel Logic
+            // 3. CONNEXION WEBSOCKET & SELF-HEALING
             let wsRef = null;
-            let cancelTimeout = null;
+            let isConnecting = false;
+            let isFatalError = false;
+            let globalTokenizer = null;
+            let globalModel = null;
+            let isModelLoaded = false;
             
-            const handleCancel = () => {
-                if (window._echoEdgeReady) return; // Ignore if already loaded
-                
-                // Set cancel flag (not persistent)
-                window._echoEdgeConnecting = false;
-                window._echoEdgeReady = false;
-                
-                // Fallback backend to CPU immediately
+            // Notification de la visibilité au serveur (Proprioception)
+            document.addEventListener("visibilitychange", () => {
+                const state = document.hidden ? 'idle' : 'active';
                 if (wsRef && wsRef.readyState === WebSocket.OPEN) {
-                    wsRef.send(JSON.stringify({ type: 'incompatible' }));
-                    wsRef.close();
+                    wsRef.send(JSON.stringify({ type: 'visibility', state: state }));
                 }
+                // Reconnexion immédiate si retour sur l'onglet et socket tombée
+                if (!document.hidden && (!wsRef || wsRef.readyState === WebSocket.CLOSED)) {
+                    connectWebSocket();
+                }
+            });
 
-                // Visual Update
-                hud.style.borderColor = 'rgba(249, 115, 22, 0.5)';
-                progressContainer.style.display = 'none';
+            async function connectWebSocket() {
+                if (isConnecting || (wsRef && wsRef.readyState === WebSocket.OPEN)) return;
+                isConnecting = true;
                 
-                textRow.innerHTML = `
-                    <span style="color:#f97316;">WebGPU ignoré.</span><br/>
-                    Pour le désactiver, décochez ENABLE_EDGE_EMBEDDING.<br/>
-                    <a href="#" id="${hudId}-restart" style="color:#38bdf8; text-decoration:none; margin-top:6px; display:inline-block; font-weight:bold;">⟳ Redémarrer</a>
-                `;
-
-                document.getElementById(`${hudId}-restart`).onclick = (e) => {
-                    e.preventDefault();
-                    if (cancelTimeout) clearTimeout(cancelTimeout);
-                    hud.remove();
-                    document.removeEventListener('mouseup', dragEnd);
-                    document.removeEventListener('mousemove', drag);
-                    initEdgeEmbedding(); // Restart
-                };
-
-                // Auto-remove after 10s
-                cancelTimeout = setTimeout(() => {
-                    hud.style.opacity = '0';
-                    setTimeout(() => {
-                        hud.remove();
-                        document.removeEventListener('mouseup', dragEnd);
-                        document.removeEventListener('mousemove', drag);
-                    }, 300);
-                }, 10000);
-            };
-
-            closeBtn.onclick = handleCancel;
-
-            try {
-                // 4. CONNEXION WEBSOCKET PRECOCE
-                const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${location.host}/ws/edge-embed`;
-                const ws = new WebSocket(wsUrl);
-                wsRef = ws;
-                
-                ws.onopen = async () => {
-                    if (!window._echoEdgeConnecting) return; // Was cancelled
-
-                    console.log("✅ WebSocket ECHO Edge connecté");
-                    textRow.innerHTML = 'Préparation Harrier-OSS...';
+                try {
+                    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${location.host}/ws/edge-embed?client_id=${clientId}`;
+                    const ws = new WebSocket(wsUrl);
+                    wsRef = ws;
                     
-                    try {
-                        // 5. IMPORT ET CHARGEMENT DU MODELE V3
-                        const transformers = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js');
-                        transformers.env.allowLocalModels = false;
+                    ws.onopen = async () => {
+                        isConnecting = false;
+                        console.log("✅ WebSocket ECHO Edge connecté");
+                        textRow.innerHTML = 'Préparation Harrier-OSS...';
+                        hud.style.borderColor = 'rgba(56, 189, 248, 0.25)';
                         
-                        let tokenizer, model;
                         try {
-                            tokenizer = await transformers.AutoTokenizer.from_pretrained('onnx-community/harrier-oss-v1-0.6b-ONNX');
-                            model = await transformers.AutoModel.from_pretrained('onnx-community/harrier-oss-v1-0.6b-ONNX', {
-                                device: 'webgpu',
-                                dtype: 'fp16',
-                                progress_callback: (x) => {
-                                    if (!window._echoEdgeConnecting) return; // Stop updates if cancelled
-                                    if (x.status === 'downloading' || x.status === 'progress') {
-                                        const percent = x.total ? Math.round((x.loaded / x.total) * 100) : 0;
-                                        textRow.innerHTML = `Chargement modèle: <b>${percent}%</b>`;
-                                        progressBar.style.width = `${percent}%`;
-                                    }
-                                }
-                            });
-                        } catch (pipelineErr) {
-                            console.error("💥 Erreur lors du chargement du modèle (HTML Poison possible). Purge du cache...", pipelineErr);
-                            if (window.caches) {
-                                await caches.delete('transformers-cache');
-                            }
-                            throw pipelineErr; // Déclenche le catch(modelError) pour le repli CPU
-                        }
-                        
-                        if (!window._echoEdgeConnecting) return; // Cancelled during download
-                        
-                        // Modèle prêt, on notifie le backend
-                        ws.send(JSON.stringify({ type: 'ready' }));
-                        window._echoEdgeReady = true;
-                        
-                        // Morphing du HUD en mini-moniteur
-                        const svgIcon = titleBox.querySelector('svg');
-                        hud.innerHTML = ''; // Nettoyage total du contenu précédent (plus de code mort)
-                        hud.appendChild(svgIcon);
-                        
-                        // Transition CSS vers la pastille
-                        hud.style.width = '32px';
-                        hud.style.height = '32px';
-                        hud.style.padding = '0';
-                        hud.style.borderRadius = '50%';
-                        hud.style.justifyContent = 'center';
-                        hud.style.alignItems = 'center';
-                        hud.style.opacity = '0.4';
-                        
-                        // Gestion des requêtes
-                        ws.onmessage = async (event) => {
-                            try {
-                                const payload = JSON.parse(event.data);
-                                if (payload.type === 'embed' && payload.texts && payload.request_id) {
-                                    hud.classList.add('echo-gpu-computing');
-                                    try {
-                                        const texts = Array.isArray(payload.texts) ? payload.texts : [payload.texts];
-                                        const inputs = tokenizer(texts, { padding: true, truncation: true });
-                                        const outputs = await model(inputs);
-                                        
-                                        const hidden = outputs.last_hidden_state || outputs.logits || Object.values(outputs)[0];
-                                        const dims = hidden.dims;
-                                        const batch_size = dims[0];
-                                        
-                                        // Support des tenseurs 3D [batch, seq, dim] et 2D [batch, dim] (pooling intégré)
-                                        const is3D = dims.length >= 3;
-                                        const seq_len = is3D ? dims[1] : 1;
-                                        const embed_dim = is3D ? dims[2] : dims[1];
-                                        
-                                        const embeddings = [];
-                                        
-                                        for (let i = 0; i < batch_size; i++) {
-                                            // CLS Token pooling (Index 0) pour les modèles encodeurs
-                                            const cls_token_idx = 0;
-                                            
-                                            let vec_start, vec_end;
-                                            if (is3D) {
-                                                vec_start = (i * seq_len + cls_token_idx) * embed_dim;
-                                            } else {
-                                                vec_start = i * embed_dim;
+                            const transformers = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js');
+                            transformers.env.allowLocalModels = false;
+                            
+                            if (!isModelLoaded) {
+                                try {
+                                    globalTokenizer = await transformers.AutoTokenizer.from_pretrained('onnx-community/harrier-oss-v1-0.6b-ONNX');
+                                    globalModel = await transformers.AutoModel.from_pretrained('onnx-community/harrier-oss-v1-0.6b-ONNX', {
+                                        device: 'webgpu',
+                                        dtype: 'fp16',
+                                        progress_callback: (x) => {
+                                            if (ws.readyState !== WebSocket.OPEN) return;
+                                            if (x.status === 'downloading' || x.status === 'progress') {
+                                                const percent = x.total ? Math.round((x.loaded / x.total) * 100) : 0;
+                                                textRow.innerHTML = `Chargement modèle: <b>${percent}%</b>`;
+                                                progressBar.style.width = `${percent}%`;
                                             }
-                                            vec_end = vec_start + embed_dim;
-                                            
-                                            const vector = hidden.data.slice(vec_start, vec_end);
-                                            
-                                            // L2 Normalization (match PyTorch exact logic)
-                                            let sum_sq = 0;
-                                            for (let j = 0; j < embed_dim; j++) {
-                                                sum_sq += vector[j] * vector[j];
-                                            }
-                                            const norm = Math.sqrt(sum_sq);
-                                            
-                                            const norm_vec = new Array(embed_dim);
-                                            for (let j = 0; j < embed_dim; j++) {
-                                                let val = Number(vector[j]);
-                                                if (isNaN(val)) val = 0; // Sécurité anti-NaN
-                                                norm_vec[j] = val / (norm || 1);
-                                            }
-                                            embeddings.push(norm_vec);
                                         }
-                                        
-                                        ws.send(JSON.stringify({
-                                            type: 'result',
-                                            request_id: payload.request_id,
-                                            embedding: embeddings
-                                        }));
-                                    } finally {
-                                        hud.classList.remove('echo-gpu-computing');
-                                    }
+                                    });
+                                    isModelLoaded = true;
+                                } catch (pipelineErr) {
+                                    console.error("💥 Erreur chargement modèle. Purge cache...", pipelineErr);
+                                    if (window.caches) await caches.delete('transformers-cache');
+                                    throw pipelineErr;
                                 }
-                            } catch(err) {
-                                console.error("❌ Erreur inférence Edge:", err);
+                            } else {
+                                textRow.innerHTML = `Modèle en mémoire: <b>Ready</b>`;
+                                progressBar.style.width = `100%`;
                             }
-                        };
-                        
-                    } catch (modelError) {
-                        if (!window._echoEdgeConnecting) return; // Was cancelled
-                        console.warn("💥 Erreur d'initialisation WebGPU:", modelError);
-                        
-                        // Notification au backend pour repli CPU immédiat
-                        ws.send(JSON.stringify({ type: 'incompatible' }));
-                        window._echoEdgeConnecting = false;
-                        window._echoEdgeReady = false;
-                        
-                        // HUD: Repli discret
-                        hud.style.borderColor = 'rgba(239, 68, 68, 0.4)';
-                        textRow.innerHTML = 'WebGPU indisponible. Repli serveur...';
-                        progressBar.style.background = '#ef4444';
-                        setTimeout(() => { 
-                            hud.style.opacity = '0'; 
-                            setTimeout(() => {
-                                hud.remove();
-                                document.removeEventListener('mouseup', dragEnd);
-                                document.removeEventListener('mousemove', drag);
-                            }, 300); 
-                        }, 2000);
-                        
-                        ws.close();
-                    }
-                };
-                
-                ws.onerror = (err) => {
-                    if (!window._echoEdgeConnecting) return;
-                    console.error("🔌 Erreur WebSocket ECHO Edge:", err);
-                    window._echoEdgeConnecting = false;
-                    window._echoEdgeReady = false;
-                    hud.style.opacity = '0';
-                    setTimeout(() => {
-                        hud.remove();
-                        document.removeEventListener('mouseup', dragEnd);
-                        document.removeEventListener('mousemove', drag);
-                    }, 300);
-                };
-                
-                ws.onclose = () => {
-                    // Only cleanup if it wasn't gracefully handled
-                    if (!window._echoEdgeReady) {
-                        window._echoEdgeConnecting = false;
-                    }
-                };
-                
-            } catch (error) {
-                if (!window._echoEdgeConnecting) return;
-                console.error("💥 Erreur globale ECHO Edge:", error);
-                window._echoEdgeConnecting = false;
-                window._echoEdgeReady = false;
-                hud.style.opacity = '0';
-                setTimeout(() => {
-                    hud.remove();
-                    document.removeEventListener('mouseup', dragEnd);
-                    document.removeEventListener('mousemove', drag);
-                }, 300);
+                            
+                            if (ws.readyState !== WebSocket.OPEN) return;
+                            
+                            // Modèle prêt
+                            ws.send(JSON.stringify({ type: 'ready' }));
+                            if (!document.hidden) ws.send(JSON.stringify({ type: 'visibility', state: 'active' }));
+                            
+                            // Morphing du HUD
+                            if (hud.style.width !== '32px') {
+                                const svgIcon = titleBox.querySelector('svg');
+                                if (svgIcon) {
+                                    hud.innerHTML = ''; 
+                                    hud.appendChild(svgIcon);
+                                }
+                                
+                                hud.style.width = '32px';
+                                hud.style.height = '32px';
+                                hud.style.padding = '0';
+                                hud.style.borderRadius = '50%';
+                                hud.style.justifyContent = 'center';
+                                hud.style.alignItems = 'center';
+                                hud.style.opacity = '0.4';
+                            }
+                            
+                            ws.onmessage = async (event) => {
+                                try {
+                                    const payload = JSON.parse(event.data);
+                                    if (payload.type === 'embed' && payload.texts && payload.request_id) {
+                                        hud.classList.add('echo-gpu-computing');
+                                        try {
+                                            const texts = Array.isArray(payload.texts) ? payload.texts : [payload.texts];
+                                            const inputs = globalTokenizer(texts, { padding: true, truncation: true });
+                                            const outputs = await globalModel(inputs);
+                                            
+                                            const hidden = outputs.last_hidden_state || outputs.logits || Object.values(outputs)[0];
+                                            const dims = hidden.dims;
+                                            const batch_size = dims[0];
+                                            
+                                            const is3D = dims.length >= 3;
+                                            const seq_len = is3D ? dims[1] : 1;
+                                            const embed_dim = is3D ? dims[2] : dims[1];
+                                            
+                                            const embeddings = [];
+                                            
+                                            for (let i = 0; i < batch_size; i++) {
+                                                let vec_start, vec_end;
+                                                if (is3D) {
+                                                    vec_start = (i * seq_len) * embed_dim;
+                                                } else {
+                                                    vec_start = i * embed_dim;
+                                                }
+                                                vec_end = vec_start + embed_dim;
+                                                const vector = hidden.data.slice(vec_start, vec_end);
+                                                
+                                                let sum_sq = 0;
+                                                for (let j = 0; j < embed_dim; j++) sum_sq += vector[j] * vector[j];
+                                                const norm = Math.sqrt(sum_sq);
+                                                
+                                                const norm_vec = new Array(embed_dim);
+                                                for (let j = 0; j < embed_dim; j++) {
+                                                    let val = Number(vector[j]);
+                                                    norm_vec[j] = (isNaN(val) ? 0 : val) / (norm || 1);
+                                                }
+                                                embeddings.push(norm_vec);
+                                            }
+                                            
+                                            ws.send(JSON.stringify({
+                                                type: 'result',
+                                                request_id: payload.request_id,
+                                                embedding: embeddings
+                                            }));
+                                        } finally {
+                                            hud.classList.remove('echo-gpu-computing');
+                                        }
+                                    }
+                                } catch(err) {
+                                    console.error("❌ Erreur inférence Edge:", err);
+                                }
+                            };
+                            
+                        } catch (modelError) {
+                            console.warn("💥 Erreur d'initialisation WebGPU:", modelError);
+                            isFatalError = true;
+                            if (ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'incompatible' }));
+                                ws.close();
+                            }
+                            hud.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+                            // Retrait discret car l'appareil est fondamentalement incompatible
+                            setTimeout(() => { 
+                                hud.style.opacity = '0'; 
+                                setTimeout(() => { hud.remove(); }, 300); 
+                            }, 2000);
+                        }
+                    };
+                    
+                    ws.onerror = (err) => {
+                        console.error("🔌 Erreur WebSocket ECHO Edge:", err);
+                    };
+                    
+                    ws.onclose = () => {
+                        isConnecting = false;
+                        if (isFatalError) return;
+                        // Mode Résilience (Self-Healing)
+                        console.warn("🔌 Socket fermée. Reconnexion en cours...");
+                        hud.classList.remove('echo-gpu-computing');
+                        hud.style.borderColor = '#f59e0b'; // Orange
+                        setTimeout(connectWebSocket, 5000); // Exponential backoff basique
+                    };
+                    
+                } catch (error) {
+                    isConnecting = false;
+                    setTimeout(connectWebSocket, 5000);
+                }
             }
+            
+            // Démarrage initial
+            connectWebSocket();
         })();
-        """
+        """.replace("__INJECTED_SCRIPT_VERSION__", SCRIPT_VERSION)
 
         # Remplacement de l'ID utilisateur dans le JS pour la remontée d'incompatibilité
         js_code = js_code.replace('__USER_ID__', user_id)

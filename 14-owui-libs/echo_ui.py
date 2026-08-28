@@ -1,18 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.62
+version: 5.63
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.63: Refonte anti-spaghetti des modales ECHO (EchoUI.get_custom_modals_js) avec implémentation de boutons interactifs (pills) pour les options de prompt.
 # 5.61: Amélioration critique UX Mobile : Flex-wrap sur le header et transformation de la sidebar en nuage de tags (wrap) pour accessibilité de tous les fichiers.
 # 5.60: Correction critique du Codex sur mobile (IDs manquants sur le header et le body empêchant le CSS responsive de s'appliquer).
 # 5.59: Refonte responsive globale des HUDs, désactivation du drag tactile et intégration pinch-to-zoom (WebPlayer).
 # 5.56: Correction de l'impression partielle du Codex PDF en forçant overflow: visible sur html et body.
-# 5.55: Modification du comportement du bouton Plein Écran (retour à 25% de la surface centrée au lieu de l'état précédent).
-# 5.54: Correction du bug d'impression de l'ECHO Codex et ajout de la fonctionnalité Plein Écran contraint.
-# 5.53: Fix backspace (suppression de mots entiers) dans Monaco Editor en forçant accessibilitySupport à 'off'.
 
 
 from fastapi.responses import HTMLResponse
@@ -800,6 +798,132 @@ return new Promise(function(resolve) {{
   # =====================================================================
 
   @staticmethod
+  def get_custom_modals_js() -> str:
+      """Fournit le code JS autonome des modales natives asynchrones d'ECHO (Confirm & Prompt)."""
+      return """
+      if (!window.echoCustomConfirm) {
+          window.echoCustomConfirm = (msg, callback) => {
+              const isDark = document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
+              const bgColor = isDark ? '#1e1e2e' : '#ffffff';
+              const borderColor = isDark ? '#444' : '#ddd';
+              const textColor = isDark ? '#cdd6f4' : '#333';
+              const accentColor = '#89b4fa';
+              
+              const overlay = document.createElement('div');
+              overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:center; justify-content:center; font-family:"Segoe UI",system-ui,sans-serif;';
+              const dialog = document.createElement('div');
+              dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:20px; border-radius:8px; text-align:center; box-shadow:0 10px 40px rgba(0,0,0,0.5); max-width:80%; color:' + textColor + '; min-width:250px;';
+              dialog.innerHTML = '<div style="margin-bottom:20px; font-size:14px; white-space:pre-wrap;">' + msg.replace(/</g, "&lt;") + '</div>';
+              const btnContainer = document.createElement('div');
+              btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px;';
+              const btnCancel = document.createElement('button');
+              btnCancel.textContent = 'Annuler';
+              btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:13px;';
+              const btnOk = document.createElement('button');
+              btnOk.textContent = 'Confirmer';
+              btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';
+              
+              btnCancel.onclick = () => { overlay.remove(); callback && callback(false); };
+              btnOk.onclick = () => { overlay.remove(); callback && callback(true); };
+              
+              btnContainer.appendChild(btnCancel);
+              btnContainer.appendChild(btnOk);
+              dialog.appendChild(btnContainer);
+              overlay.appendChild(dialog);
+              document.body.appendChild(overlay);
+          };
+      }
+
+      if (!window.echoCustomPrompt) {
+          window.echoCustomPrompt = (msg, timeoutSeconds, options, callback) => {
+              const isDark = document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
+              const bgColor = isDark ? '#1e1e2e' : '#ffffff';
+              const borderColor = isDark ? '#444' : '#ddd';
+              const textColor = isDark ? '#cdd6f4' : '#333';
+              const accentColor = '#89b4fa';
+              
+              const overlay = document.createElement('div');
+              overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:center; justify-content:center; font-family:"Segoe UI",system-ui,sans-serif;';
+              const dialog = document.createElement('div');
+              dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:20px; border-radius:8px; text-align:center; box-shadow:0 10px 40px rgba(0,0,0,0.5); max-width:80%; color:' + textColor + '; min-width:300px;';
+              dialog.innerHTML = '<div style="margin-bottom:15px; font-size:14px; white-space:pre-wrap; text-align:left;">' + msg.replace(/</g, "&lt;") + '</div>';
+              
+              const inputField = document.createElement('input');
+              inputField.type = 'text';
+              inputField.style.cssText = 'width:100%; box-sizing:border-box; padding:8px; margin-bottom:20px; border-radius:4px; border:1px solid ' + borderColor + '; background:rgba(0,0,0,0.2); color:' + textColor + '; outline:none; font-family:monospace;';
+              
+              if (options && options.length > 0) {
+                  const pillsContainer = document.createElement('div');
+                  pillsContainer.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px; margin-bottom:15px; justify-content:flex-start;';
+                  options.forEach(opt => {
+                      const pill = document.createElement('button');
+                      pill.textContent = opt;
+                      pill.style.cssText = 'padding:6px 12px; border-radius:16px; border:1px solid ' + accentColor + '; background:rgba(137,180,250,0.1); color:' + accentColor + '; cursor:pointer; font-size:12px; transition:all 0.2s; white-space:nowrap;';
+                      pill.onmouseover = () => { pill.style.background = accentColor; pill.style.color = '#1e1e2e'; };
+                      pill.onmouseout = () => { pill.style.background = 'rgba(137,180,250,0.1)'; pill.style.color = accentColor; };
+                      pill.onclick = () => {
+                          inputField.value = opt;
+                          cleanupAndResolve(opt);
+                      };
+                      pillsContainer.appendChild(pill);
+                  });
+                  dialog.appendChild(pillsContainer);
+              }
+              
+              const btnContainer = document.createElement('div');
+              btnContainer.style.cssText = 'display:flex; justify-content:space-between; gap:10px;';
+              
+              const btnCancel = document.createElement('button');
+              btnCancel.textContent = 'Annuler';
+              btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:13px;';
+              
+              const btnOk = document.createElement('button');
+              btnOk.textContent = 'Soumettre';
+              btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';
+              
+              let timeRemaining = timeoutSeconds;
+              let timerInterval = null;
+              
+              const updateTimer = () => {
+                  const m = Math.floor(timeRemaining / 60);
+                  const s = timeRemaining % 60;
+                  btnCancel.textContent = 'Annuler (' + m + ':' + s.toString().padStart(2, '0') + ')';
+              };
+              
+              const cleanupAndResolve = (val) => {
+                  if(timerInterval) clearInterval(timerInterval);
+                  overlay.remove();
+                  callback && callback(val);
+              };
+
+              if (timeoutSeconds > 0) {
+                  updateTimer();
+                  timerInterval = setInterval(() => {
+                      timeRemaining--;
+                      if (timeRemaining <= 0) {
+                          cleanupAndResolve(null);
+                      } else {
+                          updateTimer();
+                      }
+                  }, 1000);
+              }
+              
+              btnCancel.onclick = () => cleanupAndResolve(null);
+              btnOk.onclick = () => cleanupAndResolve(inputField.value);
+              inputField.onkeydown = (e) => { if(e.key === 'Enter') cleanupAndResolve(inputField.value); };
+              
+              dialog.appendChild(inputField);
+              btnContainer.appendChild(btnCancel);
+              btnContainer.appendChild(btnOk);
+              dialog.appendChild(btnContainer);
+              overlay.appendChild(dialog);
+              document.body.appendChild(overlay);
+              inputField.focus();
+          };
+      }
+      """
+
+  @staticmethod
   def _generate_codex_js(files_json: str, quick_actions_json: str, chat_id: str) -> str:
     """Génère le script JS complet du HUD Monaco Codex.
     Injection via __event_call__({type: 'execute', data: {code: ...}})."""
@@ -878,31 +1002,8 @@ return new Promise(function(resolve) {{
         document.head.appendChild(scrollStyle);
       }}
 
-      // --- Custom Confirm Dialog ---
-      window.echoCustomConfirm = (msg, callback) => {{
-        const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:20000; display:flex; align-items:center; justify-content:center; font-family:"Segoe UI",system-ui,sans-serif;';
-        const dialog = document.createElement('div');
-        dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:20px; border-radius:8px; text-align:center; box-shadow:0 10px 40px rgba(0,0,0,0.5); max-width:80%; color:' + textColor + '; min-width:250px;';
-        dialog.innerHTML = '<div style="margin-bottom:20px; font-size:14px; white-space:pre-wrap;">' + msg.replace(/</g, "&lt;") + '</div>';
-        const btnContainer = document.createElement('div');
-        btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px;';
-        const btnCancel = document.createElement('button');
-        btnCancel.textContent = 'Annuler';
-        btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:13px;';
-        const btnOk = document.createElement('button');
-        btnOk.textContent = 'Confirmer';
-        btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';
-        
-        btnCancel.onclick = () => {{ overlay.remove(); callback && callback(false); }};
-        btnOk.onclick = () => {{ overlay.remove(); callback && callback(true); }};
-        
-        btnContainer.appendChild(btnCancel);
-        btnContainer.appendChild(btnOk);
-        dialog.appendChild(btnContainer);
-        overlay.appendChild(dialog);
-        document.body.appendChild(overlay);
-      }};
+      // --- Custom Dialogs ---
+      {EchoUI.get_custom_modals_js()}
 
       // --- HUD Container ---
       const hud = document.createElement('div');

@@ -248,7 +248,9 @@ date_et_heure: "2026-08-24 14:00"
 
     <p>
       Ce filtre intercepte le corps de la page Open WebUI pour injecter dynamiquement le pont JavaScript WebGPU d'inférence distante (WASM).
-      Il gère également un mécanisme de blocage actif (conditionné par la valve <code>WAIT_FOR_EDGE_EMBEDDING</code>) avec une tolérance stricte de 3 secondes pour un signe de vie, et une limite globale définie par <code>EDGE_EMBEDDING_TIMEOUT</code>, garantissant que le client s'est connecté au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
+      Il gère un <strong>HUD d'initialisation navigateur</strong> natif et une gestion multi-onglets (via l'UUID <code>client_id</code> et la détection de <code>visibility</code>).
+      Un mécanisme de blocage actif (conditionné par la valve <code>WAIT_FOR_EDGE_EMBEDDING</code>) garantit que le client s'est connecté au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
+      Le filtre intègre également un <strong>Fallback CPU Asynchrone Instantané</strong> : il annule les requêtes <code>asyncio.Future</code> suspendues si la connexion WebSocket est rompue, basculant automatiquement le relais vers l'infrastructure Docker (`bge-m3`).
     </p>
 
 
@@ -265,6 +267,11 @@ date_et_heure: "2026-08-24 14:00"
       Ce HUD flottant (Heads-Up Display) s'interface de manière asynchrone avec les actions des Modèles, fournissant à l'utilisateur des raccourcis asynchrones et l'accès au Vault MCP, le tout sans jamais saturer ou perturber la fenêtre de discussion active.
     </p>
 
+    <h2>Filtre 6 - <code>tcp_keep_alive_filter.py</code></h2>
+    <p>
+      Filtre Inlet spécialisé visant à maintenir la stabilité des connexions réseau prolongées. Son rôle est d'empêcher la déconnexion inopinée des sessions websocket longues, particulièrement critique lors de la sollicitation de workflows Headless N8N ou de consultations Delphi qui nécessitent des délais d'exécution importants.
+    </p>
+
     <div class="transition-text">
 
       <a href="05_hud_ui.html">&larr; Écosystème HUD & UI</a>
@@ -273,7 +280,7 @@ date_et_heure: "2026-08-24 14:00"
     </div>
 
     <footer>
-      ECHO Framework - Version 5.199.39 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

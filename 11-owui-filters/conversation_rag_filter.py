@@ -1,11 +1,12 @@
 """
 title: ECHO Session RAG Conversation Filter
 author: ECHO Framework
-version: 1.12
+version: 1.13
 description: Composant système interne : ECHO Session RAG Conversation Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.13: Résolution Fork Assistant : Utilisation de l'ID du message assistant pour garantir l'indexation lors d'une régénération.
 # 1.11: Résolution Fork Bomb (Branching) : Itération à rebours O(1) via SQLite is_embedded.
 # 1.10: Self-Healing RAG Filter (auto-réparation avec last_rag_message_id).
 # 1.9: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
@@ -112,7 +113,9 @@ class Filter:
         turns_to_process = []
         for turn in reversed(turns):
             if not turn: continue
-            unique_seed = turn[0].get("id") or str(turn[0].get("timestamp"))
+            # Utilisation de l'ID du message de l'assistant (dernier du tour) pour détecter correctement
+            # les forks de régénération (où l'ID du message utilisateur turn[0] ne change pas).
+            unique_seed = turn[-1].get("id") or str(turn[-1].get("timestamp"))
             
             # Dès qu'on trouve un message déjà marqué, l'historique antérieur est valide
             if state_mgr.is_message_embedded(str(unique_seed)):
@@ -127,7 +130,7 @@ class Filter:
         # Traitement asynchrone des nouveaux tours
         for turn in turns_to_process:
             formatted_text = self._format_messages(turn)
-            unique_seed = turn[0].get("id") or str(turn[0].get("timestamp"))
+            unique_seed = turn[-1].get("id") or str(turn[-1].get("timestamp"))
             
             asyncio.create_task(
                 EchoGeminiClient.index_text_in_ephemeral_rag(

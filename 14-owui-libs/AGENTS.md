@@ -17,7 +17,7 @@ Ce dossier constitue le **Cœur Applicatif (Core Libraries)** du framework. Il c
 
 ### Interfaces Utilisateur (UI & DOM)
 - **`echo_ui.py`** : Moteur de rendu UI.
-  - **Sémantique** : Responsable de la génération dynamique de code HTML/CSS/JS (Data Islands). Il injecte les modales natives asynchrones (`window.echoCustomConfirm`, `window.mcpAlert`) qui respectent le mode sombre/clair sans bloquer l'Event Loop de WebUI. Gère également le support d'impression (`allow-modals`) pour les actions PDF.
+  - **Sémantique** : Responsable de la génération dynamique de code HTML/CSS/JS (Data Islands). Il implémente un système sophistiqué **"OWUI Tools"** injectant des modales natives asynchrones (`window.echoCustomConfirm`, `window.echoCustomPrompt` pour les saisies LLM, `window.mcpAlert`) qui respectent le mode sombre/clair sans bloquer l'Event Loop de WebUI. Gère également le support d'impression (`allow-modals`) pour les actions PDF.
 - **`echo_visuals.py`** : Traduction des concepts générés par le LLM (arbres, graphes) en composants web interactifs (via d3.js, Leaflet ou vis-network).
 
 ### Authentification Antigravity 2.1

@@ -177,14 +177,14 @@
         <a href="08g_visual_intelligence.html">Explorer ➔</a>
       </div>
       <div class="card">
-        <h3>🧠 Agents Cognitifs (Conseil d'Experts)</h3>
+        <h3>🧠 Agents Cognitifs & Délégation</h3>
         <p><strong>Table Ronde Delphi</strong> (<code>consult_council</code> - N experts en
         tours parallélisés avec thoughtSignatures, synthèse par modèle dédié),
         forge et gestion des Skills (<code>forge_skill</code>, <code>list_skills</code>),
-        <strong>Agent stateful</strong> (<code>delegate_to_agent</code> dans
-        <code>agent_engine_tool.py</code> - délégation stateful.</p>
+        <strong>Agent stateful</strong> (<code>delegate_to_agent</code>) et
+        <strong>Data Broker</strong> (<code>delegate_to_data_broker.py</code>) pour déléguer la récupération complexe de données à un agent spécialisé.</p>
         <p><strong>Sources :</strong> <code>12-owui-tools/agent_orchestration_tool.py</code>,
-        <code>12-owui-tools/agent_engine_tool.py</code></p>
+        <code>12-owui-tools/agent_engine_tool.py</code>, <code>12-owui-tools/delegate_to_data_broker.py</code></p>
         <a href="08i_delegate_agent.html">Delegate Agent →</a>
         &nbsp;|
         <a href="08j_agent_orchestration.html">Orchestration →</a>
@@ -216,10 +216,15 @@
         <a href="08k_n8n_orchestrator.html">Explorer ➔</a>
       </div>
       <div class="card">
-        <h3>🔌 MCP Broker</h3>
-        <p>Connexion transparente via ASGI aux outils d'entreprise (Sirene, Bodacc, Academic). L'Identity Vault fusionne dynamiquement les schémas pour la distribution des secrets.</p>
-        <p><strong>Serveur :</strong> <code>FastMCP</code> via Uvicorn</p>
+        <h3>🔌 MCP Broker & Inter-Services</h3>
+        <p>Proxy ASGI (FastMCP) agissant comme Proxy HTTP complet pour les outils externes (Sirene, Bodacc). Intègre la <strong>Communication Inter-Services</strong> via <code>remote_mcp_tool.py</code> et <code>internal_mcp_tool.py</code> pour orchestrer les tâches avec un schéma dynamique.</p>
+        <p><strong>Outils :</strong> <code>12-owui-tools/remote_mcp_tool.py</code>, <code>12-owui-tools/internal_mcp_tool.py</code></p>
         <a href="08l_mcp_broker.html">Explorer ➔</a>
+      </div>
+      <div class="card">
+        <h3>🔐 Identity Vault & Généralistes</h3>
+        <p><strong>Identity Vault</strong> permet au modèle de manipuler ses propres secrets (SQLite) et de découvrir les schémas d'authentification MCP (<code>identity_vault_tool.py</code>). <strong>Outils Généralistes</strong> intègre un <code>async_wait_timer</code> et des capacités de saisie utilisateur interactive (<code>generalist_tools.py</code>).</p>
+        <p><strong>Sources :</strong> <code>12-owui-tools/identity_vault_tool.py</code>, <code>12-owui-tools/generalist_tools.py</code></p>
       </div>
     </div>
 
@@ -252,7 +257,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.199.39 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

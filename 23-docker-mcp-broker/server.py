@@ -1,11 +1,14 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 1.6 (Migration MCP V2)
+VERSION : 1.9 (HTTP Status Code Forwarding)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-08-09
+DATE MAJ : 2026-08-28
 ================================================================================
 """
+from starlette.requests import Request
+from modules.m5_proxy_mcp import proxy_mcp_request
+from modules.m2_jobs_omnisearch import setup_jobs_omnisearch_mcp
 from core.security import user_id_var
 from starlette.responses import PlainTextResponse, JSONResponse
 from modules.m4_academic import register_academic_tools
@@ -21,7 +24,6 @@ mcp = MCPServer("ECHO_MCP_Broker")
 
 # Importation des modules pour enregistrer les outils
 
-from modules.m2_jobs_omnisearch import setup_jobs_omnisearch_mcp
 setup_jobs_omnisearch_mcp(mcp)
 register_corporate_tools(mcp)
 register_academic_tools(mcp)
@@ -35,6 +37,8 @@ async def ping() -> str:
 # FastMCP et Open WebUI communiquent via StreamableHTTP (et non SSE standard)
 # Nous utiliserons Uvicorn pour exposer l'application ASGI générée par mcp.
 app = mcp.streamable_http_app(
+    json_response=True,
+    stateless_http=True,
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False))
 
@@ -59,6 +63,22 @@ SERVICE_SCHEMAS = {
         "name": "Academic",
         "fields": [
             {"id": "api_key", "label": "Clé API (Optionnelle)", "type": "password"}
+        ]
+    },
+    "remote_mcp": {
+        "name": "Serveurs MCP Distants (HTTP/SSE)",
+        "fields": [
+            {"id": "url", "label": "URL du Serveur", "type": "text", "help": "ex: https://locataire-averti.com/mcp"},
+            {"id": "headers", "label": "En-têtes (JSON)", "type": "text", "help": "ex: {\"Authorization\": \"Bearer XXX\"}"},
+            {"id": "description", "label": "Rôle", "type": "text", "help": "Sert au LLM pour savoir quand l'utiliser."}
+        ]
+    },
+    "stdio_mcp": {
+        "name": "Serveurs MCP Locaux (Stdio)",
+        "fields": [
+            {"id": "command", "label": "Commande", "type": "text", "help": "ex: npx ou uvx"},
+            {"id": "args", "label": "Arguments (JSON)", "type": "text", "help": "ex: [\"-y\", \"@modelcontextprotocol/server-postgres\"]"},
+            {"id": "description", "label": "Rôle", "type": "text", "help": "Sert au LLM pour savoir quand l'utiliser."}
         ]
     }
 }
@@ -94,6 +114,39 @@ class WebUIUserMiddleware:
 
 
 app.add_middleware(WebUIUserMiddleware)
+
+# Nouveau routeur pour proxy_mcp
+
+
+async def proxy_mcp_route(request: Request):
+    try:
+        payload = await request.json()
+        result = await proxy_mcp_request(payload)
+        return JSONResponse(result)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        
+        status_code = 500
+        message = str(e)
+        payload = {"status": "error", "source": "broker_internal", "message": message}
+        
+        # Interception dynamique de l'erreur httpx/httpx2 (HTTPStatusError)
+        if type(e).__name__ == 'HTTPStatusError':
+            status_code = 502  # Bad Gateway
+            remote_status = getattr(e.response, "status_code", "Inconnu") if hasattr(e, "response") else "Inconnu"
+            remote_url = getattr(e.request, "url", "Inconnue") if hasattr(e, "request") else "Inconnue"
+            message = f"La cible distante ({remote_url}) a rejeté la requête avec le code {remote_status}."
+            payload = {
+                "status": "error", 
+                "source": "remote_server", 
+                "http_code": remote_status,
+                "message": message
+            }
+            
+        return JSONResponse(payload, status_code=status_code)
+
+app.add_route("/proxy_mcp", proxy_mcp_route, methods=["POST"])
 
 if __name__ == "__main__":
     # Démarrage du serveur sur le port 8000

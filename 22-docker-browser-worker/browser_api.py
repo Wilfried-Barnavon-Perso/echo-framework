@@ -86,7 +86,15 @@ from fastapi.responses import ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import logging.config
+import json
+import os
+
+if os.path.exists('/app/logging.json'):
+    with open('/app/logging.json', 'r') as f:
+        logging.config.dictConfig(json.load(f))
+else:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("echo-browser")
 
 import time

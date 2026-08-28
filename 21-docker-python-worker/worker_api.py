@@ -25,7 +25,15 @@ CHANGELOG 1.2 :
 """
 
 # Configuration des logs pour voir qui fait quoi dans la console Docker
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import logging.config
+import json
+import os
+
+if os.path.exists('/app/logging.json'):
+    with open('/app/logging.json', 'r') as f:
+        logging.config.dictConfig(json.load(f))
+else:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 import time

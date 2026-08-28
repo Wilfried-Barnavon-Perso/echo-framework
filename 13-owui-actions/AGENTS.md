@@ -16,9 +16,9 @@ Ce dossier gère les **Actions Interactives (Boutons sous les messages)**. Dans 
 - **`echo_codex_action.py`** : Interface avancée intégrant un éditeur Monaco (type VS Code), un explorateur de fichiers (File Tree), et un historique Git natif permettant la restauration granulaire de versions.
 
 ### Sécurité & Identité
-- **`echo_identity_vault_action.py`** : ECHO Identity Vault. C'est l'interface centralisée de gestion des secrets. 
-  - **Sémantique** : Elle se synchronise dynamiquement avec l'API du MCP Broker et de N8N (via les schémas) pour collecter et sauvegarder les identifiants (Credentials) directement dans la base SQLite locale.
-  - **Étanchéité** : Elle orchestre la distribution des secrets via des *namespaces* (domaines de session) sans jamais exposer les clés en clair.
+- **`echo_identity_vault_action.py`** : ECHO Identity Vault. Interface centralisée de gestion des secrets pour l'Agent. 
+  - **Sémantique** : Elle se synchronise dynamiquement avec l'API de schémas du MCP distant (Remote Proxy Orchestration) et de N8N pour collecter et sauvegarder les identifiants requis directement dans la base SQLite locale.
+  - **Étanchéité** : Elle orchestre la distribution des secrets via des *namespaces* (domaines de session) sans exposer les clés en clair au LLM, qui n'interagit qu'avec des Alias de confiance via l'outil natif `identity_vault_tool.py`.
 - **`reset_auth_action.py`** : Action rapide d'urgence pour purger spécifiquement les tokens et clés liés à l'authentification **Google/PKCE** et OAuth2 en cas de désynchronisation.
 
 ### Gestion Contextuelle (Saturation & Vectoriel)

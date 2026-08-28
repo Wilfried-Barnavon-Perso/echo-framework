@@ -1077,9 +1077,23 @@ class Pipe:
             # En l'absence d'ID (courant pour la réponse en cours), la suture indexée via current_cumul suffit.
             # Si on a un ID dans kwargs (ex: retry), on scelle.
             asst_msg_id = kwargs.get("__message_id__")
+            
+            # --- [NOUVEAU] RÉCUPÉRATION CHIRURGICALE ---
+            # Si OWUI a omis l'ID dans le metadata, on le récupère du payload HTTP brut.
+            if not asst_msg_id:
+                request = kwargs.get("__request__")
+                if request:
+                    try:
+                        raw_payload = await request.json()
+                        if "message_ids" in raw_payload and raw_payload["message_ids"]:
+                            asst_msg_id = raw_payload["message_ids"][0].get("message_id")
+                        elif "id" in raw_payload:
+                            asst_msg_id = raw_payload.get("id")
+                    except Exception:
+                        pass
+            
             if asst_msg_id and cascade_history:
                 orch.user_data_manager.save_shadow(asst_msg_id, int(time.time()), cascade_history, chat_id, "assistant")
-            
             user_msg_id = __metadata__.get("_echo_user_msg_id") if __metadata__ else None
             if cascade_history and user_msg_id:
                 try:

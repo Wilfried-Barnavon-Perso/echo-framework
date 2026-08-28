@@ -48,7 +48,8 @@ Le système nerveux central d'ECHO repose sur le `pipe_engine.py` et les bibliot
 - **User Native Context Filter :** Filtre Inlet (priorité 10) hébergeant les réglages utilisateur (nom, localisation) pour protéger le moteur système.
 - **App Drawer Filter :** Filtre Inlet silencieux (priorité 1000) injectant un composant Data Island UI (ECHO App Drawer) natif. Fournit un HUD flottant qui s'interface avec l'API WebUI pour déclencher directement les Actions sans rechargement.
 - **Pipeline d'Ingestion Zéro-RAM :** Architecture asynchrone déportée pour le traitement de masse. Conversion MarkItDown et traitement hybride (Vectoriel, Codex Git, SQLite).
-- **Edge Embedding Bridge :** Offload de l'inférence vectorielle (Harrier-OSS) vers le WebGPU/WASM du navigateur client via WebSocket.
+- **Edge Embedding Bridge :** Offload de l'inférence vectorielle (Harrier-OSS) vers le WebGPU/WASM du client. Intègre désormais un **HUD d'initialisation navigateur**, une gestion multi-onglets (via UUID `client_id` et détection de `visibility`), et un mécanisme de **Fallback CPU Asynchrone Instantané** (annulation des requêtes `asyncio.Future` si le WebSocket est rompu).
+- **TCP Keep-Alive Filter :** Filtre Inlet empêchant la déconnexion inopinée des sessions websocket longues.
 
 ## 4. 🧭 Contexte Proprioceptif
 
@@ -65,7 +66,10 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes, Leaflet) via `universal_visual_generator.py` isolé en Data Island.
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`). Boucle OODA, Descente Cognitive via injection de schémas, mode Lidar/Vision hybride, Proactive Context Pruning et streaming sémantique.
 - **Sovereign Web Search :** Recherche souveraine via SearXNG et DuckDuckGo, avec capacité de délégation à un agent de recherche profonde multi-tours.
-- **Agent Engine :** Moteur d'exécution d'un agent unique (`delegate_to_agent`). Boucle avec outils, budget, sans récursion RAG.
+- **Agent Engine & Délégation :** Moteur d'exécution d'un agent unique (`delegate_to_agent`) et **Data Broker** (`delegate_to_data_broker.py`) pour déléguer la récupération complexe de données à un agent spécialisé.
+- **Outils Généralistes :** `generalist_tools.py` intègre un `async_wait_timer` programmable et des capacités de saisie utilisateur interactive (remplaçant les scripts épars).
+- **Communication Inter-Services (MCP Natif) :** Outils d'orchestration proxy `remote_mcp_tool.py` (exécution de tâches sur un MCP distant avec schéma dynamique) et `internal_mcp_tool.py` (tâches internes isolées).
+- **Identity Vault (`identity_vault_tool.py`) :** Outil permettant au modèle de manipuler directement ses propres secrets et de découvrir dynamiquement les schémas d'authentification requis par le MCP distant.
 - **Explorateur de l'Espace Personnel :** Lecture brute (RAW), base64, et sondage sémantique des fichiers locaux.
 - **Registre Unifié :** Consultation du `FILE_INGESTION_STATUS`.
 - **ECHO Codex :** Éditeur multi-langage avec Git intégré. 9 fonctions. Registre SQLite. Distillation Cloud.
@@ -98,9 +102,10 @@ L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N
 - **Browser Worker :** Instance Playwright pilotée par FastAPI asynchrone (bridée à 9 FPS).
 - **Embedding Worker :** Offload WebGPU/WASM prioritaire, fallback sur llama.cpp (GGUF CPU) sous Docker.
 - **Download Broker :** Service de collecte asynchrone des téléchargements.
-- **MCP Broker :** Serveur natif Model Context Protocol (`FastMCP` via Uvicorn). Expose via ASGI StreamableHTTP des outils externes (Omnisearch Jobs, Corporate Sirene/Bodacc, Academic). Intègre un middleware pur ASGI interceptant silencieusement le `x-openwebui-user-id`.
+- **MCP Broker :** Serveur natif Model Context Protocol agissant désormais comme un **Proxy HTTP complet** (`m5_proxy_mcp.py`). Il implémente un système de **Forwarding d'erreurs** (remontée transparente vers le LLM) et un middleware pur ASGI interceptant silencieusement le `x-openwebui-user-id` pour l'authentification.
 - **[NOUVEAU] N8N Worker :** Sous-système Headless (`26-docker-n8n-worker`) encapsulant le moteur N8N (utilisant nativement SQLite via le volume `echo-n8n-data`). API Python (Port 5003) interfaçant l'LLM avec l'orchestrateur de workflow. Les workflows N8N (Mode Démon) peuvent agir comme clients MCP (pour requêter des services d'ECHO) tout en déclenchant de nouveaux "Child Chats" dans le système ECHO pour exécuter des tâches LLM complexes avec traçabilité.
-- **UI HUD & Sécurité DOM (`echo_ui.py`) :** Le moteur de rendu de l'interface injecte désormais ses propres modales asynchrones natives (`window.echoCustomConfirm`, `window.mcpAlert`) qui respectent le mode sombre/clair pour ne jamais bloquer l'Event Loop. L'interface ECHO Codex intègre des redimensionnements fluides de la Sidebar (`splitter`), une impression PDF native (`allow-modals`), et une protection contre les états d'affichage corrompus au chargement.
+- **Workers & Logs Centralisés :** Mise en place d'un système de log unifié JSON (`logging.json`) et implémentation d'un **System-wide Health Check Rate-Limiting** sur tous les workers (STT, TTS, Embedding, Browser, Python) pour éviter la saturation par les sondes Docker.
+- **UI HUD & Sécurité DOM (`echo_ui.py`) :** Le moteur de rendu implémente un système natif **"OWUI Tools"** avec des modales asynchrones bloquantes interactives (ex: `window.echoCustomPrompt` pour la saisie utilisateur) respectant le mode sombre/clair pour ne jamais bloquer l'Event Loop.
 
 ## 9. 🚦 Orchestration Séquentielle (Docker Compose)
 
@@ -112,7 +117,7 @@ Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depend
 
 ## 10. 🔢 Stratégie de Versioning (`VERSIONING.md`)
 
-- **Version Globale :** Fichier `VERSION` (SemVer 5.Y.Z).
+- **Version Globale :** Fichier `VERSION` (SemVer 5.Y.Z). Ce fichier doit **obligatoirement être encodé en UTF-8 sans BOM**.
 - **Versioning des Composants :** Granularité définie dans les en-têtes de modules.
 
 ## 11. 🔐 Authentification Antigravity 2.1
@@ -129,7 +134,9 @@ Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depend
 - **Règle d'Énonciation :** Le Kernel statique et les docstrings doivent adopter un ton impersonnel ("Permet au modèle de"). L'utilisation de la 2ème personne ("Tu es...") est réservée aux `system_prompt` des agents.
 - **Persistence :** Accès base de données uniquement via `EchoStateManager` (SQLite) ou la base native SQLite de N8N.
 - **Auto-Hébergement :** Les clés API ne sortent jamais du cluster.
+- **Vérification du Code :** Lors du codage, il est impératif de vérifier systématiquement l'algorithme, les imports et la syntaxe du code produit.
 
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.199.38*
+---
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.200.33*

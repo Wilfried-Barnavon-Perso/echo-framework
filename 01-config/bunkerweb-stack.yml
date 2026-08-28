@@ -183,6 +183,7 @@ services:
       - /opt/ECHO/docker-echo-auth-manager/auth_server.py:/app/auth_server.py:ro
       - /opt/ECHO/docker-echo-auth-manager/static:/app/static:ro
       - /opt/ECHO/docker-echo-auth-manager/templates:/app/templates:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/login\")' 2>/dev/null || exit 1"]
       interval: 10s

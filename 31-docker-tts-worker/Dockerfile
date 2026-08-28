@@ -34,4 +34,4 @@ COPY tts_api.py /app/
 EXPOSE 7996
 
 # Entrypoint : Lancement de l'API avec Uvicorn
-CMD ["uvicorn", "tts_api:app", "--host", "0.0.0.0", "--port", "7996"]
+CMD ["uvicorn", "tts_api:app", "--host", "0.0.0.0", "--port", "7996", "--log-config", "/app/logging.json"]

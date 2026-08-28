@@ -34,7 +34,15 @@ from typing import List, Union, Optional
 import time
 
 # Configuration du logging (Format ECHO)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import logging.config
+import json
+import os
+
+if os.path.exists('/app/logging.json'):
+    with open('/app/logging.json', 'r') as f:
+        logging.config.dictConfig(json.load(f))
+else:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("echo-embedding")
 
 class RateLimitHealthCheckFilter(logging.Filter):
@@ -93,8 +101,8 @@ state = {
 }
 
 # Registres pour le Edge Embedding WebGPU
-active_edge_clients: dict[str, WebSocket] = {}
-edge_client_status: dict[str, str] = {}
+# Structure: { user_id: { client_id: {"ws": WebSocket, "state": "active", "pending": set()} } }
+active_edge_clients: dict[str, dict] = {}
 pending_edge_requests: dict[str, asyncio.Future] = {}
 
 def get_user_id_from_jwt(token: str) -> str:
@@ -111,6 +119,8 @@ def get_user_id_from_jwt(token: str) -> str:
 async def websocket_edge_embed(websocket: WebSocket):
     # Le token peut être dans la query string (dev) ou dans les cookies (prod sécurisée par WAF)
     token = websocket.query_params.get("token") or websocket.cookies.get("token")
+    client_id = websocket.query_params.get("client_id", str(uuid.uuid4()))
+    
     if not token:
         await websocket.close(code=1008)
         return
@@ -121,9 +131,16 @@ async def websocket_edge_embed(websocket: WebSocket):
         return
 
     await websocket.accept()
-    active_edge_clients[user_id] = websocket
-    edge_client_status[user_id] = "connecting"
-    logger.info(f"🔌 WebGPU Client Connected | User: {user_id}")
+    if user_id not in active_edge_clients:
+        active_edge_clients[user_id] = {}
+        
+    active_edge_clients[user_id][client_id] = {
+        "ws": websocket,
+        "state": "connecting",
+        "pending": set()
+    }
+    
+    logger.info(f"🔌 WebGPU Client Connected | User: {user_id} | Client: {client_id}")
 
     try:
         while True:
@@ -131,29 +148,51 @@ async def websocket_edge_embed(websocket: WebSocket):
             msg_type = data.get("type")
             
             if msg_type == "ready":
-                edge_client_status[user_id] = "ready"
-                logger.info(f"✅ WebGPU Client Ready | User: {user_id}")
+                active_edge_clients[user_id][client_id]["state"] = "active"
+                logger.info(f"✅ WebGPU Client Ready | User: {user_id} | Client: {client_id}")
             
+            elif msg_type == "visibility":
+                state = data.get("state", "active")
+                # Keep 'connecting' or 'incompatible' if not ready yet
+                if active_edge_clients[user_id][client_id]["state"] in ["active", "idle", "ready"]:
+                    active_edge_clients[user_id][client_id]["state"] = state
+                logger.info(f"👁️ WebGPU Client Visibility | User: {user_id} | Client: {client_id} | State: {state}")
+                
             elif msg_type == "incompatible":
-                edge_client_status[user_id] = "incompatible"
-                logger.warning(f"⚠️ WebGPU Client Incompatible | User: {user_id}")
+                active_edge_clients[user_id][client_id]["state"] = "incompatible"
+                logger.warning(f"⚠️ WebGPU Client Incompatible | User: {user_id} | Client: {client_id}")
                 
             elif msg_type == "result":
                 req_id = data.get("request_id")
                 future = pending_edge_requests.get(req_id)
                 if future and not future.done():
                     future.set_result(data.get("embedding"))
+                active_edge_clients[user_id][client_id]["pending"].discard(req_id)
                 
     except Exception as e:
-        logger.warning(f"🔌 WebGPU Client Disconnected | User: {user_id} | Reason: {e}")
+        logger.warning(f"🔌 WebGPU Client Disconnected | User: {user_id} | Client: {client_id} | Reason: {e}")
     finally:
-        active_edge_clients.pop(user_id, None)
-        edge_client_status.pop(user_id, None)
+        client_data = active_edge_clients.get(user_id, {}).pop(client_id, None)
+        if client_data:
+            # Cancel all pending futures for this client to trigger instant CPU fallback
+            for req_id in list(client_data["pending"]):
+                future = pending_edge_requests.get(req_id)
+                if future and not future.done():
+                    future.cancel()
+                    logger.warning(f"🛑 Future {req_id} cancelled due to disconnect | Fallback CPU instantané")
+        
+        if user_id in active_edge_clients and not active_edge_clients[user_id]:
+            active_edge_clients.pop(user_id, None)
 
 @app.get("/internal/edge-status")
 async def edge_status(user_id: str):
     """Vérification rapide de l'état Edge pour le filtre ECHO."""
-    return {"status": edge_client_status.get(user_id, "unknown")}
+    clients = active_edge_clients.get(user_id, {})
+    if any(c.get("state") in ["active", "ready"] for c in clients.values()):
+        return {"status": "ready"}
+    if any(c.get("state") == "idle" for c in clients.values()):
+        return {"status": "idle"}
+    return {"status": "unknown"}
 
 def download_gguf_model():
     """Télécharge le modèle GGUF depuis HuggingFace Hub si non présent localement."""
@@ -208,11 +247,16 @@ async def create_embeddings(request: EmbeddingRequest, req: Request):
             inputs = [inputs]
 
         # 1. TENTATIVE EDGE EMBEDDING (WebGPU)
-        if user_id in active_edge_clients and edge_client_status.get(user_id) == "ready":
-            ws = active_edge_clients[user_id]
+        clients = active_edge_clients.get(user_id, {})
+        active_client_id = next((cid for cid, c in clients.items() if c["state"] in ["active", "ready"]), None)
+        
+        if active_client_id:
+            client_data = clients[active_client_id]
+            ws = client_data["ws"]
             req_id = str(uuid.uuid4())
             future = asyncio.get_running_loop().create_future()
             pending_edge_requests[req_id] = future
+            client_data["pending"].add(req_id)
             
             try:
                 await ws.send_json({"type": "embed", "texts": inputs, "request_id": req_id})
@@ -240,12 +284,16 @@ async def create_embeddings(request: EmbeddingRequest, req: Request):
                     "model": MODEL_ID,
                     "usage": {"prompt_tokens": 0, "total_tokens": 0}
                 }
+            except asyncio.CancelledError:
+                logger.warning(f"🛑 Edge Inference Cancelled for {user_id} (Client disconnected). Fallback -> CPU.")
             except asyncio.TimeoutError:
                 logger.warning(f"⚠️ Edge Inference Timeout for {user_id}. Fallback -> CPU.")
             except Exception as e:
                 logger.warning(f"⚠️ Edge Inference Error for {user_id}: {e}. Fallback -> CPU.")
             finally:
                 pending_edge_requests.pop(req_id, None)
+                if active_client_id and active_client_id in clients:
+                    clients[active_client_id]["pending"].discard(req_id)
 
         # 2. FALLBACK CPU SYNCHRONE
         def process_batch_sync(inputs_list: List[str]):

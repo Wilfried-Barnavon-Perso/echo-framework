@@ -1,6 +1,8 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.58
+# Version : 9.59
+# --- CHANGELOG 9.59 ---
+# - Docker Compose : Centralisation de la configuration de logging (logging.json) et montage sur tous les workers Python pour forcer l'horodatage ISO 8601.
 # --- CHANGELOG 9.58 ---
 # - Docker Compose : Correction des guillemets dans WEBUI_NAME provoquant une alerte de sécurité PWA sous Android.
 # --- CHANGELOG 9.57 ---
@@ -102,7 +104,8 @@ services:
       # Priorité absolue Nginx via "location =" pour surpasser le proxy générique
       - |
         bunkerweb.CUSTOM_CONF_SERVER_HTTP_edgeembed=location = /ws/edge-embed {
-            proxy_pass http://echo-embedding:7997;
+            set $$upstream_embed http://echo-embedding:7997;
+            proxy_pass $$upstream_embed;
             proxy_http_version 1.1;
             proxy_set_header Upgrade "websocket";
             proxy_set_header Connection "upgrade";
@@ -267,6 +270,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/ECHO/docker-admin-manager/server.py:/app/server.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - /opt/ECHO/echo-images:/app/static:ro
       - echo-backups:/backups
       - echo-webui-data:/app/backend/data
@@ -304,6 +308,7 @@ services:
       - TZ=Europe/Paris
     volumes:
       - /opt/ECHO/docker-mcp-broker/server.py:/app/server.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - /opt/ECHO/docker-mcp-broker/core:/app/core:ro
       - /opt/ECHO/docker-mcp-broker/modules:/app/modules:ro
       - echo-webui-data:/app/backend/data
@@ -331,6 +336,7 @@ services:
       - TZ=Europe/Paris
     volumes:
       - /opt/ECHO/docker-python-worker/worker_api.py:/app/app.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - echo-worker-data:/app/data
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
@@ -354,12 +360,13 @@ services:
       - TZ=Europe/Paris
     volumes:
       - /opt/ECHO/docker-browser-worker/browser_api.py:/app/browser_api.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - echo-browser-data:/app/data
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
     command: >
-      /bin/bash -c "CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc) pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 httpx Pillow && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002"
+      /bin/bash -c "CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc) pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 httpx Pillow && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002 --log-config /app/logging.json"
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5002/health\")' 2>/dev/null || exit 1"]
       interval: 15s
@@ -391,6 +398,7 @@ services:
     volumes:
       - echo-browser-data:/app/browser-data:rw
       - echo-n8n-data:/home/node/.n8n:rw
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
@@ -414,6 +422,8 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
+    volumes:
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:7995/health\")' 2>/dev/null || exit 1"]
       interval: 15s
@@ -436,6 +446,7 @@ services:
       - "echo.hot-reload=true"
     volumes:
       - /opt/ECHO/docker-tts-worker/tts_api.py:/app/tts_api.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
     command: ["uvicorn", "tts_api:app", "--host", "0.0.0.0", "--port", "7996", "--reload"]
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:7996/health\")' 2>/dev/null || exit 1"]
@@ -531,6 +542,7 @@ services:
       - MAX_LENGTH=4096
     volumes:
       - /opt/ECHO/docker-embedding-worker/app.py:/app/app.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - echo-embedding-cache:/root/.cache/huggingface
     deploy:
       resources:
@@ -565,6 +577,7 @@ services:
       - echo-browser-data:/app/browser-data:rw
       - /opt/ECHO/owui-libs:/app/backend/echo_libs:ro
       - /opt/ECHO/docker-download-broker/download_broker.py:/app/download_broker.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"

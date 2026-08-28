@@ -228,6 +228,17 @@
       et <code>m</code> l'état du mode crop.
     </p>
 
+    <h2>Système OWUI Tools et Modales Natives Asynchrones</h2>
+
+    <p>
+      Le moteur <code>echo_ui.py</code> intègre désormais un système natif d'interaction <strong>"OWUI Tools"</strong>. Ce système déploie des modales asynchrones bloquantes interactives (ex: <code>window.echoCustomPrompt</code>, <code>window.echoCustomConfirm</code>, <code>window.mcpAlert</code>) permettant de solliciter l'utilisateur ou d'afficher des alertes critiques sans jamais bloquer l'Event Loop du navigateur.
+    </p>
+
+    <ul>
+      <li><strong>Sécurité DOM :</strong> Ces modales sont injectées de manière isolée et respectent scrupuleusement le mode sombre/clair actif. L'interface ECHO Codex intègre par ailleurs des redimensionnements fluides de la Sidebar (<code>splitter</code>) et une protection contre les états d'affichage corrompus.</li>
+      <li><strong>Asynchronisme :</strong> En encapsulant ces interactions dans des Promises, l'agent peut s'interfacer en temps réel avec l'humain tout en maintenant la réactivité totale de l'application.</li>
+    </ul>
+
     <div class="transition-text">
       <a href="04_echo_libs.html">&larr; Librairies Partagées</a>
       &nbsp;&nbsp;
@@ -287,7 +298,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.199.39 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

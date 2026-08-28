@@ -1,18 +1,21 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.2
+version: 1.4
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
+# 1.4: Refonte du Lazy-Loading JS des modales ECHO (get_custom_modals_js) pour ask_user_input (Anti-Spaghetti).
+# 1.3: Fusion du User Input Tool (ask_user_input) au sein des outils généralistes.
 # 1.2: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
+# 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
 import asyncio
 import sys
+import json
 from pydantic import BaseModel, Field
 from typing import Any
 
@@ -20,6 +23,7 @@ from typing import Any
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, EchoEvents
 from echo_constants import ECHO_MAX_WAIT_TIMER
+from echo_ui import EchoUI
 
 class Tools:
     class Valves(BaseModel):
@@ -129,3 +133,73 @@ class Tools:
 
         await events.status("⏱️ Timer terminé.", done=True)
         return wrap_tool_output(text=f"Le timer de {sec_val} secondes est terminé avec succès.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def ask_user_input(
+        self,
+        question: str,
+        input_type: str = "text",
+        options: list[str] = None,
+        timeout_seconds: int = 300,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None
+    ) -> dict:
+        """
+        Interrompt brièvement l'exécution pour afficher une boîte de dialogue à l'utilisateur.
+        Permet de demander une information (ex: Clé API) via 'text', ou une approbation (Oui/Non) via 'confirm'.
+
+        :param question: La question ou le message à afficher à l'utilisateur pour lui demander une saisie ou une confirmation.
+        :param input_type: Type de demande : 'text' (pour demander de taper un texte) ou 'confirm' (pour un simple choix Oui/Non).
+        :param options: Liste optionnelle de suggestions (réponses prédéfinies). L'utilisateur pourra choisir ou taper librement.
+        :param timeout_seconds: Délai maximum en secondes avant l'annulation (uniquement pour 'text'). Par défaut 5 minutes.
+        """
+        if not __user__:
+            return wrap_tool_output(text="Erreur : Contexte manquant.", status={"status": "error"})
+
+        events = EchoEvents(__event_emitter__, __event_call__)
+        await events.status(f"En attente d'une saisie de l'utilisateur ({timeout_seconds}s)...")
+
+        # Échappement propre pour le code JS
+        question_escaped = json.dumps(question)
+        options_escaped = json.dumps(options if options else [])
+
+        # Lazy-Loading des définitions JS des Modales ECHO
+        modals_injection = EchoUI.get_custom_modals_js()
+
+        if input_type == "confirm":
+            js_code = f"""
+            {modals_injection}
+            return await new Promise((resolve) => {{
+                window.echoCustomConfirm({question_escaped}, (result) => resolve(result));
+            }});
+            """
+        else:
+            js_code = f"""
+            {modals_injection}
+            return await new Promise((resolve) => {{
+                window.echoCustomPrompt({question_escaped}, {timeout_seconds}, {options_escaped}, (result) => resolve(result));
+            }});
+            """
+
+        # __event_call__ lance le JS et attend la résolution de la promesse
+        user_input = await __event_call__({"type": "execute", "data": {"code": js_code}})
+
+        if user_input is None or user_input is False:
+            await events.status("Opération refusée, annulée ou délai expiré.", done=True)
+            return wrap_tool_output(
+                text=json.dumps({"status": "cancelled", "message": "L'utilisateur a répondu Non, annulé la saisie ou le délai imparti est expiré.", "user_input": user_input}),
+                status={"status": "cancelled"},
+                user_id=__user__["id"],
+                chat_id=__metadata__.get("chat_id"),
+                metadata=__metadata__
+            )
+
+        await events.status("Saisie utilisateur reçue.", done=True)
+        return wrap_tool_output(
+            text=json.dumps({"status": "success", "user_input": user_input}),
+            status={"status": "success"},
+            user_id=__user__["id"],
+            chat_id=__metadata__.get("chat_id"),
+            metadata=__metadata__
+        )

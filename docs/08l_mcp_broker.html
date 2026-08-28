@@ -17,7 +17,12 @@
     <h1>8l. Serveur MCP Broker</h1>
 
     <h2>Serveur MCP Broker</h2>
-    <p>Le Model Context Protocol (MCP) Broker expose via ASGI des outils externes à l'architecture ECHO. Il est géré via <code>FastMCP</code> sous Uvicorn.</p>
+    <p>Le Model Context Protocol (MCP) Broker agit désormais comme un <strong>Proxy HTTP complet</strong> (<code>m5_proxy_mcp.py</code>) exposant via ASGI des outils externes à l'architecture ECHO.</p>
+    <p>Il implémente une architecture robuste intégrant :</p>
+    <ul>
+      <li><strong>Forwarding d'erreurs :</strong> Remontée transparente des erreurs d'exécution des outils externes directement vers le LLM pour correction autonome.</li>
+      <li><strong>Middleware d'Authentification ASGI :</strong> Interception silencieuse de l'en-tête <code>x-openwebui-user-id</code> au niveau ASGI pour sécuriser toutes les requêtes entrantes.</li>
+    </ul>
     
     <h3>Modules Actifs</h3>
     <ul>
@@ -29,7 +34,7 @@
     <p>L'Identity Vault fusionne dynamiquement les schémas de ce Broker avec l'API locale N8N pour la distribution sécurisée des secrets.</p>
 
     <footer>
-      ECHO v5 Documentation - Version <span class="version-badge">5.199.38</span>
+      ECHO v5 Documentation - Version <span class="version-badge">5.200.33</span>
     </footer>
   </main>
 

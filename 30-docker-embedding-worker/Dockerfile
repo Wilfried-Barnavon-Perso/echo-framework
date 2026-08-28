@@ -29,4 +29,4 @@ ENV DO_NOT_TRACK=1
 EXPOSE 7997
 
 # Lancement de l'API avec Uvicorn
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7997", "--workers", "1"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7997", "--workers", "1", "--log-config", "/app/logging.json"]

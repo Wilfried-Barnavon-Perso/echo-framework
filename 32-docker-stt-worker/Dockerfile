@@ -24,4 +24,4 @@ COPY stt_api.py /app/
 EXPOSE 7995
 
 # Entrypoint : Lancement de l'API avec Uvicorn
-CMD ["uvicorn", "stt_api:app", "--host", "0.0.0.0", "--port", "7995"]
+CMD ["uvicorn", "stt_api:app", "--host", "0.0.0.0", "--port", "7995", "--log-config", "/app/logging.json"]

@@ -1,11 +1,12 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.36
+version: 8.37
 description: Composant système interne : ECHO Shared Utils (Core).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 8.37: Résolution Bug RAG: Remplacement du INSERT OR REPLACE par un Upsert complet préservant is_embedded.
 # 8.36: Rollback Zéro-Hallucination : Restauration de _dict_to_yaml_aec (YAML plat pur) pour l'AEC et les évènements systèmes au lieu de XML.
 # 8.35: Correction: Invalidation des dates google_quota_reset obsolètes empêchant le Fast-Failover.
 # 8.34: (Mise à jour précédente)
@@ -1623,11 +1624,18 @@ class EchoStateManager:
         ts = updated_at if updated_at is not None else int(time.time())
         try:
             with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at) VALUES (?, ?, ?, ?, ?)",
-                    (message_id, chat_id, role, json.dumps(parts).decode('utf-8'), ts)
-                )
+                conn.execute("""
+                    INSERT INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at) 
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(message_id) DO UPDATE SET
+                        chat_id = excluded.chat_id,
+                        role = excluded.role,
+                        full_parts_json = excluded.full_parts_json,
+                        updated_at = excluded.updated_at
+                """, (message_id, chat_id, role, json.dumps(parts).decode('utf-8'), ts))
                 conn.commit()
-        except: pass
+        except Exception as e:
+            print(f"[ECHO_DEBUG_FATAL] Erreur écriture save_message_shadow: {e}")
 
     def get_message_shadow(self, message_id: str, updated_at: int) -> Optional[List[dict]]:
         if not message_id: return None
@@ -1635,7 +1643,8 @@ class EchoStateManager:
             with self._get_connection() as conn:
                 row = conn.execute("SELECT full_parts_json FROM message_shadows WHERE message_id = ? AND updated_at = ?", (message_id, int(updated_at))).fetchone()
                 if row: return std_json.loads(row[0])
-        except: pass
+        except Exception as e:
+            print(f"[ECHO_DEBUG_FATAL] Erreur lecture get_message_shadow: {e}")
         return None
 
     def calculate_invariant_hash(self, role: str, content: Any, tool_io: dict = None) -> str:
@@ -2261,6 +2270,11 @@ class EchoStateManager:
         if not message_id: return
         try:
             with self._get_connection() as conn:
-                conn.execute("UPDATE message_shadows SET is_embedded = 1 WHERE message_id = ?", (message_id,))
+                cursor = conn.execute("UPDATE message_shadows SET is_embedded = 1 WHERE message_id = ?", (message_id,))
+                if cursor.rowcount == 0:
+                    conn.execute("""
+                        INSERT INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at, is_embedded) 
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (message_id, self.chat_id or "unknown", "assistant", "[]", int(time.time()), 1))
                 conn.commit()
         except: pass
