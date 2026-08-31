@@ -1,27 +1,19 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.5
+version: 1.6
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.4: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
-# 1.0: Outil de planification stratégique — construction, modification et gestion
-# de plans d'action via un agent planificateur LLM (cascade PRO→FLASH→LITE).
-# Plans persistés en Markdown dans le vault, registre de contrôle SQLite par chat,
-# injection automatique dans registre_plan (environnement_contexte).
-# 1.1: Docstrings enrichies — instruction de reformulation read_plan, directive
-# tools_summary renforcée dans build_plan, contrainte auto-suppression delete_plan,
-# log diagnostic __tools__.
-# 1.2: Centralisation politique modèle Pipe. Suppression _cascade_call() et
-# _get_thinking_level() locaux → call_cascade() centralisé.
-# 1.3: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du
-# dossier plans/. save_plan_record → save_resource. Suppression _get_plan_dir
-# et _get_plan_path.
+# 1.6: Validation obligatoire des plans (build et update) via UI modale (window.echoCustomConfirm).
 # 1.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 1.4: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
+# 1.3: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du dossier plans/.
+# 1.2: Centralisation politique modèle Pipe. Suppression _cascade_call() et _get_thinking_level() locaux.
 
 import sys
+import orjson as json
 import re
 import time
 import unicodedata
@@ -33,6 +25,7 @@ from typing import Optional, Any
 sys.path.append("/app/backend/echo_libs")
 from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager
 from echo_codex_git import CodexRepo
+from echo_ui import EchoUI
 from echo_constants import (
     PLAN_STATUS, get_generation_config,
     PLANNER_MODEL_BUILD, PLANNER_MODEL_UPDATE,
@@ -297,10 +290,51 @@ class Tools:
             git_tracked=True, storage_path=f"codex/{filename}",
         )
 
-        await events.status(f"✅ Plan `{plan_id}` créé (draft) par {model_key_used}.", done=True)
+        # Construction de la modale d'approbation
+        msg_html = f'''
+        <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
+            📝 Validation requise pour le nouveau plan stratégique
+        </div>
+        <pre style="
+            background: rgba(0,0,0,0.1); padding: 10px; border-radius: 5px; 
+            white-space: pre-wrap; word-break: break-word; max-height: 40vh;
+            overflow-y: auto; font-family: monospace; font-size: 12px;
+            border: 1px solid rgba(128,128,128,0.2);
+        ">{plan_content}</pre>
+        '''
+        
+        # orjson.dumps retourne des bytes, décodage obligatoire en utf-8
+        msg_escaped = json.dumps(msg_html).decode('utf-8')
+        modals_injection = EchoUI.get_custom_modals_js()
+
+        js_code = f"""
+        {modals_injection}
+        return await new Promise((resolve) => {{
+            window.echoCustomConfirm({msg_escaped}, (result) => resolve(result));
+        }});
+        """
+
+        if __event_emitter__:
+            await __event_emitter__({"type": "status", "data": {"description": f"En attente de la validation de l'utilisateur pour le plan {plan_id}...", "done": False}})
+
+        user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
+
+        if user_confirmed:
+            state.update_resource_status(plan_id, 'approved')
+            user_decision = "Validation accordée par l'Utilisateur. Le Modèle est autorisé à procéder à l'exécution de la première tâche."
+            final_status = "approved"
+            if __event_emitter__:
+                await __event_emitter__({"type": "status", "data": {"description": f"✅ Plan {plan_id} approuvé.", "done": True}})
+        else:
+            user_decision = "Validation refusée par l'Utilisateur. Le Modèle doit interroger l'utilisateur sur les modifications à apporter et utiliser update_plan."
+            final_status = "draft (refusé)"
+            if __event_emitter__:
+                await __event_emitter__({"type": "status", "data": {"description": f"🚫 Plan {plan_id} refusé.", "done": True}})
 
         return wrap_cascade_output(
-            text=f"### Plan stratégique créé — `{plan_id}` (draft)\n\n"
+            text=f"### Plan stratégique créé — `{plan_id}`\n\n"
+                 f"**Décision Utilisateur :** {user_decision}\n"
+                 f"**Statut :** {final_status}\n"
                  f"**Modèle :** {model_key_used}\n"
                  f"**Fichier :** `{filename}`\n\n"
                  f"---\n\n{plan_content}",
@@ -402,25 +436,58 @@ class Tools:
             await events.status("❌ Réponse vide du planificateur.", done=True)
             return wrap_tool_output(text="❌ Erreur : le planificateur n'a produit aucun contenu.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        # 4. Écriture dans le Codex (Git)
-        repo = CodexRepo(user_id, chat_id)
-        repo.commit_file(plan_filename, new_content, f"Update plan {plan_id}")
-
-        # 5. Synchronisation du statut dans le registre unifié
+        # Synchronisation du statut temporaire (avant validation)
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         new_status = self._extract_frontmatter_status(new_content)
-        if new_status and new_status in PLAN_STATUS:
-            state.update_resource_status(plan_id, new_status)
 
-        await events.status(
-            f"✅ Plan `{plan_id}` modifié par {model_key_used}.",
-            done=True
-        )
+        # Construction de la modale d'approbation pour la mise à jour
+        msg_html = f'''
+        <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
+            📝 Validation requise pour la mise à jour du plan <b>{plan_id}</b>
+        </div>
+        <pre style="
+            background: rgba(0,0,0,0.1); padding: 10px; border-radius: 5px; 
+            white-space: pre-wrap; word-break: break-word; max-height: 40vh;
+            overflow-y: auto; font-family: monospace; font-size: 12px;
+            border: 1px solid rgba(128,128,128,0.2);
+        ">{new_content}</pre>
+        '''
+        
+        msg_escaped = json.dumps(msg_html).decode('utf-8')
+        modals_injection = EchoUI.get_custom_modals_js()
+
+        js_code = f"""
+        {modals_injection}
+        return await new Promise((resolve) => {{
+            window.echoCustomConfirm({msg_escaped}, (result) => resolve(result));
+        }});
+        """
+
+        if __event_emitter__:
+            await __event_emitter__({"type": "status", "data": {"description": f"En attente de la validation de la mise à jour du plan {plan_id}...", "done": False}})
+
+        user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
+
+        if user_confirmed:
+            # L'utilisateur valide la modification, on l'applique dans le Git et le SQLite
+            repo = CodexRepo(user_id, chat_id)
+            repo.commit_file(plan_filename, new_content, f"Update plan {plan_id}")
+            if new_status and new_status in PLAN_STATUS:
+                state.update_resource_status(plan_id, new_status)
+            
+            user_decision = "Mise à jour validée par l'Utilisateur. Le Modèle est autorisé à poursuivre son action."
+            if __event_emitter__:
+                await __event_emitter__({"type": "status", "data": {"description": f"✅ Mise à jour du plan {plan_id} approuvée.", "done": True}})
+        else:
+            # On ignore les modifications
+            user_decision = "Mise à jour refusée par l'Utilisateur. Le Modèle doit prendre note du refus et ajuster sa stratégie."
+            if __event_emitter__:
+                await __event_emitter__({"type": "status", "data": {"description": f"🚫 Mise à jour du plan {plan_id} refusée.", "done": True}})
 
         return wrap_cascade_output(
-            text=f"### Plan `{plan_id}` mis à jour\n\n"
-                 f"**Modèle :** {model_key_used}\n"
-                 f"**Statut :** {new_status or '(inchangé)'}\n\n"
+            text=f"### Tentative de mise à jour du plan `{plan_id}`\n\n"
+                 f"**Décision Utilisateur :** {user_decision}\n"
+                 f"**Modèle :** {model_key_used}\n\n"
                  f"---\n\n{new_content}",
             model_requested=PLANNER_MODEL_UPDATE,
             model_used=model_key_used,

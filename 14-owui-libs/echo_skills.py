@@ -1,14 +1,16 @@
 """
 title: ECHO Skills Manager
 author: ECHO Framework
-version: 1.3
+version: 1.4
 description: Composant système interne : ECHO Skills Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.4: Ajout de la fonction delete_skill (suppression physique de dossier).
 # 1.3: Alignement avec le Hotfix Core 6.9.
 
 import os
+import shutil
 import re
 from typing import List, Dict, Optional
 from echo_utils import get_echo_global_path
@@ -89,3 +91,17 @@ description: {description}
         f.write(content.strip() + "\n")
     
     return True
+
+def delete_skill(user_id: str, skill_id: str) -> bool:
+    """Supprime physiquement le dossier du skill et tout son contenu (SKILL.md)."""
+    skills_dir = get_skills_dir(user_id)
+    skill_path = os.path.join(skills_dir, skill_id)
+    
+    if os.path.exists(skill_path) and os.path.isdir(skill_path):
+        try:
+            shutil.rmtree(skill_path)
+            return True
+        except Exception as e:
+            print(f"Error deleting skill {skill_id}: {e}")
+            return False
+    return False

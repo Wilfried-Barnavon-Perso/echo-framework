@@ -1,16 +1,17 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.63
+version: 5.67
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.67: Correction échappement backslash JSON pour Identity Vault HUD évitant le SyntaxError muet.
+# 5.66: Retrait des if (!window...) pour permettre le Hot-Reload des fonctions modales.
+# 5.65: Amélioration critique UX Mobile pour les modales système (box-sizing, width 90%, flex-wrap) évitant le débordement sur petits écrans.
+# 5.64: Assainisseur HTML DOM sécurisé (echoSanitizeHTML) avec whitelist structurelle et neutralisation XSS dans les modales système.
 # 5.63: Refonte anti-spaghetti des modales ECHO (EchoUI.get_custom_modals_js) avec implémentation de boutons interactifs (pills) pour les options de prompt.
-# 5.61: Amélioration critique UX Mobile : Flex-wrap sur le header et transformation de la sidebar en nuage de tags (wrap) pour accessibilité de tous les fichiers.
 # 5.60: Correction critique du Codex sur mobile (IDs manquants sur le header et le body empêchant le CSS responsive de s'appliquer).
-# 5.59: Refonte responsive globale des HUDs, désactivation du drag tactile et intégration pinch-to-zoom (WebPlayer).
-# 5.56: Correction de l'impression partielle du Codex PDF en forçant overflow: visible sur html et body.
 
 
 from fastapi.responses import HTMLResponse
@@ -798,44 +799,83 @@ return new Promise(function(resolve) {{
   # =====================================================================
 
   @staticmethod
+  def get_sanitize_html_js() -> str:
+      """Fournit le moteur JS d'assainissement HTML autonome pour la neutralisation des injections XSS."""
+      return """
+      window.echoSanitizeHTML = (html) => {
+          if (typeof html !== 'string') return '';
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          const allowedTags = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'BR', 'P', 'SPAN', 'UL', 'OL', 'LI', 'CODE', 'PRE', 'DIV', 'A', 'HR', 'SMALL', 'BLOCKQUOTE']);
+          const clean = (node) => {
+              const children = Array.from(node.childNodes);
+              for (const child of children) {
+                  if (child.nodeType === Node.ELEMENT_NODE) {
+                      if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE' || child.tagName === 'IFRAME' || child.tagName === 'OBJECT' || child.tagName === 'EMBED') {
+                          child.remove();
+                          continue;
+                      }
+                      if (!allowedTags.has(child.tagName)) {
+                          const textNode = document.createTextNode(child.textContent);
+                          node.replaceChild(textNode, child);
+                      } else {
+                          const attrs = Array.from(child.attributes);
+                          for (const attr of attrs) {
+                              const name = attr.name.toLowerCase();
+                              const val = (attr.value || '').toLowerCase().replace(/[\\s\\x00-\\x1f\\x7f-\\x9f]/g, '');
+                              if (name.startsWith('on') || val.startsWith('javascript:') || val.startsWith('data:text/html') || val.startsWith('vbscript:')) {
+                                  child.removeAttribute(attr.name);
+                              }
+                          }
+                          if (child.tagName === 'A') {
+                              child.target = '_blank';
+                              child.rel = 'noopener noreferrer';
+                          }
+                          clean(child);
+                      }
+                  }
+              }
+          };
+          clean(doc.body);
+          return doc.body.innerHTML;
+      };
+      """
+
+  @staticmethod
   def get_custom_modals_js() -> str:
       """Fournit le code JS autonome des modales natives asynchrones d'ECHO (Confirm & Prompt)."""
-      return """
-      if (!window.echoCustomConfirm) {
-          window.echoCustomConfirm = (msg, callback) => {
-              const isDark = document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
-              const bgColor = isDark ? '#1e1e2e' : '#ffffff';
-              const borderColor = isDark ? '#444' : '#ddd';
-              const textColor = isDark ? '#cdd6f4' : '#333';
-              const accentColor = '#89b4fa';
-              
-              const overlay = document.createElement('div');
-              overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:center; justify-content:center; font-family:"Segoe UI",system-ui,sans-serif;';
-              const dialog = document.createElement('div');
-              dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:20px; border-radius:8px; text-align:center; box-shadow:0 10px 40px rgba(0,0,0,0.5); max-width:80%; color:' + textColor + '; min-width:250px;';
-              dialog.innerHTML = '<div style="margin-bottom:20px; font-size:14px; white-space:pre-wrap;">' + msg.replace(/</g, "&lt;") + '</div>';
-              const btnContainer = document.createElement('div');
-              btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px;';
-              const btnCancel = document.createElement('button');
-              btnCancel.textContent = 'Annuler';
-              btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:13px;';
-              const btnOk = document.createElement('button');
-              btnOk.textContent = 'Confirmer';
-              btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';
-              
-              btnCancel.onclick = () => { overlay.remove(); callback && callback(false); };
-              btnOk.onclick = () => { overlay.remove(); callback && callback(true); };
-              
-              btnContainer.appendChild(btnCancel);
-              btnContainer.appendChild(btnOk);
-              dialog.appendChild(btnContainer);
-              overlay.appendChild(dialog);
-              document.body.appendChild(overlay);
-          };
-      }
+      return EchoUI.get_sanitize_html_js() + """
+      window.echoCustomConfirm = (msg, callback) => {
+          const isDark = document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
+          const bgColor = isDark ? '#1e1e2e' : '#ffffff';
+          const borderColor = isDark ? '#444' : '#ddd';
+          const textColor = isDark ? '#cdd6f4' : '#333';
+          const accentColor = '#89b4fa';
+          
+          const overlay = document.createElement('div');
+          overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:center; justify-content:center; font-family:"Segoe UI",system-ui,sans-serif;';
+          const dialog = document.createElement('div');
+          dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:16px; border-radius:8px; text-align:left; box-shadow:0 10px 40px rgba(0,0,0,0.5); width:90%; max-width:450px; box-sizing:border-box; color:' + textColor + '; max-height:85vh; overflow-y:auto;';
+          dialog.innerHTML = '<div style="margin-bottom:20px; font-size:14px; line-height:1.5;">' + window.echoSanitizeHTML(msg) + '</div>';
+          const btnContainer = document.createElement('div');
+          btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px; flex-wrap:wrap;';
+          const btnCancel = document.createElement('button');
+          btnCancel.textContent = 'Annuler';
+          btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:13px;';
+          const btnOk = document.createElement('button');
+          btnOk.textContent = 'Confirmer';
+          btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';
+          
+          btnCancel.onclick = () => { overlay.remove(); callback && callback(false); };
+          btnOk.onclick = () => { overlay.remove(); callback && callback(true); };
+          
+          btnContainer.appendChild(btnCancel);
+          btnContainer.appendChild(btnOk);
+          dialog.appendChild(btnContainer);
+          overlay.appendChild(dialog);
+          document.body.appendChild(overlay);
+      };
 
-      if (!window.echoCustomPrompt) {
-          window.echoCustomPrompt = (msg, timeoutSeconds, options, callback) => {
+      window.echoCustomPrompt = (msg, timeoutSeconds, options, callback) => {
               const isDark = document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
               const bgColor = isDark ? '#1e1e2e' : '#ffffff';
               const borderColor = isDark ? '#444' : '#ddd';
@@ -845,8 +885,8 @@ return new Promise(function(resolve) {{
               const overlay = document.createElement('div');
               overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:center; justify-content:center; font-family:"Segoe UI",system-ui,sans-serif;';
               const dialog = document.createElement('div');
-              dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:20px; border-radius:8px; text-align:center; box-shadow:0 10px 40px rgba(0,0,0,0.5); max-width:80%; color:' + textColor + '; min-width:300px;';
-              dialog.innerHTML = '<div style="margin-bottom:15px; font-size:14px; white-space:pre-wrap; text-align:left;">' + msg.replace(/</g, "&lt;") + '</div>';
+              dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:16px; border-radius:8px; text-align:left; box-shadow:0 10px 40px rgba(0,0,0,0.5); width:90%; max-width:500px; box-sizing:border-box; color:' + textColor + '; max-height:85vh; overflow-y:auto;';
+              dialog.innerHTML = '<div style="margin-bottom:15px; font-size:14px; line-height:1.5; text-align:left;">' + window.echoSanitizeHTML(msg) + '</div>';
               
               const inputField = document.createElement('input');
               inputField.type = 'text';
@@ -871,7 +911,7 @@ return new Promise(function(resolve) {{
               }
               
               const btnContainer = document.createElement('div');
-              btnContainer.style.cssText = 'display:flex; justify-content:space-between; gap:10px;';
+              btnContainer.style.cssText = 'display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;';
               
               const btnCancel = document.createElement('button');
               btnCancel.textContent = 'Annuler';
@@ -908,19 +948,18 @@ return new Promise(function(resolve) {{
                   }, 1000);
               }
               
-              btnCancel.onclick = () => cleanupAndResolve(null);
-              btnOk.onclick = () => cleanupAndResolve(inputField.value);
-              inputField.onkeydown = (e) => { if(e.key === 'Enter') cleanupAndResolve(inputField.value); };
-              
-              dialog.appendChild(inputField);
-              btnContainer.appendChild(btnCancel);
-              btnContainer.appendChild(btnOk);
-              dialog.appendChild(btnContainer);
-              overlay.appendChild(dialog);
-              document.body.appendChild(overlay);
-              inputField.focus();
-          };
-      }
+          btnCancel.onclick = () => cleanupAndResolve(null);
+          btnOk.onclick = () => cleanupAndResolve(inputField.value);
+          inputField.onkeydown = (e) => { if(e.key === 'Enter') cleanupAndResolve(inputField.value); };
+          
+          dialog.appendChild(inputField);
+          btnContainer.appendChild(btnCancel);
+          btnContainer.appendChild(btnOk);
+          dialog.appendChild(btnContainer);
+          overlay.appendChild(dialog);
+          document.body.appendChild(overlay);
+          inputField.focus();
+      };
       """
 
   @staticmethod
@@ -2443,19 +2482,21 @@ return new Promise(function(resolve) {{
       "(function() {\n"
       "  const HUD_ID = 'echo-vault-identity';\n"
       + EchoUI.get_mobile_guard_js('echo-vault-identity') + "\n"
+      + EchoUI.get_sanitize_html_js() + "\n"
       "  if (document.getElementById(HUD_ID)) document.getElementById(HUD_ID).remove();\n"
-      "  let accounts = JSON.parse('" + accounts_json.replace("\\\\", "\\\\\\\\").replace("'", "\\'") + "');\n"
-      "  let schemas = JSON.parse('" + schemas_json.replace("\\\\", "\\\\\\\\").replace("'", "\\'") + "');\n"
+      "  let accounts = JSON.parse('" + accounts_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
+      "  let schemas = JSON.parse('" + schemas_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
       "  const isDark = document.documentElement.classList.contains('dark') || document.documentElement.classList.contains('oled-dark');\n"
       "  \n"
       "  const vaultConfirm = function(msg, callback) {\n"
       "    const overlay = document.createElement('div');\n"
       "    overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:20000; display:flex; align-items:center; justify-content:center;';\n"
       "    const dialog = document.createElement('div');\n"
-      "    dialog.style.cssText = 'background:' + (isDark ? '#262626' : '#f9f9f9') + '; border:1px solid ' + (isDark ? '#404040' : '#e5e5e5') + '; padding:20px; border-radius:8px; text-align:center; box-shadow:0 10px 40px rgba(0,0,0,0.5); color:' + (isDark ? '#ececec' : '#171717') + '; min-width:250px; font-family:system-ui,sans-serif;';\n"
-      "    dialog.innerHTML = '<div style=\"margin-bottom:20px; font-size:14px; white-space:pre-wrap;\">' + msg.replace(/</g, '&lt;') + '</div>';\n"
+      "    dialog.style.cssText = 'background:' + (isDark ? '#262626' : '#f9f9f9') + '; border:1px solid ' + (isDark ? '#404040' : '#e5e5e5') + '; padding:16px; border-radius:8px; text-align:left; box-shadow:0 10px 40px rgba(0,0,0,0.5); width:90%; max-width:450px; box-sizing:border-box; color:' + (isDark ? '#ececec' : '#171717') + '; font-family:system-ui,sans-serif; max-height:85vh; overflow-y:auto;';\n"
+      "    const cleanMsg = window.echoSanitizeHTML ? window.echoSanitizeHTML(msg) : msg;\n"
+      "    dialog.innerHTML = '<div style=\"margin-bottom:20px; font-size:14px; line-height:1.5;\">' + cleanMsg + '</div>';\n"
       "    const btnContainer = document.createElement('div');\n"
-      "    btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px;';\n"
+      "    btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px; flex-wrap:wrap;';\n"
       "    const btnCancel = document.createElement('button');\n"
       "    btnCancel.textContent = 'Annuler';\n"
       "    btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + (isDark ? '#404040' : '#e5e5e5') + '; background:transparent; color:' + (isDark ? '#ececec' : '#171717') + '; cursor:pointer; font-size:13px;';\n"

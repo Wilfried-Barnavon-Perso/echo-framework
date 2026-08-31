@@ -33,9 +33,9 @@
     <h2><code>echo_constants.py</code> - Constantes et Topologie</h2>
 
     <p>
-      Registre unique de toutes les vérités immuables du système. Tout composant qui a besoin
+      Registre unique de toutes les vérités immuables du système et librairie de fondations (Shared Core Functionality). Tout composant qui a besoin
       d'un identifiant de modèle, d'un chemin de répertoire, d'un timeout ou d'une limite de tokens
-      doit le lire depuis ce fichier - jamais le coder en dur localement.
+      doit le lire depuis ce fichier.
     </p>
 
     
@@ -145,7 +145,7 @@
       <li>Fallback sécuritaire : <code>application/octet-stream</code>, non supporté.</li>
     </ol>
 
-    <h2><code>echo_utils.py</code> - Moteur Asynchrone et Fonctions Communes</h2>
+    <h2><code>echo_utils.py</code> - Moteur Asynchrone, Résilience et Fonctions Communes</h2>
 
     <h3>EchoStateManager - Persistance Bit-Perfect</h3>
     <p>
@@ -205,9 +205,12 @@
       <ul>
         <li>
           <strong>Erreurs 429/500/503 (surcharge) :</strong> backoff exponentiel avec jitter aléatoire
-          (<code>ECHO_RETRY_BASE_DELAY × jitter × 2^attempt</code>). Après
+          (<code>ECHO_RETRY_BASE_DELAY × jitter × 2^attempt</code>). Intègre un verrouillage dynamique des URL sur timeout/429 et un mécanisme d'Auto-heal. Après
           <code>KEY_SWITCH_THRESHOLD</code> (2) erreurs consécutives sur la même source,
           bascule sur la source suivante dans le registre des fournisseurs.
+        </li>
+        <li>
+          <strong>Fail-fast 400 :</strong> Interruption immédiate sur erreur de syntaxe ou mauvaise requête (erreur 400).
         </li>
         <li>
           <strong>Erreurs 403/404 (droits / modèle indisponible) :</strong> bascule
@@ -507,7 +510,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.49 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

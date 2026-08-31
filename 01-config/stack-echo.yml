@@ -1,6 +1,8 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.59
+# Version : 9.60
+# --- CHANGELOG 9.60 ---
+# - Docker Compose (BunkerWeb) : Mise en place de la résolution DNS dynamique (variables upstream) pour éviter le cache IP Nginx.
 # --- CHANGELOG 9.59 ---
 # - Docker Compose : Centralisation de la configuration de logging (logging.json) et montage sur tous les workers Python pour forcer l'horodatage ISO 8601.
 # --- CHANGELOG 9.58 ---
@@ -122,7 +124,7 @@ services:
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name"
 
       # 🔓 EXCLUSION UPLOADS (WORKAROUND FETCH) : Empêche le 401 WAF sur les uploads multimédias tout en conservant la sécurité du Bearer Token applicatif
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_media=location ~ ^/api/v1/(files|audio|images) { auth_request off; proxy_pass http://echo-open-webui:8080; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_media=location ~ ^/api/v1/(files|audio|images) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
       # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass sécurisé contre le transfert de Content-Length)
       # On crée manuellement la location Nginx sans passer par la macro REVERSE_PROXY_URL_2
@@ -130,7 +132,8 @@ services:
       - |
         bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
             internal;
-            proxy_pass http://echo-auth-manager:8000;
+            set $$upstream_auth http://echo-auth-manager:8000;
+            proxy_pass $$upstream_auth;
             proxy_pass_request_body off;
             proxy_set_header Content-Length "";
             proxy_set_header X-Original-URI $$request_uri;
@@ -152,10 +155,10 @@ services:
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_authpage=location ~ ^/auth/?$$ { return 302 /; }"
 
       # 🔓 EXCLUSION API PUBLIQUES : Permet au frontend de s'initialiser avant de rediriger proprement
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; proxy_pass http://echo-open-webui:8080; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
       # 🔓 EXCLUSION FICHIERS STATIQUES : Requis pour la PWA, les assets et la mise à jour du Service Worker
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; proxy_pass http://echo-open-webui:8080; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
       # 💀 VERSION.JSON OVERRIDE : Force le rechargement des assets SvelteKit en renvoyant un faux hash.
       # INTERDIT d'ajouter Clear-Site-Data ici : Open WebUI poll cette URL toutes les ~30s
@@ -246,7 +249,8 @@ services:
       - |
         bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
             internal;
-            proxy_pass http://echo-auth-manager:8000;
+            set $$upstream_auth http://echo-auth-manager:8000;
+            proxy_pass $$upstream_auth;
             proxy_pass_request_body off;
             proxy_set_header Content-Length "";
             proxy_set_header X-Original-URI $$request_uri;

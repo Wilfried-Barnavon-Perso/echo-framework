@@ -1,8 +1,12 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 1.9
+version: 1.10
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3).
+--- CHANGELOG 1.10 ---
+- Amélioration : Rendu impersonnel du prompt d'Action Requise pour les variables d'authentification et incitation à utiliser ask_user_input.
+--- CHANGELOG 1.9 ---
+- (Non documenté précédemment)
 --- CHANGELOG 1.8 ---
 - Renommage d'affichage : N8N Orchestrator vers ECHO N8N Orchestrator.
 --- CHANGELOG 1.7 ---
@@ -155,7 +159,7 @@ class Tools:
                         
         if errors:
             final_err = "\n".join(errors)
-            return f"[Action Requise] Problème d'identifiants ou d'architecture détecté :\n{final_err}\n\nLe Modèle doit interrompre la tâche, analyser le problème, et si nécessaire demander à l'Utilisateur d'ajouter les secrets via l'application « ECHO Identity Vault » (accessible via l'App Drawer)."
+            return f"[Action Requise] Problème d'identifiants ou d'architecture détecté :\n{final_err}\n\nLe Modèle doit interrompre la tâche et résoudre ce problème de manière autonome. Lorsqu'une information d'authentification est manquante, le Modèle doit :\n1. Identifier l'URL officielle permettant de générer ces variables.\n2. Utiliser l'outil `ask_user_input` pour fournir cette URL à l'Utilisateur et lui demander interactivement de saisir les informations requises.\n3. Utiliser l'outil `manage_identity` (service='n8n_workflows') pour enregistrer la configuration dans l'Identity Vault.\n4. Relancer la préparation du workflow."
         return None
 
     def prepare_n8n_workflow(self, content: str = None, from_template_id: str = None, __user__: dict = None, __metadata__: dict = None) -> dict:

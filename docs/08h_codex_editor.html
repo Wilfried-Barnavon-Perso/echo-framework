@@ -460,7 +460,7 @@ flowchart TD
         Le modèle <strong>doit</strong> consulter l'état de ses ressources via l'outil <code>query_registry</code> pour vérifier
         l'existence d'un fichier Codex avant d'appeler <code>read_codex</code>, <code>edit_codex</code>
         ou <code>delete_codex</code>. Cette règle évite les erreurs 404 inutiles et les tentatives
-        de création de doublons. Seuls les fichiers nouvellement intégrés au tour courant lui sont notifiés via le bloc <code>&lt;evenement_systeme&gt;</code>.
+        de création de doublons. Seuls les fichiers nouvellement intégrés au tour courant lui sont notifiés via le bloc <code>&lt;AEC_evenement_systeme&gt;</code>.
       </p>
     </div>
 
@@ -513,7 +513,7 @@ flowchart TD
           <td>Registre SQLite par conversation (Consultable via <code>query_registry</code>)</td>
         </tr>
         <tr>
-          <td><code>&lt;evenement_systeme&gt;</code></td>
+          <td><code>&lt;AEC_evenement_systeme&gt;</code></td>
           <td><code>11-owui-filters/new_context_filter.py</code></td>
           <td>7.36</td>
           <td>Notification proprioceptive des modifications Codex hors-tour (Delta)</td>
@@ -540,7 +540,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.49 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

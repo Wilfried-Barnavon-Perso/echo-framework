@@ -393,12 +393,12 @@ flowchart TD
         <p><strong>Nature :</strong> Bloc YAML proprioceptif injecté par le Filtre.</p>
         <p>
           À chaque tour de conversation, le Filtre injecte un bloc YAML structurel délimité par la balise 
-          <code>&lt;environnement_contexte&gt;</code>. Il fournit au modèle sa <em>proprioception</em> : 
+          <code>&lt;AEC_environnement_contexte&gt;</code>. Il fournit au modèle sa <em>proprioception</em> : 
           identité du modèle actif, date et heure, et surtout le <strong>Registre des Fichiers</strong> 
-          de la session. L'AEC inclut aussi des évènements asynchrones <code>&lt;evenement_systeme&gt;</code>.
+          de la session. L'AEC inclut aussi des évènements asynchrones <code>&lt;AEC_evenement_systeme&gt;</code>.
         </p>
         <p>
-          Il regroupe également la balise <code>&lt;smart_context&gt;</code>, contenant le résumé distillé 
+          Il regroupe également la balise <code>&lt;AEC_smart_context&gt;</code>, contenant le résumé distillé 
           (≤ 300 mots) des fichiers volumineux traités par le Moulage, accompagné du <code>source_id</code> Qdrant.
         </p>
       </div>
@@ -763,7 +763,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.49 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

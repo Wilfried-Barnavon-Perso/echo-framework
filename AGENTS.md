@@ -31,19 +31,19 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 
 ## 2. 🧠 Le Cortex (`/opt/ECHO/owui-pipes/`)
 
-Le système nerveux central d'ECHO repose sur le `pipe_engine.py` et les bibliothèques centrales (`echo_constants.py`, `echo_protocol.py`, `echo_utils.py`).
+Le système nerveux central d'ECHO repose sur le **composant core `pipe_engine.py`** récemment implémenté, soutenu par les bibliothèques centrales partagées (`echo_constants.py`, `echo_protocol.py`, `echo_utils.py`).
 
 - **Suture Bit-Perfect des Métadonnées :** Reconstruction de l'historique via SQLite (`message_shadows`) pour une continuité absolue. Garantit une reprise de session identique au bit près via l'ID de message et le timestamp (Verrou de Version). Suivi de la branche active et état de session garanti par un hash cumulatif (Cumulative Hash).
 - **Registre Cognitif Unifié (SSOT) :** Toutes les capacités LLM sont désormais gouvernées centralement par `ECHO_MODELS_REGISTRY`. Ce dictionnaire abstrait mappe les identifiants métiers (`MODEL_PRO`, `MODEL_FLASH`, `MODEL_LITE`, `MODEL_DISTILLATION`) vers leurs identifiants API (AI Studio / Code Assist), leur `hierarchy` cognitive stricte (0, 1, 2), et leur `generationConfig` détaillée (température, `maxOutputTokens=65535`, et `thinkingConfig`).
 - **Routage Dynamique & Fluctuation Continue :** Les modes (AUTO, AUTO_PRO) interrogent dynamiquement la hiérarchie du Registre Cognitif. Lors de la reprise d'une session ou en cas d'erreur API, le système applique un *Clamping Dynamique* et une cascade descendante (PRO → FLASH → LITE) calculés algorithmiquement sur les valeurs entières de la hiérarchie. Intègre un **Circuit Breaker OAuth2 (Fast-Failover Intra-Retry)** qui bascule instantanément sur un environnement de secours en cas de 429/503 avant d'évincer le provider. Inclut également une logique d'**Auto-heal SQLite** : si un modèle orphelin est détecté, le système effectue un reverse-lookup ou force le `MODEL_LITE` pour prévenir tout crash.
-- **Orchestration Multi-Agents (`agent_orchestration_tool.py`) :** `consult_council` (Table Ronde Delphi, N experts agentiques avec outils, tours parallélisés exigeant une dialectique structurée : Analyse/Dialectique/Réponse) et `consult_supervised_workers` (boucle critique/correction récursive). L'orchestration gère également les **Child Chats** déclenchés asynchronement par les flux N8N pour garantir une traçabilité totale.
+- **Orchestration Multi-Agents (`agent_orchestration_tool.py`) :** `consult_council` (Table Ronde Delphi, N experts agentiques avec outils, tours parallélisés exigeant une dialectique structurée : Analyse/Dialectique/Réponse) et `consult_supervised_workers` (boucle critique/correction récursive). L'orchestration intègre désormais le **Skill Management** (gestion de compétences avec modales de confirmation interactives) et le **Web Grounding**. Elle gère également les **Child Chats** déclenchés asynchronement par les flux N8N pour garantir une traçabilité totale.
 - **HTTP/2 Stealth Headers (`echo_utils.py`) :** Multiplexage HTTP/2 natif via le nouveau client consolidé `EchoGeminiClient`. Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité pour simuler un navigateur réel tout en évitant les blocages WAF.
 
 ## 3. 👁️ La Conscience (`/opt/ECHO/owui-filters/`)
 
 - **Base Vectorielle des Souvenirs :** Système RAG vectoriel (Qdrant).
 - **Gestion de l'Importance :** Algorithme de fusion sémantique préservant le score `memory_importance` maximal des souvenirs lors de l'ingestion.
-- **Smart Context :** Injection de faits via balises XML (`<smart_context>`) et `source_id` natifs. Le filtre intercepte exhaustivement les fichiers du Workspace.
+- **Smart Context :** Injection de faits via balises XML (`<AEC_smart_context>`) et `source_id` natifs. Le filtre intercepte exhaustivement les fichiers du Workspace.
 - **Conversation RAG Filter :** Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG (par fenêtre de tour dynamique). Extraction textuelle stricte pour bloquer les payloads Base64 (images). Le filtre applique un mécanisme d'**Upsert Idempotent Zéro-Latence** par tour de parole. Pour empêcher la réindexation redondante, il exploite désormais une **Validation O(1) en amont** en interrogeant directement le flag booléen `is_embedded` de la table SQLite `message_shadows`, garantissant une sollicitation asynchrone ultra-légère.
 - **User Native Context Filter :** Filtre Inlet (priorité 10) hébergeant les réglages utilisateur (nom, localisation) pour protéger le moteur système.
 - **App Drawer Filter :** Filtre Inlet silencieux (priorité 1000) injectant un composant Data Island UI (ECHO App Drawer) natif. Fournit un HUD flottant qui s'interface avec l'API WebUI pour déclencher directement les Actions sans rechargement.
@@ -54,8 +54,8 @@ Le système nerveux central d'ECHO repose sur le `pipe_engine.py` et les bibliot
 ## 4. 🧭 Contexte Proprioceptif
 
 Le vecteur d'état global (AEC) est injecté systématiquement :
-- **Contenu Statique (`<environnement_contexte>`) :** Balise XML dont le contenu est au format YAML contenant l'identité et le grounding géo-temporel.
-- **Évènements Système (`<evenement_systeme>`) :** Balise XML évènementielle dont le contenu est au format YAML notifiant le Modèle des ressources asynchrones ou nouvellement créées.
+- **Contenu Statique (`<AEC_environnement_contexte>`) :** Balise XML dont le contenu est au format YAML contenant l'identité et le grounding géo-temporel.
+- **Évènements Système (`<AEC_evenement_systeme>`) :** Balise XML évènementielle dont le contenu est au format YAML notifiant le Modèle des ressources asynchrones ou nouvellement créées.
 - **Règle d'Or :** Le modèle **DOIT** utiliser l'outil `query_registry` pour consulter le Registre Unifié avant toute manipulation de fichiers ou processus.
 
 ## 5. 🛠️ L'Arsenal (`/opt/ECHO/owui-tools/`)
@@ -105,7 +105,7 @@ L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N
 - **MCP Broker :** Serveur natif Model Context Protocol agissant désormais comme un **Proxy HTTP complet** (`m5_proxy_mcp.py`). Il implémente un système de **Forwarding d'erreurs** (remontée transparente vers le LLM) et un middleware pur ASGI interceptant silencieusement le `x-openwebui-user-id` pour l'authentification.
 - **[NOUVEAU] N8N Worker :** Sous-système Headless (`26-docker-n8n-worker`) encapsulant le moteur N8N (utilisant nativement SQLite via le volume `echo-n8n-data`). API Python (Port 5003) interfaçant l'LLM avec l'orchestrateur de workflow. Les workflows N8N (Mode Démon) peuvent agir comme clients MCP (pour requêter des services d'ECHO) tout en déclenchant de nouveaux "Child Chats" dans le système ECHO pour exécuter des tâches LLM complexes avec traçabilité.
 - **Workers & Logs Centralisés :** Mise en place d'un système de log unifié JSON (`logging.json`) et implémentation d'un **System-wide Health Check Rate-Limiting** sur tous les workers (STT, TTS, Embedding, Browser, Python) pour éviter la saturation par les sondes Docker.
-- **UI HUD & Sécurité DOM (`echo_ui.py`) :** Le moteur de rendu implémente un système natif **"OWUI Tools"** avec des modales asynchrones bloquantes interactives (ex: `window.echoCustomPrompt` pour la saisie utilisateur) respectant le mode sombre/clair pour ne jamais bloquer l'Event Loop.
+- **UI HUD & Sécurité DOM (`echo_ui.py`) :** Le moteur de rendu implémente un système natif **"OWUI Tools"** 100% "mobile-responsive". Il injecte des modales asynchrones bloquantes interactives (ex: `window.echoCustomPrompt` pour la saisie utilisateur) respectant le mode sombre/clair pour ne jamais bloquer l'Event Loop, et sécurise les injections HTML via `window.echoSanitizeHTML`.
 
 ## 9. 🚦 Orchestration Séquentielle (Docker Compose)
 
@@ -139,4 +139,4 @@ Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depend
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.200.33*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.200.49*

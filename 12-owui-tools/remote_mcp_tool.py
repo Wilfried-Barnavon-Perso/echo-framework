@@ -1,13 +1,15 @@
 """
 title: ECHO Remote MCP Tool
 author: ECHO
-version: 1.7
+version: 1.8
 description: Outil natif permettant d'interroger et d'exécuter des requêtes sur un serveur MCP (distant SSE ou local Stdio) enregistré dans l'Identity Vault via l'ECHO MCP Broker.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.2: Ajout du routage réseau et du relais HTTPX via l'ECHO MCP Broker.
+# 1.8: Amélioration : Rendu impersonnel du prompt d'Action Requise pour l'authentification et incitation à utiliser ask_user_input.
+# 1.7: (Non documenté précédemment)
 # 1.3: Faille critique (Data Leak/Stale Data) résolue : suppression du cache en mémoire pour les appels d'outils.
+# 1.2: Ajout du routage réseau et du relais HTTPX via l'ECHO MCP Broker.
 from echo_utils import EchoStateManager, wrap_tool_output, EchoEvents
 from pydantic import BaseModel
 from typing import Any, Optional
@@ -90,10 +92,10 @@ class Tools:
                         if error_dict["http_code"] in (401, 403):
                             error_dict["suggestion"] = (
                                 "Le serveur distant exige une authentification ou les droits sont insuffisants. "
-                                "Il est recommandé d'identifier l'URL racine officielle du service permettant de générer "
-                                "le jeton d'accès, de fournir uniquement cette URL sécurisée sous forme de lien hypertexte "
-                                "lors de la sollicitation de l'utilisateur, puis de configurer les identifiants "
-                                "requis via l'Identity Vault."
+                                "Le Modèle doit résoudre ce problème de manière autonome : "
+                                "1. Identifier l'URL officielle permettant de générer les variables d'authentification requises. "
+                                "2. Utiliser l'outil `ask_user_input` pour fournir cette URL à l'Utilisateur et lui demander interactivement de saisir les informations. "
+                                "3. Utiliser l'outil `manage_identity` (service='mcp') pour enregistrer ou mettre à jour la configuration dans l'Identity Vault."
                             )
                 except Exception:
                     pass
@@ -145,10 +147,10 @@ class Tools:
                         if error_dict["http_code"] in (401, 403):
                             error_dict["suggestion"] = (
                                 "Le serveur distant exige une authentification ou les droits sont insuffisants. "
-                                "Il est recommandé d'identifier l'URL racine officielle du service permettant de générer "
-                                "le jeton d'accès, de fournir uniquement cette URL sécurisée sous forme de lien hypertexte "
-                                "lors de la sollicitation de l'utilisateur, puis de configurer les identifiants "
-                                "requis via l'Identity Vault."
+                                "Le Modèle doit résoudre ce problème de manière autonome : "
+                                "1. Identifier l'URL officielle permettant de générer les variables d'authentification requises. "
+                                "2. Utiliser l'outil `ask_user_input` pour fournir cette URL à l'Utilisateur et lui demander interactivement de saisir les informations. "
+                                "3. Utiliser l'outil `manage_identity` (service='mcp') pour enregistrer ou mettre à jour la configuration dans l'Identity Vault."
                             )
                 except Exception:
                     pass

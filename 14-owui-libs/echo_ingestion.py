@@ -487,11 +487,11 @@ class EchoIngestionPipeline:
         sys_msg = "> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_sessions_context`" if is_text else "> ⚙️ INFORMATION SYSTÈME : Le document complexe est vectorisé, mais pour une analyse structurelle/visuelle profonde, privilégiez l'outil `semantic_probe`"
         
         res_text = (
-            f"<smart_context filename=\"{filename}\" mime_type=\"{mime}\" mode=\"vectorized_sum_up\"\n"
+            f"<AEC_smart_context filename=\"{filename}\" mime_type=\"{mime}\" mode=\"vectorized_sum_up\"\n"
             f"                source_id=\"{file_id}\">\n"
             f"{brief_summary}\n\n"
             f"{sys_msg}\n"
-            f"</smart_context>"
+            f"</AEC_smart_context>"
         )
         return {"status": "success", "type": FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"], "source_id": file_id, "fid": file_id, "name": filename, "mime": mime, "content": res_text}
 

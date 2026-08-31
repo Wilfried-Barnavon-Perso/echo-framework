@@ -9,7 +9,7 @@ Ce dossier constitue **l'Arsenal** du modèle. Il contient l'ensemble des Outils
 ## 2. Cartographie des Fichiers et Algorithmes
 
 ### Orchestration Agentique & Automatisation
-- **`agent_orchestration_tool.py`** : Moteur multi-agents. Implémente `consult_council` (Table Ronde Delphi avec N experts, tours de parole stricts Analyse/Dialectique/Réponse) et gère le déclenchement asynchrone des **Child Chats** invoqués par N8N.
+- **`agent_orchestration_tool.py`** : Moteur multi-agents. Implémente `consult_council` (Table Ronde Delphi avec N experts, tours de parole stricts Analyse/Dialectique/Réponse). Intègre désormais le **Skill Management** (gestion des compétences avec modales de confirmation) et le **Web Grounding**. Il gère également le déclenchement asynchrone des **Child Chats** invoqués par N8N.
 - **`agent_engine_tool.py`** : Moteur d'exécution pour un agent délégué unique, gérant un budget et interdisant la récursion RAG.
 - **`delegate_to_data_broker.py`** : [NOUVEAU] Permet au modèle de déléguer la récupération de données complexes (API tierces, gros volumes) à un agent spécialisé (Data Broker).
 - **`n8n_orchestrator_tool.py`** : Interface de commande vers l'API locale N8N. Gère le déploiement de workflows en Sandbox (éphémères, nécessitant obligatoirement un `Execute Workflow Trigger`) ou en mode Démon (permanent).
@@ -33,7 +33,7 @@ Ce dossier constitue **l'Arsenal** du modèle. Il contient l'ensemble des Outils
 
 ### Utilitaires Spécialisés
 - **`python_code_executor.py`** : Exécute de manière sécurisée du code Python (incluant numpy/pandas) via le conteneur `python-worker` Flask.
-- **`strategic_planner.py`** : Gère la planification tactique des sous-agents avec un suivi obligatoire (`update_plan`) et une persistance dans le Codex.
+- **`strategic_planner.py`** : Gère la planification tactique des sous-agents avec un suivi obligatoire (`update_plan`). La persistance des plans d'action est désormais entièrement adossée à un **Codex Git** (Git-backed Codex) pour un versionnement robuste.
 - **`universal_visual_generator.py`** : Génération de diagrammes (Mindmaps, Graphes) et cartes (Leaflet) injectés directement sous forme de Data Islands isolés.
 - **`gemini_maps_grounding.py`** : Interface avec l'API Google Maps Grounding pour des résultats géospatiaux enrichis.
 - **`context_gauge.py`** : Jauge de contexte intelligente. Mesure l'état de saturation de la fenêtre de contexte du modèle et implémente des seuils de monitoring dynamiques (définis dans `echo_constants.py`) pour alerter l'agent avant saturation complète.

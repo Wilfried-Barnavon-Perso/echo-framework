@@ -16,7 +16,7 @@ Ce dossier représente la **Conscience et l'Injection Contextuelle** de l'agent.
 ### `new_context_filter.py` (Inlet)
 **Rôle** : Smart Context RAG Injector.
 - **Sémantique** : Intercepte la requête entrante et interroge Qdrant pour récupérer les souvenirs persistants.
-- **Algorithme Clé** : Fusion sémantique qui préserve le score `memory_importance`. Injecte les mémoires récupérées ainsi que les événements systèmes formatés en **YAML plat** (via `_dict_to_yaml_aec` de `echo_utils`) dans la balise native `<smart_context>`, associant des `source_id` pour la traçabilité.
+- **Algorithme Clé** : Fusion sémantique qui préserve le score `memory_importance`. Injecte les mémoires récupérées ainsi que les événements systèmes formatés en **YAML plat** (via `_dict_to_yaml_aec` de `echo_utils`) dans la balise native `<AEC_smart_context>`, associant des `source_id` pour la traçabilité.
 
 ### `app_drawer_filter.py` (Inlet - Priorité 1000)
 **Rôle** : Interface Homme-Machine Flottante.

@@ -1,18 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.26
+version: 5.28
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.23: Précision "multi-agentique" dans la docstring de consult_supervised_workers.
-# 5.22: Ajout des recommandations (forge_skill et strategic_planner) dans la docstring de consult_supervised_workers.
-# 5.21: Ajout du cas d'usage et de l'objectif dans la docstring de consult_supervised_workers.
-# 5.20: Ajout du cas d'usage (sujets complexes/multidimensionnels) dans la docstring de consult_council.
-# 5.19: council_id obligatoire, limite [p*r] via UserValve COUNCIL_MAX_PR_COMPLEXITY.
-# 5.24: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
+# 5.28: Ajout du paramètre require_web_grounding dans forge_skill pour actualisation experte conditionnelle.
+# 5.27: Ajout de delete_user_skill avec modale de confirmation.
 # 5.25: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 5.24: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
+# 5.23: Précision "multi-agentique" dans la docstring de consult_supervised_workers.
 
 import sys
 import orjson as json
@@ -28,7 +26,8 @@ from echo_utils import wrap_tool_output, EchoEvents, EchoGeminiClient, EchoState
 from echo_constants import (
     ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, get_generation_config
 )
-from echo_skills import get_all_skills, get_skill_content, save_skill, parse_skill_metadata
+from echo_skills import get_all_skills, get_skill_content, save_skill, parse_skill_metadata, delete_skill
+from echo_ui import EchoUI
 
 class Tools:
     class Valves(BaseModel):
@@ -59,14 +58,28 @@ class Tools:
         name: str,
         description: str,
         instructions: str,
+        require_web_grounding: bool = False,
         __user__: Optional[dict] = None,
         __metadata__: dict = {}
     ) -> str:
-        """Création/Mise à jour d'une expertise (Skill). Requis avant appel d'un agent inexistant.
+        """Permet au Modèle de créer ou mettre à jour une expertise (Skill). Requis avant appel d'un agent inexistant.
+        
         :param skill_id: Identifiant technique (snake_case).
         :param name: Titre lisible.
+        :param description: Description courte de l'expertise.
         :param instructions: Directives système détaillées.
+        :param require_web_grounding: Si activé, contraint l'expertise à s'actualiser systématiquement sur le Web pour garantir la fraîcheur et la validation de ses méthodologies avant toute réponse.
         """
+        if require_web_grounding:
+            grounding_directive = (
+                "\n\n<directive_obligatoire>\n"
+                "Le Modèle DOIT systématiquement utiliser ses outils de recherche Web pour extraire, vérifier "
+                "et intégrer l'état de l'art le plus récent, ainsi que les méthodologies les plus validées dans "
+                "ce domaine d'expertise, avant de formuler toute réponse ou d'exécuter une action.\n"
+                "</directive_obligatoire>"
+            )
+            instructions += grounding_directive
+
         user_id = __user__.get("id", "system") if __user__ else "system"
         success = save_skill(user_id, skill_id, name, description, instructions)
         
@@ -92,6 +105,74 @@ class Tools:
             res += f"  > *Description:* {s['description']}\n"
             
         return wrap_tool_output(text=res, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def delete_user_skill(
+        self,
+        skill_id: str,
+        __user__: dict = {},
+        __event_emitter__: callable = None,
+        __event_call__: callable = None,
+        __metadata__: dict = {}
+    ) -> str:
+        """Permet de supprimer une expertise (Skill) de l'utilisateur.
+        Demande obligatoirement l'accord de l'utilisateur via une modale avant de procéder.
+        
+        :param skill_id: L'identifiant technique (nom du dossier) du skill à supprimer.
+        """
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        
+        content = get_skill_content(user_id, skill_id)
+        if not content:
+            return wrap_tool_output(text=f"❌ Erreur : Le skill '{skill_id}' n'existe pas.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+        msg_html = f'''
+        <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
+            ⚠️ Confirmez-vous la suppression définitive de l'expertise <b>{skill_id}</b> ?
+        </div>
+        <pre style="
+            background: rgba(0,0,0,0.1); 
+            padding: 10px; 
+            border-radius: 5px; 
+            white-space: pre-wrap; 
+            word-break: break-word;
+            max-height: 40vh; /* Ascenseur interne */
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            border: 1px solid rgba(128,128,128,0.2);
+        ">{content}</pre>
+        '''
+        
+        # orjson.dumps retourne des bytes, il faut décoder en utf-8 pour l'injection JS
+        msg_escaped = json.dumps(msg_html).decode('utf-8')
+        modals_injection = EchoUI.get_custom_modals_js()
+
+        js_code = f"""
+        {modals_injection}
+        return await new Promise((resolve) => {{
+            window.echoCustomConfirm({msg_escaped}, (result) => resolve(result));
+        }});
+        """
+
+        if __event_emitter__:
+            await __event_emitter__({"type": "status", "data": {"description": f"Validation requise pour supprimer le skill {skill_id}...", "done": False}})
+
+        user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
+
+        if user_confirmed:
+            success = delete_skill(user_id, skill_id)
+            if success:
+                if __event_emitter__:
+                    await __event_emitter__({"type": "status", "data": {"description": f"Skill {skill_id} supprimé avec succès.", "done": True}})
+                return wrap_tool_output(text=f"✅ Succès : Le skill '{skill_id}' a été supprimé.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            else:
+                if __event_emitter__:
+                    await __event_emitter__({"type": "status", "data": {"description": f"Erreur système lors de la suppression de {skill_id}.", "done": True}})
+                return wrap_tool_output(text=f"❌ Erreur : Impossible de supprimer le skill '{skill_id}'.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        else:
+            if __event_emitter__:
+                await __event_emitter__({"type": "status", "data": {"description": "Suppression annulée par l'utilisateur.", "done": True}})
+            return wrap_tool_output(text="🚫 Annulé : L'utilisateur a refusé la suppression.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     # ==========================================================================
     # 2. CONSEIL D'EXPERTS (Protocole Delphi via delegate_to_agent)

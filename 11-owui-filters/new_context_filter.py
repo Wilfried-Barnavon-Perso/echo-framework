@@ -12,7 +12,7 @@ description: Composant système interne : ECHO New Context Filter.
 # 7.48: Typage hiérarchique XML de l'AEC et suppression du formateur YAML.
 # 7.47: Délégation des UserValves vers user_native_context_filter et verrouillage de la désactivation.
 # 7.46: Nettoyage des mentions "V2" du registre et de l'AEC.
-# 7.44: Ajout du tour de conversation dans le snapshot AEC (<environnement_contexte>).
+# 7.44: Ajout du tour de conversation dans le snapshot AEC (<AEC_environnement_contexte>).
 # 7.43: Nettoyage du code mort (suppression de la Valve DEBUG_MODE inutilisée).
 # 7.42: Factorisation de l'AEC et de l'horodatage zoné, retrait de _dict_to_yaml.
 
@@ -277,7 +277,7 @@ class Filter:
                 
                 rich_parts = []
                 yaml_str = _dict_to_yaml_aec(env_snapshot)
-                rich_parts.append({"text": f"<environnement_contexte>\n{yaml_str}\n</environnement_contexte>\n\n"})
+                rich_parts.append({"text": f"<AEC_environnement_contexte>\n{yaml_str}\n</AEC_environnement_contexte>\n\n"})
 
                 # === Configuration ZoneInfo ===
                 try:

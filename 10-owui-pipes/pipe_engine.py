@@ -1,19 +1,18 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.29
+version: 192.30
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.30: Fix coupure silencieuse : déplacement du yield 'usage' à la fin du générateur pipe() pour ne pas fermer prématurément le flux SSE d'Open WebUI lors d'un auto-continue ou cascade.
 # 192.29: Rollback Zéro-Hallucination : Restauration de la mutation simple (YAML plat) pour l'AEC.
 # 192.28: Support du nouveau format AEC XML hiérarchisé dans _mutate_context_identity (auto-escalade/cascade) avec regex de substitution durcie et rétrocompatibilité YAML.
 # 192.25: Support du format de clé API Google AQ.
 # 192.24: Correction systémique des vieux identifiants orphelins (Auto-heal vers MODEL_LITE) et formatage UI avec clés techniques (ai_studio_id/ca_model_id).
-# 192.23: Restauration et sauvegarde de l'historique de cascade cognitive via KV store pour le message utilisateur. Amélioration de la gestion des erreurs de streaming de l'API Google avec alertes d'interruption. Correction de la logique de clamping et cascade via MODEL_IDENTITY.
-# 192.22: Fix silent cuts in stream generation viaSAFETY exception catch & StreamProcessor logging. Fix cognitive cascade clamping and downward logic due to IDENTITY mismatches. Fix post-cascade amnesia by persisting shadow locally via KV store.
-# 192.21: Fix du silent crash lors de l'auto-escalade. Exclusion fonctionnelle du modèle actif via MODEL_IDENTITY et feedback via functionResponse.
+
 # 192.20: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
 
 # ==============================================================================
@@ -171,7 +170,7 @@ class Orchestrator:
         old_identity = self._build_identity(old_model)
         for msg in context:
             for part in msg.get("parts", []):
-                if "text" in part and "<environnement_contexte>" in part["text"]:
+                if "text" in part and "<AEC_environnement_contexte>" in part["text"]:
                     part["text"] = re.sub(
                         r'("?modèle_actuel"?\s*:\s*"?)([^"\n]+)("?)',
                         rf'\g<1>{new_identity}\g<3>', part["text"]
@@ -462,7 +461,7 @@ class StreamProcessor:
         self.events = events or EchoEvents(); self.logger = logger
         self.usage_stats = None; self.captured_sig = None; self.accumulated_text = ""
         self.accumulated_calls = []; self.full_raw_accumulator = []
-        self.escalation_requested = None
+        self.escalation_requested = None; self.hit_max_tokens = False
 
     def _create_tool_call_part(self, func_call: dict, tool_index: int) -> Optional[dict]:
         name = func_call["name"]
@@ -499,7 +498,9 @@ class StreamProcessor:
                         if cand:
                             finish_reason = cand[0].get("finishReason")
                             content = cand[0].get("content")
-                            if not content and finish_reason and finish_reason != "STOP":
+                            if finish_reason == "MAX_TOKENS":
+                                self.hit_max_tokens = True
+                            elif not content and finish_reason and finish_reason != "STOP":
                                 yield f"\n\n> ⚠️ **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
                                 return
                             if content:
@@ -527,8 +528,6 @@ class StreamProcessor:
                         yield f"\n\n> ❌ **Erreur critique de décodage du flux API** : {str(e)}\n"
         if in_think: yield "\n</think>\n"
         if self.logger: self.logger.log("api_response", self.full_raw_accumulator)
-        if self.usage_stats:
-            yield {"usage": {"prompt_tokens": self.usage_stats.get("promptTokenCount", 0), "completion_tokens": self.usage_stats.get("candidatesTokenCount", 0), "total_tokens": self.usage_stats.get("totalTokenCount", 0)}}
 
 # ==============================================================================
 # SECTION 8 : LE PIPE
@@ -566,6 +565,7 @@ class Pipe:
         # Plus de valves pour ces paramètres.
         ENABLE_PAID_CREDITS: bool = Field(default=False, description="Activer l'utilisation des crédits Google One AI pour les requêtes OAuth2. Désactivé par défaut.")
         MAX_CASCADE_ATTEMPTS: int = Field(default=5, ge=3, le=10, description="Nombre max de transferts de modèles autorisés par tour.")
+        AUTO_CONTINUE_MAX: int = Field(default=1, ge=0, le=5, description="Nombre de relances automatiques si le flux s'arrête (MAX_TOKENS). 0 = Désactivé.")
 
     def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
 
@@ -784,6 +784,8 @@ class Pipe:
         current_cumul = body.get("_echo_last_cumul")
         user_msg_id = (__metadata__ or {}).get("_echo_user_msg_id")
 
+        auto_continue_count = 0
+
         while cascade_attempt < max_cascade_attempts:
             cascade_attempt += 1
             
@@ -908,6 +910,23 @@ class Pipe:
             if proc.usage_stats:
                 for k in cumulative_usage_stats:
                     cumulative_usage_stats[k] += proc.usage_stats.get(k, 0)
+
+            # --- [NOUVEAU] GESTION DE L'AUTO-CONTINUE (MAX_TOKENS) ---
+            if proc.hit_max_tokens:
+                if auto_continue_count < user_valves.AUTO_CONTINUE_MAX:
+                    auto_continue_count += 1
+                    await events.status(f"⚡ Limite MAX_TOKENS atteinte. Auto-continuation ({auto_continue_count}/{user_valves.AUTO_CONTINUE_MAX})...")
+                    if proc.accumulated_text:
+                        context.append({"role": "model", "parts": [{"text": proc.accumulated_text}]})
+                        context.append({"role": "user", "parts": [{"text": "<AEC_evenement_systeme>\n- type: SYSTEM_AUTO_CONTINUE\n  message: Le plafond de tokens de sortie a été atteint. Le Modèle doit reprendre la génération EXACTEMENT au caractère près où il s'est arrêté (sans reprendre la phrase du début si elle est coupée). Le Modèle ne doit produire aucune formule de politesse, ni introduction. Il doit produire uniquement la suite absolue de la chaîne de caractères.\n</AEC_evenement_systeme>"}]})
+                    else:
+                        context.append({"role": "model", "parts": [{"text": "[Erreur Système Interne ECHO : L'appel d'outil précédent du Modèle était trop long et a été détruit par l'API. Le Modèle doit obligatoirement fragmenter son action et ne pas l'envoyer d'un seul coup.]"}]})
+                        context.append({"role": "user", "parts": [{"text": "<AEC_evenement_systeme>\n- type: TOOL_CALL_DROPPED_MAX_TOKENS\n  message: Le Modèle doit recommencer l'action en cours en la fragmentant obligatoirement.\n</AEC_evenement_systeme>"}]})
+                    cascade_attempt = 0
+                    continue
+                else:
+                    yield f"\n\n> ⚠️ **Auto-Continue épuisé** ({user_valves.AUTO_CONTINUE_MAX} relances). Génération tronquée.\n"
+                    break
 
             # --- [NOUVEAU] GESTION DE LA CASCADE ---
             if is_auto and proc.escalation_requested:
@@ -1182,4 +1201,6 @@ class Pipe:
                 quota_rpm_rem=q_rpm_rem, quota_rpm_lim=q_rpm_lim,
             )
         
+        if cumulative_usage_stats.get("totalTokenCount", 0) > 0:
+            yield {"usage": {"prompt_tokens": cumulative_usage_stats.get("promptTokenCount", 0), "completion_tokens": cumulative_usage_stats.get("candidatesTokenCount", 0), "total_tokens": cumulative_usage_stats.get("totalTokenCount", 0)}}
         yield ""

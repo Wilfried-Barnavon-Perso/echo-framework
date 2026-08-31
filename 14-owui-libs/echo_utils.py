@@ -1,19 +1,21 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.37
+version: 8.39
 description: Composant système interne : ECHO Shared Utils (Core).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 8.39: Fix critique: Suppression du masquage des erreurs httpx.ReadError et RemoteProtocolError dans le flux SSE pour rétablir la cascade cognitive.
+# 8.38: Injection de ECHO_SAFETY_SETTINGS (BLOCK_NONE) dans les payloads Gemini (Code Assist et AI Studio).
 # 8.37: Résolution Bug RAG: Remplacement du INSERT OR REPLACE par un Upsert complet préservant is_embedded.
 # 8.36: Rollback Zéro-Hallucination : Restauration de _dict_to_yaml_aec (YAML plat pur) pour l'AEC et les évènements systèmes au lieu de XML.
 # 8.35: Correction: Invalidation des dates google_quota_reset obsolètes empêchant le Fast-Failover.
 # 8.34: (Mise à jour précédente)
-# 8.33: Correction: Résolution NameError (max_retries) dans call_raw remplacé par len(auth_providers).
-# 8.32: Résolution Fork Bomb RAG : Ajout migration 'is_embedded' et méthodes O(1) de vérification.
-# 8.31: Migration intégrale du générateur AEC (YAML vers XML hiérarchique pur).
-# 8.30: Refonte résilience: Conversion de la boucle `for` globale en `while` dynamique.
+
+class FatalAPIError(Exception):
+    """Erreur API fatale (ex: 400 Bad Request) ne nécessitant aucun backoff réseau."""
+    pass
 
 import os
 import sqlite3
@@ -51,6 +53,7 @@ from echo_constants import (
     CHARS_PER_TOKEN,
     ECHO_HTTP_CLIENT_TIMEOUT, ECHO_HTTP_MAX_CONNECTIONS,
     ECHO_HTTP_MAX_KEEPALIVE, ECHO_HTTP_KEEPALIVE_EXPIRY,
+    ECHO_SAFETY_SETTINGS,
 )
 from echo_protocol import build_ca_generation_config
 
@@ -297,18 +300,18 @@ def _dict_to_yaml_aec(d: Any, indent: int = 0) -> str:
     return "\n".join(lines)
 
 def build_aec_system_events(sys_events: list = None, error_events: list = None) -> str:
-    """Génère la balise <evenement_systeme> standardisée dont le contenu est au format YAML pour l'AEC"""
+    """Génère la balise <AEC_evenement_systeme> standardisée dont le contenu est au format YAML pour l'AEC"""
     if not sys_events and not error_events:
         return ""
         
-    events_text = "<evenement_systeme>\n"
+    events_text = "<AEC_evenement_systeme>\n"
     if sys_events:
         events_text += _dict_to_yaml_aec(sys_events) + "\n"
         events_text += "> Utilisez `query_registry` pour consulter l'état complet des ressources.\n"
     if error_events:
         events_text += "\n[ERREURS D'INGESTION]\n" + _dict_to_yaml_aec(error_events) + "\n"
         events_text += "> Ces fichiers ont échoué et ne sont pas exploitables.\n"
-    events_text += "</evenement_systeme>\n\n"
+    events_text += "</AEC_evenement_systeme>\n\n"
     return events_text
 
 def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[dict] = None, user_id: str = None, chat_id: str = None, metadata: dict = None) -> dict:
@@ -783,6 +786,7 @@ class EchoGeminiClient:
                     "generationConfig": gen_conf,
                     "tools": payload.get("tools"),
                     "toolConfig": t_conf,
+                    "safetySettings": payload.get("safetySettings", ECHO_SAFETY_SETTINGS),
                     "session_id": chat_id
                 }
                 
@@ -823,6 +827,7 @@ class EchoGeminiClient:
                 "generationConfig": payload.get("generationConfig", {}),
                 "tools": payload.get("tools"),
                 "toolConfig": t_conf,
+                "safetySettings": payload.get("safetySettings", ECHO_SAFETY_SETTINGS),
             }
 
             request_body = {k: v for k, v in request_body.items() if v is not None}
@@ -1132,34 +1137,34 @@ class EchoGeminiClient:
                     resp = await client.post(req_ctx["url"], json=req_ctx["payload"], headers=req_ctx["headers"], timeout=timeout)
 
                 if resp.status_code == 200:
+                    # Déverrouillage proactif sur succès (Auto-Heal)
+                    if provider.get("type") == AUTH_METHOD_OAUTH2:
+                        state_mgr.unlock_agy_endpoint(current_url_idx)
                     json_data = resp.json()
                     # NORMALISATION : Déballage automatique de l'enveloppe Code Assist (OAuth2)
                     return json_data.get("response", json_data)
 
                 # --- FAIL-FAST SUR ERREUR SYNTAXE ---
                 if resp.status_code == 400:
-                    raise Exception(f"Erreur 400 (Bad Request) - Payload rejeté par l'API: {resp.text}")
+                    raise FatalAPIError(f"Erreur 400 (Bad Request) - Payload rejeté par l'API: {resp.text}")
 
                 # --- BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
-                if resp.status_code in [403, 404]:
+                if resp.status_code in [401, 403, 404]:
                     if active_idx < len(auth_providers) - 1:
                         if events: await events.status(f"⚠️ Modèle non autorisé ou indisponible sur {provider['type']}. Bascule immédiate...", done=False)      
                         active_idx += 1
                         attempt = 0
+                        current_delay = ECHO_RETRY_BASE_DELAY
                         continue
 
                 if resp.status_code in [429, 500, 503]:
                     # 1. --- FAST-FAILOVER INTRA-RETRY (OAuth2 uniquement) ---
                     if provider.get("type") == AUTH_METHOD_OAUTH2:
+                        from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
                         from datetime import datetime, timedelta, timezone
-                        reset_time = None
-                        if resp.status_code == 429:
-                            auth = EchoAuth(user_id=user_id)
-                            reset_time = auth.get_auth_data("google_quota_reset", user_id)
-                            if reset_time and reset_time != "N/A" and reset_time < datetime.now(timezone.utc).isoformat():
-                                reset_time = None
-                        if not reset_time or reset_time == "N/A":
-                            reset_time = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+                        
+                        # Stratégie Agnostique : Verrou court fixe pour toutes les erreurs 429/50x
+                        reset_time = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
                         
                         # Verrouillage de l'URL actuelle
                         state_mgr.lock_agy_endpoint(current_url_idx, reset_time)
@@ -1171,18 +1176,14 @@ class EchoGeminiClient:
                             current_url_idx = new_idx
                             base_url = new_url
                             attempt = 0
+                            current_delay = ECHO_RETRY_BASE_DELAY
                             continue
 
                     # 2. --- BACKOFF CLASSIQUE ---
                     if attempt < max_retries:
                         wait_msg = f"⚠️ Surcharge API ({resp.status_code})."
-                        if resp.status_code == 429 and provider.get("type") == AUTH_METHOD_OAUTH2:
-                            auth = EchoAuth(user_id=user_id)
-                            r_time = auth.get_auth_data("google_quota_reset", user_id)
-                            from datetime import datetime, timezone
-                            if r_time and r_time != "N/A" and r_time < datetime.now(timezone.utc).isoformat():
-                                r_time = None
-                            if r_time and r_time != "N/A": wait_msg = f"⏳ API limite de débit. Reprise à : {r_time}."
+                        if resp.status_code == 429:
+                            wait_msg = f"⏳ Limite de débit API ({resp.status_code})."
 
                         wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                         if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s....", done=False)
@@ -1200,6 +1201,8 @@ class EchoGeminiClient:
                         continue
 
                 resp.raise_for_status()
+            except FatalAPIError as fe:
+                raise fe
             except Exception as e:
                 if attempt < max_retries:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
@@ -1364,28 +1367,25 @@ class EchoGeminiClient:
                     # --- FAIL-FAST SUR ERREUR SYNTAXE ---
                     if r.status_code == 400:
                         body = await r.aread()
-                        raise Exception(f"Erreur 400 (Bad Request) - Payload rejeté par l'API: {body.decode('utf-8')}")
+                        raise FatalAPIError(f"Erreur 400 (Bad Request) - Payload rejeté par l'API: {body.decode('utf-8')}")
 
                     # --- BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
-                    if r.status_code in [403, 404]:
+                    if r.status_code in [401, 403, 404]:
                         if active_idx < len(auth_providers) - 1:
                             if events: await events.status(f"⚠️ Modèle non autorisé ou indisponible sur {provider['type']}. Bascule immédiate...", done=False)  
                             active_idx += 1
                             attempt = 0
+                            current_delay = ECHO_RETRY_BASE_DELAY
                             continue
 
                     if r.status_code in [429, 500, 503]:
                         # 1. --- FAST-FAILOVER INTRA-RETRY (OAuth2 uniquement) ---
                         if provider.get("type") == AUTH_METHOD_OAUTH2:
+                            from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
                             from datetime import datetime, timedelta, timezone
-                            reset_time = None
-                            if r.status_code == 429:
-                                auth = EchoAuth(user_id=user_id)
-                                reset_time = auth.get_auth_data("google_quota_reset", user_id)
-                                if reset_time and reset_time != "N/A" and reset_time < datetime.now(timezone.utc).isoformat():
-                                    reset_time = None
-                            if not reset_time or reset_time == "N/A":
-                                reset_time = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+                            
+                            # Stratégie Agnostique : Verrou court fixe pour toutes les erreurs 429/50x
+                            reset_time = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
                             
                             # Verrouillage de l'URL actuelle
                             state_mgr.lock_agy_endpoint(current_url_idx, reset_time)
@@ -1397,18 +1397,14 @@ class EchoGeminiClient:
                                 current_url_idx = new_idx
                                 base_url = new_url
                                 attempt = 0
+                                current_delay = ECHO_RETRY_BASE_DELAY
                                 continue
 
                         # 2. --- BACKOFF CLASSIQUE ---
                         if attempt < max_retries:
                             wait_msg = f"⚠️ Surcharge API ({r.status_code})."
-                            if r.status_code == 429 and provider.get("type") == AUTH_METHOD_OAUTH2:
-                                auth = EchoAuth(user_id=user_id)
-                                r_time = auth.get_auth_data("google_quota_reset", user_id)
-                                from datetime import datetime, timezone
-                                if r_time and r_time != "N/A" and r_time < datetime.now(timezone.utc).isoformat():
-                                    r_time = None
-                                if r_time and r_time != "N/A": wait_msg = f"⏳ API limite de débit. Reprise à : {r_time}."
+                            if r.status_code == 429:
+                                wait_msg = f"⏳ Limite de débit API ({r.status_code})."
 
                             wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                             if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s....", done=False)
@@ -1426,6 +1422,11 @@ class EchoGeminiClient:
                             continue
 
                     r.raise_for_status()
+
+                    # Déverrouillage proactif sur succès (Auto-Heal)
+                    if provider.get("type") == AUTH_METHOD_OAUTH2:
+                        state_mgr.unlock_agy_endpoint(current_url_idx)
+
                     if process_callback:
                         try:
                             async for chunk in process_callback(r): yield chunk
@@ -1433,11 +1434,6 @@ class EchoGeminiClient:
                             # Annulation uvicorn (shutdown container) — doit se propager.
                             print(f"[EchoGemini] ⚠️ Tâche SSE annulée (shutdown). Re-propagation.")
                             raise
-                        except (httpx.RemoteProtocolError, httpx.ReadError):
-                            # Déconnexion propre du client SSE (timeout navigateur, reload UI).
-                            # Sortie sans retry — pas une erreur API.
-                            print(f"[EchoGemini] ℹ️ Client SSE déconnecté (process_callback). Abandon propre.")
-                            return
                     else:
                         # Processeur par défaut pour les outils (Extraction Texte et Objets JSON)
                         buffer = ""
@@ -1464,10 +1460,9 @@ class EchoGeminiClient:
                         except asyncio.CancelledError:
                             print(f"[EchoGemini] ⚠️ Tâche SSE annulée (shutdown). Re-propagation.")
                             raise
-                        except (httpx.RemoteProtocolError, httpx.ReadError):
-                            print(f"[EchoGemini] ℹ️ Client SSE déconnecté (aiter_bytes). Abandon propre.")
-                            return
                     break
+            except FatalAPIError as fe:
+                raise fe
             except Exception as e:
                 if attempt < max_retries:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
@@ -1809,6 +1804,10 @@ class EchoStateManager:
     def lock_agy_endpoint(self, idx: int, reset_time_utc: str):
         """Verrouille une URL jusqu'à son reset_time."""
         self.save_setting(f"agy_locked_url_{idx}", reset_time_utc)
+
+    def unlock_agy_endpoint(self, idx: int):
+        """Déverrouille proactivement une URL sur un succès HTTP (Auto-Heal)."""
+        self.save_setting(f"agy_locked_url_{idx}", "")
 
     def save_context_stats(self, stats: dict):
         try:

@@ -128,9 +128,9 @@ class Action:
             
             if isinstance(content, str):
                 # Nettoyage des balises de contexte proprioceptif pour optimiser le budget tokens
-                content = re.sub(r'<smart_context>.*?</smart_context>', '', content, flags=re.DOTALL)
-                content = re.sub(r'<environnement_contexte>.*?</environnement_contexte>', '', content, flags=re.DOTALL)
-                content = re.sub(r'<evenement_systeme>.*?</evenement_systeme>', '', content, flags=re.DOTALL)
+                content = re.sub(r'<AEC_smart_context>.*?</AEC_smart_context>', '', content, flags=re.DOTALL)
+                content = re.sub(r'<AEC_environnement_contexte>.*?</AEC_environnement_contexte>', '', content, flags=re.DOTALL)
+                content = re.sub(r'<AEC_evenement_systeme>.*?</AEC_evenement_systeme>', '', content, flags=re.DOTALL)
                 content = content.strip()
                 
             # Extraction des fichiers joints

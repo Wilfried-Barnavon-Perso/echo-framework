@@ -153,12 +153,12 @@ flowchart LR
     <h3>Le bloc AEC (<code>environnement_contexte</code>)</h3>
     <p>
       À la fin de la phase Inlet, le filtre génère un instantané plat au format YAML et l'encapsule dans les métadonnées
-      du message (via <code>_dict_to_yaml_aec</code>). Ce bloc, délimité par des balises XML structurelles <code>&lt;environnement_contexte&gt;</code>, constitue la
+      du message (via <code>_dict_to_yaml_aec</code>). Ce bloc, délimité par des balises XML structurelles <code>&lt;AEC_environnement_contexte&gt;</code>, constitue la
       <em>proprioception</em> du modèle pour le tour courant.
     </p>
 
     <div class="code-header">Structure du bloc AEC (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
-    <pre><code>&lt;environnement_contexte&gt;
+    <pre><code>&lt;AEC_environnement_contexte&gt;
 version_framework_echo: "5.199.38"
 modèle_actuel: "##MODEL_ID##"
 modèle_origine: "##MODEL_ORIGIN##"
@@ -167,26 +167,26 @@ localisation: "Paris, France"
 timezone: "Europe/Paris"
 tour_conversation: 1
 date_et_heure: "2026-08-24 14:00"
-&lt;/environnement_contexte&gt;
+&lt;/AEC_environnement_contexte&gt;
 
-&lt;evenement_systeme&gt;
+&lt;AEC_evenement_systeme&gt;
 - nom: "rapport.pdf"
   type: "vectorized_sum_up"
   mime: "application/pdf"
   source_id: "U_abc123_C_xyz789_T_1748246400"
 > Utilisez `query_registry` pour consulter l'état complet des ressources.
-&lt;/evenement_systeme&gt;
+&lt;/AEC_evenement_systeme&gt;
 
 &lt;smart_context filename="rapport.pdf" mime_type="application/pdf" mode="vectorized_sum_up" source_id="U_abc123_C_xyz789_T_1748246400"&gt;
 [Résumé exhaustif et structuré généré par Synthèse Guidée par RAG]
 
 > ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_sessions_context`
-&lt;/smart_context&gt;</code></pre>
+&lt;/AEC_smart_context&gt;</code></pre>
 
     <div class="note-box">
       <h4>Règle d'Or - Registre Unifié</h4>
       <p>
-        Les registres massifs (`registre_fichiers`, etc.) le modèle <strong>doit</strong> utiliser dynamiquement l'outil <code>query_registry</code> pour connaître l'état du système et de ses ressources (Codex, fichiers, plans). Seul un delta évènementiel (<code>&lt;evenement_systeme&gt;</code>) le prévient des actions asynchrones ou des fichiers du tour courant.
+        Les registres massifs (`registre_fichiers`, etc.) le modèle <strong>doit</strong> utiliser dynamiquement l'outil <code>query_registry</code> pour connaître l'état du système et de ses ressources (Codex, fichiers, plans). Seul un delta évènementiel (<code>&lt;AEC_evenement_systeme&gt;</code>) le prévient des actions asynchrones ou des fichiers du tour courant.
       </p>
     </div>
 
@@ -215,7 +215,7 @@ date_et_heure: "2026-08-24 14:00"
     </p>
 
     <h3>Pipeline Zéro-LLM et echo_ingestion.py</h3>
-    <p>L'ingestion de masse est déportée via l'architecture asynchrone <code>echo_ingestion.py</code> (Pipeline Zéro-RAM) qui supporte le traitement vectoriel en batch, la conversion native via MarkItDown, et un fallback SQL/Git.</p>
+    <p>Pipeline d'Ingestion Zéro-RAM asynchrone modulaire pour la base RAG. Gère de façon dynamique les fichiers entrants ("dynamic file handling"), les convertit via MarkItDown et les indexe via traitement hybride.</p>
     <p>
       Le fonctionnement de ce filtre a été radicalement simplifié et optimisé par rapport à son prédécesseur (qui gérait la distillation long terme). Le processus actuel est le suivant :
     </p>
@@ -280,7 +280,7 @@ date_et_heure: "2026-08-24 14:00"
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.49 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
