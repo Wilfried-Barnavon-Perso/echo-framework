@@ -27,6 +27,7 @@
       <li><strong>Point de passage unique :</strong> Lorsqu'il est activé, ECHO Auth devient le seul portail d'entrée. Il est couplé au WAF via l'endpoint <code>/api/verify</code>, protégeant l'ensemble de la pile de requêtes non autorisées (mécanisme de <em>Forward Auth</em>).</li>
       <li><strong>Authentification forte (MFA/TOTP) :</strong> L'authentification repose systématiquement sur un couple d'identifiants (email/mot de passe) suivi obligatoirement de la validation d'un code OTP temporel.</li>
       <li><strong>Gestion centralisée des sessions :</strong> Les jetons de session (JWT) émis par ECHO Auth peuvent être révoqués dynamiquement et unitairement depuis le <strong>Dashboard Actif</strong> de l'Admin Manager, offrant une capacité d'intervention immédiate en cas de compromission d'un accès.</li>
+      <li><strong>Déconnexion & Purge :</strong> Intègre l'invalidation proactive de la session interne d'Open WebUI lors de la déconnexion globale du SSO pour éviter les collisions. La suppression d'une identité entraîne la <strong>purge atomique totale</strong> sur toutes les bases SQLite associées (chat, identity, MCP, N8N).</li>
     </ul>
 
     <h2>Le Tunnel SSH Éphémère (PKCE)</h2>
@@ -54,7 +55,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.54 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.60 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

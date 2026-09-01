@@ -12,7 +12,7 @@ Ce dossier constitue le **Cœur Applicatif (Core Libraries)** du framework. Il c
 - **`echo_constants.py`** : C'est le Registre Unifié et la librairie de fondations (Shared Core Functionality). 
   - **Sémantique** : Contient `ECHO_MODELS_REGISTRY` dictant la hiérarchie cognitive (Pro, Flash, Lite, Distillation), `ECHO_SESSION_DOMAINS` pour le Vault, ainsi que les modèles de prompts natifs, l'identifiant obligatoire `wrap_tool_output` (`echo_tool_multiparts`) pour le multimodal, et les **seuils de monitoring de la jauge de contexte**.
 - **`echo_utils.py`** : Cœur utilitaire massif et librairie partagée du système, gérant la base de données, la gestion des chemins (path management), la résilience réseau et le formatage.
-  - **Sémantique** : Instancie `EchoStateManager` gérant l'accès sécurisé et asynchrone à SQLite (incluant le suivi RAG O(1) via `is_message_embedded()`). Contient le client natif `EchoGeminiClient` qui implémente le multiplexage **HTTP/2**, le Fail-fast sur erreur de syntaxe (400), la Cascade Descendante, et un Circuit Breaker OAuth2 robuste (Fast-Failover Intra-Retry avec verrouillage dynamique des URL sur timeout/429 et Auto-heal). Fournit également la primitive `_dict_to_yaml_aec` pour le formatage YAML plat des événements systèmes de l'AEC.
+  - **Sémantique** : Instancie `EchoStateManager` gérant l'accès sécurisé et asynchrone à SQLite (incluant le suivi RAG O(1) via `is_message_embedded()`). Contient le client natif `EchoGeminiClient` qui implémente le multiplexage **HTTP/2**, le Fail-fast sur erreur de syntaxe (400), la Cascade Descendante (déclenchée explicitement par des `raise` réseau au lieu de `yield` silencieux), et un Circuit Breaker OAuth2 robuste (Fast-Failover Intra-Retry avec verrouillage dynamique des URL sur timeout/429 via `ECHO_ENDPOINT_LOCK_TIMEOUT_MIN` et Auto-heal). Fournit également la primitive `_dict_to_yaml_aec` pour le formatage YAML plat des événements systèmes de l'AEC. Les constantes de résilience utilisent désormais la nomenclature unifiée `ECHO_API_KEY_RETRIES`.
 - **`echo_protocol.py`** : Définition des schémas Pydantic natifs et constantes de base pour les protocoles réseau.
 
 ### Interfaces Utilisateur (UI & DOM)
@@ -22,7 +22,7 @@ Ce dossier constitue le **Cœur Applicatif (Core Libraries)** du framework. Il c
 
 ### Authentification Antigravity 2.1
 - **`echo_auth.py`** : IdP (Identity Provider) Autonome. 
-  - **Sémantique** : Gère l'authentification Multi-Provider (OAuth2, TOTP, Master Keys). Il purge intégralement les bases de données (Chat, Identity, MCP, N8N) lors de la suppression d'un utilisateur.
+  - **Sémantique** : Gère l'authentification Multi-Provider (OAuth2, TOTP, Master Keys). Intègre l'invalidation proactive de la session Open WebUI (`/api/v1/auths/signout`) lors du SSO logout pour éviter les collisions. Il purge intégralement les bases de données (Chat, Identity, MCP, N8N) lors de la suppression d'un utilisateur.
 - **`echo_pkce_server.py`** & **`echo_ssh_tunnel.py`** : Implémentent le flow OAuth2 PKCE strict via un serveur callback éphémère et un tunnel SSH (Ports 8020-8024).
 
 ### Pipelines Spécialisés

@@ -1,13 +1,14 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 1.3 (Intégration Name SSO achevée)
+VERSION : 1.4 (Invalidation proactive session OWUI)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-07-13
+DATE MAJ : 2026-09-01
 ================================================================================
 """
 import os
 import sqlite3
+import httpx
 import pyotp
 import base64
 import secrets
@@ -248,6 +249,18 @@ def is_safe_url(url: str) -> bool:
 async def logout_sso(request: Request, next: str = "/", echo_auth_session: Optional[str] = Cookie(None)):
     """Endpoint de déconnexion globale du SSO."""
     if echo_auth_session:
+        # 1. Invalider la session interne d'Open WebUI pour éviter les collisions (Erreur 500)
+        # Transmet le cookie session au backend OWUI pour forcer la révocation DB
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                await client.post(
+                    "http://echo-open-webui:8080/api/v1/auths/signout",
+                    headers={"Cookie": f"echo_auth_session={echo_auth_session}"}
+                )
+        except Exception:
+            pass  # Non bloquant : on continue la déconnexion SSO même si OWUI est injoignable
+            
+        # 2. Supprimer la session SSO
         delete_session(echo_auth_session)
         
     safe_next = next if is_safe_url(next) else "/"

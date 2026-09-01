@@ -37,7 +37,7 @@ Le système nerveux central d'ECHO repose sur le **composant core `pipe_engine.p
 - **Registre Cognitif Unifié (SSOT) :** Toutes les capacités LLM sont désormais gouvernées centralement par `ECHO_MODELS_REGISTRY`. Ce dictionnaire abstrait mappe les identifiants métiers (`MODEL_PRO`, `MODEL_FLASH`, `MODEL_LITE`, `MODEL_DISTILLATION`) vers leurs identifiants API (AI Studio / Code Assist), leur `hierarchy` cognitive stricte (0, 1, 2), et leur `generationConfig` détaillée (température, `maxOutputTokens=65535`, et `thinkingConfig`).
 - **Routage Dynamique & Fluctuation Continue :** Les modes (AUTO, AUTO_PRO) interrogent dynamiquement la hiérarchie du Registre Cognitif. Lors de la reprise d'une session ou en cas d'erreur API, le système applique un *Clamping Dynamique* et une cascade descendante (PRO → FLASH → LITE) calculés algorithmiquement sur les valeurs entières de la hiérarchie. Intègre un **Circuit Breaker OAuth2 (Fast-Failover Intra-Retry)** qui bascule instantanément sur un environnement de secours en cas de 429/503 avant d'évincer le provider. Inclut également une logique d'**Auto-heal SQLite** : si un modèle orphelin est détecté, le système effectue un reverse-lookup ou force le `MODEL_LITE` pour prévenir tout crash.
 - **Orchestration Multi-Agents (`agent_orchestration_tool.py`) :** `consult_council` (Table Ronde Delphi, N experts agentiques avec outils, tours parallélisés exigeant une dialectique structurée : Analyse/Dialectique/Réponse) et `consult_supervised_workers` (boucle critique/correction récursive). L'orchestration intègre désormais le **Skill Management** (gestion de compétences avec modales de confirmation interactives) et le **Web Grounding**. Elle gère également les **Child Chats** déclenchés asynchronement par les flux N8N pour garantir une traçabilité totale.
-- **HTTP/2 Stealth Headers (`echo_utils.py`) :** Multiplexage HTTP/2 natif via le nouveau client consolidé `EchoGeminiClient`. Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité pour simuler un navigateur réel tout en évitant les blocages WAF.
+- **HTTP/2 Stealth Headers (`echo_utils.py`) :** Multiplexage HTTP/2 natif via le nouveau client consolidé `EchoGeminiClient`. Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité pour simuler un navigateur réel tout en évitant les blocages WAF. Remplacement des exceptions silencieuses par des remontées directes (raise) pour déclencher la cascade cognitive du Pipe Engine lors des erreurs réseau. Renommage des constantes de résilience (ex: `ECHO_API_KEY_RETRIES`).
 
 ## 3. 👁️ La Conscience (`/opt/ECHO/owui-filters/`)
 
@@ -77,7 +77,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 
 ## 6. 🛡️ Gouvernance & Administration (`/opt/ECHO/docker-admin-manager/`)
 
-- **ECHO Auth (SSO & MFA) :** IdP autonome gérant l'authentification forte (TOTP) couplé à BunkerWeb. Prise en charge des comptes locaux et OAuth2. La suppression d'une identité entraîne désormais la **purge atomique totale** sur toutes les bases SQLite associées (chat, identity, MCP, N8N).
+- **ECHO Auth (SSO & MFA) :** IdP autonome gérant l'authentification forte (TOTP) couplé à BunkerWeb. Prise en charge des comptes locaux et OAuth2. Intègre désormais l'invalidation proactive de la session interne d'Open WebUI lors de la déconnexion globale du SSO pour éviter les collisions. La suppression d'une identité entraîne la **purge atomique totale** sur toutes les bases SQLite associées (chat, identity, MCP, N8N).
 - **Dashboard Actif :** Interface interactive de monitoring du cluster Docker (Révocations granulaires, Kill-Switch, stats). Intègre désormais le monitoring de l'élagage vectoriel asynchrone (Background Task) via long-polling API (`/api/task_status`).
 - **Sécurité Périmétrique :** BunkerWeb (WAF) protégeant le WebSocket WebGPU et l'API IdP.
 - **Régulation & Consolidation :** Optimisation SQLite (Vacuum/WAL) et sauvegardes à chaud. Introduction du script automatisé `clean-echo.sh`. Le script d'installation centralise désormais l'**Autosafety Docker** : politique de logs stricte (max 10 Mo) et cron de nettoyage. Le dashboard `server.py` permet d'invoquer manuellement une purge profonde (Cache APT, build cache, images orphelines) pour éradiquer tout risque de saturation disque.
@@ -109,9 +109,9 @@ L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N
 
 ## 9. 🚦 Orchestration Séquentielle (Docker Compose)
 
-Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depends_on: condition: service_healthy` :
+L'infrastructure est désormais pilotée via la configuration standardisée `stack-echo.yml`. Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depends_on: condition: service_healthy` :
 - **Tier 1 (Fondations)** : Qdrant, SearXNG, Watchtower.
-- **Tier 2 (Workers)** : Embedding, Python Worker, Browser Worker, MCP Broker, **N8N Worker**.
+- **Tier 2 (Workers)** : Embedding, Python Worker, Browser Worker, MCP Broker, N8N Worker, **STT Worker**, **TTS Worker**.
 - **Tier 3** : Open WebUI.
 - **Tier 4** : Admin Manager.
 
@@ -139,4 +139,4 @@ Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depend
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.200.54*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.200.60*

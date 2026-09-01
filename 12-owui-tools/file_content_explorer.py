@@ -1,11 +1,12 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.26
+version: 5.109.27
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.109.27: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 5.109.25: Ajout de la sécurité de taille maximale (MAX_MULTIMODAL_SIZE_KB) dans semantic_probe et read_multimedia_file.
 # 5.109.24: Correction 400 Bad Request (inlineData -> inline_data) et interception robuste des exceptions sondes.
 # 5.109.17: Suppression de la classe UserValves vide pour éviter le bug UI Open WebUI (Aucune vanne trouvée).
@@ -32,7 +33,7 @@ from echo_utils import (
 )
 from echo_ui import EchoUI
 from echo_constants import (
-    ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, ECHO_API_KEY_THRESHOLD,
+    ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES, get_generation_config,
     PROMPT_SENSORY_DISTILLATION
 )
@@ -171,7 +172,7 @@ class Tools:
                 user_id=user_id,
                 metadata=__metadata__,
                 events=events,
-                threshold=ECHO_API_KEY_THRESHOLD,
+                threshold=ECHO_API_KEY_RETRIES,
                 max_retries=ECHO_API_MAX_RETRIES,
                 timeout=self.valves.PROBE_TIMEOUT,
                 include_thoughts=True,

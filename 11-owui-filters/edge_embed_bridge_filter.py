@@ -2,15 +2,15 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.14
+version: 1.15
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.15: Support du Touch Drag sur mobile et repositionnement (bottom: 80px) de l'icône WebGPU morphée.
 # 1.14: Fix HUD WebGPU Mobile (Opacité/Morphing) et standardisation 1024D (Harrier 0.6b).
 # 1.13: Support natif Mobile (WebGPU Fallback Fast-Failover & Quantification q4).
 # 1.12: Implémentation du Dual-Versioning (Modèle vs Script) et Auto-Reload (Idempotence intelligente).\n# 1.11: Correction du Self-Healing (Infinite Loop WebGPU) et du crash DOM (TypeError Morphing).
-# 1.10: Ajout d'un avertissement visuel explicite recommandant le chargement du modèle.
 
 import asyncio
 from pydantic import BaseModel, Field
@@ -73,7 +73,7 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        SCRIPT_VERSION = "1.13"
+        SCRIPT_VERSION = "1.14"
         js_code = """
         (async function initEdgeEmbedding() {
             const INJECTED_SCRIPT_VERSION = "__INJECTED_SCRIPT_VERSION__";
@@ -253,9 +253,30 @@ class Filter:
                     hud.style.transform = "translate3d(" + currentX + "px, " + currentY + "px, 0)";
                 }
             }
+            function touchDragStart(e) {
+                if (e.touches.length !== 1) return;
+                const touch = e.touches[0];
+                initialX = touch.clientX - xOffset;
+                initialY = touch.clientY - yOffset;
+                isDragging = true;
+            }
+            function touchDrag(e) {
+                if (isDragging && e.touches.length === 1) {
+                    e.preventDefault();
+                    const touch = e.touches[0];
+                    currentX = touch.clientX - initialX;
+                    currentY = touch.clientY - initialY;
+                    xOffset = currentX;
+                    yOffset = currentY;
+                    hud.style.transform = "translate3d(" + currentX + "px, " + currentY + "px, 0)";
+                }
+            }
             hud.addEventListener('mousedown', dragStart);
             document.addEventListener('mouseup', dragEnd);
             document.addEventListener('mousemove', drag);
+            hud.addEventListener('touchstart', touchDragStart, { passive: false });
+            document.addEventListener('touchend', dragEnd);
+            document.addEventListener('touchmove', touchDrag, { passive: false });
 
             // 3. CONNEXION WEBSOCKET & SELF-HEALING
             let wsRef = null;
@@ -355,9 +376,19 @@ class Filter:
                                 hud.style.height = '36px';
                                 hud.style.padding = '0';
                                 hud.style.borderRadius = '50%';
-                                hud.style.opacity = '0.85';
                                 hud.style.background = 'rgba(15, 23, 42, 0.9)';
                                 hud.style.border = '1px solid rgba(56, 189, 248, 0.6)';
+                                
+                                const isMobileDevice = /Mobi|Android/i.test(navigator.userAgent);
+                                if (isMobileDevice) {
+                                    hud.style.top = 'auto';
+                                    hud.style.bottom = '80px';
+                                    hud.style.right = '16px';
+                                    hud.style.opacity = '1';
+                                } else {
+                                    hud.style.opacity = '0.85';
+                                }
+                                
                                 hud.title = "ECHO Edge WebGPU actif (0.6B q4f16)";
                             }
                             

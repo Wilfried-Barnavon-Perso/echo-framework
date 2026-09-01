@@ -1,12 +1,13 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.15
+version: 1.16
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.13: Ajout des cas d'usage dans la docstring (protection du contexte de l'Orchestrateur).
+# 1.16: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
+# 1.15: Nettoyage du code : suppression des imports inutilisés (PEP8).
 # 1.12: Précision docstring sur l'héritage du système prompt de l'orchestrateur.
 # 1.11: Correction injection PRAF (évite doublon si héritage du Kernel). Suppression acronyme PRAF.
 # 1.10: Consolidation de l'injection universelle (date + PRAF ajusté) via <directives_globales>.
@@ -29,7 +30,7 @@ from echo_utils import (
     estimate_token_size, smart_truncate_history
 )
 from echo_constants import (
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
+    ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES,
     DELEGATE_AGENT_BLACKLIST,
     DELEGATE_SYSTEM_APPENDIX, CONTEXT_TRUNCATE_THRESHOLD,
     ECHO_MAX_CONTEXT_SIZE, get_generation_config
@@ -44,7 +45,7 @@ _DELEGATE_ROLE_ID = "delegate"
 class Tools:
     class Valves(BaseModel):
         KEY_SWITCH_THRESHOLD: int = Field(
-            default=ECHO_API_KEY_THRESHOLD,
+            default=ECHO_API_KEY_RETRIES,
             description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours."
         )
         MAX_RETRIES: int = Field(

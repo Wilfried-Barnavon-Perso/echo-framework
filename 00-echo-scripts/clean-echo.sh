@@ -26,7 +26,7 @@ DISK_USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
 # Cette étape ne supprime aucune image nommée, mais libère instantanément les déchets de build.
 echo "-> Nettoyage inconditionnel des images orphelines (<none>:<none>) et du cache de build..."
 docker image prune -f
-docker builder prune -f
+docker buildx prune -f
 
 if [ "$DISK_USAGE" -ge 90 ]; then
     echo "🚨 ALERTE CRITIQUE ($DISK_USAGE%) : Survie système menacée."

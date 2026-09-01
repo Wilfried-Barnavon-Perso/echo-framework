@@ -6,9 +6,9 @@ description: 5.x: PKCE flow avec serveur asyncio TCP sur port fixe 8765.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.11: Harmonisation temporelle: utilisation de ECHO_ENDPOINT_LOCK_TIMEOUT_MIN (2min) au lieu de 60s pour les verrous d'URL sur 429/503.
+# 7.10: (Mise à jour précédente)
 # 7.9: Alignement endpoint quota sur AGY IDE (retrieveUserQuota→retrieveUserQuotaSummary),
-#      parsing adapté du format Protobuf groups[] (remplacement de buckets[]).
-# 7.8: Résolution Silent Failures clés API (concaténation erreurs), correction Label mismatch, et purge "Clé Fantôme".
 # 7.7: Support du format de clé API AQ.
 # 7.6: Fast-Failover sur AGY_BASE_URLS pour l'authentification et provisionnement.
 # 7.5: Restauration de ECHO_AGY_USER_AGENT (Sécurité Anti-Spoofing).
@@ -58,6 +58,7 @@ from echo_constants import (
     AGY_BASE_URLS,
     ECHO_CLIENT_METADATA,
     AUTH_DATA_PROJECT_ID,
+    ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
     AUTH_DATA_USER_EMAIL,
     AUTH_DATA_USER_TIER,
     ECHO_SSH_TUNNEL_USER,
@@ -364,7 +365,7 @@ class AuthService:
 
                 if h_resp.status_code in [429, 500, 503]:
                     from datetime import datetime, timedelta, timezone
-                    reset = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
                     state_mgr.lock_agy_endpoint(idx, reset)
                     continue
 
@@ -393,7 +394,7 @@ class AuthService:
 
                 if q_resp.status_code in [429, 500, 503]:
                     from datetime import datetime, timedelta, timezone
-                    reset = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
                     state_mgr.lock_agy_endpoint(idx, reset)
                     continue
 
@@ -450,7 +451,7 @@ class AuthService:
                 
                 if resp.status_code in [429, 500, 503]:
                     from datetime import datetime, timedelta, timezone
-                    reset = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
                     state_mgr.lock_agy_endpoint(idx, reset)
                     continue
 
@@ -564,7 +565,7 @@ class AuthService:
 
                 if resp.status_code in [429, 500, 503]:
                     from datetime import datetime, timedelta, timezone
-                    reset = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
                     state_mgr.lock_agy_endpoint(idx, reset)
                     continue
 

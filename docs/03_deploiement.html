@@ -94,8 +94,16 @@
 
     <h3>Phase 4 - Orchestration Docker (<code>install-stack.sh</code>)</h3>
     <p>
-      Ce script orchestre le démarrage de la pile applicative via le fichier de configuration
-      centralisé <code>stack-echo.yml</code>, .
+      Ce script orchestre le démarrage séquentiel de la pile applicative via le fichier de configuration
+      centralisé <code>stack-echo.yml</code> (v9.3+). Le démarrage est ordonné par hostnames stricts (<code>echo-*</code>) via <code>healthcheck</code> et la condition <code>service_healthy</code> :
+    </p>
+    <ul>
+      <li><strong>Tier 1 (Fondations)</strong> : Qdrant, SearXNG, Watchtower.</li>
+      <li><strong>Tier 2 (Workers)</strong> : Embedding, Python Worker, Browser Worker, MCP Broker, N8N Worker, STT Worker, TTS Worker.</li>
+      <li><strong>Tier 3</strong> : Open WebUI.</li>
+      <li><strong>Tier 4</strong> : Admin Manager.</li>
+    </ul>
+    <p>
       Il sécurise également l'hôte en appliquant une politique Autosafety de rotation des logs Docker (max-size 50m).
       Il centralise les secrets et variables dans <code>/opt/ECHO/.env</code> (incluant la génération automatique de <code>ECHO_SSO_SECRET</code>), calcule dynamiquement 
       les origines CORS autorisées (<code>ECHO_DETECTED_ORIGINS</code>), puis lève les services.
@@ -247,7 +255,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.54 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.60 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

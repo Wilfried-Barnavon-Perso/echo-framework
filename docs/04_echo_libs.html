@@ -177,7 +177,7 @@
     <h3>EchoGeminiClient - Moteur d'Appel API</h3>
     <p>
       <code>EchoGeminiClient</code> centralise la logique réseau en agissant comme un <strong>sélecteur de protocole symétrique</strong>. Il gère de manière transparente les deux backends d'inférence selon la méthode d'authentification disponible. 
-      La couche de transport utilise exclusivement <code>httpx</code> avec un <strong>multiplexage HTTP/2 natif</strong> couplé à des stealth headers de haute fidélité. Cette implémentation prévient activement les blocages par les pare-feux applicatifs (WAF).
+      La couche de transport utilise exclusivement <code>httpx</code> avec un <strong>multiplexage HTTP/2 natif</strong> couplé à des stealth headers de haute fidélité. Cette implémentation prévient activement les blocages par les pare-feux applicatifs (WAF). Les anciennes exceptions silencieuses ont été remplacées par des remontées directes (<code>raise</code>) pour déclencher la cascade cognitive du Pipe Engine lors des erreurs réseau.
     </p>
 
     <table>
@@ -206,7 +206,7 @@
         <li>
           <strong>Erreurs 429/500/503 (surcharge) :</strong> backoff exponentiel avec jitter aléatoire
           (<code>ECHO_RETRY_BASE_DELAY × jitter × 2^attempt</code>). Intègre un verrouillage dynamique des URL sur timeout/429 et un mécanisme d'Auto-heal. Après
-          <code>KEY_SWITCH_THRESHOLD</code> (2) erreurs consécutives sur la même source,
+          <code>ECHO_API_KEY_RETRIES</code> (2) erreurs consécutives sur la même source,
           bascule sur la source suivante dans le registre des fournisseurs.
         </li>
         <li>
@@ -510,7 +510,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.54 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.60 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

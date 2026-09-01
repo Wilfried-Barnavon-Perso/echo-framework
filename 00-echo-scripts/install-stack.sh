@@ -248,6 +248,9 @@ echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_N
 BW_STACK_FILE="$ECHO_CONFIG/bunkerweb-stack.yml"
 ENV_FILE="$ECHO_ENV_FILE"
 
+export COMPOSE_DOCKER_CLI_BUILD=1
+export DOCKER_BUILDKIT=1
+
 if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -qE "^ECHO_DOMAIN=.+" "$ENV_FILE"; then
     echo "🔒 Mode SECURE EDGE détecté. Lancement de l'infrastructure complète (ECHO + BunkerWeb)..."
     $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans
@@ -285,6 +288,7 @@ else
     echo "⚠️ Script de configuration introuvable ($ECHO_SCRIPTS/config-owui.sh)"
 fi
 
+docker buildx prune -f >/dev/null 2>&1
 docker image prune -f >/dev/null 2>&1
 
 echo "✅ DEPLOIEMENT TERMINÉ."

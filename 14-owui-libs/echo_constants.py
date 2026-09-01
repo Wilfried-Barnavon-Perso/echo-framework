@@ -1,20 +1,21 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.53
+version: 5.54
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.53: Ajout de ECHO_SAFETY_SETTINGS (BLOCK_NONE) pour les appels Gemini.
-# 5.52: Création des constantes CONTEXT_LOAD_WARNING_THRESHOLD (40) et CONTEXT_LOAD_CRITICAL_THRESHOLD (60)
+# 5.55: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
+# 5.54: Ajout de ECHO_SAFETY_SETTINGS (BLOCK_NONE) pour les appels Gemini.
+# 5.53: Création des constantes CONTEXT_LOAD_WARNING_THRESHOLD (40) et CONTEXT_LOAD_CRITICAL_THRESHOLD (60)
 #       pour gérer l'escalade de modèle dans l'outil get_context_load de façon découplée du toast UI.
-# 5.51: Alignement protocole OAuth2 sur AGY IDE 2.5.5 (audit binaire main.js) :
+# 5.52: Alignement protocole OAuth2 sur AGY IDE 2.5.5 (audit binaire main.js) :
 #       - ECHO_CLIENT_METADATA : ideType ANTIGRAVITY, ajout ideName/ideVersion/platform
 #       - ECHO_OAUTH_SCOPES : +experimentsandconfigs, -openid, -aicode
 #       - User-Agent : format natif "{app}/{version} {os}/{arch}"
 #       - Documentation dual-client (Desktop=perso, LS=Enterprise GCP TOS)
-# 5.50: Réduction du backoff exponentiel (base 5.0→3.0s, max_retries 5→3, mult 2.0→1.5)
+# 5.51: Réduction du backoff exponentiel (base 5.0→3.0s, max_retries 5→3, mult 2.0→1.5)
 #       pour prévenir les crashes silencieux SSE via SIGKILL Gunicorn (backoff cumulatif
 #       ~155s > GUNICORN_TIMEOUT 60s). Total max post-fix : ~14s.
 
@@ -167,7 +168,7 @@ PKCE_CALLBACK_TIMEOUT = 300  # secondes
 # 1.2 RÉSILIENCE ET RETRIES (API)
 # ==============================================================================
 
-ECHO_API_KEY_THRESHOLD   = 2
+ECHO_API_KEY_RETRIES   = 2
 ECHO_API_MAX_RETRIES     = 3
 ECHO_RETRY_BASE_DELAY    = 3.0   # Base backoff exponentiel — réduit de 5.0 à 3.0 (v5.50)
                                   # Raison : avec base=5.0 et 5 retries, le backoff cumulé (~155s)

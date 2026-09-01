@@ -17,7 +17,8 @@ RUN pip install --no-cache-dir \
     jinja2 \
     python-multipart \
     user-agents \
-    orjson
+    orjson \
+    httpx
 
 # Création du point de montage pour la base de données
 RUN mkdir -p /data

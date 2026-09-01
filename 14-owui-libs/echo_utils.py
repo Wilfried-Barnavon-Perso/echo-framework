@@ -1,14 +1,14 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.39
+version: 8.41
 description: Composant système interne : ECHO Shared Utils (Core).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 8.41: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
+# 8.40: Fix critique: Résolution boucle/silence dans stream() (remplacement yield par raise e) et bascule rapide clés API (threshold symétrique).
 # 8.39: Fix critique: Suppression du masquage des erreurs httpx.ReadError et RemoteProtocolError dans le flux SSE pour rétablir la cascade cognitive.
-# 8.38: Injection de ECHO_SAFETY_SETTINGS (BLOCK_NONE) dans les payloads Gemini (Code Assist et AI Studio).
-# 8.37: Résolution Bug RAG: Remplacement du INSERT OR REPLACE par un Upsert complet préservant is_embedded.
 # 8.36: Rollback Zéro-Hallucination : Restauration de _dict_to_yaml_aec (YAML plat pur) pour l'AEC et les évènements systèmes au lieu de XML.
 # 8.35: Correction: Invalidation des dates google_quota_reset obsolètes empêchant le Fast-Failover.
 # 8.34: (Mise à jour précédente)
@@ -43,7 +43,7 @@ import orjson as std_json
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, ECHO_VERSION_PATH,
     GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_AGY_USER_AGENT, ECHO_USERS_ROOT,
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES,
+    ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES,
     ECHO_RETRY_BASE_DELAY, ECHO_RETRY_MULTIPLIER,
     ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX,
     AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_OAUTH2, AUTH_METHOD_KEY_SECONDARY,
@@ -1087,7 +1087,7 @@ class EchoGeminiClient:
         payload: dict,
         user_id: str,
         auth_providers: Optional[List[Dict]] = None,
-        threshold: int = ECHO_API_KEY_THRESHOLD,
+        threshold: int = ECHO_API_KEY_RETRIES,
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
         timeout: int = 120,
@@ -1179,14 +1179,17 @@ class EchoGeminiClient:
                             current_delay = ECHO_RETRY_BASE_DELAY
                             continue
 
+                    # Détermination de la limite de tentatives (Backoff max vs Switch rapide)
+                    current_limit = max_retries if provider.get("type") == AUTH_METHOD_OAUTH2 else threshold
+
                     # 2. --- BACKOFF CLASSIQUE ---
-                    if attempt < max_retries:
+                    if attempt < current_limit:
                         wait_msg = f"⚠️ Surcharge API ({resp.status_code})."
                         if resp.status_code == 429:
                             wait_msg = f"⏳ Limite de débit API ({resp.status_code})."
 
                         wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
-                        if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s....", done=False)
+                        if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s....", done=False)
                         await asyncio.sleep(wait_time)
                         current_delay *= ECHO_RETRY_MULTIPLIER
                         attempt += 1
@@ -1204,10 +1207,11 @@ class EchoGeminiClient:
             except FatalAPIError as fe:
                 raise fe
             except Exception as e:
-                if attempt < max_retries:
+                current_limit = max_retries if provider.get("type") == AUTH_METHOD_OAUTH2 else threshold
+                if attempt < current_limit:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
-                    print(f"[EchoGemini] ⚠️ Tentative {attempt + 1}/{max_retries} échouée pour {target_model} : {e.__class__.__name__} - {str(e)}")
-                    if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
+                    print(f"[EchoGemini] ⚠️ Tentative {attempt + 1}/{current_limit} échouée pour {target_model} : {e.__class__.__name__} - {str(e)}")
+                    if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
                     attempt += 1
@@ -1230,7 +1234,7 @@ class EchoGeminiClient:
         user_id: str,
         metadata: dict = None,
         events: Optional[EchoEvents] = None,
-        threshold: int = ECHO_API_KEY_THRESHOLD,
+        threshold: int = ECHO_API_KEY_RETRIES,
         max_retries: int = ECHO_API_MAX_RETRIES,
         timeout: int = 120,
         chat_id: str = None,
@@ -1326,7 +1330,7 @@ class EchoGeminiClient:
         payload: dict,
         user_id: str,
         auth_providers: Optional[List[Dict]] = None,
-        threshold: int = ECHO_API_KEY_THRESHOLD,
+        threshold: int = ECHO_API_KEY_RETRIES,
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
         process_callback: Optional[Any] = None,
@@ -1400,14 +1404,17 @@ class EchoGeminiClient:
                                 current_delay = ECHO_RETRY_BASE_DELAY
                                 continue
 
+                        # Détermination de la limite de tentatives (Backoff max vs Switch rapide)
+                        current_limit = max_retries if provider.get("type") == AUTH_METHOD_OAUTH2 else threshold
+
                         # 2. --- BACKOFF CLASSIQUE ---
-                        if attempt < max_retries:
+                        if attempt < current_limit:
                             wait_msg = f"⚠️ Surcharge API ({r.status_code})."
                             if r.status_code == 429:
                                 wait_msg = f"⏳ Limite de débit API ({r.status_code})."
 
                             wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
-                            if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s....", done=False)
+                            if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s....", done=False)
                             await asyncio.sleep(wait_time)
                             current_delay *= ECHO_RETRY_MULTIPLIER
                             attempt += 1
@@ -1464,9 +1471,10 @@ class EchoGeminiClient:
             except FatalAPIError as fe:
                 raise fe
             except Exception as e:
-                if attempt < max_retries:
+                current_limit = max_retries if provider.get("type") == AUTH_METHOD_OAUTH2 else threshold
+                if attempt < current_limit:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
-                    if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{max_retries} dans {wait_time:.1f}s...", done=False)
+                    if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
                     attempt += 1
@@ -1479,7 +1487,9 @@ class EchoGeminiClient:
                         current_delay = ECHO_RETRY_BASE_DELAY
                         if events: await events.status(f"🔄 Erreur fatale sur source {provider['type']}. Bascule sur la suivante...", done=False)
                         continue
-                    yield f"🚫 Erreur système : {str(e)}"; return
+                    
+                    # Remplacement du 'yield' par un 'raise' pour déclencher la cascade dans le Pipe Engine
+                    raise e
 
     @staticmethod
     async def embed(
@@ -1487,7 +1497,7 @@ class EchoGeminiClient:
         content: dict,
         user_id: str,
         auth_providers: Optional[List[Dict]] = None,
-        threshold: int = ECHO_API_KEY_THRESHOLD,
+        threshold: int = ECHO_API_KEY_RETRIES,
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
         timeout: int = 30,

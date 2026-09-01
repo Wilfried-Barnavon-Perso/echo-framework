@@ -1,11 +1,12 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 13.5
+version: 13.6
 description: Composant système interne : ECHO Maps Grounding.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 13.6: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 13.4: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans generationConfig.
 # 13.3: Ajout argument optionnel print_map et lecture de _echo_suppress_map_ui pour blocage du rendu UI.
 # 13.2: Fix commentaires : MODEL_LITE est le plancher de la cascade (pas de fallback
@@ -22,14 +23,14 @@ sys.path.append("/app/backend/echo_libs")
 from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
 from echo_ui import EchoUI
 from echo_constants import (
-    ECHO_API_KEY_THRESHOLD, ECHO_API_MAX_RETRIES, get_generation_config
+    ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, get_generation_config
 )
 
 
 class Tools:
     class Valves(BaseModel):
         KEY_SWITCH_THRESHOLD: int = Field(
-            default=ECHO_API_KEY_THRESHOLD,
+            default=ECHO_API_KEY_RETRIES,
             description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours."
         )
         MAX_RETRIES: int = Field(

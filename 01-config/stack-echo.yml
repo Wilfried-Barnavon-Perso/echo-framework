@@ -73,6 +73,8 @@ services:
       - ENABLE_RAG_WEB_SEARCH=false
       - ECHO_VERSION_PATH=/app/backend/data/ECHO_VERSION
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
+      # Désactivation de l'expiration du token interne (géré par SSO/WAF)
+      - JWT_EXPIRES_IN=-1
     volumes:
       - /opt/ECHO/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
       - /opt/ECHO/owui-libs:/app/backend/echo_libs:ro
@@ -119,7 +121,7 @@ services:
 
       # 🛡️ ECHO AUTH : Forward Auth
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @auth_hard_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @auth_hard_reject { default_type application/json; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @auth_hard_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @auth_hard_reject { default_type application/json; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; }"
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name"
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name"
 
@@ -189,7 +191,7 @@ services:
       # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
     command: >
-      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc) pip install mgzip dulwich 'markitdown[all]' && ./start.sh"
+      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc --ignore=1) pip install mgzip dulwich 'markitdown[all]' && ./start.sh"
     healthcheck:
       test: ["CMD-SHELL", "curl --silent --fail http://localhost:8080/health || exit 1"]
       interval: 15s
@@ -365,7 +367,7 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
     command: >
-      /bin/bash -c "CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc) pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 httpx Pillow && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002 --log-config /app/logging.json"
+      /bin/bash -c "CMAKE_BUILD_PARALLEL_LEVEL=$$(nproc --ignore=1) pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 httpx Pillow && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002 --log-config /app/logging.json"
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5002/health\")' 2>/dev/null || exit 1"]
       interval: 15s
