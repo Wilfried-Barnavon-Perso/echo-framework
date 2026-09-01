@@ -17,7 +17,7 @@ Ce dossier constitue le **Cœur Applicatif (Core Libraries)** du framework. Il c
 
 ### Interfaces Utilisateur (UI & DOM)
 - **`echo_ui.py`** : Moteur de rendu UI.
-  - **Sémantique** : Responsable de la génération dynamique de code HTML/CSS/JS (Data Islands). Il implémente un système sophistiqué **"OWUI Tools"** pour la gestion de HUD "mobile-responsive" (wrap, max-width, overflow). Il injecte des modales natives asynchrones (`window.echoCustomConfirm`, `window.echoCustomPrompt` pour les saisies LLM, `window.mcpAlert`) qui respectent le mode sombre/clair sans bloquer l'Event Loop de WebUI, tout en sécurisant les rendus via la fonction d'assainissement **`window.echoSanitizeHTML`**. Gère également le support d'impression (`allow-modals`) pour les actions PDF.
+  - **Sémantique** : Responsable de la génération dynamique de code HTML/CSS/JS (Data Islands). Il implémente un système sophistiqué **"OWUI Tools"** avec de fortes optimisations natives mobiles (dvh, touch targets de 44px min, anti-scroll du document, anti-zoom iOS). Il injecte des modales natives asynchrones refactorisées sans effet spaghetti (`window.echoCustomConfirm`, `window.echoCustomPrompt` pour les saisies LLM, doté de boutons 'pills' interactifs, `window.mcpAlert`) qui respectent le mode sombre/clair sans bloquer l'Event Loop de WebUI, tout en sécurisant les rendus via la fonction d'assainissement **`window.echoSanitizeHTML`**. Gère également le support d'impression (`allow-modals`) pour les actions PDF.
 - **`echo_visuals.py`** : Traduction des concepts générés par le LLM (arbres, graphes) en composants web interactifs (via d3.js, Leaflet ou vis-network).
 
 ### Authentification Antigravity 2.1

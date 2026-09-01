@@ -2,16 +2,15 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.12
+version: 1.14
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.14: Fix HUD WebGPU Mobile (Opacité/Morphing) et standardisation 1024D (Harrier 0.6b).
+# 1.13: Support natif Mobile (WebGPU Fallback Fast-Failover & Quantification q4).
 # 1.12: Implémentation du Dual-Versioning (Modèle vs Script) et Auto-Reload (Idempotence intelligente).\n# 1.11: Correction du Self-Healing (Infinite Loop WebGPU) et du crash DOM (TypeError Morphing).
 # 1.10: Ajout d'un avertissement visuel explicite recommandant le chargement du modèle.
-# 1.9: Modification de la priorité (0 -> 1) pour permettre l'exécution préalable du TCP Keep-Alive Filter.
-# 1.8: Implémentation du pont asynchrone matériel et des mécanismes de Self-Healing WebGPU.
-# 1.7: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
 
 import asyncio
 from pydantic import BaseModel, Field
@@ -74,7 +73,7 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        SCRIPT_VERSION = "1.12"
+        SCRIPT_VERSION = "1.13"
         js_code = """
         (async function initEdgeEmbedding() {
             const INJECTED_SCRIPT_VERSION = "__INJECTED_SCRIPT_VERSION__";
@@ -109,11 +108,17 @@ class Filter:
                 localStorage.setItem('ECHO_EDGE_MODEL_VERSION', MODEL_CACHE_VERSION);
             }
 
-            // HARDWARE CHECK
-            const isMobile = /Mobi|Android/i.test(navigator.userAgent);
-            const ram = navigator.deviceMemory || 8;
-            if (isMobile || ram < 4) {
-                console.log("⚠️ ECHO Edge: Appareil mobile ou RAM < 4GB détecté.");
+            // HARDWARE CHECK REVISE
+            const hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
+            if (!hasWebGPU) {
+                console.warn("⚠️ ECHO Edge: WebGPU non supporté par l'appareil. Fallback CPU immédiat.");
+                // Ouverture éphémère du WSS pour notifier l'incompatibilité instantanément au lieu d'attendre le timeout
+                try {
+                    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${location.host}/ws/edge-embed?client_id=${clientId}`;
+                    const ws = new WebSocket(wsUrl);
+                    ws.onopen = () => { ws.send(JSON.stringify({ type: 'incompatible' })); ws.close(); };
+                } catch(e) {}
                 return;
             }
 
@@ -294,10 +299,14 @@ class Filter:
                             
                             if (!isModelLoaded) {
                                 try {
-                                    globalTokenizer = await transformers.AutoTokenizer.from_pretrained('onnx-community/harrier-oss-v1-0.6b-ONNX');
-                                    globalModel = await transformers.AutoModel.from_pretrained('onnx-community/harrier-oss-v1-0.6b-ONNX', {
+                                    const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+                                    const targetRepo = 'onnx-community/harrier-oss-v1-0.6b-ONNX';
+                                    const targetDtype = isMobile ? 'q4f16' : 'fp16';
+                                    
+                                    globalTokenizer = await transformers.AutoTokenizer.from_pretrained(targetRepo);
+                                    globalModel = await transformers.AutoModel.from_pretrained(targetRepo, {
                                         device: 'webgpu',
-                                        dtype: 'fp16',
+                                        dtype: targetDtype,
                                         progress_callback: (x) => {
                                             if (ws.readyState !== WebSocket.OPEN) return;
                                             if (x.status === 'downloading' || x.status === 'progress') {
@@ -324,21 +333,32 @@ class Filter:
                             ws.send(JSON.stringify({ type: 'ready' }));
                             if (!document.hidden) ws.send(JSON.stringify({ type: 'visibility', state: 'active' }));
                             
-                            // Morphing du HUD
-                            if (hud.style.width !== '32px') {
-                                const svgIcon = titleBox.querySelector('svg');
-                                if (svgIcon) {
-                                    hud.innerHTML = ''; 
-                                    hud.appendChild(svgIcon);
-                                }
-                                
-                                hud.style.width = '32px';
-                                hud.style.height = '32px';
+                            // Morphing sécurisé du HUD en icône flottante
+                            if (hud.style.width !== '36px') {
+                                hud.innerHTML = `
+                                    <div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;color:#38bdf8;">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+                                            <rect x="9" y="9" width="6" height="6"></rect>
+                                            <line x1="9" y1="1" x2="9" y2="4"></line>
+                                            <line x1="15" y1="1" x2="15" y2="4"></line>
+                                            <line x1="9" y1="20" x2="9" y2="23"></line>
+                                            <line x1="15" y1="20" x2="15" y2="23"></line>
+                                            <line x1="20" y1="9" x2="23" y2="9"></line>
+                                            <line x1="20" y1="14" x2="23" y2="14"></line>
+                                            <line x1="1" y1="9" x2="4" y2="9"></line>
+                                            <line x1="1" y1="14" x2="4" y2="14"></line>
+                                        </svg>
+                                    </div>
+                                `;
+                                hud.style.width = '36px';
+                                hud.style.height = '36px';
                                 hud.style.padding = '0';
                                 hud.style.borderRadius = '50%';
-                                hud.style.justifyContent = 'center';
-                                hud.style.alignItems = 'center';
-                                hud.style.opacity = '0.4';
+                                hud.style.opacity = '0.85';
+                                hud.style.background = 'rgba(15, 23, 42, 0.9)';
+                                hud.style.border = '1px solid rgba(56, 189, 248, 0.6)';
+                                hud.title = "ECHO Edge WebGPU actif (0.6B q4f16)";
                             }
                             
                             ws.onmessage = async (event) => {

@@ -1,17 +1,17 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.67
+version: 5.68
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.68: Optimisation Mobile native (dvh, anti-zoom iOS, touch targets 44px, anti-scroll) pour echoCustomPrompt/Confirm.
 # 5.67: Correction échappement backslash JSON pour Identity Vault HUD évitant le SyntaxError muet.
 # 5.66: Retrait des if (!window...) pour permettre le Hot-Reload des fonctions modales.
 # 5.65: Amélioration critique UX Mobile pour les modales système (box-sizing, width 90%, flex-wrap) évitant le débordement sur petits écrans.
 # 5.64: Assainisseur HTML DOM sécurisé (echoSanitizeHTML) avec whitelist structurelle et neutralisation XSS dans les modales système.
 # 5.63: Refonte anti-spaghetti des modales ECHO (EchoUI.get_custom_modals_js) avec implémentation de boutons interactifs (pills) pour les options de prompt.
-# 5.60: Correction critique du Codex sur mobile (IDs manquants sur le header et le body empêchant le CSS responsive de s'appliquer).
 
 
 from fastapi.responses import HTMLResponse
@@ -173,7 +173,7 @@ class EchoUI(EchoRichUI):
               const styleEl = document.createElement('style');
               styleEl.id = styleId;
               styleEl.innerHTML = `
-                  #{hud_id} {{ position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100dvh !important; max-width: none !important; max-height: none !important; min-width: 0 !important; min-height: 0 !important; border-radius: 0 !important; z-index: 10005 !important; transform: none !important; }}
+                  #{hud_id} {{ position: fixed !important; top: 0 !important; left: 0 !important; max-width: 100vw !important; max-height: 100dvh !important; min-width: 0 !important; min-height: 0 !important; border-radius: 0 !important; z-index: 10005 !important; transform: none !important; }}
                   #{hud_id}-resizer, .cp {{ display: none !important; }}
                   /* Factorisation du Responsive pour les structures classiques (Codex, Agent Monitor) */
                   #{hud_id}-header {{ flex-wrap: wrap !important; height: auto !important; min-height: 40px !important; padding: 6px !important; gap: 4px !important; }}
@@ -184,8 +184,14 @@ class EchoUI(EchoRichUI):
               `;
               document.head.appendChild(styleEl);
           }}
-          // Factorisation : Désactivation passive du drag&drop après initialisation du DOM
+          // Factorisation : Force l'UI en plein écran par défaut au chargement via styles en ligne (permettant le redimensionnement JS futur) et désactive le drag&drop.
           setTimeout(() => {{
+              const hud = document.getElementById('{hud_id}');
+              if (hud && !hud.dataset.mobileInit) {{
+                  hud.style.width = '100vw';
+                  hud.style.height = '100dvh';
+                  hud.dataset.mobileInit = 'true';
+              }}
               const header = document.getElementById('{hud_id}-header');
               if (header) {{
                   header.onmousedown = null;
@@ -852,7 +858,9 @@ return new Promise(function(resolve) {{
           const accentColor = '#89b4fa';
           
           const overlay = document.createElement('div');
-          overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:center; justify-content:center; font-family:"Segoe UI",system-ui,sans-serif;';
+          overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:flex-start; justify-content:center; padding-top:10dvh; overflow-y:auto; font-family:"Segoe UI",system-ui,sans-serif;';
+          const originalOverflow = document.body.style.overflow;
+          document.body.style.overflow = 'hidden';
           const dialog = document.createElement('div');
           dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:16px; border-radius:8px; text-align:left; box-shadow:0 10px 40px rgba(0,0,0,0.5); width:90%; max-width:450px; box-sizing:border-box; color:' + textColor + '; max-height:85vh; overflow-y:auto;';
           dialog.innerHTML = '<div style="margin-bottom:20px; font-size:14px; line-height:1.5;">' + window.echoSanitizeHTML(msg) + '</div>';
@@ -860,13 +868,18 @@ return new Promise(function(resolve) {{
           btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px; flex-wrap:wrap;';
           const btnCancel = document.createElement('button');
           btnCancel.textContent = 'Annuler';
-          btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:13px;';
+          btnCancel.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:14px; flex: 1 1 45%;';
           const btnOk = document.createElement('button');
           btnOk.textContent = 'Confirmer';
-          btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';
+          btnOk.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:14px; flex: 1 1 45%;';
           
-          btnCancel.onclick = () => { overlay.remove(); callback && callback(false); };
-          btnOk.onclick = () => { overlay.remove(); callback && callback(true); };
+          const cleanupAndResolve = (val) => {
+              document.body.style.overflow = originalOverflow;
+              overlay.remove();
+              callback && callback(val);
+          };
+          btnCancel.onclick = () => cleanupAndResolve(false);
+          btnOk.onclick = () => cleanupAndResolve(true);
           
           btnContainer.appendChild(btnCancel);
           btnContainer.appendChild(btnOk);
@@ -883,14 +896,16 @@ return new Promise(function(resolve) {{
               const accentColor = '#89b4fa';
               
               const overlay = document.createElement('div');
-              overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:center; justify-content:center; font-family:"Segoe UI",system-ui,sans-serif;';
+              overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:flex-start; justify-content:center; padding-top:10dvh; overflow-y:auto; font-family:"Segoe UI",system-ui,sans-serif;';
+              const originalOverflow = document.body.style.overflow;
+              document.body.style.overflow = 'hidden';
               const dialog = document.createElement('div');
               dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:16px; border-radius:8px; text-align:left; box-shadow:0 10px 40px rgba(0,0,0,0.5); width:90%; max-width:500px; box-sizing:border-box; color:' + textColor + '; max-height:85vh; overflow-y:auto;';
               dialog.innerHTML = '<div style="margin-bottom:15px; font-size:14px; line-height:1.5; text-align:left;">' + window.echoSanitizeHTML(msg) + '</div>';
               
               const inputField = document.createElement('input');
               inputField.type = 'text';
-              inputField.style.cssText = 'width:100%; box-sizing:border-box; padding:8px; margin-bottom:20px; border-radius:4px; border:1px solid ' + borderColor + '; background:rgba(0,0,0,0.2); color:' + textColor + '; outline:none; font-family:monospace;';
+              inputField.style.cssText = 'width:100%; box-sizing:border-box; padding:12px; margin-bottom:20px; border-radius:4px; border:1px solid ' + borderColor + '; background:rgba(0,0,0,0.2); color:' + textColor + '; outline:none; font-family:monospace; font-size:16px !important;';
               
               if (options && options.length > 0) {
                   const pillsContainer = document.createElement('div');
@@ -898,7 +913,7 @@ return new Promise(function(resolve) {{
                   options.forEach(opt => {
                       const pill = document.createElement('button');
                       pill.textContent = opt;
-                      pill.style.cssText = 'padding:6px 12px; border-radius:16px; border:1px solid ' + accentColor + '; background:rgba(137,180,250,0.1); color:' + accentColor + '; cursor:pointer; font-size:12px; transition:all 0.2s; white-space:nowrap;';
+                      pill.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:22px; border:1px solid ' + accentColor + '; background:rgba(137,180,250,0.1); color:' + accentColor + '; cursor:pointer; font-size:14px; transition:all 0.2s; white-space:nowrap; margin-bottom:4px;';
                       pill.onmouseover = () => { pill.style.background = accentColor; pill.style.color = '#1e1e2e'; };
                       pill.onmouseout = () => { pill.style.background = 'rgba(137,180,250,0.1)'; pill.style.color = accentColor; };
                       pill.onclick = () => {
@@ -915,11 +930,11 @@ return new Promise(function(resolve) {{
               
               const btnCancel = document.createElement('button');
               btnCancel.textContent = 'Annuler';
-              btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:13px;';
+              btnCancel.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:14px; flex: 1 1 45%;';
               
               const btnOk = document.createElement('button');
               btnOk.textContent = 'Soumettre';
-              btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';
+              btnOk.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:14px; flex: 1 1 45%;';
               
               let timeRemaining = timeoutSeconds;
               let timerInterval = null;
@@ -932,6 +947,7 @@ return new Promise(function(resolve) {{
               
               const cleanupAndResolve = (val) => {
                   if(timerInterval) clearInterval(timerInterval);
+                  document.body.style.overflow = originalOverflow;
                   overlay.remove();
                   callback && callback(val);
               };

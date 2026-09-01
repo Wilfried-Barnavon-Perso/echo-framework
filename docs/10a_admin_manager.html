@@ -149,7 +149,8 @@ flowchart TD
     <p>
       Optimisation physique régulière des bases de données de session (commande SQL <code>VACUUM</code>)
       pour récupérer l'espace disque des enregistrements supprimés et maintenir les performances
-      d'accès. L'Admin Manager exécute également une consolidation des fragments de bases en mode WAL.
+      d'accès. L'Admin Manager exécute également une consolidation des fragments de bases en mode WAL. 
+      Le système introduit le script automatisé <code>clean-echo.sh</code> et centralise désormais l'<strong>Autosafety Docker</strong> : politique de logs stricte (max 10 Mo) et cron de nettoyage hebdomadaire. Le dashboard <code>server.py</code> permet d'invoquer manuellement une purge profonde (Cache APT, build cache, images orphelines) pour éradiquer tout risque de saturation disque.
     </p>
 
     <h2>3. Sécurité SSO et Purge Dynamique</h2>
@@ -225,7 +226,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.49 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.54 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

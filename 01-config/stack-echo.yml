@@ -151,8 +151,7 @@ services:
       # 🧹 PURGE SW VIA LOGOUT : Point de chute de la déconnexion pour injecter Clear-Site-Data
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_ssologout=location = /sso-logout { auth_request off; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; return 302 https://auth.${ECHO_DOMAIN:-localhost}/logout?next=https://ui.${ECHO_DOMAIN:-localhost}; }"
 
-      # 🚫 REDIRECTION 401 NATIVE : Bloque l'affichage de la mire de login native d'Open WebUI (issue 401)
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_authpage=location ~ ^/auth/?$$ { return 302 /; }"
+
 
       # 🔓 EXCLUSION API PUBLIQUES : Permet au frontend de s'initialiser avant de rediriger proprement
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
@@ -160,10 +159,6 @@ services:
       # 🔓 EXCLUSION FICHIERS STATIQUES : Requis pour la PWA, les assets et la mise à jour du Service Worker
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
-      # 💀 VERSION.JSON OVERRIDE : Force le rechargement des assets SvelteKit en renvoyant un faux hash.
-      # INTERDIT d'ajouter Clear-Site-Data ici : Open WebUI poll cette URL toutes les ~30s
-      # et cela détruirait le cookie JWT de session (cause racine du bug 401 audio).
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_poison=location = /_app/version.json { auth_request off; add_header Content-Type application/json; return 200 '{\"version\":\"ECHO_KILL_SW_V5\"}'; }"
 
       # 🚫 ANTI-CACHE DYNAMIQUE (Pour forcer l'interception SSO sur le HTML)
       - "bunkerweb.CUSTOM_CONF_HTTP_mapcache=map $$sent_http_content_type $$html_cache_control { default \"\"; \"~*text/html\" \"no-store, no-cache, must-revalidate, max-age=0\"; }"

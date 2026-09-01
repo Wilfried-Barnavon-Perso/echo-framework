@@ -24,10 +24,10 @@ Cependant, la base de connaissances d'ECHO est **distribuée et fractale**. Chaq
 L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véracité, Autonomie) articulés autour du Kernel ECHO (dont la partie statique est définie dans `01-config/system-prompt.md`) :
 
 ### 1.1 Le Kernel Statique
-- **Méta-Principes et Identité :** Définit les conditions d'exécution indépassables du Modèle, son persona, ses outils, et les Artéfacts Environnementaux Contextuels (AEC) pour assurer la cohésion globale.
+- **Méta-Principes et Identité :** Définit les conditions d'exécution indépassables du Modèle, son persona (interdiction stricte des tics IA, anglicismes, listes excessives), ses outils, et les Artéfacts Environnementaux Contextuels (AEC) géo-temporels pour assurer la cohésion globale.
 - **Principe de Cognition Interne et Réflexion (PCIR) :** Impose au modèle une réflexion verbale interne exhaustive et critique avant toute interaction ou déclenchement d'outil, pour maximiser le raisonnement.
 - **PGCU (Gestion du Contexte Unifié) :** Fixe l'attention du modèle selon une hiérarchie stricte (Kernel > AEC > Méta-Artéfacts et Mémoires Vectorisées > Requêtes > Outils).
-- **PRAF (Rigueur Analytique et Factuelle) :** Impose la vérification systématique de chaque fait et hypothèse via recherche web avec un niveau de confiance justifié.
+- **PRAF (Rigueur Analytique et Factuelle) :** Stipule que toute hypothèse vérifiable et non vérifiée sur le réel est invalidée. Impose la vérification systématique via recherche web avec un niveau de confiance justifié.
 
 ## 2. 🧠 Le Cortex (`/opt/ECHO/owui-pipes/`)
 
@@ -48,7 +48,7 @@ Le système nerveux central d'ECHO repose sur le **composant core `pipe_engine.p
 - **User Native Context Filter :** Filtre Inlet (priorité 10) hébergeant les réglages utilisateur (nom, localisation) pour protéger le moteur système.
 - **App Drawer Filter :** Filtre Inlet silencieux (priorité 1000) injectant un composant Data Island UI (ECHO App Drawer) natif. Fournit un HUD flottant qui s'interface avec l'API WebUI pour déclencher directement les Actions sans rechargement.
 - **Pipeline d'Ingestion Zéro-RAM :** Architecture asynchrone déportée pour le traitement de masse. Conversion MarkItDown et traitement hybride (Vectoriel, Codex Git, SQLite).
-- **Edge Embedding Bridge :** Offload de l'inférence vectorielle (Harrier-OSS) vers le WebGPU/WASM du client. Intègre désormais un **HUD d'initialisation navigateur**, une gestion multi-onglets (via UUID `client_id` et détection de `visibility`), et un mécanisme de **Fallback CPU Asynchrone Instantané** (annulation des requêtes `asyncio.Future` si le WebSocket est rompu).
+- **Edge Embedding Bridge :** Offload de l'inférence vectorielle (Harrier-OSS) vers le WebGPU/WASM du client. Intègre désormais un **HUD d'initialisation navigateur**, le support natif Mobile WebGPU (quantification q4), l'auto-reload, une gestion multi-onglets (via UUID `client_id` et détection de `visibility`), et un mécanisme de **Fallback CPU Asynchrone Instantané** (annulation des requêtes `asyncio.Future` si le WebSocket est rompu).
 - **TCP Keep-Alive Filter :** Filtre Inlet empêchant la déconnexion inopinée des sessions websocket longues.
 
 ## 4. 🧭 Contexte Proprioceptif
@@ -80,7 +80,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 - **ECHO Auth (SSO & MFA) :** IdP autonome gérant l'authentification forte (TOTP) couplé à BunkerWeb. Prise en charge des comptes locaux et OAuth2. La suppression d'une identité entraîne désormais la **purge atomique totale** sur toutes les bases SQLite associées (chat, identity, MCP, N8N).
 - **Dashboard Actif :** Interface interactive de monitoring du cluster Docker (Révocations granulaires, Kill-Switch, stats). Intègre désormais le monitoring de l'élagage vectoriel asynchrone (Background Task) via long-polling API (`/api/task_status`).
 - **Sécurité Périmétrique :** BunkerWeb (WAF) protégeant le WebSocket WebGPU et l'API IdP.
-- **Régulation & Consolidation :** Optimisation SQLite (Vacuum/WAL) et sauvegardes à chaud. Le script d'installation centralise désormais l'**Autosafety Docker** : configuration d'une politique de logs stricte (max 10 Mo) et mise en place d'un cron hebdomadaire de nettoyage (`docker system prune`) pour éradiquer tout risque de saturation disque.
+- **Régulation & Consolidation :** Optimisation SQLite (Vacuum/WAL) et sauvegardes à chaud. Introduction du script automatisé `clean-echo.sh`. Le script d'installation centralise désormais l'**Autosafety Docker** : politique de logs stricte (max 10 Mo) et cron de nettoyage. Le dashboard `server.py` permet d'invoquer manuellement une purge profonde (Cache APT, build cache, images orphelines) pour éradiquer tout risque de saturation disque.
 - **Purge Vectorielle & SQLite (Asynchrone) :** Élagage temporel (TTL) automatisé des orphelins dans Qdrant et SQLite. L'élagage se fait dorénavant via un thread dédié en arrière-plan (`run_semantic_pruning`) pour ne jamais bloquer l'interface d'administration.
 - **Configuration OWUI :** Script de post-déploiement automatisé des modèles et permissions.
 
@@ -105,7 +105,7 @@ L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N
 - **MCP Broker :** Serveur natif Model Context Protocol agissant désormais comme un **Proxy HTTP complet** (`m5_proxy_mcp.py`). Il implémente un système de **Forwarding d'erreurs** (remontée transparente vers le LLM) et un middleware pur ASGI interceptant silencieusement le `x-openwebui-user-id` pour l'authentification.
 - **[NOUVEAU] N8N Worker :** Sous-système Headless (`26-docker-n8n-worker`) encapsulant le moteur N8N (utilisant nativement SQLite via le volume `echo-n8n-data`). API Python (Port 5003) interfaçant l'LLM avec l'orchestrateur de workflow. Les workflows N8N (Mode Démon) peuvent agir comme clients MCP (pour requêter des services d'ECHO) tout en déclenchant de nouveaux "Child Chats" dans le système ECHO pour exécuter des tâches LLM complexes avec traçabilité.
 - **Workers & Logs Centralisés :** Mise en place d'un système de log unifié JSON (`logging.json`) et implémentation d'un **System-wide Health Check Rate-Limiting** sur tous les workers (STT, TTS, Embedding, Browser, Python) pour éviter la saturation par les sondes Docker.
-- **UI HUD & Sécurité DOM (`echo_ui.py`) :** Le moteur de rendu implémente un système natif **"OWUI Tools"** 100% "mobile-responsive". Il injecte des modales asynchrones bloquantes interactives (ex: `window.echoCustomPrompt` pour la saisie utilisateur) respectant le mode sombre/clair pour ne jamais bloquer l'Event Loop, et sécurise les injections HTML via `window.echoSanitizeHTML`.
+- **UI HUD & Sécurité DOM (`echo_ui.py`) :** Le moteur de rendu implémente un système natif **"OWUI Tools"** avec des optimisations 100% Mobile Natives (unités dvh, anti-zoom iOS, touch targets 44px, anti-scroll du body). Il injecte des modales asynchrones interactives (ex: `window.echoCustomPrompt` enrichies par des boutons 'pills' pour les options) respectant le mode sombre/clair pour ne jamais bloquer l'Event Loop, et sécurise les rendus HTML via `window.echoSanitizeHTML`.
 
 ## 9. 🚦 Orchestration Séquentielle (Docker Compose)
 
@@ -139,4 +139,4 @@ Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depend
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.200.49*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.200.54*

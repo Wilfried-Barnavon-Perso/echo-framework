@@ -231,11 +231,11 @@
     <h2>Système OWUI Tools et Modales Natives Asynchrones</h2>
 
     <p>
-      Le moteur <code>echo_ui.py</code> intègre désormais un système natif d'interaction <strong>"OWUI Tools"</strong>. Ce système déploie des modales asynchrones bloquantes interactives (ex: <code>window.echoCustomPrompt</code>, <code>window.echoCustomConfirm</code>, <code>window.mcpAlert</code>) permettant de solliciter l'utilisateur ou d'afficher des alertes critiques sans jamais bloquer l'Event Loop du navigateur.
+      Le moteur <code>echo_ui.py</code> intègre désormais un système natif d'interaction <strong>"OWUI Tools"</strong> avec des optimisations 100% Mobile Natives (unités dvh, anti-zoom iOS, touch targets 44px, anti-scroll du body). Ce système déploie des modales asynchrones interactives (ex: <code>window.echoCustomPrompt</code> enrichies par des boutons 'pills' pour les options) permettant de solliciter l'utilisateur ou d'afficher des alertes critiques sans jamais bloquer l'Event Loop du navigateur.
     </p>
 
     <ul>
-      <li><strong>Sécurité DOM & Responsivité :</strong> Le moteur HUD est intégralement "mobile-responsive" (gestion native de wrap, max-width, overflow). Ces modales sont injectées de manière isolée, respectent le mode sombre/clair, et sécurisent strictement les rendus via la fonction d'assainissement <code>window.echoSanitizeHTML</code>. L'interface intègre par ailleurs des redimensionnements fluides (<code>splitter</code>).</li>
+      <li><strong>Sécurité DOM & Responsivité :</strong> Le moteur HUD est intégralement optimisé pour le mobile (gestion native de wrap, max-width, overflow). Ces modales sont injectées de manière isolée, respectent le mode sombre/clair, et sécurisent strictement les rendus via la fonction d'assainissement <code>window.echoSanitizeHTML</code>. L'interface intègre par ailleurs des redimensionnements fluides (<code>splitter</code>).</li>
       <li><strong>Asynchronisme :</strong> En encapsulant ces interactions dans des Promises, l'agent peut s'interfacer en temps réel avec l'humain tout en maintenant la réactivité totale de l'application.</li>
     </ul>
 
@@ -298,7 +298,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.49 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.54 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

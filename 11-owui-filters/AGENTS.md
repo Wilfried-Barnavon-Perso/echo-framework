@@ -25,7 +25,7 @@ Ce dossier représente la **Conscience et l'Injection Contextuelle** de l'agent.
 ### `edge_embed_bridge_filter.py` (Inlet/Outlet)
 **Rôle** : Déport de la puissance de calcul (Offload) et WebUI Bridge.
 - **Sémantique** : Intercepte les requêtes nécessitant une vectorisation massive et déporte l'inférence (Harrier-OSS) vers le navigateur client via la technologie WebGPU/WASM et WebSocket.
-- **Algorithme Clé** : Injecte un **HUD d'initialisation WebGPU** natif dans l'interface. Gère rigoureusement l'état asynchrone des **onglets multiples** via des `client_id` uniques et la détection de visibilité (`visibility`). Il implémente un mécanisme de **Fallback CPU asynchrone instantané** en annulant les requêtes `asyncio.Future` dès la perte de connexion WebSocket.
+- **Algorithme Clé** : Injecte un **HUD d'initialisation WebGPU** natif dans l'interface avec support du rechargement automatique (auto-reload). Embarque un support natif Mobile WebGPU (quantification q4). Gère rigoureusement l'état asynchrone des **onglets multiples** via des `client_id` uniques et la détection de visibilité (`visibility`). Il implémente un mécanisme de **Fallback CPU asynchrone instantané** en annulant les requêtes `asyncio.Future` dès la perte de connexion WebSocket.
 
 ### `tcp_keepalive_filter.py` (Inlet)
 **Rôle** : Maintien de connexion.

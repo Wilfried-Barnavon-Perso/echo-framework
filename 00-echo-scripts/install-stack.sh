@@ -126,16 +126,17 @@ ensure_docker_autosafety() {
     fi
     rm -f "$temp_file"
 
-    # --- Ajout du Cron de Nettoyage (Idempotent) ---
-    local cron_file="/etc/cron.weekly/docker-prune"
-    echo "   🔄 Configuration du nettoyage automatique hebdomadaire..."
-    cat <<EOF > "$cron_file"
-#!/bin/sh
-# Nettoyage hebdomadaire du système Docker pour éviter la saturation du disque
-docker system prune -af --filter "until=168h" > /var/log/docker-prune.log 2>&1
-EOF
-    chmod +x "$cron_file"
-    echo "   ✅ Cron hebdomadaire configuré."
+    # --- Ajout du Cron de Nettoyage Centralisé (Idempotent) ---
+    local cron_target="/etc/cron.daily/clean-echo"
+    echo "   🔄 Configuration de la maintenance centralisée (clean-echo)..."
+    if [ -f "$ECHO_SCRIPTS/clean-echo.sh" ]; then
+        # Le script a été copié physiquement ici par sync-echo.sh
+        # Nous l'injectons dans le moteur cron pour l'exécution automatique chaque nuit
+        ln -sf "$ECHO_SCRIPTS/clean-echo.sh" "$cron_target"
+        echo "   ✅ Cron quotidien configuré ($cron_target)."
+    else
+        echo "   ⚠️ Fichier clean-echo.sh introuvable, maintenance ignorée."
+    fi
 }
 
 # --- 1. PRE-FLIGHT CHECKS ---
