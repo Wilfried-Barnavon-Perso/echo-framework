@@ -2,13 +2,13 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.20
+version: 1.21
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.21: Rétablissement de q4f16 pour compatibilité WebGPU stricte.
 # 1.20: Fast-Failover WebGPU, sécurisation mobile q4 et tenseur sentence_embedding.
-# 1.19: Restauration de q4f16 pour test pilote GPU Mali.
 # 1.18: Purge des références bge-m3. Fix fallback q4 universel pour GPU mobiles (Android).
 # 1.17: Fix compatibilité Android (suppression du setTimeout et de la transparence causant l'invisibilité de l'icône).
 # 1.16: Repositionnement du HUD WebGPU (top center) avec animation fluide (transition CSS) et overflow hidden.
@@ -75,7 +75,7 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        SCRIPT_VERSION = "1.20"
+        SCRIPT_VERSION = "1.21"
         
         # --- SYNCHRONISATION DYNAMIQUE DU MODÈLE (CPU -> GPU) ---
         import httpx
@@ -94,7 +94,7 @@ class Filter:
         # NOTE: Le target_dtype injecté ici servira de fallback absolu pour Mobile.
         # Sur PC, le JavaScript (via isMobile) basculera automatiquement sur 'fp16'
         # pour exploiter la pleine puissance du GPU.
-        target_dtype = "q4"
+        target_dtype = "q4f16"
         hud_title = "Harrier 0.6B"
 
         js_code = """
