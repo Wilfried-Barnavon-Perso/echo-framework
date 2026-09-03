@@ -135,7 +135,7 @@ flowchart LR
       La première phase est l'<strong>Extraction Transmodale</strong> : les fichiers textuels sont lus localement. Les fichiers Office (Word, Excel, PowerPoint) sont automatiquement convertis en Markdown via <strong>MarkItDown</strong> (avec description textuelle des images extraites par le modèle LITE). Les fichiers multimédias complexes (vidéos) sont transcrits textuellement via API.
     </p>
     <p>
-      Le texte brut unifié est immédiatement vectorisé par <code>bge-m3</code> (1024d) et stocké dans 
+      Le texte brut unifié est immédiatement vectorisé par <code>Harrier-OSS</code> (dimension dynamiqued) et stocké dans 
       la collection <code>echo_session_rag</code>. Ensuite, un processus de <strong>Synthèse Guidée par RAG (O(1))</strong>
       (introduit en v7.37) est exécuté. Plutôt que de distiller le document de bout en bout, le système génère une requête vectorielle stratégique (<em>"Introduction, résumé exécutif, conclusion, thèmes clés..."</em>) pour extraire dynamiquement les <code>SMART_CONTEXT_CHUNK_LIMIT</code> (défaut: 10) passages les plus pertinents depuis la base Qdrant. Le résumé est ensuite généré via l'API Gemini exclusivement à partir de ces extraits. Un <em>Fast-path</em> (court-circuit) est appliqué si le texte est suffisamment court (<code>ECHO_MR_SUMMARY_MAX_WORDS</code>).
     </p>
@@ -227,7 +227,7 @@ date_et_heure: "2026-08-24 14:00"
         <strong>Injection Asynchrone :</strong> Le texte formaté est transmis directement à la méthode <code>index_text_in_ephemeral_rag</code> (avec l'identifiant réservé <code>SESSION_RAG_CONVERSATION_SOURCE_ID</code>).
       </li>
       <li>
-        <strong>Vectorisation :</strong> L'Embedding Worker (bge-m3) calcule les embeddings et injecte silencieusement les vecteurs et le payload dans Qdrant (<code>echo_session_rag</code>).
+        <strong>Vectorisation :</strong> L'Embedding Worker (Harrier-OSS) calcule les embeddings et injecte silencieusement les vecteurs et le payload dans Qdrant (<code>echo_session_rag</code>).
       </li>
     </ol>
     <p>
@@ -250,7 +250,7 @@ date_et_heure: "2026-08-24 14:00"
       Ce filtre intercepte le corps de la page Open WebUI pour injecter dynamiquement le pont JavaScript WebGPU d'inférence distante (WASM).
       Il gère un <strong>HUD d'initialisation navigateur</strong> natif et une gestion multi-onglets (via l'UUID <code>client_id</code> et la détection de <code>visibility</code>).
       Un mécanisme de blocage actif (conditionné par la valve <code>WAIT_FOR_EDGE_EMBEDDING</code>) garantit que le client s'est connecté au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
-      Le filtre intègre également un <strong>Fallback CPU Asynchrone Instantané</strong> : il annule les requêtes <code>asyncio.Future</code> suspendues si la connexion WebSocket est rompue, basculant automatiquement le relais vers l'infrastructure Docker (`bge-m3`).
+      Le filtre intègre également un <strong>Fallback CPU Asynchrone Instantané</strong> : il annule les requêtes <code>asyncio.Future</code> suspendues si la connexion WebSocket est rompue, basculant automatiquement le relais vers l'infrastructure Docker (`Harrier-OSS`).
     </p>
 
 
@@ -280,7 +280,7 @@ date_et_heure: "2026-08-24 14:00"
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.60 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.82 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

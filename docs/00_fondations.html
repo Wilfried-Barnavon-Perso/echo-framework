@@ -125,7 +125,7 @@
       La vectorisation (Embedding) est une opération très gourmande en ressources CPU. L'infrastructure ECHO intègre un paradigme d'<strong>Edge Computing</strong> : le déchargement de l'inférence vectorielle directement vers le navigateur du client via <strong>WebGPU</strong> et <strong>WASM</strong>. 
     </p>
     <p>
-      Grâce à ce pont (injecté dynamiquement par le Filtre 3), l'Embedding Worker (serveur) délègue le calcul des vecteurs <code>BAAI/bge-m3</code> au client. Ce n'est qu'en cas de non-réponse du client (timeout asynchrone de 15s) que le serveur reprend la charge en Fallback CPU local. Cela allège drastiquement la consommation énergétique du serveur d'auto-hébergement et accélère la création de la Mémoire Vectorisée de Session.
+      Grâce à ce pont (injecté dynamiquement par le Filtre 3), l'Embedding Worker (serveur) délègue le calcul des vecteurs <code>Microsoft/Harrier-OSS</code> au client. Ce n'est qu'en cas de non-réponse du client (timeout asynchrone de 15s) que le serveur reprend la charge en Fallback CPU local. Cela allège drastiquement la consommation énergétique du serveur d'auto-hébergement et accélère la création de la Mémoire Vectorisée de Session.
     </p>
 
     <div class="transition-text">
@@ -135,7 +135,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.60 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.82 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

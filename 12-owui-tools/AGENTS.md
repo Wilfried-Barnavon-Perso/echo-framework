@@ -17,14 +17,14 @@ Ce dossier constitue **l'Arsenal** du modèle. Il contient l'ensemble des Outils
 ### Communication Inter-Services (MCP) & Sécurité
 - **`remote_mcp_tool.py`** : [NOUVEAU] Exécuteur natif permettant au LLM de requêter des outils exposés par un MCP Server distant via le MCP Broker. L'outil gère la transmission des credentials et du JSON Schema dynamique.
 - **`internal_mcp_tool.py`** : [NOUVEAU] Outil permettant d'exécuter des fonctionnalités internes isolées.
-- **`identity_vault_tool.py`** : [NOUVEAU] Coffre-fort d'identités. Permet au modèle de consulter, de générer ou de révoquer ses propres credentials d'accès de manière sécurisée en base SQLite.
+- **`identity_vault_tool.py`** : [NOUVEAU] Coffre-fort d'identités. Permet au modèle de consulter, de générer ou de révoquer ses propres credentials d'accès de manière sécurisée en base SQLite. La notion d'accès RO/RW a été totalement supprimée pour simplifier le modèle avec un accès unique universel.
 
 ### Persistance & RAG
 - **`memory_and_rag_tool.py`** : Outils de manipulation explicite de la base Qdrant. Implémente `search_sessions_context` (recherche avec le flag `global_search` inter-sessions), `update_meta_artifact` et `search_meta_artifacts` (fusion sémantique avec cartographie d'index et reranking).
-- **`echo_codex_tool.py`** : Éditeur de code intégré avec 9 fonctions. Gère la modification de fichiers, l'intégration Git native, l'enregistrement dans SQLite et un processus de Distillation Cloud pour les revues de code.
+- **`echo_codex_tool.py`** : Éditeur de code intégré avec 9 fonctions. Gère la modification de fichiers, l'intégration Git native, l'enregistrement dans SQLite et un processus de Distillation Cloud pour les revues de code. Il intègre un **Lock asynchrone** (clé `user_id:chat_id`) pour prévenir toute race condition lors des éditions simultanées.
 
 ### Web & Navigation
-- **`navigation_engine_tool.py`** : Pilote de navigateur autonome basé sur Playwright. Fonctionne selon une Boucle OODA, implémente une descente cognitive via l'injection de schémas, un mode hybride Lidar/Vision et un streaming sémantique.
+- **`navigation_engine_tool.py`** : Pilote de navigateur autonome basé sur Playwright. Fonctionne selon une Boucle OODA, implémente une descente cognitive via l'injection de schémas, un mode hybride Lidar/Vision et un streaming sémantique. Il assure la synchronisation de l'URL en temps réel dans le HUD Live via `stream_proxy`.
 - **`sovereign_web_search.py`** : Outil de recherche web souveraine (SearXNG / DuckDuckGo) avec capacité de délégation récursive.
 
 ### Exploration Locale

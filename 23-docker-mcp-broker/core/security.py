@@ -7,9 +7,9 @@ import contextvars
 user_id_var = contextvars.ContextVar("user_id", default=None)
 
 
-def require_rw_access(service: str):
+def require_service_access(service: str):
     """
-    Décorateur pour les outils MCP qui requièrent un accès en écriture (RW).
+    Décorateur pour les outils MCP qui requièrent un accès vérifié au service.
     FastMCP fournira le `Context` (ctx) automatiquement.
     """
     def decorator(func):
@@ -39,12 +39,6 @@ def require_rw_access(service: str):
             vault_data = await get_credentials(user_id, service)
             if not vault_data:
                 raise PermissionError(f"No credentials found for service '{service}'.")
-
-            if vault_data["access_level"] != "RW":
-                raise PermissionError(
-                    f"Permission Denied: Service '{service}' is configured in Read-Only (RO) mode. "
-                    "Write operations are blocked."
-                )
 
             # Execution autorisée
             return await func(*args, **kwargs)

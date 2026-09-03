@@ -1,11 +1,12 @@
 """
 title: ECHO Identity Vault
 author: ECHO
-version: 2.0
+version: 2.1
 description: Coffre-fort universel pour l'authentification des agents (MCP et N8N).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xMiAyMnM4LTQgOC0xMFY1bC04LTMtOCAzdjdjMCA2IDggMTAgOCAxMHoiLz48L3N2Zz4=
 """
 # Historique des versions :
+# 2.1: Suppression totale de la notion d'accès RO/RW (access_level).
 # 1.4: Suppression de la notion d'Alias (multicompte) pour simplifier en accès unique.
 # 1.3: Remplacement de la saisie manuelle des services par une découverte dynamique (API /schemas du MCP Broker).
 # 1.2: Mise à jour de la priorité d'affichage à 40.
@@ -36,7 +37,6 @@ class Action:
                     service TEXT, 
                     account_id TEXT, 
                     credentials TEXT, 
-                    access_level TEXT, 
                     PRIMARY KEY (user_id, service, account_id)
                 )
             """)
@@ -45,15 +45,15 @@ class Action:
 
     def _get_accounts(self, state: EchoStateManager) -> List[Dict]:
         with state._get_connection() as conn:
-            cursor = conn.execute("SELECT service, account_id, access_level FROM identity_vault WHERE user_id = ?", (state.user_id,))
+            cursor = conn.execute("SELECT service, account_id FROM identity_vault WHERE user_id = ?", (state.user_id,))
             rows = cursor.fetchall()
-            return [{"service": r[0], "account_id": r[1], "access_level": r[2]} for r in rows]
+            return [{"service": r[0], "account_id": r[1]} for r in rows]
 
-    def _save_account(self, state: EchoStateManager, service: str, account_id: str, credentials: str, access_level: str):
+    def _save_account(self, state: EchoStateManager, service: str, account_id: str, credentials: str):
         with state._get_connection() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials, access_level) VALUES (?, ?, ?, ?, ?)",
-                (state.user_id, service, account_id, credentials, access_level)
+                "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials) VALUES (?, ?, ?, ?)",
+                (state.user_id, service, account_id, credentials)
             )
             conn.commit()
 
@@ -130,13 +130,12 @@ class Action:
             elif action_type == "add_account":
                 service = response.get("service")
                 account_id = response.get("account_id")
-                access_level = response.get("access_level")
                 
                 # Encodage JSON des champs dynamiques générés par le Schéma
                 if "credentials" in response:
                     credentials = response["credentials"]
                 else:
-                    reserved = {"action", "service", "account_id", "access_level"}
+                    reserved = {"action", "service", "account_id"}
                     dynamic_data = {k: v for k, v in response.items() if k not in reserved}
                     
                     # Auto-provisionnement Sémantique si la description est vide
@@ -164,8 +163,8 @@ class Action:
                             
                     credentials = json.dumps(dynamic_data).decode("utf-8") if dynamic_data else ""
                 
-                if service and account_id and credentials and access_level:
-                    self._save_account(state, service, account_id, credentials, access_level)
+                if service and account_id and credentials:
+                    self._save_account(state, service, account_id, credentials)
                     await events.toast(f"✅ Compte {account_id} enregistré pour {service}.", "success")
                 
                 # Refresh list

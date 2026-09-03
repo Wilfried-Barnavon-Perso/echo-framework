@@ -1,20 +1,21 @@
 """
 ================================================================================
 MODULE : ECHO EMBEDDING WORKER (Llama.cpp / GGUF)
-VERSION : 2.2 (Rate-Limit Healthcheck)
+VERSION : 2.3 (Dimension Dynamique)
 AUTEUR : Wilfried BARNAVON
-DATE : 2026-08-19
+DATE : 2026-09-02
 
 ROLE : Serveur d'embedding texte compatible OpenAI (Harrier-OSS GGUF)
-       Multilingue, 1024 dimensions, 8192 tokens max.
+       Multilingue, dimensions natives, 8192 tokens max.
        Support de l'Edge Embedding (WebGPU) via WebSocket Proxy.
 
 CHANGELOG :
-  1.4 : Stabilisation threadpool.
   1.5 : Support Edge Embedding WebGPU (WebSocket proxy & Fallback).
   1.6 : Correction critique : passage au CLS Token Pooling (index 0) au lieu du Last-Token.
   2.0 : Migration majeure vers llama.cpp (GGUF) pour réduire l'empreinte RAM. Suppression de PyTorch.
   2.1 : Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
+  2.2 : Rate-Limit Healthcheck.
+  2.3 : Suppression de la propriété 'dim' hardcodée dans le /health pour permettre la dimension dynamique selon le modèle.
 ================================================================================
 """
 
@@ -74,8 +75,8 @@ class RateLimitHealthCheckFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 
 app = FastAPI(
-    title="ECHO bge-m3 Embedding Worker",
-    description="Worker souverain pour embeddings texte multilingues (BAAI/bge-m3) & Edge WebGPU",
+    title="ECHO Harrier Embedding Worker",
+    description="Worker souverain pour embeddings texte multilingues (Harrier-OSS) & Edge WebGPU",
     version="1.5"
 )
 
@@ -89,7 +90,7 @@ GGUF_FILE = os.getenv("GGUF_FILE", "harrier-oss-v1-0.6b.Q8_0.gguf")
 # Llama.cpp CPU
 DEVICE = "cpu"
 
-# Sweet spot qualité/vitesse sur CPU pour bge-m3.
+# Sweet spot qualité/vitesse sur CPU pour Harrier-OSS.
 # Le modèle supporte 8192 tokens, mais les chunks ECHO font ~300-500 tokens.
 MAX_LENGTH = int(os.getenv("MAX_LENGTH", "512"))
 
@@ -342,8 +343,7 @@ async def health():
             "status": "ready",
             "model": MODEL_ID,
             "device": DEVICE,
-            "max_length": MAX_LENGTH,
-            "dim": 1024
+            "max_length": MAX_LENGTH
         }
     else:
         return JSONResponse(status_code=503, content={"status": "initializing", "model": MODEL_ID})

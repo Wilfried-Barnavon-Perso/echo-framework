@@ -1,11 +1,13 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.18 (Rate-Limit Healthcheck)
+VERSION : 9.19 (URL Streaming)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-08-19
+DATE MAJ : 2026-09-02
 
-CHANGELOG 9.17 :
+CHANGELOG 9.19 :
+- FEAT: Synchronisation continue de l'URL courante de la page dans le flux screencast pour le HUD.
+CHANGELOG 9.18 :
 - FIX: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
 CHANGELOG 9.16 :
 - MIGRATION: Renommage de l'entité Agent en Worker pour standardisation globale de l'architecture.
@@ -587,10 +589,14 @@ async def screencast_latest(request: Request):
     while session.frame_id == last_frame_id and time.time() - start_time < 1.0:
         await asyncio.sleep(0.05)
         
+    page = await session.get_active_page()
+    current_url = page.url if page else ""
+        
     return {
         "status": "success",
         "frame_id": session.frame_id,
-        "frame_b64": session.latest_frame
+        "frame_b64": session.latest_frame,
+        "url": current_url
     }
 
 @app.post("/action")

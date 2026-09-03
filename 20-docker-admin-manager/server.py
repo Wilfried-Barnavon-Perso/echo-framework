@@ -839,7 +839,7 @@ def consolidate_memories_for_user(user_id: str, config: dict) -> dict:
 
     Stratégie : clustering greedy sur les vecteurs récupérés via scroll (with_vectors=True),
     puis fusion par centroïde L2-normalisé des vecteurs du cluster.
-    - Zéro appel au worker bge-m3 (vecteurs déjà disponibles).
+    - Zéro appel au worker Harrier-OSS (vecteurs déjà disponibles).
     - Zéro appel Gemini (pas de dépendance aux clés API utilisateur).
     - Zéro troncature : le summary concatène l'intégralité des textes originaux.
     - Idémpotente : cible uniquement memory_importance=1.

@@ -349,6 +349,11 @@ async def login_post(request: Request, email: str = Form(...), password: str = F
 
     # Succès
     session_id = create_session(email, request)
+    
+    # [FIX] User requested a delay to prevent SSO race conditions
+    import asyncio
+    await asyncio.sleep(1.5)
+    
     response = RedirectResponse(url=safe_next, status_code=status.HTTP_302_FOUND)
     
     settings = get_auth_settings()

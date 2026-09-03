@@ -1,11 +1,12 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 1.1
+version: 1.2
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.2: Suppression totale de la notion d'accès RO/RW (access_level).
 # 1.1: Refonte du Lazy-Loading JS des modales ECHO (get_custom_modals_js) pour éviter les fallbacks moches hors-Codex.
 # 1.0: Outil initial.
 import sys
@@ -29,7 +30,7 @@ class Tools:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS identity_vault (
                     user_id TEXT, service TEXT, account_id TEXT, 
-                    credentials TEXT, access_level TEXT, 
+                    credentials TEXT, 
                     PRIMARY KEY (user_id, service, account_id)
                 )
             """)
@@ -108,8 +109,8 @@ class Tools:
             state = self._init_vault(__user__["id"])
             with state._get_connection() as conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials, access_level) VALUES (?, ?, ?, ?, ?)",
-                    (__user__["id"], service, account_id, credentials_json, "user")
+                    "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials) VALUES (?, ?, ?, ?)",
+                    (__user__["id"], service, account_id, credentials_json)
                 )
                 conn.commit()
             return f"Succès: Source '{account_id}' ({service}) configurée avec succès."

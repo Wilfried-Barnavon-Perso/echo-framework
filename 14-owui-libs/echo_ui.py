@@ -1,11 +1,15 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.68
+version: 5.72
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.72: Ajout du bouton Annuler et fiabilisation de la sélection du service en mode édition Vault.
+# 5.71: Ajout de l'édition "Blind" (Modifier) sécurisée dans l'Identity Vault.
+# 5.70: Retrait de la notion d'accès RO/RW du Identity Vault et correctif CSS ascenseur.
+# 5.69: Support paramètre newUrl dans echoWebPlayerUpdate pour mise à jour HUD asynchrone de l'URL.
 # 5.68: Optimisation Mobile native (dvh, anti-zoom iOS, touch targets 44px, anti-scroll) pour echoCustomPrompt/Confirm.
 # 5.67: Correction échappement backslash JSON pour Identity Vault HUD évitant le SyntaxError muet.
 # 5.66: Retrait des if (!window...) pour permettre le Hot-Reload des fonctions modales.
@@ -231,10 +235,14 @@ class EchoUI(EchoRichUI):
     const ENGINE_KEY = 'echoWebPlayer_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_');
 
     // Expose a global update function for the backend to push frames
-    window['echoWebPlayerUpdate_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_')] = function(newB64, newId) {{
+    window['echoWebPlayerUpdate_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_')] = function(newB64, newId, newUrl) {{
         if (window[ENGINE_KEY]) {{
             const img = document.getElementById(HUD_ID + "-img");
             if (img) img.src = 'data:image/jpeg;base64,' + newB64;
+            if (newUrl !== undefined) {{
+                const urlEl = document.getElementById(HUD_ID + "-url");
+                if (urlEl) urlEl.value = newUrl;
+            }}
         }}
     }};
 
@@ -2535,7 +2543,7 @@ return new Promise(function(resolve) {{
       "    #${HUD_ID} { position: fixed; top: 15vh; left: calc(50vw - 250px); width: 500px; max-height: 80vh; background: ${isDark ? '#262626' : '#f9f9f9'}; color: ${isDark ? '#ececec' : '#171717'}; border: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; border-radius: 8px; z-index: 10000; display: flex; flex-direction: column; font-family: system-ui, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.5); overflow: hidden; }\n"
       "    #${HUD_ID}-header { padding: 12px 16px; background: ${isDark ? '#171717' : '#e5e5e5'}; border-bottom: 1px solid ${isDark ? '#404040' : '#d1d5db'}; display: flex; justify-content: space-between; align-items: center; cursor: move; user-select: none; font-weight: bold; font-size: 14px; }\n"
       "    #${HUD_ID}-close { cursor: pointer; color: #ef4444; font-size: 18px; line-height: 1; }\n"
-      "    #${HUD_ID}-content { padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }\n"
+      "    #${HUD_ID}-content { flex: 1; min-height: 0; padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }\n"
       "    .vault-table { width: 100%; border-collapse: collapse; font-size: 13px; }\n"
       "    .vault-table th, .vault-table td { text-align: left; padding: 8px; border-bottom: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; }\n"
       "    .vault-table th { color: ${isDark ? '#a3a3a3' : '#6b7280'}; font-weight: 500; }\n"
@@ -2566,17 +2574,14 @@ return new Promise(function(resolve) {{
       "    <div id=\"${HUD_ID}-content\">\n"
       "      <div id=\"${HUD_ID}-list\"></div>\n"
       "      <div class=\"vault-form\">\n"
-      "        <div style=\"font-weight:bold; margin-bottom:4px;\">➕ Configurer un service</div>\n"
+      "        <div id=\"vault-form-title\" style=\"font-weight:bold; margin-bottom:4px;\">➕ Configurer un service</div>\n"
       "        <div style=\"display:flex; flex-direction:column; gap:8px;\">\n"
       "          <select id=\"vault-input-service\" style=\"flex:1;\"></select>\n"
       "          <input type=\"text\" id=\"vault-input-account\" placeholder=\"Nom du Secret (ex: LINKEDIN_COOKIE)\" autocomplete=\"off\" spellcheck=\"false\" />\n"
       "        </div>\n"
       "        <div id=\"vault-dynamic-fields\" style=\"display:flex; flex-direction:column; gap:8px;\"></div>\n"
       "        <div style=\"display:flex; gap:8px;\">\n"
-      "          <select id=\"vault-input-access\" style=\"flex:1;\">\n"
-      "            <option value=\"RO\">🟢 Lecture Seule (RO)</option>\n"
-      "            <option value=\"RW\">🔴 Lecture/Écriture (RW)</option>\n"
-      "          </select>\n"
+      "          <button class=\"vault-btn\" id=\"vault-btn-cancel\" style=\"flex:0 0 auto; background: #6b7280;\">Annuler</button>\n"
       "          <button class=\"vault-btn\" id=\"vault-btn-add\" style=\"flex:1;\">Enregistrer</button>\n"
       "        </div>\n"
       "      </div>\n"
@@ -2636,7 +2641,17 @@ return new Promise(function(resolve) {{
       "      });\n"
       "    }\n"
       "  }\n"
-      "  serviceSelect.addEventListener('change', renderDynamicFields);\n"
+      "  function resetForm() {\n"
+      "    const accountInput = document.getElementById('vault-input-account');\n"
+      "    accountInput.disabled = false;\n"
+      "    accountInput.value = '';\n"
+      "    document.querySelectorAll('.vault-dynamic-input').forEach(input => input.value = '');\n"
+      "    const addBtn = document.getElementById('vault-btn-add');\n"
+      "    addBtn.textContent = 'Enregistrer';\n"
+      "    addBtn.style.background = '#3b82f6';\n"
+      "    document.getElementById('vault-form-title').textContent = '➕ Configurer un service';\n"
+      "  }\n"
+      "  serviceSelect.addEventListener('change', function() { renderDynamicFields(); resetForm(); });\n"
       "  if(Object.keys(schemas).length > 0) renderDynamicFields();\n"
       "  \n"
       "  // Drag logic\n"
@@ -2673,13 +2688,15 @@ return new Promise(function(resolve) {{
       "      listDiv.innerHTML = '<div style=\"text-align:center; padding:16px; opacity:0.6;\"><i>Aucun identifiant enregistré.</i></div>';\n"
       "      return;\n"
       "    }\n"
-      "    let html = '<table class=\"vault-table\"><thead><tr><th>Service</th><th>Nom</th><th>Accès</th><th width=\"30\"></th></tr></thead><tbody>';\n"
+      "    let html = '<table class=\"vault-table\"><thead><tr><th>Service</th><th>Nom</th><th width=\"30\"></th></tr></thead><tbody>';\n"
       "    accounts.forEach(acc => {\n"
       "      html += `<tr>\n"
       "        <td>${acc.service}</td>\n"
       "        <td><strong>${acc.account_id || ''}</strong></td>\n"
-      "        <td><span class=\"vault-badge ${acc.access_level}\">${acc.access_level}</span></td>\n"
-      "        <td style=\"text-align:right;\"><button class=\"vault-btn-del\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || 'default'}\" onclick=\"window.echoVaultDelete(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Supprimer\">🗑️</button></td>\n"
+      "        <td style=\"text-align:right;\">\n"
+      "          <button class=\"vault-btn-del\" style=\"color:#3b82f6; margin-right:8px;\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || ''}\" onclick=\"window.echoVaultEdit(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Écraser (Modifier)\">✏️</button>\n"
+      "          <button class=\"vault-btn-del\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || 'default'}\" onclick=\"window.echoVaultDelete(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Supprimer\">🗑️</button>\n"
+      "        </td>\n"
       "      </tr>`;\n"
       "    });\n"
       "    html += '</tbody></table>';\n"
@@ -2693,9 +2710,12 @@ return new Promise(function(resolve) {{
       "    if(window.echoVaultResolve) window.echoVaultResolve({action: 'close'});\n"
       "  };\n"
       "  \n"
+      "  document.getElementById('vault-btn-cancel').onclick = function() {\n"
+      "    resetForm();\n"
+      "  };\n"
+      "  \n"
       "  document.getElementById('vault-btn-add').onclick = function() {\n"
       "    const service = serviceSelect.value;\n"
-      "    const access = document.getElementById('vault-input-access').value;\n"
       "    \n"
       "    if(!service) { vaultAlert('Veuillez sélectionner un Service.'); return; }\n"
       "    \n"
@@ -2712,7 +2732,8 @@ return new Promise(function(resolve) {{
       "    const processForm = function() {\n"
       "      const credStr = JSON.stringify(credObj);\n"
       "      document.querySelectorAll('.vault-dynamic-input').forEach(input => input.value = '');\n"
-      "      if(window.echoVaultResolve) window.echoVaultResolve({action: 'add_account', service: service, account_id: account_id, credentials: credStr, access_level: access});\n"
+      "      resetForm();\n"
+      "      if(window.echoVaultResolve) window.echoVaultResolve({action: 'add_account', service: service, account_id: account_id, credentials: credStr});\n"
       "    };\n"
       "    \n"
       "    if(missingField) {\n"
@@ -2728,6 +2749,24 @@ return new Promise(function(resolve) {{
       "    vaultConfirm('Supprimer les identifiants pour ' + service + ' ?', function(agreed) {\n"
       "      if(agreed && window.echoVaultResolve) window.echoVaultResolve({action: 'delete_account', service: service, account_id: alias});\n"
       "    });\n"
+      "  };\n"
+      "  \n"
+      "  window.echoVaultEdit = function(service, alias) {\n"
+      "    serviceSelect.value = service;\n"
+      "    if(serviceSelect.value !== service) {\n"
+      "      const opt = document.createElement('option');\n"
+      "      opt.value = service; opt.textContent = service;\n"
+      "      serviceSelect.appendChild(opt);\n"
+      "      serviceSelect.value = service;\n"
+      "    }\n"
+      "    renderDynamicFields();\n"
+      "    const accountInput = document.getElementById('vault-input-account');\n"
+      "    accountInput.value = alias;\n"
+      "    accountInput.disabled = true;\n"
+      "    const addBtn = document.getElementById('vault-btn-add');\n"
+      "    addBtn.textContent = 'Écraser les secrets';\n"
+      "    addBtn.style.background = '#f59e0b';\n"
+      "    document.getElementById('vault-form-title').textContent = '✏️ Modifier le service';\n"
       "  };\n"
       "  \n"
       "  window.echoVaultUpdate = function(newAccountsJson) {\n"

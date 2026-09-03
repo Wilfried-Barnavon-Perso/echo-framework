@@ -267,7 +267,7 @@
         <tr>
           <td><code>echo_meta_artifacts</code></td>
           <td><code>COLLECTION_MEMORY</code></td>
-          <td>1024 (bge-m3)</td>
+          <td>1024 (Harrier-OSS)</td>
           <td>Cosinus</td>
           <td><code>user_id</code></td>
           <td>Permanent - TTL par niveau (Admin Manager)</td>
@@ -275,7 +275,7 @@
         <tr>
           <td><code>echo_session_rag</code></td>
           <td><code>COLLECTION_EPHEMERAL</code></td>
-          <td>1024 (bge-m3)</td>
+          <td>1024 (Harrier-OSS)</td>
           <td>Cosinus</td>
           <td><code>user_id + chat_id + slug</code></td>
           <td>Session - purgé automatiquement en fin de session</td>
@@ -334,7 +334,7 @@
       <tbody>
         <tr><td><code>call(model, payload, user_id, chat_id)</code></td><td>Appel non-streamant (utilisé pour la distillation). Gère automatiquement le choix du backend (AI Studio / API Antigravity) et le failover.</td></tr>
         <tr><td><code>call_distillation(prompt, __user__, __metadata__, is_json, max_tokens)</code></td><td>Exécute une tâche de distillation. Route par défaut vers <code>gemini-2.5-flash</code> (API). Gère le nettoyage des thoughts et le parsing JSON.</td></tr>
-        <tr><td><code>generate_embedding(text, task_type, __user__, __metadata__)</code></td><td>Vectorise un texte via le modèle local BAAI/bge-m3 (Embedding Worker). Retourne une liste de 1024 floats.</td></tr>
+        <tr><td><code>generate_embedding(text, task_type, __user__, __metadata__)</code></td><td>Vectorise un texte via le modèle local Microsoft/Harrier-OSS (Embedding Worker). Retourne une liste de 1024 floats.</td></tr>
         <tr><td><code>get_stealth_headers(url)</code></td><td>Construit les en-têtes HTTP/2 haute fidélité (User-Agent Chrome 123, Sec-Fetch-*) pour le téléchargement Stealth. Paramètre <code>url</code> optionnel.</td></tr>
       </tbody>
     </table>
@@ -346,7 +346,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.60 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.82 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

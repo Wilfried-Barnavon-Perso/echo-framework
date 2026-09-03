@@ -1,11 +1,12 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.54
+version: 5.56
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.56: Mise à jour du modèle MODEL_FLASH de 3.7 vers 3.8.
 # 5.55: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
 # 5.54: Ajout de ECHO_SAFETY_SETTINGS (BLOCK_NONE) pour les appels Gemini.
 # 5.53: Création des constantes CONTEXT_LOAD_WARNING_THRESHOLD (40) et CONTEXT_LOAD_CRITICAL_THRESHOLD (60)
@@ -15,9 +16,6 @@ description: Composant système interne : ECHO Constants.
 #       - ECHO_OAUTH_SCOPES : +experimentsandconfigs, -openid, -aicode
 #       - User-Agent : format natif "{app}/{version} {os}/{arch}"
 #       - Documentation dual-client (Desktop=perso, LS=Enterprise GCP TOS)
-# 5.51: Réduction du backoff exponentiel (base 5.0→3.0s, max_retries 5→3, mult 2.0→1.5)
-#       pour prévenir les crashes silencieux SSE via SIGKILL Gunicorn (backoff cumulatif
-#       ~155s > GUNICORN_TIMEOUT 60s). Total max post-fix : ~14s.
 
 import os
 try:
@@ -204,8 +202,8 @@ ECHO_MODELS_REGISTRY = {
         }
     },
     "MODEL_FLASH": {
-        "ai_studio_id": "gemini-3.7-flash",
-        "ca_model_id":  "gemini-3.7-flash-high",
+        "ai_studio_id": "gemini-3.8-flash",
+        "ca_model_id":  "gemini-3.8-flash-high",
         "hierarchy": 1,
         "generationConfig": {
             "temperature": 1.0,
@@ -260,7 +258,7 @@ MODEL_ENUM_BY_POLICY = {
     "AUTO_PRO":    ["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"],
 }
 
-EMBEDDING_DIM      = 1024               # Dimension Harrier-OSS (remplace bge-m3)
+EMBEDDING_DIM      = 1024               # Dimension Harrier-OSS
 COLLECTION_META_ARTIFACTS = "echo_meta_artifacts"
 COLLECTION_SESSION_RAG    = "echo_session_rag"
 SESSION_RAG_CONVERSATION_SOURCE_ID = "conversation_history"

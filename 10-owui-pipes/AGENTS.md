@@ -19,7 +19,7 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 #### B. Classe `Orchestrator` (Le Cerveau Exécutif)
 **Rôle** : Traduction des schémas OWUI vers l'API cible, gestion du *Clamping Dynamique*.
 - **`convert_owui_tools()`** : Parse les schémas d'outils OWUI et les traduit dans le format strict Gemini (OpenAPI), en appliquant les politiques de sécurité (Tool Forcing, Model Policy) via `ECHO_MODELS_REGISTRY`.
-- **`_mutate_context_identity()`** : Modifie à la volée le System Prompt ou l'identité si un *reverse-lookup* (Auto-heal) impose un changement de modèle (ex: Fallback vers MODEL_LITE en cas de surcharge).
+- **`_mutate_context_identity()`** : Modifie à la volée le System Prompt ou l'identité si un *reverse-lookup* (Auto-heal) impose un changement de modèle. Gère désormais le nouveau format AEC XML hiérarchisé avec regex de substitution durcie et rétrocompatibilité YAML. La cascade et le clamping dynamique gèrent élégamment les modèles sans hiérarchie stricte (ex: `MODEL_DISTILLATION`).
 - **`_unbox_tool_output()`** : Extrait et normalise les réponses asynchrones des outils (comme la réception multimédia issue de `echo_tool_multiparts`).
 - **Routage HTTP/2 (`EchoGeminiClient`)** : S'appuie désormais intégralement sur le client consolidé `EchoGeminiClient` (provenant de `echo_utils.py`) pour bénéficier du Circuit Breaker OAuth2 et du multiplexage H2, déportant ainsi la logique réseau hors du Pipe.
 

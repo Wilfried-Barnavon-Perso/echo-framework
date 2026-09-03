@@ -1,11 +1,12 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.41
+version: 8.42
 description: Composant système interne : ECHO Shared Utils (Core).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 8.42: Correction de clamp_model() pour gérer correctement les modèles avec hierarchy=None (ex: MODEL_DISTILLATION).
 # 8.41: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
 # 8.40: Fix critique: Résolution boucle/silence dans stream() (remplacement yield par raise e) et bascule rapide clés API (threshold symétrique).
 # 8.39: Fix critique: Suppression du masquage des erreurs httpx.ReadError et RemoteProtocolError dans le flux SSE pour rétablir la cascade cognitive.
@@ -452,8 +453,10 @@ def clamp_model(requested: str, metadata: dict, user_id: str = None) -> str:
     mode, ceiling = resolve_model_policy(metadata, user_id=uid)
     if mode == "fixed":
         return ceiling
-    req_level = ECHO_MODELS_REGISTRY.get(requested, {}).get("hierarchy", 1)
-    ceil_level = ECHO_MODELS_REGISTRY.get(ceiling, {}).get("hierarchy", 1)
+    req_level = ECHO_MODELS_REGISTRY.get(requested, {}).get("hierarchy")
+    ceil_level = ECHO_MODELS_REGISTRY.get(ceiling, {}).get("hierarchy")
+    req_level = req_level if req_level is not None else -1
+    ceil_level = ceil_level if ceil_level is not None else -1
     return ceiling if req_level > ceil_level else requested
 
 # ==============================================================================
@@ -844,7 +847,7 @@ class EchoGeminiClient:
         max_retries: int = 1
     ) -> List[float]:
         """
-        Génère un vecteur d'embedding via BAAI/bge-m3 (Local).
+        Génère un vecteur d'embedding via Harrier-OSS (Local).
         Zéro donnée sortante (infrastructure auto-hébergée).
         Retry intégré (1 retry, 2s backoff) pour absorber les indisponibilités transitoires.
         """
@@ -955,7 +958,7 @@ class EchoGeminiClient:
         """
         Factorise le pipeline chunk → embed → upsert Qdrant pour la Mémoire Vectorisée de Session.
 
-        Découpe `distillate` (markdown structuré) en chunks sémantiques (~400 tokens bge-m3)
+        Découpe `distillate` (markdown structuré) en chunks sémantiques (~400 tokens Harrier-OSS)
         basés sur les séparateurs de paragraphes \\n\\n, avec recouvrement entre chunks contigus
         pour éviter la perte de contexte aux jointures.
 

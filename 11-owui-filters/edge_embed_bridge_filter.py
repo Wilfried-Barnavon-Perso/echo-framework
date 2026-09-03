@@ -2,15 +2,17 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.15
+version: 1.20
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.15: Support du Touch Drag sur mobile et repositionnement (bottom: 80px) de l'icône WebGPU morphée.
+# 1.20: Fast-Failover WebGPU, sécurisation mobile q4 et tenseur sentence_embedding.
+# 1.19: Restauration de q4f16 pour test pilote GPU Mali.
+# 1.18: Purge des références bge-m3. Fix fallback q4 universel pour GPU mobiles (Android).
+# 1.17: Fix compatibilité Android (suppression du setTimeout et de la transparence causant l'invisibilité de l'icône).
+# 1.16: Repositionnement du HUD WebGPU (top center) avec animation fluide (transition CSS) et overflow hidden.
 # 1.14: Fix HUD WebGPU Mobile (Opacité/Morphing) et standardisation 1024D (Harrier 0.6b).
-# 1.13: Support natif Mobile (WebGPU Fallback Fast-Failover & Quantification q4).
-# 1.12: Implémentation du Dual-Versioning (Modèle vs Script) et Auto-Reload (Idempotence intelligente).\n# 1.11: Correction du Self-Healing (Infinite Loop WebGPU) et du crash DOM (TypeError Morphing).
 
 import asyncio
 from pydantic import BaseModel, Field
@@ -73,7 +75,28 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        SCRIPT_VERSION = "1.14"
+        SCRIPT_VERSION = "1.20"
+        
+        # --- SYNCHRONISATION DYNAMIQUE DU MODÈLE (CPU -> GPU) ---
+        import httpx
+        cpu_model = "microsoft/Harrier-OSS-v1-0.6B" # Par défaut
+        try:
+            with httpx.Client(timeout=1.5) as client:
+                resp = client.get("http://echo-embedding:7997/health")
+                if resp.status_code in (200, 503):
+                    cpu_model = resp.json().get("model", cpu_model)
+        except Exception:
+            pass
+
+        # Assignation stricte (Harrier-OSS)
+        target_repo = "onnx-community/harrier-oss-v1-0.6b-ONNX"
+        
+        # NOTE: Le target_dtype injecté ici servira de fallback absolu pour Mobile.
+        # Sur PC, le JavaScript (via isMobile) basculera automatiquement sur 'fp16'
+        # pour exploiter la pleine puissance du GPU.
+        target_dtype = "q4"
+        hud_title = "Harrier 0.6B"
+
         js_code = """
         (async function initEdgeEmbedding() {
             const INJECTED_SCRIPT_VERSION = "__INJECTED_SCRIPT_VERSION__";
@@ -108,17 +131,26 @@ class Filter:
                 localStorage.setItem('ECHO_EDGE_MODEL_VERSION', MODEL_CACHE_VERSION);
             }
 
-            // HARDWARE CHECK REVISE
-            const hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
-            if (!hasWebGPU) {
-                console.warn("⚠️ ECHO Edge: WebGPU non supporté par l'appareil. Fallback CPU immédiat.");
-                // Ouverture éphémère du WSS pour notifier l'incompatibilité instantanément au lieu d'attendre le timeout
+            // FACTORISATION DU FALLBACK
+            function sendIncompatibleAndExit(reason) {
+                console.warn(`⚠️ ECHO Edge: ${reason}. Fallback CPU immédiat.`);
                 try {
                     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
                     const wsUrl = `${protocol}//${location.host}/ws/edge-embed?client_id=${clientId}`;
                     const ws = new WebSocket(wsUrl);
                     ws.onopen = () => { ws.send(JSON.stringify({ type: 'incompatible' })); ws.close(); };
                 } catch(e) {}
+            }
+
+            // HARDWARE CHECK REVISE ET ACTIF
+            if (typeof navigator === 'undefined' || !navigator.gpu) {
+                sendIncompatibleAndExit("WebGPU non exposé par le navigateur");
+                return;
+            }
+
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) {
+                sendIncompatibleAndExit("Adaptateur WebGPU refusé par le pilote");
                 return;
             }
 
@@ -150,7 +182,7 @@ class Filter:
             hud.style.cssText = `
                 position: fixed;
                 top: 65px;
-                right: 20px;
+                left: calc(100vw - 270px);
                 width: 250px;
                 background: rgba(15, 23, 42, 0.85);
                 backdrop-filter: blur(8px);
@@ -162,7 +194,8 @@ class Filter:
                 font-size: 12px;
                 z-index: 10000;
                 box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.15);
-                transition: opacity 0.3s ease, border-color 0.3s ease;
+                transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+                overflow: hidden;
                 display: flex;
                 flex-direction: column;
                 gap: 8px;
@@ -321,8 +354,8 @@ class Filter:
                             if (!isModelLoaded) {
                                 try {
                                     const isMobile = /Mobi|Android/i.test(navigator.userAgent);
-                                    const targetRepo = 'onnx-community/harrier-oss-v1-0.6b-ONNX';
-                                    const targetDtype = isMobile ? 'q4f16' : 'fp16';
+                                    const targetRepo = '__TARGET_REPO__';
+                                    const targetDtype = isMobile ? '__TARGET_DTYPE__' : 'fp16';
                                     
                                     globalTokenizer = await transformers.AutoTokenizer.from_pretrained(targetRepo);
                                     globalModel = await transformers.AutoModel.from_pretrained(targetRepo, {
@@ -372,6 +405,7 @@ class Filter:
                                         </svg>
                                     </div>
                                 `;
+
                                 hud.style.width = '36px';
                                 hud.style.height = '36px';
                                 hud.style.padding = '0';
@@ -379,17 +413,24 @@ class Filter:
                                 hud.style.background = 'rgba(15, 23, 42, 0.9)';
                                 hud.style.border = '1px solid rgba(56, 189, 248, 0.6)';
                                 
+                                hud.style.top = '12px';
+                                hud.style.bottom = 'auto';
+                                hud.style.right = 'auto';
+                                
+                                xOffset = 0;
+                                yOffset = 0;
+                                hud.style.transform = 'translate3d(0, 0, 0)';
+                                
                                 const isMobileDevice = /Mobi|Android/i.test(navigator.userAgent);
                                 if (isMobileDevice) {
-                                    hud.style.top = 'auto';
-                                    hud.style.bottom = '80px';
-                                    hud.style.right = '16px';
+                                    hud.style.left = 'calc(50% + 75px)';
                                     hud.style.opacity = '1';
                                 } else {
+                                    hud.style.left = 'calc(50% + 90px)';
                                     hud.style.opacity = '0.85';
                                 }
                                 
-                                hud.title = "ECHO Edge WebGPU actif (0.6B q4f16)";
+                                hud.title = "ECHO Edge WebGPU actif (__HUD_TITLE__)";
                             }
                             
                             ws.onmessage = async (event) => {
@@ -402,8 +443,8 @@ class Filter:
                                             const inputs = globalTokenizer(texts, { padding: true, truncation: true });
                                             const outputs = await globalModel(inputs);
                                             
-                                            const hidden = outputs.last_hidden_state || outputs.logits || Object.values(outputs)[0];
-                                            const dims = hidden.dims;
+                                            const tensor = outputs.sentence_embedding || outputs.last_hidden_state || Object.values(outputs)[0];
+                                            const dims = tensor.dims;
                                             const batch_size = dims[0];
                                             
                                             const is3D = dims.length >= 3;
@@ -420,7 +461,7 @@ class Filter:
                                                     vec_start = i * embed_dim;
                                                 }
                                                 vec_end = vec_start + embed_dim;
-                                                const vector = hidden.data.slice(vec_start, vec_end);
+                                                const vector = tensor.data.slice(vec_start, vec_end);
                                                 
                                                 let sum_sq = 0;
                                                 for (let j = 0; j < embed_dim; j++) sum_sq += vector[j] * vector[j];
@@ -489,7 +530,10 @@ class Filter:
         })();
         """.replace("__INJECTED_SCRIPT_VERSION__", SCRIPT_VERSION)
 
-        # Remplacement de l'ID utilisateur dans le JS pour la remontée d'incompatibilité
+        # Injections dynamiques
+        js_code = js_code.replace('__TARGET_REPO__', target_repo)
+        js_code = js_code.replace('__TARGET_DTYPE__', target_dtype)
+        js_code = js_code.replace('__HUD_TITLE__', hud_title)
         js_code = js_code.replace('__USER_ID__', user_id)
 
         # Émission du code JS vers le DOM du navigateur

@@ -20,7 +20,7 @@ Ces projets constituent la colonne vertébrale absolue du framework ECHO.
 ## 2. Les Composants Périphériques (Tier 2)
 *(Par ordre alphabétique)*
 
-* **[BAAI / bge-m3](https://huggingface.co/BAAI/bge-m3)** : Modèle d'embedding multilingue exécuté localement pour vectoriser la mémoire sans perte de confidentialité. (MIT License)
+* **[Microsoft / Harrier-OSS](https://huggingface.co/microsoft/Harrier-OSS-v1-0.6B)** : Modèle d'embedding multilingue exécuté localement (ou sur Edge WebGPU) pour vectoriser la mémoire sans perte de confidentialité. (MIT License)
 * **[BunkerWeb](https://github.com/bunkerity/bunkerweb) / ModSecurity** : Web Application Firewall (WAF) protégeant le trafic entrant de l'infrastructure Docker. (AGPL-3.0 License)
 * **[Dulwich](https://www.dulwich.io/)** : Implémentation de Git en pur Python, utilisée par ECHO Codex pour le versioning transparent des fichiers modifiés. (GPL-2.0 / Apache License 2.0)
 * **[Faster-Whisper](https://github.com/SYSTRAN/faster-whisper)** : Implémentation optimisée (CTranslate2) du modèle Whisper d'OpenAI pour la transcription vocale (STT). (MIT License)
@@ -33,7 +33,7 @@ Ces projets constituent la colonne vertébrale absolue du framework ECHO.
 * **[ONNX Runtime](https://onnxruntime.ai/)** : Moteur d'inférence multi-plateforme utilisé pour propulser le modèle TTS Kokoro. (MIT License)
 * **[Playwright](https://playwright.dev/)** : Framework d'automatisation de navigateur (Headless Chromium) au cœur de l'agent de navigation autonome. (Apache License 2.0)
 * **[Pydub](https://github.com/jiaaro/pydub)** : Bibliothèque Python pour la manipulation et la normalisation des tampons audio en temps réel. (MIT License)
-* **[PyTorch](https://pytorch.org/)** : Framework de tenseurs exécutant le Worker Embedding (bge-m3) sur CPU. (BSD Style License)
+* **[PyTorch](https://pytorch.org/)** : Framework de tenseurs exécutant le Worker Embedding (Harrier-OSS) sur CPU en cas de fallback. (BSD Style License)
 * **[SearXNG](https://github.com/searxng/searxng)** : Moteur de méta-recherche souverain préservant la confidentialité des recherches web du modèle. (AGPL-3.0 License)
 * **[Watchtower](https://github.com/containrrr/watchtower)** : Utilitaire gérant la mise à jour automatisée des conteneurs isolés. (Apache License 2.0)
 

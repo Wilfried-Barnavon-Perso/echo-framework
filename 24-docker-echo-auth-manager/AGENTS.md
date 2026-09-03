@@ -12,7 +12,7 @@ Ce dossier contient l'application **ECHO Auth Manager**, qui agit comme un **IdP
 Le cœur du gestionnaire d'identités.
 - **Authentification Multi-Provider** : Implémente la validation des Master Keys, le flux OAuth2 (couplé au serveur PKCE local) et les comptes locaux.
 - **Sécurité MFA (TOTP)** : Contient la logique de génération et de vérification des mots de passe à usage unique basés sur le temps (Time-based One-Time Password), imposés comme seconde ligne de défense.
-- **Synchronisation avec BunkerWeb** : Le serveur gère la validation des tokens de session et renvoie les headers d'autorisation appropriés à BunkerWeb pour laisser passer le trafic légitime ou bloquer l'accès.
+- **Synchronisation avec BunkerWeb** : Le serveur gère la validation des tokens de session et renvoie les headers d'autorisation appropriés à BunkerWeb pour laisser passer le trafic légitime ou bloquer l'accès. Intègre également un délai anti-race condition (`asyncio.sleep`) pour fiabiliser le Single Sign-On (SSO).
 
 ### Dossiers `static/` & `templates/`
 - Contiennent les interfaces de connexion front-end (HTML/CSS/JS) présentées à l'utilisateur lors de son authentification, stylisées selon l'esthétique du projet ECHO.

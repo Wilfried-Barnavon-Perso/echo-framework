@@ -73,7 +73,7 @@
         </tr>
         <tr>
           <td><code>MODEL_EMBEDDING</code></td>
-          <td><code>BAAI/bge-m3</code></td>
+          <td><code>Microsoft/Harrier-OSS</code></td>
           <td>-</td>
           <td>Vectorisation locale (Embedding Worker)</td>
         </tr>
@@ -272,7 +272,7 @@
     </p>
     <ul>
       <li><strong>Chunking avec recouvrement :</strong> Le texte brut est découpé en fragments optimisés (chunks) avec un <em>overlap</em> (recouvrement). Cela évite de sectionner une phrase ou un concept au milieu de l'information.</li>
-      <li><strong>Vectorisation BAAI/bge-m3 :</strong> Chaque chunk est converti en un vecteur dense de 1024 dimensions. Cette étape exploite le modèle texte-first multilingue <code>bge-m3</code> de l'Embedding Worker, garantissant d'excellentes performances multilingues.</li>
+      <li><strong>Vectorisation Microsoft/Harrier-OSS :</strong> Chaque chunk est converti en un vecteur dense de dimensions dynamiques. Cette étape exploite le modèle texte-first multilingue <code>Harrier-OSS</code> de l'Embedding Worker, garantissant d'excellentes performances multilingues.</li>
       <li><strong>Upsert Qdrant :</strong> Les vecteurs, accompagnés de leurs métadonnées (payload incluant le texte d'origine et le <code>source_id</code>), sont injectés dans la collection <code>echo_session_rag</code> pour être interrogés par le modèle via ses outils.</li>
     </ul>
 
@@ -510,7 +510,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.60 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.200.82 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

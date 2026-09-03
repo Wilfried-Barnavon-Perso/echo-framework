@@ -20,20 +20,19 @@ async def get_db_path(user_id: str) -> str:
 
 
 async def get_credentials(user_id: str, service: str) -> dict:
-    """Récupère les identifiants et le niveau d'accès depuis le Vault (identity.db) en accès unique"""
+    """Récupère les identifiants depuis le Vault (identity.db) en accès unique"""
     db_path = await get_db_path(user_id)
     if not os.path.exists(db_path):
         return None
 
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
-            "SELECT credentials, access_level FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
+            "SELECT credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
             (user_id, service)
         ) as cursor:
             row = await cursor.fetchone()
             if row:
                 return {
-                    "credentials": row[0],
-                    "access_level": row[1]
+                    "credentials": row[0]
                 }
     return None

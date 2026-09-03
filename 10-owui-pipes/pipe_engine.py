@@ -1,12 +1,13 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.30
+version: 192.31
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.31: Fix du crash de cascade cognitive : correction du tri et du clamping dynamique pour ignorer de manière robuste les hiérarchies à None (ex: MODEL_DISTILLATION).
 # 192.30: Fix coupure silencieuse : déplacement du yield 'usage' à la fin du générateur pipe() pour ne pas fermer prématurément le flux SSE d'Open WebUI lors d'un auto-continue ou cascade.
 # 192.29: Rollback Zéro-Hallucination : Restauration de la mutation simple (YAML plat) pour l'AEC.
 # 192.28: Support du nouveau format AEC XML hiérarchisé dans _mutate_context_identity (auto-escalade/cascade) avec regex de substitution durcie et rétrocompatibilité YAML.
@@ -746,8 +747,10 @@ class Pipe:
             ceiling = MODEL_PRO if model_selection == "AUTO_PRO" else MODEL_FLASH
             if last_model and last_model != "aucun":
                 # Clamping dynamique via la hiérarchie du SSOT
-                last_hierarchy = ECHO_MODELS_REGISTRY.get(last_model, {}).get("hierarchy", 1)
-                ceiling_hierarchy = ECHO_MODELS_REGISTRY.get(ceiling, {}).get("hierarchy", 1)
+                last_hierarchy = ECHO_MODELS_REGISTRY.get(last_model, {}).get("hierarchy")
+                ceiling_hierarchy = ECHO_MODELS_REGISTRY.get(ceiling, {}).get("hierarchy")
+                last_hierarchy = last_hierarchy if last_hierarchy is not None else -1
+                ceiling_hierarchy = ceiling_hierarchy if ceiling_hierarchy is not None else -1
                 if last_hierarchy > ceiling_hierarchy:
                     target_model = ceiling
                 else:
@@ -886,9 +889,11 @@ class Pipe:
                     from echo_constants import ECHO_MODELS_REGISTRY, get_model_identity
                     target_identity = get_model_identity(target_model)
                     if target_identity == 'UNKNOWN': target_identity = 'MODEL_FLASH'
+                    target_hierarchy = ECHO_MODELS_REGISTRY.get(target_identity, {}).get("hierarchy")
+                    target_hierarchy = target_hierarchy if target_hierarchy is not None else 0
                     cascade_order_keys = sorted(
-                        [k for k in ECHO_MODELS_REGISTRY if ECHO_MODELS_REGISTRY[k].get("hierarchy", 1) < ECHO_MODELS_REGISTRY.get(target_identity, {}).get("hierarchy", 0)],
-                        key=lambda k: ECHO_MODELS_REGISTRY[k].get("hierarchy", 1), reverse=True
+                        [k for k in ECHO_MODELS_REGISTRY if ECHO_MODELS_REGISTRY[k].get("hierarchy") is not None and ECHO_MODELS_REGISTRY[k].get("hierarchy") < target_hierarchy],
+                        key=lambda k: ECHO_MODELS_REGISTRY[k].get("hierarchy"), reverse=True
                     )
                     cascade_order = cascade_order_keys
                     if cascade_order:

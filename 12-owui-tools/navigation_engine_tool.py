@@ -1,7 +1,7 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.21
+version: 11.22
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -18,6 +18,7 @@ description: Composant système interne : ECHO Navigation Engine.
 # 11.19: Correction de l'appel wrap_tool_output (nouveaux_fichiers) et retrait de **kwargs.
 # 11.20: Correction du bug EchoStateManager: passage de chat_id manquant.
 # 11.21: Correction architecturale: injection des images via echo_tool_multiparts.
+# 11.22: Synchronisation URL en temps réel dans stream_proxy pour le HUD Live.
 
 import os
 import time
@@ -234,7 +235,10 @@ class Tools:
                         b64 = resp.get("frame_b64")
                         if b64 and new_id != last_id:
                             last_id = new_id
-                            update_code = f"if(window.echoWebPlayerUpdate_{clean_hud_id}) window.echoWebPlayerUpdate_{clean_hud_id}('{b64}', {new_id});"
+                            url = resp.get("url", "")
+                            import json
+                            safe_url = json.dumps(url)
+                            update_code = f"if(window.echoWebPlayerUpdate_{clean_hud_id}) window.echoWebPlayerUpdate_{clean_hud_id}('{b64}', {new_id}, {safe_url});"
                             await events.emit("execute", {"code": update_code})
                 except asyncio.CancelledError:
                     break

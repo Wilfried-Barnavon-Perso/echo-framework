@@ -1,14 +1,15 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.4
+version: 1.7
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.7: Précision sur la saisie libre pour l'argument options de ask_user_input.
+# 1.6: Précision dans la docstring de ask_user_input (les options génèrent des listes/boutons cliquables).
+# 1.5: Mise à jour de la docstring de wait_timer (précision boucle agentique).
 # 1.4: Refonte du Lazy-Loading JS des modales ECHO (get_custom_modals_js) pour ask_user_input (Anti-Spaghetti).
-# 1.3: Fusion du User Input Tool (ask_user_input) au sein des outils généralistes.
-# 1.2: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
 # 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
@@ -44,7 +45,7 @@ class Tools:
         __metadata__: dict = {},
     ) -> str:
         """
-        Met en pause l'exécution du Modèle. Strictement limité à 1 seule tentative pour éviter les boucles infinies.
+        Met en pause l'exécution. Strictement limité à 1 seule tentative par boucle agentique pour éviter les boucles infinies.
         :param seconds: Durée en secondes (Maximum autorisé: 300).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
@@ -151,7 +152,7 @@ class Tools:
 
         :param question: La question ou le message à afficher à l'utilisateur pour lui demander une saisie ou une confirmation.
         :param input_type: Type de demande : 'text' (pour demander de taper un texte) ou 'confirm' (pour un simple choix Oui/Non).
-        :param options: Liste optionnelle de suggestions (réponses prédéfinies). L'utilisateur pourra choisir ou taper librement.
+        :param options: Liste optionnelle de suggestions (réponses prédéfinies). Génère des boutons/pilules cliquables dans l'interface que l'utilisateur peut sélectionner directement. L'utilisateur pourra choisir ou taper librement.
         :param timeout_seconds: Délai maximum en secondes avant l'annulation (uniquement pour 'text'). Par défaut 5 minutes.
         """
         if not __user__:

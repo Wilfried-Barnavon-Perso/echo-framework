@@ -1,6 +1,8 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.60
+# Version : 9.61
+# --- CHANGELOG 9.61 ---
+# - Docker Compose (BunkerWeb) : Généralisation de la résolution DNS dynamique (set $$upstream) sur l'ensemble des locations custom de l'Open WebUI (authbackend, media, bypass, statics) pour corriger l'erreur 500 sur expiration de cache IP Nginx.
 # --- CHANGELOG 9.60 ---
 # - Docker Compose (BunkerWeb) : Mise en place de la résolution DNS dynamique (variables upstream) pour éviter le cache IP Nginx.
 # --- CHANGELOG 9.59 ---
@@ -88,7 +90,8 @@ services:
       - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
-      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-open-webui:8080"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_main=set $$upstream_main http://echo-open-webui:8080;"
+      - "bunkerweb.REVERSE_PROXY_HOST=$$upstream_main"
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
       # 1. OPTIMISATIONS STREAMING & UPLOAD
       - "bunkerweb.REVERSE_PROXY_BUFFERING=no"
@@ -121,7 +124,7 @@ services:
 
       # 🛡️ ECHO AUTH : Forward Auth
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @auth_hard_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @auth_hard_reject { default_type application/json; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @auth_hard_reject; error_page 500 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @auth_hard_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_5xx_reject { default_type application/json; if ($$request_uri ~* ^/api/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } return 500 '500 Internal Error'; }"
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name"
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name"
 
@@ -147,19 +150,18 @@ services:
 
       # (Les intercepteurs /auth ont été supprimés car ils provoquaient une boucle infinie)
 
-      # 💀 SERVICE WORKER KILL-SWITCH : Empêche la PWA de court-circuiter les redirections SSO et force le rafraîchissement (UX Transparent)
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_sw=location = /sw.js { auth_request off; add_header Content-Type application/javascript; return 200 'self.addEventListener(\"install\", e => e.waitUntil(self.skipWaiting())); self.addEventListener(\"activate\", e => e.waitUntil(self.clients.claim().then(() => self.clients.matchAll({type: \"window\"})).then(clients => { clients.forEach(c => c.navigate(c.url)); self.registration.unregister(); })));'; }"
+      # 💀 SERVICE WORKER KILL-SWITCH (PROPRE) : Retourne 404 pour forcer le navigateur à désenregistrer la PWA en silence, sans causer de race condition au rechargement.
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_sw=location = /sw.js { auth_request off; return 404; }"
 
-      # 🧹 PURGE SW VIA LOGOUT : Point de chute de la déconnexion pour injecter Clear-Site-Data
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_ssologout=location = /sso-logout { auth_request off; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; return 302 https://auth.${ECHO_DOMAIN:-localhost}/logout?next=https://ui.${ECHO_DOMAIN:-localhost}; }"
-
+      # 🧹 PURGE SW VIA LOGOUT : Point de chute de la déconnexion
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_ssologout=location = /sso-logout { auth_request off; return 302 https://auth.${ECHO_DOMAIN:-localhost}/logout?next=https://ui.${ECHO_DOMAIN:-localhost}; }"
 
 
       # 🔓 EXCLUSION API PUBLIQUES : Permet au frontend de s'initialiser avant de rediriger proprement
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
       # 🔓 EXCLUSION FICHIERS STATIQUES : Requis pour la PWA, les assets et la mise à jour du Service Worker
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; }"
 
 
       # 🚫 ANTI-CACHE DYNAMIQUE (Pour forcer l'interception SSO sur le HTML)
@@ -236,7 +238,7 @@ services:
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=yes"
       # 🛡️ ECHO AUTH : Forward Auth + SSO Secret (Syntaxe Officielle BunkerWeb 1.6)
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @auth_hard_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* \\\"^/sw\\\\\\\\.js\\\") { return 401 'Unauthorized'; } if ($$request_uri ~* \\\"^/api/\\\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* \\\"application/json\\\") { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @auth_hard_reject { default_type application/json; add_header Clear-Site-Data '\"cache\", \"storage\", \"executionContexts\"' always; if ($$request_uri ~* \\\"^/sw\\\\\\\\.js\\\") { return 401 'Unauthorized'; } if ($$request_uri ~* \\\"^/api/\\\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* \\\"application/json\\\") { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @auth_hard_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* \\\"^/sw\\\\\\\\.js\\\") { return 401 'Unauthorized'; } if ($$request_uri ~* \\\"^/api/\\\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* \\\"application/json\\\") { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @auth_hard_reject { default_type application/json; if ($$request_uri ~* \\\"^/sw\\\\\\\\.js\\\") { return 401 'Unauthorized'; } if ($$request_uri ~* \\\"^/api/\\\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* \\\"application/json\\\") { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; }"
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$dummy $$upstream_http_dummy"
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret ${ECHO_SSO_SECRET}"
       
