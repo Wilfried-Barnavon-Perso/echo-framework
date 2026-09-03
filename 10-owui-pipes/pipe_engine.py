@@ -1,18 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.31
+version: 192.32
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.32: Ajout du délai d'attente et de l'heure locale estimée de reprise dans le message d'erreur de la cascade cognitive sur épuisement TPM (429).
 # 192.31: Fix du crash de cascade cognitive : correction du tri et du clamping dynamique pour ignorer de manière robuste les hiérarchies à None (ex: MODEL_DISTILLATION).
 # 192.30: Fix coupure silencieuse : déplacement du yield 'usage' à la fin du générateur pipe() pour ne pas fermer prématurément le flux SSE d'Open WebUI lors d'un auto-continue ou cascade.
 # 192.29: Rollback Zéro-Hallucination : Restauration de la mutation simple (YAML plat) pour l'AEC.
 # 192.28: Support du nouveau format AEC XML hiérarchisé dans _mutate_context_identity (auto-escalade/cascade) avec regex de substitution durcie et rétrocompatibilité YAML.
-# 192.25: Support du format de clé API Google AQ.
-# 192.24: Correction systémique des vieux identifiants orphelins (Auto-heal vers MODEL_LITE) et formatage UI avec clés techniques (ai_studio_id/ca_model_id).
 
 # 192.20: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
 
@@ -904,7 +903,11 @@ class Pipe:
                         orch._mutate_context_identity(context, target_model, prev_model)
                     else:
                         # Plus de modèle inférieur → échec terminal
-                        yield f"❌ Cascade épuisée : tous les modèles sont indisponibles ({str(e)})"
+                        from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
+                        from datetime import datetime, timedelta
+                        resume_time = datetime.now().astimezone() + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)
+                        time_str = resume_time.strftime("%H:%M:%S")
+                        yield f"❌ Cascade épuisée : tous les modèles sont indisponibles. Reprise estimée dans {ECHO_ENDPOINT_LOCK_TIMEOUT_MIN} min (vers {time_str}). ({str(e)})"
                         break
                     continue
                 else:
