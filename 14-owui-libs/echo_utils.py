@@ -1,18 +1,18 @@
 """
 title: ECHO Shared Utils (Core)
 author: Wilfried BARNAVON
-version: 8.42
+version: 8.43
 description: Composant système interne : ECHO Shared Utils (Core).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 8.43: Factorisation: Extraction des utilitaires de conversion API et de l'Orchestrateur depuis pipe_engine.py.
 # 8.42: Correction de clamp_model() pour gérer correctement les modèles avec hierarchy=None (ex: MODEL_DISTILLATION).
 # 8.41: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
 # 8.40: Fix critique: Résolution boucle/silence dans stream() (remplacement yield par raise e) et bascule rapide clés API (threshold symétrique).
 # 8.39: Fix critique: Suppression du masquage des erreurs httpx.ReadError et RemoteProtocolError dans le flux SSE pour rétablir la cascade cognitive.
 # 8.36: Rollback Zéro-Hallucination : Restauration de _dict_to_yaml_aec (YAML plat pur) pour l'AEC et les évènements systèmes au lieu de XML.
 # 8.35: Correction: Invalidation des dates google_quota_reset obsolètes empêchant le Fast-Failover.
-# 8.34: (Mise à jour précédente)
 
 class FatalAPIError(Exception):
     """Erreur API fatale (ex: 400 Bad Request) ne nécessitant aucun backoff réseau."""
@@ -84,6 +84,145 @@ def get_echo_session_path(user_id: str, chat_id: str, domain: str) -> str:
         return os.path.join(base_dir, "session.db")
     
     return os.path.join(base_dir, domain)
+
+# ==============================================================================
+# SECTION 1b : UTILITAIRES DE CONVERSION API (GEMINI / OWUI)
+# ==============================================================================
+
+def build_model_identity(m_id: str) -> str:
+    if m_id == "aucun": return "aucun"
+    from echo_constants import get_model_identity
+    cat = get_model_identity(m_id)
+    return cat
+
+def resolve_placeholders(text: str, model_id: str, model_origin: str = "unknown") -> str:
+    if not isinstance(text, str): return text
+    version = get_echo_version() or "##VERSION_ERR##"
+    resolved = text.replace("##ECHO_VERSION##", version)
+    resolved = resolved.replace("##MODEL_ID##", build_model_identity(model_id))
+    resolved = resolved.replace("##MODEL_ORIGIN##", build_model_identity(model_origin))
+    return resolved
+
+def ensure_gemini_parts(content: Any, model_id: str = "unknown", model_origin: str = "unknown") -> List[Dict]:
+    parts = []
+    if isinstance(content, str):
+        if content.strip(): parts.append({"text": resolve_placeholders(content, model_id, model_origin)})
+    elif isinstance(content, list):
+        for p in content:
+            if not isinstance(p, dict): continue
+            new_part = {}
+            if "text" in p: 
+                new_part["text"] = resolve_placeholders(p["text"], model_id, model_origin)
+            elif p.get("type") == "image_url" and "image_url" in p:
+                url = p["image_url"].get("url", "")
+                if url.startswith("data:"):
+                    try:
+                        mime, b64 = url.split(";", 1)[0].replace("data:", ""), url.split(",", 1)[1]
+                        new_part["inlineData"] = {"mimeType": mime, "data": b64}
+                    except: pass
+            elif "inlineData" in p: 
+                new_part["inlineData"] = p["inlineData"]
+            elif "inline_data" in p: 
+                new_part["inlineData"] = {"mimeType": p["inline_data"]["mime_type"], "data": p["inline_data"]["data"]}
+            elif "functionCall" in p: 
+                new_part["functionCall"] = p["functionCall"]
+            elif "functionResponse" in p: 
+                new_part["functionResponse"] = p["functionResponse"]
+            
+            if "thoughtSignature" in p and new_part: 
+                new_part["thoughtSignature"] = p["thoughtSignature"]
+            
+            if new_part: 
+                parts.append(new_part)
+    return parts
+
+def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str = "unknown") -> List[Dict]:
+    import ast
+    if isinstance(content, str):
+        try:
+            # Utilisation du lecteur Python sécurisé (ast) pour gérer les guillemets simples du stockage SQL
+            content = ast.literal_eval(content)
+        except:
+            # Échec total de lecture : marquage comme donnée non structurée
+            content = {"text": str(content), "status": {"status": "unstructured_data"}}
+    
+    if not isinstance(content, dict):
+        content = {"text": str(content), "status": {"status": "error_format"}}
+    
+    text_body = content.get("text", "")
+    status_meta = content.get("status", {"status": "success"})
+    rich_multiparts = content.get("echo_tool_multiparts", [])
+
+    response_dict = status_meta.copy()
+    if text_body:
+        response_dict["result"] = resolve_placeholders(text_body, model_id, model_origin)
+
+    func_resp_part = {
+        "functionResponse": {
+            "name": name,
+            "response": response_dict
+        }
+    }
+
+    final_parts = [func_resp_part]
+    for mp in rich_multiparts:
+        m_type = mp.get("type")
+        if m_type == "thought" and mp.get("content"): 
+            response_dict["tool_thought"] = mp["content"]
+        elif m_type == "media" and mp.get("data"): 
+            final_parts.append({
+                "inlineData": {
+                    "mimeType": mp.get("mime_type", "image/png"), 
+                    "data": mp["data"]
+                }
+            })
+    return final_parts
+
+def convert_owui_tools(tools: Optional[List[Dict]], model_policy: str = "AUTO") -> Optional[List[Dict]]:
+    """
+    Convertit les specs OWUI → format Gemini.
+    Filtre dynamiquement les enum des paramètres modèle selon MODEL_SELECTION.
+    """
+    if not tools: return None
+    from echo_constants import MODEL_ENUM_BY_POLICY, MODEL_ENUM_REFERENCE
+    allowed_models = MODEL_ENUM_BY_POLICY.get(model_policy, list(MODEL_ENUM_REFERENCE))
+
+    funcs = []
+    for t in tools:
+        if t.get("type") == "function":
+            f = t.get("function", {})
+            params = f.get("parameters", {"type": "object", "properties": {}})
+
+            # Filtrage dynamique : tout paramètre dont l'enum est un sous-ensemble de MODEL_ENUM_REFERENCE
+            for prop_name, prop_val in params.get("properties", {}).items():
+                if "enum" in prop_val:
+                    enum_set = set(prop_val["enum"])
+                    if enum_set.issubset(MODEL_ENUM_REFERENCE):
+                        prop_val["enum"] = allowed_models
+
+            funcs.append({
+                "name": f.get("name"),
+                "description": f.get("description", ""),
+                "parameters": params
+            })
+    return [{"function_declarations": funcs}] if funcs else None
+
+class DebugLogger:
+    def __init__(self, data_dir: str, chat_id: str):
+        self.log_dir = os.path.join(data_dir, "debug_logs")
+        os.makedirs(self.log_dir, exist_ok=True)
+        safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_") if chat_id else "unknown_chat"
+        self.log_path = os.path.join(self.log_dir, f"debug_{safe_id}.json")
+
+    def log(self, event_type: str, payload: Any, metadata: Dict = None):
+        import orjson as std_json
+        from datetime import datetime
+        entry = {"timestamp": datetime.now().isoformat(), "type": event_type, "metadata": metadata or {}, "data": payload}
+        try:
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                f.write(std_json.dumps(entry).decode('utf-8') + "\n")
+        except Exception: pass
+
 
 # ==============================================================================
 # SECTION 0 : CLIENT HTTP GLOBAL (HTTP/2)
