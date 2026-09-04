@@ -1,12 +1,13 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.37
+version: 192.38
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.38: Purge des appels orphelins restants vers AuthService (auth.refresh_quota, PKCE) provoquant des NameError en fin de génération.
 # 192.37: Remplacement global des caractères Mojibake (corrompus en CP1252) par leurs émojis UTF-8 natifs.
 # 192.36: Retrait de l'import critique AuthService (non défini) pour restaurer le chargement OWUI.
 # 192.35: Scission de echo_utils.py en 8 librairies dédiées (SRP) et bascule sur de nouveaux imports modulaires.
@@ -311,9 +312,9 @@ class Orchestrator:
             
             if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
                 try:
-                    await events.toast("âš ï¸ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "warning")
+                    await events.toast("⚠️ï¸ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "warning")
                 except AttributeError:
-                    await events.emit({"type": "toast", "data": {"title": "ECHO V5", "message": "âš ï¸ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "type": "warning"}})
+                    await events.emit({"type": "toast", "data": {"title": "ECHO V5", "message": "⚠️ï¸ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "type": "warning"}})
             
             if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                 system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
@@ -381,7 +382,7 @@ class StreamProcessor:
                             if finish_reason == "MAX_TOKENS":
                                 self.hit_max_tokens = True
                             elif not content and finish_reason and finish_reason != "STOP":
-                                yield f"\n\n> âš ï¸ **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
+                                yield f"\n\n> ⚠️ï¸ **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
                                 return
                             if content:
                                 for part in content["parts"]:
@@ -537,7 +538,7 @@ class Pipe:
 
         if api_key_from_filter:
             await events.status("🔒 Validation de l'authentification Google...")
-            success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
+            success, msg = False, 'Désactivé'
             if success:
                 yield (
                     "✅ **Configuration d'accès ECHO Configurée avec Succès**\n\n"
@@ -547,7 +548,7 @@ class Pipe:
                 )
                 return
             else:
-                yield f"âŒ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
+                yield f"âŒ **Échec de validation**\n\n{msg}\n\n" + ''
                 return
 
         # --- AUTHENTIFICATION PKCE (Authorization Code + PKCE RFC 7636) ---
@@ -571,28 +572,21 @@ class Pipe:
                     return
 
                 await events.status("\U0001f510 Lancement authentification PKCE...")
-                ok, auth_url, server_ip, ssh_port, cb_port, temp_pwd = \
-                    await auth.initiate_pkce_flow(request=__request__)
+                ok, auth_url, server_ip, ssh_port, cb_port, temp_pwd = False, '', '', '', '', ''
                 if not ok:
-                    yield f"\u274c Impossible de lancer le flow PKCE.\n\n" + auth.get_auth_prompt()
+                    yield f"\u274c Impossible de lancer le flow PKCE.\n\n" + ''
                     return
 
                 # Persister l'URL pour les messages suivants
                 _ea.save_api_key("pkce_auth_url", auth_url)
 
                 # Lancer le serveur callback en background (non bloquant)
-                asyncio.create_task(auth.await_pkce_callback())
+                # PKCE désactivé
 
-                yield auth.get_auth_prompt(
-                    auth_url  = auth_url,
-                    server_ip = server_ip,
-                    ssh_port  = ssh_port,
-                    cb_port   = cb_port,
-                    temp_pwd  = temp_pwd,
-                )
+                yield ''
 
             except Exception as e:
-                yield f"\u274c Erreur PKCE : {str(e)}\n\n" + auth.get_auth_prompt()
+                yield f"\u274c Erreur PKCE : {str(e)}\n\n" + ''
             return
 
         # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
@@ -813,7 +807,7 @@ class Pipe:
                     cascade_attempt = 0
                     continue
                 else:
-                    yield f"\n\n> âš ï¸ **Auto-Continue épuisé** ({user_valves.AUTO_CONTINUE_MAX} relances). Génération tronquée.\n"
+                    yield f"\n\n> ⚠️ï¸ **Auto-Continue épuisé** ({user_valves.AUTO_CONTINUE_MAX} relances). Génération tronquée.\n"
                     break
 
             # --- [NOUVEAU] GESTION DE LA CASCADE ---
@@ -839,7 +833,7 @@ class Pipe:
                 
                 # Vérification des droits (Valve)
                 if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PRO:
-                    await events.status(f"âš ï¸ Transfert vers MODEL_PRO refusé (Valve AUTO).")
+                    await events.status(f"⚠️ï¸ Transfert vers MODEL_PRO refusé (Valve AUTO).")
                     # Signalement de refus au modèle actuel
                     context.append({
                         "role": "model",
@@ -852,7 +846,7 @@ class Pipe:
                     continue # On reboucle avec le MÊME target_model
                 
                 if new_target == target_model:
-                    await events.status(f"âš ï¸ Auto-transfert annulé ({target_req}).")
+                    await events.status(f"⚠️ï¸ Auto-transfert annulé ({target_req}).")
                     context.append({
                         "role": "model",
                         "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
@@ -1016,7 +1010,7 @@ class Pipe:
         # --- HUD METRICS ---
         if user_valves.SHOW_CONTEXT_METRICS:
             # Rafraîchissement intelligent des quotas (OAuth2 uniquement) - ASYNCHRONE NON BLOQUANT
-            asyncio.create_task(auth.refresh_quota_if_needed())
+            # # asyncio.create_task(auth.refresh_quota_if_needed())  # [192.38]  # [192.38] DÉSACTIVÉ : AuthService n'existe plus
 
             p_t = cumulative_usage_stats.get("promptTokenCount", 0)
             c_t = cumulative_usage_stats.get("cachedContentTokenCount", 0)
