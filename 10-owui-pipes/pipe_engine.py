@@ -309,9 +309,9 @@ class Orchestrator:
             
             if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
                 try:
-                    await events.toast("âš ï¸ Approche de la limite contextuelle. Migration recommandÃ©e (Action 'Resume in New Chat').", "warning")
+                    await events.toast("âš ï¸ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "warning")
                 except AttributeError:
-                    await events.emit({"type": "toast", "data": {"title": "ECHO V5", "message": "âš ï¸ Approche de la limite contextuelle. Migration recommandÃ©e (Action 'Resume in New Chat').", "type": "warning"}})
+                    await events.emit({"type": "toast", "data": {"title": "ECHO V5", "message": "âš ï¸ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "type": "warning"}})
             
             if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                 system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
@@ -379,7 +379,7 @@ class StreamProcessor:
                             if finish_reason == "MAX_TOKENS":
                                 self.hit_max_tokens = True
                             elif not content and finish_reason and finish_reason != "STOP":
-                                yield f"\n\n> âš ï¸ **Interruption de gÃ©nÃ©ration par Google API** (Motif : `{finish_reason}`)\n"
+                                yield f"\n\n> âš ï¸ **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
                                 return
                             if content:
                                 for part in content["parts"]:
@@ -403,7 +403,7 @@ class StreamProcessor:
                         if self.logger: self.logger.log("stream_decode_error", {"error": str(e), "chunk": full_json_str})
                         log.error(f"[StreamProcessor] Erreur de décodage du flux: {e} - Chunk: {full_json_str[:200]}")
                         if in_think: yield "\n</think>\n"; in_think = False
-                        yield f"\n\n> âŒ **Erreur critique de dÃ©codage du flux API** : {str(e)}\n"
+                        yield f"\n\n> âŒ **Erreur critique de décodage du flux API** : {str(e)}\n"
         if in_think: yield "\n</think>\n"
         if self.logger: self.logger.log("api_response", self.full_raw_accumulator)
 
@@ -449,7 +449,7 @@ class Pipe:
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         events = EchoEvents(__event_emitter__)
-        if not __user__: yield "âŒ IdentitÃ© manquante."; return
+        if not __user__: yield "âŒ Identité manquante."; return
         user_valves = __user__.get("valves") or self.UserValves()
         chat_id = kwargs.get("__chat_id__") or body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
@@ -467,7 +467,7 @@ class Pipe:
         # INJECTION DES OUTILS (bridge __tools__ â†’ _TOOLS_CACHE)
         # -----------------------------------------------------------------------
         # OWUI injecte __tools__ dans le Pipe sous deux formes selon la version :
-        #   1. dict {fn_name: {tool_id, callable, spec, metadata}}  â† observÃ© en production
+        #   1. dict {fn_name: {tool_id, callable, spec, metadata}}  â† observé en production
         #      Contient les callables Python directement utilisables.
         #   2. list[ToolUserModel] avec attribut .specs               â† doc officielle
         #      Contient les specs OpenAI mais PAS les callables.
@@ -534,7 +534,7 @@ class Pipe:
         auth_providers = await echo_auth.get_ordered_auth_providers(__user__["id"])
 
         if api_key_from_filter:
-            await events.status("ðŸ” Validation de l'authentification Google...")
+            await events.status("🔒 Validation de l'authentification Google...")
             success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
             if success:
                 yield (
@@ -545,7 +545,7 @@ class Pipe:
                 )
                 return
             else:
-                yield f"âŒ **Ã‰chec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
+                yield f"âŒ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
                 return
 
         # --- AUTHENTIFICATION PKCE (Authorization Code + PKCE RFC 7636) ---
@@ -633,11 +633,11 @@ class Pipe:
                 else:
                     target_model = last_model
                 origine_model = last_model
-                await events.status(f"ðŸ§  Reprise du contexte ({_get_ui_display(target_model)})...")
+                await events.status(f"🧠  Reprise du contexte ({_get_ui_display(target_model)})...")
             else:
                 target_model = MODEL_LITE
                 origine_model = "aucun"
-                await events.status(f"ðŸ§  Initialisation de session ({_get_ui_display(MODEL_LITE)})...")
+                await events.status(f"🧠  Initialisation de session ({_get_ui_display(MODEL_LITE)})...")
         else:
             target_model = model_selection
             origine_model = last_model if last_model else "aucun"
@@ -785,7 +785,7 @@ class Pipe:
                         from datetime import datetime, timedelta
                         resume_time = datetime.now().astimezone() + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)
                         time_str = resume_time.strftime("%H:%M:%S")
-                        yield f"âŒ Cascade Ã©puisÃ©e : tous les modèles sont indisponibles. Reprise estimÃ©e dans {ECHO_ENDPOINT_LOCK_TIMEOUT_MIN} min (vers {time_str}). ({str(e)})"
+                        yield f"âŒ Cascade épuisée : tous les modèles sont indisponibles. Reprise estimée dans {ECHO_ENDPOINT_LOCK_TIMEOUT_MIN} min (vers {time_str}). ({str(e)})"
                         break
                     continue
                 else:
@@ -811,7 +811,7 @@ class Pipe:
                     cascade_attempt = 0
                     continue
                 else:
-                    yield f"\n\n> âš ï¸ **Auto-Continue Ã©puisÃ©** ({user_valves.AUTO_CONTINUE_MAX} relances). GÃ©nÃ©ration tronquÃ©e.\n"
+                    yield f"\n\n> âš ï¸ **Auto-Continue épuisé** ({user_valves.AUTO_CONTINUE_MAX} relances). Génération tronquée.\n"
                     break
 
             # --- [NOUVEAU] GESTION DE LA CASCADE ---
@@ -837,7 +837,7 @@ class Pipe:
                 
                 # Vérification des droits (Valve)
                 if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PRO:
-                    await events.status(f"âš ï¸ Transfert vers MODEL_PRO refusÃ© (Valve AUTO).")
+                    await events.status(f"âš ï¸ Transfert vers MODEL_PRO refusé (Valve AUTO).")
                     # Signalement de refus au modèle actuel
                     context.append({
                         "role": "model",
@@ -850,7 +850,7 @@ class Pipe:
                     continue # On reboucle avec le MÊME target_model
                 
                 if new_target == target_model:
-                    await events.status(f"âš ï¸ Auto-transfert annulÃ© ({target_req}).")
+                    await events.status(f"âš ï¸ Auto-transfert annulé ({target_req}).")
                     context.append({
                         "role": "model",
                         "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
