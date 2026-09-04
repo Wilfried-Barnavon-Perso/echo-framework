@@ -72,7 +72,7 @@ try:
     log = logging.getLogger("echo.pipe_engine")
 except ImportError as e:
     missing_module = e.name or "inconnu"
-    raise ImportError(f"âŒ Module critique manquant : '{missing_module}'. ECHO exige httpx, orjson, pybase64 et h2 (HTTP/2).") from e
+    raise ImportError(f"❌ Module critique manquant : '{missing_module}'. ECHO exige httpx, orjson, pybase64 et h2 (HTTP/2).") from e
 
 MAGIC_KEY_SKIP_VALIDATION = "context_engineering_is_the_way_to_go"
 
@@ -406,7 +406,7 @@ class StreamProcessor:
                         if self.logger: self.logger.log("stream_decode_error", {"error": str(e), "chunk": full_json_str})
                         log.error(f"[StreamProcessor] Erreur de décodage du flux: {e} - Chunk: {full_json_str[:200]}")
                         if in_think: yield "\n</think>\n"; in_think = False
-                        yield f"\n\n> âŒ **Erreur critique de décodage du flux API** : {str(e)}\n"
+                        yield f"\n\n> ❌ **Erreur critique de décodage du flux API** : {str(e)}\n"
         if in_think: yield "\n</think>\n"
         if self.logger: self.logger.log("api_response", self.full_raw_accumulator)
 
@@ -452,7 +452,7 @@ class Pipe:
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         events = EchoEvents(__event_emitter__)
-        if not __user__: yield "âŒ Identité manquante."; return
+        if not __user__: yield "❌ Identité manquante."; return
         user_valves = __user__.get("valves") or self.UserValves()
         chat_id = kwargs.get("__chat_id__") or body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
@@ -470,9 +470,8 @@ class Pipe:
         # INJECTION DES OUTILS (bridge __tools__ → _TOOLS_CACHE)
         # -----------------------------------------------------------------------
         # OWUI injecte __tools__ dans le Pipe sous deux formes selon la version :
-        #   1. dict {fn_name: {tool_id, callable, spec, metadata}}  â† observé en production
-        #      Contient les callables Python directement utilisables.
-        #   2. list[ToolUserModel] avec attribut .specs               â† doc officielle
+        #   1. dict {fn_name: {tool_id, callable, spec, metadata}}  ← observé en production
+        #   2. list[ToolUserModel] avec attribut .specs             ← doc officielle
         #      Contient les specs OpenAI mais PAS les callables.
         #
         # Dans le cas 1 (dict), on stocke dans _TOOLS_CACHE[chat_id] pour que
@@ -548,7 +547,7 @@ class Pipe:
                 )
                 return
             else:
-                yield f"âŒ **Échec de validation**\n\n{msg}\n\n" + ''
+                yield f"❌ **Échec de validation**\n\n{msg}\n\n" + ''
                 return
 
         # --- AUTHENTIFICATION PKCE (Authorization Code + PKCE RFC 7636) ---
@@ -781,11 +780,11 @@ class Pipe:
                         from datetime import datetime, timedelta
                         resume_time = datetime.now().astimezone() + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)
                         time_str = resume_time.strftime("%H:%M:%S")
-                        yield f"âŒ Cascade épuisée : tous les modèles sont indisponibles. Reprise estimée dans {ECHO_ENDPOINT_LOCK_TIMEOUT_MIN} min (vers {time_str}). ({str(e)})"
+                        yield f"❌ Cascade épuisée : tous les modèles sont indisponibles. Reprise estimée dans {ECHO_ENDPOINT_LOCK_TIMEOUT_MIN} min (vers {time_str}). ({str(e)})"
                         break
                     continue
                 else:
-                    yield f"âŒ Erreur critique lors de la communication API : {str(e)}"
+                    yield f"❌ Erreur critique lors de la communication API : {str(e)}"
                     break
 
             # --- [NOUVEAU] ACCUMULATION DES TOKENS (SOUVERAINETÉ) ---
@@ -1021,7 +1020,7 @@ class Pipe:
             # Nom de la source active (via le registre des fournisseurs d'accès)
             source_label = auth_providers[0]['type'].replace('_', ' ').title() if auth_providers else "ECHO"
             plan_name = f"Accès {source_label}"
-            credits_val = "âˆž"
+            credits_val = "∞"
             quota_str = ""
             
             # Métadonnées d'identité pour l'infobulle (INFO GEMINI CODE ASSIST)
@@ -1042,7 +1041,7 @@ class Pipe:
 
             # Crédits AI (source : loadCodeAssist HEALTH_CHECK)
             credits_raw = echo_auth.get_auth_data("google_credits_total") or echo_auth.get_auth_data("google_g1_credits")
-            credits_val = credits_raw if (credits_raw and credits_raw != "0") else "âˆž"
+            credits_val = credits_raw if (credits_raw and credits_raw != "0") else "∞"
 
             # Formatage du reset : ISO → HH:MM + minutes restantes
             q_reset = q_reset_raw
