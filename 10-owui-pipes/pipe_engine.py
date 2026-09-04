@@ -1,12 +1,13 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.35
+version: 192.36
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.36: Retrait de l'import critique AuthService (non défini) pour restaurer le chargement OWUI.
 # 192.35: Scission de echo_utils.py en 8 librairies dédiées (SRP) et bascule sur de nouveaux imports modulaires.
 # 192.34: Correction des reliquats de factorisation (appels orphelins) et nettoyage de l'encodage Mojibake.
 # 192.33: Factorisation: Nettoyage et extraction de l'Orchestrateur vers echo_utils.py (importation des fonctions partagées).
@@ -57,7 +58,7 @@ from echo_constants import (
     FILE_INGESTION_STATUS,
     CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
 )
-from echo_auth import AuthService
+
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
 try:
@@ -453,7 +454,7 @@ class Pipe:
         user_valves = __user__.get("valves") or self.UserValves()
         chat_id = kwargs.get("__chat_id__") or body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
-        auth = AuthService(user_id=__user__["id"])
+        # auth = AuthService(user_id=__user__["id"])  # [192.36] DÉSACTIVÉ : AuthService n'existe plus.
         from echo_auth import EchoAuth
         echo_auth = EchoAuth(user_id=__user__["id"])
 
