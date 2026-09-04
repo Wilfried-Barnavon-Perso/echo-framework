@@ -2,7 +2,7 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.51
+version: 7.52
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -30,7 +30,8 @@ from datetime import datetime
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import resolve_upload_file_path, EchoAuth
+from echo_paths import resolve_upload_file_path
+from echo_auth import EchoAuth
 from echo_constants import (
     GOOGLE_API_KEY_REGEX,
     DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB,
@@ -61,7 +62,9 @@ class Filter:
 
     async def inlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[Dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
         try:
-            from echo_utils import EchoEvents, get_echo_version, EchoStateManager
+            from echo_events import EchoEvents
+            from echo_paths import get_echo_version
+            from echo_state_manager import EchoStateManager
             events = EchoEvents(__event_emitter__)
             
             meta = __metadata__ or body.get("metadata", {})
@@ -113,7 +116,7 @@ class Filter:
             files_to_process = []
             files_already_processed = []
             if chat_id:
-                from echo_utils import get_echo_session_path
+                from echo_paths import get_echo_session_path
                 vault_dir = os.path.normpath(get_echo_session_path(user_id, chat_id, "files"))
                 for f in all_files:
                     fid = f.get("id") or f.get("file", {}).get("id")
@@ -273,7 +276,7 @@ class Filter:
                     "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                 }
                 
-                from echo_utils import _dict_to_yaml_aec, build_aec_system_events
+                from echo_core import _dict_to_yaml_aec, build_aec_system_events
                 
                 rich_parts = []
                 yaml_str = _dict_to_yaml_aec(env_snapshot)

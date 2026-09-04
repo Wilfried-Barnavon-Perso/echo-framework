@@ -1,7 +1,7 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 13.6
+version: 13.7
 description: Composant système interne : ECHO Maps Grounding.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -20,7 +20,9 @@ from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
+from echo_events import EchoEvents
+from echo_core import wrap_tool_output
+from echo_gemini_client import EchoGeminiClient
 from echo_ui import EchoUI
 from echo_constants import (
     ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, get_generation_config

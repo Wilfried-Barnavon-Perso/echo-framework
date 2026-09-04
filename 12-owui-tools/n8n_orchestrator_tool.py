@@ -1,7 +1,7 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 1.10
+version: 1.11
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3).
 --- CHANGELOG 1.10 ---
 - Amélioration : Rendu impersonnel du prompt d'Action Requise pour les variables d'authentification et incitation à utiliser ask_user_input.
@@ -25,7 +25,8 @@ from pathlib import Path
 from typing import Optional
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoStateManager, wrap_tool_output
+from echo_state_manager import EchoStateManager
+from echo_core import wrap_tool_output
 from echo_constants import ECHO_N8N_WORKER_URL
 
 class Tools:

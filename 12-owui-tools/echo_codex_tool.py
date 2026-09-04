@@ -1,7 +1,7 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 1.8
+version: 1.9
 description: Composant système interne : ECHO Codex Editor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -21,10 +21,10 @@ from pydantic import BaseModel, Field
 from typing import Optional, Any
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import (
-    wrap_tool_output, wrap_cascade_output, EchoEvents,
-    EchoGeminiClient, EchoStateManager,
-)
+from echo_core import wrap_tool_output, wrap_cascade_output
+from echo_events import EchoEvents
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
 from echo_constants import (
     ECHO_API_MAX_RETRIES, get_generation_config, CODEX_EDIT_SYSTEM_PROMPT,
     CODEX_SUMMARIZE_PROMPT, FILE_INGESTION_STATUS

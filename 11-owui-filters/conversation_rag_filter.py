@@ -1,7 +1,7 @@
 """
 title: ECHO Session RAG Conversation Filter
 author: ECHO Framework
-version: 1.13
+version: 1.14
 description: Composant système interne : ECHO Session RAG Conversation Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -20,7 +20,8 @@ import asyncio
 # Importations ECHO Standard
 import sys
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoGeminiClient, EchoStateManager
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
 from echo_constants import SESSION_RAG_CONVERSATION_SOURCE_ID
 
 class Filter:

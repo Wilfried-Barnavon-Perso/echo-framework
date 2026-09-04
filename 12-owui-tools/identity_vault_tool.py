@@ -1,7 +1,7 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 1.2
+version: 1.3
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -14,7 +14,7 @@ from typing import Optional, Any, List, Dict
 from pydantic import BaseModel, Field
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoStateManager
+from echo_state_manager import EchoStateManager
 from echo_ui import EchoUI
 
 class Tools:

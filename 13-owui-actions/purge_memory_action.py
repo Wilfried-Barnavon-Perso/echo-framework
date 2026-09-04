@@ -1,7 +1,7 @@
 """
 title: Purge Mémoire Long Terme /!\
 author: Wilfried BARNAVON
-version: 3.5
+version: 3.6
 description: Console d'administration pour la suppression sélective des souvenirs vectorisés (Qdrant).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5Z29uIHBvaW50cz0iMjIgMyAyIDMgMTAgMTIuNDYgMTAgMTkgMTQgMjEgMTQgMTIuNDYgMjIgMyIvPjwvc3ZnPg==
 """
@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents
+from echo_events import EchoEvents
 from echo_constants import COLLECTION_META_ARTIFACTS, ECHO_QDRANT_URL
 
 class Action:

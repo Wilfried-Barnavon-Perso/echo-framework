@@ -1,7 +1,7 @@
 """
 title: ECHO Delegate to Data Broker
 author: ECHO
-version: 1.1
+version: 1.2
 description: Délégation de collecte de données externes structurées au Data Broker autonome.
 """
 from pydantic import BaseModel, Field
@@ -9,7 +9,7 @@ from typing import Any
 import sys
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents
+from echo_events import EchoEvents
 
 
 class Tools:

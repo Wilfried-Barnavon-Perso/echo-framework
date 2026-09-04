@@ -1,9 +1,15 @@
+"""
+title: ECHO Download Broker
+author: Wilfried BARNAVON
+version: 1.0
+description: Composant du système ECHO : Download Broker.
+"""
 import asyncio, os, shutil, sys
 from pathlib import Path
 
 # Dépendances ECHO (injectées via bind-mount readonly par stack-echo.yml)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoStateManager
+from echo_state_manager import EchoStateManager
 from echo_constants import FILE_INGESTION_STATUS, ECHO_USERS_ROOT, get_gemini_mime
 
 async def process_downloads():

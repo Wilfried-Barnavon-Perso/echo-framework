@@ -1,7 +1,7 @@
 """
 title: ECHO Resource Registry
 author: Wilfried BARNAVON
-version: 1.7
+version: 1.8
 description: Composant système interne : ECHO Resource Registry.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -21,7 +21,8 @@ import sys
 from typing import Optional, Any, Literal
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoStateManager
+from echo_core import wrap_tool_output
+from echo_state_manager import EchoStateManager
 
 
 

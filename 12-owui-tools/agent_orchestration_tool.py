@@ -1,7 +1,7 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.29
+version: 5.30
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -23,7 +23,10 @@ from typing import Optional, List, Dict, Any, Literal, Tuple
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoEvents, EchoGeminiClient, EchoStateManager
+from echo_core import wrap_tool_output
+from echo_events import EchoEvents
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
 from echo_constants import (
     ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, get_generation_config
 )

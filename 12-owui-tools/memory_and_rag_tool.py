@@ -1,7 +1,7 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.21
+version: 2.22
 description: Composant système interne : ECHO Memory & RAG Tool.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -23,7 +23,9 @@ from pydantic import BaseModel, Field
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
+from echo_events import EchoEvents
+from echo_core import wrap_tool_output
+from echo_gemini_client import EchoGeminiClient
 from echo_constants import (
     COLLECTION_META_ARTIFACTS, EMBEDDING_DIM,
     MEMORY_IMPORTANCE_WEIGHTS, MEMORY_IMPORTANCE_LABELS,

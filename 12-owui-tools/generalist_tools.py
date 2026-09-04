@@ -1,7 +1,7 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.7
+version: 1.8
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -22,7 +22,8 @@ from typing import Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoEvents
+from echo_core import wrap_tool_output
+from echo_events import EchoEvents
 from echo_constants import ECHO_MAX_WAIT_TIMER
 from echo_ui import EchoUI
 

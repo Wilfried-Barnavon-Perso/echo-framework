@@ -1,7 +1,7 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.6
+version: 1.7
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -23,7 +23,10 @@ from typing import Optional, Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager
+from echo_core import wrap_tool_output, wrap_cascade_output
+from echo_events import EchoEvents
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
 from echo_codex_git import CodexRepo
 from echo_ui import EchoUI
 from echo_constants import (

@@ -1,7 +1,7 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.16
+version: 1.17
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -24,11 +24,15 @@ from pydantic import BaseModel, Field
 from typing import Optional, Any, List
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import (
-    wrap_tool_output, EchoEvents,
-    EchoGeminiClient, EchoStateManager, clamp_model,
-    estimate_token_size, smart_truncate_history
+from echo_core import (
+    wrap_tool_output,
+    clamp_model,
+    estimate_token_size,
+    smart_truncate_history
 )
+from echo_events import EchoEvents
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
 from echo_constants import (
     ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES,
     DELEGATE_AGENT_BLACKLIST,

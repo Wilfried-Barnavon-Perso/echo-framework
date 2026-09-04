@@ -1,7 +1,7 @@
 """
 title: ECHO Remote MCP Tool
 author: ECHO
-version: 1.8
+version: 1.9
 description: Outil natif permettant d'interroger et d'exécuter des requêtes sur un serveur MCP (distant SSE ou local Stdio) enregistré dans l'Identity Vault via l'ECHO MCP Broker.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -10,7 +10,9 @@ description: Outil natif permettant d'interroger et d'exécuter des requêtes su
 # 1.7: (Non documenté précédemment)
 # 1.3: Faille critique (Data Leak/Stale Data) résolue : suppression du cache en mémoire pour les appels d'outils.
 # 1.2: Ajout du routage réseau et du relais HTTPX via l'ECHO MCP Broker.
-from echo_utils import EchoStateManager, wrap_tool_output, EchoEvents
+from echo_state_manager import EchoStateManager
+from echo_core import wrap_tool_output
+from echo_events import EchoEvents
 from pydantic import BaseModel
 from typing import Any, Optional
 import httpx

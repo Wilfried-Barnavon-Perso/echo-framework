@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.34
+version: 192.35
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.35: Scission de echo_utils.py en 8 librairies dédiées (SRP) et bascule sur de nouveaux imports modulaires.
 # 192.34: Correction des reliquats de factorisation (appels orphelins) et nettoyage de l'encodage Mojibake.
 # 192.33: Factorisation: Nettoyage et extraction de l'Orchestrateur vers echo_utils.py (importation des fonctions partagées).
 # 192.32: Ajout du délai d'attente et de l'heure locale estimée de reprise dans le message d'erreur de la cascade cognitive sur épuisement TPM (429).
 # 192.31: Fix du crash de cascade cognitive : correction du tri et du clamping dynamique pour ignorer de manière robuste les hiérarchies à None (ex: MODEL_DISTILLATION).
-# 192.30: Fix coupure silencieuse : déplacement du yield 'usage' à la fin du générateur pipe() pour ne pas fermer prématurément le flux SSE d'Open WebUI lors d'un auto-continue ou cascade.
 
 
 # ==============================================================================
@@ -35,21 +35,21 @@ from typing import List, Dict, Optional, AsyncGenerator, Literal, Any, Union
 sys.path.append("/app/backend/echo_libs")
 
 # --- IMPORTATIONS ECHO STRICTES (Consolidées) ---
-from echo_utils import (
-    EchoEvents, 
-    EchoStateManager, 
-    get_echo_version, 
-    split_thought_process, 
-    EchoGeminiClient,
-    estimate_token_size, 
+from echo_events import EchoEvents
+from echo_state_manager import EchoStateManager
+from echo_paths import get_echo_version
+from echo_core import (
+    split_thought_process,
+    estimate_token_size,
     smart_truncate_history,
-    build_model_identity, 
-    resolve_placeholders, 
-    ensure_gemini_parts, 
-    unbox_tool_output, 
-    convert_owui_tools,
-    DebugLogger
+    build_model_identity,
+    resolve_placeholders,
+    ensure_gemini_parts,
+    unbox_tool_output,
+    convert_owui_tools
 )
+from echo_gemini_client import EchoGeminiClient
+from echo_logger import DebugLogger
 from echo_protocol import get_ca_model_id
 from echo_ui import EchoUI
 from echo_constants import (
@@ -454,7 +454,7 @@ class Pipe:
         chat_id = kwargs.get("__chat_id__") or body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
         auth = AuthService(user_id=__user__["id"])
-        from echo_utils import EchoAuth
+        from echo_auth import EchoAuth
         echo_auth = EchoAuth(user_id=__user__["id"])
 
         # Injection politiques Pipe → __metadata__ (non propagé aux outils par OWUI, conservé pour usage interne pipe)
@@ -522,7 +522,7 @@ class Pipe:
         )
 
         # Persistance identity.db → lu par clamp_model() côté outils (fallback SQLite)
-        from echo_utils import EchoStateManager
+        from echo_state_manager import EchoStateManager
         _settings = EchoStateManager(user_id=__user__["id"])
         _settings.save_setting("model_policy", user_valves.MODEL_SELECTION)
         _settings.save_setting("enable_paid_credits", str(user_valves.ENABLE_PAID_CREDITS))
@@ -551,7 +551,7 @@ class Pipe:
         # --- AUTHENTIFICATION PKCE (Authorization Code + PKCE RFC 7636) ---
         # Tunnel SSH ephemere asyncssh - ports dynamiques - multi-user natif.
         if not auth_providers:
-            from echo_utils import EchoAuth as _EchoAuth
+            from echo_auth import EchoAuth as _EchoAuth
             _ea = _EchoAuth(user_id=__user__["id"])
             pkce_pending = _ea.get_auth_data("pkce_status") == "pending"
 

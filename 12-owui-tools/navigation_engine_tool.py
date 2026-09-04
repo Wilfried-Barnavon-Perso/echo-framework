@@ -1,7 +1,7 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.22
+version: 11.23
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -31,7 +31,16 @@ from pydantic import BaseModel, Field
 from typing import Optional, Literal, Any
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, clamp_model, get_echo_session_path, estimate_token_size, smart_truncate_history
+from echo_events import EchoEvents
+from echo_core import (
+    wrap_tool_output,
+    clamp_model,
+    estimate_token_size,
+    smart_truncate_history
+)
+from echo_state_manager import EchoStateManager
+from echo_paths import generate_echo_file_id, get_echo_session_path
+from echo_gemini_client import EchoGeminiClient
 from echo_ui import EchoUI
 from echo_browser_lib import EchoBrowserLib, BROWSER_TOOLS_SCHEMA, req_to_browser
 from echo_constants import FILE_INGESTION_STATUS, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE

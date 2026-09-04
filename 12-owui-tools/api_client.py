@@ -1,7 +1,7 @@
 """
 title: ECHO Universal API Client
 author: Wilfried BARNAVON
-version: 1.7
+version: 1.8
 description: Composant système interne : ECHO Universal API Client.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -20,7 +20,7 @@ from typing import Optional, Literal
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output
+from echo_core import wrap_tool_output
 from echo_constants import ECHO_ALLOWED_DOMAINS
 
 class Tools:

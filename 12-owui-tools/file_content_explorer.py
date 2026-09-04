@@ -1,7 +1,7 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.27
+version: 5.109.28
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -26,11 +26,11 @@ from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import (
-    EchoEvents, wrap_tool_output, wrap_cascade_output,
-    resolve_upload_file_path, split_thought_process,
-    EchoGeminiClient, get_stealth_headers
-)
+from echo_events import EchoEvents
+from echo_core import wrap_tool_output, wrap_cascade_output, split_thought_process
+from echo_paths import resolve_upload_file_path
+from echo_gemini_client import EchoGeminiClient
+from echo_http import get_stealth_headers
 from echo_ui import EchoUI
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, ECHO_API_KEY_RETRIES,

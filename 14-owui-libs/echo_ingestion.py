@@ -3,6 +3,8 @@ ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
 Version: 1.5 (Correction de l'instruction système du smart_context pour guider vers semantic_probe sur les binaires)
+version: 1.1
+description: Composant du système ECHO : Echo Ingestion.
 """
 
 import os
@@ -19,9 +21,9 @@ try:
 except ImportError:
     aiofiles = None
 
-from echo_utils import (
-    resolve_upload_file_path, get_echo_session_path, get_echo_global_path, EchoGeminiClient, EchoStateManager
-)
+from echo_paths import resolve_upload_file_path, get_echo_session_path, get_echo_global_path
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
 from echo_constants import (
     get_gemini_mime, 
     FILE_INGESTION_STATUS,
@@ -325,7 +327,8 @@ class EchoIngestionPipeline:
             MODEL_DISTILLATION, ECHO_MODELS_REGISTRY
         )
         import copy
-        from echo_utils import EchoAuth, EchoGeminiClient
+        from echo_auth import EchoAuth
+        from echo_gemini_client import EchoGeminiClient
         import json
         
         u_ctx = {"id": user_id}

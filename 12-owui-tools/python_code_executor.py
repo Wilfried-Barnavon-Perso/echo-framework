@@ -1,7 +1,7 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 6.7
+version: 6.8
 description: Composant système interne : ECHO Python Code Executor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -22,7 +22,8 @@ from typing import Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoEvents
+from echo_core import wrap_tool_output
+from echo_events import EchoEvents
 from echo_constants import ECHO_PYTHON_WORKER_URL
 
 class Tools:
