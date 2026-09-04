@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.33
+version: 192.34
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.34: Correction des reliquats de factorisation (appels orphelins) et nettoyage de l'encodage Mojibake.
 # 192.33: Factorisation: Nettoyage et extraction de l'Orchestrateur vers echo_utils.py (importation des fonctions partagées).
 # 192.32: Ajout du délai d'attente et de l'heure locale estimée de reprise dans le message d'erreur de la cascade cognitive sur épuisement TPM (429).
 # 192.31: Fix du crash de cascade cognitive : correction du tri et du clamping dynamique pour ignorer de manière robuste les hiérarchies à None (ex: MODEL_DISTILLATION).
 # 192.30: Fix coupure silencieuse : déplacement du yield 'usage' à la fin du générateur pipe() pour ne pas fermer prématurément le flux SSE d'Open WebUI lors d'un auto-continue ou cascade.
-# 192.29: Rollback Zéro-Hallucination : Restauration de la mutation simple (YAML plat) pour l'AEC.
 
 
 # ==============================================================================
@@ -671,7 +671,7 @@ class Pipe:
             
             # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
             sys_instr_raw = "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."
-            resolved_sys = orch._resolve_placeholders(sys_instr_raw, target_model)
+            resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
             import copy
@@ -685,7 +685,7 @@ class Pipe:
                 "generationConfig": gen_config
             }
 
-            tools = orch.convert_owui_tools(body.get("tools"), user_valves.MODEL_SELECTION)
+            tools = convert_owui_tools(body.get("tools"), user_valves.MODEL_SELECTION)
             
             # --- [NOUVEAU] INJECTION OUTIL CHANGEMENT COGNITIF (BIDIRECTIONNEL) ---
             if is_auto:
@@ -941,11 +941,11 @@ class Pipe:
             user_draft = meta.get("_echo_user_parts_draft")
             if user_msg_id and user_draft:
                 user_text = body['messages'][-1].get('content', "")
-                full_user_parts = orch._ensure_gemini_parts(user_draft, target_model)
+                full_user_parts = ensure_gemini_parts(user_draft, target_model, orch.model_origin)
                 # Guard : si content est une liste (multipart OWUI), le texte est déjà dans user_draft.
-                # Sans ce guard, la liste entière serait passée à _resolve_placeholders, corrompant le shadow.
+                # Sans ce guard, la liste entière serait passée à resolve_placeholders, corrompant le shadow.
                 if isinstance(user_text, str) and user_text.strip():
-                    full_user_parts.append({"text": orch._resolve_placeholders(user_text, target_model)})
+                    full_user_parts.append({"text": resolve_placeholders(user_text, target_model, orch.model_origin)})
                 orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
 
             # 2. Scellement du Registre Unifié et Rangement
