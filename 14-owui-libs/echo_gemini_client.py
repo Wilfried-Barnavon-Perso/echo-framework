@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.1
+version: 1.2
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.2: Standardisation PEP8, déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID en en-tête de fichier.
 # 1.1: Injection du tenant global ECHO_GLOBAL_TENANT_PROJECT_ID pour éviter les limites de quota (429) OAuth2 persos.
 import os
 import time
@@ -26,7 +27,7 @@ from echo_state_manager import EchoStateManager
 from echo_http import _get_global_client, FatalAPIError
 from echo_core import clamp_model, split_thought_process
 from echo_protocol import build_ca_generation_config
-from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, ECHO_AGY_USER_AGENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME
+from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, ECHO_AGY_USER_AGENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_GLOBAL_TENANT_PROJECT_ID, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME
 
 class EchoGeminiClient:
     """Moteur factorisé pour les appels API Gemini avec Architecture Symétrique (AI Studio & Code Assist)."""
@@ -120,7 +121,6 @@ class EchoGeminiClient:
                     if not project_id:
                          project_id = (EchoAuth(user_id=provider.get("user_id")).get_auth_data(AUTH_DATA_PROJECT_ID) if provider.get("user_id") else None)
                     
-                    from echo_constants import ECHO_GLOBAL_TENANT_PROJECT_ID
                     if project_id:
                         headers["x-goog-user-project"] = ECHO_GLOBAL_TENANT_PROJECT_ID
             else:
@@ -223,7 +223,6 @@ class EchoGeminiClient:
                 # Suppression des valeurs None (L'API Code Assist rejette les nulls explicites)
                 request_body = {k: v for k, v in request_body.items() if v is not None}
 
-            from echo_constants import ECHO_GLOBAL_TENANT_PROJECT_ID
             wrapped_payload = {
                 "model": target_model,
                 "project": ECHO_GLOBAL_TENANT_PROJECT_ID,
