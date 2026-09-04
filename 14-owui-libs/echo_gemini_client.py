@@ -2,9 +2,12 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.0
+version: 1.1
 description: Client API LLM principal.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.1: Injection du tenant global ECHO_GLOBAL_TENANT_PROJECT_ID pour éviter les limites de quota (429) OAuth2 persos.
 import os
 import time
 import random
@@ -117,8 +120,9 @@ class EchoGeminiClient:
                     if not project_id:
                          project_id = (EchoAuth(user_id=provider.get("user_id")).get_auth_data(AUTH_DATA_PROJECT_ID) if provider.get("user_id") else None)
                     
+                    from echo_constants import ECHO_GLOBAL_TENANT_PROJECT_ID
                     if project_id:
-                        headers["x-goog-user-project"] = project_id
+                        headers["x-goog-user-project"] = ECHO_GLOBAL_TENANT_PROJECT_ID
             else:
                 raise Exception("Échec de récupération du jeton d'accès (OAuth2).")
         else:
@@ -219,9 +223,10 @@ class EchoGeminiClient:
                 # Suppression des valeurs None (L'API Code Assist rejette les nulls explicites)
                 request_body = {k: v for k, v in request_body.items() if v is not None}
 
+            from echo_constants import ECHO_GLOBAL_TENANT_PROJECT_ID
             wrapped_payload = {
                 "model": target_model,
-                "project": project_id,
+                "project": ECHO_GLOBAL_TENANT_PROJECT_ID,
                 "user_prompt_id": prompt_id, # Correction : snake_case requis ici
                 "request": request_body
             }

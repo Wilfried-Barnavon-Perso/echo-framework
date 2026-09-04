@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.56
+version: 5.57
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.57: Ajout de ECHO_GLOBAL_TENANT_PROJECT_ID ("aicode-consumers") pour forcer le routage Code Assist et contourner les 429 persos.
 # 5.56: Mise à jour du modèle MODEL_FLASH de 3.7 vers 3.8.
 # 5.55: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
 # 5.54: Ajout de ECHO_SAFETY_SETTINGS (BLOCK_NONE) pour les appels Gemini.
 # 5.53: Création des constantes CONTEXT_LOAD_WARNING_THRESHOLD (40) et CONTEXT_LOAD_CRITICAL_THRESHOLD (60)
-#       pour gérer l'escalade de modèle dans l'outil get_context_load de façon découplée du toast UI.
 # 5.52: Alignement protocole OAuth2 sur AGY IDE 2.5.5 (audit binaire main.js) :
 #       - ECHO_CLIENT_METADATA : ideType ANTIGRAVITY, ajout ideName/ideVersion/platform
 #       - ECHO_OAUTH_SCOPES : +experimentsandconfigs, -openid, -aicode
@@ -146,6 +146,7 @@ ECHO_CLIENT_METADATA = {
 }
 
 AUTH_DATA_PROJECT_ID  = "google_project_id"
+ECHO_GLOBAL_TENANT_PROJECT_ID = "aicode-consumers"
 AUTH_DATA_USER_EMAIL  = "google_user_email"
 AUTH_DATA_USER_TIER   = "google_user_tier"
 
