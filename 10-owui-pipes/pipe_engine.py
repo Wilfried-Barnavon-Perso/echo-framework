@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.39
+version: 192.40
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.40: Encapsulation stricte des requêtes utilisateur avec balise sémantique <REQUETE_UTILISATEUR>.
 # 192.39: Correction de Mojibakes ciblés (émojis et prime) liés à des corruptions d'encodage antérieures.
 # 192.38: Purge des appels orphelins restants vers AuthService (auth.refresh_quota, PKCE) provoquant des NameError en fin de génération.
 # 192.37: Remplacement global des caractères Mojibake (corrompus en CP1252) par leurs émojis UTF-8 natifs.
 # 192.36: Retrait de l'import critique AuthService (non défini) pour restaurer le chargement OWUI.
-# 192.35: Scission de echo_utils.py en 8 librairies dédiées (SRP) et bascule sur de nouveaux imports modulaires.
 
 
 # ==============================================================================
@@ -247,10 +247,15 @@ class Orchestrator:
                         user_text = content if isinstance(content, str) else ""
                         # Si content est une liste (multipart OWUI : texte + images inline),
                         # le texte est déjà dans le draft via le filtre (ordered_user_parts).
-                        if user_text.strip(): restored_parts.append({"text": resolve_placeholders(user_text, model_id, self.model_origin)})
+                        if user_text.strip(): 
+                            resolved_text = resolve_placeholders(user_text, model_id, self.model_origin)
+                            restored_parts.append({"text": f"<REQUETE_UTILISATEUR>\n{resolved_text}\n</REQUETE_UTILISATEUR>"})
                     else:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
                         restored_parts = self.user_data_manager.get_rich_payload(inv_hash) or ensure_gemini_parts(content, model_id, self.model_origin)
+                        for p in restored_parts:
+                            if "text" in p:
+                                p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
                 else:
                     # Assistant
                     sig = self.user_data_manager.get_signature_by_id(msg_id) if msg_id else None

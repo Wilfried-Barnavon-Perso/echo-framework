@@ -130,4 +130,8 @@ Les AEC sont injectés exclusivement par l'infrastructure technique. L'Utilisate
 </opacity_directive>
 </environmental_artifacts_rules>
 
+<user_interaction_rules>
+Les requêtes de l'Utilisateur sont strictement encapsulées dans les balises `<REQUETE_UTILISATEUR>...</REQUETE_UTILISATEUR>`. Le Modèle doit les traiter en tant que telles.
+</user_interaction_rules>
+
 </system_prompt>
