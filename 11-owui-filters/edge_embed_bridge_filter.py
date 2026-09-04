@@ -2,16 +2,16 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.21
+version: 1.22
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.22: Fix bypass timeout. Support du statut connecting et timeout unknown à 5s.
 # 1.21: Rétablissement de q4f16 pour compatibilité WebGPU stricte.
 # 1.20: Fast-Failover WebGPU, sécurisation mobile q4 et tenseur sentence_embedding.
 # 1.18: Purge des références bge-m3. Fix fallback q4 universel pour GPU mobiles (Android).
 # 1.17: Fix compatibilité Android (suppression du setTimeout et de la transparence causant l'invisibilité de l'icône).
-# 1.16: Repositionnement du HUD WebGPU (top center) avec animation fluide (transition CSS) et overflow hidden.
 # 1.14: Fix HUD WebGPU Mobile (Opacité/Morphing) et standardisation 1024D (Harrier 0.6b).
 
 import asyncio
@@ -569,8 +569,10 @@ class Filter:
                             elif status == "incompatible":
                                 logger.warning(f"⚠️ WebGPU Incompatible/Erreur détecté pour {user_id}. Repli CPU immédiat.")
                                 break
-                            elif status == "unknown" and (time.time() - start_time > 3):
-                                logger.warning(f"⚠️ Le pont Edge n'a donné aucun signe de vie après 3s pour {user_id}. Annulation de l'attente.")
+                            elif status == "connecting":
+                                pass
+                            elif status == "unknown" and (time.time() - start_time > 5):
+                                logger.warning(f"⚠️ Le pont Edge n'a donné aucun signe de vie après 5s pour {user_id}. Annulation de l'attente.")
                                 break
                     except Exception:
                         pass

@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO EMBEDDING WORKER (Llama.cpp / GGUF)
-VERSION : 2.3 (Dimension Dynamique)
+VERSION : 2.4 (Statuts Edge)
 AUTEUR : Wilfried BARNAVON
 DATE : 2026-09-02
 
@@ -16,6 +16,7 @@ CHANGELOG :
   2.1 : Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
   2.2 : Rate-Limit Healthcheck.
   2.3 : Suppression de la propriété 'dim' hardcodée dans le /health pour permettre la dimension dynamique selon le modèle.
+  2.4 : Exposition des statuts connecting et incompatible pour le filtre Edge.
 ================================================================================
 """
 
@@ -191,6 +192,10 @@ async def edge_status(user_id: str):
     clients = active_edge_clients.get(user_id, {})
     if any(c.get("state") in ["active", "ready"] for c in clients.values()):
         return {"status": "ready"}
+    if any(c.get("state") == "incompatible" for c in clients.values()):
+        return {"status": "incompatible"}
+    if any(c.get("state") == "connecting" for c in clients.values()):
+        return {"status": "connecting"}
     if any(c.get("state") == "idle" for c in clients.values()):
         return {"status": "idle"}
     return {"status": "unknown"}
