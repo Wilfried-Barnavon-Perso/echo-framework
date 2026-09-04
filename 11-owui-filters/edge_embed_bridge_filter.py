@@ -2,11 +2,12 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.22
+version: 1.23
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.23: Désactivation totale de WebGPU sur mobile (Fallback CPU immédiat).
 # 1.22: Fix bypass timeout. Support du statut connecting et timeout unknown à 5s.
 # 1.21: Rétablissement de q4f16 pour compatibilité WebGPU stricte.
 # 1.20: Fast-Failover WebGPU, sécurisation mobile q4 et tenseur sentence_embedding.
@@ -75,7 +76,7 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        SCRIPT_VERSION = "1.21"
+        SCRIPT_VERSION = "1.23"
         
         # --- SYNCHRONISATION DYNAMIQUE DU MODÈLE (CPU -> GPU) ---
         import httpx
@@ -143,6 +144,12 @@ class Filter:
             }
 
             // HARDWARE CHECK REVISE ET ACTIF
+            const isEarlyMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+            if (isEarlyMobile) {
+                sendIncompatibleAndExit("WebGPU désactivé sur mobile (stabilité)");
+                return;
+            }
+
             if (typeof navigator === 'undefined' || !navigator.gpu) {
                 sendIncompatibleAndExit("WebGPU non exposé par le navigateur");
                 return;
