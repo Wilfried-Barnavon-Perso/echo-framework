@@ -1,12 +1,13 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.36
+version: 192.37
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.37: Remplacement global des caractères Mojibake (corrompus en CP1252) par leurs émojis UTF-8 natifs.
 # 192.36: Retrait de l'import critique AuthService (non défini) pour restaurer le chargement OWUI.
 # 192.35: Scission de echo_utils.py en 8 librairies dédiées (SRP) et bascule sur de nouveaux imports modulaires.
 # 192.34: Correction des reliquats de factorisation (appels orphelins) et nettoyage de l'encodage Mojibake.
@@ -465,7 +466,7 @@ class Pipe:
         __metadata__["_echo_enable_paid_credits"] = user_valves.ENABLE_PAID_CREDITS
 
         # -----------------------------------------------------------------------
-        # INJECTION DES OUTILS (bridge __tools__ â†’ _TOOLS_CACHE)
+        # INJECTION DES OUTILS (bridge __tools__ → _TOOLS_CACHE)
         # -----------------------------------------------------------------------
         # OWUI injecte __tools__ dans le Pipe sous deux formes selon la version :
         #   1. dict {fn_name: {tool_id, callable, spec, metadata}}  â† observé en production
@@ -481,7 +482,7 @@ class Pipe:
         _log_pipe = _plog.getLogger("echo.pipe")
 
         if isinstance(__tools__, dict) and __tools__:
-            # Cas 1 â€” dict avec callables (production ECHO)
+            # Cas 1 — dict avec callables (production ECHO)
             __metadata__["_echo_tools_dict"] = __tools__          # Conservé pour compatibilité
             __metadata__["_echo_body_tools"] = [                  # Specs format OpenAI
                 {"type": "function", "function": v["spec"]}
@@ -494,7 +495,7 @@ class Pipe:
                 _log_pipe.debug("_TOOLS_CACHE[%s] = %d outils", chat_id, len(__tools__))
 
         elif isinstance(__tools__, list) and __tools__:
-            # Cas 2 â€” list[ToolUserModel] sans callables
+            # Cas 2 — list[ToolUserModel] sans callables
             __metadata__["_echo_tools_dict"] = {}
             _specs: list = []
             for _tm in __tools__:
@@ -509,7 +510,7 @@ class Pipe:
 
         # Log diagnostic (DEBUG uniquement, ne pas laisser en WARNING en production)
         if isinstance(__tools__, dict):
-            _tools_info = f"dict({len(__tools__)} keys) â€” sample: {list(__tools__.keys())[:3]}"
+            _tools_info = f"dict({len(__tools__)} keys) — sample: {list(__tools__.keys())[:3]}"
         elif isinstance(__tools__, list):
             _first_type = type(__tools__[0]).__name__ if __tools__ else "empty"
             _tools_info = f"list({len(__tools__)} items, item[0]={_first_type})"
@@ -621,7 +622,7 @@ class Pipe:
             return f"{model_key} [{tech_str}]" if tech_str else model_key
 
         if model_selection in ["AUTO", "AUTO_PRO"]:
-            # Plafond : AUTO â†’ FLASH max, AUTO_PRO â†’ PRO max
+            # Plafond : AUTO → FLASH max, AUTO_PRO → PRO max
             ceiling = MODEL_PRO if model_selection == "AUTO_PRO" else MODEL_FLASH
             if last_model and last_model != "aucun":
                 # Clamping dynamique via la hiérarchie du SSOT
@@ -777,8 +778,8 @@ class Pipe:
                     if cascade_order:
                         prev_model = target_model
                         target_model = cascade_order[0]
-                        await events.status(f"âš¡ {prev_model} indisponible â†’ cascade vers {target_model}")
-                        await events.toast(f"âš¡ Cascade : {prev_model} â†’ {target_model} (erreur: {str(e)[:80]})", "warning")
+                        await events.status(f"⚡ {prev_model} indisponible → cascade vers {target_model}")
+                        await events.toast(f"⚡ Cascade : {prev_model} → {target_model} (erreur: {str(e)[:80]})", "warning")
                         orch._mutate_context_identity(context, target_model, prev_model)
                     else:
                         # Plus de modèle inférieur → échec terminal
@@ -802,7 +803,7 @@ class Pipe:
             if proc.hit_max_tokens:
                 if auto_continue_count < user_valves.AUTO_CONTINUE_MAX:
                     auto_continue_count += 1
-                    await events.status(f"âš¡ Limite MAX_TOKENS atteinte. Auto-continuation ({auto_continue_count}/{user_valves.AUTO_CONTINUE_MAX})...")
+                    await events.status(f"⚡ Limite MAX_TOKENS atteinte. Auto-continuation ({auto_continue_count}/{user_valves.AUTO_CONTINUE_MAX})...")
                     if proc.accumulated_text:
                         context.append({"role": "model", "parts": [{"text": proc.accumulated_text}]})
                         context.append({"role": "user", "parts": [{"text": "<AEC_evenement_systeme>\n- type: SYSTEM_AUTO_CONTINUE\n  message: Le plafond de tokens de sortie a été atteint. Le Modèle doit reprendre la génération EXACTEMENT au caractère près où il s'est arrêté (sans reprendre la phrase du début si elle est coupée). Le Modèle ne doit produire aucune formule de politesse, ni introduction. Il doit produire uniquement la suite absolue de la chaîne de caractères.\n</AEC_evenement_systeme>"}]})
@@ -1049,7 +1050,7 @@ class Pipe:
             credits_raw = echo_auth.get_auth_data("google_credits_total") or echo_auth.get_auth_data("google_g1_credits")
             credits_val = credits_raw if (credits_raw and credits_raw != "0") else "âˆž"
 
-            # Formatage du reset : ISO â†’ HH:MM + minutes restantes
+            # Formatage du reset : ISO → HH:MM + minutes restantes
             q_reset = q_reset_raw
             if "T" in q_reset_raw:
                 try:
@@ -1066,7 +1067,7 @@ class Pipe:
             q_rpd_lim = str(model_quota.get("requestsPerDayLimit",      "N/A"))
             q_rpm_rem = str(model_quota.get("requestsPerMinuteRemaining", "N/A"))
             q_rpm_lim = str(model_quota.get("requestsPerMinuteLimit",     "N/A"))
-            q_model_label = ca_model_id or "â€”"
+            q_model_label = ca_model_id or "—"
 
             # Liste des fournisseurs d'accès résolus pour le HUD
             sources = [s['type'].replace('google_', '').replace('_', ' ').upper() for s in auth_providers] if auth_providers else []

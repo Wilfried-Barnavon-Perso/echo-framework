@@ -14,6 +14,10 @@ class FatalAPIError(Exception):
     """Erreur API fatale (ex: 400 Bad Request) ne nécessitant aucun backoff réseau."""
     pass
 
+_SHARED_ASYNC_CLIENT: Optional[httpx.AsyncClient] = None
+_LAST_CLIENT_ACCESS: float = 0.0
+
+
 async def _get_global_client(
     timeout: int = None,
     max_connections: int = None,

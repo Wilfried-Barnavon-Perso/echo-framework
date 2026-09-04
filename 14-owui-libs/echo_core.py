@@ -8,6 +8,7 @@ description: Fonctions cognitives et utilitaires pures.
 import re
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import orjson as std_json
 from typing import Any, Dict, List, Optional, Tuple
 from echo_state_manager import EchoStateManager
