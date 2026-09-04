@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.2
+version: 1.3
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.3: Alignement strict du payload gRPC/JSON Code Assist (OAuth2) sur le format Antigravity (camelCase + headers d'agent)
 # 1.2: Standardisation PEP8, déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID en en-tête de fichier.
 # 1.1: Injection du tenant global ECHO_GLOBAL_TENANT_PROJECT_ID pour éviter les limites de quota (429) OAuth2 persos.
 import os
@@ -199,7 +200,7 @@ class EchoGeminiClient:
             if method == "embedContent":
                 request_body = {
                     "content": payload.get("content", {}),
-                    "session_id": chat_id
+                    "sessionId": chat_id
                 }
             else:
                 # Harmonisation tool_config (owui) -> toolConfig (API)
@@ -217,7 +218,7 @@ class EchoGeminiClient:
                     "tools": payload.get("tools"),
                     "toolConfig": t_conf,
                     "safetySettings": payload.get("safetySettings", ECHO_SAFETY_SETTINGS),
-                    "session_id": chat_id
+                    "sessionId": chat_id
                 }
                 
                 # Suppression des valeurs None (L'API Code Assist rejette les nulls explicites)
@@ -227,7 +228,9 @@ class EchoGeminiClient:
                 "model": target_model,
                 "project": ECHO_GLOBAL_TENANT_PROJECT_ID,
                 "user_prompt_id": prompt_id, # Correction : snake_case requis ici
-                "request": request_body
+                "request": request_body,
+                "userAgent": "antigravity",
+                "requestType": "agent"
             }
 
             # CRÉDITS AI — opt-in via UserValve pipe (propagé __metadata__ → enable_paid_credits)
@@ -238,7 +241,7 @@ class EchoGeminiClient:
                 elif g1_credits and int(g1_credits) > 50:
                     enabled_credits = ["GOOGLE_ONE_AI"]
                 if enabled_credits:
-                    wrapped_payload["enabled_credit_types"] = enabled_credits
+                    wrapped_payload["enabledCreditTypes"] = enabled_credits
 
             return {"url": api_url, "headers": headers, "payload": wrapped_payload}
 
