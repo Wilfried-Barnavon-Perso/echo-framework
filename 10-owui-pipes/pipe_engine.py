@@ -1,20 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.38
+version: 192.39
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.39: Correction de Mojibakes ciblés (émojis et prime) liés à des corruptions d'encodage antérieures.
 # 192.38: Purge des appels orphelins restants vers AuthService (auth.refresh_quota, PKCE) provoquant des NameError en fin de génération.
 # 192.37: Remplacement global des caractères Mojibake (corrompus en CP1252) par leurs émojis UTF-8 natifs.
 # 192.36: Retrait de l'import critique AuthService (non défini) pour restaurer le chargement OWUI.
 # 192.35: Scission de echo_utils.py en 8 librairies dédiées (SRP) et bascule sur de nouveaux imports modulaires.
-# 192.34: Correction des reliquats de factorisation (appels orphelins) et nettoyage de l'encodage Mojibake.
-# 192.33: Factorisation: Nettoyage et extraction de l'Orchestrateur vers echo_utils.py (importation des fonctions partagées).
-# 192.32: Ajout du délai d'attente et de l'heure locale estimée de reprise dans le message d'erreur de la cascade cognitive sur épuisement TPM (429).
-# 192.31: Fix du crash de cascade cognitive : correction du tri et du clamping dynamique pour ignorer de manière robuste les hiérarchies à None (ex: MODEL_DISTILLATION).
 
 
 # ==============================================================================
@@ -856,7 +853,7 @@ class Pipe:
                     })
                     continue
 
-                await events.status(f"ðŸš€ Transfert cognitif vers {new_target}...")
+                await events.status(f"🚀 Transfert cognitif vers {new_target}...")
                 
                 if proc.captured_sig:
                     orch.user_data_manager.save_call_bridge(f"esc-{secrets.token_hex(4)}", proc.captured_sig, "new_cognitive_level", req)
@@ -1052,7 +1049,7 @@ class Pipe:
                     reset_dt = datetime.fromisoformat(q_reset_raw.replace("Z", "+00:00"))
                     diff_min = int((reset_dt - datetime.now(timezone.utc)).total_seconds() / 60)
                     if diff_min > 0:
-                        q_reset = f"{q_reset} ({diff_min}Â´)"
+                        q_reset = f"{q_reset} ({diff_min}')"
                 except: pass
 
             # Champs détaillés du quota modèle (RPD / RPM)
