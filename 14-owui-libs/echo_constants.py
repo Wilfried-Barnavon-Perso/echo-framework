@@ -1,11 +1,12 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.57
+version: 5.58
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.58: Augmentation de ECHO_API_MAX_RETRIES à 5 tentatives.
 # 5.57: Ajout de ECHO_GLOBAL_TENANT_PROJECT_ID ("aicode-consumers") pour forcer le routage Code Assist et contourner les 429 persos.
 # 5.56: Mise à jour du modèle MODEL_FLASH de 3.7 vers 3.8.
 # 5.55: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
@@ -168,12 +169,12 @@ PKCE_CALLBACK_TIMEOUT = 300  # secondes
 # ==============================================================================
 
 ECHO_API_KEY_RETRIES   = 2
-ECHO_API_MAX_RETRIES     = 3
+ECHO_API_MAX_RETRIES     = 5
 ECHO_RETRY_BASE_DELAY    = 3.0   # Base backoff exponentiel — réduit de 5.0 à 3.0 (v5.50)
                                   # Raison : avec base=5.0 et 5 retries, le backoff cumulé (~155s)
                                   # dépassait GUNICORN_TIMEOUT (60s) et causait des crashes SSE
                                   # silencieux via SIGKILL du worker uvicorn.
-                                  # Avec base=3.0 et 3 retries : total max ~14s.
+                                  # Avec base=3.0 et 5 retries : total max ~39s.
                                   # Historique : base augmentée à 5.0 (v5.166.6) pour les rafales
                                   # consult_council sur Code Assist. Ces appels passent par call()
                                   # non-streaming, non impactés par ce changement.
