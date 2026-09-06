@@ -1,16 +1,16 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.7
+version: 1.8
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.6: Validation obligatoire des plans (build et update) via UI modale (window.echoCustomConfirm).
-# 1.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 1.4: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
-# 1.3: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du dossier plans/.
-# 1.2: Centralisation politique modèle Pipe. Suppression _cascade_call() et _get_thinking_level() locaux.
+# 1.8: Refonte architecturale séparant la stratégie (plan) et la tactique (tasks). Création d'update_tasks avec évènements silencieux.
+# 1.7: Validation obligatoire des plans (build et update) via UI modale (window.echoCustomConfirm).
+# 1.6: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 1.5: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
+# 1.4: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du dossier plans/.
 
 import sys
 import orjson as json
@@ -39,19 +39,19 @@ from echo_constants import (
 # PROMPTS SYSTÈME POUR L'AGENT PLANIFICATEUR
 # ==============================================================================
 
-SYSTEM_PROMPT_BUILD = """<persona>
-Le Modèle est un architecte expert en planification stratégique et tactique.
+SYSTEM_PROMPT_COMMON = """<persona>
+Le Modèle agit en tant qu'architecte expert en planification stratégique et tactique. Son approche est logique, son ton est neutre, formel et strictement analytique.
 </persona>
+"""
 
-<mission>
-Le Modèle doit rédiger un plan d'action stratégique structuré en Markdown, focalisé exclusivement sur la résolution logique de l'objectif.
+SYSTEM_PROMPT_BUILD = SYSTEM_PROMPT_COMMON + """<mission>
+Le Modèle doit rédiger un plan d'action stratégique et la liste des tâches associée, focalisés exclusivement sur la résolution logique de l'objectif.
 </mission>
 
 <rules>
 1. PROFONDEUR : La profondeur maximale des sous-tâches est strictement limitée à {max_depth} niveaux.
 2. SYNTAXE : Chaque tâche DOIT impérativement commencer par `- [ ] ` (notation Markdown).
-3. CONTENU : Le plan DOIT être actionnable, sans ambiguïté, identifier les contraintes/risques réels et définir des critères de succès mesurables.
-4. OUTILS : Le Modèle a l'INTERDICTION d'inventer des outils. Il DOIT utiliser UNIQUEMENT ceux fournis dans la balise <available_tools>, en ajoutant la syntaxe `→ nom_exact_outil` à la fin de la ligne de la tâche correspondante.
+3. OUTILS : Le Modèle DOIT utiliser UNIQUEMENT ceux fournis dans la balise <available_tools>, en ajoutant la syntaxe `→ nom_exact_outil` à la fin de la tâche.
 </rules>
 
 <available_tools>
@@ -59,9 +59,10 @@ Le Modèle doit rédiger un plan d'action stratégique structuré en Markdown, f
 </available_tools>
 
 <output_format>
-Le Modèle DOIT retourner EXACTEMENT le frontmatter YAML suivi du plan, selon l'exemple suivant.
-Le Modèle a l'INTERDICTION d'ajouter du texte conversationnel en dehors du bloc Markdown pur. Toute information supplémentaire DOIT être intégrée au sein du plan (via des sections `##`).
+Le Modèle DOIT structurer sa réponse en deux blocs distincts séparés par des délimiteurs stricts.
+
 <example>
+=== PLAN ===
 ---
 plan_id: {plan_id}
 chat_id: {chat_id}
@@ -71,35 +72,43 @@ author_model: {author_model}
 status: draft
 ---
 ## 🎯 Objectif
-(Reformulation claire et analytique de l'objectif)
-## 📋 Plan d'action
+(Reformulation claire de l'objectif)
+
+=== TASKS ===
 - [ ] Étape 1 : Analyse initiale
-  - [ ] Sous-tâche 1.1 : Lire les fichiers cibles (→ `echo_codex_tool`)
-## ⚠️ Contraintes & Risques
-- Risque identifié X...
-## ✅ Critères de succès
-- Critère mesurable 1...
+  - [ ] Sous-tâche 1.1 (→ `outil`)
 </example>
 </output_format>"""
 
-SYSTEM_PROMPT_UPDATE = """<persona>
-Le Modèle est un architecte expert en planification stratégique et tactique.
-</persona>
-
-<mission>
-Le Modèle doit modifier le plan existant selon les instructions fournies, sans en altérer la structure globale.
+SYSTEM_PROMPT_UPDATE = SYSTEM_PROMPT_COMMON + """<mission>
+Le Modèle doit modifier le plan d'action stratégique existant selon les instructions fournies, sans en altérer la structure globale.
 </mission>
 
 <rules>
-1. SCOPE : Le Modèle DOIT appliquer UNIQUEMENT les modifications demandées. Il ne doit RIEN modifier d'autre (étapes non mentionnées, frontmatter non ciblé).
+1. SCOPE STRATÉGIQUE : Le Modèle DOIT appliquer UNIQUEMENT les modifications demandées sur la stratégie. Il a l'INTERDICTION de manipuler ou de lister des tâches avec cet outil (il doit utiliser l'outil `update_tasks` pour cela).
 2. STATUT : Si les instructions impliquent un changement de statut, Le Modèle DOIT mettre à jour le champ `status:` du frontmatter YAML.
-3. SYNTAXE : Si les instructions cochent/décochent des tâches, Le Modèle DOIT utiliser strictement cette notation :
-   - [ ] = en attente | [/] = en cours | [x] = terminée | [!] = échouée | [-] = ignorée
 </rules>
 
 <output_format>
 Le Modèle DOIT retourner UNIQUEMENT le bloc Markdown brut du plan modifié (incluant le frontmatter YAML). 
-Aucun préambule ni phrase d'introduction conversationnelle n'est toléré en dehors du Markdown. Les ajouts d'informations (comme un compte-rendu final) DOIVENT être insérés directement À L'INTÉRIEUR du plan en créant une nouvelle section appropriée. La réponse entière doit impérativement commencer par `---`.
+</output_format>"""
+
+SYSTEM_PROMPT_UPDATE_TASKS = SYSTEM_PROMPT_COMMON + """<mission>
+Le Modèle doit pointer l'état d'avancement de la liste des tâches selon les instructions fournies, sans en altérer la structure globale.
+</mission>
+
+<rules>
+1. CODIFICATION STRICTE DES STATUTS : Le Modèle DOIT utiliser EXCLUSIVEMENT la syntaxe suivante pour refléter l'état de chaque tâche :
+   - [ ] : Tâche en attente (Non commencée)
+   - [/] : Tâche en cours d'exécution
+   - [x] : Tâche terminée avec succès
+   - [!] : Tâche échouée ou bloquée (nécessite attention)
+   - [-] : Tâche ignorée ou obsolète
+2. CONSERVATION : Le Modèle DOIT préserver l'intégralité des tâches existantes, même celles non modifiées, pour retourner la liste complète.
+</rules>
+
+<output_format>
+Le Modèle DOIT retourner UNIQUEMENT le bloc Markdown brut de la liste des tâches modifiée. Aucun préambule, aucun frontmatter, aucune balise.
 </output_format>"""
 
 
@@ -109,10 +118,10 @@ class Tools:
     Permet a l'Orchestrateur de construire, consulter et maintenir un plan d'action formel.
     
     DIRECTIVE ORCHESTRATEUR (OBLIGATION DE SUIVI ET VALIDATION) :
-    1. Validation : L'outil build_plan sauvegarde nativement le plan dans le Codex. Apres creation, l'Orchestrateur DOIT presenter le plan a l'Utilisateur, specifier le nom sous lequel il est consultable dans le Codex, et obtenir son accord explicite avant d'entamer les taches.
-    2. Execution Sequentielle : L'Orchestrateur DOIT executer les phases du plan chronologiquement (telles que decrites dans la section Plan d'action du Markdown genere).
-    3. Suivi Tactique : L'Orchestrateur a l'OBLIGATION STRICTE de maintenir le plan a jour. A chaque etape technique franchie (succes ou echec), il DOIT invoquer l'outil update_plan pour pointer les taches (ex: [x] ou [!]) AVANT d'entreprendre l'etape suivante.
-    4. Resume d'Action : Une fois le plan entierement execute, le Modele DOIT ajouter a la fin du plan (via update_plan) le compte-rendu final de mise en oeuvre.
+    1. Validation : L'outil build_plan sauvegarde nativement la stratégie et les tâches dans le Codex. Apres creation, l'Orchestrateur DOIT presenter le plan a l'Utilisateur et obtenir son accord explicite.
+    2. Execution Sequentielle : L'Orchestrateur DOIT executer les phases du plan chronologiquement.
+    3. Suivi Tactique : L'Orchestrateur a l'OBLIGATION STRICTE de pointer l'avancement. A chaque etape technique franchie, il DOIT invoquer l'outil `update_tasks` pour mettre a jour les statuts AVANT d'entreprendre l'etape suivante. (Ce processus est silencieux).
+    4. Pivot Strategique : Si l'objectif ou les criteres de reussite changent en cours de route, le Modele DOIT utiliser `update_plan`. Ceci declenchera une modale de validation manuelle pour des raisons de securite.
     """
     class Valves(BaseModel):
         PLANNER_TIMEOUT: int = Field(
@@ -206,12 +215,16 @@ class Tools:
         __event_call__: Optional[Any] = None,
     ) -> dict:
         """
-        Creation d'un plan d'action avec organisation de la liste des taches.
-        ATTENTION ORCHESTRATEUR : L'outil sauvegarde AUTOMATIQUEMENT le plan dans le Codex (Git). Ne tentez pas de le sauvegarder vous-meme.
-        Une fois execute, le Modele DOIT presenter les grandes lignes a l'Utilisateur (en specifiant le nom du fichier Codex) pour validation avant de demarrer l'execution.
+        Création d'un plan d'action stratégique et de sa liste de tâches associée.
+        ATTENTION ORCHESTRATEUR : L'outil génère automatiquement DEUX fichiers dans le Codex (Git), liés par le même identifiant :
+        1. Le fichier de Stratégie (plan_xxx.md)
+        2. Le fichier des Tâches (tasks_xxx.md)
+        
+        Une fois exécuté, le Modèle DOIT présenter les grandes lignes à l'Utilisateur et obtenir son accord explicite avant de démarrer l'exécution.
+        Le `plan_id` retourné est la clé unique pour interagir ensuite avec `update_plan` (pour la stratégie) ou `update_tasks` (pour la tactique).
         
         :param goal: Objectif final mesurable.
-        :param context: Contraintes et perimetre.
+        :param context: Contraintes et périmètre.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -281,9 +294,18 @@ class Tools:
         # Remplacement du placeholder author_model dans le frontmatter
         plan_content = plan_content.replace("{author_model}", model_key_used)
 
+        # Séparation du contenu généré
+        parts = plan_content.split("=== TASKS ===")
+        plan_part = parts[0].replace("=== PLAN ===", "").strip()
+        tasks_part = parts[1].strip() if len(parts) > 1 else "- [ ] Aucune tâche."
+
+        plan_filename = filename
+        tasks_filename = f"tasks_{plan_id}_{slug}.md"
+
         # Persistance dans le Codex (Git)
         repo = CodexRepo(user_id, chat_id)
-        repo.commit_file(filename, plan_content, f"Plan {plan_id}: {goal[:60]}")
+        repo.commit_file(plan_filename, plan_part, f"Strategy {plan_id}: {goal[:60]}")
+        repo.commit_file(tasks_filename, tasks_part, f"Tasks {plan_id}: {goal[:60]}")
 
         # Enregistrement dans le registre unifié
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
@@ -369,10 +391,18 @@ class Tools:
         if not result:
             return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        content = result["content"]
+        plan_content = result["content"]
+        tasks_filename = "tasks_" + result["filename"]
+        
+        # Lecture silencieuse des tâches
+        repo = CodexRepo(user_id, chat_id)
+        tasks_result = repo.read_file(tasks_filename)
+        tasks_text = tasks_result["content"] if tasks_result else "- [ ] Fichier de tâches introuvable."
+        
+        full_content = f"=== STRATÉGIE (Fichier: {result['filename']}) ===\n{plan_content}\n\n=== TÂCHES (Fichier: {tasks_filename}) ===\n{tasks_text}"
 
-        await events.status(f"📖 Plan `{plan_id}` lu.", done=True)
-        return wrap_tool_output(text=content, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        await events.status(f"📖 Plan `{plan_id}` et ses tâches lus.", done=True)
+        return wrap_tool_output(text=full_content, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def update_plan(
         self,
@@ -384,10 +414,11 @@ class Tools:
         __event_call__: Optional[Any] = None,
     ) -> dict:
         """
-        Outil tactique pour amender un plan OU mettre a jour l'etat d'avancement des taches.
+        Outil STRATÉGIQUE pour modifier le plan d'action (stratégie).
+        Ne DOIT PAS être utilisé pour le pointage des tâches (utiliser update_tasks).
         
         :param plan_id: Identifiant unique du plan (obtenu lors de la creation ou via query_registry).
-        :param instructions: Ordres precis (ex: "Coche la tache 1.1 comme terminee", "Ajoute un resume de mise en oeuvre a la fin").
+        :param instructions: Ordres precis (ex: "Ajoute un resume de mise en oeuvre a la fin").
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -492,6 +523,97 @@ class Tools:
                  f"**Décision Utilisateur :** {user_decision}\n"
                  f"**Modèle :** {model_key_used}\n\n"
                  f"---\n\n{new_content}",
+            model_requested=PLANNER_MODEL_UPDATE,
+            model_used=model_key_used,
+            reason=reason
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def update_tasks(
+        self,
+        plan_id: str,
+        instructions: str,
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __event_emitter__: Optional[Any] = None,
+        __event_call__: Optional[Any] = None,
+    ) -> dict:
+        """
+        Outil TACTIQUE EXCLUSIF pour pointer l'état d'avancement des tâches (tasks_XXX.md).
+        Permet de modifier le statut des tâches sans bloquer le flux d'exécution. Ne DOIT PAS être utilisé pour changer la stratégie globale.
+        
+        Codification stricte des statuts à respecter dans vos instructions :
+        - [ ] : Tâche en attente (Non commencée)
+        - [/] : Tâche en cours d'exécution
+        - [x] : Tâche terminée avec succès
+        - [!] : Tâche échouée ou bloquée (nécessite attention)
+        - [-] : Tâche ignorée ou obsolète
+        
+        :param plan_id: Identifiant unique du plan (lie le plan et les tâches).
+        :param instructions: Ordres précis de modification de statut (ex: 'Passe la sous-tâche 1.1 au statut [x] et la 1.2 au statut [/]').
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        chat_id = (__metadata__ or {}).get("chat_id")
+
+        if not chat_id:
+            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+        # 1. Vérifier que le plan existe pour obtenir le nom de fichier
+        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        if not result:
+            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        
+        plan_filename = result["filename"]
+        tasks_filename = "tasks_" + plan_filename
+
+        # 2. Lecture des tâches
+        repo = CodexRepo(user_id, chat_id)
+        tasks_result = repo.read_file(tasks_filename)
+        current_tasks = tasks_result["content"] if tasks_result else "- [ ] Aucune tâche trouvée."
+
+        # 3. Appel du modèle
+        user_prompt = (
+            f"## Tâches actuelles\n{current_tasks}\n\n"
+            f"## Instructions de pointage\n{instructions}"
+        )
+
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": get_generation_config(PLANNER_MODEL_UPDATE),
+            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT_UPDATE_TASKS}]},
+        }
+
+        res_json, model_key_used, reason = await EchoGeminiClient.call_cascade(
+            target_model_key=PLANNER_MODEL_UPDATE,
+            payload=payload,
+            user_id=user_id,
+            metadata=__metadata__,
+            events=events,
+            timeout=self.valves.PLANNER_TIMEOUT,
+            chat_id=chat_id,
+            include_thoughts=False,
+        )
+
+        if not res_json:
+            await events.status("❌ Échec de la mise à jour des tâches.", done=True)
+            return wrap_tool_output(text="❌ Échec : aucun modèle disponible.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+        new_tasks_content = self._extract_llm_text(res_json)
+        if not new_tasks_content:
+            await events.status("❌ Réponse vide pour les tâches.", done=True)
+            return wrap_tool_output(text="❌ Erreur : aucune tâche générée.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+        # 4. Commit silencieux
+        repo.commit_file(tasks_filename, new_tasks_content, f"Update tasks {plan_id}")
+
+        # 5. Évènement de notification UI
+        await events.status(f"ℹ️ Modification du statut des tâches (Plan {plan_id})", done=True)
+
+        return wrap_cascade_output(
+            text=f"### Tâches du plan `{plan_id}` mises à jour\n\n"
+                 f"**Modèle :** {model_key_used}\n"
+                 f"**Fichier :** `{tasks_filename}`\n\n"
+                 f"---\n\n{new_tasks_content}",
             model_requested=PLANNER_MODEL_UPDATE,
             model_used=model_key_used,
             reason=reason
