@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.48
+version: 192.49
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.49: Correction de l'affichage des pensées OWUI (accordéon) via levier d'indexation asymétrique et reasoning_content natif.
 # 192.48: Factorisation Auto-Continue : Fusion native de la cascade dans prepare_context et KV Store supprimé pour éviter la duplication.
 # 192.46: Restauration des balises <think> avec nettoyage strict anti-dédoublement (fallback Pipe).
 # 192.45: Migration vers reasoning_content natif (OpenAI format) pour corriger le défilement et l'affichage brut pendant le stream.
 # 192.44: Implémentation de l'Auto-Continue (reprise sur MAX_TOKENS) avec boucle d'inférence encapsulée et AEC système.
-# 192.42: Résolution fuite _TOOLS_CACHE (LRU 100), perte outils (suture cascade), purge code mort et résilience JSON.
 
 
 # ==============================================================================
@@ -403,14 +403,16 @@ class StreamProcessor:
                                 for part in content["parts"]:
                                     if "thoughtSignature" in part: self.captured_sig = part["thoughtSignature"]
                                     if part.get("thought"):
-                                        if not in_think: yield "<think>\n"; in_think = True
+                                        if not in_think:
+                                            yield " "
+                                            in_think = True
                                         chunk_text = part.get("text", "").replace("<think>", "").replace("</think>", "")
                                         if chunk_text:
-                                            yield chunk_text
+                                            yield {"choices": [{"index": 0, "delta": {"reasoning_content": chunk_text}}]}
                                     elif part.get("functionCall"):
                                         # [AUTO-CONTINUE] Verrouillage d'état lors de la construction d'un appel d'outil
                                         self.is_generating_tool = True
-                                        if in_think: yield "\n</think>\n"; in_think = False
+                                        if in_think: in_think = False
                                         tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
                                         if tool_call:
                                             yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
@@ -419,7 +421,7 @@ class StreamProcessor:
                                         # [AUTO-CONTINUE] Libération du verrou après complétion de l'appel d'outil
                                         self.is_generating_tool = False
                                     elif "text" in part:
-                                        if in_think: yield "\n</think>\n"; in_think = False
+                                        if in_think: in_think = False
                                         raw_t = part["text"].replace("<think>", "").replace("</think>", "")
                                         if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t: continue
                                         self.accumulated_text += raw_t; yield raw_t
@@ -430,9 +432,9 @@ class StreamProcessor:
                     except Exception as e:
                         if self.logger: self.logger.log("stream_decode_error", {"error": str(e), "chunk": full_json_str})
                         log.error(f"[StreamProcessor] Erreur de décodage du flux: {e} - Chunk: {full_json_str[:200]}")
-                        if in_think: yield "\n</think>\n"; in_think = False
+                        if in_think: in_think = False
                         yield f"\n\n> ❌ **Erreur critique de décodage du flux API** : {str(e)}\n"
-        if in_think: yield "\n</think>\n"
+        if in_think: in_think = False
         if self.logger: self.logger.log("api_response", self.full_raw_accumulator)
 
 # ==============================================================================
