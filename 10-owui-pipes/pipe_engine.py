@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.44
+version: 192.47
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.47: Remplacement des yield textuels par le canal d'event natif (events.status/toast) pour l'auto-continue.
+# 192.46: Migration vers reasoning_content natif (OpenAI format) pour corriger le défilement et l'affichage brut pendant le stream.
+# 192.45: Suppression des balises <think> littérales du flux de texte pour corriger l'affichage brut sous OWUI.
 # 192.44: Implémentation de l'Auto-Continue (reprise sur MAX_TOKENS) avec boucle d'inférence encapsulée et AEC système.
 # 192.43: Refactorisation PEP8 : Centralisation des imports en en-tête de fichier et suppression des imports locaux redondants.
-# 192.42: Résolution fuite _TOOLS_CACHE (LRU 100), perte outils (suture cascade), purge code mort et résilience JSON.
-# 192.41: Ablation complète de la fonctionnalité d'auto-continue (suppression Valve et relance sur MAX_TOKENS).
-# 192.39: Correction de Mojibakes ciblés (émojis et prime) liés à des corruptions d'encodage antérieures.
 
 
 # ==============================================================================
@@ -945,12 +945,14 @@ class Pipe:
                     if proc.is_generating_tool:
                         # Cas 1 : L'interruption a eu lieu durant la structuration JSON d'un appel de fonction.
                         # Le payload partiel est rejeté par le StreamProcessor. On injecte une directive punitive pour forcer la concision.
-                        yield "\n\n> ⚠️ *Appel d'outil tronqué (MAX_TOKENS). Reprise et correction automatique...*\n\n"
+                        await events.status("⚠️ Appel d'outil tronqué (MAX_TOKENS). Reprise et correction...")
+                        await events.toast("Appel d'outil trop volumineux : Reprise automatique de la génération.", "warning")
                         user_resp_parts = [{"text": "<AEC_evenement_systeme>\ntype: erreur_troncature_outil\nmessage: L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte).\ninstruction: Le modèle doit relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation.\n</AEC_evenement_systeme>"}]
                     else:
                         # Cas 2 : L'interruption a eu lieu sur du texte brut.
                         # Le texte existant a déjà été indexé. On injecte une directive de continuation pure.
-                        yield "\n\n> 🔄 *Reprise automatique de la génération (MAX_TOKENS)...*\n\n"
+                        await events.status("🔄 Reprise automatique de la génération (MAX_TOKENS)...")
+                        await events.toast("Limite de contexte (MAX_TOKENS) atteinte : Reprise automatique.", "info")
                         user_resp_parts = [{"text": "<AEC_evenement_systeme>\ntype: troncature_texte\nmessage: La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte.\ninstruction: Le modèle doit poursuivre la génération du texte à partir du point de troncature exact, sans introduction.\n</AEC_evenement_systeme>"}]
                         
                     # Suture sémantique de l'événement système pour maintenir l'invariant cognitif bit-perfect
