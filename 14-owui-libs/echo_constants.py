@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.58
+version: 5.59
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.59: Création de ECHO_TOOLS_CACHE_MAX_SIZE (100) pour plafonner la RAM du Bridge OWUI.
 # 5.58: Augmentation de ECHO_API_MAX_RETRIES à 5 tentatives.
 # 5.57: Ajout de ECHO_GLOBAL_TENANT_PROJECT_ID ("aicode-consumers") pour forcer le routage Code Assist et contourner les 429 persos.
 # 5.56: Mise à jour du modèle MODEL_FLASH de 3.7 vers 3.8.
 # 5.55: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
-# 5.54: Ajout de ECHO_SAFETY_SETTINGS (BLOCK_NONE) pour les appels Gemini.
 # 5.53: Création des constantes CONTEXT_LOAD_WARNING_THRESHOLD (40) et CONTEXT_LOAD_CRITICAL_THRESHOLD (60)
 # 5.52: Alignement protocole OAuth2 sur AGY IDE 2.5.5 (audit binaire main.js) :
 #       - ECHO_CLIENT_METADATA : ideType ANTIGRAVITY, ajout ideName/ideVersion/platform
@@ -35,6 +35,13 @@ except ImportError:
 
 # Racine unique de l'infrastructure de données
 ECHO_BASE_DATA_DIR = "/app/backend/data"
+
+# --- LIMITES MÉMOIRE GLOBALES ---
+# Définit le nombre maximum de sessions de chat gardées activement en RAM pour le 
+# pont des outils (Bridge _TOOLS_CACHE). Au-delà, un mécanisme LRU/FIFO éjecte
+# les anciennes sessions. Limite de sécurité "anti-memory leak" pour Uvicorn.
+# Fixé à 100 pour couvrir largement les usages simultanés sans saturer la RAM.
+ECHO_TOOLS_CACHE_MAX_SIZE = 100
 
 # HIÉRARCHIE ECHO SOUVERAINE (Standardisé)
 ECHO_USERS_ROOT = f"{ECHO_BASE_DATA_DIR}/users"

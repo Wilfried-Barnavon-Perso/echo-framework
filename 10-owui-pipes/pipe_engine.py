@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.41
+version: 192.42
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.42: Résolution fuite _TOOLS_CACHE (LRU 100), perte outils (suture cascade), purge code mort et résilience JSON.
 # 192.41: Ablation complète de la fonctionnalité d'auto-continue (suppression Valve et relance sur MAX_TOKENS).
 # 192.40: Encapsulation stricte des requêtes utilisateur avec balise sémantique <REQUETE_UTILISATEUR>.
 # 192.39: Correction de Mojibakes ciblés (émojis et prime) liés à des corruptions d'encodage antérieures.
 # 192.38: Purge des appels orphelins restants vers AuthService (auth.refresh_quota, PKCE) provoquant des NameError en fin de génération.
-# 192.37: Remplacement global des caractères Mojibake (corrompus en CP1252) par leurs émojis UTF-8 natifs.
 
 
 # ==============================================================================
@@ -55,7 +55,8 @@ from echo_ui import EchoUI
 from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO,
     FILE_INGESTION_STATUS,
-    CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
+    CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE,
+    ECHO_TOOLS_CACHE_MAX_SIZE
 )
 
 
@@ -344,7 +345,7 @@ class StreamProcessor:
         self.events = events or EchoEvents(); self.logger = logger
         self.usage_stats = None; self.captured_sig = None; self.accumulated_text = ""
         self.accumulated_calls = []; self.full_raw_accumulator = []
-        self.escalation_requested = None; self.hit_max_tokens = False
+        self.escalation_requested = None
 
     def _create_tool_call_part(self, func_call: dict, tool_index: int) -> Optional[dict]:
         name = func_call["name"]
@@ -381,9 +382,7 @@ class StreamProcessor:
                         if cand:
                             finish_reason = cand[0].get("finishReason")
                             content = cand[0].get("content")
-                            if finish_reason == "MAX_TOKENS":
-                                self.hit_max_tokens = True
-                            elif not content and finish_reason and finish_reason != "STOP":
+                            if not content and finish_reason and finish_reason not in ["STOP", "MAX_TOKENS"]:
                                 yield f"\n\n> ⚠️ï¸ **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
                                 return
                             if content:
@@ -404,6 +403,10 @@ class StreamProcessor:
                                         raw_t = part["text"]
                                         if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t: continue
                                         self.accumulated_text += raw_t; yield raw_t
+                    except std_json.JSONDecodeError:
+                        # Trame réseau probablement fragmentée, réintégration dans le tampon d'attente
+                        buffered_lines = [full_json_str]
+                        continue
                     except Exception as e:
                         if self.logger: self.logger.log("stream_decode_error", {"error": str(e), "chunk": full_json_str})
                         log.error(f"[StreamProcessor] Erreur de décodage du flux: {e} - Chunk: {full_json_str[:200]}")
@@ -493,6 +496,11 @@ class Pipe:
             # Bridge principal : stockage dans le cache module-level
             if chat_id:
                 _TOOLS_CACHE[chat_id] = __tools__
+                # Mécanisme de fenêtre glissante (Garbage Collection FIFO)
+                # Préserve les ECHO_TOOLS_CACHE_MAX_SIZE dernières sessions actives.
+                # Protège le processus Uvicorn d'une fuite de mémoire à long terme.
+                if len(_TOOLS_CACHE) > ECHO_TOOLS_CACHE_MAX_SIZE:
+                    _TOOLS_CACHE.pop(next(iter(_TOOLS_CACHE)))
                 _log_pipe.debug("_TOOLS_CACHE[%s] = %d outils", chat_id, len(__tools__))
 
         elif isinstance(__tools__, list) and __tools__:
@@ -850,18 +858,24 @@ class Pipe:
                 
                 # 2. Suture Sémantique (Relais Protocolé avec réinjection signée du texte précédent)
                 sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
+                tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
                 model_parts = []
                 if proc.accumulated_text:
                     model_parts.append({"text": proc.accumulated_text, "thoughtSignature": sig_to_apply})
 
                 model_parts.append({"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": sig_to_apply})
 
+                # Récupération des appels parallèles orphelins
+                if proc.accumulated_calls:
+                    for c in proc.accumulated_calls:
+                        model_parts.append({"functionCall": {"name": c["name"], "args": c["args"]}, "thoughtSignature": sig_to_apply})
+
                 # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
                 model_msg = {"role": "model", "parts": model_parts}
-                inv = orch.user_data_manager.calculate_invariant("model", model_parts)
+                inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
                 new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
                 orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, user_msg_id)
-                orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, None, user_msg_id, target_model)
+                orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, user_msg_id, target_model)
                 cascade_history.append(model_msg)
                 current_cumul = new_cumul
 
@@ -873,6 +887,17 @@ class Pipe:
                 }
                 msg = f"Transfert effectué vers {target_req}."
                 user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {**escalation_status, "message": msg, "plan": plan_md}}}]
+                
+                # Annulation formelle des appels parallèles orphelins pour préserver le schéma strict
+                if proc.accumulated_calls:
+                    for c in proc.accumulated_calls:
+                        user_resp_parts.append({
+                            "functionResponse": {
+                                "name": c["name"],
+                                "response": {"status": "error", "message": "Exécution annulée (Escalade cognitive prioritaire). Veuillez relancer cet outil."}
+                            }
+                        })
+
                 user_msg = {"role": "user", "parts": user_resp_parts}
                 inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
                 new_cumul_u = orch.user_data_manager.calculate_cumulative(inv_u, current_cumul)
