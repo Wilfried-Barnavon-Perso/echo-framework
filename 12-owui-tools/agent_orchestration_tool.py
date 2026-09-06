@@ -130,7 +130,7 @@ class Tools:
         
         content = get_skill_content(user_id, skill_id)
         if not content:
-            return wrap_tool_output(text=f"❌ Erreur : Le skill '{skill_id}' n'existe pas.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=f"Le skill '{skill_id}' n'existe pas.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         msg_html = f'''
         <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
@@ -171,15 +171,15 @@ class Tools:
             if success:
                 if __event_emitter__:
                     await __event_emitter__({"type": "status", "data": {"description": f"Skill {skill_id} supprimé avec succès.", "done": True}})
-                return wrap_tool_output(text=f"✅ Succès : Le skill '{skill_id}' a été supprimé.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text=f"Le skill '{skill_id}' a été supprimé.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             else:
                 if __event_emitter__:
                     await __event_emitter__({"type": "status", "data": {"description": f"Erreur système lors de la suppression de {skill_id}.", "done": True}})
-                return wrap_tool_output(text=f"❌ Erreur : Impossible de supprimer le skill '{skill_id}'.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text=f"Impossible de supprimer le skill '{skill_id}'.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         else:
             if __event_emitter__:
                 await __event_emitter__({"type": "status", "data": {"description": "Suppression non confirmée par l'utilisateur.", "done": True}})
-            return wrap_tool_output(text="🚫 Annulé : L'utilisateur n'a pas confirmé la suppression (ou délai expiré).", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text="L'utilisateur a refusé ou délai expiré.", status={"status": "cancelled"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     # ==========================================================================
     # 2. CONSEIL D'EXPERTS (Protocole Delphi via delegate_to_agent)
