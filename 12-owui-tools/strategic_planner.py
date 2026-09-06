@@ -1,13 +1,13 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.8
+version: 1.9
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.9: Création de process_plan, modale optionnelle, verrouillage frontend de update_plan contre les démarrages illicites.
 # 1.8: Refonte architecturale séparant la stratégie (plan) et la tactique (tasks). Création d'update_tasks avec évènements silencieux.
-# 1.7: Validation obligatoire des plans (build et update) via UI modale (window.echoCustomConfirm).
 # 1.6: Nettoyage du code : suppression des imports inutilisés (PEP8).
 # 1.5: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
 # 1.4: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du dossier plans/.
@@ -119,9 +119,10 @@ class Tools:
     
     DIRECTIVE ORCHESTRATEUR (OBLIGATION DE SUIVI ET VALIDATION) :
     1. Validation : L'outil build_plan sauvegarde nativement la stratégie et les tâches dans le Codex. Apres creation, l'Orchestrateur DOIT presenter le plan a l'Utilisateur et obtenir son accord explicite.
-    2. Execution Sequentielle : L'Orchestrateur DOIT executer les phases du plan chronologiquement.
-    3. Suivi Tactique : L'Orchestrateur a l'OBLIGATION STRICTE de pointer l'avancement. A chaque etape technique franchie, il DOIT invoquer l'outil `update_tasks` pour mettre a jour les statuts AVANT d'entreprendre l'etape suivante. (Ce processus est silencieux).
-    4. Pivot Strategique : Si l'objectif ou les criteres de reussite changent en cours de route, le Modele DOIT utiliser `update_plan`. Ceci declenchera une modale de validation manuelle pour des raisons de securite.
+    2. Amorçage : Une fois le plan validé, l'Orchestrateur a l'OBLIGATION d'invoquer `process_plan` pour basculer le système en exécution et recevoir ses directives tactiques.
+    3. Execution Sequentielle : L'Orchestrateur DOIT executer les phases du plan chronologiquement.
+    4. Suivi Tactique : L'Orchestrateur a l'OBLIGATION STRICTE de pointer l'avancement. A chaque etape technique franchie, il DOIT invoquer l'outil `update_tasks` pour mettre a jour les statuts AVANT d'entreprendre l'etape suivante. (Ce processus est silencieux).
+    5. Pivot Strategique : Si l'objectif ou les criteres de reussite changent en cours de route, le Modele DOIT utiliser `update_plan`. Ceci declenchera une modale de validation manuelle pour des raisons de securite.
     """
     class Valves(BaseModel):
         PLANNER_TIMEOUT: int = Field(
@@ -345,9 +346,9 @@ class Tools:
         user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
 
         if user_confirmed:
-            state.update_resource_status(plan_id, 'approved')
-            user_decision = "Validation accordée par l'Utilisateur. Le Modèle est autorisé à procéder à l'exécution de la première tâche."
-            final_status = "approved"
+            state.update_resource_status(plan_id, 'ready')
+            user_decision = "Validation accordée par l'Utilisateur. Le Modèle DOIT MAINTENANT invoquer l'outil `process_plan` avec le paramètre `user_already_validated=True` pour démarrer formellement l'exécution."
+            final_status = "ready"
             if __event_emitter__:
                 await __event_emitter__({"type": "status", "data": {"description": f"✅ Plan {plan_id} approuvé.", "done": True}})
         else:
@@ -472,7 +473,17 @@ class Tools:
 
         # Synchronisation du statut temporaire (avant validation)
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        
+        current_status = self._extract_frontmatter_status(current_content)
         new_status = self._extract_frontmatter_status(new_content)
+
+        # Gatekeeper : Interdiction absolue de bypass process_plan
+        if new_status == 'executing' and current_status != 'executing':
+            await events.status("ERREUR : Tentative de démarrage illicite bloquée.", done=True)
+            return wrap_tool_output(
+                text="ACTION INTERDITE : Le passage au statut 'executing' est verrouillé pour des raisons de sécurité. Vous n'avez pas le droit d'utiliser `update_plan` pour cela. Vous DEVEZ obligatoirement invoquer l'outil `process_plan` pour démarrer l'exécution d'un plan.",
+                user_id=user_id, chat_id=chat_id, metadata=__metadata__
+            )
 
         # Construction de la modale d'approbation pour la mise à jour
         msg_html = f'''
@@ -618,6 +629,94 @@ class Tools:
             model_used=model_key_used,
             reason=reason
         , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def process_plan(
+        self, plan_id: str, user_already_validated: bool = False,
+        __user__: Optional[dict] = None, __metadata__: Optional[dict] = None,
+        __event_emitter__: Optional[Any] = None, __event_call__: Optional[Any] = None,
+    ) -> dict:
+        """
+        Outil D'AMORÇAGE OBLIGATOIRE. Déclenche l'exécution officielle d'un plan.
+        Le Modèle DOIT invoquer cet outil AVANT de commencer la première tâche d'un plan.
+        
+        :param plan_id: Identifiant unique du plan.
+        :param user_already_validated: Booléen (défaut False). Mettre à True UNIQUEMENT si l'Utilisateur vient de valider explicitement le plan lors d'un appel immédiat et précédent à `build_plan`. Si False, une modale de confirmation demandera formellement l'accord de l'utilisateur.
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        chat_id = (__metadata__ or {}).get("chat_id")
+
+        if not chat_id:
+            await events.status("Erreur : Aucun chat_id détecté.", done=True)
+            return wrap_tool_output(text="Erreur : Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
+
+        # 1. Vérification d'existence
+        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        if not result:
+            await events.status(f"Erreur : Plan {plan_id} introuvable.", done=True)
+            return wrap_tool_output(text=f"Erreur : Plan `{plan_id}` introuvable.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+
+        plan_filename = result["filename"]
+        tasks_filename = "tasks_" + plan_filename
+        plan_content = result["content"]
+
+        # 2. Modale de confirmation (Si non validé précédemment)
+        if not user_already_validated:
+            msg_html = f'''
+            <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
+                Lancement du Plan : Confirmez-vous l'exécution de <b>{plan_id}</b> ?
+            </div>
+            '''
+            msg_escaped = json.dumps(msg_html).decode('utf-8')
+            modals_injection = EchoUI.get_custom_modals_js()
+            js_code = f"""
+            {modals_injection}
+            return await new Promise((resolve) => {{
+                window.echoCustomConfirm({msg_escaped}, (result) => resolve(result));
+            }});
+            """
+            if __event_emitter__:
+                await __event_emitter__({"type": "status", "data": {"description": f"Attente de confirmation pour lancer le plan {plan_id}...", "done": False}})
+                
+            user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
+            if not user_confirmed:
+                await events.status(f"Lancement du plan {plan_id} refusé par l'utilisateur.", done=True)
+                return wrap_tool_output(text="Refus : L'Utilisateur a refusé de lancer l'exécution du plan. Attendez ses consignes.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+
+        # 3. Remplacement du statut dans le frontmatter (draft|ready -> executing)
+        import re
+        new_plan_content = re.sub(r"^status:\s*(\w+)", "status: executing", plan_content, flags=re.MULTILINE)
+        
+        repo = CodexRepo(user_id, chat_id)
+        repo.commit_file(plan_filename, new_plan_content, f"Start execution {plan_id}")
+
+        # 4. Mise à jour de l'état SQLite
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        state.update_resource_status(plan_id, 'executing')
+
+        # 5. Lecture silencieuse des tâches
+        tasks_result = repo.read_file(tasks_filename)
+        tasks_text = tasks_result["content"] if tasks_result else "- [ ] Fichier de tâches introuvable."
+
+        # 6. Évènement UI
+        await events.status(f"Exécution du plan {plan_id} amorcée.", done=True)
+
+        # 7. Directive Cognitive
+        directive = f"""=== STRATÉGIE ===
+{new_plan_content}
+
+=== TÂCHES ===
+{tasks_text}
+
+=== DIRECTIVES TACTIQUES ABSOLUES POUR LE MODÈLE ===
+Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
+
+1. SÉQUENTIALITÉ : Le Modèle DOIT exécuter les tâches strictement dans l'ordre de la liste ci-dessus.
+2. POINTAGE OBLIGATOIRE : Après CHAQUE tâche accomplie (ou échouée), le Modèle a l'OBLIGATION ABSOLUE d'utiliser l'outil `update_tasks` pour mettre à jour la liste.
+3. ENDURANCE : Le Modèle DOIT POURSUIVRE l'exécution ininterrompue des tâches jusqu'à la finalisation intégrale du plan.
+4. CLÔTURE : Une fois la dernière tâche terminée, le Modèle DOIT utiliser `update_plan` pour modifier le statut du plan en `success` (ou `failed`) ET ajouter une section `## Synthèse d'exécution` résumant les actions menées.
+"""
+        return wrap_tool_output(text=directive, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
     async def delete_plan(
         self,
