@@ -1,16 +1,16 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.46
+version: 192.48
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.48: Factorisation Auto-Continue : Fusion native de la cascade dans prepare_context et KV Store supprimé pour éviter la duplication.
 # 192.46: Restauration des balises <think> avec nettoyage strict anti-dédoublement (fallback Pipe).
 # 192.45: Migration vers reasoning_content natif (OpenAI format) pour corriger le défilement et l'affichage brut pendant le stream.
 # 192.44: Implémentation de l'Auto-Continue (reprise sur MAX_TOKENS) avec boucle d'inférence encapsulée et AEC système.
-# 192.43: Refactorisation PEP8 : Centralisation des imports en en-tête de fichier et suppression des imports locaux redondants.
 # 192.42: Résolution fuite _TOOLS_CACHE (LRU 100), perte outils (suture cascade), purge code mort et résilience JSON.
 
 
@@ -208,18 +208,6 @@ class Orchestrator:
                         inv_hash = self.user_data_manager.calculate_invariant(role, shadow_data)
                         last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
                         
-                        if role == "user":
-                            try:
-                                cascade_str = self.user_data_manager.state_manager.get_auth_data(f"cascade_{msg_id}")
-                                if cascade_str:
-                                    cascade_history = std_json.loads(cascade_str)
-                                    for cm_msg in cascade_history:
-                                        final_contents.append(cm_msg)
-                                        cm_inv_hash = self.user_data_manager.calculate_invariant(cm_msg["role"], cm_msg["parts"])
-                                        last_cumul = self.user_data_manager.calculate_cumulative(cm_inv_hash, last_cumul)
-                            except Exception:
-                                pass
-                        
                         i += 1; continue
 
             # --- PRIORITÉ 2 : RECONSTRUCTION NORMALE (Fallback ou Cache Miss Temporel) ---
@@ -301,16 +289,7 @@ class Orchestrator:
             last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
 
             if role == "user" and msg_id:
-                try:
-                    cascade_str = self.user_data_manager.state_manager.get_auth_data(f"cascade_{msg_id}")
-                    if cascade_str:
-                        cascade_history = std_json.loads(cascade_str)
-                        for cm_msg in cascade_history:
-                            final_contents.append(cm_msg)
-                            cm_inv_hash = self.user_data_manager.calculate_invariant(cm_msg["role"], cm_msg["parts"])
-                            last_cumul = self.user_data_manager.calculate_cumulative(cm_inv_hash, last_cumul)
-                except Exception:
-                    pass
+                pass
 
         # --- SATURATION ET TRONCATURE ---
         if events:
@@ -319,9 +298,9 @@ class Orchestrator:
             
             if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
                 try:
-                    await events.toast("⚠️ï¸ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "warning")
+                    await events.toast("⚠️ï¸  Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "warning")
                 except AttributeError:
-                    await events.emit({"type": "toast", "data": {"title": "ECHO V5", "message": "⚠️ï¸ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "type": "warning"}})
+                    await events.emit({"type": "toast", "data": {"title": "ECHO V5", "message": "⚠️ï¸  Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "type": "warning"}})
             
             if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                 system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
@@ -361,7 +340,33 @@ class StreamProcessor:
             return None
         tc_id = f"echo-{secrets.token_hex(8)}"
         self.accumulated_calls.append({"id": tc_id, "name": name, "args": args})
+        return self._build_openai_tool_call(tool_index, tc_id, name, args)
+
+    def _build_openai_tool_call(self, tool_index: int, tc_id: str, name: str, args: dict) -> dict:
         return {"index": tool_index, "id": tc_id, "type": "function", "function": {"name": name, "arguments": std_json.dumps(args).decode('utf-8')}}
+
+    def _filter_cascade_for_shadow(self, cascade_history: List[Dict]) -> List[Dict]:
+        """
+        Analyse l'historique de la cascade pour la sauvegarde du shadow.
+        - Retourne la cascade entière si erreurs complexes (Tool Error, Cascade Cognitive).
+        - Retourne les parties fusionnées du modèle si uniquement auto-continue (MAX_TOKENS).
+        """
+        is_complex = False
+        for msg in cascade_history:
+            if msg["role"] == "user":
+                part_text = msg.get("parts", [{}])[0].get("text", "") if msg.get("parts") else ""
+                if "MAX_TOKENS" not in part_text:
+                    is_complex = True
+                    break
+        
+        if is_complex:
+            return cascade_history
+            
+        fused_parts = []
+        for msg in cascade_history:
+            if msg["role"] in ["model", "assistant"]:
+                fused_parts.extend(msg.get("parts", []))
+        return fused_parts
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False; buffer = ""; decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
@@ -560,7 +565,7 @@ class Pipe:
         auth_providers = await echo_auth.get_ordered_auth_providers(__user__["id"])
 
         if api_key_from_filter:
-            await events.status("🔒 Validation de l'authentification Google...")
+            await events.status("🔒  Validation de l'authentification Google...")
             success, msg = False, 'Désactivé'
             if success:
                 yield (
@@ -832,7 +837,7 @@ class Pipe:
                 
                 # Vérification des droits (Valve)
                 if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PRO:
-                    await events.status(f"⚠️ï¸ Transfert vers MODEL_PRO refusé (Valve AUTO).")
+                    await events.status(f"⚠️ï¸  Transfert vers MODEL_PRO refusé (Valve AUTO).")
                     # Signalement de refus au modèle actuel
                     context.append({
                         "role": "model",
@@ -845,7 +850,7 @@ class Pipe:
                     continue # On reboucle avec le MÊME target_model
                 
                 if new_target == target_model:
-                    await events.status(f"⚠️ï¸ Auto-transfert annulé ({target_req}).")
+                    await events.status(f"⚠️ï¸  Auto-transfert annulé ({target_req}).")
                     context.append({
                         "role": "model",
                         "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
@@ -1040,7 +1045,9 @@ class Pipe:
                         pass
             
             if asst_msg_id and cascade_history:
-                orch.user_data_manager.save_shadow(asst_msg_id, int(time.time()), cascade_history, chat_id, "assistant")
+                final_shadow_content = proc._filter_cascade_for_shadow(cascade_history)
+                if final_shadow_content:
+                    orch.user_data_manager.save_shadow(asst_msg_id, int(time.time()), final_shadow_content, chat_id, "assistant")
             user_msg_id = __metadata__.get("_echo_user_msg_id") if __metadata__ else None
             if cascade_history and user_msg_id:
                 try:
