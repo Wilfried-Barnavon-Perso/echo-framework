@@ -2,16 +2,16 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.24
+version: 1.25
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.25: Fix HUD WebGPU (Saut de position lors du clignotement) via CSS scale indépendant.
 # 1.24: Optimisation (Bypass Serveur-Side) empêchant l'injection JS sur mobile et purge du code mort associé.
 # 1.23: Désactivation totale de WebGPU sur mobile (Fallback CPU immédiat).
 # 1.22: Fix bypass timeout. Support du statut connecting et timeout unknown à 5s.
 # 1.21: Rétablissement de q4f16 pour compatibilité WebGPU stricte.
-# 1.20: Fast-Failover WebGPU, sécurisation mobile q4 et tenseur sentence_embedding.
 # 1.18: Purge des références bge-m3. Fix fallback q4 universel pour GPU mobiles (Android).
 # 1.17: Fix compatibilité Android (suppression du setTimeout et de la transparence causant l'invisibilité de l'icône).
 # 1.14: Fix HUD WebGPU Mobile (Opacité/Morphing) et standardisation 1024D (Harrier 0.6b).
@@ -89,7 +89,7 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        SCRIPT_VERSION = "1.24"
+        SCRIPT_VERSION = "1.25"
         
         # --- SYNCHRONISATION DYNAMIQUE DU MODÈLE (CPU -> GPU) ---
         import httpx
@@ -170,9 +170,9 @@ class Filter:
                 style.id = styleId;
                 style.innerHTML = `
                     @keyframes echoComputePulse {
-                        0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); transform: scale(0.95); }
-                        70% { box-shadow: 0 0 0 8px rgba(56, 189, 248, 0); transform: scale(1); }
-                        100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); transform: scale(0.95); }
+                        0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); scale: 0.95; }
+                        70% { box-shadow: 0 0 0 8px rgba(56, 189, 248, 0); scale: 1; }
+                        100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); scale: 0.95; }
                     }
                     .echo-gpu-computing {
                         animation: echoComputePulse 1s infinite !important;
