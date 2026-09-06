@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.42
+version: 192.43
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.43: Refactorisation PEP8 : Centralisation des imports en en-tête de fichier et suppression des imports locaux redondants.
 # 192.42: Résolution fuite _TOOLS_CACHE (LRU 100), perte outils (suture cascade), purge code mort et résilience JSON.
 # 192.41: Ablation complète de la fonctionnalité d'auto-continue (suppression Valve et relance sur MAX_TOKENS).
 # 192.40: Encapsulation stricte des requêtes utilisateur avec balise sémantique <REQUETE_UTILISATEUR>.
 # 192.39: Correction de Mojibakes ciblés (émojis et prime) liés à des corruptions d'encodage antérieures.
-# 192.38: Purge des appels orphelins restants vers AuthService (auth.refresh_quota, PKCE) provoquant des NameError en fin de génération.
 
 
 # ==============================================================================
@@ -19,6 +19,7 @@ description: Composant système interne : ECHO Engine.
 # ==============================================================================
 import os
 import sys
+import copy
 import secrets
 import hashlib
 import re
@@ -28,7 +29,7 @@ import pybase64 as base64
 import codecs
 import asyncio
 import orjson as std_json 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Any, Union
 
 # Importations ECHO Strictes (Volume Docker)
@@ -56,8 +57,11 @@ from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO,
     FILE_INGESTION_STATUS,
     CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE,
-    ECHO_TOOLS_CACHE_MAX_SIZE
+    ECHO_TOOLS_CACHE_MAX_SIZE,
+    ECHO_MODELS_REGISTRY, get_model_identity, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
+    AUTH_DATA_USER_EMAIL, AUTH_DATA_USER_TIER, AUTH_DATA_PROJECT_ID
 )
+from echo_auth import EchoAuth
 
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
@@ -461,7 +465,6 @@ class Pipe:
         chat_id = kwargs.get("__chat_id__") or body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
         # auth = AuthService(user_id=__user__["id"])  # [192.36] DÉSACTIVÉ : AuthService n'existe plus.
-        from echo_auth import EchoAuth
         echo_auth = EchoAuth(user_id=__user__["id"])
 
         # Injection politiques Pipe → __metadata__ (non propagé aux outils par OWUI, conservé pour usage interne pipe)
@@ -533,7 +536,6 @@ class Pipe:
         )
 
         # Persistance identity.db → lu par clamp_model() côté outils (fallback SQLite)
-        from echo_state_manager import EchoStateManager
         _settings = EchoStateManager(user_id=__user__["id"])
         _settings.save_setting("model_policy", user_valves.MODEL_SELECTION)
         _settings.save_setting("enable_paid_credits", str(user_valves.ENABLE_PAID_CREDITS))
@@ -562,8 +564,7 @@ class Pipe:
         # --- AUTHENTIFICATION PKCE (Authorization Code + PKCE RFC 7636) ---
         # Tunnel SSH ephemere asyncssh - ports dynamiques - multi-user natif.
         if not auth_providers:
-            from echo_auth import EchoAuth as _EchoAuth
-            _ea = _EchoAuth(user_id=__user__["id"])
+            _ea = EchoAuth(user_id=__user__["id"])
             pkce_pending = _ea.get_auth_data("pkce_status") == "pending"
 
             try:
@@ -600,7 +601,6 @@ class Pipe:
         # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
         model_selection = user_valves.MODEL_SELECTION
         last_model = orch.user_data_manager.get_last_active_model()
-        from echo_constants import ECHO_MODELS_REGISTRY
         
         # Reverse-lookup (Auto-heal SQLite)
         if last_model and last_model != "aucun" and last_model not in ECHO_MODELS_REGISTRY:
@@ -676,7 +676,6 @@ class Pipe:
             resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
-            import copy
             gen_config = copy.deepcopy(ECHO_MODELS_REGISTRY.get(target_model, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
             if "thinkingConfig" in gen_config:
                 gen_config["thinkingConfig"]["includeThoughts"] = True
@@ -695,7 +694,6 @@ class Pipe:
                 menu_escalade = ["MODEL_LITE", "MODEL_FLASH"]
                 if user_valves.MODEL_SELECTION == "AUTO_PRO":
                     menu_escalade.append("MODEL_PRO")
-                from echo_constants import get_model_identity
                 target_identity = get_model_identity(target_model)
                 if target_identity in menu_escalade:
                     menu_escalade.remove(target_identity)
@@ -765,7 +763,6 @@ class Pipe:
                 log.error(f"[PipeEngine] Erreur API lors de l'appel Gemini: {e}")
                 # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
                 if is_auto and cascade_attempt < max_cascade_attempts:
-                    from echo_constants import ECHO_MODELS_REGISTRY, get_model_identity
                     target_identity = get_model_identity(target_model)
                     if target_identity == 'UNKNOWN': target_identity = 'MODEL_FLASH'
                     target_hierarchy = ECHO_MODELS_REGISTRY.get(target_identity, {}).get("hierarchy")
@@ -783,8 +780,6 @@ class Pipe:
                         orch._mutate_context_identity(context, target_model, prev_model)
                     else:
                         # Plus de modèle inférieur → échec terminal
-                        from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
-                        from datetime import datetime, timedelta
                         resume_time = datetime.now().astimezone() + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)
                         time_str = resume_time.strftime("%H:%M:%S")
                         yield f"❌ Cascade épuisée : tous les modèles sont indisponibles. Reprise estimée dans {ECHO_ENDPOINT_LOCK_TIMEOUT_MIN} min (vers {time_str}). ({str(e)})"
@@ -805,7 +800,6 @@ class Pipe:
                 target_req = req.get("niveau_requis")
                 
                 # Mapping explicite pour gérer la montée ET la redescente
-                from echo_constants import get_model_identity
                 new_target = get_model_identity(target_req)
                 
                 if not new_target:
@@ -1031,7 +1025,6 @@ class Pipe:
             quota_str = ""
             
             # Métadonnées d'identité pour l'infobulle (INFO GEMINI CODE ASSIST)
-            from echo_constants import AUTH_DATA_USER_EMAIL, AUTH_DATA_USER_TIER, AUTH_DATA_PROJECT_ID
             email = echo_auth.get_auth_data(AUTH_DATA_USER_EMAIL)
             tier = echo_auth.get_auth_data(AUTH_DATA_USER_TIER)
             proj = echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
@@ -1055,7 +1048,6 @@ class Pipe:
             if "T" in q_reset_raw:
                 try:
                     q_reset = q_reset_raw.split("T")[1][:5]
-                    from datetime import datetime, timezone
                     reset_dt = datetime.fromisoformat(q_reset_raw.replace("Z", "+00:00"))
                     diff_min = int((reset_dt - datetime.now(timezone.utc)).total_seconds() / 60)
                     if diff_min > 0:

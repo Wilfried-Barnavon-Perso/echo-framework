@@ -2,11 +2,12 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.23
+version: 1.24
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.24: Optimisation (Bypass Serveur-Side) empêchant l'injection JS sur mobile et purge du code mort associé.
 # 1.23: Désactivation totale de WebGPU sur mobile (Fallback CPU immédiat).
 # 1.22: Fix bypass timeout. Support du statut connecting et timeout unknown à 5s.
 # 1.21: Rétablissement de q4f16 pour compatibilité WebGPU stricte.
@@ -69,6 +70,18 @@ class Filter:
         if not __event_emitter__:
             return body
             
+        # --- BYPASS SERVEUR-SIDE POUR MOBILES ---
+        # Le pont WebGPU est instable/inefficace sur mobile.
+        # On court-circuite l'injection JS et la boucle d'attente.
+        if __request__:
+            user_agent = __request__.headers.get("user-agent", "").lower()
+            import re
+            if re.search(r'mobi|android|iphone|ipad|ipod', user_agent):
+                import logging
+                logger = logging.getLogger("ECHO-EDGE-BRIDGE")
+                logger.info(f"📱 Bypass Mobile (Server-Side) : Pont WebGPU ignoré pour ce client.")
+                return body
+
         user_id = __user__.get("id", "anonymous") if __user__ else "anonymous"
 
         # Code JavaScript (Data Island) :
@@ -76,7 +89,7 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        SCRIPT_VERSION = "1.23"
+        SCRIPT_VERSION = "1.24"
         
         # --- SYNCHRONISATION DYNAMIQUE DU MODÈLE (CPU -> GPU) ---
         import httpx
@@ -92,10 +105,6 @@ class Filter:
         # Assignation stricte (Harrier-OSS)
         target_repo = "onnx-community/harrier-oss-v1-0.6b-ONNX"
         
-        # NOTE: Le target_dtype injecté ici servira de fallback absolu pour Mobile.
-        # Sur PC, le JavaScript (via isMobile) basculera automatiquement sur 'fp16'
-        # pour exploiter la pleine puissance du GPU.
-        target_dtype = "q4f16"
         hud_title = "Harrier 0.6B"
 
         js_code = """
@@ -141,13 +150,6 @@ class Filter:
                     const ws = new WebSocket(wsUrl);
                     ws.onopen = () => { ws.send(JSON.stringify({ type: 'incompatible' })); ws.close(); };
                 } catch(e) {}
-            }
-
-            // HARDWARE CHECK REVISE ET ACTIF
-            const isEarlyMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-            if (isEarlyMobile) {
-                sendIncompatibleAndExit("WebGPU désactivé sur mobile (stabilité)");
-                return;
             }
 
             if (typeof navigator === 'undefined' || !navigator.gpu) {
@@ -360,9 +362,8 @@ class Filter:
                             
                             if (!isModelLoaded) {
                                 try {
-                                    const isMobile = /Mobi|Android/i.test(navigator.userAgent);
                                     const targetRepo = '__TARGET_REPO__';
-                                    const targetDtype = isMobile ? '__TARGET_DTYPE__' : 'fp16';
+                                    const targetDtype = 'fp16'; // Toujours fp16 (Desktop exclusif)
                                     
                                     globalTokenizer = await transformers.AutoTokenizer.from_pretrained(targetRepo);
                                     globalModel = await transformers.AutoModel.from_pretrained(targetRepo, {
@@ -428,14 +429,8 @@ class Filter:
                                 yOffset = 0;
                                 hud.style.transform = 'translate3d(0, 0, 0)';
                                 
-                                const isMobileDevice = /Mobi|Android/i.test(navigator.userAgent);
-                                if (isMobileDevice) {
-                                    hud.style.left = 'calc(50% + 75px)';
-                                    hud.style.opacity = '1';
-                                } else {
-                                    hud.style.left = 'calc(50% + 90px)';
-                                    hud.style.opacity = '0.85';
-                                }
+                                hud.style.left = 'calc(50% + 90px)';
+                                hud.style.opacity = '0.85';
                                 
                                 hud.title = "ECHO Edge WebGPU actif (__HUD_TITLE__)";
                             }
@@ -539,7 +534,6 @@ class Filter:
 
         # Injections dynamiques
         js_code = js_code.replace('__TARGET_REPO__', target_repo)
-        js_code = js_code.replace('__TARGET_DTYPE__', target_dtype)
         js_code = js_code.replace('__HUD_TITLE__', hud_title)
         js_code = js_code.replace('__USER_ID__', user_id)
 
