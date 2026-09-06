@@ -1,16 +1,16 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.43
+version: 192.44
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.44: Implémentation de l'Auto-Continue (reprise sur MAX_TOKENS) avec boucle d'inférence encapsulée et AEC système.
 # 192.43: Refactorisation PEP8 : Centralisation des imports en en-tête de fichier et suppression des imports locaux redondants.
 # 192.42: Résolution fuite _TOOLS_CACHE (LRU 100), perte outils (suture cascade), purge code mort et résilience JSON.
 # 192.41: Ablation complète de la fonctionnalité d'auto-continue (suppression Valve et relance sur MAX_TOKENS).
-# 192.40: Encapsulation stricte des requêtes utilisateur avec balise sémantique <REQUETE_UTILISATEUR>.
 # 192.39: Correction de Mojibakes ciblés (émojis et prime) liés à des corruptions d'encodage antérieures.
 
 
@@ -350,6 +350,8 @@ class StreamProcessor:
         self.usage_stats = None; self.captured_sig = None; self.accumulated_text = ""
         self.accumulated_calls = []; self.full_raw_accumulator = []
         self.escalation_requested = None
+        # [AUTO-CONTINUE] Suivi granulaire de l'état du flux pour la détection des troncatures
+        self.last_finish_reason = None; self.is_generating_tool = False
 
     def _create_tool_call_part(self, func_call: dict, tool_index: int) -> Optional[dict]:
         name = func_call["name"]
@@ -386,9 +388,12 @@ class StreamProcessor:
                         if cand:
                             finish_reason = cand[0].get("finishReason")
                             content = cand[0].get("content")
-                            if not content and finish_reason and finish_reason not in ["STOP", "MAX_TOKENS"]:
-                                yield f"\n\n> ⚠️ï¸ **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
-                                return
+                            if finish_reason:
+                                # [AUTO-CONTINUE] Capture systématique de la raison d'arrêt pour déclenchement ultérieur
+                                self.last_finish_reason = finish_reason
+                                if not content and finish_reason not in ["STOP", "MAX_TOKENS"]:
+                                    yield f"\n\n> ⚠️ï¸  **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
+                                    return
                             if content:
                                 for part in content["parts"]:
                                     if "thoughtSignature" in part: self.captured_sig = part["thoughtSignature"]
@@ -396,12 +401,16 @@ class StreamProcessor:
                                         if not in_think: yield "<think>\n"; in_think = True
                                         yield part.get("text", "")
                                     elif part.get("functionCall"):
+                                        # [AUTO-CONTINUE] Verrouillage d'état lors de la construction d'un appel d'outil
+                                        self.is_generating_tool = True
                                         if in_think: yield "\n</think>\n"; in_think = False
                                         tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
                                         if tool_call:
                                             yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
                                         else:
                                             return # Escalade
+                                        # [AUTO-CONTINUE] Libération du verrou après complétion de l'appel d'outil
+                                        self.is_generating_tool = False
                                     elif "text" in part:
                                         if in_think: yield "\n</think>\n"; in_think = False
                                         raw_t = part["text"]
@@ -455,6 +464,8 @@ class Pipe:
         # Plus de valves pour ces paramètres.
         ENABLE_PAID_CREDITS: bool = Field(default=False, description="Activer l'utilisation des crédits Google One AI pour les requêtes OAuth2. Désactivé par défaut.")
         MAX_CASCADE_ATTEMPTS: int = Field(default=5, ge=3, le=10, description="Nombre max de transferts de modèles autorisés par tour.")
+        # [AUTO-CONTINUE] Valve contrôlant le nombre maximal de boucles de relance automatique autorisées en cas de troncature API (MAX_TOKENS).
+        ECHO_AUTO_CONTINUE_MAX: int = Field(default=2, ge=1, le=10, description="Nombre max de relances si le modèle est interrompu (MAX_TOKENS).")
 
     def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
 
@@ -661,6 +672,9 @@ class Pipe:
         
         max_cascade_attempts = user_valves.MAX_CASCADE_ATTEMPTS
         cascade_attempt = 0
+        # [AUTO-CONTINUE] Initialisation des compteurs de relance pour sécuriser la boucle de génération
+        max_auto_continue = user_valves.ECHO_AUTO_CONTINUE_MAX
+        auto_continue_attempts = 0
         cumulative_usage_stats = {"promptTokenCount": 0, "cachedContentTokenCount": 0, "candidatesTokenCount": 0, "totalTokenCount": 0}
         
         # [NOUVEAU] HISTORIQUE DE CASCADE POUR SUTURE & SHADOW
@@ -923,6 +937,34 @@ class Pipe:
                     orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, user_msg_id, target_model)
                     cascade_history.append(model_msg)
                     current_cumul = new_cumul
+
+                # [NOUVEAU] GESTION DE L'AUTO-CONTINUE (MAX_TOKENS)
+                # Mécanisme de relance encapsulée empêchant l'arrêt prématuré de la génération.
+                if proc.last_finish_reason == "MAX_TOKENS" and auto_continue_attempts < max_auto_continue:
+                    auto_continue_attempts += 1
+                    if proc.is_generating_tool:
+                        # Cas 1 : L'interruption a eu lieu durant la structuration JSON d'un appel de fonction.
+                        # Le payload partiel est rejeté par le StreamProcessor. On injecte une directive punitive pour forcer la concision.
+                        yield "\n\n> ⚠️ *Appel d'outil tronqué (MAX_TOKENS). Reprise et correction automatique...*\n\n"
+                        user_resp_parts = [{"text": "<AEC_evenement_systeme>\ntype: erreur_troncature_outil\nmessage: L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte).\ninstruction: Le modèle doit relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation.\n</AEC_evenement_systeme>"}]
+                    else:
+                        # Cas 2 : L'interruption a eu lieu sur du texte brut.
+                        # Le texte existant a déjà été indexé. On injecte une directive de continuation pure.
+                        yield "\n\n> 🔄 *Reprise automatique de la génération (MAX_TOKENS)...*\n\n"
+                        user_resp_parts = [{"text": "<AEC_evenement_systeme>\ntype: troncature_texte\nmessage: La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte.\ninstruction: Le modèle doit poursuivre la génération du texte à partir du point de troncature exact, sans introduction.\n</AEC_evenement_systeme>"}]
+                        
+                    # Suture sémantique de l'événement système pour maintenir l'invariant cognitif bit-perfect
+                    user_msg = {"role": "user", "parts": user_resp_parts}
+                    inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
+                    new_cumul_u = orch.user_data_manager.calculate_cumulative(inv_u, current_cumul)
+                    orch.user_data_manager.index_suture(new_cumul_u, chat_id, inv_u, current_cumul, user_msg_id)
+                    cascade_history.append(user_msg)
+                    current_cumul = new_cumul_u
+                    
+                    # Mise à jour du contexte pour la boucle suivante
+                    context.append(model_msg)
+                    context.append(user_msg)
+                    continue
 
                 # Pas d'escalade demandée, on sort de la boucle de cascade
                 break
