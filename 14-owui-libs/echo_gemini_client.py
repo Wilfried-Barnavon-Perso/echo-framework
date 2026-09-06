@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.3
+version: 1.4
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.4: Ajout du code HTTP 420 aux conditions de failover (surcharge/rate limit).
 # 1.3: Alignement strict du payload gRPC/JSON Code Assist (OAuth2) sur le format Antigravity (camelCase + headers d'agent)
 # 1.2: Standardisation PEP8, déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID en en-tête de fichier.
 # 1.1: Injection du tenant global ECHO_GLOBAL_TENANT_PROJECT_ID pour éviter les limites de quota (429) OAuth2 persos.
@@ -590,7 +591,7 @@ class EchoGeminiClient:
                         current_delay = ECHO_RETRY_BASE_DELAY
                         continue
 
-                if resp.status_code in [429, 500, 503]:
+                if resp.status_code in [420, 429, 500, 503]:
                     # 1. --- FAST-FAILOVER INTRA-RETRY (OAuth2 uniquement) ---
                     if provider.get("type") == AUTH_METHOD_OAUTH2:
                         from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
@@ -618,7 +619,7 @@ class EchoGeminiClient:
                     # 2. --- BACKOFF CLASSIQUE ---
                     if attempt < current_limit:
                         wait_msg = f"⚠️ Surcharge API ({resp.status_code})."
-                        if resp.status_code == 429:
+                        if resp.status_code in [420, 429]:
                             wait_msg = f"⏳ Limite de débit API ({resp.status_code})."
 
                         wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
@@ -815,7 +816,7 @@ class EchoGeminiClient:
                             current_delay = ECHO_RETRY_BASE_DELAY
                             continue
 
-                    if r.status_code in [429, 500, 503]:
+                    if r.status_code in [420, 429, 500, 503]:
                         # 1. --- FAST-FAILOVER INTRA-RETRY (OAuth2 uniquement) ---
                         if provider.get("type") == AUTH_METHOD_OAUTH2:
                             from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
@@ -843,7 +844,7 @@ class EchoGeminiClient:
                         # 2. --- BACKOFF CLASSIQUE ---
                         if attempt < current_limit:
                             wait_msg = f"⚠️ Surcharge API ({r.status_code})."
-                            if r.status_code == 429:
+                            if r.status_code in [420, 429]:
                                 wait_msg = f"⏳ Limite de débit API ({r.status_code})."
 
                             wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)

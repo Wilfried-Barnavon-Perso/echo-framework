@@ -2,8 +2,10 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 1.0
+version: 1.1
 description: Gestionnaire d'état SQLite et RAG.
+# Historique des versions :
+# 1.1: Correction du get_agy_endpoint pour fallback sur l'URL de secours (1) au lieu de 0 en cas de verrouillage global.
 """
 import os
 import time
@@ -315,8 +317,11 @@ class EchoStateManager:
             if not reset_time or now > reset_time:
                 return idx, url # URL saine
                 
-        # Si tout est bloqué, fallback sur l'URL standard (0) par défaut.
-        return 0, AGY_BASE_URLS[0]
+        # Si tout est bloqué, on privilégie l'URL de secours (Canary) par défaut
+        # pour permettre à la boucle de backoff d'opérer sur l'environnement secondaire
+        # plutôt que de provoquer un rebond immédiat vers Prod (0).
+        fallback_idx = len(AGY_BASE_URLS) - 1
+        return fallback_idx, AGY_BASE_URLS[fallback_idx]
 
     def lock_agy_endpoint(self, idx: int, reset_time_utc: str):
         """Verrouille une URL jusqu'à son reset_time."""
