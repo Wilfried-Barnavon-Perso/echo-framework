@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.30
+version: 5.31
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.31: Ajout du paramètre timeout_seconds (5 min par défaut) à delete_user_skill et modale auto-annulable.
 # 5.29: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 5.28: Ajout du paramètre require_web_grounding dans forge_skill pour actualisation experte conditionnelle.
 # 5.27: Ajout de delete_user_skill avec modale de confirmation.
@@ -113,6 +114,7 @@ class Tools:
     async def delete_user_skill(
         self,
         skill_id: str,
+        timeout_seconds: int = 300,
         __user__: dict = {},
         __event_emitter__: callable = None,
         __event_call__: callable = None,
@@ -122,6 +124,7 @@ class Tools:
         Demande obligatoirement l'accord de l'utilisateur via une modale avant de procéder.
         
         :param skill_id: L'identifiant technique (nom du dossier) du skill à supprimer.
+        :param timeout_seconds: Délai maximum en secondes avant annulation automatique de la suppression (par défaut 300s).
         """
         user_id = __user__.get("id", "system") if __user__ else "system"
         
@@ -154,7 +157,7 @@ class Tools:
         js_code = f"""
         {modals_injection}
         return await new Promise((resolve) => {{
-            window.echoCustomConfirm({msg_escaped}, (result) => resolve(result));
+            window.echoCustomConfirm({msg_escaped}, {timeout_seconds}, (result) => resolve(result));
         }});
         """
 
@@ -175,8 +178,8 @@ class Tools:
                 return wrap_tool_output(text=f"❌ Erreur : Impossible de supprimer le skill '{skill_id}'.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         else:
             if __event_emitter__:
-                await __event_emitter__({"type": "status", "data": {"description": "Suppression annulée par l'utilisateur.", "done": True}})
-            return wrap_tool_output(text="🚫 Annulé : L'utilisateur a refusé la suppression.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                await __event_emitter__({"type": "status", "data": {"description": "Suppression non confirmée par l'utilisateur.", "done": True}})
+            return wrap_tool_output(text="🚫 Annulé : L'utilisateur n'a pas confirmé la suppression (ou délai expiré).", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     # ==========================================================================
     # 2. CONSEIL D'EXPERTS (Protocole Delphi via delegate_to_agent)

@@ -1,11 +1,12 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.74
+version: 5.75
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
 # 5.74: Correction de portée (scope) : déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID au niveau global pour éviter l'erreur "not defined" dans l'évaluation de f-string.
 # 5.73: Ajout de l'affichage du Tenant Global (ECHO_GLOBAL_TENANT_PROJECT_ID) dans le HUD des quotas.
 # 5.72: Ajout du bouton Annuler et fiabilisation de la sélection du service en mode édition Vault.
@@ -861,7 +862,10 @@ return new Promise(function(resolve) {{
   def get_custom_modals_js() -> str:
       """Fournit le code JS autonome des modales natives asynchrones d'ECHO (Confirm & Prompt)."""
       return EchoUI.get_sanitize_html_js() + """
-      window.echoCustomConfirm = (msg, callback) => {
+      window.echoCustomConfirm = (msg, arg2, arg3) => {
+          const callback = typeof arg2 === 'function' ? arg2 : arg3;
+          const timeoutSeconds = typeof arg2 === 'number' ? arg2 : 0;
+          
           const isDark = document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
           const bgColor = isDark ? '#1e1e2e' : '#ffffff';
           const borderColor = isDark ? '#444' : '#ddd';
@@ -884,11 +888,34 @@ return new Promise(function(resolve) {{
           btnOk.textContent = 'Confirmer';
           btnOk.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:14px; flex: 1 1 45%;';
           
+          let timeRemaining = timeoutSeconds;
+          let timerInterval = null;
+          
           const cleanupAndResolve = (val) => {
+              if (timerInterval) clearInterval(timerInterval);
               document.body.style.overflow = originalOverflow;
               overlay.remove();
               callback && callback(val);
           };
+          
+          const updateTimer = () => {
+              const m = Math.floor(timeRemaining / 60);
+              const s = timeRemaining % 60;
+              btnCancel.textContent = 'Annuler (' + m + ':' + s.toString().padStart(2, '0') + ')';
+          };
+          
+          if (timeoutSeconds > 0) {
+              updateTimer();
+              timerInterval = setInterval(() => {
+                  timeRemaining--;
+                  if (timeRemaining <= 0) {
+                      cleanupAndResolve(false);
+                  } else {
+                      updateTimer();
+                  }
+              }, 1000);
+          }
+          
           btnCancel.onclick = () => cleanupAndResolve(false);
           btnOk.onclick = () => cleanupAndResolve(true);
           
