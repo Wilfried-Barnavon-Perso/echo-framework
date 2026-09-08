@@ -1,7 +1,7 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.21
+version: 2.22
 description: Composant système interne : ECHO Memory & RAG Tool.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -23,12 +23,15 @@ from pydantic import BaseModel, Field
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
+from echo_events import EchoEvents
+from echo_core import wrap_tool_output
+from echo_gemini_client import EchoGeminiClient
 from echo_constants import (
     COLLECTION_META_ARTIFACTS, EMBEDDING_DIM,
     MEMORY_IMPORTANCE_WEIGHTS, MEMORY_IMPORTANCE_LABELS,
     ECHO_QDRANT_URL
 )
+from echo_prompts import SYS_RAG_DISTILL
 
 # Configuration du Logger
 logging.basicConfig(level=logging.INFO)
@@ -110,13 +113,7 @@ class Tools:
         await events.status("🧠 Distillation contextuelle et enregistrement dans la base vectorielle...")
         try:
             # Extraction memory_id + tags via LLM
-            distill_prompt = (
-                "<instruction>\n"
-                "Le Modèle DOIT extraire un 'memory_id' technique court et 2-3 'tags' pour ce fait.\n"
-                "RÈGLE CRITIQUE : Pour METTRE À JOUR un fait existant, réutiliser scrupuleusement son memory_id. Pour AJOUTER un nouveau fait distinct, générer un memory_id unique.\n"
-                "</instruction>\n\n"
-                f"<fact>\n{fact}\n</fact>"
-            )
+            distill_prompt = SYS_RAG_DISTILL.format(fact=fact)
             distilled = await EchoGeminiClient.call_distillation(distill_prompt, __user__, __metadata__)
             memory_id = distilled.get("memory_id", distilled.get("slug", f"note_{uuid.uuid4().hex[:8]}")) if distilled else f"note_{uuid.uuid4().hex[:8]}"
             tags = distilled.get("tags", ["user_pref"]) if distilled else ["user_pref"]

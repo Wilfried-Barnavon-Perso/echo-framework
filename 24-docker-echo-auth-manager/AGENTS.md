@@ -10,7 +10,7 @@ Ce dossier contient l'application **ECHO Auth Manager**, qui agit comme un **IdP
 
 ### `auth_server.py`
 Le cœur du gestionnaire d'identités.
-- **Authentification Multi-Provider** : Implémente la validation des Master Keys, le flux OAuth2 (couplé au serveur PKCE local) et les comptes locaux.
+- **Authentification Multi-Provider** : Implémente la validation des Master Keys, le flux OAuth2 (couplé au serveur PKCE local) et les comptes locaux. La robustesse des sessions est garantie par la **désactivation de l'expiration du JWT interne** d'Open WebUI (`JWT_EXPIRES_IN=-1`), qui s'en remet dorénavant purement à la validité de la session SSO, prévenant ainsi les erreurs 500 SvelteKit lors de rafraîchissements (F5).
 - **Sécurité MFA (TOTP)** : Contient la logique de génération et de vérification des mots de passe à usage unique basés sur le temps (Time-based One-Time Password), imposés comme seconde ligne de défense.
 - **Synchronisation avec BunkerWeb** : Le serveur gère la validation des tokens de session et renvoie les headers d'autorisation appropriés à BunkerWeb pour laisser passer le trafic légitime ou bloquer l'accès. Intègre également un délai anti-race condition (`asyncio.sleep`) pour fiabiliser le Single Sign-On (SSO).
 

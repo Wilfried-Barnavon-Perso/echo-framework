@@ -1,7 +1,7 @@
 """
 title: Print / PDF
 author: Wilfried BARNAVON
-version: 2.4
+version: 2.5
 description: Outil d'exportation de la conversation courante vers un document PDF formaté pour l'impression.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNCAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWOHoiLz48cG9seWxpbmUgcG9pbnRzPSIxNCAyIDE0IDggMjAgOCIvPjxsaW5lIHgxPSIxMiIgeTE9IjEyIiB4Mj0iMTIiIHkyPSIxOCIvPjxwb2x5bGluZSBwb2ludHM9IjkgMTUgMTIgMTggMTUgMTUiLz48L3N2Zz4=
 """
@@ -15,7 +15,7 @@ from typing import Optional, Any
 from pydantic import BaseModel, Field
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents
+from echo_events import EchoEvents
 from echo_ui import EchoUI
 
 logging.basicConfig(level=logging.INFO)

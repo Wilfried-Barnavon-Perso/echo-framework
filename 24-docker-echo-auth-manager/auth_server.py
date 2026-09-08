@@ -1,9 +1,9 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 1.4 (Invalidation proactive session OWUI)
+VERSION : 1.5 (Correction Race Condition Event Loop I/O)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-09-01
+DATE MAJ : 2026-09-08
 ================================================================================
 """
 import os
@@ -33,11 +33,24 @@ SECRET_KEY = os.environ.get("AUTH_SECRET_KEY", secrets.token_hex(32))
 ECHO_DOMAIN = os.environ.get("ECHO_DOMAIN", "localhost")
 SETTINGS_PATH = os.environ.get("AUTH_SETTINGS_PATH", "/app/auth-data/auth-settings.json")
 
+_settings_cache = {}
+_settings_cache_time = 0
+
 def get_auth_settings():
-    if not os.path.exists(SETTINGS_PATH): return {}
+    global _settings_cache, _settings_cache_time
+    if time.time() - _settings_cache_time < 60:
+        return _settings_cache
+        
+    if not os.path.exists(SETTINGS_PATH): 
+        return {}
+        
     try:
-        with open(SETTINGS_PATH, 'r') as f: return json.load(f)
-    except: return {}
+        with open(SETTINGS_PATH, 'r', encoding='utf-8') as f: 
+            _settings_cache = json.load(f)
+            _settings_cache_time = time.time()
+            return _settings_cache
+    except Exception: 
+        return {}
 
 app = FastAPI(title="ECHO Auth Server", description="SSO & MFA IdP for ECHO Framework")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -53,6 +66,7 @@ def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 email TEXT PRIMARY KEY,
@@ -279,7 +293,7 @@ async def logout_sso(request: Request, next: str = "/", echo_auth_session: Optio
     return response
 
 @app.api_route("/api/verify", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
-async def verify_auth(request: Request, echo_auth_session: Optional[str] = Cookie(None)):
+def verify_auth(request: Request, echo_auth_session: Optional[str] = Cookie(None)):
     """Endpoint de Forward-Auth appelé par BunkerWeb."""
     if not echo_auth_session:
         raise HTTPException(status_code=401, detail="Unauthorized")

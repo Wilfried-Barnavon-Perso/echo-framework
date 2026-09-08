@@ -1,7 +1,7 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.12
+version: 5.13
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -41,9 +41,12 @@ from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoGeminiClient
+from echo_events import EchoEvents
+from echo_core import wrap_tool_output
+from echo_gemini_client import EchoGeminiClient
 from echo_ui import EchoUI
 from echo_constants import get_generation_config
+from echo_prompts import SYS_VISUAL_GENERATE
 
 
 
@@ -81,51 +84,7 @@ class Tools:
     # 1. Manuel Technique de l'Architecte
     directive_moteur = f"Le Modèle DOIT impérativement utiliser le moteur : '{moteur}'." if moteur else "Le Modèle DOIT choisir le moteur le plus adapté."
     
-    system_prompt = (
-        "<persona>\n"
-        "Le Modèle est un architecte technique expert en génération de représentations visuelles.\n"
-        "</persona>\n\n"
-        "<mission>\n"
-        "Le Modèle doit transformer une intention textuelle et un jeu de données en un payload technique certifié et fonctionnel.\n"
-        "</mission>\n\n"
-        f"<directive>\n"
-        f"{directive_moteur}\n"
-        f"</directive>\n\n"
-        "<technical_manual>\n"
-        "1. 'markmap' : Markdown hiérarchique pur. Aucun bloc de code.\n"
-        "2. 'mermaid' : Syntaxe stricte compatible Mermaid v11.16.0. Identifiants de nœuds STRICTEMENT ASCII alphanumériques ou underscore (aucun espace/tiret). Texte lisible encapsulé entre guillemets (ex: ID[\"Texte\"]).\n"
-        "3. 'echarts' : JSON ECharts 5+ valide (inclure tooltip, legend, xAxis, yAxis, series). Thème clair.\n"
-        "4. 'vega' : JSON Vega-Lite strict (spécifier $schema, data, mark, encoding).\n"
-        "5. 'timeline' : JSON TimelineJS. Structure imposée: {\"events\": [{\"start_date\":..., \"text\":{\"headline\":..., \"text\":...}}]}.\n"
-        "6. 'bpmn' : XML BPMN 2.0 valide.\n"
-        "7. 'gantt' : Syntaxe Mermaid Gantt pure (débute par 'gantt').\n"
-        "8. 'aframe' : HTML A-Frame (<a-scene>, <a-box>, etc.).\n"
-        "9. 'cytoscape' : JSON Cytoscape.js (elements: {\"nodes\": [], \"edges\": []}).\n"
-        "10. 'wavedrom' : JSON WaveDrom (signal: []).\n"
-        "11. 'astro' : JSON Celestial (projection: 'orthographic', transform: 'equatorial').\n"
-        "12. 'bio' : Renvoie UNIQUEMENT l'ID PDB (ex: 1A8M) ou le contenu complet d'un fichier PDB.\n"
-        "13. 'svg' : XML SVG complet et valide.\n"
-        "14. 'chem' : Chaîne SMILES (ex: 'CC(=O)OC1=CC=CC=C1C(=O)O').\n"
-        "15. 'science' : JSON Plotly.js (data: [], layout: {}).\n"
-        "16. 'leaflet' : JSON strict pour carte géographique. Structure imposée: {\"center\": [lat, lng], \"zoom\": int, \"markers\": [{\"lat\": float, \"lng\": float, \"popup\": \"texte html\"}]}.\n"
-        "</technical_manual>\n\n"
-        "<rules>\n"
-        "1. RÉFLEXION : Le Modèle DOIT structurer sa réflexion analytique préalable dans une balise <thinking>.\n"
-        "2. EXÉCUTION : Le Modèle DOIT renvoyer UNIQUEMENT le payload technique encapsulé dans un bloc de code (```).\n"
-        "3. SILENCE : Le Modèle a l'INTERDICTION absolue d'ajouter du texte ou des commentaires en dehors de la balise <thinking> et du bloc de code.\n"
-        "</rules>\n\n"
-        "<example>\n"
-        "<thinking>\n"
-        "Processus séquentiel requis. Choix du moteur: Mermaid (sequenceDiagram). Vérification: Les identifiants de participants doivent être strictement alphanumériques (User1, SystemA).\n"
-        "</thinking>\n"
-        "```mermaid\n"
-        "sequenceDiagram\n"
-        f"    participant User1\n"
-        f"    participant SystemA\n"
-        f"    User1->>SystemA: Request\n"
-        f"```\n"
-        f"</example>"
-    )
+    system_prompt = SYS_VISUAL_GENERATE.format(directive_moteur=directive_moteur)
 
     # 3. Génération
     try:

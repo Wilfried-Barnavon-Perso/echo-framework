@@ -63,7 +63,7 @@
     </p>
     <ul>
       <li><strong>Incompatibilité matérielle :</strong> Le client envoie un statut <code>incompatible</code> via le WebSocket s'il ne peut initialiser le contexte WebGPU/WASM.</li>
-      <li><strong>Déconnexion :</strong> Le client a fermé l'onglet ou la connexion WebSocket est perdue.</li>
+      <li><strong>Déconnexion (Fallback CPU Asynchrone Instantané) :</strong> Si le client ferme l'onglet ou si la connexion WebSocket est rompue, le système annule immédiatement les requêtes <code>asyncio.Future</code> suspendues et bascule sans attendre sur le CPU.</li>
       <li><strong>Timeout Strict :</strong> Si le navigateur met plus de <strong>15 secondes</strong> à retourner les vecteurs après une requête d'inférence, le Worker annule l'attente asynchrone et bascule instantanément sur l'exécution locale du modèle (via Llama.cpp) sur le CPU du serveur hôte.</li>
     </ul>
 
@@ -74,7 +74,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.82 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.203.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

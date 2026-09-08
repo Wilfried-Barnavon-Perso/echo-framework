@@ -1,7 +1,7 @@
 """
 title: Resume in New Chat
 author: ECHO Framework
-version: 1.6
+version: 1.7
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMSAxNnYuNWExLjUgMS41IDAgMCAxLTEuNSAxLjVoLTZMMTIgMjBsLTIuNS0yLjVoLTZBMS41IDEuNSAwIDAgMSAyIDE2LjVWNGExLjUgMS41IDAgMCAxIDEuNS0xLjVoMTVBMS41IDEuNSAwIDAgMSAyMCA0djciLz48cGF0aCBkPSJtMTggMjIgMy0zLTMtMyIvPjxwb2x5bGluZSBwb2ludHM9IjIxIDE5IDEzIDE5Ii8+PC9zdmc+
 """
@@ -25,8 +25,10 @@ from typing import Optional, Any
 from pydantic import BaseModel, Field
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, EchoGeminiClient
+from echo_events import EchoEvents
+from echo_gemini_client import EchoGeminiClient
 from echo_constants import ECHO_USERS_ROOT, ECHO_QDRANT_URL, COLLECTION_META_ARTIFACTS, COLLECTION_SESSION_RAG
+from echo_prompts import USR_ACTION_RESUME
 
 try:
     from open_webui.models.chats import Chats, ChatForm
@@ -143,13 +145,7 @@ class Action:
             if isinstance(content, str):
                 messages_text += f"{role.upper()}: {content[:10000]}{file_meta}\n\n"
         
-        prompt = (
-            "Tu es l'architecte mémoire d'ECHO.\n"
-            "Analyse l'historique de session ci-dessous. Résume très précisément l'état actuel de la session, "
-            "les objectifs en cours, les plans d'action et le contexte technique acquis.\n"
-            "Ce résumé sera le point de départ strict de la NOUVELLE session. Sois exhaustif.\n\n"
-            f"--- HISTORIQUE ---\n{messages_text}"
-        )
+        prompt = USR_ACTION_RESUME.format(messages_text=messages_text)
         
         try:
             distilled_res = await EchoGeminiClient.call_distillation(

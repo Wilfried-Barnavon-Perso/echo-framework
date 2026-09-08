@@ -1,16 +1,17 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.6
+version: 1.13
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.6: Validation obligatoire des plans (build et update) via UI modale (window.echoCustomConfirm).
-# 1.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 1.4: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
-# 1.3: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du dossier plans/.
-# 1.2: Centralisation politique modèle Pipe. Suppression _cascade_call() et _get_thinking_level() locaux.
+# 1.13: Refonte UX complète (zéro émoji), statut "proposed" par défaut, retrait des modales build/update, et ajout de l'outil analyze_plan.
+# 1.11: Affichage des instructions de pointage dans l'évènement UI de update_tasks.
+# 1.9: Création de process_plan, modale optionnelle, verrouillage frontend de update_plan contre les démarrages illicites.
+# 1.6: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 1.5: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
+# 1.4: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du dossier plans/.
 
 import sys
 import orjson as json
@@ -23,7 +24,14 @@ from typing import Optional, Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, wrap_cascade_output, EchoEvents, EchoGeminiClient, EchoStateManager
+from echo_core import wrap_tool_output, wrap_cascade_output
+from echo_events import EchoEvents
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
+from echo_prompts import (
+    SYS_PLANNER_BUILD, SYS_PLANNER_UPDATE,
+    SYS_PLANNER_UPDATE_TASKS, SYS_PLANNER_ANALYZE
+)
 from echo_codex_git import CodexRepo
 from echo_ui import EchoUI
 from echo_constants import (
@@ -36,68 +44,8 @@ from echo_constants import (
 # PROMPTS SYSTÈME POUR L'AGENT PLANIFICATEUR
 # ==============================================================================
 
-SYSTEM_PROMPT_BUILD = """<persona>
-Le Modèle est un architecte expert en planification stratégique et tactique.
-</persona>
+# Les prompts ont été migrés vers echo_prompts.py
 
-<mission>
-Le Modèle doit rédiger un plan d'action stratégique structuré en Markdown, focalisé exclusivement sur la résolution logique de l'objectif.
-</mission>
-
-<rules>
-1. PROFONDEUR : La profondeur maximale des sous-tâches est strictement limitée à {max_depth} niveaux.
-2. SYNTAXE : Chaque tâche DOIT impérativement commencer par `- [ ] ` (notation Markdown).
-3. CONTENU : Le plan DOIT être actionnable, sans ambiguïté, identifier les contraintes/risques réels et définir des critères de succès mesurables.
-4. OUTILS : Le Modèle a l'INTERDICTION d'inventer des outils. Il DOIT utiliser UNIQUEMENT ceux fournis dans la balise <available_tools>, en ajoutant la syntaxe `→ nom_exact_outil` à la fin de la ligne de la tâche correspondante.
-</rules>
-
-<available_tools>
-{tools_summary}
-</available_tools>
-
-<output_format>
-Le Modèle DOIT retourner EXACTEMENT le frontmatter YAML suivi du plan, selon l'exemple suivant.
-Le Modèle a l'INTERDICTION d'ajouter du texte conversationnel en dehors du bloc Markdown pur. Toute information supplémentaire DOIT être intégrée au sein du plan (via des sections `##`).
-<example>
----
-plan_id: {plan_id}
-chat_id: {chat_id}
-created_at: {iso_date}
-goal: "{goal}"
-author_model: {author_model}
-status: draft
----
-## 🎯 Objectif
-(Reformulation claire et analytique de l'objectif)
-## 📋 Plan d'action
-- [ ] Étape 1 : Analyse initiale
-  - [ ] Sous-tâche 1.1 : Lire les fichiers cibles (→ `echo_codex_tool`)
-## ⚠️ Contraintes & Risques
-- Risque identifié X...
-## ✅ Critères de succès
-- Critère mesurable 1...
-</example>
-</output_format>"""
-
-SYSTEM_PROMPT_UPDATE = """<persona>
-Le Modèle est un architecte expert en planification stratégique et tactique.
-</persona>
-
-<mission>
-Le Modèle doit modifier le plan existant selon les instructions fournies, sans en altérer la structure globale.
-</mission>
-
-<rules>
-1. SCOPE : Le Modèle DOIT appliquer UNIQUEMENT les modifications demandées. Il ne doit RIEN modifier d'autre (étapes non mentionnées, frontmatter non ciblé).
-2. STATUT : Si les instructions impliquent un changement de statut, Le Modèle DOIT mettre à jour le champ `status:` du frontmatter YAML.
-3. SYNTAXE : Si les instructions cochent/décochent des tâches, Le Modèle DOIT utiliser strictement cette notation :
-   - [ ] = en attente | [/] = en cours | [x] = terminée | [!] = échouée | [-] = ignorée
-</rules>
-
-<output_format>
-Le Modèle DOIT retourner UNIQUEMENT le bloc Markdown brut du plan modifié (incluant le frontmatter YAML). 
-Aucun préambule ni phrase d'introduction conversationnelle n'est toléré en dehors du Markdown. Les ajouts d'informations (comme un compte-rendu final) DOIVENT être insérés directement À L'INTÉRIEUR du plan en créant une nouvelle section appropriée. La réponse entière doit impérativement commencer par `---`.
-</output_format>"""
 
 
 class Tools:
@@ -106,10 +54,11 @@ class Tools:
     Permet a l'Orchestrateur de construire, consulter et maintenir un plan d'action formel.
     
     DIRECTIVE ORCHESTRATEUR (OBLIGATION DE SUIVI ET VALIDATION) :
-    1. Validation : L'outil build_plan sauvegarde nativement le plan dans le Codex. Apres creation, l'Orchestrateur DOIT presenter le plan a l'Utilisateur, specifier le nom sous lequel il est consultable dans le Codex, et obtenir son accord explicite avant d'entamer les taches.
-    2. Execution Sequentielle : L'Orchestrateur DOIT executer les phases du plan chronologiquement (telles que decrites dans la section Plan d'action du Markdown genere).
-    3. Suivi Tactique : L'Orchestrateur a l'OBLIGATION STRICTE de maintenir le plan a jour. A chaque etape technique franchie (succes ou echec), il DOIT invoquer l'outil update_plan pour pointer les taches (ex: [x] ou [!]) AVANT d'entreprendre l'etape suivante.
-    4. Resume d'Action : Une fois le plan entierement execute, le Modele DOIT ajouter a la fin du plan (via update_plan) le compte-rendu final de mise en oeuvre.
+    1. Validation : L'outil build_plan sauvegarde nativement la stratégie et les tâches dans le Codex (statut 'proposed'). L'Orchestrateur DOIT présenter le plan à l'Utilisateur.
+    2. Amorçage : Le lancement de l'exécution DOIT OBLIGATOIREMENT ÊTRE EXPLICITEMENT DEMANDÉ PAR L'UTILISATEUR. L'Orchestrateur a l'OBLIGATION ABSOLUE d'invoquer `process_plan` pour déclencher la modale de validation officielle et basculer le système en exécution.
+    3. Execution Sequentielle : L'Orchestrateur DOIT executer les phases du plan chronologiquement.
+    4. Suivi Tactique : L'Orchestrateur a l'OBLIGATION STRICTE de pointer l'avancement via `update_tasks`.
+    5. Pivot Strategique : Le modèle utilise `update_plan` pour modifier un plan (uniquement s'il est au statut 'proposed').
     """
     class Valves(BaseModel):
         PLANNER_TIMEOUT: int = Field(
@@ -203,12 +152,16 @@ class Tools:
         __event_call__: Optional[Any] = None,
     ) -> dict:
         """
-        Creation d'un plan d'action avec organisation de la liste des taches.
-        ATTENTION ORCHESTRATEUR : L'outil sauvegarde AUTOMATIQUEMENT le plan dans le Codex (Git). Ne tentez pas de le sauvegarder vous-meme.
-        Une fois execute, le Modele DOIT presenter les grandes lignes a l'Utilisateur (en specifiant le nom du fichier Codex) pour validation avant de demarrer l'execution.
+        Création d'un plan d'action stratégique et de sa liste de tâches associée.
+        ATTENTION ORCHESTRATEUR : L'outil génère automatiquement DEUX fichiers dans le Codex (Git), liés par le même identifiant :
+        1. Le fichier de Stratégie (plan_xxx.md)
+        2. Le fichier des Tâches (tasks_xxx.md)
+        
+        Une fois exécuté, le Modèle DOIT présenter les grandes lignes à l'Utilisateur et obtenir son accord explicite avant de démarrer l'exécution.
+        Le `plan_id` retourné est la clé unique pour interagir ensuite avec `update_plan` (pour la stratégie) ou `update_tasks` (pour la tactique).
         
         :param goal: Objectif final mesurable.
-        :param context: Contraintes et perimetre.
+        :param context: Contraintes et périmètre.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -234,7 +187,7 @@ class Tools:
         max_depth = self.user_valves.MAX_PLAN_DEPTH
 
         # Construction du prompt système avec les variables injectées
-        system_prompt = SYSTEM_PROMPT_BUILD.format(
+        system_prompt = SYS_PLANNER_BUILD.format(
             max_depth=max_depth,
             plan_id=plan_id,
             chat_id=chat_id,
@@ -278,58 +231,32 @@ class Tools:
         # Remplacement du placeholder author_model dans le frontmatter
         plan_content = plan_content.replace("{author_model}", model_key_used)
 
+        # Séparation du contenu généré
+        parts = plan_content.split("=== TASKS ===")
+        plan_part = parts[0].replace("=== PLAN ===", "").strip()
+        tasks_part = parts[1].strip() if len(parts) > 1 else "- [ ] Aucune tâche."
+
+        plan_filename = filename
+        tasks_filename = f"tasks_{plan_id}_{slug}.md"
+
         # Persistance dans le Codex (Git)
         repo = CodexRepo(user_id, chat_id)
-        repo.commit_file(filename, plan_content, f"Plan {plan_id}: {goal[:60]}")
+        repo.commit_file(plan_filename, plan_part, f"Strategy {plan_id}: {goal[:60]}")
+        repo.commit_file(tasks_filename, tasks_part, f"Tasks {plan_id}: {goal[:60]}")
 
         # Enregistrement dans le registre unifié
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         state.save_resource(
-            id=plan_id, name=goal[:80], resource_type='plan', status='draft',
+            id=plan_id, name=goal[:80], resource_type='plan', status='proposed',
             mime='text/markdown', plan_goal=goal[:200], author_model=model_key_used,
             git_tracked=True, storage_path=f"codex/{filename}",
         )
 
-        # Construction de la modale d'approbation
-        msg_html = f'''
-        <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
-            📝 Validation requise pour le nouveau plan stratégique
-        </div>
-        <pre style="
-            background: rgba(0,0,0,0.1); padding: 10px; border-radius: 5px; 
-            white-space: pre-wrap; word-break: break-word; max-height: 40vh;
-            overflow-y: auto; font-family: monospace; font-size: 12px;
-            border: 1px solid rgba(128,128,128,0.2);
-        ">{plan_content}</pre>
-        '''
-        
-        # orjson.dumps retourne des bytes, décodage obligatoire en utf-8
-        msg_escaped = json.dumps(msg_html).decode('utf-8')
-        modals_injection = EchoUI.get_custom_modals_js()
-
-        js_code = f"""
-        {modals_injection}
-        return await new Promise((resolve) => {{
-            window.echoCustomConfirm({msg_escaped}, (result) => resolve(result));
-        }});
-        """
-
         if __event_emitter__:
-            await __event_emitter__({"type": "status", "data": {"description": f"En attente de la validation de l'utilisateur pour le plan {plan_id}...", "done": False}})
-
-        user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
-
-        if user_confirmed:
-            state.update_resource_status(plan_id, 'approved')
-            user_decision = "Validation accordée par l'Utilisateur. Le Modèle est autorisé à procéder à l'exécution de la première tâche."
-            final_status = "approved"
-            if __event_emitter__:
-                await __event_emitter__({"type": "status", "data": {"description": f"✅ Plan {plan_id} approuvé.", "done": True}})
-        else:
-            user_decision = "Validation refusée par l'Utilisateur. Le Modèle doit interroger l'utilisateur sur les modifications à apporter et utiliser update_plan."
-            final_status = "draft (refusé)"
-            if __event_emitter__:
-                await __event_emitter__({"type": "status", "data": {"description": f"🚫 Plan {plan_id} refusé.", "done": True}})
+            await __event_emitter__({"type": "status", "data": {"description": f"Plan {plan_id} créé.", "done": True}})
+        
+        user_decision = "Le plan a été créé au statut 'proposed'. L'Utilisateur a été informé implicitement. Le Modèle DOIT lui indiquer qu'il peut proposer des ajustements via le chat, modifier manuellement le plan dans le Codex, ou demander formellement son exécution via process_plan."
+        final_status = "proposed"
 
         return wrap_cascade_output(
             text=f"### Plan stratégique créé — `{plan_id}`\n\n"
@@ -366,10 +293,18 @@ class Tools:
         if not result:
             return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        content = result["content"]
+        plan_content = result["content"]
+        tasks_filename = "tasks_" + result["filename"]
+        
+        # Lecture silencieuse des tâches
+        repo = CodexRepo(user_id, chat_id)
+        tasks_result = repo.read_file(tasks_filename)
+        tasks_text = tasks_result["content"] if tasks_result else "- [ ] Fichier de tâches introuvable."
+        
+        full_content = f"=== STRATÉGIE (Fichier: {result['filename']}) ===\n{plan_content}\n\n=== TÂCHES (Fichier: {tasks_filename}) ===\n{tasks_text}"
 
-        await events.status(f"📖 Plan `{plan_id}` lu.", done=True)
-        return wrap_tool_output(text=content, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        await events.status(f"📖 Plan `{plan_id}` et ses tâches lus.", done=True)
+        return wrap_tool_output(text=full_content, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def update_plan(
         self,
@@ -381,10 +316,11 @@ class Tools:
         __event_call__: Optional[Any] = None,
     ) -> dict:
         """
-        Outil tactique pour amender un plan OU mettre a jour l'etat d'avancement des taches.
+        Outil STRATÉGIQUE pour modifier le plan d'action (stratégie).
+        Ne DOIT PAS être utilisé pour le pointage des tâches (utiliser update_tasks).
         
         :param plan_id: Identifiant unique du plan (obtenu lors de la creation ou via query_registry).
-        :param instructions: Ordres precis (ex: "Coche la tache 1.1 comme terminee", "Ajoute un resume de mise en oeuvre a la fin").
+        :param instructions: Ordres precis (ex: "Ajoute un resume de mise en oeuvre a la fin").
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
@@ -412,7 +348,7 @@ class Tools:
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
             "generationConfig": get_generation_config(PLANNER_MODEL_UPDATE),
-            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT_UPDATE}]},
+            "systemInstruction": {"parts": [{"text": SYS_PLANNER_UPDATE}]},
         }
 
         # 3. Appel cascade
@@ -428,61 +364,43 @@ class Tools:
         )
 
         if not res_json:
-            await events.status("❌ Échec — tous les modèles sont indisponibles.", done=True)
-            return wrap_tool_output(text="❌ Échec : aucun modèle disponible pour la modification.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            await events.status("Échec — tous les modèles sont indisponibles.", done=True)
+            return wrap_tool_output(text="Échec : aucun modèle disponible pour la modification.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         new_content = self._extract_llm_text(res_json)
         if not new_content:
-            await events.status("❌ Réponse vide du planificateur.", done=True)
-            return wrap_tool_output(text="❌ Erreur : le planificateur n'a produit aucun contenu.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            await events.status("Réponse vide du planificateur.", done=True)
+            return wrap_tool_output(text="Erreur : le planificateur n'a produit aucun contenu.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        # Synchronisation du statut temporaire (avant validation)
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        current_status = self._extract_frontmatter_status(current_content)
         new_status = self._extract_frontmatter_status(new_content)
 
-        # Construction de la modale d'approbation pour la mise à jour
-        msg_html = f'''
-        <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
-            📝 Validation requise pour la mise à jour du plan <b>{plan_id}</b>
-        </div>
-        <pre style="
-            background: rgba(0,0,0,0.1); padding: 10px; border-radius: 5px; 
-            white-space: pre-wrap; word-break: break-word; max-height: 40vh;
-            overflow-y: auto; font-family: monospace; font-size: 12px;
-            border: 1px solid rgba(128,128,128,0.2);
-        ">{new_content}</pre>
-        '''
+        # Gatekeeper 1 : Verrouillage strict dès que le plan n'est plus "proposed"
+        if current_status != 'proposed':
+            await events.status("Action refusée : Le plan est verrouillé.", done=True)
+            return wrap_tool_output(
+                text=f"Action refusée : Un plan au statut '{current_status}' est verrouillé stratégiquement. Vous ne pouvez modifier qu'un plan au statut 'proposed'.",
+                user_id=user_id, chat_id=chat_id, metadata=__metadata__
+            )
+
+        # Gatekeeper 2 : Interdiction absolue de bypass process_plan
+        if new_status == 'executing':
+            await events.status("ERREUR : Tentative de démarrage illicite bloquée.", done=True)
+            return wrap_tool_output(
+                text="ACTION INTERDITE : Le passage au statut 'executing' est verrouillé pour des raisons de sécurité. Vous n'avez pas le droit d'utiliser `update_plan` pour cela. Vous DEVEZ obligatoirement invoquer l'outil `process_plan` pour démarrer l'exécution d'un plan.",
+                user_id=user_id, chat_id=chat_id, metadata=__metadata__
+            )
+
+        # Application silencieuse de la modification
+        repo = CodexRepo(user_id, chat_id)
+        repo.commit_file(plan_filename, new_content, f"Update plan {plan_id}")
+        if new_status and new_status in PLAN_STATUS:
+            state.update_resource_status(plan_id, new_status)
         
-        msg_escaped = json.dumps(msg_html).decode('utf-8')
-        modals_injection = EchoUI.get_custom_modals_js()
-
-        js_code = f"""
-        {modals_injection}
-        return await new Promise((resolve) => {{
-            window.echoCustomConfirm({msg_escaped}, (result) => resolve(result));
-        }});
-        """
-
+        user_decision = "Mise à jour effectuée silencieusement au statut 'proposed'. L'Utilisateur a été informé implicitement. Le Modèle DOIT lui indiquer qu'il peut proposer des ajustements via le chat, modifier manuellement le plan dans le Codex, ou demander formellement son exécution via process_plan."
         if __event_emitter__:
-            await __event_emitter__({"type": "status", "data": {"description": f"En attente de la validation de la mise à jour du plan {plan_id}...", "done": False}})
-
-        user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
-
-        if user_confirmed:
-            # L'utilisateur valide la modification, on l'applique dans le Git et le SQLite
-            repo = CodexRepo(user_id, chat_id)
-            repo.commit_file(plan_filename, new_content, f"Update plan {plan_id}")
-            if new_status and new_status in PLAN_STATUS:
-                state.update_resource_status(plan_id, new_status)
-            
-            user_decision = "Mise à jour validée par l'Utilisateur. Le Modèle est autorisé à poursuivre son action."
-            if __event_emitter__:
-                await __event_emitter__({"type": "status", "data": {"description": f"✅ Mise à jour du plan {plan_id} approuvée.", "done": True}})
-        else:
-            # On ignore les modifications
-            user_decision = "Mise à jour refusée par l'Utilisateur. Le Modèle doit prendre note du refus et ajuster sa stratégie."
-            if __event_emitter__:
-                await __event_emitter__({"type": "status", "data": {"description": f"🚫 Mise à jour du plan {plan_id} refusée.", "done": True}})
+            await __event_emitter__({"type": "status", "data": {"description": f"Plan {plan_id} mis à jour.", "done": True}})
 
         return wrap_cascade_output(
             text=f"### Tentative de mise à jour du plan `{plan_id}`\n\n"
@@ -493,6 +411,194 @@ class Tools:
             model_used=model_key_used,
             reason=reason
         , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def update_tasks(
+        self,
+        plan_id: str,
+        instructions: str,
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __event_emitter__: Optional[Any] = None,
+        __event_call__: Optional[Any] = None,
+    ) -> dict:
+        """
+        Outil TACTIQUE EXCLUSIF pour pointer l'état d'avancement des tâches (tasks_XXX.md).
+        Permet de modifier le statut des tâches sans bloquer le flux d'exécution. Ne DOIT PAS être utilisé pour changer la stratégie globale.
+        
+        Codification stricte des statuts à respecter dans vos instructions :
+        - [ ] : Tâche en attente (Non commencée)
+        - [/] : Tâche en cours d'exécution
+        - [x] : Tâche terminée avec succès
+        - [!] : Tâche échouée ou bloquée (nécessite attention)
+        - [-] : Tâche ignorée ou obsolète
+        
+        :param plan_id: Identifiant unique du plan (lie le plan et les tâches).
+        :param instructions: Ordres précis de modification de statut (ex: 'Passe la sous-tâche 1.1 au statut [x] et la 1.2 au statut [/]').
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        chat_id = (__metadata__ or {}).get("chat_id")
+
+        if not chat_id:
+            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+        # 1. Vérifier que le plan existe pour obtenir le nom de fichier
+        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        if not result:
+            return wrap_tool_output(text=f"Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        
+        plan_filename = result["filename"]
+        tasks_filename = "tasks_" + plan_filename
+
+        # 2. Lecture des tâches
+        repo = CodexRepo(user_id, chat_id)
+        tasks_result = repo.read_file(tasks_filename)
+        current_tasks = tasks_result["content"] if tasks_result else "- [ ] Aucune tâche trouvée."
+
+        # 3. Appel du modèle
+        user_prompt = (
+            f"## Tâches actuelles\n{current_tasks}\n\n"
+            f"## Instructions de pointage\n{instructions}"
+        )
+
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": get_generation_config(PLANNER_MODEL_UPDATE),
+            "systemInstruction": {"parts": [{"text": SYS_PLANNER_UPDATE_TASKS}]},
+        }
+
+        res_json, model_key_used, reason = await EchoGeminiClient.call_cascade(
+            target_model_key=PLANNER_MODEL_UPDATE,
+            payload=payload,
+            user_id=user_id,
+            metadata=__metadata__,
+            events=events,
+            timeout=self.valves.PLANNER_TIMEOUT,
+            chat_id=chat_id,
+            include_thoughts=False,
+        )
+
+        if not res_json:
+            await events.status("Échec de la mise à jour des tâches.", done=True)
+            return wrap_tool_output(text="Échec : aucun modèle disponible.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+        new_tasks_content = self._extract_llm_text(res_json)
+        if not new_tasks_content:
+            await events.status("Réponse vide pour les tâches.", done=True)
+            return wrap_tool_output(text="Erreur : aucune tâche générée.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+        # 4. Commit silencieux
+        repo.commit_file(tasks_filename, new_tasks_content, f"Update tasks {plan_id}")
+
+        # 5. Évènement de notification UI
+        short_inst = instructions.replace('\n', ' ')
+        if len(short_inst) > 80:
+            short_inst = short_inst[:77] + "..."
+        await events.status(f"Tâches (Plan {plan_id}) : {short_inst}", done=True)
+
+        return wrap_cascade_output(
+            text=f"### Tâches du plan `{plan_id}` mises à jour\n\n"
+                 f"**Modèle :** {model_key_used}\n"
+                 f"**Fichier :** `{tasks_filename}`\n\n"
+                 f"---\n\n{new_tasks_content}",
+            model_requested=PLANNER_MODEL_UPDATE,
+            model_used=model_key_used,
+            reason=reason
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def process_plan(
+        self, plan_id: str, user_already_validated: bool = False,
+        __user__: Optional[dict] = None, __metadata__: Optional[dict] = None,
+        __event_emitter__: Optional[Any] = None, __event_call__: Optional[Any] = None,
+    ) -> dict:
+        """
+        Outil D'AMORÇAGE OBLIGATOIRE. Déclenche l'exécution officielle d'un plan.
+        Le Modèle DOIT invoquer cet outil AVANT de commencer la première tâche d'un plan.
+        
+        :param plan_id: Identifiant unique du plan.
+        :param user_already_validated: Booléen (défaut False). Mettre à True UNIQUEMENT si l'Utilisateur a formellement validé le plan lors d'un échange explicite dans la conversation (ex: "OK pour le plan, vas-y"). Si False, une modale de confirmation demandera formellement l'accord de l'utilisateur.
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        chat_id = (__metadata__ or {}).get("chat_id")
+
+        if not chat_id:
+            await events.status("Erreur : Aucun chat_id détecté.", done=True)
+            return wrap_tool_output(text="Erreur : Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
+
+        # 1. Vérification d'existence
+        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        if not result:
+            await events.status(f"Erreur : Plan {plan_id} introuvable.", done=True)
+            return wrap_tool_output(text=f"Erreur : Plan `{plan_id}` introuvable.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+
+        plan_filename = result["filename"]
+        tasks_filename = "tasks_" + plan_filename
+        plan_content = result["content"]
+
+        current_status = self._extract_frontmatter_status(plan_content)
+        if current_status != 'proposed':
+            await events.status(f"Erreur : Le statut doit être 'proposed' (actuel: {current_status}).", done=True)
+            return wrap_tool_output(text=f"Erreur : Le plan doit être au statut 'proposed' pour être exécuté. Statut actuel: {current_status}", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+
+        # 2. Modale de confirmation (Si non validé précédemment)
+        is_subagent = (__metadata__ or {}).get("is_subagent", False)
+        if not user_already_validated and not is_subagent:
+            msg_html = f'''
+            <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
+                Lancement du Plan : Confirmez-vous l'exécution de <b>{plan_id}</b> ?
+            </div>
+            '''
+            msg_escaped = json.dumps(msg_html).decode('utf-8')
+            modals_injection = EchoUI.get_custom_modals_js()
+            js_code = f"""
+            {modals_injection}
+            return await new Promise((resolve) => {{
+                window.echoCustomConfirm({msg_escaped}, (result) => resolve(result));
+            }});
+            """
+            if __event_emitter__:
+                await __event_emitter__({"type": "status", "data": {"description": f"Attente de confirmation pour lancer le plan {plan_id}...", "done": False}})
+                
+            user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
+            if not user_confirmed:
+                await events.status(f"Lancement du plan {plan_id} refusé par l'utilisateur.", done=True)
+                return wrap_tool_output(text="Refus : L'Utilisateur a refusé de lancer l'exécution du plan. Attendez ses consignes.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+
+        # 3. Remplacement du statut dans le frontmatter (proposed -> executing)
+        import re
+        new_plan_content = re.sub(r"^status:\s*(\w+)", "status: executing", plan_content, flags=re.MULTILINE)
+        
+        repo = CodexRepo(user_id, chat_id)
+        repo.commit_file(plan_filename, new_plan_content, f"Start execution {plan_id}")
+
+        # 4. Mise à jour de l'état SQLite
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        state.update_resource_status(plan_id, 'executing')
+
+        # 5. Lecture silencieuse des tâches
+        tasks_result = repo.read_file(tasks_filename)
+        tasks_text = tasks_result["content"] if tasks_result else "- [ ] Fichier de tâches introuvable."
+
+        # 6. Évènement UI
+        await events.status(f"Exécution du plan {plan_id} amorcée.", done=True)
+
+        # 7. Directive Cognitive
+        directive = f"""=== STRATÉGIE ===
+{new_plan_content}
+
+=== TÂCHES ===
+{tasks_text}
+
+=== DIRECTIVES TACTIQUES ABSOLUES POUR LE MODÈLE ===
+Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
+
+1. SÉQUENTIALITÉ : Le Modèle DOIT exécuter les tâches strictement dans l'ordre de la liste ci-dessus.
+2. POINTAGE OBLIGATOIRE : Après CHAQUE tâche accomplie (ou échouée), le Modèle a l'OBLIGATION ABSOLUE d'utiliser l'outil `update_tasks` pour mettre à jour la liste.
+3. ENDURANCE : Le Modèle DOIT POURSUIVRE l'exécution ininterrompue des tâches jusqu'à la finalisation intégrale du plan.
+4. CLÔTURE : Une fois la dernière tâche terminée, le Modèle DOIT utiliser `update_plan` pour modifier le statut du plan en `success` (ou `failed`) ET ajouter une section `## Synthèse d'exécution` résumant les actions menées.
+"""
+        return wrap_tool_output(text=directive, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
     async def delete_plan(
         self,
@@ -508,11 +614,11 @@ class Tools:
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text="Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         result = self._read_plan_from_codex(user_id, chat_id, plan_id)
         if not result:
-            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=f"Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         plan_filename = result["filename"]
 
@@ -524,8 +630,90 @@ class Tools:
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         state.delete_resource(plan_id)
 
-        await events.status(f"🗑️ Plan `{plan_id}` supprimé.", done=True)
+        await events.status(f"Plan `{plan_id}` supprimé.", done=True)
 
         return wrap_tool_output(
-            text=f"✅ Plan `{plan_id}` (`{plan_filename}`) supprimé définitivement."
+            text=f"Plan `{plan_id}` (`{plan_filename}`) supprimé définitivement."
         , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def analyze_plan(
+        self,
+        plan_id: str,
+        focus: str = "Applicabilité, logique, dépendances et bonnes pratiques",
+        context_info: str = "",
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __event_emitter__: Optional[Any] = None,
+        __event_call__: Optional[Any] = None,
+    ) -> dict:
+        """
+        Outil D'ANALYSE NON MODIFICATRICE d'un plan stratégique.
+        Permet à l'Orchestrateur de déléguer l'audit d'un plan pour vérifier sa robustesse et sa cohérence.
+        
+        :param plan_id: Identifiant unique du plan.
+        :param focus: (Optionnel) Points d'attention spécifiques pour l'analyse.
+        :param context_info: (Optionnel) Informations de contexte supplémentaires justifiant les choix du plan.
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        chat_id = (__metadata__ or {}).get("chat_id")
+
+        if not chat_id:
+            return wrap_tool_output(text="Erreur: Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
+
+        # 1. Vérification d'existence
+        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        if not result:
+            return wrap_tool_output(text=f"Plan `{plan_id}` introuvable.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+
+        # 2. Lecture des tâches associées
+        plan_content = result["content"]
+        tasks_filename = "tasks_" + result["filename"]
+        repo = CodexRepo(user_id, chat_id)
+        tasks_result = repo.read_file(tasks_filename)
+        tasks_content = tasks_result["content"] if tasks_result else "- [ ] Aucune tâche."
+
+        await events.status(f"Analyse du plan {plan_id} en cours...")
+
+        # 3. Appel du LLM auditeur
+        user_prompt = f"## Stratégie actuelle\n{plan_content}\n\n"
+        if context_info:
+            user_prompt += f"## Contexte d'exécution et contraintes métier\n{context_info}\n\n"
+        user_prompt += f"## Tâches actuelles\n{tasks_content}\n\n"
+        user_prompt += f"## Focus d'analyse demandé\n{focus}"
+
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": get_generation_config(PLANNER_MODEL_BUILD),
+            "systemInstruction": {"parts": [{"text": SYS_PLANNER_ANALYZE}]},
+        }
+
+        res_json, model_key_used, reason = await EchoGeminiClient.call_cascade(
+            target_model_key=PLANNER_MODEL_BUILD,
+            payload=payload,
+            user_id=user_id,
+            metadata=__metadata__,
+            events=events,
+            timeout=self.valves.PLANNER_TIMEOUT,
+            chat_id=chat_id,
+            include_thoughts=False,
+        )
+
+        if not res_json:
+            await events.status("Échec : aucun modèle disponible pour l'analyse.", done=True)
+            return wrap_tool_output(text="Échec : aucun modèle disponible.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+
+        analysis_content = self._extract_llm_text(res_json)
+        await events.status(f"Analyse du plan {plan_id} terminée.", done=True)
+
+        return wrap_cascade_output(
+            text=f"### Audit du plan `{plan_id}`\n\n"
+                 f"**Modèle Auditeur :** {model_key_used}\n"
+                 f"**Focus :** {focus}\n"
+                 f"**Contexte additionnel :** {'Oui' if context_info else 'Non'}\n\n"
+                 f"---\n\n{analysis_content}",
+            model_requested=PLANNER_MODEL_BUILD,
+            model_used=model_key_used,
+            reason=reason,
+            user_id=user_id, chat_id=chat_id, metadata=__metadata__
+        )

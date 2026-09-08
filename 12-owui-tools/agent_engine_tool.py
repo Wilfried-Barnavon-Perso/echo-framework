@@ -1,13 +1,13 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.16
+version: 1.18
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.16: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
-# 1.15: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 1.18: Injection du paramètre is_subagent dans les métadonnées pour bypasser les modales UI.
+# 1.17: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 1.12: Précision docstring sur l'héritage du système prompt de l'orchestrateur.
 # 1.11: Correction injection PRAF (évite doublon si héritage du Kernel). Suppression acronyme PRAF.
 # 1.10: Consolidation de l'injection universelle (date + PRAF ajusté) via <directives_globales>.
@@ -24,17 +24,23 @@ from pydantic import BaseModel, Field
 from typing import Optional, Any, List
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import (
-    wrap_tool_output, EchoEvents,
-    EchoGeminiClient, EchoStateManager, clamp_model,
-    estimate_token_size, smart_truncate_history
+from echo_core import (
+    wrap_tool_output,
+    clamp_model,
+    estimate_token_size,
+    smart_truncate_history
 )
+from echo_events import EchoEvents
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
 from echo_constants import (
     ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES,
     DELEGATE_AGENT_BLACKLIST,
-    DELEGATE_SYSTEM_APPENDIX, CONTEXT_TRUNCATE_THRESHOLD,
-    ECHO_MAX_CONTEXT_SIZE, get_generation_config
+    CONTEXT_TRUNCATE_THRESHOLD,
+    ECHO_MAX_CONTEXT_SIZE,
+    get_generation_config
 )
+from echo_prompts import SYS_ORCHESTRATOR_APPENDIX
 from echo_skills import get_skill_content, parse_skill_metadata
 
 # Identifiant de rôle pour les threads delegate dans cognitive_threads
@@ -238,7 +244,7 @@ class Tools:
         )
 
         # 4. System prompt final (appendice cadre d'exécution)
-        final_system = base_system + DELEGATE_SYSTEM_APPENDIX.format(
+        final_system = base_system + SYS_ORCHESTRATOR_APPENDIX.format(
             sub_sid=sid, max_calls=max_calls
         )
 
@@ -712,10 +718,13 @@ async def _run_agent_loop(
             else:
                 try:
                     # Paramètres infrastructure — passage explicite (binding OWUI non garanti)
+                    subagent_metadata = dict(__metadata__ or {})
+                    subagent_metadata["is_subagent"] = True
+                    
                     infra_kwargs = {
                         "__user__": __user__,
                         "__chat_id__": __chat_id__,
-                        "__metadata__": __metadata__,
+                        "__metadata__": subagent_metadata,
                         "__event_emitter__": __event_emitter__,
                         "__event_call__": __event_call__,
                     }

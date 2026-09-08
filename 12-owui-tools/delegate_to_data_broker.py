@@ -1,7 +1,7 @@
 """
 title: ECHO Delegate to Data Broker
 author: ECHO
-version: 1.1
+version: 1.2
 description: Délégation de collecte de données externes structurées au Data Broker autonome.
 """
 from pydantic import BaseModel, Field
@@ -9,7 +9,8 @@ from typing import Any
 import sys
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents
+from echo_events import EchoEvents
+from echo_prompts import SYS_BROKER_DELEGATE
 
 
 class Tools:
@@ -42,23 +43,7 @@ class Tools:
 
         events = EchoEvents(__event_emitter__, __event_call__)
 
-        system_prompt = (
-            "Identité : ECHO Data Broker (Agent Spécialisé Autonome).\n"
-            "Objectif : Fournir des données externes structurées et fiables à l'Agent appelant.\n"
-            "Capacités : Accès exclusif au registre sécurisé du système (Identity Vault) "
-            "et aux serveurs MCP publics.\n"
-            "Protocole d'Exécution Strict :\n"
-            "1. Pour les services complexes (Bodacc, emplois, documents académiques), exploration SYSTEMATIQUE du broker local "
-            "(via list_internal_mcp_tools et call_internal_mcp_tool).\n"
-            "2. Si le besoin n'est pas couvert par l'interne, vérification de l'existence d'un serveur distant dans le registre local "
-            "(list_identities, service='remote_mcp'), puis interrogation (list_remote_mcp_tools / call_remote_mcp_tool).\n"
-            "3. Si inexistant, recherche autonome sur internet d'un serveur MCP public "
-            "(search_web), ajout au registre (manage_identity), et exécution.\n"
-            "4. Formatage du flux JSON brut en une réponse technique structurée et factuelle.\n"
-            "Règle de Communication : Toute interaction directe avec l'utilisateur humain "
-            "est proscrite. La réponse doit être formulée exclusivement sous forme de "
-            "compte-rendu technique destiné à l'Agent appelant."
-        )
+        system_prompt = SYS_BROKER_DELEGATE
 
         # Outils autorisés pour le Data Broker (noms dans _TOOLS_CACHE unifié)
         allowed = [

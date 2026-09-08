@@ -145,9 +145,10 @@
       <li>Fallback sécuritaire : <code>application/octet-stream</code>, non supporté.</li>
     </ol>
 
-    <h2><code>echo_utils.py</code> - Moteur Asynchrone, Résilience et Fonctions Communes</h2>
+    <h2>La Suite Modulaire (Démembrement du noyau utilitaire)</h2>
+    <p>Le module monolithique <code>echo_utils.py</code> a été scindé en 9 modules spécialisés pour garantir la clarté et la maintenabilité.</p>
 
-    <h3>EchoStateManager - Persistance Bit-Perfect</h3>
+    <h3><code>echo_state_manager.py</code> - Persistance Bit-Perfect</h3>
     <p>
       La classe <code>EchoStateManager</code> est l'organe de mémoire persistante. Elle gère
       les bases SQLite en mode WAL (Write-Ahead Logging) pour la résistance aux pannes.
@@ -174,7 +175,7 @@
       </p>
     </div>
 
-    <h3>EchoGeminiClient - Moteur d'Appel API</h3>
+    <h3><code>echo_gemini_client.py</code> - Moteur d'Appel API</h3>
     <p>
       <code>EchoGeminiClient</code> centralise la logique réseau en agissant comme un <strong>sélecteur de protocole symétrique</strong>. Il gère de manière transparente les deux backends d'inférence selon la méthode d'authentification disponible. 
       La couche de transport utilise exclusivement <code>httpx</code> avec un <strong>multiplexage HTTP/2 natif</strong> couplé à des stealth headers de haute fidélité. Cette implémentation prévient activement les blocages par les pare-feux applicatifs (WAF). Les anciennes exceptions silencieuses ont été remplacées par des remontées directes (<code>raise</code>) pour déclencher la cascade cognitive du Pipe Engine lors des erreurs réseau.
@@ -252,7 +253,7 @@
       </p>
     </div>
 
-    <h3>Fonctions utilitaires et protocole Multipart</h3>
+    <h3><code>echo_core.py</code> - Fonctions utilitaires et protocole Multipart</h3>
     <table>
       <thead>
         <tr><th>Fonction</th><th>Rôle</th></tr>
@@ -268,7 +269,7 @@
 
     <h3>Pipeline de Vectorisation (RAG)</h3>
     <p>
-      Le module <code>echo_utils.py</code> centralise la mécanique d'indexation vectorielle via la méthode <code>index_text_in_ephemeral_rag()</code>. Ce pipeline garantit une continuité sémantique lors de la construction de la Mémoire Vectorisée de Session.
+      Le module <code>echo_gemini_client.py</code> centralise la mécanique d'indexation vectorielle via la méthode <code>index_text_in_ephemeral_rag()</code>. Ce pipeline garantit une continuité sémantique lors de la construction de la Mémoire Vectorisée de Session.
     </p>
     <ul>
       <li><strong>Chunking avec recouvrement :</strong> Le texte brut est découpé en fragments optimisés (chunks) avec un <em>overlap</em> (recouvrement). Cela évite de sectionner une phrase ou un concept au milieu de l'information.</li>
@@ -276,7 +277,7 @@
       <li><strong>Upsert Qdrant :</strong> Les vecteurs, accompagnés de leurs métadonnées (payload incluant le texte d'origine et le <code>source_id</code>), sont injectés dans la collection <code>echo_session_rag</code> pour être interrogés par le modèle via ses outils.</li>
     </ul>
 
-    <h3>Politique Modèle Centralisée - <code>clamp_model()</code> et <code>resolve_model_policy()</code></h3>
+    <h3>Politique Modèle Centralisée (dans <code>echo_core.py</code>)</h3>
     <p>
       Ces deux fonctions constituent le <strong>verrou de politique</strong> entre le Pipe et
       les outils. Elles garantissent que tout outil respecte la <code>MODEL_SELECTION</code>
@@ -360,6 +361,17 @@
     </table>
 
     
+    
+    <h3>Autres Modules de la Suite</h3>
+    <ul>
+      <li><strong><code>echo_aec.py</code></strong> : Moteur d'orchestration contextuelle (AEC, Grounding YAML/XML).</li>
+      <li><strong><code>echo_http.py</code></strong> : Moteur HTTP asynchrone universel.</li>
+      <li><strong><code>echo_events.py</code></strong> : Interface événementielle vers Open WebUI.</li>
+      <li><strong><code>echo_logger.py</code></strong> : Formatage centralisé des logs.</li>
+      <li><strong><code>echo_paths.py</code></strong> : Gestion absolue des arborescences de domaines et d'Espace Personnel.</li>
+      <li><strong><code>echo_prompts.py</code></strong> : Templates de prompts centralisés.</li>
+    </ul>
+
     <h2>Autres Librairies Partagées Intégrées</h2>
     <ul>
       <li><code>echo_browser_lib.py</code> : Méthodes utilitaires et injecteurs JS pour l'agent navigateur (Playwright).</li>
@@ -510,7 +522,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.82 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.203.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

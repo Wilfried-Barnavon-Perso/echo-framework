@@ -1,7 +1,7 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.17
+version: 1.18
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -18,8 +18,11 @@ from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager
+from echo_events import EchoEvents
+from echo_core import wrap_tool_output
+from echo_state_manager import EchoStateManager
 from echo_constants import ECHO_USER_AGENT, ECHO_SEARXNG_BASE_URL, DEEP_RESEARCH_MAX_CALLS_DEFAULT
+from echo_prompts import SYS_SEARCH_STATIC
 
 class Tools:
     class Valves(BaseModel):
@@ -184,25 +187,7 @@ class Tools:
         
         sid = f"thread_deepresearch_{uuid.uuid4().hex[:8]}"
         
-        STATIC_SYSTEM_PROMPT = (
-            "<persona>\n"
-            "Le Modèle est un expert en recherche web approfondie, rigoureuse et autonome.\n"
-            "</persona>\n\n"
-            "<mission>\n"
-            "Le Modèle doit explorer le sujet de manière exhaustive, croiser de multiples sources et combler proactivement les angles morts pour garantir une complétude absolue.\n"
-            "</mission>\n\n"
-            "<rules>\n"
-            "1. ITÉRATION : Le Modèle DOIT poursuivre sa recherche tant que son analyse globale n'est pas complète et factuellement vérifiée.\n"
-            "2. OUTILS : Le Modèle DOIT privilégier 'search_web' et 'search_instant_answer'.\n"
-            "3. RÉCENCE : Pour toute requête nécessitant des informations récentes, le Modèle DOIT utiliser le paramètre 'time_range' de 'search_web' (ex: 'year', 'month').\n"
-            "4. CARTOGRAPHIE : Si l'outil 'search_maps' est mobilisé, le Modèle DOIT obligatoirement définir l'argument 'print_map=False'.\n"
-            "5. ANTI-SPAM : Le Modèle a l'INTERDICTION d'exécuter plus de 2 appels à 'search_web' simultanément lors d'un même tour. Il DOIT agréger ses mots-clés en requêtes denses.\n"
-            "6. NAVIGATION ('delegate_web_browsing') : Cet outil est STRICTEMENT réservé à l'extraction sur une URL absolue précise obtenue précédemment. INTERDICTION FORMELLE de l'utiliser sur un moteur de recherche. L'argument 'max_iterations=20' est OBLIGATOIRE.\n"
-            "</rules>\n\n"
-            "<output_format>\n"
-            "Le Modèle doit produire une synthèse finale structurée en Markdown, en citant rigoureusement chaque source consultée.\n"
-            "</output_format>"
-        )
+        # La définition de STATIC_SYSTEM_PROMPT a été migrée vers echo_prompts.py
         
         allowed = ["search_web", "search_instant_answer", "search_maps", "wait_timer", "delegate_web_browsing"]
         
@@ -219,7 +204,7 @@ class Tools:
         # Exécution
         result = await delegate.delegate_to_agent(
             task=augmented_query,
-            system_prompt=STATIC_SYSTEM_PROMPT,
+            system_prompt=SYS_SEARCH_STATIC,
             skill_id=None,
             sub_sid=sid,
             with_context_distillate=False,

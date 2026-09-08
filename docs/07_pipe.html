@@ -53,7 +53,7 @@
         <tr><td><strong>Point d'entrée</strong></td><td><code>Pipe.pipe(body, __event_emitter__)</code></td></tr>
         <tr><td><strong>Exécution</strong></td><td>In-process dans Python d'Open WebUI, asynchrone (<code>asyncio</code>)</td></tr>
         <tr><td><strong>Transport API</strong></td><td>HTTP/2 strict (<code>httpx</code> avec <code>http2=True</code>), SSE streaming</td></tr>
-        <tr><td><strong>Dépendances internes</strong></td><td><code>echo_utils</code>, <code>echo_auth</code>, <code>echo_protocol</code>, <code>echo_constants</code>, <code>echo_ui</code></td></tr>
+        <tr><td><strong>Dépendances internes</strong></td><td><code>echo_state_manager</code>, <code>echo_gemini_client</code>, <code>echo_core</code>, <code>echo_auth</code>, <code>echo_protocol</code>, <code>echo_constants</code>, <code>echo_ui</code></td></tr>
       </tbody>
     </table>
 
@@ -313,7 +313,7 @@ flowchart TD
     <h3>Isolation et affichage</h3>
     <p>
       Les pensées sont extraites par <code>split_thought_process(text)</code>
-      (<code>echo_utils.py</code>), encapsulées dans les balises <code>&lt;think&gt;…&lt;/think&gt;</code>
+      (issue de <code>echo_core.py</code>), encapsulées dans les balises <code>&lt;think&gt;…&lt;/think&gt;</code>
       et envoyées en amont du texte final dans le flux SSE. Open WebUI les affiche dans une
       section repliable. Elles <strong>ne polluent jamais</strong> le texte de la réponse.
     </p>
@@ -454,6 +454,12 @@ Content-Type: application/json</code></pre>
       </li>
     </ol>
 
+    
+    <h3>Suture Asynchrone (UserDataManager)</h3>
+    <p>
+      L'orchestrateur intègre un mécanisme de <strong>pontage d'état (Shadow Suture)</strong> via <code>get_call_bridge()</code>. Ce mécanisme relie cryptographiquement l'ID d'un appel d'outil déclenché à la réponse asynchrone réceptionnée au tour suivant, garantissant la cohérence des appels outils en environnement asynchrone.
+    </p>
+
     <h2>HUD Quota - intégration dans le Pipe</h2>
 
     <p>
@@ -498,7 +504,7 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.82 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.203.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -3,7 +3,12 @@ ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
 Version: 1.5 (Correction de l'instruction système du smart_context pour guider vers semantic_probe sur les binaires)
+version: 1.2
+description: Composant du système ECHO : Echo Ingestion.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.2: SSOT AEC : Remplacement du hardcoding XML par EchoAEC.render_smart_context.
 
 import os
 import asyncio
@@ -19,9 +24,10 @@ try:
 except ImportError:
     aiofiles = None
 
-from echo_utils import (
-    resolve_upload_file_path, get_echo_session_path, get_echo_global_path, EchoGeminiClient, EchoStateManager
-)
+from echo_paths import resolve_upload_file_path, get_echo_session_path, get_echo_global_path
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
+from echo_prompts import SYS_INGEST_EXTRACT, USR_INGEST_SYNTHESIS
 from echo_constants import (
     get_gemini_mime, 
     FILE_INGESTION_STATUS,
@@ -325,7 +331,8 @@ class EchoIngestionPipeline:
             MODEL_DISTILLATION, ECHO_MODELS_REGISTRY
         )
         import copy
-        from echo_utils import EchoAuth, EchoGeminiClient
+        from echo_auth import EchoAuth
+        from echo_gemini_client import EchoGeminiClient
         import json
         
         u_ctx = {"id": user_id}
@@ -360,12 +367,7 @@ class EchoIngestionPipeline:
         else:
             # Flux Multimédia : Pipeline B64 injecté
             await events.status(f"👁️ Analyse multimodale de {filename}...", False)
-            extraction_prompt = (
-                "Tu es un extracteur de données brut. Ta mission est de décrire, transcrire et analyser "
-                "ce document. Si le document est structuré reproduis et respecte strictement la structure. "
-                "Si le document est textuel, respecte strictement son verbatim. Si le document est audiovisuel "
-                "la description doit être précise, détaillée, complète, couvrant autant, le textuel, le visuel que l'audio, et parfaitement horosynchronisé."
-            )
+            extraction_prompt = SYS_INGEST_EXTRACT
             
             base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(MODEL_DISTILLATION, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
             
@@ -469,10 +471,9 @@ class EchoIngestionPipeline:
                             context_chunks.append(pl.get("text", ""))
                             
             if context_chunks:
-                synthesis_prompt = (
-                    f"Fais un résumé exhaustif et structuré (en markdown) de ce document '{filename}' "
-                    "en te basant UNIQUEMENT sur les extraits suivants pertinents :\n\n" +
-                    "\n\n---\n\n".join(context_chunks)
+                synthesis_prompt = USR_INGEST_SYNTHESIS.format(
+                    filename=filename,
+                    chunks="\n\n---\n\n".join(context_chunks)
                 )
                 try:
                     brief_summary = await EchoGeminiClient.call_distillation(
@@ -486,12 +487,14 @@ class EchoIngestionPipeline:
                 
         sys_msg = "> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_sessions_context`" if is_text else "> ⚙️ INFORMATION SYSTÈME : Le document complexe est vectorisé, mais pour une analyse structurelle/visuelle profonde, privilégiez l'outil `semantic_probe`"
         
-        res_text = (
-            f"<AEC_smart_context filename=\"{filename}\" mime_type=\"{mime}\" mode=\"vectorized_sum_up\"\n"
-            f"                source_id=\"{file_id}\">\n"
-            f"{brief_summary}\n\n"
-            f"{sys_msg}\n"
-            f"</AEC_smart_context>"
+        from echo_aec import EchoAEC
+        res_text = EchoAEC.render_smart_context(
+            filename=filename,
+            mime=mime,
+            mode="vectorized_sum_up",
+            source_id=file_id,
+            summary=brief_summary,
+            sys_msg=sys_msg
         )
         return {"status": "success", "type": FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"], "source_id": file_id, "fid": file_id, "name": filename, "mime": mime, "content": res_text}
 

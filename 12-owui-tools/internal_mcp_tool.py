@@ -1,7 +1,7 @@
 """
 title: ECHO Internal MCP Tool
 author: ECHO
-version: 1.0
+version: 1.1
 description: Outil natif d'interrogation et d'exécution sur le serveur MCP interne d'ECHO (Broker local).
 """
 from pydantic import BaseModel
@@ -11,7 +11,8 @@ import json
 import sys
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoEvents
+from echo_core import wrap_tool_output
+from echo_events import EchoEvents
 
 class Tools:
     class Valves(BaseModel):

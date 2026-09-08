@@ -2,13 +2,14 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.51
+version: 7.54
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.54: Correction du bug d'ingestion des fichiers attachés au premier message (chat_id récupéré depuis le body).
+# 7.53: SSOT AEC : Délégation complète du rendu YAML/XML (environnement & système) à la lib dédiée EchoAEC.
 # 7.51: Correction d'un bug critique (NameError) bloquant l'injection de l'AEC via l'import de FILE_INGESTION_STATUS.
-# 7.50: Rollback Zéro-Hallucination : Restauration du snapshot plat AEC et abandon du format XML.
 # 7.48: Typage hiérarchique XML de l'AEC et suppression du formateur YAML.
 # 7.47: Délégation des UserValves vers user_native_context_filter et verrouillage de la désactivation.
 # 7.46: Nettoyage des mentions "V2" du registre et de l'AEC.
@@ -30,7 +31,8 @@ from datetime import datetime
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import resolve_upload_file_path, EchoAuth
+from echo_paths import resolve_upload_file_path
+from echo_auth import EchoAuth
 from echo_constants import (
     GOOGLE_API_KEY_REGEX,
     DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB,
@@ -61,38 +63,44 @@ class Filter:
 
     async def inlet(self, body: dict, __user__: Optional[dict] = None, __metadata__: Optional[Dict] = None, __event_emitter__: Optional[Any] = None) -> dict:
         try:
-            from echo_utils import EchoEvents, get_echo_version, EchoStateManager
+            from echo_events import EchoEvents
+            from echo_paths import get_echo_version
+            from echo_state_manager import EchoStateManager
             events = EchoEvents(__event_emitter__)
-            
+
             meta = __metadata__ or body.get("metadata", {})
-            chat_id = meta.get("chat_id")
+            chat_id = meta.get("chat_id") or body.get("chat_id")
             user_id = __user__.get("id", "system") if __user__ else "system"
-            
+
             # Factorisation : Création anticipée du DOMAIN (Vault) Utilisateur-Chat
             state_manager = None
             if chat_id:
                 state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
-            
+
             all_files_dict = {}
             for f in (body.get("files") or []):
                 fid = f.get("id") or f.get("file", {}).get("id")
-                if fid: all_files_dict[fid] = f
-                
+                if fid:
+                    all_files_dict[fid] = f
+
             user_msg_files = meta.get("user_message", {}).get("files") or []
             for f in user_msg_files:
                 fid = f.get("id") or f.get("file", {}).get("id")
-                if fid: all_files_dict[fid] = f
-                
+                if fid:
+                    all_files_dict[fid] = f
+
             # [NOUVEAU] Récupération des fichiers globaux (ex: import Workspace)
             global_workspace_files = meta.get("files") or []
             for f in global_workspace_files:
                 fid = f.get("id") or f.get("file", {}).get("id")
-                if fid: all_files_dict[fid] = f
-                
+                if fid:
+                    all_files_dict[fid] = f
+
             all_files = list(all_files_dict.values())
-            
+
             msgs = body.get("messages") or []
-            if not msgs: return body
+            if not msgs:
+                return body
 
             if len(msgs) >= 2:
                 prev_content = str(msgs[-2].get("content", ""))
@@ -106,14 +114,13 @@ class Filter:
                     msgs[-1]["content"] = "🔐 *Vérification de la clé API Google en cours...*"
                     return body
 
-            tokens = []
             if __user__ and "id" in __user__:
-                tokens = self.auth.get_api_keys(__user__["id"])
+                self.auth.get_api_keys(__user__["id"])
 
             files_to_process = []
             files_already_processed = []
             if chat_id:
-                from echo_utils import get_echo_session_path
+                from echo_paths import get_echo_session_path
                 vault_dir = os.path.normpath(get_echo_session_path(user_id, chat_id, "files"))
                 for f in all_files:
                     fid = f.get("id") or f.get("file", {}).get("id")
@@ -124,7 +131,7 @@ class Filter:
                                 files_already_processed.append(f)
                             else:
                                 files_to_process.append(f)
-                
+
             # [NEW] Injection des téléchargements Playwright en attente d'ingestion
             if chat_id and state_manager:
                 pending_resources = state_manager.get_resources(
@@ -147,41 +154,42 @@ class Filter:
             results_to_seal = []
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
-                
+
                 # Instanciation du Pipeline Externe
                 if "/app/backend/echo_libs" not in sys.path:
                     sys.path.append("/app/backend/echo_libs")
                 try:
                     from echo_ingestion import EchoIngestionPipeline
-                except ImportError as e:
+                except ImportError:
                     # Dans le cas où on teste localement, on ajoute le path du dossier contenant echo_ingestion
                     dir_path = os.path.dirname(os.path.realpath(__file__))
                     lib_path = os.path.join(os.path.dirname(dir_path), "14-owui-libs")
                     sys.path.append(lib_path)
                     from echo_ingestion import EchoIngestionPipeline
-                    
+
                 pipeline = EchoIngestionPipeline(valves=self.valves)
                 sem = asyncio.Semaphore(3)
-                
+
                 async def safe_process(f):
                     async with sem:
                         return await pipeline.process_file_task(user_id, f, chat_id, events)
-                        
+
                 tasks = [safe_process(f) for f in files_to_process]
                 gathered = await asyncio.gather(*tasks, return_exceptions=True)
-                
+
                 for i, res in enumerate(gathered):
                     if isinstance(res, Exception):
                         err_msg = str(res)
                         file_name = files_to_process[i].get('name', 'inconnu')
                         print(f"[ECHO-FILTER] !! Pipeline exception for {file_name}: {err_msg}", flush=True)
-                        if events: await events.status(f"❌ Crash critique pour {file_name}", False)
+                        if events:
+                            await events.status(f"❌ Crash critique pour {file_name}", False)
                         results_to_seal.append({"status": "error", "name": file_name, "error": f"Crash Pipeline: {err_msg}"})
                     else:
                         results_to_seal.append(res)
 
             results = list(results_to_seal)
-            
+
             # Réhydratation hybride : Disque (Codex) / Base (Images/PDFs)
             if files_already_processed and chat_id and state_manager:
                 for f in files_already_processed:
@@ -222,7 +230,7 @@ class Filter:
             idx = -1
             ordered_user_parts = []  # Parts user en ordre (texte + images entrelacés)
             for i in range(len(msgs)-1, -1, -1):
-                if msgs[i].get("role") == "user": 
+                if msgs[i].get("role") == "user":
                     idx = i
                     orig_content = msgs[i].get("content")
                     if isinstance(orig_content, list):
@@ -244,16 +252,16 @@ class Filter:
 
             if idx != -1:
                 meta_vars = meta.get("variables", {})
-                
+
                 enable_name = meta.get("_echo_user_name_enabled", False)
                 display_name = __user__.get("name", "anonyme") if enable_name else "anonyme"
-                
+
                 sys_loc = meta_vars.get("{{USER_LOCATION}}", "Inconnu")
                 u_loc = meta.get("_echo_override_location", "")
                 final_loc = u_loc if u_loc else sys_loc
-                
+
                 tour_conversation = sum(1 for m in msgs if m.get("role") == "user")
-                
+
                 # === AEC : Snapshot minimaliste (sans registres) ===
                 env_snapshot = {
                     "version_framework_echo": get_echo_version() or "##ECHO_VERSION##",
@@ -272,12 +280,11 @@ class Filter:
                     "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
                     "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                 }
-                
-                from echo_utils import _dict_to_yaml_aec, build_aec_system_events
-                
+
+                from echo_aec import EchoAEC
+
                 rich_parts = []
-                yaml_str = _dict_to_yaml_aec(env_snapshot)
-                rich_parts.append({"text": f"<AEC_environnement_contexte>\n{yaml_str}\n</AEC_environnement_contexte>\n\n"})
+                rich_parts.append({"text": EchoAEC.render_environment_context(env_snapshot)})
 
                 # === Configuration ZoneInfo ===
                 try:
@@ -297,11 +304,14 @@ class Filter:
                     if r.get("status") == "success":
                         evt = {"type": r.get("type"), "name": r.get("name"), "mime": r.get("mime")}
                         evt["date"] = datetime.fromtimestamp(r.get("created_at", time.time()), tz=user_tz).strftime("%Y-%m-%d %H:%M:%S")
-                        if r.get("source_id"): evt["source_id"] = r["source_id"]
-                        if evt not in sys_events: sys_events.append(evt)
+                        if r.get("source_id"):
+                            evt["source_id"] = r["source_id"]
+                        if evt not in sys_events:
+                            sys_events.append(evt)
                     elif r.get("status") == "error":
                         err_evt = {"name": r.get("name"), "error": r.get("error", "Erreur inconnue")}
-                        if err_evt not in error_events: error_events.append(err_evt)
+                        if err_evt not in error_events:
+                            error_events.append(err_evt)
 
                 # === AEC : Détection delta (ressources créées par outils/HUD hors-tour) ===
                 if chat_id:
@@ -322,21 +332,24 @@ class Filter:
                     body["metadata"]["_echo_last_event_check_at"] = int(time.time())
 
                 # Injection factorisée des évènements dans l'AEC
-                events_text = build_aec_system_events(sys_events, error_events)
+                events_text = EchoAEC.render_system_events(sys_events, error_events)
                 if events_text:
                     rich_parts.append({"text": events_text})
 
-                if ordered_user_parts: rich_parts.extend(ordered_user_parts)
-                
+                if ordered_user_parts:
+                    rich_parts.extend(ordered_user_parts)
+
                 for res in results:
                     if res.get("status") == "success":
-                        if res["type"] == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]: rich_parts.append({"text": res["content"]})
+                        if res["type"] == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]:
+                            rich_parts.append({"text": res["content"]})
                         elif res["type"] == FILE_INGESTION_STATUS["PUT_IN_CONTEXT"]:
-                            if res["sub_type"] == "text": rich_parts.append({"text": res["content"]})
+                            if res["sub_type"] == "text":
+                                rich_parts.append({"text": res["content"]})
                             else:
                                 rich_parts.append({"text": res["content"]["anchor"]})
                                 rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
-                
+
                 body["metadata"]["_echo_user_parts_draft"] = rich_parts
                 body["metadata"]["_echo_user_msg_id"] = msgs[idx].get("id")
                 body["metadata"]["_echo_user_msg_updated_at"] = msgs[idx].get("updated_at")

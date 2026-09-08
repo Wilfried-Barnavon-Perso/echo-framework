@@ -1,7 +1,7 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.27
+version: 5.109.28
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -26,17 +26,17 @@ from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import (
-    EchoEvents, wrap_tool_output, wrap_cascade_output,
-    resolve_upload_file_path, split_thought_process,
-    EchoGeminiClient, get_stealth_headers
-)
+from echo_events import EchoEvents
+from echo_core import wrap_tool_output, wrap_cascade_output, split_thought_process
+from echo_paths import resolve_upload_file_path
+from echo_gemini_client import EchoGeminiClient
+from echo_http import get_stealth_headers
 from echo_ui import EchoUI
 from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, ECHO_API_KEY_RETRIES,
-    ECHO_API_MAX_RETRIES, get_generation_config,
-    PROMPT_SENSORY_DISTILLATION
+    ECHO_API_MAX_RETRIES, get_generation_config
 )
+from echo_prompts import SYS_EXPLORE_SENSORY
 
 class Tools:
     class Valves(BaseModel):
@@ -239,7 +239,7 @@ class Tools:
         safe_name = os.path.basename(fpath)
         if "_" in safe_name and len(safe_name.split("_")[0]) >= 32: safe_name = safe_name.split("_", 1)[1]
         
-        prompt = PROMPT_SENSORY_DISTILLATION.format(filename=safe_name)
+        prompt = SYS_EXPLORE_SENSORY.format(filename=safe_name)
         
         try:
             payload = {

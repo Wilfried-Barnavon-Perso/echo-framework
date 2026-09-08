@@ -11,8 +11,12 @@ Ce dossier constitue le **Cœur Applicatif (Core Libraries)** du framework. Il c
 ### Fondations & Registre Unifié
 - **`echo_constants.py`** : C'est le Registre Unifié et la librairie de fondations (Shared Core Functionality). 
   - **Sémantique** : Contient `ECHO_MODELS_REGISTRY` dictant la hiérarchie cognitive (Pro, Flash avec `gemini-3.8-flash`, Lite, Distillation), `ECHO_SESSION_DOMAINS` pour le Vault, ainsi que les modèles de prompts natifs, l'identifiant obligatoire `wrap_tool_output` (`echo_tool_multiparts`) pour le multimodal, et les **seuils de monitoring de la jauge de contexte**.
-- **`echo_utils.py`** : Cœur utilitaire massif et librairie partagée du système, gérant la base de données, la gestion des chemins (path management), la résilience réseau et le formatage.
-  - **Sémantique** : Instancie `EchoStateManager` gérant l'accès sécurisé et asynchrone à SQLite (incluant le suivi RAG O(1) via `is_message_embedded()`). Contient le client natif `EchoGeminiClient` qui implémente le multiplexage **HTTP/2**, le Fail-fast sur erreur de syntaxe (400), la Cascade Descendante (déclenchée explicitement par des `raise` réseau au lieu de `yield` silencieux), et un Circuit Breaker OAuth2 robuste (Fast-Failover Intra-Retry avec verrouillage dynamique des URL sur timeout/429 via `ECHO_ENDPOINT_LOCK_TIMEOUT_MIN` et Auto-heal). Fournit également la primitive `_dict_to_yaml_aec` pour le formatage YAML plat des événements systèmes de l'AEC. Les constantes de résilience utilisent désormais la nomenclature unifiée `ECHO_API_KEY_RETRIES`.
+- **Démembrement de l'ancien `echo_utils.py`** : Le framework a subi une refonte modulaire majeure. Le cœur utilitaire massif a été éclaté en composants ultra-spécialisés :
+  - **`echo_state_manager.py`** : Gestionnaire universel de l'état asynchrone SQLite (`EchoStateManager`), incluant le verrouillage intra-chat, le suivi RAG O(1), et l'accès concurrent sécurisé.
+  - **`echo_gemini_client.py`** : Client natif implémentant le multiplexage **HTTP/2**, la Cascade Descendante, et le Circuit Breaker OAuth2 (Fast-Failover Intra-Retry avec verrouillage dynamique).
+  - **`echo_aec.py`** : Module d'orchestration contextuelle (AEC) générant dynamiquement les injections YAML pour le grounding et les événements systèmes.
+  - **`echo_core.py`** : Fonctions cognitives et utilitaires pures (ex: `build_model_identity`).
+  - **`echo_http.py`**, **`echo_events.py`**, **`echo_logger.py`**, **`echo_paths.py`**, **`echo_prompts.py`** : Briques fondamentales gérant respectivement les requêtes HTTP asynchrones, l'émission d'évènements OWUI, la journalisation système, le path management absolu, et les gabarits de prompts.
 - **`echo_protocol.py`** : Définition des schémas Pydantic natifs et constantes de base pour les protocoles réseau.
 
 ### Interfaces Utilisateur (UI & DOM)

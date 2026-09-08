@@ -2,16 +2,18 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.20
+version: 1.25
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.20: Fast-Failover WebGPU, sécurisation mobile q4 et tenseur sentence_embedding.
-# 1.19: Restauration de q4f16 pour test pilote GPU Mali.
+# 1.25: Fix HUD WebGPU (Saut de position lors du clignotement) via CSS scale indépendant.
+# 1.24: Optimisation (Bypass Serveur-Side) empêchant l'injection JS sur mobile et purge du code mort associé.
+# 1.23: Désactivation totale de WebGPU sur mobile (Fallback CPU immédiat).
+# 1.22: Fix bypass timeout. Support du statut connecting et timeout unknown à 5s.
+# 1.21: Rétablissement de q4f16 pour compatibilité WebGPU stricte.
 # 1.18: Purge des références bge-m3. Fix fallback q4 universel pour GPU mobiles (Android).
 # 1.17: Fix compatibilité Android (suppression du setTimeout et de la transparence causant l'invisibilité de l'icône).
-# 1.16: Repositionnement du HUD WebGPU (top center) avec animation fluide (transition CSS) et overflow hidden.
 # 1.14: Fix HUD WebGPU Mobile (Opacité/Morphing) et standardisation 1024D (Harrier 0.6b).
 
 import asyncio
@@ -68,6 +70,18 @@ class Filter:
         if not __event_emitter__:
             return body
             
+        # --- BYPASS SERVEUR-SIDE POUR MOBILES ---
+        # Le pont WebGPU est instable/inefficace sur mobile.
+        # On court-circuite l'injection JS et la boucle d'attente.
+        if __request__:
+            user_agent = __request__.headers.get("user-agent", "").lower()
+            import re
+            if re.search(r'mobi|android|iphone|ipad|ipod', user_agent):
+                import logging
+                logger = logging.getLogger("ECHO-EDGE-BRIDGE")
+                logger.info(f"📱 Bypass Mobile (Server-Side) : Pont WebGPU ignoré pour ce client.")
+                return body
+
         user_id = __user__.get("id", "anonymous") if __user__ else "anonymous"
 
         # Code JavaScript (Data Island) :
@@ -75,7 +89,7 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        SCRIPT_VERSION = "1.20"
+        SCRIPT_VERSION = "1.25"
         
         # --- SYNCHRONISATION DYNAMIQUE DU MODÈLE (CPU -> GPU) ---
         import httpx
@@ -91,10 +105,6 @@ class Filter:
         # Assignation stricte (Harrier-OSS)
         target_repo = "onnx-community/harrier-oss-v1-0.6b-ONNX"
         
-        # NOTE: Le target_dtype injecté ici servira de fallback absolu pour Mobile.
-        # Sur PC, le JavaScript (via isMobile) basculera automatiquement sur 'fp16'
-        # pour exploiter la pleine puissance du GPU.
-        target_dtype = "q4"
         hud_title = "Harrier 0.6B"
 
         js_code = """
@@ -142,7 +152,6 @@ class Filter:
                 } catch(e) {}
             }
 
-            // HARDWARE CHECK REVISE ET ACTIF
             if (typeof navigator === 'undefined' || !navigator.gpu) {
                 sendIncompatibleAndExit("WebGPU non exposé par le navigateur");
                 return;
@@ -161,9 +170,9 @@ class Filter:
                 style.id = styleId;
                 style.innerHTML = `
                     @keyframes echoComputePulse {
-                        0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); transform: scale(0.95); }
-                        70% { box-shadow: 0 0 0 8px rgba(56, 189, 248, 0); transform: scale(1); }
-                        100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); transform: scale(0.95); }
+                        0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); scale: 0.95; }
+                        70% { box-shadow: 0 0 0 8px rgba(56, 189, 248, 0); scale: 1; }
+                        100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); scale: 0.95; }
                     }
                     .echo-gpu-computing {
                         animation: echoComputePulse 1s infinite !important;
@@ -353,9 +362,8 @@ class Filter:
                             
                             if (!isModelLoaded) {
                                 try {
-                                    const isMobile = /Mobi|Android/i.test(navigator.userAgent);
                                     const targetRepo = '__TARGET_REPO__';
-                                    const targetDtype = isMobile ? '__TARGET_DTYPE__' : 'fp16';
+                                    const targetDtype = 'fp16'; // Toujours fp16 (Desktop exclusif)
                                     
                                     globalTokenizer = await transformers.AutoTokenizer.from_pretrained(targetRepo);
                                     globalModel = await transformers.AutoModel.from_pretrained(targetRepo, {
@@ -421,14 +429,8 @@ class Filter:
                                 yOffset = 0;
                                 hud.style.transform = 'translate3d(0, 0, 0)';
                                 
-                                const isMobileDevice = /Mobi|Android/i.test(navigator.userAgent);
-                                if (isMobileDevice) {
-                                    hud.style.left = 'calc(50% + 75px)';
-                                    hud.style.opacity = '1';
-                                } else {
-                                    hud.style.left = 'calc(50% + 90px)';
-                                    hud.style.opacity = '0.85';
-                                }
+                                hud.style.left = 'calc(50% + 90px)';
+                                hud.style.opacity = '0.85';
                                 
                                 hud.title = "ECHO Edge WebGPU actif (__HUD_TITLE__)";
                             }
@@ -532,7 +534,6 @@ class Filter:
 
         # Injections dynamiques
         js_code = js_code.replace('__TARGET_REPO__', target_repo)
-        js_code = js_code.replace('__TARGET_DTYPE__', target_dtype)
         js_code = js_code.replace('__HUD_TITLE__', hud_title)
         js_code = js_code.replace('__USER_ID__', user_id)
 
@@ -569,8 +570,10 @@ class Filter:
                             elif status == "incompatible":
                                 logger.warning(f"⚠️ WebGPU Incompatible/Erreur détecté pour {user_id}. Repli CPU immédiat.")
                                 break
-                            elif status == "unknown" and (time.time() - start_time > 3):
-                                logger.warning(f"⚠️ Le pont Edge n'a donné aucun signe de vie après 3s pour {user_id}. Annulation de l'attente.")
+                            elif status == "connecting":
+                                pass
+                            elif status == "unknown" and (time.time() - start_time > 5):
+                                logger.warning(f"⚠️ Le pont Edge n'a donné aucun signe de vie après 5s pour {user_id}. Annulation de l'attente.")
                                 break
                     except Exception:
                         pass

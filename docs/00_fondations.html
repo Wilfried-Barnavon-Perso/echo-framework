@@ -128,14 +128,21 @@
       Grâce à ce pont (injecté dynamiquement par le Filtre 3), l'Embedding Worker (serveur) délègue le calcul des vecteurs <code>Microsoft/Harrier-OSS</code> au client. Ce n'est qu'en cas de non-réponse du client (timeout asynchrone de 15s) que le serveur reprend la charge en Fallback CPU local. Cela allège drastiquement la consommation énergétique du serveur d'auto-hébergement et accélère la création de la Mémoire Vectorisée de Session.
     </p>
 
-    <div class="transition-text">
+    
+    <h2>Standards de Développement</h2>
+    <h3>Règle UTF-8 sans BOM</h3>
+    <p>
+      Le framework impose une règle stricte d'encodage : tous les fichiers (<code>VERSION</code>, <code>.py</code>, <code>.xml</code>, <code>.sh</code>, <code>.json</code>) doivent <strong>obligatoirement être encodés en UTF-8 sans BOM</strong>. L'introduction de BOM ou de mojibake est strictement interdite pour garantir la compatibilité absolue entre les environnements Windows et Linux de la pile Docker.
+    </p>
+
+<div class="transition-text">
       <a href="index.html">&larr; Introduction</a>
       &nbsp;&nbsp;
       <a href="01_hld_architecture.html">High-Level Design (HLD) &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.82 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.203.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

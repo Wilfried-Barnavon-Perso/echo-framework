@@ -70,9 +70,11 @@ flowchart TD
     V[("📂 Vault Local")]
     N8N["⚡ N8N Worker<br/>(Headless SQLite)"]
     MCP["🔌 MCP Broker"]
+    DBK["📊 Data Broker"]
     Tools <--> V
     Tools <--> N8N
     Tools <--> MCP
+    Tools <--> DBK
   end
 
   subgraph CLOUD ["☁️ ZONE 4 : INFÉRENCE"]
@@ -111,7 +113,7 @@ flowchart TD
     <p>
       Ce schéma vectoriel représente l'imbrication réelle des modules Python d'ECHO et leurs dépendances.
       Les connexions reproduisent fidèlement les imports déclarés dans le code source
-      (<code>pipe_engine.py v192.21</code>, <code>echo_utils.py v8.2</code>).
+      (<code>pipe_engine.py</code>, <code>echo_state_manager.py</code>, <code>echo_core.py</code>).
       Cliquer sur le diagramme pour le zoomer.
     </p>
 
@@ -176,9 +178,9 @@ flowchart TD
         <rect x="24" y="306" width="560" height="180" rx="8" fill="#0d1117" stroke="#1e40af" stroke-width="1.5" stroke-dasharray="6,3"/>
         <text x="304" y="326" text-anchor="middle" fill="#1d4ed8" font-size="9" font-family="monospace" letter-spacing="1">14-owui-libs</text>
 
-        <!-- echo_utils.py -->
+        <!-- echo_state_manager.py -->
         <rect x="36" y="334" width="160" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
-        <text x="52" y="354" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_utils.py</text>
+        <text x="52" y="354" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_state_manager.py</text>
         <text x="186" y="354" fill="#4ade80" font-size="8">v8.2</text>
         <text x="52" y="371" fill="#64748b" font-size="9" font-family="monospace">EchoStateManager</text>
         <text x="52" y="385" fill="#64748b" font-size="9" font-family="monospace">EchoGeminiClient</text>
@@ -279,7 +281,7 @@ flowchart TD
         <line x1="266" y1="84" x2="334" y2="130" stroke="#4ade80" stroke-width="1.2" marker-end="url(#arrow)"/>
         <text x="286" y="106" fill="#4ade80" font-size="8" font-family="monospace">Draft YAML</text>
 
-        <!-- Pipe → echo_utils -->
+        <!-- Pipe → echo_state_manager -->
         <line x1="445" y1="192" x2="116" y2="334" stroke="#60a5fa" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
 
         <!-- Pipe → echo_auth -->
@@ -294,10 +296,10 @@ flowchart TD
         <!-- Pipe → echo_ui -->
         <line x1="556" y1="100" x2="614" y2="84" stroke="#2dd4bf" stroke-width="1.2" marker-end="url(#arrow-gray)"/>
 
-        <!-- echo_utils → SQLite -->
+        <!-- echo_state_manager → SQLite -->
         <line x1="116" y1="472" x2="134" y2="540" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
 
-        <!-- echo_utils → Qdrant -->
+        <!-- echo_state_manager → Qdrant -->
         <line x1="196" y1="456" x2="328" y2="540" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
 
         <!-- Admin → Qdrant -->
@@ -614,6 +616,7 @@ flowchart TB
     SNG["🔍 SearxNG Proxy<br/>[:8080]"]
     DL["⬇️ Download Broker<br/>[Daemon]"]
     AUD["🎙️ Audio Workers<br/>[:7995, :7996]"]
+    DBK["📊 Data Broker Agent"]
   end
 
   subgraph MGMT ["⚙️ ZONE 5 : PLAN DE CONTRÔLE"]
@@ -634,7 +637,7 @@ flowchart TB
   BW -. "Accès Admin" .-> AM
 
   P == "SQL R/W" ==> SQL
-  P == "HTTP Interne" ==> BA & PW & SNG
+  P == "HTTP Interne" ==> BA & PW & SNG & DBK
   P == "HTTP/2 SSE" ==> GEMINI
 
   F -. "Hash Uploads" .-> SQL
@@ -654,7 +657,7 @@ flowchart TB
   class U,BW,OWUI,AUTH,AM,DOCKER node
   class SQL,QD,FS,EMB db
   class F,P core
-  class BA,PW,SNG,AUD,DL tool
+  class BA,PW,SNG,AUD,DL,DBK tool
       </div>
     </div>
 
@@ -672,7 +675,7 @@ flowchart TB
     <h2>Schéma SQL - Ombres Riches</h2>
 
     <p>
-      La persistance repose sur la classe <code>EchoStateManager</code> (<code>echo_utils.py v8.2</code>).
+      La persistance repose sur la classe <code>EchoStateManager</code> (<code>echo_state_manager.py</code>).
       Chaque chat dispose d'une base SQLite dédiée, en mode <strong>WAL</strong> (Write-Ahead Logging)
       pour la résistance aux pannes.
     </p>
@@ -722,12 +725,37 @@ erDiagram
     string vault_path "Chemin dans l'Espace Personnel"
     string status "inline | vectorized_sum_up | vault"
   }
+  THREAD_STEPS {
+    string sub_sid PK "ID Conversation"
+    string chat_id FK
+    string role "USER ou MODEL"
+    string content "Message text"
+  }
+  PLAN_RECORDS {
+    string plan_id PK
+    string status
+    string goal
+  }
+  CODEX_DOCS {
+    string filename PK
+    string language
+    string lines
+  }
+  ECHO_RESOURCES {
+    string id PK
+    string resource_type
+    string status
+  }
 
   MESSAGE_SHADOWS ||--o| SUTURE_INDEX : "indexé par"
   SUTURE_INDEX ||--o| COGNITIVE_SIGNATURES : "lie"
   SUTURE_INDEX ||--o{ TOOL_JOURNAL : "journalise"
   MESSAGE_SHADOWS }|--o{ RICH_PAYLOADS : "référence (Invariant Hash)"
   TOOL_JOURNAL }|--o{ PROCESSED_FILES : "génère / consulte"
+  MESSAGE_SHADOWS ||--o{ THREAD_STEPS : "délègue"
+  MESSAGE_SHADOWS ||--o{ PLAN_RECORDS : "planifie"
+  MESSAGE_SHADOWS ||--o{ CODEX_DOCS : "modifie"
+  MESSAGE_SHADOWS ||--o{ ECHO_RESOURCES : "référence"
       </div>
     </div>
 
@@ -763,7 +791,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.82 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.203.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

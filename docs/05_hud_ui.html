@@ -231,7 +231,7 @@
     <h2>Système OWUI Tools et Modales Natives Asynchrones</h2>
 
     <p>
-      Le moteur <code>echo_ui.py</code> intègre désormais un système natif d'interaction <strong>"OWUI Tools"</strong> avec des optimisations 100% Mobile Natives (unités dvh, anti-zoom iOS, touch targets 44px, anti-scroll du body). Ce système déploie des modales asynchrones interactives (ex: <code>window.echoCustomPrompt</code> enrichies par des boutons 'pills' pour les options) permettant de solliciter l'utilisateur ou d'afficher des alertes critiques sans jamais bloquer l'Event Loop du navigateur.
+      Le moteur <code>echo_ui.py</code> intègre désormais un système natif d'interaction <strong>"OWUI Tools"</strong> avec des optimisations 100% Mobile Natives (unités dvh, anti-zoom iOS, touch targets 44px, anti-scroll du body). Ce système déploie des modales asynchrones interactives (ex: <code>window.echoCustomPrompt</code>, <code>window.echoCustomConfirm</code> enrichies par des boutons 'pills' pour les options) permettant de solliciter l'utilisateur ou d'afficher des alertes critiques sans jamais bloquer l'Event Loop du navigateur.
     </p>
 
     <ul>
@@ -244,6 +244,12 @@
       &nbsp;&nbsp;
       <a href="06_filtre.html">Les Filtres (Conscience) &rarr;</a>
     </div>
+
+    
+    <h2>Vault UI et <code>echoWebPlayerUpdate</code></h2>
+    <p>
+      L'écosystème intègre également le <strong>Vault UI</strong>, un gestionnaire de fichiers avancé. Il se met à jour en temps réel via <code>echoWebPlayerUpdate</code>, assurant une synchronisation parfaite entre les processus d'arrière-plan (N8N, MCP) et l'interface client, sans nécessiter de rafraîchissement global de la page.
+    </p>
 
     <h2><code>_generate_codex_js()</code> - Moteur HUD Monaco Codex</h2>
 
@@ -298,7 +304,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.200.82 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.203.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,7 +1,7 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.22
+version: 11.24
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -19,6 +19,7 @@ description: Composant système interne : ECHO Navigation Engine.
 # 11.20: Correction du bug EchoStateManager: passage de chat_id manquant.
 # 11.21: Correction architecturale: injection des images via echo_tool_multiparts.
 # 11.22: Synchronisation URL en temps réel dans stream_proxy pour le HUD Live.
+# 11.24: Ajustement sémantique du retour pour cibler l'usage explicite de query_registry.
 
 import os
 import time
@@ -31,7 +32,16 @@ from pydantic import BaseModel, Field
 from typing import Optional, Literal, Any
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, wrap_tool_output, EchoStateManager, generate_echo_file_id, EchoGeminiClient, clamp_model, get_echo_session_path, estimate_token_size, smart_truncate_history
+from echo_events import EchoEvents
+from echo_core import (
+    wrap_tool_output,
+    clamp_model,
+    estimate_token_size,
+    smart_truncate_history
+)
+from echo_state_manager import EchoStateManager
+from echo_paths import generate_echo_file_id, get_echo_session_path
+from echo_gemini_client import EchoGeminiClient
 from echo_ui import EchoUI
 from echo_browser_lib import EchoBrowserLib, BROWSER_TOOLS_SCHEMA, req_to_browser
 from echo_constants import FILE_INGESTION_STATUS, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
@@ -383,7 +393,7 @@ class Tools:
                                         _resp = {"status": "success", "dom_map": last_view.get("metadata", [])}
                                     
                                         if action_res.get("status") == "downloading":
-                                            _resp["message"] = f"📥 Le téléchargement a débuté avec l'identifiant ({fn_args.get('download_file_id')}). Il sera automatiquement injecté dans votre contexte une fois terminé."
+                                            _resp["message"] = f"📥 Téléchargement asynchrone démarré. Identifiant du fichier attendu : {fn_args.get('download_file_id')}. Résultat en attente. Utilisez 'query_registry' ultérieurement pour vérifier son statut."
 
                                         # Intégrer les résultats spécifiques de l'action dans la réponse
                                         if "search_result" in action_res:
@@ -395,7 +405,7 @@ class Tools:
                                     else:
                                         _resp = {"status": "success", "message": "Action exécutée avec succès."}
                                         if action_res.get("status") == "downloading":
-                                            _resp["message"] = f"📥 Le téléchargement a débuté avec l'identifiant ({fn_args.get('download_file_id')}). Il sera automatiquement injecté dans votre contexte une fois terminé."
+                                            _resp["message"] = f"📥 Téléchargement asynchrone démarré. Identifiant du fichier attendu : {fn_args.get('download_file_id')}. Résultat en attente. Utilisez 'query_registry' ultérieurement pour vérifier son statut."
                                         if "content" in action_res:
                                             _resp["content"] = action_res["content"]
                                         if "value" in action_res:

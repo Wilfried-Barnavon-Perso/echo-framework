@@ -90,6 +90,11 @@ if [ -f "$ENV_FILE" ]; then
     else
         echo "ECHO_DETECTED_ORIGINS=\"$ECHO_DETECTED_ORIGINS\"" >> "$ENV_FILE"
     fi
+    if grep -q "^ECHO_JWT_EXPIRES_IN=" "$ENV_FILE"; then
+        sed -i "s|^ECHO_JWT_EXPIRES_IN=.*|ECHO_JWT_EXPIRES_IN=\"4w\"|" "$ENV_FILE"
+    else
+        echo "ECHO_JWT_EXPIRES_IN=\"4w\"" >> "$ENV_FILE"
+    fi
 fi
 
 export ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS"

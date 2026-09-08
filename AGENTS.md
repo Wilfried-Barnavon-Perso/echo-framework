@@ -31,13 +31,13 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 
 ## 2. 🧠 Le Cortex (`/opt/ECHO/owui-pipes/`)
 
-Le système nerveux central d'ECHO repose sur le **composant core `pipe_engine.py`** récemment implémenté, soutenu par les bibliothèques centrales partagées (`echo_constants.py`, `echo_protocol.py`, `echo_utils.py`).
+Le système nerveux central d'ECHO repose sur le **composant core `pipe_engine.py`** récemment implémenté, soutenu par les bibliothèques centrales partagées (la suite modulaire `echo_core.py`, `echo_state_manager.py`, etc.).
 
 - **Suture Bit-Perfect des Métadonnées :** Reconstruction de l'historique via SQLite (`message_shadows`) pour une continuité absolue. Garantit une reprise de session identique au bit près via l'ID de message et le timestamp (Verrou de Version). Suivi de la branche active et état de session garanti par un hash cumulatif (Cumulative Hash).
 - **Registre Cognitif Unifié (SSOT) :** Toutes les capacités LLM sont désormais gouvernées centralement par `ECHO_MODELS_REGISTRY`. Ce dictionnaire abstrait mappe les identifiants métiers (`MODEL_PRO`, `MODEL_FLASH`, `MODEL_LITE`, `MODEL_DISTILLATION`) vers leurs identifiants API (AI Studio / Code Assist), leur `hierarchy` cognitive stricte (0, 1, 2), et leur `generationConfig` détaillée (température, `maxOutputTokens=65535`, et `thinkingConfig`).
 - **Routage Dynamique & Fluctuation Continue :** Les modes (AUTO, AUTO_PRO) interrogent dynamiquement la hiérarchie du Registre Cognitif. Lors de la reprise d'une session ou en cas d'erreur API, le système applique un *Clamping Dynamique* et une cascade descendante (PRO → FLASH → LITE) calculés algorithmiquement sur les valeurs entières de la hiérarchie. Intègre un **Circuit Breaker OAuth2 (Fast-Failover Intra-Retry)** qui bascule instantanément sur un environnement de secours en cas de 429/503 avant d'évincer le provider. Inclut également une logique d'**Auto-heal SQLite** : si un modèle orphelin est détecté, le système effectue un reverse-lookup ou force le `MODEL_LITE` pour prévenir tout crash.
 - **Orchestration Multi-Agents (`agent_orchestration_tool.py`) :** `consult_council` (Table Ronde Delphi, N experts agentiques avec outils, tours parallélisés exigeant une dialectique structurée : Analyse/Dialectique/Réponse) et `consult_supervised_workers` (boucle critique/correction récursive). L'orchestration intègre désormais le **Skill Management** (gestion de compétences avec modales de confirmation interactives) et le **Web Grounding**. Elle gère également les **Child Chats** déclenchés asynchronement par les flux N8N pour garantir une traçabilité totale.
-- **HTTP/2 Stealth Headers (`echo_utils.py`) :** Multiplexage HTTP/2 natif via le nouveau client consolidé `EchoGeminiClient`. Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité pour simuler un navigateur réel tout en évitant les blocages WAF. Remplacement des exceptions silencieuses par des remontées directes (raise) pour déclencher la cascade cognitive du Pipe Engine lors des erreurs réseau. Renommage des constantes de résilience (ex: `ECHO_API_KEY_RETRIES`).
+- **HTTP/2 Stealth Headers (`echo_gemini_client.py`) :** Multiplexage HTTP/2 natif via le client dédié `EchoGeminiClient`. Utilisation de `httpx` (H2 obligatoire) avec en-têtes de navigation haute fidélité pour simuler un navigateur réel tout en évitant les blocages WAF. Remplacement des exceptions silencieuses par des remontées directes (raise) pour déclencher la cascade cognitive du Pipe Engine lors des erreurs réseau. Renommage des constantes de résilience (ex: `ECHO_API_KEY_RETRIES`).
 
 ## 3. 👁️ La Conscience (`/opt/ECHO/owui-filters/`)
 
@@ -117,7 +117,8 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 
 ## 10. 🔢 Stratégie de Versioning (`VERSIONING.md`)
 
-- **Version Globale :** Fichier `VERSION` (SemVer 5.Y.Z). Ce fichier doit **obligatoirement être encodé en UTF-8 sans BOM**.
+- **Version Globale :** Fichier `VERSION` (SemVer 5.Y.Z). 
+- **Encodage Strict :** Les fichiers `VERSION`, `.py`, `.xml`, `.sh`, et `.json` doivent **obligatoirement être encodés en UTF-8 sans BOM**. L'introduction de BOM ou de mojibake est strictement interdite.
 - **Versioning des Composants :** Granularité définie dans les en-têtes de modules.
 
 ## 11. 🔐 Authentification Antigravity 2.1
@@ -139,4 +140,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.200.82*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.202.38*

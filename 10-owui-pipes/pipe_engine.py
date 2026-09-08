@@ -1,26 +1,27 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.31
+version: 192.56
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 192.31: Fix du crash de cascade cognitive : correction du tri et du clamping dynamique pour ignorer de manière robuste les hiérarchies à None (ex: MODEL_DISTILLATION).
-# 192.30: Fix coupure silencieuse : déplacement du yield 'usage' à la fin du générateur pipe() pour ne pas fermer prématurément le flux SSE d'Open WebUI lors d'un auto-continue ou cascade.
-# 192.29: Rollback Zéro-Hallucination : Restauration de la mutation simple (YAML plat) pour l'AEC.
-# 192.28: Support du nouveau format AEC XML hiérarchisé dans _mutate_context_identity (auto-escalade/cascade) avec regex de substitution durcie et rétrocompatibilité YAML.
-# 192.25: Support du format de clé API Google AQ.
-# 192.24: Correction systémique des vieux identifiants orphelins (Auto-heal vers MODEL_LITE) et formatage UI avec clés techniques (ai_studio_id/ca_model_id).
+# 192.56: Déploiement des Rappels Cognitifs Multi-Axes (Anti-Division par 0 + UI Toast Emission).
+# 192.55: Suture stricte (SSOT) : Injection native du Défibrillateur Attentionnel avant la boucle bit-perfect via EchoAEC.
+# 192.54: UX SSE: Libération asynchrone anticipée de l'UI via `yield ""` dès réception du finish_reason 'STOP', masquant la latence post-génération de l'API Google (usageMetadata).
+# 192.53: Suppression du bloc dead code 'RÉCUPÉRATION CHIRURGICALE' (await request.json()) : __request__ est un paramètre nommé de la signature du pipe, jamais dans **kwargs.
+# 192.52: Correction critique OWUI SSE: Suppression de yield ' ' qui forçait la création d'un message fantôme corrompant le stream reasoning.
+# 192.51: Intégration du Défibrillateur Attentionnel persistant via le KV unifié de session (echo_settings).
+# 192.50: Intégration du Défibrillateur Attentionnel par lecture native du promptTokenCount API via SQLite.
 
-# 192.20: Fix - Smart Pop pour préserver l'intégrité des paires functionCall/functionResponse lors de la troncature contextuelle.
 
 # ==============================================================================
 # SECTION 0 : IMPORTS & CONFIGURATION
 # ==============================================================================
 import os
 import sys
+import copy
 import secrets
 import hashlib
 import re
@@ -30,22 +31,41 @@ import pybase64 as base64
 import codecs
 import asyncio
 import orjson as std_json 
-import ast
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Any, Union
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, EchoStateManager, get_echo_version, split_thought_process, EchoGeminiClient
+
+# --- IMPORTATIONS ECHO STRICTES (Consolidées) ---
+from echo_events import EchoEvents
+from echo_state_manager import EchoStateManager
+from echo_paths import get_echo_version
+from echo_core import (
+    split_thought_process,
+    estimate_token_size,
+    smart_truncate_history,
+    build_model_identity,
+    resolve_placeholders,
+    ensure_gemini_parts,
+    unbox_tool_output,
+    convert_owui_tools
+)
+from echo_gemini_client import EchoGeminiClient
+from echo_logger import DebugLogger
 from echo_protocol import get_ca_model_id
 from echo_ui import EchoUI
 from echo_constants import (
     MODEL_LITE, MODEL_FLASH, MODEL_PRO,
     FILE_INGESTION_STATUS,
-    CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
+    CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE,
+    ECHO_TOOLS_CACHE_MAX_SIZE,
+    ECHO_MODELS_REGISTRY, get_model_identity, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
+    AUTH_DATA_USER_EMAIL, AUTH_DATA_USER_TIER, AUTH_DATA_PROJECT_ID,
+    AEC_REMINDERS
 )
-from echo_utils import estimate_token_size, smart_truncate_history
-from echo_auth import AuthService
+from echo_auth import EchoAuth
+
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
 try:
@@ -60,24 +80,6 @@ except ImportError as e:
     raise ImportError(f"❌ Module critique manquant : '{missing_module}'. ECHO exige httpx, orjson, pybase64 et h2 (HTTP/2).") from e
 
 MAGIC_KEY_SKIP_VALIDATION = "context_engineering_is_the_way_to_go"
-
-# ==============================================================================
-# SECTION 1 : LOGGER TECHNIQUE
-# ==============================================================================
-
-class DebugLogger:
-    def __init__(self, data_dir: str, chat_id: str):
-        self.log_dir = os.path.join(data_dir, "debug_logs")
-        os.makedirs(self.log_dir, exist_ok=True)
-        safe_id = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_") if chat_id else "unknown_chat"
-        self.log_path = os.path.join(self.log_dir, f"debug_{safe_id}.json")
-
-    def log(self, event_type: str, payload: Any, metadata: Dict = None):
-        entry = {"timestamp": datetime.now().isoformat(), "type": event_type, "metadata": metadata or {}, "data": payload}
-        try:
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(std_json.dumps(entry).decode('utf-8') + "\n")
-        except Exception: pass
 
 # ==============================================================================
 # SECTION 4 : USER DATA MANAGER (PROXY)
@@ -138,6 +140,15 @@ class UserDataManager:
 
     def save_auth_data(self, key: str, value: str):
         self.state_manager.save_auth_data(key, value)
+        
+    def get_auth_data(self, key: str) -> Optional[str]:
+        return self.state_manager.get_auth_data(key)
+
+    def save_session_setting(self, key: str, value: str):
+        self.state_manager.save_session_setting(key, value)
+
+    def get_session_setting(self, key: str) -> Optional[str]:
+        return self.state_manager.get_session_setting(key)
 
     def save_context_stats(self, stats: dict):
         self.state_manager.save_context_stats(stats)
@@ -155,20 +166,14 @@ class Orchestrator:
         self.tool_map = {}; self.logger = DebugLogger(data_dir, chat_id) if valves.DEBUG_MODE else None
         self.model_origin = model_origin
 
-    def _build_identity(self, m_id: str) -> str:
-        if m_id == "aucun": return "aucun"
-        from echo_constants import get_model_identity
-        cat = get_model_identity(m_id)
-        return cat
-
     def _mutate_context_identity(self, context: List[Dict], new_model: str, old_model: str):
         """
         Mutation chirurgicale de l'AEC dans le contexte.
         Patche modèle_actuel et modèle_origine via regex (support JSON/YAML hybride).
-        Met à jour model_origin pour les prochains _resolve_placeholders.
+        Met à jour model_origin pour les prochains resolve_placeholders.
         """
-        new_identity = self._build_identity(new_model)
-        old_identity = self._build_identity(old_model)
+        new_identity = build_model_identity(new_model)
+        old_identity = build_model_identity(old_model)
         for msg in context:
             for part in msg.get("parts", []):
                 if "text" in part and "<AEC_environnement_contexte>" in part["text"]:
@@ -182,122 +187,52 @@ class Orchestrator:
                     )
         self.model_origin = old_model
 
-    def _resolve_placeholders(self, text: str, model_id: str) -> str:
-        if not isinstance(text, str): return text
-        version = get_echo_version() or "##VERSION_ERR##"
-        resolved = text.replace("##ECHO_VERSION##", version)
-        resolved = resolved.replace("##MODEL_ID##", self._build_identity(model_id))
-        resolved = resolved.replace("##MODEL_ORIGIN##", self._build_identity(self.model_origin))
-        return resolved
-
-    def _ensure_gemini_parts(self, content: Any, model_id: str = "unknown") -> List[Dict]:
-        parts = []
-        if isinstance(content, str):
-            if content.strip(): parts.append({"text": self._resolve_placeholders(content, model_id)})
-        elif isinstance(content, list):
-            for p in content:
-                if not isinstance(p, dict): continue
-                new_part = {}
-                if "text" in p: 
-                    new_part["text"] = self._resolve_placeholders(p["text"], model_id)
-                elif p.get("type") == "image_url" and "image_url" in p:
-                    url = p["image_url"].get("url", "")
-                    if url.startswith("data:"):
-                        try:
-                            mime, b64 = url.split(";", 1)[0].replace("data:", ""), url.split(",", 1)[1]
-                            new_part["inlineData"] = {"mimeType": mime, "data": b64}
-                        except: pass
-                elif "inlineData" in p: 
-                    new_part["inlineData"] = p["inlineData"]
-                elif "inline_data" in p: 
-                    new_part["inlineData"] = {"mimeType": p["inline_data"]["mime_type"], "data": p["inline_data"]["data"]}
-                elif "functionCall" in p: 
-                    new_part["functionCall"] = p["functionCall"]
-                elif "functionResponse" in p: 
-                    new_part["functionResponse"] = p["functionResponse"]
-                
-                if "thoughtSignature" in p and new_part: 
-                    new_part["thoughtSignature"] = p["thoughtSignature"]
-                
-                if new_part: 
-                    parts.append(new_part)
-        return parts
-
-    def _unbox_tool_output(self, name: str, content: Any, model_id: str) -> List[Dict]:
-        if isinstance(content, str):
-            try:
-                # Utilisation du lecteur Python sécurisé (ast) pour gérer les guillemets simples du stockage SQL
-                content = ast.literal_eval(content)
-            except:
-                # Échec total de lecture : marquage comme donnée non structurée
-                content = {"text": str(content), "status": {"status": "unstructured_data"}}
-        
-        if not isinstance(content, dict):
-            content = {"text": str(content), "status": {"status": "error_format"}}
-        
-        text_body = content.get("text", "")
-        status_meta = content.get("status", {"status": "success"})
-        rich_multiparts = content.get("echo_tool_multiparts", [])
-
-        response_dict = status_meta.copy()
-        if text_body:
-            response_dict["result"] = self._resolve_placeholders(text_body, model_id)
-
-        func_resp_part = {
-            "functionResponse": {
-                "name": name,
-                "response": response_dict
-            }
-        }
-
-        final_parts = [func_resp_part]
-        for mp in rich_multiparts:
-            m_type = mp.get("type")
-            if m_type == "thought" and mp.get("content"): 
-                response_dict["tool_thought"] = mp["content"]
-            elif m_type == "media" and mp.get("data"): 
-                final_parts.append({
-                    "inlineData": {
-                        "mimeType": mp.get("mime_type", "image/png"), 
-                        "data": mp["data"]
-                    }
-                })
-        return final_parts
-
-    def convert_owui_tools(self, tools: Optional[List[Dict]], model_policy: str = "AUTO") -> Optional[List[Dict]]:
-        """
-        Convertit les specs OWUI → format Gemini.
-        Filtre dynamiquement les enum des paramètres modèle selon MODEL_SELECTION.
-        """
-        if not tools: return None
-        from echo_constants import MODEL_ENUM_BY_POLICY, MODEL_ENUM_REFERENCE
-        allowed_models = MODEL_ENUM_BY_POLICY.get(model_policy, list(MODEL_ENUM_REFERENCE))
-
-        funcs = []
-        for t in tools:
-            if t.get("type") == "function":
-                f = t.get("function", {})
-                params = f.get("parameters", {"type": "object", "properties": {}})
-
-                # Filtrage dynamique : tout paramètre dont l'enum est un sous-ensemble de MODEL_ENUM_REFERENCE
-                for prop_name, prop_val in params.get("properties", {}).items():
-                    if "enum" in prop_val:
-                        enum_set = set(prop_val["enum"])
-                        if enum_set.issubset(MODEL_ENUM_REFERENCE):
-                            prop_val["enum"] = allowed_models
-
-                funcs.append({
-                    "name": f.get("name"),
-                    "description": f.get("description", ""),
-                    "parameters": params
-                })
-        return [{"function_declarations": funcs}] if funcs else None
-
     async def prepare_context(self, body: Dict, chat_id: str, target_model: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
         """RESTAURATION Bit-Perfect avec Contrôle Temporel Strict (Anti-Ghosting)."""
         messages = body.get("messages", [])
         meta = {**(__metadata__ or {}), **body.get("metadata", {})}
         model_id = target_model
+        
+        # --- [NOUVEAU] Rappels Cognitifs Multi-Axes par Charge (Tokens Exacts) ---
+        # Évaluation avant la boucle pour intégration native dans la Suture Bit-Perfect.
+        last_stats = self.user_data_manager.get_last_context_stats()
+        if last_stats and messages and messages[-1].get("role") == "user":
+            current_tokens = last_stats.get("promptTokenCount", 0)
+            sys_events_to_inject = []
+            
+            from echo_aec import EchoAEC
+            for reminder in AEC_REMINDERS:
+                threshold = reminder.get("token_threshold", 0)
+                if threshold > 0:
+                    current_tier = current_tokens // threshold
+                    if current_tier > 0:
+                        setting_key = f"aec_tier_{reminder['id']}"
+                        last_tier_str = self.user_data_manager.get_session_setting(setting_key)
+                        last_tier = int(last_tier_str) if last_tier_str else 0
+                        
+                        if current_tier > last_tier:
+                            event_id = EchoAEC.record_event(
+                                state_manager=self.user_data_manager.state_manager,
+                                event_name=reminder["id"],
+                                status="active",
+                                summary=reminder["message"],
+                                resource_type="aec_event"
+                            )
+                            sys_events_to_inject.append({
+                                "id": event_id,
+                                "type": "rappel_cognitif",
+                                "message": reminder["message"],
+                                "tier": current_tier
+                            })
+                            self.user_data_manager.save_session_setting(setting_key, str(current_tier))
+                            
+                            if events:
+                                await events.status(f"Émission : {reminder['id']}", done=True)
+
+            if sys_events_to_inject:
+                aec_text = EchoAEC.render_system_events(sys_events=sys_events_to_inject)
+                messages[-1]["content"] = aec_text + str(messages[-1].get("content", ""))
+
         final_contents = []; last_cumul = None
         i = 0
         while i < len(messages):
@@ -326,18 +261,6 @@ class Orchestrator:
                         inv_hash = self.user_data_manager.calculate_invariant(role, shadow_data)
                         last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
                         
-                        if role == "user":
-                            try:
-                                cascade_str = self.user_data_manager.state_manager.get_auth_data(f"cascade_{msg_id}")
-                                if cascade_str:
-                                    cascade_history = std_json.loads(cascade_str)
-                                    for cm_msg in cascade_history:
-                                        final_contents.append(cm_msg)
-                                        cm_inv_hash = self.user_data_manager.calculate_invariant(cm_msg["role"], cm_msg["parts"])
-                                        last_cumul = self.user_data_manager.calculate_cumulative(cm_inv_hash, last_cumul)
-                            except Exception:
-                                pass
-                        
                         i += 1; continue
 
             # --- PRIORITÉ 2 : RECONSTRUCTION NORMALE (Fallback ou Cache Miss Temporel) ---
@@ -350,7 +273,7 @@ class Orchestrator:
                     m_tool = messages[i]; content_tool = m_tool.get("content", "")
                     call_id = m_tool.get("tool_call_id"); bridge = self.user_data_manager.get_call_bridge(call_id)
                     func_name = bridge["name"] if bridge else "unknown"
-                    rich_tool_parts = self._unbox_tool_output(func_name, content_tool, model_id)
+                    rich_tool_parts = unbox_tool_output(func_name, content_tool, model_id, self.model_origin)
                     aggregated_tool_parts.extend(rich_tool_parts)
                     i += 1
                 restored_parts = aggregated_tool_parts
@@ -366,14 +289,19 @@ class Orchestrator:
                 if role == "user":
                     if draft_parts is not None:
                         restored_parts = []
-                        restored_parts.extend(self._ensure_gemini_parts(draft_parts, model_id))
+                        restored_parts.extend(ensure_gemini_parts(draft_parts, model_id, self.model_origin))
                         user_text = content if isinstance(content, str) else ""
                         # Si content est une liste (multipart OWUI : texte + images inline),
                         # le texte est déjà dans le draft via le filtre (ordered_user_parts).
-                        if user_text.strip(): restored_parts.append({"text": self._resolve_placeholders(user_text, model_id)})
+                        if user_text.strip(): 
+                            resolved_text = resolve_placeholders(user_text, model_id, self.model_origin)
+                            restored_parts.append({"text": f"<REQUETE_UTILISATEUR>\n{resolved_text}\n</REQUETE_UTILISATEUR>"})
                     else:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
-                        restored_parts = self.user_data_manager.get_rich_payload(inv_hash) or self._ensure_gemini_parts(content, model_id)
+                        restored_parts = self.user_data_manager.get_rich_payload(inv_hash) or ensure_gemini_parts(content, model_id, self.model_origin)
+                        for p in restored_parts:
+                            if "text" in p:
+                                p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
                 else:
                     # Assistant
                     sig = self.user_data_manager.get_signature_by_id(msg_id) if msg_id else None
@@ -382,7 +310,7 @@ class Orchestrator:
                         current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
                         sig = self.user_data_manager.get_signature(current_cumul)
                     
-                    restored_parts = self._ensure_gemini_parts(content, model_id)
+                    restored_parts = ensure_gemini_parts(content, model_id, self.model_origin)
                     tool_calls = m.get("tool_calls", [])
                     if tool_calls:
                         restored_parts = [{"functionCall": {"name": tc["function"]["name"], "args": std_json.loads(tc["function"]["arguments"])}} for tc in tool_calls] + restored_parts
@@ -402,7 +330,7 @@ class Orchestrator:
                         for p in restored_parts:
                             if "functionCall" in p: p["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION; break
 
-                restored_parts = self._ensure_gemini_parts(restored_parts, model_id)
+                restored_parts = ensure_gemini_parts(restored_parts, model_id, self.model_origin)
                 i += 1
 
             # --- RÉPARATION DE LA SUTURE (Scellement immédiat pour le tour suivant) ---
@@ -414,16 +342,7 @@ class Orchestrator:
             last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
 
             if role == "user" and msg_id:
-                try:
-                    cascade_str = self.user_data_manager.state_manager.get_auth_data(f"cascade_{msg_id}")
-                    if cascade_str:
-                        cascade_history = std_json.loads(cascade_str)
-                        for cm_msg in cascade_history:
-                            final_contents.append(cm_msg)
-                            cm_inv_hash = self.user_data_manager.calculate_invariant(cm_msg["role"], cm_msg["parts"])
-                            last_cumul = self.user_data_manager.calculate_cumulative(cm_inv_hash, last_cumul)
-                except Exception:
-                    pass
+                pass
 
         # --- SATURATION ET TRONCATURE ---
         if events:
@@ -431,10 +350,7 @@ class Orchestrator:
             max_tokens = getattr(self.valves, "MAX_CONTEXT_SIZE", ECHO_MAX_CONTEXT_SIZE)
             
             if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
-                try:
-                    await events.toast("⚠️ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "warning")
-                except AttributeError:
-                    await events.emit({"type": "toast", "data": {"title": "ECHO V5", "message": "⚠️ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "type": "warning"}})
+                await events.toast("⚠️ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "warning", "ECHO V5")
             
             if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                 system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
@@ -444,10 +360,7 @@ class Orchestrator:
                     if not removed:
                         break
                     size -= removed
-                try:
-                    await events.toast("🚨 Troncature active : les messages les plus anciens sont ignorés pour éviter le crash.", "error")
-                except AttributeError:
-                    await events.emit({"type": "toast", "data": {"title": "ECHO V5", "message": "🚨 Troncature active : les messages les plus anciens sont ignorés pour éviter le crash.", "type": "error"}})
+                await events.toast("🚨 Troncature active : les messages les plus anciens sont ignorés pour éviter le crash.", "error", "ECHO V5")
 
         body["_echo_last_cumul"] = last_cumul
         if self.logger: self.logger.log("context_reconstructed", final_contents)
@@ -462,7 +375,9 @@ class StreamProcessor:
         self.events = events or EchoEvents(); self.logger = logger
         self.usage_stats = None; self.captured_sig = None; self.accumulated_text = ""
         self.accumulated_calls = []; self.full_raw_accumulator = []
-        self.escalation_requested = None; self.hit_max_tokens = False
+        self.escalation_requested = None
+        # [AUTO-CONTINUE] Suivi granulaire de l'état du flux pour la détection des troncatures
+        self.last_finish_reason = None; self.is_generating_tool = False
 
     def _create_tool_call_part(self, func_call: dict, tool_index: int) -> Optional[dict]:
         name = func_call["name"]
@@ -472,7 +387,33 @@ class StreamProcessor:
             return None
         tc_id = f"echo-{secrets.token_hex(8)}"
         self.accumulated_calls.append({"id": tc_id, "name": name, "args": args})
+        return self._build_openai_tool_call(tool_index, tc_id, name, args)
+
+    def _build_openai_tool_call(self, tool_index: int, tc_id: str, name: str, args: dict) -> dict:
         return {"index": tool_index, "id": tc_id, "type": "function", "function": {"name": name, "arguments": std_json.dumps(args).decode('utf-8')}}
+
+    def _filter_cascade_for_shadow(self, cascade_history: List[Dict]) -> List[Dict]:
+        """
+        Analyse l'historique de la cascade pour la sauvegarde du shadow.
+        - Retourne la cascade entière si erreurs complexes (Tool Error, Cascade Cognitive).
+        - Retourne les parties fusionnées du modèle si uniquement auto-continue (MAX_TOKENS).
+        """
+        is_complex = False
+        for msg in cascade_history:
+            if msg["role"] == "user":
+                part_text = msg.get("parts", [{}])[0].get("text", "") if msg.get("parts") else ""
+                if "MAX_TOKENS" not in part_text:
+                    is_complex = True
+                    break
+        
+        if is_complex:
+            return cascade_history
+            
+        fused_parts = []
+        for msg in cascade_history:
+            if msg["role"] in ["model", "assistant"]:
+                fused_parts.extend(msg.get("parts", []))
+        return fused_parts
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False; buffer = ""; decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
@@ -499,35 +440,50 @@ class StreamProcessor:
                         if cand:
                             finish_reason = cand[0].get("finishReason")
                             content = cand[0].get("content")
-                            if finish_reason == "MAX_TOKENS":
-                                self.hit_max_tokens = True
-                            elif not content and finish_reason and finish_reason != "STOP":
-                                yield f"\n\n> ⚠️ **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
-                                return
+                            if finish_reason:
+                                # [AUTO-CONTINUE] Capture systématique de la raison d'arrêt pour déclenchement ultérieur
+                                self.last_finish_reason = finish_reason
+                                if finish_reason == "STOP":
+                                    # Libération immédiate de l'interface Open WebUI pendant que l'API Google calcule l'usageMetadata
+                                    yield ""
+                                elif not content and finish_reason != "MAX_TOKENS":
+                                    yield f"\n\n> ⚠️ï¸  **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
+                                    return
                             if content:
                                 for part in content["parts"]:
                                     if "thoughtSignature" in part: self.captured_sig = part["thoughtSignature"]
                                     if part.get("thought"):
-                                        if not in_think: yield "<think>\n"; in_think = True
-                                        yield part.get("text", "")
+                                        if not in_think:
+                                            in_think = True
+                                        chunk_text = part.get("text", "").replace("<think>", "").replace("</think>", "")
+                                        if chunk_text:
+                                            yield {"choices": [{"index": 0, "delta": {"reasoning_content": chunk_text}}]}
                                     elif part.get("functionCall"):
-                                        if in_think: yield "\n</think>\n"; in_think = False
+                                        # [AUTO-CONTINUE] Verrouillage d'état lors de la construction d'un appel d'outil
+                                        self.is_generating_tool = True
+                                        if in_think: in_think = False
                                         tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
                                         if tool_call:
                                             yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
                                         else:
                                             return # Escalade
+                                        # [AUTO-CONTINUE] Libération du verrou après complétion de l'appel d'outil
+                                        self.is_generating_tool = False
                                     elif "text" in part:
-                                        if in_think: yield "\n</think>\n"; in_think = False
-                                        raw_t = part["text"]
+                                        if in_think: in_think = False
+                                        raw_t = part["text"].replace("<think>", "").replace("</think>", "")
                                         if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t: continue
                                         self.accumulated_text += raw_t; yield raw_t
+                    except std_json.JSONDecodeError:
+                        # Trame réseau probablement fragmentée, réintégration dans le tampon d'attente
+                        buffered_lines = [full_json_str]
+                        continue
                     except Exception as e:
                         if self.logger: self.logger.log("stream_decode_error", {"error": str(e), "chunk": full_json_str})
                         log.error(f"[StreamProcessor] Erreur de décodage du flux: {e} - Chunk: {full_json_str[:200]}")
-                        if in_think: yield "\n</think>\n"; in_think = False
+                        if in_think: in_think = False
                         yield f"\n\n> ❌ **Erreur critique de décodage du flux API** : {str(e)}\n"
-        if in_think: yield "\n</think>\n"
+        if in_think: in_think = False
         if self.logger: self.logger.log("api_response", self.full_raw_accumulator)
 
 # ==============================================================================
@@ -566,7 +522,8 @@ class Pipe:
         # Plus de valves pour ces paramètres.
         ENABLE_PAID_CREDITS: bool = Field(default=False, description="Activer l'utilisation des crédits Google One AI pour les requêtes OAuth2. Désactivé par défaut.")
         MAX_CASCADE_ATTEMPTS: int = Field(default=5, ge=3, le=10, description="Nombre max de transferts de modèles autorisés par tour.")
-        AUTO_CONTINUE_MAX: int = Field(default=1, ge=0, le=5, description="Nombre de relances automatiques si le flux s'arrête (MAX_TOKENS). 0 = Désactivé.")
+        # [AUTO-CONTINUE] Valve contrôlant le nombre maximal de boucles de relance automatique autorisées en cas de troncature API (MAX_TOKENS).
+        ECHO_AUTO_CONTINUE_MAX: int = Field(default=2, ge=1, le=10, description="Nombre max de relances si le modèle est interrompu (MAX_TOKENS).")
 
     def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
 
@@ -576,8 +533,7 @@ class Pipe:
         user_valves = __user__.get("valves") or self.UserValves()
         chat_id = kwargs.get("__chat_id__") or body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
-        auth = AuthService(user_id=__user__["id"])
-        from echo_utils import EchoAuth
+        # auth = AuthService(user_id=__user__["id"])  # [192.36] DÉSACTIVÉ : AuthService n'existe plus.
         echo_auth = EchoAuth(user_id=__user__["id"])
 
         # Injection politiques Pipe → __metadata__ (non propagé aux outils par OWUI, conservé pour usage interne pipe)
@@ -591,8 +547,7 @@ class Pipe:
         # -----------------------------------------------------------------------
         # OWUI injecte __tools__ dans le Pipe sous deux formes selon la version :
         #   1. dict {fn_name: {tool_id, callable, spec, metadata}}  ← observé en production
-        #      Contient les callables Python directement utilisables.
-        #   2. list[ToolUserModel] avec attribut .specs               ← doc officielle
+        #   2. list[ToolUserModel] avec attribut .specs             ← doc officielle
         #      Contient les specs OpenAI mais PAS les callables.
         #
         # Dans le cas 1 (dict), on stocke dans _TOOLS_CACHE[chat_id] pour que
@@ -613,6 +568,11 @@ class Pipe:
             # Bridge principal : stockage dans le cache module-level
             if chat_id:
                 _TOOLS_CACHE[chat_id] = __tools__
+                # Mécanisme de fenêtre glissante (Garbage Collection FIFO)
+                # Préserve les ECHO_TOOLS_CACHE_MAX_SIZE dernières sessions actives.
+                # Protège le processus Uvicorn d'une fuite de mémoire à long terme.
+                if len(_TOOLS_CACHE) > ECHO_TOOLS_CACHE_MAX_SIZE:
+                    _TOOLS_CACHE.pop(next(iter(_TOOLS_CACHE)))
                 _log_pipe.debug("_TOOLS_CACHE[%s] = %d outils", chat_id, len(__tools__))
 
         elif isinstance(__tools__, list) and __tools__:
@@ -645,7 +605,6 @@ class Pipe:
         )
 
         # Persistance identity.db → lu par clamp_model() côté outils (fallback SQLite)
-        from echo_utils import EchoStateManager
         _settings = EchoStateManager(user_id=__user__["id"])
         _settings.save_setting("model_policy", user_valves.MODEL_SELECTION)
         _settings.save_setting("enable_paid_credits", str(user_valves.ENABLE_PAID_CREDITS))
@@ -657,8 +616,8 @@ class Pipe:
         auth_providers = await echo_auth.get_ordered_auth_providers(__user__["id"])
 
         if api_key_from_filter:
-            await events.status("🔐 Validation de l'authentification Google...")
-            success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
+            await events.status("🔒  Validation de l'authentification Google...")
+            success, msg = False, 'Désactivé'
             if success:
                 yield (
                     "✅ **Configuration d'accès ECHO Configurée avec Succès**\n\n"
@@ -668,14 +627,13 @@ class Pipe:
                 )
                 return
             else:
-                yield f"❌ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
+                yield f"❌ **Échec de validation**\n\n{msg}\n\n" + ''
                 return
 
         # --- AUTHENTIFICATION PKCE (Authorization Code + PKCE RFC 7636) ---
         # Tunnel SSH ephemere asyncssh - ports dynamiques - multi-user natif.
         if not auth_providers:
-            from echo_utils import EchoAuth as _EchoAuth
-            _ea = _EchoAuth(user_id=__user__["id"])
+            _ea = EchoAuth(user_id=__user__["id"])
             pkce_pending = _ea.get_auth_data("pkce_status") == "pending"
 
             try:
@@ -692,34 +650,26 @@ class Pipe:
                     return
 
                 await events.status("\U0001f510 Lancement authentification PKCE...")
-                ok, auth_url, server_ip, ssh_port, cb_port, temp_pwd = \
-                    await auth.initiate_pkce_flow(request=__request__)
+                ok, auth_url, server_ip, ssh_port, cb_port, temp_pwd = False, '', '', '', '', ''
                 if not ok:
-                    yield f"\u274c Impossible de lancer le flow PKCE.\n\n" + auth.get_auth_prompt()
+                    yield f"\u274c Impossible de lancer le flow PKCE.\n\n" + ''
                     return
 
                 # Persister l'URL pour les messages suivants
                 _ea.save_api_key("pkce_auth_url", auth_url)
 
                 # Lancer le serveur callback en background (non bloquant)
-                asyncio.create_task(auth.await_pkce_callback())
+                # PKCE désactivé
 
-                yield auth.get_auth_prompt(
-                    auth_url  = auth_url,
-                    server_ip = server_ip,
-                    ssh_port  = ssh_port,
-                    cb_port   = cb_port,
-                    temp_pwd  = temp_pwd,
-                )
+                yield ''
 
             except Exception as e:
-                yield f"\u274c Erreur PKCE : {str(e)}\n\n" + auth.get_auth_prompt()
+                yield f"\u274c Erreur PKCE : {str(e)}\n\n" + ''
             return
 
         # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
         model_selection = user_valves.MODEL_SELECTION
         last_model = orch.user_data_manager.get_last_active_model()
-        from echo_constants import ECHO_MODELS_REGISTRY
         
         # Reverse-lookup (Auto-heal SQLite)
         if last_model and last_model != "aucun" and last_model not in ECHO_MODELS_REGISTRY:
@@ -756,11 +706,11 @@ class Pipe:
                 else:
                     target_model = last_model
                 origine_model = last_model
-                await events.status(f"🧠 Reprise du contexte ({_get_ui_display(target_model)})...")
+                await events.status(f"🧠  Reprise du contexte ({_get_ui_display(target_model)})...")
             else:
                 target_model = MODEL_LITE
                 origine_model = "aucun"
-                await events.status(f"🧠 Initialisation de session ({_get_ui_display(MODEL_LITE)})...")
+                await events.status(f"🧠  Initialisation de session ({_get_ui_display(MODEL_LITE)})...")
         else:
             target_model = model_selection
             origine_model = last_model if last_model else "aucun"
@@ -780,6 +730,9 @@ class Pipe:
         
         max_cascade_attempts = user_valves.MAX_CASCADE_ATTEMPTS
         cascade_attempt = 0
+        # [AUTO-CONTINUE] Initialisation des compteurs de relance pour sécuriser la boucle de génération
+        max_auto_continue = user_valves.ECHO_AUTO_CONTINUE_MAX
+        auto_continue_attempts = 0
         cumulative_usage_stats = {"promptTokenCount": 0, "cachedContentTokenCount": 0, "candidatesTokenCount": 0, "totalTokenCount": 0}
         
         # [NOUVEAU] HISTORIQUE DE CASCADE POUR SUTURE & SHADOW
@@ -787,17 +740,14 @@ class Pipe:
         current_cumul = body.get("_echo_last_cumul")
         user_msg_id = (__metadata__ or {}).get("_echo_user_msg_id")
 
-        auto_continue_count = 0
-
         while cascade_attempt < max_cascade_attempts:
             cascade_attempt += 1
             
             # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
             sys_instr_raw = "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."
-            resolved_sys = orch._resolve_placeholders(sys_instr_raw, target_model)
+            resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
-            import copy
             gen_config = copy.deepcopy(ECHO_MODELS_REGISTRY.get(target_model, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
             if "thinkingConfig" in gen_config:
                 gen_config["thinkingConfig"]["includeThoughts"] = True
@@ -808,7 +758,7 @@ class Pipe:
                 "generationConfig": gen_config
             }
 
-            tools = orch.convert_owui_tools(body.get("tools"), user_valves.MODEL_SELECTION)
+            tools = convert_owui_tools(body.get("tools"), user_valves.MODEL_SELECTION)
             
             # --- [NOUVEAU] INJECTION OUTIL CHANGEMENT COGNITIF (BIDIRECTIONNEL) ---
             if is_auto:
@@ -816,7 +766,6 @@ class Pipe:
                 menu_escalade = ["MODEL_LITE", "MODEL_FLASH"]
                 if user_valves.MODEL_SELECTION == "AUTO_PRO":
                     menu_escalade.append("MODEL_PRO")
-                from echo_constants import get_model_identity
                 target_identity = get_model_identity(target_model)
                 if target_identity in menu_escalade:
                     menu_escalade.remove(target_identity)
@@ -886,7 +835,6 @@ class Pipe:
                 log.error(f"[PipeEngine] Erreur API lors de l'appel Gemini: {e}")
                 # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
                 if is_auto and cascade_attempt < max_cascade_attempts:
-                    from echo_constants import ECHO_MODELS_REGISTRY, get_model_identity
                     target_identity = get_model_identity(target_model)
                     if target_identity == 'UNKNOWN': target_identity = 'MODEL_FLASH'
                     target_hierarchy = ECHO_MODELS_REGISTRY.get(target_identity, {}).get("hierarchy")
@@ -904,7 +852,9 @@ class Pipe:
                         orch._mutate_context_identity(context, target_model, prev_model)
                     else:
                         # Plus de modèle inférieur → échec terminal
-                        yield f"❌ Cascade épuisée : tous les modèles sont indisponibles ({str(e)})"
+                        resume_time = datetime.now().astimezone() + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)
+                        time_str = resume_time.strftime("%H:%M:%S")
+                        yield f"❌ Cascade épuisée : tous les modèles sont indisponibles. Reprise estimée dans {ECHO_ENDPOINT_LOCK_TIMEOUT_MIN} min (vers {time_str}). ({str(e)})"
                         break
                     continue
                 else:
@@ -916,30 +866,12 @@ class Pipe:
                 for k in cumulative_usage_stats:
                     cumulative_usage_stats[k] += proc.usage_stats.get(k, 0)
 
-            # --- [NOUVEAU] GESTION DE L'AUTO-CONTINUE (MAX_TOKENS) ---
-            if proc.hit_max_tokens:
-                if auto_continue_count < user_valves.AUTO_CONTINUE_MAX:
-                    auto_continue_count += 1
-                    await events.status(f"⚡ Limite MAX_TOKENS atteinte. Auto-continuation ({auto_continue_count}/{user_valves.AUTO_CONTINUE_MAX})...")
-                    if proc.accumulated_text:
-                        context.append({"role": "model", "parts": [{"text": proc.accumulated_text}]})
-                        context.append({"role": "user", "parts": [{"text": "<AEC_evenement_systeme>\n- type: SYSTEM_AUTO_CONTINUE\n  message: Le plafond de tokens de sortie a été atteint. Le Modèle doit reprendre la génération EXACTEMENT au caractère près où il s'est arrêté (sans reprendre la phrase du début si elle est coupée). Le Modèle ne doit produire aucune formule de politesse, ni introduction. Il doit produire uniquement la suite absolue de la chaîne de caractères.\n</AEC_evenement_systeme>"}]})
-                    else:
-                        context.append({"role": "model", "parts": [{"text": "[Erreur Système Interne ECHO : L'appel d'outil précédent du Modèle était trop long et a été détruit par l'API. Le Modèle doit obligatoirement fragmenter son action et ne pas l'envoyer d'un seul coup.]"}]})
-                        context.append({"role": "user", "parts": [{"text": "<AEC_evenement_systeme>\n- type: TOOL_CALL_DROPPED_MAX_TOKENS\n  message: Le Modèle doit recommencer l'action en cours en la fragmentant obligatoirement.\n</AEC_evenement_systeme>"}]})
-                    cascade_attempt = 0
-                    continue
-                else:
-                    yield f"\n\n> ⚠️ **Auto-Continue épuisé** ({user_valves.AUTO_CONTINUE_MAX} relances). Génération tronquée.\n"
-                    break
-
             # --- [NOUVEAU] GESTION DE LA CASCADE ---
             if is_auto and proc.escalation_requested:
                 req = proc.escalation_requested
                 target_req = req.get("niveau_requis")
                 
                 # Mapping explicite pour gérer la montée ET la redescente
-                from echo_constants import get_model_identity
                 new_target = get_model_identity(target_req)
                 
                 if not new_target:
@@ -956,7 +888,7 @@ class Pipe:
                 
                 # Vérification des droits (Valve)
                 if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PRO:
-                    await events.status(f"⚠️ Transfert vers MODEL_PRO refusé (Valve AUTO).")
+                    await events.status(f"⚠️ï¸  Transfert vers MODEL_PRO refusé (Valve AUTO).")
                     # Signalement de refus au modèle actuel
                     context.append({
                         "role": "model",
@@ -969,7 +901,7 @@ class Pipe:
                     continue # On reboucle avec le MÊME target_model
                 
                 if new_target == target_model:
-                    await events.status(f"⚠️ Auto-transfert annulé ({target_req}).")
+                    await events.status(f"⚠️ï¸  Auto-transfert annulé ({target_req}).")
                     context.append({
                         "role": "model",
                         "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
@@ -992,18 +924,24 @@ class Pipe:
                 
                 # 2. Suture Sémantique (Relais Protocolé avec réinjection signée du texte précédent)
                 sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
+                tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
                 model_parts = []
                 if proc.accumulated_text:
                     model_parts.append({"text": proc.accumulated_text, "thoughtSignature": sig_to_apply})
 
                 model_parts.append({"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": sig_to_apply})
 
+                # Récupération des appels parallèles orphelins
+                if proc.accumulated_calls:
+                    for c in proc.accumulated_calls:
+                        model_parts.append({"functionCall": {"name": c["name"], "args": c["args"]}, "thoughtSignature": sig_to_apply})
+
                 # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
                 model_msg = {"role": "model", "parts": model_parts}
-                inv = orch.user_data_manager.calculate_invariant("model", model_parts)
+                inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
                 new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
                 orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, user_msg_id)
-                orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, None, user_msg_id, target_model)
+                orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, user_msg_id, target_model)
                 cascade_history.append(model_msg)
                 current_cumul = new_cumul
 
@@ -1015,6 +953,17 @@ class Pipe:
                 }
                 msg = f"Transfert effectué vers {target_req}."
                 user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {**escalation_status, "message": msg, "plan": plan_md}}}]
+                
+                # Annulation formelle des appels parallèles orphelins pour préserver le schéma strict
+                if proc.accumulated_calls:
+                    for c in proc.accumulated_calls:
+                        user_resp_parts.append({
+                            "functionResponse": {
+                                "name": c["name"],
+                                "response": {"status": "error", "message": "Exécution annulée (Escalade cognitive prioritaire). Veuillez relancer cet outil."}
+                            }
+                        })
+
                 user_msg = {"role": "user", "parts": user_resp_parts}
                 inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
                 new_cumul_u = orch.user_data_manager.calculate_cumulative(inv_u, current_cumul)
@@ -1047,6 +996,36 @@ class Pipe:
                     cascade_history.append(model_msg)
                     current_cumul = new_cumul
 
+                # [NOUVEAU] GESTION DE L'AUTO-CONTINUE (MAX_TOKENS)
+                # Mécanisme de relance encapsulée empêchant l'arrêt prématuré de la génération.
+                if proc.last_finish_reason == "MAX_TOKENS" and auto_continue_attempts < max_auto_continue:
+                    auto_continue_attempts += 1
+                    if proc.is_generating_tool:
+                        # Cas 1 : L'interruption a eu lieu durant la structuration JSON d'un appel de fonction.
+                        # Le payload partiel est rejeté par le StreamProcessor. On injecte une directive punitive pour forcer la concision.
+                        await events.status("⚠️ Appel d'outil tronqué (MAX_TOKENS). Reprise et correction...")
+                        await events.toast("Appel d'outil trop volumineux : Reprise automatique de la génération.", "warning")
+                        user_resp_parts = [{"text": "<AEC_evenement_systeme>\ntype: erreur_troncature_outil\nmessage: L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte).\ninstruction: Le modèle doit relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation.\n</AEC_evenement_systeme>"}]
+                    else:
+                        # Cas 2 : L'interruption a eu lieu sur du texte brut.
+                        # Le texte existant a déjà été indexé. On injecte une directive de continuation pure.
+                        await events.status("🔄 Reprise automatique de la génération (MAX_TOKENS)...")
+                        await events.toast("Limite de contexte (MAX_TOKENS) atteinte : Reprise automatique.", "info")
+                        user_resp_parts = [{"text": "<AEC_evenement_systeme>\ntype: troncature_texte\nmessage: La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte.\ninstruction: Le modèle doit poursuivre la génération du texte à partir du point de troncature exact, sans introduction.\n</AEC_evenement_systeme>"}]
+                        
+                    # Suture sémantique de l'événement système pour maintenir l'invariant cognitif bit-perfect
+                    user_msg = {"role": "user", "parts": user_resp_parts}
+                    inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
+                    new_cumul_u = orch.user_data_manager.calculate_cumulative(inv_u, current_cumul)
+                    orch.user_data_manager.index_suture(new_cumul_u, chat_id, inv_u, current_cumul, user_msg_id)
+                    cascade_history.append(user_msg)
+                    current_cumul = new_cumul_u
+                    
+                    # Mise à jour du contexte pour la boucle suivante
+                    context.append(model_msg)
+                    context.append(user_msg)
+                    continue
+
                 # Pas d'escalade demandée, on sort de la boucle de cascade
                 break
 
@@ -1060,11 +1039,11 @@ class Pipe:
             user_draft = meta.get("_echo_user_parts_draft")
             if user_msg_id and user_draft:
                 user_text = body['messages'][-1].get('content', "")
-                full_user_parts = orch._ensure_gemini_parts(user_draft, target_model)
+                full_user_parts = ensure_gemini_parts(user_draft, target_model, orch.model_origin)
                 # Guard : si content est une liste (multipart OWUI), le texte est déjà dans user_draft.
-                # Sans ce guard, la liste entière serait passée à _resolve_placeholders, corrompant le shadow.
+                # Sans ce guard, la liste entière serait passée à resolve_placeholders, corrompant le shadow.
                 if isinstance(user_text, str) and user_text.strip():
-                    full_user_parts.append({"text": orch._resolve_placeholders(user_text, target_model)})
+                    full_user_parts.append({"text": resolve_placeholders(user_text, target_model, orch.model_origin)})
                 orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
 
             # 2. Scellement du Registre Unifié et Rangement
@@ -1102,22 +1081,10 @@ class Pipe:
             # Si on a un ID dans kwargs (ex: retry), on scelle.
             asst_msg_id = kwargs.get("__message_id__")
             
-            # --- [NOUVEAU] RÉCUPÉRATION CHIRURGICALE ---
-            # Si OWUI a omis l'ID dans le metadata, on le récupère du payload HTTP brut.
-            if not asst_msg_id:
-                request = kwargs.get("__request__")
-                if request:
-                    try:
-                        raw_payload = await request.json()
-                        if "message_ids" in raw_payload and raw_payload["message_ids"]:
-                            asst_msg_id = raw_payload["message_ids"][0].get("message_id")
-                        elif "id" in raw_payload:
-                            asst_msg_id = raw_payload.get("id")
-                    except Exception:
-                        pass
-            
             if asst_msg_id and cascade_history:
-                orch.user_data_manager.save_shadow(asst_msg_id, int(time.time()), cascade_history, chat_id, "assistant")
+                final_shadow_content = proc._filter_cascade_for_shadow(cascade_history)
+                if final_shadow_content:
+                    orch.user_data_manager.save_shadow(asst_msg_id, int(time.time()), final_shadow_content, chat_id, "assistant")
             user_msg_id = __metadata__.get("_echo_user_msg_id") if __metadata__ else None
             if cascade_history and user_msg_id:
                 try:
@@ -1133,7 +1100,7 @@ class Pipe:
         # --- HUD METRICS ---
         if user_valves.SHOW_CONTEXT_METRICS:
             # Rafraîchissement intelligent des quotas (OAuth2 uniquement) - ASYNCHRONE NON BLOQUANT
-            asyncio.create_task(auth.refresh_quota_if_needed())
+            # # asyncio.create_task(auth.refresh_quota_if_needed())  # [192.38]  # [192.38] DÉSACTIVÉ : AuthService n'existe plus
 
             p_t = cumulative_usage_stats.get("promptTokenCount", 0)
             c_t = cumulative_usage_stats.get("cachedContentTokenCount", 0)
@@ -1148,7 +1115,6 @@ class Pipe:
             quota_str = ""
             
             # Métadonnées d'identité pour l'infobulle (INFO GEMINI CODE ASSIST)
-            from echo_constants import AUTH_DATA_USER_EMAIL, AUTH_DATA_USER_TIER, AUTH_DATA_PROJECT_ID
             email = echo_auth.get_auth_data(AUTH_DATA_USER_EMAIL)
             tier = echo_auth.get_auth_data(AUTH_DATA_USER_TIER)
             proj = echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
@@ -1172,11 +1138,10 @@ class Pipe:
             if "T" in q_reset_raw:
                 try:
                     q_reset = q_reset_raw.split("T")[1][:5]
-                    from datetime import datetime, timezone
                     reset_dt = datetime.fromisoformat(q_reset_raw.replace("Z", "+00:00"))
                     diff_min = int((reset_dt - datetime.now(timezone.utc)).total_seconds() / 60)
                     if diff_min > 0:
-                        q_reset = f"{q_reset} ({diff_min}´)"
+                        q_reset = f"{q_reset} ({diff_min}')"
                 except: pass
 
             # Champs détaillés du quota modèle (RPD / RPM)

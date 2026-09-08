@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.29
+version: 5.31
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.31: Ajout du paramètre timeout_seconds (5 min par défaut) à delete_user_skill et modale auto-annulable.
 # 5.29: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 5.28: Ajout du paramètre require_web_grounding dans forge_skill pour actualisation experte conditionnelle.
 # 5.27: Ajout de delete_user_skill avec modale de confirmation.
@@ -23,7 +24,10 @@ from typing import Optional, List, Dict, Any, Literal, Tuple
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoEvents, EchoGeminiClient, EchoStateManager
+from echo_core import wrap_tool_output
+from echo_events import EchoEvents
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
 from echo_constants import (
     ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, get_generation_config
 )
@@ -110,6 +114,7 @@ class Tools:
     async def delete_user_skill(
         self,
         skill_id: str,
+        timeout_seconds: int = 300,
         __user__: dict = {},
         __event_emitter__: callable = None,
         __event_call__: callable = None,
@@ -119,12 +124,13 @@ class Tools:
         Demande obligatoirement l'accord de l'utilisateur via une modale avant de procéder.
         
         :param skill_id: L'identifiant technique (nom du dossier) du skill à supprimer.
+        :param timeout_seconds: Délai maximum en secondes avant annulation automatique de la suppression (par défaut 300s).
         """
         user_id = __user__.get("id", "system") if __user__ else "system"
         
         content = get_skill_content(user_id, skill_id)
         if not content:
-            return wrap_tool_output(text=f"❌ Erreur : Le skill '{skill_id}' n'existe pas.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=f"Le skill '{skill_id}' n'existe pas.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         msg_html = f'''
         <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
@@ -151,7 +157,7 @@ class Tools:
         js_code = f"""
         {modals_injection}
         return await new Promise((resolve) => {{
-            window.echoCustomConfirm({msg_escaped}, (result) => resolve(result));
+            window.echoCustomConfirm({msg_escaped}, {timeout_seconds}, (result) => resolve(result));
         }});
         """
 
@@ -165,15 +171,15 @@ class Tools:
             if success:
                 if __event_emitter__:
                     await __event_emitter__({"type": "status", "data": {"description": f"Skill {skill_id} supprimé avec succès.", "done": True}})
-                return wrap_tool_output(text=f"✅ Succès : Le skill '{skill_id}' a été supprimé.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text=f"Le skill '{skill_id}' a été supprimé.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             else:
                 if __event_emitter__:
                     await __event_emitter__({"type": "status", "data": {"description": f"Erreur système lors de la suppression de {skill_id}.", "done": True}})
-                return wrap_tool_output(text=f"❌ Erreur : Impossible de supprimer le skill '{skill_id}'.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text=f"Impossible de supprimer le skill '{skill_id}'.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         else:
             if __event_emitter__:
-                await __event_emitter__({"type": "status", "data": {"description": "Suppression annulée par l'utilisateur.", "done": True}})
-            return wrap_tool_output(text="🚫 Annulé : L'utilisateur a refusé la suppression.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                await __event_emitter__({"type": "status", "data": {"description": "Suppression non confirmée par l'utilisateur.", "done": True}})
+            return wrap_tool_output(text="L'utilisateur a refusé ou délai expiré.", status={"status": "cancelled"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     # ==========================================================================
     # 2. CONSEIL D'EXPERTS (Protocole Delphi via delegate_to_agent)

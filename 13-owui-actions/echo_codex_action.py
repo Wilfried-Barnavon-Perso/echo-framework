@@ -1,7 +1,7 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 2.8
+version: 2.9
 description: Éditeur de code natif (HUD) avec intégration Git locale et diffusion en direct des modifications.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
@@ -38,10 +38,13 @@ from pydantic import BaseModel, Field
 sys.path.append("/app/backend/echo_libs")
 from echo_constants import (
     get_generation_config,
-    CODEX_EDIT_SYSTEM_PROMPT, CODEX_QUICK_ACTIONS,
+    CODEX_QUICK_ACTIONS,
     FILE_INGESTION_STATUS
 )
-from echo_utils import EchoEvents, EchoGeminiClient, EchoStateManager
+from echo_prompts import SYS_CODEX_EDIT
+from echo_events import EchoEvents
+from echo_gemini_client import EchoGeminiClient
+from echo_state_manager import EchoStateManager
 from echo_codex_git import CodexRepo
 from echo_ui import EchoUI
 
@@ -541,7 +544,7 @@ class Action:
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
             "generationConfig": get_generation_config("MODEL_FLASH"),
             "systemInstruction": {
-                "parts": [{"text": CODEX_EDIT_SYSTEM_PROMPT.format(filename=filename, language=lang)}]
+                "parts": [{"text": SYS_CODEX_EDIT.format(filename=filename, language=lang)}]
             },
         }
 

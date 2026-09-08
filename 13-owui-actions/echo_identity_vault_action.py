@@ -1,7 +1,7 @@
 """
 title: ECHO Identity Vault
 author: ECHO
-version: 2.1
+version: 2.2
 description: Coffre-fort universel pour l'authentification des agents (MCP et N8N).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xMiAyMnM4LTQgOC0xMFY1bC04LTMtOCAzdjdjMCA2IDggMTAgOCAxMHoiLz48L3N2Zz4=
 """
@@ -18,7 +18,8 @@ from typing import Any, Optional, List, Dict
 import httpx
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents, EchoStateManager
+from echo_events import EchoEvents
+from echo_state_manager import EchoStateManager
 from echo_ui import EchoUI
 
 class Action:
@@ -147,7 +148,7 @@ class Action:
                                 resp = await client.post(url, json=rpc, timeout=5.0)
                                 tools_schema = resp.text
                                 
-                            from echo_utils import EchoGeminiClient
+                            from echo_gemini_client import EchoGeminiClient
                             prompt = (
                                 "Objectif : Rédiger une description sémantique d'UNE SEULE PHRASE (maximum 15 mots) "
                                 "définissant le cas d'usage d'un serveur MCP distant, à partir de ses capacités brutes.\n"

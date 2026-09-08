@@ -32,8 +32,9 @@ Ce dossier constitue **l'Arsenal** du modèle. Il contient l'ensemble des Outils
 - **`query_registry_tool.py`** : Outil obligatoire avant toute modification de fichier. Permet au modèle d'interroger le registre unifié SQLite, incluant le `FILE_INGESTION_STATUS`.
 
 ### Utilitaires Spécialisés
+- **`api_client.py`** : ECHO Universal API Client. Composant système interne fournissant une abstraction robuste pour l'exécution des requêtes HTTP asynchrones.
 - **`python_code_executor.py`** : Exécute de manière sécurisée du code Python (incluant numpy/pandas) via le conteneur `python-worker` Flask.
-- **`strategic_planner.py`** : Gère la planification tactique des sous-agents avec un suivi obligatoire (`update_plan`). La persistance des plans d'action est désormais entièrement adossée à un **Codex Git** (Git-backed Codex) pour un versionnement robuste.
+- **`strategic_planner.py`** : Gère la planification tactique des sous-agents via un cycle en multi-étapes (multi-stage planning), avec suivi obligatoire des statuts (`update_plan`) et outils d'analyse (`analyze_plan`). La persistance est adossée à un **Codex Git** (Git-backed Codex) pour un versionnement robuste.
 - **`universal_visual_generator.py`** : Génération de diagrammes (Mindmaps, Graphes) et cartes (Leaflet) injectés directement sous forme de Data Islands isolés.
 - **`gemini_maps_grounding.py`** : Interface avec l'API Google Maps Grounding pour des résultats géospatiaux enrichis.
 - **`context_gauge.py`** : Jauge de contexte intelligente. Mesure l'état de saturation de la fenêtre de contexte du modèle et implémente des seuils de monitoring dynamiques (définis dans `echo_constants.py`) pour alerter l'agent avant saturation complète.

@@ -1,7 +1,7 @@
 """
 title: ECHO Resource Registry
 author: Wilfried BARNAVON
-version: 1.7
+version: 1.9
 description: Composant système interne : ECHO Resource Registry.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -14,6 +14,7 @@ description: Composant système interne : ECHO Resource Registry.
 # 1.2: Suppression des Valves inutilisées (code mort).
 # 1.5: Nettoyage PEP8 : F841 (Variables locales inutilisées préfixées par _ ou retirées).
 # 1.6: Suppression d'assignations obsolètes.
+# 1.9: Mise à jour SNR de la docstring (explication sémantique stricte des statuts d'ingestion).
 
 # ECHO CONFIG NAME : ECHO Registry
 
@@ -21,7 +22,8 @@ import sys
 from typing import Optional, Any, Literal
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output, EchoStateManager
+from echo_core import wrap_tool_output
+from echo_state_manager import EchoStateManager
 
 
 
@@ -45,8 +47,12 @@ class Tools:
         """
         Consultation centralisée de l'état des ressources du Registre (fichiers, URLs, agents, Codex, plans, etc.). Étape de validation obligatoire AVANT toute manipulation.
         RÈGLES DE STATUTS PAR TYPE :
-        - Fichiers (media/binary/weburl/codex) : put_in_context, vectorized_sum_up, indexed, pending_ingestion
-        - Plans (plan) : draft, ready, executing, success, partial, failed, abandoned
+        - Fichiers (media/binary/weburl/codex) :
+          * pending_ingestion : en attente d'ingestion au prochain tour.
+          * put_in_context : fichier injecté directement.
+          * vectorized_sum_up : résumé via Smart Context, contenu disponible dans le RAG.
+          * indexed : id du fichier connu, consultable via agent ou outils disponibles.
+        - Plans (plan) : proposed, executing, success, partial, failed, abandoned
         - N8N Workflows (n8n_workflow) : 
           * ready : Le workflow est préparé et en attente.
           * executing : Le workflow est en cours d'exécution unique (One-Shot).

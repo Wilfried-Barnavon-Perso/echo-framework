@@ -16,9 +16,10 @@ Fichier d'entrée du Broker instanciant le serveur `FastMCP` propulsé par `Uvic
 
 ### `core/` & `modules/`
 Dossiers contenant la logique métier des outils exposés par le Broker.
-- **Outils Corporatifs (Corporate Sirene/Bodacc)** : Intégration avec les API d'entreprise pour la récupération légale d'entités.
-- **Outils Académiques (Academic)** : Connecteurs vers arXiv ou d'autres bases documentaires pour la recherche scientifique structurée.
-- **Omnisearch Jobs** : Mécanismes d'interrogation multi-sources.
+- **`core/security.py` & `core/database.py`** : Implémentation du système de sécurité d'accès. `security.py` offre le décorateur `require_service_access` récupérant l'ID via un ContextVar, et `database.py` gère l'accès asynchrone direct (`aiosqlite`) à la base `identity.db` de l'utilisateur pour l'extraction de clés.
+- **`modules/m3_corporate.py`** (Corporate Sirene/Bodacc) : Intégration avec les API d'entreprise pour la récupération légale d'entités.
+- **`modules/m4_academic.py`** (Academic) : Connecteurs vers arXiv ou d'autres bases documentaires pour la recherche scientifique structurée.
+- **`modules/m2_jobs_omnisearch.py`** (Omnisearch Jobs) : Mécanismes d'interrogation multi-sources (ex: APEC HTML parsing).
 - **Remote Proxy (`m5_proxy_mcp.py`)** : [NOUVEAU] Orchestrateur de requêtes MCP distantes. Il gère la transmission JSON, applique un **Error Forwarding natif** (remontant les exceptions transparentes vers le LLM) et sert de Backend pour l'outil `remote_mcp_tool.py`.
 
 ## 3. Dépendances Logiques

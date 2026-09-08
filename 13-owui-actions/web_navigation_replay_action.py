@@ -1,7 +1,7 @@
 """
 title: Revue Navigation Web
 author: Wilfried BARNAVON
-version: 4.11
+version: 4.12
 description: Cockpit vidéo interactif permettant de visionner et d'extraire des captures de la navigation autonome.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiIC8+PHBhdGggZD0iTTcgM3YxOCIgLz48cGF0aCBkPSJNMyA3LjVoNCIgLz48cGF0aCBkPSJNMyAxMmgxOCIgLz48cGF0aCBkPSJNMyAxNi41aDQiIC8+PHBhdGggZD0iTTE3IDN2MTgiIC8+PHBhdGggZD0iTTE3IDcuNWg0IiAvPjxwYXRoIGQ9Ik0xNyAxNi41aDQiIC8+PC9zdmc+
 """
@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 # Importations ECHO
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoEvents
+from echo_events import EchoEvents
 from echo_ui import EchoUI
 
 # --- CONFIGURATION LOGGING ---
@@ -376,7 +376,7 @@ class Action:
         if not cid: return None
 
         # Redirection vers le Registre V2
-        from echo_utils import EchoStateManager
+        from echo_state_manager import EchoStateManager
         
         state_manager = EchoStateManager(user_id=uid, chat_id=cid)
         resources = state_manager.get_resources(resource_type='media')

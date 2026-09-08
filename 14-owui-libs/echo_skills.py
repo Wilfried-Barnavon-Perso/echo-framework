@@ -1,7 +1,7 @@
 """
 title: ECHO Skills Manager
 author: ECHO Framework
-version: 1.4
+version: 1.5
 description: Composant système interne : ECHO Skills Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -13,7 +13,7 @@ import os
 import shutil
 import re
 from typing import List, Dict, Optional
-from echo_utils import get_echo_global_path
+from echo_paths import get_echo_global_path
 
 def get_skills_dir(user_id: str) -> str:
     """Retourne le chemin du répertoire des skills de l'utilisateur."""

@@ -1,11 +1,12 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 3.3
+version: 3.5
 description: Composant système interne : ECHO Context Gauge.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 3.5: Migration SQL : Lecture des métriques depuis le registre KV unifié echo_settings au lieu de la table dédiée context_stats.
 # 3.3: Bascule des seuils cognitifs (WARNING/CRITICAL) sur les constantes définies dans echo_constants.py.
 # 3.2: Alignement sur le standard de retour minimaliste (wrap_tool_output).
 
@@ -18,7 +19,7 @@ from typing import Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import wrap_tool_output
+from echo_core import wrap_tool_output
 from echo_constants import ECHO_BASE_DATA_DIR, CONTEXT_LOAD_WARNING_THRESHOLD, CONTEXT_LOAD_CRITICAL_THRESHOLD
 
 class Tools:
@@ -61,7 +62,7 @@ class Tools:
             
             # 2. Chemin vers la session (Tokens)
             if chat_id:
-                from echo_utils import get_echo_session_path
+                from echo_paths import get_echo_session_path
                 session_db = get_echo_session_path(user_id, chat_id, "db")
             else:
                 session_db = identity_db # Fallback sur identity si pas de chat_id
@@ -72,7 +73,7 @@ class Tools:
             # Lecture des stats de tokens (depuis session_db ou identity_db fallback)
             with sqlite3.connect(f"file://{session_db}?mode=ro", uri=True, timeout=5.0) as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT data FROM context_stats WHERE id = 1")
+                cursor.execute("SELECT value FROM echo_settings WHERE key = 'context_stats'")
                 row = cursor.fetchone()
                 if row:
                     real_stats = json.loads(row[0])

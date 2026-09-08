@@ -1,12 +1,14 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 1.10
+version: 1.12
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3).
 --- CHANGELOG 1.10 ---
 - Amélioration : Rendu impersonnel du prompt d'Action Requise pour les variables d'authentification et incitation à utiliser ask_user_input.
 --- CHANGELOG 1.9 ---
 - (Non documenté précédemment)
+--- CHANGELOG 1.12 ---
+- Ajustement sémantique du retour pour cibler l'usage explicite de query_registry.
 --- CHANGELOG 1.8 ---
 - Renommage d'affichage : N8N Orchestrator vers ECHO N8N Orchestrator.
 --- CHANGELOG 1.7 ---
@@ -25,7 +27,8 @@ from pathlib import Path
 from typing import Optional
 
 sys.path.append("/app/backend/echo_libs")
-from echo_utils import EchoStateManager, wrap_tool_output
+from echo_state_manager import EchoStateManager
+from echo_core import wrap_tool_output
 from echo_constants import ECHO_N8N_WORKER_URL
 
 class Tools:
@@ -397,7 +400,7 @@ class Tools:
                     status = res.get("status")
                     if sync:
                         logs = res.get("stdout", "") + "\n" + res.get("stderr", "")
-                        return self._wrap(f"[N8N EXECUTION : {status.upper()}]\n{logs}\n\n[INFO SYSTEM] Si ce workflow génère des fichiers, ils apparaîtront dans le Download Broker.", __user__, __metadata__)
+                        return self._wrap(f"[N8N EXECUTION : {status.upper()}]\n{logs}\n\n[INFO SYSTEM] Tâche asynchrone démarrée. S'il génère des fichiers, utilisez 'query_registry' ultérieurement pour vérifier.", __user__, __metadata__)
                     else:
                         exec_id = res.get("execution_id", "inconnu")
                         return self._wrap(f"[N8N EXECUTION : ASYNCHRONE DÉMARRÉE]\nL'exécution de la tâche (ID: {exec_id}) a bien été lancée en tâche de fond.\n\n[INFO SYSTEM] Le workflow N8N tourne en arrière-plan. Ses résultats (et ses logs stdout/stderr) seront écrits dans des fichiers qui seront automatiquement ingérés dès la fin du traitement. Vous pouvez passer à la tâche suivante !", __user__, __metadata__)

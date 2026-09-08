@@ -1,7 +1,7 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.3
+version: 1.4
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -21,7 +21,7 @@ from dulwich.objects import Tree
 from dulwich import porcelain
 
 from echo_constants import CODEX_LANG_MAP, CODEX_DEFAULT_LANG
-from echo_utils import get_echo_session_path
+from echo_paths import get_echo_session_path
 
 # Mapping inversé langage Monaco → extension (première extension trouvée)
 CODEX_LANG_TO_EXT: dict[str, str] = {}

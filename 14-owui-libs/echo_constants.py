@@ -1,16 +1,19 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.56
+version: 5.62
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.62: Migration du Défibrillateur Attentionnel vers un système de Rappels Cognitifs Multi-Axes.
+# 5.61: Migration de AEC_REMINDER_MSG en texte pur pour utilisation par EchoAEC (SSOT).
+# 5.60: Injection des seuils de Rappel Cognitif (Défibrillateur Attentionnel).
+# 5.58: Augmentation de ECHO_API_MAX_RETRIES à 5 tentatives.
+# 5.57: Ajout de ECHO_GLOBAL_TENANT_PROJECT_ID ("aicode-consumers") pour forcer le routage Code Assist et contourner les 429 persos.
 # 5.56: Mise à jour du modèle MODEL_FLASH de 3.7 vers 3.8.
 # 5.55: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
-# 5.54: Ajout de ECHO_SAFETY_SETTINGS (BLOCK_NONE) pour les appels Gemini.
 # 5.53: Création des constantes CONTEXT_LOAD_WARNING_THRESHOLD (40) et CONTEXT_LOAD_CRITICAL_THRESHOLD (60)
-#       pour gérer l'escalade de modèle dans l'outil get_context_load de façon découplée du toast UI.
 # 5.52: Alignement protocole OAuth2 sur AGY IDE 2.5.5 (audit binaire main.js) :
 #       - ECHO_CLIENT_METADATA : ideType ANTIGRAVITY, ajout ideName/ideVersion/platform
 #       - ECHO_OAUTH_SCOPES : +experimentsandconfigs, -openid, -aicode
@@ -34,6 +37,13 @@ except ImportError:
 
 # Racine unique de l'infrastructure de données
 ECHO_BASE_DATA_DIR = "/app/backend/data"
+
+# --- LIMITES MÉMOIRE GLOBALES ---
+# Définit le nombre maximum de sessions de chat gardées activement en RAM pour le 
+# pont des outils (Bridge _TOOLS_CACHE). Au-delà, un mécanisme LRU/FIFO éjecte
+# les anciennes sessions. Limite de sécurité "anti-memory leak" pour Uvicorn.
+# Fixé à 100 pour couvrir largement les usages simultanés sans saturer la RAM.
+ECHO_TOOLS_CACHE_MAX_SIZE = 100
 
 # HIÉRARCHIE ECHO SOUVERAINE (Standardisé)
 ECHO_USERS_ROOT = f"{ECHO_BASE_DATA_DIR}/users"
@@ -146,6 +156,7 @@ ECHO_CLIENT_METADATA = {
 }
 
 AUTH_DATA_PROJECT_ID  = "google_project_id"
+ECHO_GLOBAL_TENANT_PROJECT_ID = "aicode-consumers"
 AUTH_DATA_USER_EMAIL  = "google_user_email"
 AUTH_DATA_USER_TIER   = "google_user_tier"
 
@@ -167,18 +178,42 @@ PKCE_CALLBACK_TIMEOUT = 300  # secondes
 # ==============================================================================
 
 ECHO_API_KEY_RETRIES   = 2
-ECHO_API_MAX_RETRIES     = 3
+ECHO_API_MAX_RETRIES     = 5
 ECHO_RETRY_BASE_DELAY    = 3.0   # Base backoff exponentiel — réduit de 5.0 à 3.0 (v5.50)
                                   # Raison : avec base=5.0 et 5 retries, le backoff cumulé (~155s)
                                   # dépassait GUNICORN_TIMEOUT (60s) et causait des crashes SSE
                                   # silencieux via SIGKILL du worker uvicorn.
-                                  # Avec base=3.0 et 3 retries : total max ~14s.
+                                  # Avec base=3.0 et 5 retries : total max ~39s.
                                   # Historique : base augmentée à 5.0 (v5.166.6) pour les rafales
                                   # consult_council sur Code Assist. Ces appels passent par call()
                                   # non-streaming, non impactés par ce changement.
 ECHO_RETRY_MULTIPLIER    = 1.5
 ECHO_RETRY_JITTER_MIN    = 0.7
 ECHO_RETRY_JITTER_MAX    = 1.3
+
+# ==============================================================================
+# 1.3 RAPPELS COGNITIFS (DÉFIBRILLATEUR ATTENTIONNEL MULTI-AXES)
+# ==============================================================================
+AEC_REMINDERS = [
+    {
+        "id": "kernel",
+        "token_threshold": 88000,
+        "tool_calls_threshold": 50,
+        "message": "Rappel : L'alignement sur le Kernel et la rigueur d'analyse sont FONDAMENTAUX."
+    },
+    {
+        "id": "alignment",
+        "token_threshold": 34000,
+        "tool_calls_threshold": 30,
+        "message": "Rappel : Assure-toi de respecter scrupuleusement le Profil d'Alignement et les préférences de formatage de l'utilisateur."
+    },
+    {
+        "id": "strategy",
+        "token_threshold": 50000,
+        "tool_calls_threshold": 20,
+        "message": "Rappel : Vérifie tes Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel."
+    }
+]
 
 # ==============================================================================
 # 1.1 MODULE : CONSTANTES ET DEFAULTS ECHO (CENTRALISATION)
@@ -313,8 +348,7 @@ PLANNER_MODEL_UPDATE = "MODEL_FLASH"
 
 # Statuts globaux d'un plan (champ `status:` du frontmatter YAML)
 PLAN_STATUS = {
-    "draft":     "draft",       # Généré par l'agent, non validé par l'utilisateur
-    "ready":     "ready",       # Validé, prêt à l'exécution
+    "proposed":  "proposed",    # Généré par l'agent, proposé à l'utilisateur (remplace draft/ready)
     "executing": "executing",   # En cours d'application
     "success":   "success",     # Objectif atteint
     "partial":   "partial",     # Réussi partiellement
@@ -396,37 +430,7 @@ CODEX_LANG_MAP = {
 }
 CODEX_DEFAULT_LANG = "plaintext"
 
-# Prompt système sub-chat édition (HUD AI-assisted)
-CODEX_EDIT_SYSTEM_PROMPT = """<persona>
-Le Modèle est l'éditeur de code ECHO Codex.
-</persona>
-
-<rules>
-RÈGLES ABSOLUES :
-1. Le Modèle DOIT retourner UNIQUEMENT le fichier modifié complet. Aucune explication, aucun markdown de formatage.
-2. Si une sélection est fournie, le Modèle ne modifie QUE cette partie dans le contexte du fichier complet.
-3. Le Modèle DOIT préserver le style, l'indentation et les conventions du document original.
-4. Si l'instruction est ambiguë, le Modèle DOIT faire le choix le plus conservateur.
-</rules>
-
-<context>
-Fichier : {filename} | Langage : {language}
-</context>"""
-
-# Prompt distillation/résumé de fichier
-CODEX_SUMMARIZE_PROMPT = """<instruction>
-Le Modèle DOIT fournir une analyse technique exhaustive du fichier '{filename}' ({language}).
-Le Modèle DOIT être technique, précis et complet.
-</instruction>
-
-<output_format>
-Le Modèle DOIT structurer sa réponse strictement selon le format suivant :
-1. Objectif et rôle du fichier
-2. Architecture : classes, fonctions, structures principales
-3. Dépendances et imports
-4. Patterns et conventions utilisés
-5. Points d'attention, complexité, dette technique éventuelle
-</output_format>"""
+# Les prompts de la librairie CODEX ont été migrés vers 14-owui-libs/echo_prompts.py
 
 # Actions rapides prédéfinies (boutons HUD)
 CODEX_QUICK_ACTIONS = {

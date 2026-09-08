@@ -132,6 +132,7 @@ update_env() {
 update_env "ECHO_DOMAIN" "$DOMAIN"
 update_env "TZ" "Europe/Paris"
 update_env "ECHO_DETECTED_ORIGINS" "$ECHO_DETECTED_ORIGINS"
+update_env "ECHO_JWT_EXPIRES_IN" "-1"
 
 # Génération des secrets si absents
 generate_secret() {
