@@ -4,11 +4,13 @@ import logging
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : 1.8 (Rate-Limit Healthcheck)
+VERSION : 2.0 (Moteur Bubblewrap Absolu)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-08-19
+DATE MAJ : 2026-09-09
 
-CHANGELOG 1.7 :
+CHANGELOG 2.0 :
+- Moteur Bubblewrap : Isolation absolue avec dossiers `workspace` (RW) et `inputs` (RO).
+CHANGELOG 1.8 :
 - FIX: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
 CHANGELOG 1.6 :
 - Correction d'un risque de deadlock IPC (utilisation de queue.get avec timeout au lieu de p.join bloquant).

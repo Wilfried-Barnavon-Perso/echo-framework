@@ -1,14 +1,15 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.4
+version: 1.5
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.0: Wrapper dulwich pour la gestion de dépôts Git par user/chat.
+# 1.5: Prise en charge des dossiers de workspaces isolés (main/sandbox).
+# 1.4: Wrapper dulwich pour la gestion de dépôts Git par user/chat.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
-# 1.1: Fix bytes.fromhex → encode('ascii') pour object_store dulwich.
+# 1.3: Fix bytes.fromhex → encode('ascii') pour object_store dulwich.
 # 1.2: Ajout rename_file() (rename Git + commit). list_files tri par mtime desc.
 
 import os

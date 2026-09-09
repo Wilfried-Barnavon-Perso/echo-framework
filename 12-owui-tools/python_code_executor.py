@@ -1,16 +1,16 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 6.8
+version: 6.9
 description: Composant système interne : ECHO Python Code Executor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.7: Mise à jour sémantique de la docstring (explicitation de l'interdiction de génération UI).
-# 6.6: Précision de la version (Python 3.14) et rappel d'isolation dans la docstring.
-# 6.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 6.4: Ajout de l'argument __metadata__ dans l'interface de l'outil pour assurer la compatibilité OWUI.
-# 6.3: Nettoyage sémantique de la docstring (Retrait de la mention PRAF).
+# 6.9: Refonte asynchrone via httpx, sécurisation de la sandbox et gestion multi-workspaces.
+# 6.8: Mise à jour sémantique de la docstring (explicitation de l'interdiction de génération UI).
+# 6.7: Précision de la version (Python 3.14) et rappel d'isolation dans la docstring.
+# 6.6: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 6.5: Ajout de l'argument __metadata__ dans l'interface de l'outil pour assurer la compatibilité OWUI.
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
 

@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 1.9
+version: 2.0
 description: Composant système interne : ECHO Codex Editor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.8: Ajout d'un Lock asynchrone (user_id:chat_id) pour prévenir les race conditions intra-chat.
-# 1.7: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 1.6: Nettoyage du code mort (suppression de la Valve KEY_SWITCH_THRESHOLD inutilisée).
-# 1.5: Augmentation du CODEX_EDIT_TIMEOUT à 600s et max_retries=0 pour call_cascade.
-# 1.4: [précédent]
+# 2.0: Intégration de l'isolation Workspace Codex (main/sandbox) avec le type Literal.
+# 1.9: Ajout d'un Lock asynchrone (user_id:chat_id) pour prévenir les race conditions intra-chat.
+# 1.8: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 1.7: Nettoyage du code mort (suppression de la Valve KEY_SWITCH_THRESHOLD inutilisée).
+# 1.6: Augmentation du CODEX_EDIT_TIMEOUT à 600s et max_retries=0 pour call_cascade.
 
 # ECHO CONFIG NAME : ECHO Codex
 

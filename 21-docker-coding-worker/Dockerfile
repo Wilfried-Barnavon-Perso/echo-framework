@@ -1,7 +1,7 @@
 FROM python:3.14
 
 LABEL maintainer="Wilfried BARNAVON"
-LABEL version="1.6"
+LABEL version="2.0"
 LABEL description="ECHO Python Worker (Data Science & Logic)"
 
 WORKDIR /app
