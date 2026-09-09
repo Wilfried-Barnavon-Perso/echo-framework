@@ -551,8 +551,13 @@ MODEL_ENUM_REFERENCE = {"MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"}
 # ECHO_QDRANT_URL : Utilisée par memory_and_rag_tool et conversation_memory_filter pour le stockage vectoriel.
 ECHO_QDRANT_URL = "http://echo-qdrant:6333"
 
-# ECHO_PYTHON_WORKER_URL : Utilisée par python_code_executor pour isoler l'exécution de code Python.
-ECHO_PYTHON_WORKER_URL = "http://echo-python-worker:5000/execute"
+# --- CONFIGURATION DES ESPACES DE TRAVAIL (CODEX) ---
+# Définit les sous-dossiers stricts dans la structure codex.
+ECHO_CODEX_WORKSPACE_MAIN = "main"       # Dépôt officiel versionné
+ECHO_CODEX_WORKSPACE_SANDBOX = "sandbox" # Espace d'exécution et de génération du worker
+
+# ECHO_CODING_WORKER_URL : Utilisée pour isoler l'exécution de code (Python, JS, etc.).
+ECHO_CODING_WORKER_URL = "http://echo-coding-worker:5000/execute"
 
 # NAVIGATION_ENGINE_URL : Utilisée par navigation_engine_tool pour le pilotage Playwright/Chrome.
 NAVIGATION_ENGINE_URL = "http://echo-browser-worker:5002"

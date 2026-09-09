@@ -18,7 +18,7 @@ import sys
 import asyncio
 from collections import defaultdict
 from pydantic import BaseModel, Field
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 
 sys.path.append("/app/backend/echo_libs")
 from echo_core import wrap_tool_output, wrap_cascade_output
@@ -53,13 +53,13 @@ class Tools:
     # HELPERS
     # =========================================================================
 
-    def _get_context(self, __user__: dict, __metadata__: dict):
+    def _get_context(self, __user__: dict, __metadata__: dict, workspace: str = "main"):
         """Extrait user_id, chat_id et initialise CodexRepo + StateManager."""
         uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
         cid = (__metadata__ or {}).get("chat_id")
         if not cid:
             return None, None, None, None
-        repo = CodexRepo(uid, cid)
+        repo = CodexRepo(uid, cid, workspace)
         state = EchoStateManager(user_id=uid, chat_id=cid)
         return uid, cid, repo, state
 
@@ -88,6 +88,7 @@ class Tools:
         content: str,
         language: str = None,
         commit_message: str = None,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -100,7 +101,7 @@ class Tools:
         :param commit_message: (Optionnel) Message Git.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -132,6 +133,7 @@ class Tools:
         new_content: str = None,
         instructions: str = None,
         commit_message: str = None,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -145,7 +147,7 @@ class Tools:
         :param instructions: (Optionnel) Directives d'édition (exclut new_content).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -232,6 +234,7 @@ class Tools:
     async def delete_codex(
         self,
         filename: str,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -239,7 +242,7 @@ class Tools:
     ) -> str:
         """Suppression d'un fichier du Codex. Validation Registre requise."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -261,6 +264,7 @@ class Tools:
         filename: str,
         start_line: int = None,
         end_line: int = None,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -271,7 +275,7 @@ class Tools:
         :param start_line: (Optionnel) Ligne de début (1-indexed).
         :param end_line: (Optionnel) Ligne de fin (inclusive).
         """
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -290,6 +294,7 @@ class Tools:
         filename: str,
         query: str,
         is_regex: bool = False,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -299,7 +304,7 @@ class Tools:
         :param query: Motif de recherche.
         :param is_regex: (Bool) Interprétation regex du motif.
         """
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -317,6 +322,7 @@ class Tools:
     async def summarize_codex(
         self,
         filename: str,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -324,7 +330,7 @@ class Tools:
     ) -> str:
         """Résumé technique structuré d'un fichier Codex par distillation Gemini."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -353,13 +359,14 @@ class Tools:
 
     async def list_codex(
         self,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
         """Liste tous les fichiers du Codex de la session courante."""
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -384,6 +391,7 @@ class Tools:
         self,
         filename: Optional[str] = None,
         limit: int = 20,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -394,7 +402,7 @@ class Tools:
         :param filename: (Optionnel) Nom du fichier pour filtrer l'historique.
         :param limit: (Optionnel) Nombre maximum de commits à retourner. Le Modèle doit limiter (Maximum conseillé: 100) pour éviter la surcharge cognitive.
         """
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 

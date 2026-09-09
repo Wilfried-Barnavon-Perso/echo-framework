@@ -14,17 +14,15 @@ description: Composant système interne : ECHO Python Code Executor.
 
 # ECHO CONFIG NAME : ECHO Python Sandbox
 
-import requests
 import sys
 from pydantic import BaseModel, Field
 from typing import Any
-
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_core import wrap_tool_output
 from echo_events import EchoEvents
-from echo_constants import ECHO_PYTHON_WORKER_URL
+from echo_constants import ECHO_CODING_WORKER_URL
 
 class Tools:
     class Valves(BaseModel):
@@ -36,25 +34,37 @@ class Tools:
     async def execute_python(
         self,
         code: str,
-        __user__: dict = {},
+        __user__: dict = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None,
-        __metadata__: dict = {}
+        __metadata__: dict = None
     ) -> str:
-        """Exécution isolée de code Python, en environnement sandbox, dédié au traitement analytique et algorithmique (math, dates, data).
-        Retour textuel au Modèle. Pas de gestion de fichier avec le reste de l'environnement. 
-        Pour afficher des données calculées, le Modèle peut employer generate_rich_visualization.
-        ATTENTION: Cette sandbox n'a AUCUN accès à l'infrastructure d'outils d'ECHO ni aux fichiers de l'utilisateur (injecter les données textuellement dans le code). IMPLIQUE Python 3.14."""
-        events = EchoEvents(__event_emitter__, __event_call__)
+        """
+        Permet au modèle d'exécuter du code (Python, etc.) dans une Sandbox isolée.
+        Le script s'exécute avec les accès stricts suivants :
+        - '/workspace' : Dossier en Lecture/Écriture pour générer et manipuler des fichiers.
+        - '/inputs' : Dossier en Lecture seule contenant les fichiers fournis par l'utilisateur.
+        
+        Note à l'Orchestrateur : Si la tâche de développement ou d'exécution est complexe, il est vivement recommandé de confier l'utilisation de cet outil à un sous-agent spécialisé.
+        """
+        __user__ = __user__ or {}
+        __metadata__ = __metadata__ or {}
 
-        await events.status("🐍 Exécution Python en cours...")
+        events = EchoEvents(__event_emitter__, __event_call__)
+        await events.status("🐍 Exécution de code en cours...")
 
         try:
-            response = requests.post(
-                ECHO_PYTHON_WORKER_URL,
-                json={"code": code},
-                timeout=self.valves.TIMEOUT
-            )
+            import httpx
+            async with httpx.AsyncClient(timeout=self.valves.TIMEOUT) as client:
+                response = await client.post(
+                    ECHO_CODING_WORKER_URL,
+                    json={
+                        "code": code,
+                        "user_id": __user__.get("id", "system"),
+                        "chat_id": __metadata__.get("chat_id"),
+                        "timeout": self.valves.TIMEOUT
+                    }
+                )
             
             if response.status_code == 200:
                 worker_res = response.json()
@@ -62,19 +72,18 @@ class Tools:
                 if worker_res.get("error"):
                     text_out += f"\n\n⚠️ Erreur d'exécution :\n{worker_res['error']}"
                 
-                # Status ECHO propre (sans polluer avec output/error du worker)
                 echo_status = {"status": worker_res.get("status", "success")}
                 if worker_res.get("error"):
                     echo_status["error"] = worker_res["error"]
 
                 await events.status("Exécution terminée.", done=True)
-                return wrap_tool_output(text=text_out, status=echo_status, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text=text_out, status=echo_status, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
             else:
                 err_msg = f"Erreur Worker (HTTP {response.status_code})"
                 await events.status(f"❌ {err_msg}", done=True)
-                return wrap_tool_output(text=err_msg, status={"status": "critical_error", "code": response.status_code}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text=err_msg, status={"status": "critical_error", "code": response.status_code}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
 
-        except requests.exceptions.ConnectionError:
-            return wrap_tool_output(text="❌ Service Python Worker injoignable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        except httpx.RequestError as e:
+            return wrap_tool_output(text="❌ Service Coding Worker injoignable.", status={"status": "error"}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
         except Exception as e: 
-            return wrap_tool_output(text=f"❌ Erreur Client: {str(e)}", status={"status": "error", "error": str(e)}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=f"❌ Erreur Client: {str(e)}", status={"status": "error", "error": str(e)}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)

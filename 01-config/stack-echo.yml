@@ -332,20 +332,22 @@ services:
       retries: 5
       start_period: 30s
 
-  echo-python-worker:
+  echo-coding-worker:
     build:
-      context: /opt/ECHO/docker-python-worker
+      context: /opt/ECHO/docker-coding-worker
       dockerfile: Dockerfile
-    container_name: echo-python-worker
+    container_name: echo-coding-worker
     restart: always
+    security_opt:
+      - seccomp=unconfined
     networks:
       - echo-sandbox
     environment:
       - TZ=Europe/Paris
     volumes:
-      - /opt/ECHO/docker-python-worker/worker_api.py:/app/app.py:ro
+      - /opt/ECHO/docker-coding-worker/worker_api.py:/app/app.py:ro
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
-      - echo-worker-data:/app/data
+      - echo-webui-data:/app/backend/data:rw
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
@@ -606,8 +608,6 @@ networks:
 
 volumes:
   echo-webui-data:
-    external: true
-  echo-worker-data:
     external: true
   echo-browser-data:
     external: true

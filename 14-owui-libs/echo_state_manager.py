@@ -19,7 +19,7 @@ import orjson as std_json
 from datetime import datetime
 from typing import Any, List, Optional
 from echo_paths import get_echo_global_path, get_echo_session_path, resolve_upload_file_path
-from echo_constants import ECHO_GLOBAL_DOMAINS, ECHO_SESSION_DOMAINS, ECHO_UPLOADS_TRANSIT_DIR, ECHO_USERS_ROOT
+from echo_constants import ECHO_GLOBAL_DOMAINS, ECHO_SESSION_DOMAINS, ECHO_UPLOADS_TRANSIT_DIR, ECHO_USERS_ROOT, ECHO_CODEX_WORKSPACE_MAIN, ECHO_CODEX_WORKSPACE_SANDBOX
 
 class EchoStateManager:
     def __init__(self, user_id: str = "system", chat_id: Optional[str] = None):
@@ -32,7 +32,11 @@ class EchoStateManager:
         if chat_id:
             for domain in ECHO_SESSION_DOMAINS:
                 if domain != "db":
-                    os.makedirs(get_echo_session_path(self.user_id, self.chat_id, domain), exist_ok=True)
+                    domain_path = get_echo_session_path(self.user_id, self.chat_id, domain)
+                    os.makedirs(domain_path, exist_ok=True)
+                    if domain == "codex":
+                        os.makedirs(os.path.join(domain_path, ECHO_CODEX_WORKSPACE_MAIN), exist_ok=True)
+                        os.makedirs(os.path.join(domain_path, ECHO_CODEX_WORKSPACE_SANDBOX), exist_ok=True)
             self.db_path = get_echo_session_path(self.user_id, self.chat_id, "db")
         else:
             for domain in ECHO_GLOBAL_DOMAINS:

@@ -35,8 +35,10 @@ class CodexRepo:
     Un dépôt isolé par couple (user_id, chat_id).
     Toutes les opérations sont synchrones et sans effet de bord réseau."""
 
-    def __init__(self, user_id: str, chat_id: str):
-        self.repo_path = get_echo_session_path(user_id, chat_id, "codex")
+    def __init__(self, user_id: str, chat_id: str, workspace: str = "main"):
+        base_codex = get_echo_session_path(user_id, chat_id, "codex")
+        self.repo_path = os.path.join(base_codex, workspace)
+        os.makedirs(self.repo_path, exist_ok=True)
         self.repo = self._ensure_repo()
 
     def _ensure_repo(self) -> Repo:
