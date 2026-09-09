@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 4.7
+# VERSION : 4.8
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -165,7 +165,7 @@ sync_resource "$SRC_DIR/_assets/images"        "$ECHO_ROOT/echo-images"
 # Docker Build Contexts
 sync_resource "$SRC_DIR/23-docker-mcp-broker"       "$ECHO_ROOT/docker-mcp-broker"
 sync_resource "$SRC_DIR/20-docker-admin-manager"    "$ECHO_ROOT/docker-admin-manager"
-sync_resource "$SRC_DIR/21-docker-python-worker"    "$ECHO_ROOT/docker-python-worker"
+sync_resource "$SRC_DIR/21-docker-coding-worker"    "$ECHO_ROOT/docker-coding-worker"
 sync_resource "$SRC_DIR/22-docker-browser-worker/browser_api.py" "$ECHO_ROOT/docker-browser-worker/browser_api.py"
 sync_resource "$SRC_DIR/30-docker-embedding-worker" "$ECHO_ROOT/docker-embedding-worker"
 sync_resource "$SRC_DIR/24-docker-echo-auth-manager" "$ECHO_ROOT/docker-echo-auth-manager"
@@ -193,7 +193,7 @@ fi
 # Nettoyage et Permissions
 echo "   🧹 Nettoyage des caractères Windows et permissions..."
 # Liste des dossiers à nettoyer (tous les dossiers de prod sous ECHO_ROOT)
-PROD_DIRS="$ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/docker-admin-manager $ECHO_ROOT/docker-python-worker $ECHO_ROOT/docker-browser-worker $ECHO_ROOT/docker-embedding-worker $ECHO_ROOT/docker-echo-auth-manager $ECHO_ROOT/docker-stt-worker $ECHO_ROOT/docker-tts-worker $ECHO_ROOT/docker-download-broker $ECHO_ROOT/docker-mcp-broker $ECHO_ROOT/docker-n8n-worker"
+PROD_DIRS="$ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/docker-admin-manager $ECHO_ROOT/docker-coding-worker $ECHO_ROOT/docker-browser-worker $ECHO_ROOT/docker-embedding-worker $ECHO_ROOT/docker-echo-auth-manager $ECHO_ROOT/docker-stt-worker $ECHO_ROOT/docker-tts-worker $ECHO_ROOT/docker-download-broker $ECHO_ROOT/docker-mcp-broker $ECHO_ROOT/docker-n8n-worker"
 
 find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
 find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec sed -i 's/\r$//' {} +
