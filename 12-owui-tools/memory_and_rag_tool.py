@@ -1,16 +1,17 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.22
+version: 2.23
 description: Composant système interne : ECHO Memory & RAG Tool.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.23: Correction (HTTP 400) : Remplacement d'une valeur par défaut mutable `__metadata__: dict = {}` par `Optional[dict] = None`.
+# 2.22: (Version précédente non documentée ici).
 # 2.21: Renommage search_session_context -> search_sessions_context et maximisation du SNR de sa docstring.
 # 2.20: Nettoyage du code : suppression des imports inutilisés (PEP8).
 # 2.19: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
 # 2.18: Alignement sur Harrier-OSS (EMBEDDING_DIM), tri chronologique inverse pour search_session_context, directives de mise à jour de faits via memory_id et notes SNR RAG éphémère vs méta-artéfacts.
-# 2.17: Ajout start_date/end_date dans consult_session_context. Clarification SNR purge.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -318,7 +319,7 @@ class Tools:
         memory_id: str,
         __user__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
-        __metadata__: dict = {},
+        __metadata__: Optional[dict] = None,
     ) -> dict:
         """Supprime une information obsolète ou erronée d'un Méta-Artéfact par son memory_id."""
         events = EchoEvents(__event_emitter__)
