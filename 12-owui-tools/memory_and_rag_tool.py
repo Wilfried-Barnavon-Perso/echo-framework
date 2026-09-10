@@ -1,17 +1,17 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.24
+version: 2.25
 description: Composant système interne : ECHO Memory & RAG Tool.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.25: Correctif (Recall) : Injection du paramètre score_threshold vers Qdrant dans search_sessions_context.
 # 2.24: Améliorations de formatage PEP8 (espacements, indentations, ifs sur ligne unique).
 # 2.23: Correction (HTTP 400) : Remplacement d'une valeur par défaut mutable `__metadata__: dict = {}` par `Optional[dict] = None`.
 # 2.22: (Version précédente non documentée ici).
 # 2.21: Renommage search_session_context -> search_sessions_context et maximisation du SNR de sa docstring.
 # 2.20: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 2.18: Alignement sur Harrier-OSS (EMBEDDING_DIM), tri chronologique inverse pour search_session_context, directives de mise à jour de faits via memory_id et notes SNR RAG éphémère vs méta-artéfacts.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -520,6 +520,7 @@ class Tools:
 
                     search_payload = {
                         "vector": vector, "limit": limit, "with_payload": True,
+                        "score_threshold": self.valves.SCORE_THRESHOLD,
                         "filter": {
                             "must": must_filters
                         }

@@ -1,10 +1,16 @@
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : 2.4 (orjson integration)
+VERSION : 2.7 (Anti-DoS Tmpfs)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-09-10
 
+CHANGELOG 2.7 :
+- Remplacement du tmpfs en RAM par un bind-mount physique vers `.tmp` dans le workspace pour prévenir les attaques de type OOM-DoS (Saturation RAM).
+CHANGELOG 2.6 :
+- Ajout de montages Bubblewrap ciblés : lib64 (NumPy), resolv.conf/ssl (requests/réseau) et un tmpfs en RAM (Pandas).
+CHANGELOG 2.5 :
+- Fix "Can't mount proc on /proc" en remplaçant la création d'un nouveau procfs (--proc) par un montage en lecture seule du procfs parent (--ro-bind /proc /proc).
 CHANGELOG 2.4 :
 - Remplacement du module json par orjson pour de meilleures performances (lecture binaire de logging.json).
 CHANGELOG 2.3 :
@@ -83,6 +89,9 @@ def run_isolated_process(code, result_queue, target_dir, files_dir, timeout_sec)
         else:
             workspace = tempfile.mkdtemp()
             
+        sandbox_tmp = os.path.join(workspace, ".tmp")
+        os.makedirs(sandbox_tmp, exist_ok=True)
+        
         script_path = os.path.join(workspace, "script.py")
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(code)
@@ -94,8 +103,11 @@ def run_isolated_process(code, result_queue, target_dir, files_dir, timeout_sec)
             "--ro-bind", "/lib", "/lib",
             "--ro-bind", "/bin", "/bin",
             "--dev", "/dev",
-            "--proc", "/proc",
-            "--unshare-pid",
+            "--ro-bind", "/proc", "/proc",
+            "--ro-bind-try", "/lib64", "/lib64", # Requis pour certaines dépendances C (NumPy)
+            "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf", # Requis pour la résolution DNS (Internet)
+            "--ro-bind-try", "/etc/ssl/certs", "/etc/ssl/certs", # Requis pour les requêtes HTTPS (requests)
+            "--bind", sandbox_tmp, "/tmp", # Remplace le tmpfs en RAM pour éviter un crash OOM DoS
             "--unshare-ipc",
             "--unshare-uts",
             "--unshare-cgroup",

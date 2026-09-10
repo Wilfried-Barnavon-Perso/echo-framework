@@ -558,6 +558,8 @@ ECHO_CODEX_WORKSPACE_SANDBOX = "sandbox" # Espace d'exécution et de génératio
 
 # ECHO_CODING_WORKER_URL : Utilisée pour isoler l'exécution de code (Python, JS, etc.).
 ECHO_CODING_WORKER_URL = "http://echo-coding-worker:5000/execute"
+ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT = 900
+ECHO_MAX_CODE_EXECUTION_TIMEOUT = 3600
 
 # NAVIGATION_ENGINE_URL : Utilisée par navigation_engine_tool pour le pilotage Playwright/Chrome.
 NAVIGATION_ENGINE_URL = "http://echo-browser-worker:5002"

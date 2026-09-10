@@ -1,11 +1,12 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 6.9
+version: 6.13
 description: Composant système interne : ECHO Python Code Executor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10: Délégation de la gestion du timeout (ECHO_MAX_CODE_EXECUTION_TIMEOUT) au modèle.
 # 6.9: Refonte asynchrone via httpx, sécurisation de la sandbox et gestion multi-workspaces.
 # 6.8: Mise à jour sémantique de la docstring (explicitation de l'interdiction de génération UI).
 # 6.7: Précision de la version (Python 3.14) et rappel d'isolation dans la docstring.
@@ -15,25 +16,22 @@ description: Composant système interne : ECHO Python Code Executor.
 # ECHO CONFIG NAME : ECHO Python Sandbox
 
 import sys
-from pydantic import BaseModel, Field
 from typing import Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_core import wrap_tool_output
 from echo_events import EchoEvents
-from echo_constants import ECHO_CODING_WORKER_URL
+from echo_constants import ECHO_CODING_WORKER_URL, ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT, ECHO_MAX_CODE_EXECUTION_TIMEOUT
 
 class Tools:
-    class Valves(BaseModel):
-        TIMEOUT: int = Field(default=30, description="Délai d'attente maximum pour l'exécution (secondes).")
-
     def __init__(self):
-        self.valves = self.Valves()
+        pass
 
     async def execute_python(
         self,
         code: str,
+        timeout_sec: int = ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT,
         __user__: dict = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None,
@@ -45,24 +43,39 @@ class Tools:
         - '/workspace' : Dossier en Lecture/Écriture pour générer et manipuler des fichiers.
         - '/inputs' : Dossier en Lecture seule contenant les fichiers fournis par l'utilisateur.
         
+        Args:
+            code (str): Le code source complet à exécuter.
+            timeout_sec (int): Délai maximum accordé au script. Une fois ce délai strictement 
+                               dépassé, l'environnement d'exécution éphémère (la Sandbox) 
+                               disparaît intégralement, entraînant la destruction instantanée 
+                               de tous les processus et variables en mémoire.
+        
         Note à l'Orchestrateur : Si la tâche de développement ou d'exécution est complexe, il est vivement recommandé de confier l'utilisation de cet outil à un sous-agent spécialisé.
         """
         __user__ = __user__ or {}
         __metadata__ = __metadata__ or {}
 
         events = EchoEvents(__event_emitter__, __event_call__)
-        await events.status("🐍 Exécution de code en cours...")
+        
+        if timeout_sec > ECHO_MAX_CODE_EXECUTION_TIMEOUT:
+            err_msg = f"timeout_sec ({timeout_sec}s) dépasse la limite autorisée ({ECHO_MAX_CODE_EXECUTION_TIMEOUT}s)."
+            await events.status(f"Erreur: {err_msg}", done=True)
+            return wrap_tool_output(text="", status={"status": "error", "error": err_msg}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+        
+        actual_timeout = timeout_sec
+        
+        await events.status(f"🐍 Exécution de code en cours... (Timeout: {actual_timeout}s)")
 
         try:
             import httpx
-            async with httpx.AsyncClient(timeout=self.valves.TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=actual_timeout + 2.0) as client:
                 response = await client.post(
                     ECHO_CODING_WORKER_URL,
                     json={
                         "code": code,
                         "user_id": __user__.get("id", "system"),
                         "chat_id": __metadata__.get("chat_id"),
-                        "timeout": self.valves.TIMEOUT
+                        "timeout": actual_timeout
                     }
                 )
             
@@ -80,10 +93,10 @@ class Tools:
                 return wrap_tool_output(text=text_out, status=echo_status, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
             else:
                 err_msg = f"Erreur Worker (HTTP {response.status_code})"
-                await events.status(f"❌ {err_msg}", done=True)
-                return wrap_tool_output(text=err_msg, status={"status": "critical_error", "code": response.status_code}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+                await events.status(err_msg, done=True)
+                return wrap_tool_output(text="", status={"status": "critical_error", "code": response.status_code, "error": err_msg}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
 
         except httpx.RequestError as e:
-            return wrap_tool_output(text="❌ Service Coding Worker injoignable.", status={"status": "error"}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+            return wrap_tool_output(text="", status={"status": "error", "error": "Service Coding Worker injoignable."}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
         except Exception as e: 
-            return wrap_tool_output(text=f"❌ Erreur Client: {str(e)}", status={"status": "error", "error": str(e)}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+            return wrap_tool_output(text="", status={"status": "error", "error": f"Erreur Client: {str(e)}"}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
