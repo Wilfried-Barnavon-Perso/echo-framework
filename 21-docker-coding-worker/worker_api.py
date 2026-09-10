@@ -1,10 +1,13 @@
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : 2.7 (Anti-DoS Tmpfs)
+VERSION : 2.8 (Topologie Codex RO)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-09-10
 
+CHANGELOG 2.8 :
+- Renommage de /inputs vers /ro_user_files (plus sémantique).
+- Ajout du montage du dépôt Codex en lecture seule vers /ro_user_edits pour permettre au script Python d'exécuter le code généré.
 CHANGELOG 2.7 :
 - Remplacement du tmpfs en RAM par un bind-mount physique vers `.tmp` dans le workspace pour prévenir les attaques de type OOM-DoS (Saturation RAM).
 CHANGELOG 2.6 :
@@ -117,8 +120,13 @@ def run_isolated_process(code, result_queue, target_dir, files_dir, timeout_sec)
         ]
 
         # Montage des uploads utilisateurs en LECTURE SEULE
-        if files_dir and os.path.exists(files_dir):
-            bwrap_cmd.extend(["--ro-bind", files_dir, "/inputs"])
+        if files_dir:
+            bwrap_cmd.extend(["--ro-bind-try", files_dir, "/ro_user_files"])
+            
+        # Montage du dépôt Codex (main) en LECTURE SEULE
+        if target_dir:
+            codex_main = os.path.join(os.path.dirname(target_dir), "main")
+            bwrap_cmd.extend(["--ro-bind-try", codex_main, "/ro_user_edits"])
 
         bwrap_cmd.extend(["python", "/workspace/script.py"])
 

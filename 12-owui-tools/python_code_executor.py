@@ -1,7 +1,7 @@
 """
 title: ECHO Python Code Executor
 author: Wilfried BARNAVON
-version: 6.13
+version: 6.14
 description: Composant système interne : ECHO Python Code Executor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -40,8 +40,9 @@ class Tools:
         """
         Permet au modèle d'exécuter du code (Python, etc.) dans une Sandbox isolée.
         Le script s'exécute avec les accès stricts suivants :
-        - '/workspace' : Dossier en Lecture/Écriture pour générer et manipuler des fichiers.
-        - '/inputs' : Dossier en Lecture seule contenant les fichiers fournis par l'utilisateur.
+        - '/ro_user_files' : Dossier en Lecture seule contenant les fichiers (pièces jointes) du Registre.
+        - '/ro_user_edits' : Dossier en Lecture seule contenant le code versionné du Codex.
+        - '/workspace' : Espace d'écriture persistant pour le script (sandbox).
         
         Args:
             code (str): Le code source complet à exécuter.
