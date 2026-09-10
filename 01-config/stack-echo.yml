@@ -340,6 +340,9 @@ services:
     restart: always
     security_opt:
       - seccomp=unconfined
+      - apparmor=unconfined
+    cap_add:
+      - SYS_ADMIN
     networks:
       - echo-sandbox
     environment:

@@ -1,13 +1,16 @@
-from flask import Flask, request, jsonify # pyright: ignore[reportMissingImports]
-import io, contextlib, traceback, multiprocessing, tempfile, os, queue, subprocess
-import logging
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : 2.0 (Moteur Bubblewrap Absolu)
+VERSION : 2.3 (PEP8 Imports Cleanup)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-09-09
+DATE MAJ : 2026-09-10
 
+CHANGELOG 2.3 :
+- Nettoyage des imports (PEP8) et placement de la docstring en tête de fichier.
+CHANGELOG 2.2 :
+- Retrait de l'isolation réseau (--unshare-net) pour permettre l'usage de requests/pandas.
+CHANGELOG 2.1 :
+- Durcissement de Bubblewrap : exécution en tant que nobody (UID/GID 65534) et isolation complète (--unshare-all).
 CHANGELOG 2.0 :
 - Moteur Bubblewrap : Isolation absolue avec dossiers `workspace` (RW) et `inputs` (RO).
 CHANGELOG 1.8 :
@@ -26,10 +29,19 @@ CHANGELOG 1.2 :
 ================================================================================
 """
 
-# Configuration des logs pour voir qui fait quoi dans la console Docker
-import logging.config
 import json
+import logging
+import logging.config
+import multiprocessing
+import os
+import queue
+import subprocess
+import tempfile
 import time
+
+from flask import Flask, jsonify, request  # pyright: ignore[reportMissingImports]
+
+# Configuration des logs pour voir qui fait quoi dans la console Docker
 
 if os.path.exists('/app/logging.json'):
     with open('/app/logging.json', 'r') as f:
@@ -82,6 +94,10 @@ def run_isolated_process(code, result_queue, target_dir, files_dir, timeout_sec)
             "--dev", "/dev",
             "--proc", "/proc",
             "--unshare-pid",
+            "--unshare-ipc",
+            "--unshare-uts",
+            "--unshare-cgroup",
+            "--unshare-user", "--uid", "65534", "--gid", "65534", # Exécute en tant qu'utilisateur "nobody"
             "--bind", workspace, "/workspace", # <- Dossier Sandbox (RW)
             "--chdir", "/workspace"
         ]
