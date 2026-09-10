@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO PYTHON WORKER API
-VERSION : 2.3 (PEP8 Imports Cleanup)
+VERSION : 2.4 (orjson integration)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-09-10
 
+CHANGELOG 2.4 :
+- Remplacement du module json par orjson pour de meilleures performances (lecture binaire de logging.json).
 CHANGELOG 2.3 :
 - Nettoyage des imports (PEP8) et placement de la docstring en tête de fichier.
 CHANGELOG 2.2 :
@@ -29,10 +31,10 @@ CHANGELOG 1.2 :
 ================================================================================
 """
 
-import json
 import logging
 import logging.config
 import multiprocessing
+import orjson
 import os
 import queue
 import subprocess
@@ -44,8 +46,8 @@ from flask import Flask, jsonify, request  # pyright: ignore[reportMissingImport
 # Configuration des logs pour voir qui fait quoi dans la console Docker
 
 if os.path.exists('/app/logging.json'):
-    with open('/app/logging.json', 'r') as f:
-        logging.config.dictConfig(json.load(f))
+    with open('/app/logging.json', 'rb') as f:
+        logging.config.dictConfig(orjson.loads(f.read()))
 else:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
