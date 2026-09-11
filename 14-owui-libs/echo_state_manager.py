@@ -19,7 +19,7 @@ import orjson as std_json
 from datetime import datetime
 from typing import Any, List, Optional
 from echo_paths import get_echo_global_path, get_echo_session_path, resolve_upload_file_path
-from echo_constants import ECHO_GLOBAL_DOMAINS, ECHO_SESSION_DOMAINS, ECHO_UPLOADS_TRANSIT_DIR, ECHO_USERS_ROOT, ECHO_CODEX_WORKSPACE_MAIN, ECHO_CODEX_WORKSPACE_SANDBOX
+from echo_constants import ECHO_GLOBAL_DOMAINS, ECHO_SESSION_DOMAINS, ECHO_UPLOADS_TRANSIT_DIR, ECHO_USERS_ROOT, ECHO_CODEX_WORKSPACES
 
 class EchoStateManager:
     def __init__(self, user_id: str = "system", chat_id: Optional[str] = None):
@@ -35,8 +35,8 @@ class EchoStateManager:
                     domain_path = get_echo_session_path(self.user_id, self.chat_id, domain)
                     os.makedirs(domain_path, exist_ok=True)
                     if domain == "codex":
-                        os.makedirs(os.path.join(domain_path, ECHO_CODEX_WORKSPACE_MAIN), exist_ok=True)
-                        os.makedirs(os.path.join(domain_path, ECHO_CODEX_WORKSPACE_SANDBOX), exist_ok=True)
+                        for ws in ECHO_CODEX_WORKSPACES.keys():
+                            os.makedirs(os.path.join(domain_path, ws), exist_ok=True)
             self.db_path = get_echo_session_path(self.user_id, self.chat_id, "db")
         else:
             for domain in ECHO_GLOBAL_DOMAINS:
@@ -132,6 +132,10 @@ class EchoStateManager:
                 try: conn.execute("ALTER TABLE cognitive_signatures ADD COLUMN model_id TEXT")
                 except: pass
                 try: conn.execute("ALTER TABLE suture_index ADD COLUMN message_id TEXT")
+                except: pass
+                
+                # MIGRATION ECHO CODEX MULTI-WORKSPACE (item_type = file | directory)
+                try: conn.execute("ALTER TABLE echo_resources ADD COLUMN item_type TEXT DEFAULT 'file'")
                 except: pass
 
                 conn.commit()
@@ -577,7 +581,7 @@ class EchoStateManager:
                       git_tracked: bool = False, message_id: str = None,
                       plan_goal: str = None, author_model: str = None,
                       language: str = None, lines: int = None,
-                      last_commit: str = None, commit_msg: str = None):
+                      last_commit: str = None, commit_msg: str = None, item_type: str = "file"):
         """Crée ou met à jour une ressource dans le registre unifié.
         Utilise INSERT ... ON CONFLICT pour préserver created_at lors des mises à jour.
         """
@@ -588,8 +592,8 @@ class EchoStateManager:
                     "INSERT INTO echo_resources "
                     "(id, name, resource_type, mime, status, summary, storage_path, "
                     "git_tracked, message_id, plan_goal, author_model, language, lines, "
-                    "last_commit, commit_msg, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "last_commit, commit_msg, created_at, updated_at, item_type) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(id) DO UPDATE SET "
                     "name=excluded.name, resource_type=excluded.resource_type, "
                     "mime=excluded.mime, status=excluded.status, summary=excluded.summary, "
@@ -598,10 +602,10 @@ class EchoStateManager:
                     "plan_goal=excluded.plan_goal, author_model=excluded.author_model, "
                     "language=excluded.language, lines=excluded.lines, "
                     "last_commit=excluded.last_commit, commit_msg=excluded.commit_msg, "
-                    "updated_at=excluded.updated_at",
+                    "updated_at=excluded.updated_at, item_type=excluded.item_type",
                     (id, name, resource_type, mime, status, summary, storage_path,
                      1 if git_tracked else 0, message_id, plan_goal, author_model,
-                     language, lines, last_commit, commit_msg, ts, ts)
+                     language, lines, last_commit, commit_msg, ts, ts, item_type)
                 )
                 conn.commit()
         except Exception as e:

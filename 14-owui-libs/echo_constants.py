@@ -1,18 +1,17 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.62
+version: 5.63
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.63: Plan Gamma - Remplacement par le dictionnaire ECHO_CODEX_WORKSPACES et ajout de ECHO_SYNC_EXCLUDE_LIST.
 # 5.62: Migration du Défibrillateur Attentionnel vers un système de Rappels Cognitifs Multi-Axes.
 # 5.61: Migration de AEC_REMINDER_MSG en texte pur pour utilisation par EchoAEC (SSOT).
 # 5.60: Injection des seuils de Rappel Cognitif (Défibrillateur Attentionnel).
 # 5.58: Augmentation de ECHO_API_MAX_RETRIES à 5 tentatives.
 # 5.57: Ajout de ECHO_GLOBAL_TENANT_PROJECT_ID ("aicode-consumers") pour forcer le routage Code Assist et contourner les 429 persos.
-# 5.56: Mise à jour du modèle MODEL_FLASH de 3.7 vers 3.8.
-# 5.55: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
 # 5.53: Création des constantes CONTEXT_LOAD_WARNING_THRESHOLD (40) et CONTEXT_LOAD_CRITICAL_THRESHOLD (60)
 # 5.52: Alignement protocole OAuth2 sur AGY IDE 2.5.5 (audit binaire main.js) :
 #       - ECHO_CLIENT_METADATA : ideType ANTIGRAVITY, ajout ideName/ideVersion/platform
@@ -552,9 +551,14 @@ MODEL_ENUM_REFERENCE = {"MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"}
 ECHO_QDRANT_URL = "http://echo-qdrant:6333"
 
 # --- CONFIGURATION DES ESPACES DE TRAVAIL (CODEX) ---
-# Définit les sous-dossiers stricts dans la structure codex.
-ECHO_CODEX_WORKSPACE_MAIN = "main"       # Dépôt officiel versionné
-ECHO_CODEX_WORKSPACE_SANDBOX = "sandbox" # Espace d'exécution et de génération du worker
+# Définit les sous-dossiers stricts dans la structure codex via un dictionnaire pour alimenter dynamiquement l'UI.
+ECHO_CODEX_WORKSPACES = {
+    "main": "Main",       # Dépôt officiel versionné
+    "sandbox": "Sandbox"  # Espace d'exécution et de génération du worker
+}
+
+# Liste stricte des dossiers et fichiers à ignorer lors de la synchronisation ou de l'exploration UI
+ECHO_SYNC_EXCLUDE_LIST = [".venv", "node_modules", "__pycache__", ".git", ".pytest_cache", "venv"]
 
 # ECHO_CODING_WORKER_URL : Utilisée pour isoler l'exécution de code (Python, JS, etc.).
 ECHO_CODING_WORKER_URL = "http://echo-coding-worker:5000/execute"

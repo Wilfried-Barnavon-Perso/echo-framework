@@ -39,7 +39,8 @@ sys.path.append("/app/backend/echo_libs")
 from echo_constants import (
     get_generation_config,
     CODEX_QUICK_ACTIONS,
-    FILE_INGESTION_STATUS
+    FILE_INGESTION_STATUS,
+    ECHO_CODEX_WORKSPACES
 )
 from echo_prompts import SYS_CODEX_EDIT
 from echo_events import EchoEvents
@@ -77,7 +78,8 @@ class Action:
             return None
 
         # Initialisation du repo et du state manager
-        repo = CodexRepo(uid, cid)
+        current_workspace = "main"
+        repo = CodexRepo(uid, cid, workspace=current_workspace)
         state = EchoStateManager(user_id=uid, chat_id=cid)
         files = repo.list_files()
 
@@ -87,7 +89,8 @@ class Action:
         # 1. Injection du HUD Monaco
         files_json = json.dumps(files).decode("utf-8")
         quick_actions_json = json.dumps(CODEX_QUICK_ACTIONS).decode("utf-8")
-        hud_js = EchoUI._generate_codex_js(files_json, quick_actions_json, cid)
+        workspaces_json = json.dumps(ECHO_CODEX_WORKSPACES).decode("utf-8")
+        hud_js = EchoUI._generate_codex_js(files_json, quick_actions_json, workspaces_json, current_workspace, cid)
         await __event_call__({"type": "execute", "data": {"code": hud_js}})
         await events.status("HUD Codex injecté.", done=True, hidden=True)
 
@@ -109,6 +112,18 @@ class Action:
                     # ---- FERMETURE ----
                     if action_type == "close":
                         break
+
+                    # ---- SWITCH WORKSPACE ----
+                    elif action_type == "switch_workspace":
+                        current_workspace = response.get("workspace", "main")
+                        repo = CodexRepo(uid, cid, workspace=current_workspace)
+                        stats = repo.get_repo_stats()
+                        current_commit = stats.get("last_commit_hash")
+                        updated_files = repo.list_files()
+                        files_json = json.dumps(updated_files).decode("utf-8")
+                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                        await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+                        continue
 
                     # ---- PING HEARTBEAT (Auto-refresh) ----
                     elif action_type == "ping":

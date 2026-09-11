@@ -247,9 +247,13 @@ class Tools:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         async with _codex_locks[f"{uid}:{cid}"]:
-            commit_hash = await asyncio.to_thread(repo.delete_file, filename, f"Delete {filename}")
+            try:
+                commit_hash = await asyncio.to_thread(repo.delete_file, filename, f"Delete {filename}")
+            except ValueError as e:
+                return wrap_tool_output(text=f"❌ {e}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            
             if not commit_hash:
-                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text=f"❌ Fichier/Dossier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             await asyncio.to_thread(state.delete_resource, filename)
         await events.status(f"🗑️ {filename} supprimé (commit {commit_hash[:7]}).", done=True)

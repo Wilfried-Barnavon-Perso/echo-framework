@@ -53,13 +53,19 @@ class CodexRepo:
     # CRUD FICHIERS
     # =========================================================================
 
+    def _secure_path(self, path: str) -> str:
+        """Sécurise un chemin relatif et empêche le path traversal."""
+        path = path.replace("\\", "/").strip("/")
+        if ".." in path.split("/"):
+            raise ValueError("Path traversal non autorisé.")
+        return path
+
     def commit_file(self, filename: str, content: str, message: str,
-                    author: str = "ECHO Codex") -> str:
-        """Écrit un fichier, l'ajoute au staging et commit.
-        Crée ou met à jour le fichier. Retourne le hash du commit (hex)."""
-        # Sécurisation du nom de fichier (pas de traversée de répertoire)
-        safe_name = os.path.basename(filename)
+                    author: str = "ECHO Codex") -> Optional[str]:
+        """Crée ou met à jour un fichier, avec création automatique des sous-dossiers. Retourne le hash du commit."""
+        safe_name = self._secure_path(filename)
         filepath = os.path.join(self.repo_path, safe_name)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
@@ -76,7 +82,7 @@ class CodexRepo:
     def read_file(self, filename: str, start_line: int = None,
                   end_line: int = None) -> Optional[dict]:
         """Lit un fichier. Retourne {content, total_lines, range} ou None."""
-        safe_name = os.path.basename(filename)
+        safe_name = self._secure_path(filename)
         filepath = os.path.join(self.repo_path, safe_name)
         if not os.path.exists(filepath):
             return None
@@ -95,14 +101,26 @@ class CodexRepo:
 
         return {"content": "".join(lines), "total_lines": total, "range": None}
 
-    def delete_file(self, filename: str, message: str) -> Optional[str]:
-        """Supprime un fichier et commit. Retourne le hash ou None."""
-        safe_name = os.path.basename(filename)
-        filepath = os.path.join(self.repo_path, safe_name)
-        if not os.path.exists(filepath):
+    def delete_file(self, path: str, message: str) -> Optional[str]:
+        """Supprime un fichier ou un dossier vide et commit. Retourne le hash ou None."""
+        safe_name = self._secure_path(path)
+        target_path = os.path.join(self.repo_path, safe_name)
+        if not os.path.exists(target_path):
             return None
 
-        porcelain.rm(self.repo_path, paths=[safe_name])
+        if os.path.isdir(target_path):
+            if os.listdir(target_path):  # Non vide
+                raise ValueError(f"Le répertoire '{path}' n'est pas vide. Suppression annulée.")
+            os.rmdir(target_path)
+            # Git ne traque pas les dossiers vides, mais on lance un cleanup
+            paths_to_rm = []
+        else:
+            os.remove(target_path)
+            paths_to_rm = [safe_name]
+
+        if paths_to_rm:
+            try: porcelain.rm(self.repo_path, paths=paths_to_rm)
+            except: pass
         commit_sha = porcelain.commit(
             self.repo_path,
             message=message.encode("utf-8"),
@@ -113,12 +131,12 @@ class CodexRepo:
 
     def rename_file(self, old_name: str, new_name: str, message: str,
                     author: str = "ECHO Codex") -> Optional[str]:
-        """Renomme un fichier dans le dépôt (rename OS + git add/rm + commit).
-        Retourne le hash du commit ou None si échec."""
-        safe_old = os.path.basename(old_name)
-        safe_new = os.path.basename(new_name)
+        """Renomme un fichier ou un dossier dans le dépôt. Retourne le hash du commit ou None."""
+        safe_old = self._secure_path(old_name)
+        safe_new = self._secure_path(new_name)
         old_path = os.path.join(self.repo_path, safe_old)
         new_path = os.path.join(self.repo_path, safe_new)
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
 
         if not os.path.exists(old_path) or safe_old == safe_new:
             return None
@@ -137,8 +155,8 @@ class CodexRepo:
         return commit_sha.decode("ascii") if isinstance(commit_sha, bytes) else str(commit_sha)
 
     def list_files(self) -> List[dict]:
-        """Liste tous les fichiers trackés dans le working tree.
-        Triés par date de modification décroissante (dernier modifié en premier)."""
+        """Liste tous les fichiers et sous-dossiers trackés ou non (si sandbox).
+        Retourne une liste plate (pour compatibilité) avec chemins relatifs complets et type (file/directory)."""
         files = []
         if not os.path.exists(self.repo_path):
             return files
@@ -149,31 +167,46 @@ class CodexRepo:
         except Exception:
             tracked_files = set()
 
-        for entry in os.listdir(self.repo_path):
-            if entry.startswith("."):
-                continue
-            if entry not in tracked_files:
-                continue
-            filepath = os.path.join(self.repo_path, entry)
-            if not os.path.isfile(filepath):
-                continue
-            try:
-                with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-                    line_count = sum(1 for _ in f)
-                size = os.path.getsize(filepath)
-                mtime = os.path.getmtime(filepath)
-            except:
-                line_count = 0
-                size = 0
-                mtime = 0
+        for root, dirs, filenames in os.walk(self.repo_path):
+            # Ignorer le dossier .git et autres dossiers cachés
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
 
-            files.append({
-                "filename": entry,
-                "lang": self.detect_language(entry),
-                "lines": line_count,
-                "size_bytes": size,
-                "mtime": mtime,
-            })
+            for d in dirs:
+                rel_dir = os.path.relpath(os.path.join(root, d), self.repo_path).replace("\\", "/")
+                files.append({
+                    "filename": rel_dir,
+                    "type": "directory",
+                    "lang": "folder",
+                    "lines": 0,
+                    "size_bytes": 0,
+                    "mtime": os.path.getmtime(os.path.join(root, d))
+                })
+
+            for f in filenames:
+                if f.startswith("."): continue
+                rel_file = os.path.relpath(os.path.join(root, f), self.repo_path).replace("\\", "/")
+                # Dans un vrai repo (main), on peut vouloir filtrer les untracked. 
+                # Mais en sandbox, on montre tout. Pour l'UI, on affiche tous les fichiers réels.
+                
+                filepath = os.path.join(root, f)
+                try:
+                    with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
+                        line_count = sum(1 for _ in fh)
+                    size = os.path.getsize(filepath)
+                    mtime = os.path.getmtime(filepath)
+                except:
+                    line_count = 0
+                    size = 0
+                    mtime = 0
+
+                files.append({
+                    "filename": rel_file,
+                    "type": "file",
+                    "lang": self.detect_language(f),
+                    "lines": line_count,
+                    "size_bytes": size,
+                    "mtime": mtime,
+                })
         return sorted(files, key=lambda x: x["mtime"], reverse=True)
 
     def search_in_file(self, filename: str, pattern: str,
@@ -219,7 +252,7 @@ class CodexRepo:
 
                 if filename:
                     # Filtrage : vérifier si le fichier est modifié dans ce commit
-                    safe_name = os.path.basename(filename)
+                    safe_name = self._secure_path(filename)
                     if not self._file_in_commit(commit, safe_name):
                         continue
 
@@ -278,7 +311,7 @@ class CodexRepo:
     def get_file_at_commit(self, filename: str, commit_hash: str) -> Optional[str]:
         """Lit le contenu d'un fichier à un commit donné (checkout virtuel)."""
         try:
-            safe_name = os.path.basename(filename)
+            safe_name = self._secure_path(filename)
             commit = self.repo.object_store[commit_hash.encode("ascii")]
             tree = self.repo.object_store[commit.tree]
 

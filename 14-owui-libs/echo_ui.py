@@ -1017,7 +1017,8 @@ return new Promise(function(resolve) {{
       """
 
   @staticmethod
-  def _generate_codex_js(files_json: str, quick_actions_json: str, chat_id: str) -> str:
+  @staticmethod
+  def _generate_codex_js(files_json: str, quick_actions_json: str, workspaces_json: str, current_workspace: str, chat_id: str) -> str:
     """Génère le script JS complet du HUD Monaco Codex.
     Injection via __event_call__({type: 'execute', data: {code: ...}})."""
     return f"""
@@ -1034,6 +1035,8 @@ return new Promise(function(resolve) {{
       // --- State ---
       let files = {files_json};
       const quickActions = {quick_actions_json};
+      const workspaces = {workspaces_json};
+      let currentWorkspace = '{current_workspace}';
       // Mapping langage Monaco → extension (pour rename)
       const LANG_TO_EXT = {{
         python:'.py', javascript:'.js', typescript:'.ts', c:'.c', cpp:'.cpp',
@@ -1268,48 +1271,131 @@ return new Promise(function(resolve) {{
       function renderFileTree() {{
         const sb = document.getElementById(CODEX_ID + '-sidebar');
         sb.innerHTML = '';
-        files.forEach(f => {{
-          const item = document.createElement('div');
-          const isActive = f.filename === currentFile;
-          item.style.cssText = `padding:4px 10px; cursor:pointer; font-size:12px; white-space:nowrap;
-            overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center;
-            background:${{isActive ? hoverBg : 'transparent'}};
-            border-left:${{isActive ? '3px solid ' + accentColor : '3px solid transparent'}};`;
-          const nameSpan = document.createElement('span');
-          nameSpan.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
-          nameSpan.textContent = (modified && isActive ? '● ' : '') + f.filename;
-          nameSpan.title = f.filename + ' (' + f.lang + ', ' + f.lines + ' lines)';
-          nameSpan.onclick = () => switchFile(f.filename);
-          item.appendChild(nameSpan);
-          // Bouton supprimer
-          const delBtn = document.createElement('span');
-          delBtn.textContent = '×';
-          delBtn.title = 'Supprimer ' + f.filename;
-          delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px;
-            font-weight:bold; padding:0 4px; transition:opacity 0.15s;`;
-          item.onmouseenter = () => delBtn.style.opacity = '1';
-          item.onmouseleave = () => delBtn.style.opacity = '0';
-          delBtn.onclick = (e) => {{
-            e.stopPropagation();
-            window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
-              if (agreed) {{
-                window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
-              }}
-            }});
-          }};
-          item.appendChild(delBtn);
-          sb.appendChild(item);
+        
+        // --- 1. Workspace Switcher ---
+        const wsSelect = document.createElement('select');
+        wsSelect.id = CODEX_ID + '-workspace';
+        wsSelect.style.cssText = `width:100%; padding:6px; background:${{headerBg}}; border:none; border-bottom:1px solid ${{borderColor}}; color:${{textColor}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer; flex-shrink:0;`;
+        Object.entries(workspaces).forEach(([key, label]) => {{
+          const opt = document.createElement('option');
+          opt.value = key;
+          opt.textContent = '📦 ' + label;
+          if (key === currentWorkspace) opt.selected = true;
+          wsSelect.appendChild(opt);
         }});
+        wsSelect.onchange = () => {{
+          window.echoCodexResolve({{action:'switch_workspace', workspace:wsSelect.value}});
+        }};
+        sb.appendChild(wsSelect);
+
+        // Masquer la Timeline Git (historique) si on est dans la Sandbox
+        const statusBar = document.getElementById(CODEX_ID + '-status');
+        if (statusBar) statusBar.style.display = currentWorkspace === 'sandbox' ? 'none' : 'flex';
+
+        // --- 2. Build Tree JSON ---
+        const treeMap = {{ '': {{ isDir: true, children: {{}} }} }};
+        files.forEach(f => {{
+          const parts = f.filename.split('/');
+          let currentPath = '';
+          let parentNode = treeMap[''];
+          for (let i = 0; i < parts.length; i++) {{
+            const part = parts[i];
+            currentPath = currentPath ? currentPath + '/' + part : part;
+            const isLast = (i === parts.length - 1);
+            if (!parentNode.children[part]) {{
+              parentNode.children[part] = {{
+                name: part,
+                path: currentPath,
+                isDir: isLast ? (f.type === 'directory') : true,
+                file: isLast && f.type === 'file' ? f : null,
+                children: {{}}
+              }};
+            }}
+            parentNode = parentNode.children[part];
+          }}
+        }});
+
+        // --- 3. Render Tree DOM Recursive ---
+        function renderNode(node, container, level) {{
+          Object.values(node.children).sort((a,b) => {{
+            if(a.isDir && !b.isDir) return -1;
+            if(!a.isDir && b.isDir) return 1;
+            return a.name.localeCompare(b.name);
+          }}).forEach(child => {{
+            if (child.isDir) {{
+              const details = document.createElement('details');
+              details.open = true; // Par défaut ouvert
+              const summary = document.createElement('summary');
+              summary.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; user-select:none; font-weight:600; color:${{isDark ? '#cba6f7' : '#8839ef'}};`;
+              summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
+              
+              // Folder delete button
+              const delBtn = document.createElement('span');
+              delBtn.innerHTML = '🗑️';
+              delBtn.title = 'Supprimer le dossier ' + child.path;
+              delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s; margin-left:auto;`;
+              summary.onmouseenter = () => delBtn.style.opacity = '1';
+              summary.onmouseleave = () => delBtn.style.opacity = '0';
+              delBtn.onclick = (e) => {{
+                e.preventDefault();
+                window.echoCustomConfirm('Supprimer le dossier ' + child.path + ' ?', (agreed) => {{
+                  if (agreed) window.echoCodexResolve({{action:'delete_file', filename:child.path, current_file:currentFile}});
+                }});
+              }};
+              summary.appendChild(delBtn);
+              
+              details.appendChild(summary);
+              const childrenContainer = document.createElement('div');
+              renderNode(child, childrenContainer, level + 1);
+              details.appendChild(childrenContainer);
+              container.appendChild(details);
+            }} else {{
+              // Fichier
+              const f = child.file;
+              const item = document.createElement('div');
+              const isActive = f.filename === currentFile;
+              item.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; background:${{isActive ? hoverBg : 'transparent'}}; border-left:${{isActive ? '3px solid ' + accentColor : '3px solid transparent'}};`;
+              const nameSpan = document.createElement('span');
+              nameSpan.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
+              nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
+              nameSpan.title = f.filename + ' (' + f.lang + ', ' + f.lines + ' lines)';
+              nameSpan.onclick = () => switchFile(f.filename);
+              item.appendChild(nameSpan);
+              
+              // Bouton supprimer
+              const delBtn = document.createElement('span');
+              delBtn.innerHTML = '×';
+              delBtn.title = 'Supprimer ' + f.filename;
+              delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px; font-weight:bold; padding:0 4px; transition:opacity 0.15s; margin-left:auto;`;
+              item.onmouseenter = () => delBtn.style.opacity = '1';
+              item.onmouseleave = () => delBtn.style.opacity = '0';
+              delBtn.onclick = (e) => {{
+                e.stopPropagation();
+                window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
+                  if (agreed) window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
+                }});
+              }};
+              item.appendChild(delBtn);
+              container.appendChild(item);
+            }}
+          }});
+        }}
+        
+        const treeContainer = document.createElement('div');
+        treeContainer.style.cssText = 'overflow-y:auto; flex:1; padding-bottom:6px;';
+        renderNode(treeMap[''], treeContainer, 0);
+        sb.appendChild(treeContainer);
+
         // + Créer
         const newBtn = document.createElement('div');
-        newBtn.style.cssText = `padding:6px 10px; cursor:pointer; font-size:12px; color:${{accentColor}};`;
-        newBtn.textContent = '+ Cr\u00e9er';
+        newBtn.style.cssText = `padding:8px 10px; cursor:pointer; font-size:12px; color:${{accentColor}}; border-top:1px solid ${{borderColor}}; margin-top:auto; font-weight:bold; flex-shrink:0;`;
+        newBtn.textContent = '+ Créer';
         newBtn.onclick = () => {{
           newBtn.textContent = '';
           const input = document.createElement('input');
           input.type = 'text';
-          input.placeholder = 'ex: main.py';
-          input.style.cssText = `width:100%; background:rgba(0,0,0,0.2); border:1px solid ${{borderColor}}; color:${{textColor}}; padding:2px 4px; border-radius:3px; font-size:11px; outline:none;`;
+          input.placeholder = 'ex: src/main.py';
+          input.style.cssText = `width:100%; background:rgba(0,0,0,0.2); border:1px solid ${{borderColor}}; color:${{textColor}}; padding:4px 6px; border-radius:4px; font-size:12px; outline:none; font-family:monospace;`;
           
           const submitFile = () => {{
             const name = input.value.trim();
@@ -1328,10 +1414,11 @@ return new Promise(function(resolve) {{
           newBtn.onclick = null;
         }};
         sb.appendChild(newBtn);
+
         // Reset
         const resetBtn = document.createElement('div');
-        resetBtn.style.cssText = `padding:6px 10px; cursor:pointer; font-size:12px; color:#f38ba8; margin-top:auto;`;
-        resetBtn.textContent = '🗑 Reset';
+        resetBtn.style.cssText = `padding:8px 10px; cursor:pointer; font-size:12px; color:#f38ba8; border-top:1px dashed ${{borderColor}}; font-weight:bold; flex-shrink:0;`;
+        resetBtn.textContent = '🗑️ Reset complet';
         resetBtn.onclick = () => {{
           window.echoCustomConfirm('⚠️ Supprimer tout le dépôt Codex de cette conversation ? Irréversible.', (agreed) => {{
             if (agreed) {{
