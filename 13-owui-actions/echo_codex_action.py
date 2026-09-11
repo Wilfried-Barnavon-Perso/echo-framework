@@ -227,7 +227,7 @@ class Action:
                         else:
                             hide_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Aucun r\u00e9sultat');"
                             await __event_call__({"type": "execute", "data": {"code": hide_code}})
-                            await events.status("❌ L'éditeur AI n'a pas produit de résultat.", done=True)
+                            await events.status("❌ L'éÉditeur AI n'a pas produit de résultat.", done=True)
 
                     # ---- ACCEPTER DIFF ----
                     elif action_type == "accept_diff":
@@ -261,7 +261,7 @@ class Action:
                                 :7]}');"
                         await __event_call__({"type": "execute", "data": {"code": notify_code}})
 
-                        # Recharger le fichier dans l'éditeur
+                        # Recharger le fichier dans l'éÉditeur
                         result = repo.read_file(filename)
                         file_content = result["content"] if result else ""
                         escaped = json.dumps(file_content).decode("utf-8")
@@ -274,7 +274,7 @@ class Action:
                         revert_code = "if(window.echoCodexRevertDiff) window.echoCodexRevertDiff();"
                         await __event_call__({"type": "execute", "data": {"code": revert_code}})
 
-                        # Recharger le fichier original dans l'éditeur
+                        # Recharger le fichier original dans l'éÉditeur
                         filename = response.get("filename", "")
                         if filename:
                             result = repo.read_file(filename)
@@ -520,7 +520,7 @@ class Action:
                                 f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
                                 f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
                             )
-                            # On ne charge pas de contenu vide dans l'éditeur
+                            # On ne charge pas de contenu vide dans l'éÉditeur
                             # si on vient de créer un dossier
                             if not is_dir:
                                 refresh_code += f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
@@ -623,7 +623,7 @@ class Action:
                             await __event_call__({"type": "execute", "data": {"code": combined}})
                             await events.status(f"✏️ Renommé : {old_name} → {new_name} ({commit_hash[:7]})", done=True)
                         else:
-                            notify_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Renommage \u00e9chou\u00e9');"
+                            notify_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Renommage \u00e9échoué\u00e9');"
                             await __event_call__({"type": "execute", "data": {"code": notify_code}})
 
             except Exception as e:
