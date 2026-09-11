@@ -1,11 +1,12 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.75
+version: 5.76
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
 # 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
 # 5.74: Correction de portée (scope) : déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID au niveau global pour éviter l'erreur "not defined" dans l'évaluation de f-string.
 # 5.73: Ajout de l'affichage du Tenant Global (ECHO_GLOBAL_TENANT_PROJECT_ID) dans le HUD des quotas.
@@ -18,9 +19,12 @@ description: Composant système interne : ECHO UI Rendering Engine.
 # 5.66: Retrait des if (!window...) pour permettre le Hot-Reload des fonctions modales.
 # 5.65: Amélioration critique UX Mobile pour les modales système (box-sizing, width 90%, flex-wrap) évitant le débordement sur petits écrans.
 # 5.64: Assainisseur HTML DOM sécurisé (echoSanitizeHTML) avec whitelist structurelle et neutralisation XSS dans les modales système.
-# 5.63: Refonte anti-spaghetti des modales ECHO (EchoUI.get_custom_modals_js) avec implémentation de boutons interactifs (pills) pour les options de prompt.
+# 5.63: Refonte anti-spaghetti des modales ECHO
+# (EchoUI.get_custom_modals_js) avec implémentation de boutons interactifs
+# (pills) pour les options de prompt.
 
 
+from echo_constants import ECHO_GLOBAL_TENANT_PROJECT_ID
 from fastapi.responses import HTMLResponse
 import sys
 import orjson as std_json
@@ -28,15 +32,15 @@ from typing import Optional, Any, List, Dict
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_constants import ECHO_GLOBAL_TENANT_PROJECT_ID
+
 
 class EchoRichUI:
-  """Usine de rendu de composants visuels riches pour ECHO."""
+    """Usine de rendu de composants visuels riches pour ECHO."""
 
-  @staticmethod
-  def _get_boilerplate(content: str, title: str = "ECHO Visual") -> str:
-    """Encapsulation HTML standard avec détection de thème hybride (Open WebUI Native)."""
-    return f"""
+    @staticmethod
+    def _get_boilerplate(content: str, title: str = "ECHO Visual") -> str:
+        """Encapsulation HTML standard avec détection de thème hybride (Open WebUI Native)."""
+        return f"""
     <!DOCTYPE html>
     <html lang="fr" class="light">
     <head>
@@ -166,13 +170,17 @@ class EchoRichUI:
     </html>
     """
 
-class EchoUI(EchoRichUI):
-  """Moteur de pilotage HUD pour ECHO."""
 
-  @staticmethod
-  def get_mobile_guard_js(hud_id: str, block_execution: bool = False, error_msg: str = "Incompatible sur mobile.") -> str:
-      """Génère le garde-fou JS centralisé pour l'adaptation ou le blocage sur mobile."""
-      return f"""
+class EchoUI(EchoRichUI):
+    """Moteur de pilotage HUD pour ECHO."""
+
+    @staticmethod
+    def get_mobile_guard_js(
+            hud_id: str,
+            block_execution: bool = False,
+            error_msg: str = "Incompatible sur mobile.") -> str:
+        """Génère le garde-fou JS centralisé pour l'adaptation ou le blocage sur mobile."""
+        return f"""
       const isMobile = window.matchMedia('(max-width: 768px)').matches || /Mobi|Android/i.test(navigator.userAgent);
       if (isMobile) {{
           {f"window.parent.postMessage({{ type: 'toast', message: `{error_msg}`, level: 'warning' }}, '*'); return;" if block_execution else f'''
@@ -211,27 +219,34 @@ class EchoUI(EchoRichUI):
       }}
       """
 
-  @staticmethod
-  async def safe_deploy(events: Any, monitor_func: Any, **kwargs):
-      """Déploiement sécurisé du HUD (Anti-Crash si events/caller absent)."""
-      if not events or (not events.emitter and not events.caller):
-          return False
-      try:
-          await monitor_func(events=events, **kwargs)
-          return True
-      except Exception as e:
-          print(f"[EchoUI] Safe Deploy Error: {e}")
-          return False
+    @staticmethod
+    async def safe_deploy(events: Any, monitor_func: Any, **kwargs):
+        """Déploiement sécurisé du HUD (Anti-Crash si events/caller absent)."""
+        if not events or (not events.emitter and not events.caller):
+            return False
+        try:
+            await monitor_func(events=events, **kwargs)
+            return True
+        except Exception as e:
+            print(f"[EchoUI] Safe Deploy Error: {e}")
+            return False
 
-  @staticmethod
-  def _generate_webplayer_js(b64: str, mime: str, metadata: list, current_url: str, hud_id: str, state_key: str, icon: str = "👁️") -> str:
-    """Génère le moteur de pilotage ECHO WEBPLAYER (v5.20 Équilibre Souverain Pro)."""
-    meta_j = std_json.dumps(metadata).decode('utf-8')
-    b64_j = std_json.dumps(b64).decode('utf-8')
-    url_j = std_json.dumps(current_url).decode('utf-8')
-    mime_j = std_json.dumps(mime).decode('utf-8')
+    @staticmethod
+    def _generate_webplayer_js(
+            b64: str,
+            mime: str,
+            metadata: list,
+            current_url: str,
+            hud_id: str,
+            state_key: str,
+            icon: str = "👁️") -> str:
+        """Génère le moteur de pilotage ECHO WEBPLAYER (v5.20 Équilibre Souverain Pro)."""
+        meta_j = std_json.dumps(metadata).decode('utf-8')
+        b64_j = std_json.dumps(b64).decode('utf-8')
+        url_j = std_json.dumps(current_url).decode('utf-8')
+        mime_j = std_json.dumps(mime).decode('utf-8')
 
-    return f"""
+        return f"""
   (function() {{
     const HUD_ID = '{hud_id}';
     {EchoUI.get_mobile_guard_js(hud_id)}
@@ -418,7 +433,7 @@ class EchoUI(EchoRichUI):
             this.imgScale = Math.min(sW, sH);
             this.syncLayout();
           }};
-          
+
           document.getElementById(HUD_ID + "-btn-reset").onclick = () => {{
             this.imgScale = 1.0; this.syncLayout();
           }};
@@ -440,7 +455,7 @@ class EchoUI(EchoRichUI):
                 const startScale = this.imgScale;
                 const img = document.getElementById(HUD_ID + "-img");
                 if (!img || !img.naturalWidth) return;
-                
+
                 const doDrag = (me) => {{
                    const deltaX = me.clientX - startX;
                    this.imgScale = Math.max(0.05, startScale + (deltaX / img.naturalWidth));
@@ -455,7 +470,7 @@ class EchoUI(EchoRichUI):
                 document.addEventListener('mouseup', stopDrag);
              }};
           }}
-          
+
           window.addEventListener('resize', () => {{
              this.syncLayout(false);
           }});
@@ -466,7 +481,7 @@ class EchoUI(EchoRichUI):
           this.hud = document.createElement('div');
           this.hud.id = HUD_ID;
           this.hud.style.cssText = 'position:fixed; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:200px; min-height:100px;';
-          
+
           this.hud.innerHTML = `
             <div id="${{HUD_ID}}-header" style="height:${{this.headerH}}px; padding:0 15px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:12px; border-bottom:1px solid #222; cursor:move; user-select:none; box-sizing:border-box;">
               <span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">{icon}</span>
@@ -505,7 +520,7 @@ class EchoUI(EchoRichUI):
           const boxes = document.getElementById(HUD_ID + "-hitboxes");
           const matrix = document.getElementById(HUD_ID + "-matrix");
           document.getElementById(HUD_ID + "-url").value = data.url;
-          
+
           img.onload = () => {{
             const newNatW = img.naturalWidth;
             if (this.lastNatWidth && newNatW !== this.lastNatWidth && this.imgScale) {{
@@ -513,7 +528,7 @@ class EchoUI(EchoRichUI):
                 if (this.saveState) this.saveState();
             }}
             this.lastNatWidth = newNatW;
-            
+
             this.ratio = img.naturalHeight / newNatW;
             matrix.style.width = newNatW + "px";
             matrix.style.height = img.naturalHeight + "px";
@@ -523,7 +538,7 @@ class EchoUI(EchoRichUI):
                 this.posX = (window.innerWidth - (newNatW * this.imgScale)) / 2;
                 this.posY = (window.innerHeight - (img.naturalHeight * this.imgScale + this.headerH)) / 2;
             }}
-            
+
             boxes.innerHTML = "";
             data.metadata.forEach(m => {{
                 if (m.x !== undefined) {{
@@ -534,9 +549,9 @@ class EchoUI(EchoRichUI):
             }});
             this.syncLayout();
           }};
-          
+
           img.src = "data:" + data.mime + ";base64," + data.b64;
-          
+
           const area = document.getElementById(HUD_ID + "-area");
           if (data.mime === "image/webp") {{
              area.ondblclick = () => {{
@@ -554,38 +569,68 @@ class EchoUI(EchoRichUI):
   }})();
     """
 
-  @staticmethod
-  async def monitor_ECHO(events: Any, b64: str, metadata: List[Dict] = None, hud_id: str = "echo-webplayer", state_key: str = "echo_webplayer_state", current_url: str = "", webp_b64: str = None):
-    """Déploie le moniteur visuel interactif (HUD) haute performance."""
-    if webp_b64:
-        js_code = EchoUI._generate_webplayer_js(webp_b64, "image/webp", metadata or [], current_url, hud_id, state_key, icon="🌐")
-    else:
-        js_code = EchoUI._generate_webplayer_js(b64, "image/png", metadata or [], current_url, hud_id, state_key, icon="🌐")
-    await events.emit("execute", {"code": js_code})
+    @staticmethod
+    async def monitor_ECHO(
+            events: Any,
+            b64: str,
+            metadata: List[Dict] = None,
+            hud_id: str = "echo-webplayer",
+            state_key: str = "echo_webplayer_state",
+            current_url: str = "",
+            webp_b64: str = None):
+        """Déploie le moniteur visuel interactif (HUD) haute performance."""
+        if webp_b64:
+            js_code = EchoUI._generate_webplayer_js(
+                webp_b64,
+                "image/webp",
+                metadata or [],
+                current_url,
+                hud_id,
+                state_key,
+                icon="🌐")
+        else:
+            js_code = EchoUI._generate_webplayer_js(
+                b64, "image/png", metadata or [], current_url, hud_id, state_key, icon="🌐")
+        await events.emit("execute", {"code": js_code})
 
-  @staticmethod
-  async def deploy_context_gauge(
-      events: Any, plan_name: str, credits_val: str, quota_str: str,
-      c_t: int, active_p_t: int, g_t: int, max_t: int,
-      cache_pct: float, prompt_pct: float, gen_pct: float,
-      user_email: Optional[str] = None, user_tier: Optional[str] = None,
-      project_id: Optional[str] = None, auth_sources: Optional[list] = None,
-      quota_fraction: float = 1.0,
-      quota_reset: str = "N/A", quota_type: str = "UNKNOWN",
-      quota_model: str = "", quota_rpd_rem: str = "N/A", quota_rpd_lim: str = "N/A",
-      quota_rpm_rem: str = "N/A", quota_rpm_lim: str = "N/A"
-  ):
-    """Déploie le HUD ECHO flottant avec tooltips en dessous."""
-    auth_list = ", ".join(auth_sources) if auth_sources else "N/A"
-    total_t = c_t + active_p_t + g_t
-    total_pct = (total_t / max_t) * 100 if max_t > 0 else 0
-    q_color = "#10b981"
-    if quota_fraction < 0.2: q_color = "#ef4444"
-    elif quota_fraction < 0.5: q_color = "#f59e0b"
-    dash_array = 2 * 3.14159 * 8
-    dash_offset = dash_array * (1 - quota_fraction)
+    @staticmethod
+    async def deploy_context_gauge(
+            events: Any,
+            plan_name: str,
+            credits_val: str,
+            quota_str: str,
+            c_t: int,
+            active_p_t: int,
+            g_t: int,
+            max_t: int,
+            cache_pct: float,
+            prompt_pct: float,
+            gen_pct: float,
+            user_email: Optional[str] = None,
+            user_tier: Optional[str] = None,
+            project_id: Optional[str] = None,
+            auth_sources: Optional[list] = None,
+            quota_fraction: float = 1.0,
+            quota_reset: str = "N/A",
+            quota_type: str = "UNKNOWN",
+            quota_model: str = "",
+            quota_rpd_rem: str = "N/A",
+            quota_rpd_lim: str = "N/A",
+            quota_rpm_rem: str = "N/A",
+            quota_rpm_lim: str = "N/A"):
+        """Déploie le HUD ECHO flottant avec tooltips en dessous."""
+        auth_list = ", ".join(auth_sources) if auth_sources else "N/A"
+        total_t = c_t + active_p_t + g_t
+        total_pct = (total_t / max_t) * 100 if max_t > 0 else 0
+        q_color = "#10b981"
+        if quota_fraction < 0.2:
+            q_color = "#ef4444"
+        elif quota_fraction < 0.5:
+            q_color = "#f59e0b"
+        dash_array = 2 * 3.14159 * 8
+        dash_offset = dash_array * (1 - quota_fraction)
 
-    js_code = f"""
+        js_code = f"""
     (function() {{
       var container = document.querySelector('nav div.flex.items-center.w-full.max-w-full') ||
                       document.querySelector('nav div.flex.items-center.w-full.pl-1\\\\.5.pr-1') ||
@@ -621,50 +666,61 @@ class EchoUI(EchoRichUI):
       var hud = document.createElement('div');
       hud.id = 'echo-nav-context-hud';
       hud.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:12px;pointer-events:auto;background:rgba(0,0,0,0.2);padding:4px 12px;border-radius:20px;backdrop-filter:blur(4px);';
-      var iconHtml = `<div class="echo-tooltip"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" /><circle cx="10" cy="10" r="8" fill="none" stroke="{q_color}" stroke-width="2" stroke-dasharray="{dash_array}" stroke-dashoffset="{dash_offset}" transform="rotate(-90 10 10)" stroke-linecap="round" /><path d="M10 6a2.5 2.5 0 00-2.5 2.5V10h5V8.5A2.5 2.5 0 0010 6zm3.5 4H6.5a1 1 0 00-1 1v4a1 1 0 001 1h7a1 1 0 001 1h7a1 1 0 001-1v-4a1 1 0 00-1-1z" fill="white" opacity="0.9" /></svg><div class="tooltip-box" style="width:300px;"><div class="tooltip-title">AUTHENTIFICATION</div><div class="tooltip-row"><span>🔐 Source:</span> <span>{auth_list}</span></div><div class="tooltip-row"><span>👤 Compte:</span> <span>{user_email or 'N/A'}</span></div><div class="tooltip-row"><span>🏗️ Projet Perso:</span> <span>{project_id or 'N/A'}</span></div><div class="tooltip-row"><span>🌐 Tenant:</span> <span style="color:#10b981;">{ECHO_GLOBAL_TENANT_PROJECT_ID}</span></div><div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">QUOTAS</div><div class="tooltip-row"><span>💳 Crédits:</span> <b style="color:#10b981;">{credits_val}</b></div><div class="tooltip-row"><span>🤖 Modèle CA:</span> <span style="color:#a3a3a3;font-size:10px;">{quota_model or "—"}</span></div><div class="tooltip-row"><span>📊 Quota:</span> <b style="color:{q_color};">{quota_fraction*100:.1f}%</b></div><div class="tooltip-row"><span>📅 Req/jour:</span> <span>{"N/A" if quota_rpd_rem == "N/A" else f"{quota_rpd_rem} / {quota_rpd_lim}"}</span></div><div class="tooltip-row"><span>⚡ Req/min:</span> <span>{"N/A" if quota_rpm_rem == "N/A" else f"{quota_rpm_rem} / {quota_rpm_lim}"}</span></div><div class="tooltip-row"><span>🔄 Reset:</span> <span>{"—" if quota_reset == "N/A" else quota_reset}</span></div><div class="tooltip-row"><span>🏷️ Type:</span> <span style="color:#a3a3a3;font-size:10px;">{quota_type}</span></div></div></div>`;
+      var iconHtml = `<div class="echo-tooltip"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" /><circle cx="10" cy="10" r="8" fill="none" stroke="{q_color}" stroke-width="2" stroke-dasharray="{dash_array}" stroke-dashoffset="{dash_offset}" transform="rotate(-90 10 10)" stroke-linecap="round" /><path d="M10 6a2.5 2.5 0 00-2.5 2.5V10h5V8.5A2.5 2.5 0 0010 6zm3.5 4H6.5a1 1 0 00-1 1v4a1 1 0 001 1h7a1 1 0 001 1h7a1 1 0 001-1v-4a1 1 0 00-1-1z" fill="white" opacity="0.9" /></svg><div class="tooltip-box" style="width:300px;"><div class="tooltip-title">AUTHENTIFICATION</div><div class="tooltip-row"><span>🔐 Source:</span> <span>{auth_list}</span></div><div class="tooltip-row"><span>👤 Compte:</span> <span>{user_email or 'N/A'}</span></div><div class="tooltip-row"><span>🏗️ Projet Perso:</span> <span>{project_id or 'N/A'}</span></div><div class="tooltip-row"><span>🌐 Tenant:</span> <span style="color:#10b981;">{ECHO_GLOBAL_TENANT_PROJECT_ID}</span></div><div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">QUOTAS</div><div class="tooltip-row"><span>💳 Crédits:</span> <b style="color:#10b981;">{credits_val}</b></div><div class="tooltip-row"><span>🤖 Modèle CA:</span> <span style="color:#a3a3a3;font-size:10px;">{quota_model or "—"}</span></div><div class="tooltip-row"><span>📊 Quota:</span> <b style="color:{q_color};">{quota_fraction * 100:.1f}%</b></div><div class="tooltip-row"><span>📅 Req/jour:</span> <span>{"N/A" if quota_rpd_rem == "N/A" else f"{quota_rpd_rem} / {quota_rpd_lim}"}</span></div><div class="tooltip-row"><span>⚡ Req/min:</span> <span>{"N/A" if quota_rpm_rem == "N/A" else f"{quota_rpm_rem} / {quota_rpm_lim}"}</span></div><div class="tooltip-row"><span>🔄 Reset:</span> <span>{"—" if quota_reset == "N/A" else quota_reset}</span></div><div class="tooltip-row"><span>🏷️ Type:</span> <span style="color:#a3a3a3;font-size:10px;">{quota_type}</span></div></div></div>`;
       var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:{cache_pct}%;background:#8b5cf6;"></div><div style="width:{prompt_pct}%;background:#10b981;"></div><div style="width:{gen_pct}%;background:#f59e0b;"></div></div><div class="tooltip-box" style="width:240px;"><div class="tooltip-title">CONTEXTE</div><div class="tooltip-row"><span>Cache:</span> <span>{c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>{active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>{g_t}</span></div><div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>{total_t} / {max_t}</span></div></div></div>`;
       hud.innerHTML = iconHtml + barHtml;
       hudWrapper.appendChild(hud);
       document.body.appendChild(hudWrapper);
     }})();
     """
-    await events.emit("execute", {"code": js_code})
-  @staticmethod
-  def show_image_js(b64: str, mime: str = "image/png", title: str = "Aperçu Image") -> str:
-    """Réutilise le moteur WebPlayer (HUD navigateur) pour afficher une image locale (Base64).
-    Utiliser via events.call('execute', {'code': ...}).
-    N'utilise pas HTMLResponse — retour 100% propre, sans pollution du contexte Gemini."""
-    return EchoUI._generate_webplayer_js(
-      b64=b64, mime=mime, metadata=[], current_url=title, 
-      hud_id="echo-preview", state_key="echo_preview_state", icon="🖼️"
-    )
+        await events.emit("execute", {"code": js_code})
 
-  @classmethod
-  def image_viewer(cls, img_url: str, title: str = "Aperçu Image") -> HTMLResponse:
-    """Maintenu pour les Actions OWUI. Pour les Tools, utiliser show_image_js() + events.call."""
-    content = f"""
+    @staticmethod
+    def show_image_js(b64: str, mime: str = "image/png",
+                      title: str = "Aperçu Image") -> str:
+        """Réutilise le moteur WebPlayer (HUD navigateur) pour afficher une image locale (Base64).
+        Utiliser via events.call('execute', {'code': ...}).
+        N'utilise pas HTMLResponse — retour 100% propre, sans pollution du contexte Gemini."""
+        return EchoUI._generate_webplayer_js(
+            b64=b64, mime=mime, metadata=[], current_url=title,
+            hud_id="echo-preview", state_key="echo_preview_state", icon="🖼️"
+        )
+
+    @classmethod
+    def image_viewer(
+            cls,
+            img_url: str,
+            title: str = "Aperçu Image") -> HTMLResponse:
+        """Maintenu pour les Actions OWUI. Pour les Tools, utiliser show_image_js() + events.call."""
+        content = f"""
     <div id="hud-bar"><span style="font-weight:bold;">👁️ ECHO Vision Explorer</span></div>
     <div id="canvas-area" style="width:100%; height:600px; overflow:hidden; position:relative; background:#f1f5f9; display:flex; align-items:center; justify-content:center;">
       <img src="{img_url}" style="max-width:100%; max-height:100%;">
     </div>
     """
-    html = cls._get_boilerplate(content, title)
-    return HTMLResponse(content=html, headers={"Content-Disposition": "inline"})
+        html = cls._get_boilerplate(content, title)
+        return HTMLResponse(
+            content=html, headers={
+                "Content-Disposition": "inline"})
 
-  @classmethod
-  def player_ui(cls, session_id: str, total_steps: int) -> HTMLResponse:
-    content = f"<div style='padding:20px;'>Interface Replay v5.136 active via Action.</div>"
-    html = cls._get_boilerplate(content, "ECHO Navigation Replay")
-    return HTMLResponse(content=html, headers={"Content-Disposition": "inline"})
+    @classmethod
+    def player_ui(cls, session_id: str, total_steps: int) -> HTMLResponse:
+        content = f"<div style='padding:20px;'>Interface Replay v5.136 active via Action.</div>"
+        html = cls._get_boilerplate(content, "ECHO Navigation Replay")
+        return HTMLResponse(
+            content=html, headers={
+                "Content-Disposition": "inline"})
 
-
-  @classmethod
-  def map_viewer(cls, query: str, title: str = "Localisation") -> HTMLResponse:
-    """Affiche une carte Google Maps interactive via l'embed natif.
-    Utilise conjointement avec le grounding googleMaps de Gemini (gemini_maps_grounding.py)."""
-    from urllib.parse import quote
-    safe_query = quote(query.strip())
-    content = f"""
+    @classmethod
+    def map_viewer(
+            cls,
+            query: str,
+            title: str = "Localisation") -> HTMLResponse:
+        """Affiche une carte Google Maps interactive via l'embed natif.
+        Utilise conjointement avec le grounding googleMaps de Gemini (gemini_maps_grounding.py)."""
+        from urllib.parse import quote
+        safe_query = quote(query.strip())
+        content = f"""
     <div id="hud-bar"><span style="font-weight:bold;">🗺️ ECHO Maps Explorer</span></div>
     <div style='width: 100%; height: 600px; background: white;'>
       <iframe width='100%' height='100%' frameborder='0' style='border:0;'
@@ -672,22 +728,35 @@ class EchoUI(EchoRichUI):
       </iframe>
     </div>
     """
-    html = cls._get_boilerplate(content, title)
-    return HTMLResponse(content=html, headers={"Content-Disposition": "inline"})
+        html = cls._get_boilerplate(content, title)
+        return HTMLResponse(
+            content=html, headers={
+                "Content-Disposition": "inline"})
 
-  @classmethod
-  def generate_rich_view(cls, moteur: str, payload: str, title: str = "ECHO Rendu Visuel", cdn_timeout_ms: int = 30000) -> tuple:
-    """Usine de rendu universelle (Restauration intégrale v5.121)."""
-    from echo_visuals import VisualEngine
-    cfg = VisualEngine.get_config(moteur, payload, cdn_timeout_ms=cdn_timeout_ms)
+    @classmethod
+    def generate_rich_view(
+            cls,
+            moteur: str,
+            payload: str,
+            title: str = "ECHO Rendu Visuel",
+            cdn_timeout_ms: int = 30000) -> tuple:
+        """Usine de rendu universelle (Restauration intégrale v5.121)."""
+        from echo_visuals import VisualEngine
+        cfg = VisualEngine.get_config(
+            moteur, payload, cdn_timeout_ms=cdn_timeout_ms)
 
-    styles_list = [s for s in cfg.get("scripts", []) if s.endswith('.css')]
-    scripts_list = [s for s in cfg.get("scripts", []) if not s.endswith('.css')]
+        styles_list = [s for s in cfg.get("scripts", []) if s.endswith('.css')]
+        scripts_list = [
+            s for s in cfg.get(
+                "scripts",
+                []) if not s.endswith('.css')]
 
-    styles_html = "\n".join([f'<link rel="stylesheet" href="{s}">' for s in styles_list])
-    scripts_html = "\n".join([f'<script src="{s}"></script>' for s in scripts_list])
+        styles_html = "\n".join(
+            [f'<link rel="stylesheet" href="{s}">' for s in styles_list])
+        scripts_html = "\n".join(
+            [f'<script src="{s}"></script>' for s in scripts_list])
 
-    content = f"""
+        content = f"""
     <style>
       #visual-target {{ display: block; width: 100%; min-height: 400px; }}
       {cfg.get('style', '')}
@@ -700,14 +769,17 @@ class EchoUI(EchoRichUI):
       {cfg.get('init', '')}
     </script>
     """
-    html = cls._get_boilerplate(content, title)
-    response = HTMLResponse(content=html, headers={"Content-Disposition": "inline"})
-    return response, {"status": "success", "message": f"Visualisation {moteur} générée."}
+        html = cls._get_boilerplate(content, title)
+        response = HTMLResponse(
+            content=html, headers={
+                "Content-Disposition": "inline"})
+        return response, {"status": "success",
+                          "message": f"Visualisation {moteur} générée."}
 
-  @staticmethod
-  def get_print_isolation_js(target_selectors: str) -> str:
-    """Génère le script JS d'isolation CSS Path-Marking + window.print() natif."""
-    return f"""
+    @staticmethod
+    def get_print_isolation_js(target_selectors: str) -> str:
+        """Génère le script JS d'isolation CSS Path-Marking + window.print() natif."""
+        return f"""
 return new Promise(function(resolve) {{
     var STYLE_ID = 'echo-print-isolation-css';
     var chatContainer = document.querySelector('{target_selectors}');
@@ -812,14 +884,14 @@ return new Promise(function(resolve) {{
 }});
 """
 
-  # =====================================================================
-  # ECHO CODEX — HUD Monaco Editor
-  # =====================================================================
+    # =====================================================================
+    # ECHO CODEX — HUD Monaco Editor
+    # =====================================================================
 
-  @staticmethod
-  def get_sanitize_html_js() -> str:
-      """Fournit le moteur JS d'assainissement HTML autonome pour la neutralisation des injections XSS."""
-      return """
+    @staticmethod
+    def get_sanitize_html_js() -> str:
+        """Fournit le moteur JS d'assainissement HTML autonome pour la neutralisation des injections XSS."""
+        return """
       window.echoSanitizeHTML = (html) => {
           if (typeof html !== 'string') return '';
           const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -858,20 +930,20 @@ return new Promise(function(resolve) {{
       };
       """
 
-  @staticmethod
-  def get_custom_modals_js() -> str:
-      """Fournit le code JS autonome des modales natives asynchrones d'ECHO (Confirm & Prompt)."""
-      return EchoUI.get_sanitize_html_js() + """
+    @staticmethod
+    def get_custom_modals_js() -> str:
+        """Fournit le code JS autonome des modales natives asynchrones d'ECHO (Confirm & Prompt)."""
+        return EchoUI.get_sanitize_html_js() + """
       window.echoCustomConfirm = (msg, arg2, arg3) => {
           const callback = typeof arg2 === 'function' ? arg2 : arg3;
           const timeoutSeconds = typeof arg2 === 'number' ? arg2 : 0;
-          
+
           const isDark = document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
           const bgColor = isDark ? '#1e1e2e' : '#ffffff';
           const borderColor = isDark ? '#444' : '#ddd';
           const textColor = isDark ? '#cdd6f4' : '#333';
           const accentColor = '#89b4fa';
-          
+
           const overlay = document.createElement('div');
           overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:flex-start; justify-content:center; padding-top:10dvh; overflow-y:auto; font-family:"Segoe UI",system-ui,sans-serif;';
           const originalOverflow = document.body.style.overflow;
@@ -887,23 +959,23 @@ return new Promise(function(resolve) {{
           const btnOk = document.createElement('button');
           btnOk.textContent = 'Confirmer';
           btnOk.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:14px; flex: 1 1 45%;';
-          
+
           let timeRemaining = timeoutSeconds;
           let timerInterval = null;
-          
+
           const cleanupAndResolve = (val) => {
               if (timerInterval) clearInterval(timerInterval);
               document.body.style.overflow = originalOverflow;
               overlay.remove();
               callback && callback(val);
           };
-          
+
           const updateTimer = () => {
               const m = Math.floor(timeRemaining / 60);
               const s = timeRemaining % 60;
               btnCancel.textContent = 'Annuler (' + m + ':' + s.toString().padStart(2, '0') + ')';
           };
-          
+
           if (timeoutSeconds > 0) {
               updateTimer();
               timerInterval = setInterval(() => {
@@ -915,10 +987,10 @@ return new Promise(function(resolve) {{
                   }
               }, 1000);
           }
-          
+
           btnCancel.onclick = () => cleanupAndResolve(false);
           btnOk.onclick = () => cleanupAndResolve(true);
-          
+
           btnContainer.appendChild(btnCancel);
           btnContainer.appendChild(btnOk);
           dialog.appendChild(btnContainer);
@@ -932,7 +1004,7 @@ return new Promise(function(resolve) {{
               const borderColor = isDark ? '#444' : '#ddd';
               const textColor = isDark ? '#cdd6f4' : '#333';
               const accentColor = '#89b4fa';
-              
+
               const overlay = document.createElement('div');
               overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:flex-start; justify-content:center; padding-top:10dvh; overflow-y:auto; font-family:"Segoe UI",system-ui,sans-serif;';
               const originalOverflow = document.body.style.overflow;
@@ -940,11 +1012,11 @@ return new Promise(function(resolve) {{
               const dialog = document.createElement('div');
               dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:16px; border-radius:8px; text-align:left; box-shadow:0 10px 40px rgba(0,0,0,0.5); width:90%; max-width:500px; box-sizing:border-box; color:' + textColor + '; max-height:85vh; overflow-y:auto;';
               dialog.innerHTML = '<div style="margin-bottom:15px; font-size:14px; line-height:1.5; text-align:left;">' + window.echoSanitizeHTML(msg) + '</div>';
-              
+
               const inputField = document.createElement('input');
               inputField.type = 'text';
               inputField.style.cssText = 'width:100%; box-sizing:border-box; padding:12px; margin-bottom:20px; border-radius:4px; border:1px solid ' + borderColor + '; background:rgba(0,0,0,0.2); color:' + textColor + '; outline:none; font-family:monospace; font-size:16px !important;';
-              
+
               if (options && options.length > 0) {
                   const pillsContainer = document.createElement('div');
                   pillsContainer.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px; margin-bottom:15px; justify-content:flex-start;';
@@ -962,27 +1034,27 @@ return new Promise(function(resolve) {{
                   });
                   dialog.appendChild(pillsContainer);
               }
-              
+
               const btnContainer = document.createElement('div');
               btnContainer.style.cssText = 'display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;';
-              
+
               const btnCancel = document.createElement('button');
               btnCancel.textContent = 'Annuler';
               btnCancel.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:14px; flex: 1 1 45%;';
-              
+
               const btnOk = document.createElement('button');
               btnOk.textContent = 'Soumettre';
               btnOk.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:14px; flex: 1 1 45%;';
-              
+
               let timeRemaining = timeoutSeconds;
               let timerInterval = null;
-              
+
               const updateTimer = () => {
                   const m = Math.floor(timeRemaining / 60);
                   const s = timeRemaining % 60;
                   btnCancel.textContent = 'Annuler (' + m + ':' + s.toString().padStart(2, '0') + ')';
               };
-              
+
               const cleanupAndResolve = (val) => {
                   if(timerInterval) clearInterval(timerInterval);
                   document.body.style.overflow = originalOverflow;
@@ -1001,11 +1073,11 @@ return new Promise(function(resolve) {{
                       }
                   }, 1000);
               }
-              
+
           btnCancel.onclick = () => cleanupAndResolve(null);
           btnOk.onclick = () => cleanupAndResolve(inputField.value);
           inputField.onkeydown = (e) => { if(e.key === 'Enter') cleanupAndResolve(inputField.value); };
-          
+
           dialog.appendChild(inputField);
           btnContainer.appendChild(btnCancel);
           btnContainer.appendChild(btnOk);
@@ -1016,12 +1088,17 @@ return new Promise(function(resolve) {{
       };
       """
 
-  @staticmethod
-  @staticmethod
-  def _generate_codex_js(files_json: str, quick_actions_json: str, workspaces_json: str, current_workspace: str, chat_id: str) -> str:
-    """Génère le script JS complet du HUD Monaco Codex.
-    Injection via __event_call__({type: 'execute', data: {code: ...}})."""
-    return f"""
+    @staticmethod
+    @staticmethod
+    def _generate_codex_js(
+            files_json: str,
+            quick_actions_json: str,
+            workspaces_json: str,
+            current_workspace: str,
+            chat_id: str) -> str:
+        """Génère le script JS complet du HUD Monaco Codex.
+        Injection via __event_call__({type: 'execute', data: {code: ...}})."""
+        return f"""
     (function() {{
       const CODEX_ID = 'echo-codex-hud';
       {EchoUI.get_mobile_guard_js("echo-codex-hud")}
@@ -1271,7 +1348,7 @@ return new Promise(function(resolve) {{
       function renderFileTree() {{
         const sb = document.getElementById(CODEX_ID + '-sidebar');
         sb.innerHTML = '';
-        
+
         // --- 1. Workspace Switcher ---
         const wsSelect = document.createElement('select');
         wsSelect.id = CODEX_ID + '-workspace';
@@ -1292,98 +1369,130 @@ return new Promise(function(resolve) {{
         const statusBar = document.getElementById(CODEX_ID + '-status');
         if (statusBar) statusBar.style.display = currentWorkspace === 'sandbox' ? 'none' : 'flex';
 
-        // --- 2. Build Tree JSON ---
-        const treeMap = {{ '': {{ isDir: true, children: {{}} }} }};
-        files.forEach(f => {{
-          const parts = f.filename.split('/');
-          let currentPath = '';
-          let parentNode = treeMap[''];
-          for (let i = 0; i < parts.length; i++) {{
-            const part = parts[i];
-            currentPath = currentPath ? currentPath + '/' + part : part;
-            const isLast = (i === parts.length - 1);
-            if (!parentNode.children[part]) {{
-              parentNode.children[part] = {{
-                name: part,
-                path: currentPath,
-                isDir: isLast ? (f.type === 'directory') : true,
-                file: isLast && f.type === 'file' ? f : null,
-                children: {{}}
-              }};
-            }}
-            parentNode = parentNode.children[part];
-          }}
-        }});
-
-        // --- 3. Render Tree DOM Recursive ---
-        function renderNode(node, container, level) {{
-          Object.values(node.children).sort((a,b) => {{
-            if(a.isDir && !b.isDir) return -1;
-            if(!a.isDir && b.isDir) return 1;
-            return a.name.localeCompare(b.name);
-          }}).forEach(child => {{
-            if (child.isDir) {{
-              const details = document.createElement('details');
-              details.open = true; // Par défaut ouvert
-              const summary = document.createElement('summary');
-              summary.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; user-select:none; font-weight:600; color:${{isDark ? '#cba6f7' : '#8839ef'}};`;
-              summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
-              
-              // Folder delete button
-              const delBtn = document.createElement('span');
-              delBtn.innerHTML = '🗑️';
-              delBtn.title = 'Supprimer le dossier ' + child.path;
-              delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s; margin-left:auto;`;
-              summary.onmouseenter = () => delBtn.style.opacity = '1';
-              summary.onmouseleave = () => delBtn.style.opacity = '0';
-              delBtn.onclick = (e) => {{
-                e.preventDefault();
-                window.echoCustomConfirm('Supprimer le dossier ' + child.path + ' ?', (agreed) => {{
-                  if (agreed) window.echoCodexResolve({{action:'delete_file', filename:child.path, current_file:currentFile}});
-                }});
-              }};
-              summary.appendChild(delBtn);
-              
-              details.appendChild(summary);
-              const childrenContainer = document.createElement('div');
-              renderNode(child, childrenContainer, level + 1);
-              details.appendChild(childrenContainer);
-              container.appendChild(details);
-            }} else {{
-              // Fichier
-              const f = child.file;
-              const item = document.createElement('div');
-              const isActive = f.filename === currentFile;
-              item.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; background:${{isActive ? hoverBg : 'transparent'}}; border-left:${{isActive ? '3px solid ' + accentColor : '3px solid transparent'}};`;
-              const nameSpan = document.createElement('span');
-              nameSpan.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
-              nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
-              nameSpan.title = f.filename + ' (' + f.lang + ', ' + f.lines + ' lines)';
-              nameSpan.onclick = () => switchFile(f.filename);
-              item.appendChild(nameSpan);
-              
-              // Bouton supprimer
-              const delBtn = document.createElement('span');
-              delBtn.innerHTML = '×';
-              delBtn.title = 'Supprimer ' + f.filename;
-              delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px; font-weight:bold; padding:0 4px; transition:opacity 0.15s; margin-left:auto;`;
-              item.onmouseenter = () => delBtn.style.opacity = '1';
-              item.onmouseleave = () => delBtn.style.opacity = '0';
-              delBtn.onclick = (e) => {{
-                e.stopPropagation();
-                window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
-                  if (agreed) window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
-                }});
-              }};
-              item.appendChild(delBtn);
-              container.appendChild(item);
-            }}
-          }});
-        }}
-        
+        // --- 2 & 3. Render Files ---
         const treeContainer = document.createElement('div');
         treeContainer.style.cssText = 'overflow-y:auto; flex:1; padding-bottom:6px;';
-        renderNode(treeMap[''], treeContainer, 0);
+
+        if (currentWorkspace === 'sandbox') {{
+          // Mode SANDBOX : Arborescence avec treeMap
+          const treeMap = {{ '': {{ isDir: true, children: {{}} }} }};
+          files.forEach(f => {{
+            const parts = f.filename.split('/');
+            let currentPath = '';
+            let parentNode = treeMap[''];
+            for (let i = 0; i < parts.length; i++) {{
+              const part = parts[i];
+              currentPath = currentPath ? currentPath + '/' + part : part;
+              const isLast = (i === parts.length - 1);
+              if (!parentNode.children[part]) {{
+                parentNode.children[part] = {{
+                  name: part,
+                  path: currentPath,
+                  isDir: isLast ? (f.type === 'directory') : true,
+                  file: isLast && f.type === 'file' ? f : null,
+                  children: {{}}
+                }};
+              }}
+              parentNode = parentNode.children[part];
+            }}
+          }});
+
+          function renderNode(node, container, level) {{
+            Object.values(node.children).sort((a,b) => {{
+              if(a.isDir && !b.isDir) return -1;
+              if(!a.isDir && b.isDir) return 1;
+              return a.name.localeCompare(b.name);
+            }}).forEach(child => {{
+              if (child.isDir) {{
+                const details = document.createElement('details');
+                details.open = true; // Par défaut ouvert
+                const summary = document.createElement('summary');
+                summary.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; user-select:none; font-weight:600; color:${{isDark ? '#cba6f7' : '#8839ef'}};`;
+                summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
+
+                // Folder delete button
+                const delBtn = document.createElement('span');
+                delBtn.innerHTML = '🗑️';
+                delBtn.title = 'Supprimer le dossier ' + child.path;
+                delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s; margin-left:auto;`;
+                summary.onmouseenter = () => delBtn.style.opacity = '1';
+                summary.onmouseleave = () => delBtn.style.opacity = '0';
+                delBtn.onclick = (e) => {{
+                  e.preventDefault();
+                  window.echoCustomConfirm('Supprimer le dossier ' + child.path + ' ?', (agreed) => {{
+                    if (agreed) window.echoCodexResolve({{action:'delete_file', filename:child.path, current_file:currentFile}});
+                  }});
+                }};
+                summary.appendChild(delBtn);
+
+                details.appendChild(summary);
+                const childrenContainer = document.createElement('div');
+                renderNode(child, childrenContainer, level + 1);
+                details.appendChild(childrenContainer);
+                container.appendChild(details);
+              }} else {{
+                // Fichier
+                const f = child.file;
+                const item = document.createElement('div');
+                const isActive = f.filename === currentFile;
+                item.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; background:${{isActive ? hoverBg : 'transparent'}}; border-left:${{isActive ? '3px solid ' + accentColor : '3px solid transparent'}};`;
+                const nameSpan = document.createElement('span');
+                nameSpan.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
+                nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
+                nameSpan.title = f.filename + ' (' + f.lang + ', ' + f.lines + ' lines)';
+                nameSpan.onclick = () => switchFile(f.filename);
+                item.appendChild(nameSpan);
+
+                // Bouton supprimer
+                const delBtn = document.createElement('span');
+                delBtn.innerHTML = '×';
+                delBtn.title = 'Supprimer ' + f.filename;
+                delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px; font-weight:bold; padding:0 4px; transition:opacity 0.15s; margin-left:auto;`;
+                item.onmouseenter = () => delBtn.style.opacity = '1';
+                item.onmouseleave = () => delBtn.style.opacity = '0';
+                delBtn.onclick = (e) => {{
+                  e.stopPropagation();
+                  window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
+                    if (agreed) window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
+                  }});
+                }};
+                item.appendChild(delBtn);
+                container.appendChild(item);
+              }}
+            }});
+          }}
+          renderNode(treeMap[''], treeContainer, 0);
+        }} else {{
+          // Mode MAIN : Liste plate linéaire ultra-rapide
+          files.forEach(f => {{
+            const item = document.createElement('div');
+            const isActive = f.filename === currentFile;
+            item.style.cssText = `padding:4px 10px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; background:${{isActive ? hoverBg : 'transparent'}}; border-left:${{isActive ? '3px solid ' + accentColor : '3px solid transparent'}};`;
+
+            const nameSpan = document.createElement('span');
+            nameSpan.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
+            nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + f.filename}}`;
+            nameSpan.title = f.filename + ' (' + f.lang + ', ' + f.lines + ' lines)';
+            nameSpan.onclick = () => switchFile(f.filename);
+            item.appendChild(nameSpan);
+
+            // Bouton supprimer
+            const delBtn = document.createElement('span');
+            delBtn.innerHTML = '×';
+            delBtn.title = 'Supprimer ' + f.filename;
+            delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px; font-weight:bold; padding:0 4px; transition:opacity 0.15s; margin-left:auto;`;
+            item.onmouseenter = () => delBtn.style.opacity = '1';
+            item.onmouseleave = () => delBtn.style.opacity = '0';
+            delBtn.onclick = (e) => {{
+              e.stopPropagation();
+              window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
+                if (agreed) window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
+              }});
+            }};
+            item.appendChild(delBtn);
+            treeContainer.appendChild(item);
+          }});
+        }}
         sb.appendChild(treeContainer);
 
         // + Créer
@@ -1396,19 +1505,19 @@ return new Promise(function(resolve) {{
           input.type = 'text';
           input.placeholder = 'ex: src/main.py';
           input.style.cssText = `width:100%; background:rgba(0,0,0,0.2); border:1px solid ${{borderColor}}; color:${{textColor}}; padding:4px 6px; border-radius:4px; font-size:12px; outline:none; font-family:monospace;`;
-          
+
           const submitFile = () => {{
             const name = input.value.trim();
             if (name) window.echoCodexResolve({{action:'new_file', filename:name}});
             else renderFileTree();
           }};
-          
+
           input.onkeydown = (e) => {{
             if (e.key === 'Enter') submitFile();
             if (e.key === 'Escape') renderFileTree();
           }};
           input.onblur = () => submitFile();
-          
+
           newBtn.appendChild(input);
           input.focus();
           newBtn.onclick = null;
@@ -1590,8 +1699,8 @@ return new Promise(function(resolve) {{
         ta.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
         document.body.appendChild(ta);
         ta.select();
-        try {{ 
-          document.execCommand('copy'); 
+        try {{
+          document.execCommand('copy');
           updateStatus('📋 Code copi\u00e9 (Fallback HTTP) !');
         }} catch (e) {{ updateStatus('❌ Erreur de copie'); }}
         document.body.removeChild(ta);
@@ -1620,8 +1729,8 @@ return new Promise(function(resolve) {{
         range.selectNodeContents(div);
         selection.removeAllRanges();
         selection.addRange(range);
-        try {{ 
-          document.execCommand('copy'); 
+        try {{
+          document.execCommand('copy');
           updateStatus('📋 Rendu copi\u00e9 (Fallback HTTP) !');
         }} catch (e) {{ updateStatus('❌ Erreur de copie'); }}
         selection.removeAllRanges();
@@ -1640,7 +1749,7 @@ return new Promise(function(resolve) {{
           if (!currentFile) return;
           const lang = files.find(f => f.filename === currentFile)?.lang;
           const content = editor ? editor.getValue() : '';
-          
+
           if (lang === 'markdown') {{
             const container = document.getElementById(CODEX_ID + '-preview-content');
             copyRichText(container.innerHTML, container.innerText);
@@ -2217,678 +2326,676 @@ return new Promise(function(resolve) {{
     }})();
     """
 
-  # =====================================================================
-  # ECHO COGNITIVE MONITOR — HUD Sub-Agent Visualization
-  # =====================================================================
+    # =====================================================================
+    # ECHO COGNITIVE MONITOR — HUD Sub-Agent Visualization
+    # =====================================================================
 
-  @staticmethod
-  def _generate_agent_monitor_js(threads_json: str, chat_id: str) -> str:
-    """Génère le script JS complet du HUD Cognitive Monitor.
-    Injection via __event_call__(type: 'execute', data: code: ...).
-    
-    Affiche les threads cognitifs (delegates, experts, conseils) sous forme
-    d'onglets verticaux avec arbre d'appels expand/collapse.
-    3 contrôles : refresh manuel, auto-refresh slider 2-15s, réduire."""
+    @staticmethod
+    def _generate_agent_monitor_js(threads_json: str, chat_id: str) -> str:
+        """Génère le script JS complet du HUD Cognitive Monitor.
+        Injection via __event_call__(type: 'execute', data: code: ...).
 
-    return (
-      "(function() {\n"
-      "  const HUD_ID = 'echo-cognitive-monitor';\n"
-      + EchoUI.get_mobile_guard_js('echo-cognitive-monitor') + "\n"
-      "  const CID = '" + chat_id + "';\n"
-      "  const STATE_KEY = 'echo_cogmon_' + CID;\n"
-      "\n"
-      "  var existing = document.getElementById(HUD_ID);\n"
-      "  if (existing) existing.remove();\n"
-      "\n"
-      "  var threads = " + threads_json + ";\n"
-      "\n"
-      "  var activeThreadIdx = 0;\n"
-      "  var expandedNodes = {};\n"
-      "  var autoRefreshTimer = null;\n"
-      "  var isMinimized = false;\n"
-      "\n"
-      "  var saved = {};\n"
-      "  try { saved = JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch(e) {}\n"
-      "  var posX = saved.x || 60;\n"
-      "  var posY = saved.y || 60;\n"
-      "  var hudW = saved.w || '720px';\n"
-      "  var hudH = saved.h || '500px';\n"
-      "  var autoInterval = saved.interval || 5;\n"
-      "  var autoEnabled = saved.autoOn || false;\n"
-      "  // Forcé à false au lancement pour éviter le bug de la fenêtre vide après restauration\n"
-      "  isMinimized = false;\n"
-      "  if (saved.activeIdx !== undefined) activeThreadIdx = saved.activeIdx;\n"
-      "  if (activeThreadIdx >= threads.length) activeThreadIdx = Math.max(0, threads.length - 1);\n"
-      "  if (saved.expanded) try { expandedNodes = JSON.parse(saved.expanded); } catch(e) {}\n"
-      "\n"
-      "  var isDark = document.documentElement.classList.contains('dark') ||\n"
-      "               window.matchMedia('(prefers-color-scheme: dark)').matches;\n"
-      "  var C = {\n"
-      "    bg:       isDark ? '#1a1b2e' : '#ffffff',\n"
-      "    headerBg: isDark ? 'rgba(26,27,46,0.97)' : 'rgba(245,245,250,0.97)',\n"
-      "    sidebarBg:isDark ? '#151626' : '#f5f5fa',\n"
-      "    text:     isDark ? '#e2e8f0' : '#1e293b',\n"
-      "    textMuted:isDark ? '#94a3b8' : '#64748b',\n"
-      "    border:   isDark ? '#2d3748' : '#e2e8f0',\n"
-      "    accent:   '#38bdf8',\n"
-      "    hoverBg:  isDark ? 'rgba(56,189,248,0.08)' : 'rgba(56,189,248,0.06)',\n"
-      "    success:  '#10b981',\n"
-      "    error:    '#ef4444',\n"
-      "    warning:  '#f59e0b',\n"
-      "    cyan:     '#38bdf8',\n"
-      "  };\n"
-      "\n"
-      "  function esc(s) { return (s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }\n"
-      "  function trunc(s, n) { s = s || ''; return s.length > n ? s.substring(0, n) + '\\u2026' : s; }\n"
-      "  function fmtTime(ts) {\n"
-      "    if (!ts) return '';\n"
-      "    var d = new Date(ts * 1000);\n"
-      "    var p = function(n){return ('0'+n).slice(-2);};\n"
-      "    return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());\n"
-      "  }\n"
-      "  function saveState() {\n"
-      "    var hud = document.getElementById(HUD_ID);\n"
-      "    if (!hud) return;\n"
-      "    localStorage.setItem(STATE_KEY, JSON.stringify({\n"
-      "      x: posX, y: posY,\n"
-      "      w: hud.style.width, h: hud.style.height,\n"
-      "      interval: autoInterval, autoOn: autoEnabled, min: isMinimized,\n"
-      "      activeIdx: activeThreadIdx, expanded: JSON.stringify(expandedNodes)\n"
-      "    }));\n"
-      "  }\n"
-      "  function clampHud() {\n"
-      "    var hud = document.getElementById(HUD_ID);\n"
-      "    if (!hud) return;\n"
-      "    var vw = window.innerWidth, vh = window.innerHeight;\n"
-      "    var w = hud.offsetWidth, h = hud.offsetHeight;\n"
-      "    if (posX < 0) posX = 0;\n"
-      "    if (posY < 0) posY = 0;\n"
-      "    if (posX + w > vw) posX = Math.max(0, vw - w);\n"
-      "    if (posY + h > vh) posY = Math.max(0, vh - h);\n"
-      "    hud.style.left = posX + 'px';\n"
-      "    hud.style.top = posY + 'px';\n"
-      "  }\n"
-      "\n"
-      "  // =============== SIDEBAR ONGLETS VERTICAUX ===============\n"
-      "  function renderSidebar() {\n"
-      "    var sb = document.getElementById(HUD_ID + '-sidebar');\n"
-      "    if (!sb) return;\n"
-      "    sb.innerHTML = '';\n"
-      "    threads.forEach(function(t, i) {\n"
-      "      var isActive = (i === activeThreadIdx);\n"
-      "      var tab = document.createElement('div');\n"
-      "      tab.style.cssText = 'padding:8px 10px; cursor:pointer; border-left:3px solid ' + (isActive ? t.color : 'transparent') + ';"
-      " background:' + (isActive ? C.hoverBg : 'transparent') + '; transition:all 0.15s; margin:2px 0;';\n"
-      "      tab.innerHTML = '<div style=\"font-size:16px; text-align:center;\">' + t.icon + '</div>'\n"
-      "        + '<div style=\"font-size:10px; color:' + t.color + '; text-align:center; font-family:monospace;"
-      " overflow:hidden; text-overflow:ellipsis; white-space:nowrap;\">' + t.sid.substring(0, 10) + '</div>'\n"
-      "        + '<div style=\"font-size:9px; color:' + C.textMuted + '; text-align:center;\">' + esc(t.label) + '</div>'\n"
-      "        + '<div style=\"font-size:9px; color:' + C.textMuted + '; text-align:center; margin-top:2px;"
-      " background:rgba(255,255,255,0.05); border-radius:8px; padding:1px 4px;\">' + t.steps_count + '</div>';\n"
-      "      tab.onmouseenter = function() { if (!isActive) tab.style.background = C.hoverBg; };\n"
-      "      tab.onmouseleave = function() { if (!isActive) tab.style.background = 'transparent'; };\n"
-      "      tab.onclick = function() { activeThreadIdx = i; renderSidebar(); renderTree(); saveState(); };\n"
-      "      sb.appendChild(tab);\n"
-      "    });\n"
-      "  }\n"
-      "\n"
-      "  // =============== ARBRE D'APPELS ===============\n"
-      "  function renderTree() {\n"
-      "    var tree = document.getElementById(HUD_ID + '-tree');\n"
-      "    if (!tree || !threads.length) { if(tree) tree.innerHTML = '<div style=\"padding:20px; color:' + C.textMuted + ';\">Aucun thread.</div>'; return; }\n"
-      "    var t = threads[activeThreadIdx];\n"
-      "    var html = '<div style=\"padding:12px 16px; border-bottom:1px solid ' + C.border + '; display:flex; align-items:center; gap:8px;\">'\n"
-      "      + '<span style=\"font-size:18px;\">' + t.icon + '</span>'\n"
-      "      + '<div><div style=\"font-weight:600; font-size:13px; color:' + t.color + ';\">' + esc(t.label) + '</div>'\n"
-      "      + '<div style=\"font-size:11px; color:' + C.textMuted + '; font-family:monospace;\">' + t.sid + ' \\u00b7 ' + t.steps_count + ' \\u00e9tapes \\u00b7 ' + fmtTime(t.updated_at) + '</div></div></div>';\n"
-      "\n"
-      "    html += '<div id=\"' + HUD_ID + '-tree-scroll\" style=\"padding:8px 12px; overflow-y:auto; flex:1;\">';\n"
-      "\n"
-      "    if (!t.nodes || t.nodes.length === 0) {\n"
-      "      html += '<div style=\"color:' + C.textMuted + '; font-style:italic; padding:16px;\">Thread vide.</div>';\n"
-      "    } else {\n"
-      "      t.nodes.forEach(function(node, ni) {\n"
-      "        var nodeId = t.sid + '_' + ni;\n"
-      "        var isExpanded = !!expandedNodes[nodeId];\n"
-      "        var icon = '', label = '', detail = '', color = C.text, indent = 0;\n"
-      "\n"
-      "        if (node.type === 'text') {\n"
-      "          if (node.role === 'user' && ni === 0) { icon = '\\ud83d\\udccb'; label = 'T\\u00e2che'; color = C.accent; }\n"
-      "          else if (node.role === 'model') {\n"
-      "            icon = '\\ud83d\\udcac';\n"
-      "            label = node.expert_alias ? node.expert_alias : 'R\\u00e9ponse';\n"
-      "            color = node.expert_alias ? '#a78bfa' : C.success;\n"
-      "          } else { icon = '\\ud83d\\udcad'; label = node.role === 'user' ? 'User' : 'Model'; color = C.textMuted; }\n"
-      "          detail = esc(node.content || '');\n"
-      "        } else if (node.type === 'worker_branch') {\n"
-      "          icon = '\\ud83d\\udc77'; label = 'Worker'; color = C.cyan;\n"
-      "          detail = esc(node.content || '');\n"
-      "        } else if (node.type === 'functionCall') {\n"
-      "          icon = '\\ud83d\\udd27'; label = node.fn_name || '?'; color = C.cyan; indent = 1;\n"
-      "          var args = node.fn_args || {};\n"
-      "          var argParts = [];\n"
-      "          for (var k in args) { if (args.hasOwnProperty(k)) argParts.push(k + ': ' + esc(trunc(args[k], 80))); }\n"
-      "          detail = argParts.join(' \\u00b7 ');\n"
-      "        } else if (node.type === 'functionResponse') {\n"
-      "          var isOk = (node.status === 'ok' || node.status === 'success' || node.status === true);\n"
-      "          icon = isOk ? '\\u2705' : '\\u274c'; label = node.fn_name || '?'; indent = 2;\n"
-      "          color = isOk ? C.success : C.error;\n"
-      "          detail = esc(trunc(node.content || '', 200));\n"
-      "        } else if (node.type === 'escalation') {\n"
-      "          icon = '\\ud83d\\ude80'; label = 'Escalade cognitive'; color = C.warning;\n"
-      "          detail = esc(node.content || '');\n"
-      "        } else if (node.type === 'question') {\n"
-      "          icon = '\\u2753'; label = 'Question en attente'; color = C.warning;\n"
-      "          detail = esc(node.content || '');\n"
-      "        } else {\n"
-      "          icon = '\\u00b7'; label = node.type || '?'; detail = '';\n"
-      "        }\n"
-      "\n"
-      "        if (node.indent_override !== undefined) indent = node.indent_override;\n"
-      "        var marginLeft = indent * 20;\n"
-      "        var connector = indent > 0 ? '<span style=\"color:' + C.border + '; margin-right:4px;\">' + (indent > 1 ? '\\u2514\\u2500' : '\\u251c\\u2500\\u2500') + '</span>' : '';\n"
-      "        var expandable = detail.length > 60;\n"
-      "        var displayDetail = isExpanded ? detail : trunc(detail, 60);\n"
-      "        var ts = node.timestamp ? '<span style=\"font-size:9px; color:' + C.textMuted + '; margin-left:auto; flex-shrink:0;\">' + fmtTime(node.timestamp) + '</span>' : '';\n"
-      "\n"
-      "        html += '<div data-nodeid=\"' + nodeId + '\" style=\"display:flex; align-items:flex-start; gap:6px; padding:4px 6px; margin-left:' + marginLeft + 'px;'\n"
-      "          + ' border-radius:6px; cursor:' + (expandable ? 'pointer' : 'default') + '; transition:background 0.12s;\"'\n"
-      "          + ' onmouseenter=\"this.style.background=\\'' + C.hoverBg + '\\';\"'\n"
-      "          + ' onmouseleave=\"this.style.background=\\'transparent\\';\"'\n"
-      "          + '>'\n"
-      "          + connector\n"
-      "          + '<span style=\"flex-shrink:0;\">' + icon + '</span>'\n"
-      "          + '<span style=\"font-size:12px; font-weight:600; color:' + color + '; flex-shrink:0;\">' + esc(label) + '</span>'\n"
-      "          + '<span style=\"font-size:11px; color:' + C.textMuted + '; overflow:hidden; word-break:break-word;\">' + displayDetail\n"
-      "          + (expandable && !isExpanded ? ' <span style=\"color:' + C.accent + '; font-size:10px;\">\\u25b8</span>' : '')\n"
-      "          + '</span>'\n"
-      "          + ts\n"
-      "          + '</div>';\n"
-      "      });\n"
-      "    }\n"
-      "    html += '</div>';\n"
-      "    tree.innerHTML = html;\n"
-      "\n"
-      "    // Attach click handlers for expand/collapse\n"
-      "    tree.querySelectorAll('[data-nodeid]').forEach(function(el) {\n"
-      "      el.onclick = function() {\n"
-      "        var nid = el.getAttribute('data-nodeid');\n"
-      "        if (expandedNodes[nid]) delete expandedNodes[nid];\n"
-      "        else expandedNodes[nid] = true;\n"
-      "        renderTree();\n"
-      "        saveState();\n"
-      "      };\n"
-      "    });\n"
-      "  }\n"
-      "\n"
-      "  // =============== CONSTRUCTION DU HUD ===============\n"
-      "  var hud = document.createElement('div');\n"
-      "  hud.id = HUD_ID;\n"
-      "  hud.style.cssText = 'position:fixed; z-index:10001; display:flex; flex-direction:column;'\n"
-      "    + ' background:' + C.bg + '; border:1px solid ' + C.border + '; border-radius:12px;'\n"
-      "    + ' box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:Segoe UI,system-ui,sans-serif;'\n"
-      "    + ' color:' + C.text + '; overflow:hidden; resize:both; min-width:500px; min-height:200px;'\n"
-      "    + ' width:' + hudW + '; height:' + hudH + '; left:' + posX + 'px; top:' + posY + 'px;';\n"
-      "\n"
-      "  // --- HEADER ---\n"
-      "  var header = document.createElement('div');\n"
-      "  header.id = HUD_ID + '-header';\n"
-      "  header.style.cssText = 'display:flex; align-items:center; padding:8px 14px; gap:10px;'\n"
-      "    + ' background:' + C.headerBg + '; border-bottom:1px solid ' + C.border + '; cursor:move;'\n"
-      "    + ' user-select:none; flex-shrink:0; min-height:42px;';\n"
-      "  header.innerHTML = '<span style=\"font-size:16px;\">\\ud83e\\udde0</span>'\n"
-      "    + '<span style=\"font-weight:600; font-size:13px; flex:1;\">Cognitive Monitor</span>'\n"
-      "    + '<button id=\"' + HUD_ID + '-refresh\" title=\"Rafra\\u00eechir\" style=\"background:none; border:none; color:' + C.text + '; cursor:pointer; font-size:14px;\">\\ud83d\\udd04</button>'\n"
-      "    + '<button id=\"' + HUD_ID + '-auto-toggle\" title=\"Auto-refresh\" style=\"background:none; border:1px solid ' + C.border + '; color:' + C.textMuted + '; cursor:pointer; font-size:11px; padding:2px 6px; border-radius:4px;\">\\u25b6</button>'\n"
-      "    + '<input id=\"' + HUD_ID + '-auto-slider\" type=\"range\" min=\"2\" max=\"15\" value=\"' + autoInterval + '\" title=\"Intervalle auto-refresh\" style=\"width:60px; accent-color:' + C.accent + '; cursor:pointer;\" />'\n"
-      "    + '<span id=\"' + HUD_ID + '-auto-label\" style=\"font-size:10px; color:' + C.textMuted + '; min-width:22px;\">' + autoInterval + 's</span>'\n"
-      "    + '<button id=\"' + HUD_ID + '-minimize\" title=\"R\\u00e9duire\" style=\"background:none; border:none; color:' + C.textMuted + '; cursor:pointer; font-size:16px;\">\\u2014</button>'\n"
-      "    + '<button id=\"' + HUD_ID + '-close\" title=\"Fermer\" style=\"background:none; border:none; color:' + C.error + '; cursor:pointer; font-size:18px;\">\\u00d7</button>';\n"
-      "  hud.appendChild(header);\n"
-      "\n"
-      "  // --- BODY ---\n"
-      "  var body = document.createElement('div');\n"
-      "  body.id = HUD_ID + '-body';\n"
-      "  body.style.cssText = 'display:' + (isMinimized ? 'none' : 'flex') + '; flex:1; overflow:hidden;';\n"
-      "\n"
-      "  var sidebar = document.createElement('div');\n"
-      "  sidebar.id = HUD_ID + '-sidebar';\n"
-      "  sidebar.style.cssText = 'width:80px; background:' + C.sidebarBg + '; border-right:1px solid ' + C.border + ';'\n"
-      "    + ' overflow-y:auto; flex-shrink:0; scrollbar-width:thin;';\n"
-      "\n"
-      "  var treePanel = document.createElement('div');\n"
-      "  treePanel.id = HUD_ID + '-tree';\n"
-      "  treePanel.style.cssText = 'flex:1; overflow-y:auto; display:flex; flex-direction:column; scrollbar-width:thin;';\n"
-      "\n"
-      "  body.appendChild(sidebar);\n"
-      "  body.appendChild(treePanel);\n"
-      "  hud.appendChild(body);\n"
-      "\n"
-      "  // --- STATUS BAR ---\n"
-      "  var statusBar = document.createElement('div');\n"
-      "  statusBar.id = HUD_ID + '-status';\n"
-      "  statusBar.style.cssText = 'display:' + (isMinimized ? 'none' : 'flex') + '; align-items:center; padding:4px 14px;'\n"
-      "    + ' background:' + C.sidebarBg + '; border-top:1px solid ' + C.border + '; font-size:11px;'\n"
-      "    + ' color:' + C.textMuted + '; font-family:monospace; flex-shrink:0; gap:12px;';\n"
-      "  var totalSteps = threads.reduce(function(s, t) { return s + (t.steps_count || 0); }, 0);\n"
-      "  var lastUpdate = threads.length ? fmtTime(Math.max.apply(null, threads.map(function(t) { return t.updated_at || 0; }))) : '';\n"
-      "  statusBar.innerHTML = '<span>\\ud83d\\udcca ' + threads.length + ' thread' + (threads.length > 1 ? 's' : '') + '</span>'\n"
-      "    + '<span>|</span>'\n"
-      "    + '<span>' + totalSteps + ' \\u00e9tapes</span>'\n"
-      "    + '<span>|</span>'\n"
-      "    + '<span>' + lastUpdate + '</span>'\n"
-      "    + '<span style=\"flex:1;\"></span>'\n"
-      "    + '<span id=\"' + HUD_ID + '-auto-status\" style=\"color:' + (autoEnabled ? C.success : C.textMuted) + ';\">' + (autoEnabled ? '\\u25cf Auto' : '\\u25cb Manuel') + '</span>';\n"
-      "  hud.appendChild(statusBar);\n"
-      "\n"
-      "  document.body.appendChild(hud);\n"
-      "\n"
-      "  // =============== ÉVÉNEMENTS ===============\n"
-      "\n"
-      "  // Draggable\n"
-      "  header.onmousedown = function(e) {\n"
-      "    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;\n"
-      "    e.preventDefault();\n"
-      "    var ox = e.clientX, oy = e.clientY;\n"
-      "    function move(me) {\n"
-      "      posX += (me.clientX - ox); posY += (me.clientY - oy);\n"
-      "      ox = me.clientX; oy = me.clientY;\n"
-      "      clampHud();\n"
-      "    }\n"
-      "    function up() {\n"
-      "      document.removeEventListener('mousemove', move);\n"
-      "      document.removeEventListener('mouseup', up);\n"
-      "      saveState();\n"
-      "    }\n"
-      "    document.addEventListener('mousemove', move);\n"
-      "    document.addEventListener('mouseup', up);\n"
-      "  };\n"
-      "\n"
-      "  window.addEventListener('resize', clampHud);\n"
-      "\n"
-      "  // Refresh\n"
-      "  document.getElementById(HUD_ID + '-refresh').onclick = function() {\n"
-      "    if (window.echoAgentResolve) {\n"
-      "      window.echoAgentResolve({action: 'refresh'});\n"
-      "    } else {\n"
-      "      var btn = document.getElementById(HUD_ID + '-refresh');\n"
-      "      if (btn) { btn.textContent = '\\u23f3'; setTimeout(function() { if (btn) btn.textContent = '\\ud83d\\udd04'; }, 1000); }\n"
-      "    }\n"
-      "  };\n"
-      "\n"
-      "  // Auto-refresh\n"
-      "  var toggleBtn = document.getElementById(HUD_ID + '-auto-toggle');\n"
-      "  var slider = document.getElementById(HUD_ID + '-auto-slider');\n"
-      "  var autoLabel = document.getElementById(HUD_ID + '-auto-label');\n"
-      "  var autoStatusEl = document.getElementById(HUD_ID + '-auto-status');\n"
-      "\n"
-      "  function updateAutoState() {\n"
-      "    toggleBtn.textContent = autoEnabled ? '\\u23f8' : '\\u25b6';\n"
-      "    toggleBtn.style.borderColor = autoEnabled ? C.success : C.border;\n"
-      "    toggleBtn.style.color = autoEnabled ? C.success : C.textMuted;\n"
-      "    if (autoStatusEl) {\n"
-      "      autoStatusEl.textContent = autoEnabled ? '\\u25cf Auto ' + autoInterval + 's' : '\\u25cb Manuel';\n"
-      "      autoStatusEl.style.color = autoEnabled ? C.success : C.textMuted;\n"
-      "    }\n"
-      "    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }\n"
-      "    if (autoEnabled) {\n"
-      "      autoRefreshTimer = setInterval(function() {\n"
-      "        if (window.echoAgentResolve) window.echoAgentResolve({action: 'refresh'});\n"
-      "      }, autoInterval * 1000);\n"
-      "    }\n"
-      "    saveState();\n"
-      "  }\n"
-      "\n"
-      "  toggleBtn.onclick = function() { autoEnabled = !autoEnabled; updateAutoState(); };\n"
-      "  slider.oninput = function() {\n"
-      "    autoInterval = parseInt(slider.value);\n"
-      "    autoLabel.textContent = autoInterval + 's';\n"
-      "    if (autoEnabled) updateAutoState();\n"
-      "    saveState();\n"
-      "  };\n"
-      "\n"
-      "  // Minimize\n"
-      "  document.getElementById(HUD_ID + '-minimize').onclick = function() {\n"
-      "    isMinimized = !isMinimized;\n"
-      "    body.style.display = isMinimized ? 'none' : 'flex';\n"
-      "    statusBar.style.display = isMinimized ? 'none' : 'flex';\n"
-      "    hud.style.minHeight = isMinimized ? '42px' : '200px';\n"
-      "    hud.style.height = isMinimized ? '42px' : hudH;\n"
-      "    hud.style.resize = isMinimized ? 'none' : 'both';\n"
-      "    saveState();\n"
-      "  };\n"
-      "\n"
-      "  // Close — resolve pour sortir de la boucle Python\n"
-      "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
-      "    if (autoRefreshTimer) clearInterval(autoRefreshTimer);\n"
-      "    hud.remove();\n"
-      "    if (window.echoAgentResolve) window.echoAgentResolve({action: 'close'});\n"
-      "  };\n"
-      "\n"
-      "  // Resize persistence\n"
-      "  new ResizeObserver(function() {\n"
-      "    hudW = hud.style.width;\n"
-      "    hudH = hud.style.height;\n"
-      "    saveState();\n"
-      "  }).observe(hud);\n"
-      "\n"
-      "  // =============== STATUS BAR UPDATE ===============\n"
-      "  function updateStatusBar() {\n"
-      "    var sb = document.getElementById(HUD_ID + '-status');\n"
-      "    if (!sb) return;\n"
-      "    var totalSteps = threads.reduce(function(s, t) { return s + (t.steps_count || 0); }, 0);\n"
-      "    var lastUpdate = threads.length ? fmtTime(Math.max.apply(null, threads.map(function(t) { return t.updated_at || 0; }))) : '';\n"
-      "    sb.innerHTML = '<span>\\ud83d\\udcca ' + threads.length + ' thread' + (threads.length > 1 ? 's' : '') + '</span>'\n"
-      "      + '<span>|</span>'\n"
-      "      + '<span>' + totalSteps + ' \\u00e9tapes</span>'\n"
-      "      + '<span>|</span>'\n"
-      "      + '<span>' + lastUpdate + '</span>'\n"
-      "      + '<span style=\"flex:1;\"></span>'\n"
-      "      + '<span id=\"' + HUD_ID + '-auto-status\" style=\"color:' + (autoEnabled ? C.success : C.textMuted) + ';\">' + (autoEnabled ? '\\u25cf Auto ' + autoInterval + 's' : '\\u25cb Manuel') + '</span>';\n"
-      "    autoStatusEl = document.getElementById(HUD_ID + '-auto-status');\n"
-      "  }\n"
-      "\n"
-      "  // =============== GLOBAL API — Mise à jour live ===============\n"
-      "  window.echoMonitorUpdate = function(newThreads) {\n"
-      "    threads = newThreads;\n"
-      "    if (activeThreadIdx >= threads.length) activeThreadIdx = Math.max(0, threads.length - 1);\n"
-      "    renderSidebar();\n"
-      "    renderTree();\n"
-      "    updateStatusBar();\n"
-      "    var scrollArea = document.getElementById(HUD_ID + '-tree-scroll');\n"
-      "    if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;\n"
-      "  };\n"
-      "\n"
-      "  // =============== INIT ===============\n"
-      "  clampHud();\n"
-      "  renderSidebar();\n"
-      "  renderTree();\n"
-      "  updateAutoState();\n"
-      "  var initialScroll = document.getElementById(HUD_ID + '-tree-scroll');\n"
-      "  if (initialScroll) initialScroll.scrollTop = initialScroll.scrollHeight;\n"
-      "})();\n"
-    )
+        Affiche les threads cognitifs (delegates, experts, conseils) sous forme
+        d'onglets verticaux avec arbre d'appels expand/collapse.
+        3 contrôles : refresh manuel, auto-refresh slider 2-15s, réduire."""
 
+        return (
+            "(function() {\n"
+            "  const HUD_ID = 'echo-cognitive-monitor';\n" + EchoUI.get_mobile_guard_js('echo-cognitive-monitor') + "\n"
+            "  const CID = '" + chat_id + "';\n"
+            "  const STATE_KEY = 'echo_cogmon_' + CID;\n"
+            "\n"
+            "  var existing = document.getElementById(HUD_ID);\n"
+            "  if (existing) existing.remove();\n"
+            "\n"
+            "  var threads = " + threads_json + ";\n"
+            "\n"
+            "  var activeThreadIdx = 0;\n"
+            "  var expandedNodes = {};\n"
+            "  var autoRefreshTimer = null;\n"
+            "  var isMinimized = false;\n"
+            "\n"
+            "  var saved = {};\n"
+            "  try { saved = JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch(e) {}\n"
+            "  var posX = saved.x || 60;\n"
+            "  var posY = saved.y || 60;\n"
+            "  var hudW = saved.w || '720px';\n"
+            "  var hudH = saved.h || '500px';\n"
+            "  var autoInterval = saved.interval || 5;\n"
+            "  var autoEnabled = saved.autoOn || false;\n"
+            "  // Forcé à false au lancement pour éviter le bug de la fenêtre vide après restauration\n"
+            "  isMinimized = false;\n"
+            "  if (saved.activeIdx !== undefined) activeThreadIdx = saved.activeIdx;\n"
+            "  if (activeThreadIdx >= threads.length) activeThreadIdx = Math.max(0, threads.length - 1);\n"
+            "  if (saved.expanded) try { expandedNodes = JSON.parse(saved.expanded); } catch(e) {}\n"
+            "\n"
+            "  var isDark = document.documentElement.classList.contains('dark') ||\n"
+            "               window.matchMedia('(prefers-color-scheme: dark)').matches;\n"
+            "  var C = {\n"
+            "    bg:       isDark ? '#1a1b2e' : '#ffffff',\n"
+            "    headerBg: isDark ? 'rgba(26,27,46,0.97)' : 'rgba(245,245,250,0.97)',\n"
+            "    sidebarBg:isDark ? '#151626' : '#f5f5fa',\n"
+            "    text:     isDark ? '#e2e8f0' : '#1e293b',\n"
+            "    textMuted:isDark ? '#94a3b8' : '#64748b',\n"
+            "    border:   isDark ? '#2d3748' : '#e2e8f0',\n"
+            "    accent:   '#38bdf8',\n"
+            "    hoverBg:  isDark ? 'rgba(56,189,248,0.08)' : 'rgba(56,189,248,0.06)',\n"
+            "    success:  '#10b981',\n"
+            "    error:    '#ef4444',\n"
+            "    warning:  '#f59e0b',\n"
+            "    cyan:     '#38bdf8',\n"
+            "  };\n"
+            "\n"
+            "  function esc(s) { return (s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }\n"
+            "  function trunc(s, n) { s = s || ''; return s.length > n ? s.substring(0, n) + '\\u2026' : s; }\n"
+            "  function fmtTime(ts) {\n"
+            "    if (!ts) return '';\n"
+            "    var d = new Date(ts * 1000);\n"
+            "    var p = function(n){return ('0'+n).slice(-2);};\n"
+            "    return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());\n"
+            "  }\n"
+            "  function saveState() {\n"
+            "    var hud = document.getElementById(HUD_ID);\n"
+            "    if (!hud) return;\n"
+            "    localStorage.setItem(STATE_KEY, JSON.stringify({\n"
+            "      x: posX, y: posY,\n"
+            "      w: hud.style.width, h: hud.style.height,\n"
+            "      interval: autoInterval, autoOn: autoEnabled, min: isMinimized,\n"
+            "      activeIdx: activeThreadIdx, expanded: JSON.stringify(expandedNodes)\n"
+            "    }));\n"
+            "  }\n"
+            "  function clampHud() {\n"
+            "    var hud = document.getElementById(HUD_ID);\n"
+            "    if (!hud) return;\n"
+            "    var vw = window.innerWidth, vh = window.innerHeight;\n"
+            "    var w = hud.offsetWidth, h = hud.offsetHeight;\n"
+            "    if (posX < 0) posX = 0;\n"
+            "    if (posY < 0) posY = 0;\n"
+            "    if (posX + w > vw) posX = Math.max(0, vw - w);\n"
+            "    if (posY + h > vh) posY = Math.max(0, vh - h);\n"
+            "    hud.style.left = posX + 'px';\n"
+            "    hud.style.top = posY + 'px';\n"
+            "  }\n"
+            "\n"
+            "  // =============== SIDEBAR ONGLETS VERTICAUX ===============\n"
+            "  function renderSidebar() {\n"
+            "    var sb = document.getElementById(HUD_ID + '-sidebar');\n"
+            "    if (!sb) return;\n"
+            "    sb.innerHTML = '';\n"
+            "    threads.forEach(function(t, i) {\n"
+            "      var isActive = (i === activeThreadIdx);\n"
+            "      var tab = document.createElement('div');\n"
+            "      tab.style.cssText = 'padding:8px 10px; cursor:pointer; border-left:3px solid ' + (isActive ? t.color : 'transparent') + ';"
+            " background:' + (isActive ? C.hoverBg : 'transparent') + '; transition:all 0.15s; margin:2px 0;';\n"
+            "      tab.innerHTML = '<div style=\"font-size:16px; text-align:center;\">' + t.icon + '</div>'\n"
+            "        + '<div style=\"font-size:10px; color:' + t.color + '; text-align:center; font-family:monospace;"
+            " overflow:hidden; text-overflow:ellipsis; white-space:nowrap;\">' + t.sid.substring(0, 10) + '</div>'\n"
+            "        + '<div style=\"font-size:9px; color:' + C.textMuted + '; text-align:center;\">' + esc(t.label) + '</div>'\n"
+            "        + '<div style=\"font-size:9px; color:' + C.textMuted + '; text-align:center; margin-top:2px;"
+            " background:rgba(255,255,255,0.05); border-radius:8px; padding:1px 4px;\">' + t.steps_count + '</div>';\n"
+            "      tab.onmouseenter = function() { if (!isActive) tab.style.background = C.hoverBg; };\n"
+            "      tab.onmouseleave = function() { if (!isActive) tab.style.background = 'transparent'; };\n"
+            "      tab.onclick = function() { activeThreadIdx = i; renderSidebar(); renderTree(); saveState(); };\n"
+            "      sb.appendChild(tab);\n"
+            "    });\n"
+            "  }\n"
+            "\n"
+            "  // =============== ARBRE D'APPELS ===============\n"
+            "  function renderTree() {\n"
+            "    var tree = document.getElementById(HUD_ID + '-tree');\n"
+            "    if (!tree || !threads.length) { if(tree) tree.innerHTML = '<div style=\"padding:20px; color:' + C.textMuted + ';\">Aucun thread.</div>'; return; }\n"
+            "    var t = threads[activeThreadIdx];\n"
+            "    var html = '<div style=\"padding:12px 16px; border-bottom:1px solid ' + C.border + '; display:flex; align-items:center; gap:8px;\">'\n"
+            "      + '<span style=\"font-size:18px;\">' + t.icon + '</span>'\n"
+            "      + '<div><div style=\"font-weight:600; font-size:13px; color:' + t.color + ';\">' + esc(t.label) + '</div>'\n"
+            "      + '<div style=\"font-size:11px; color:' + C.textMuted + '; font-family:monospace;\">' + t.sid + ' \\u00b7 ' + t.steps_count + ' \\u00e9tapes \\u00b7 ' + fmtTime(t.updated_at) + '</div></div></div>';\n"
+            "\n"
+            "    html += '<div id=\"' + HUD_ID + '-tree-scroll\" style=\"padding:8px 12px; overflow-y:auto; flex:1;\">';\n"
+            "\n"
+            "    if (!t.nodes || t.nodes.length === 0) {\n"
+            "      html += '<div style=\"color:' + C.textMuted + '; font-style:italic; padding:16px;\">Thread vide.</div>';\n"
+            "    } else {\n"
+            "      t.nodes.forEach(function(node, ni) {\n"
+            "        var nodeId = t.sid + '_' + ni;\n"
+            "        var isExpanded = !!expandedNodes[nodeId];\n"
+            "        var icon = '', label = '', detail = '', color = C.text, indent = 0;\n"
+            "\n"
+            "        if (node.type === 'text') {\n"
+            "          if (node.role === 'user' && ni === 0) { icon = '\\ud83d\\udccb'; label = 'T\\u00e2che'; color = C.accent; }\n"
+            "          else if (node.role === 'model') {\n"
+            "            icon = '\\ud83d\\udcac';\n"
+            "            label = node.expert_alias ? node.expert_alias : 'R\\u00e9ponse';\n"
+            "            color = node.expert_alias ? '#a78bfa' : C.success;\n"
+            "          } else { icon = '\\ud83d\\udcad'; label = node.role === 'user' ? 'User' : 'Model'; color = C.textMuted; }\n"
+            "          detail = esc(node.content || '');\n"
+            "        } else if (node.type === 'worker_branch') {\n"
+            "          icon = '\\ud83d\\udc77'; label = 'Worker'; color = C.cyan;\n"
+            "          detail = esc(node.content || '');\n"
+            "        } else if (node.type === 'functionCall') {\n"
+            "          icon = '\\ud83d\\udd27'; label = node.fn_name || '?'; color = C.cyan; indent = 1;\n"
+            "          var args = node.fn_args || {};\n"
+            "          var argParts = [];\n"
+            "          for (var k in args) { if (args.hasOwnProperty(k)) argParts.push(k + ': ' + esc(trunc(args[k], 80))); }\n"
+            "          detail = argParts.join(' \\u00b7 ');\n"
+            "        } else if (node.type === 'functionResponse') {\n"
+            "          var isOk = (node.status === 'ok' || node.status === 'success' || node.status === true);\n"
+            "          icon = isOk ? '\\u2705' : '\\u274c'; label = node.fn_name || '?'; indent = 2;\n"
+            "          color = isOk ? C.success : C.error;\n"
+            "          detail = esc(trunc(node.content || '', 200));\n"
+            "        } else if (node.type === 'escalation') {\n"
+            "          icon = '\\ud83d\\ude80'; label = 'Escalade cognitive'; color = C.warning;\n"
+            "          detail = esc(node.content || '');\n"
+            "        } else if (node.type === 'question') {\n"
+            "          icon = '\\u2753'; label = 'Question en attente'; color = C.warning;\n"
+            "          detail = esc(node.content || '');\n"
+            "        } else {\n"
+            "          icon = '\\u00b7'; label = node.type || '?'; detail = '';\n"
+            "        }\n"
+            "\n"
+            "        if (node.indent_override !== undefined) indent = node.indent_override;\n"
+            "        var marginLeft = indent * 20;\n"
+            "        var connector = indent > 0 ? '<span style=\"color:' + C.border + '; margin-right:4px;\">' + (indent > 1 ? '\\u2514\\u2500' : '\\u251c\\u2500\\u2500') + '</span>' : '';\n"
+            "        var expandable = detail.length > 60;\n"
+            "        var displayDetail = isExpanded ? detail : trunc(detail, 60);\n"
+            "        var ts = node.timestamp ? '<span style=\"font-size:9px; color:' + C.textMuted + '; margin-left:auto; flex-shrink:0;\">' + fmtTime(node.timestamp) + '</span>' : '';\n"
+            "\n"
+            "        html += '<div data-nodeid=\"' + nodeId + '\" style=\"display:flex; align-items:flex-start; gap:6px; padding:4px 6px; margin-left:' + marginLeft + 'px;'\n"
+            "          + ' border-radius:6px; cursor:' + (expandable ? 'pointer' : 'default') + '; transition:background 0.12s;\"'\n"
+            "          + ' onmouseenter=\"this.style.background=\\'' + C.hoverBg + '\\';\"'\n"
+            "          + ' onmouseleave=\"this.style.background=\\'transparent\\';\"'\n"
+            "          + '>'\n"
+            "          + connector\n"
+            "          + '<span style=\"flex-shrink:0;\">' + icon + '</span>'\n"
+            "          + '<span style=\"font-size:12px; font-weight:600; color:' + color + '; flex-shrink:0;\">' + esc(label) + '</span>'\n"
+            "          + '<span style=\"font-size:11px; color:' + C.textMuted + '; overflow:hidden; word-break:break-word;\">' + displayDetail\n"
+            "          + (expandable && !isExpanded ? ' <span style=\"color:' + C.accent + '; font-size:10px;\">\\u25b8</span>' : '')\n"
+            "          + '</span>'\n"
+            "          + ts\n"
+            "          + '</div>';\n"
+            "      });\n"
+            "    }\n"
+            "    html += '</div>';\n"
+            "    tree.innerHTML = html;\n"
+            "\n"
+            "    // Attach click handlers for expand/collapse\n"
+            "    tree.querySelectorAll('[data-nodeid]').forEach(function(el) {\n"
+            "      el.onclick = function() {\n"
+            "        var nid = el.getAttribute('data-nodeid');\n"
+            "        if (expandedNodes[nid]) delete expandedNodes[nid];\n"
+            "        else expandedNodes[nid] = true;\n"
+            "        renderTree();\n"
+            "        saveState();\n"
+            "      };\n"
+            "    });\n"
+            "  }\n"
+            "\n"
+            "  // =============== CONSTRUCTION DU HUD ===============\n"
+            "  var hud = document.createElement('div');\n"
+            "  hud.id = HUD_ID;\n"
+            "  hud.style.cssText = 'position:fixed; z-index:10001; display:flex; flex-direction:column;'\n"
+            "    + ' background:' + C.bg + '; border:1px solid ' + C.border + '; border-radius:12px;'\n"
+            "    + ' box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:Segoe UI,system-ui,sans-serif;'\n"
+            "    + ' color:' + C.text + '; overflow:hidden; resize:both; min-width:500px; min-height:200px;'\n"
+            "    + ' width:' + hudW + '; height:' + hudH + '; left:' + posX + 'px; top:' + posY + 'px;';\n"
+            "\n"
+            "  // --- HEADER ---\n"
+            "  var header = document.createElement('div');\n"
+            "  header.id = HUD_ID + '-header';\n"
+            "  header.style.cssText = 'display:flex; align-items:center; padding:8px 14px; gap:10px;'\n"
+            "    + ' background:' + C.headerBg + '; border-bottom:1px solid ' + C.border + '; cursor:move;'\n"
+            "    + ' user-select:none; flex-shrink:0; min-height:42px;';\n"
+            "  header.innerHTML = '<span style=\"font-size:16px;\">\\ud83e\\udde0</span>'\n"
+            "    + '<span style=\"font-weight:600; font-size:13px; flex:1;\">Cognitive Monitor</span>'\n"
+            "    + '<button id=\"' + HUD_ID + '-refresh\" title=\"Rafra\\u00eechir\" style=\"background:none; border:none; color:' + C.text + '; cursor:pointer; font-size:14px;\">\\ud83d\\udd04</button>'\n"
+            "    + '<button id=\"' + HUD_ID + '-auto-toggle\" title=\"Auto-refresh\" style=\"background:none; border:1px solid ' + C.border + '; color:' + C.textMuted + '; cursor:pointer; font-size:11px; padding:2px 6px; border-radius:4px;\">\\u25b6</button>'\n"
+            "    + '<input id=\"' + HUD_ID + '-auto-slider\" type=\"range\" min=\"2\" max=\"15\" value=\"' + autoInterval + '\" title=\"Intervalle auto-refresh\" style=\"width:60px; accent-color:' + C.accent + '; cursor:pointer;\" />'\n"
+            "    + '<span id=\"' + HUD_ID + '-auto-label\" style=\"font-size:10px; color:' + C.textMuted + '; min-width:22px;\">' + autoInterval + 's</span>'\n"
+            "    + '<button id=\"' + HUD_ID + '-minimize\" title=\"R\\u00e9duire\" style=\"background:none; border:none; color:' + C.textMuted + '; cursor:pointer; font-size:16px;\">\\u2014</button>'\n"
+            "    + '<button id=\"' + HUD_ID + '-close\" title=\"Fermer\" style=\"background:none; border:none; color:' + C.error + '; cursor:pointer; font-size:18px;\">\\u00d7</button>';\n"
+            "  hud.appendChild(header);\n"
+            "\n"
+            "  // --- BODY ---\n"
+            "  var body = document.createElement('div');\n"
+            "  body.id = HUD_ID + '-body';\n"
+            "  body.style.cssText = 'display:' + (isMinimized ? 'none' : 'flex') + '; flex:1; overflow:hidden;';\n"
+            "\n"
+            "  var sidebar = document.createElement('div');\n"
+            "  sidebar.id = HUD_ID + '-sidebar';\n"
+            "  sidebar.style.cssText = 'width:80px; background:' + C.sidebarBg + '; border-right:1px solid ' + C.border + ';'\n"
+            "    + ' overflow-y:auto; flex-shrink:0; scrollbar-width:thin;';\n"
+            "\n"
+            "  var treePanel = document.createElement('div');\n"
+            "  treePanel.id = HUD_ID + '-tree';\n"
+            "  treePanel.style.cssText = 'flex:1; overflow-y:auto; display:flex; flex-direction:column; scrollbar-width:thin;';\n"
+            "\n"
+            "  body.appendChild(sidebar);\n"
+            "  body.appendChild(treePanel);\n"
+            "  hud.appendChild(body);\n"
+            "\n"
+            "  // --- STATUS BAR ---\n"
+            "  var statusBar = document.createElement('div');\n"
+            "  statusBar.id = HUD_ID + '-status';\n"
+            "  statusBar.style.cssText = 'display:' + (isMinimized ? 'none' : 'flex') + '; align-items:center; padding:4px 14px;'\n"
+            "    + ' background:' + C.sidebarBg + '; border-top:1px solid ' + C.border + '; font-size:11px;'\n"
+            "    + ' color:' + C.textMuted + '; font-family:monospace; flex-shrink:0; gap:12px;';\n"
+            "  var totalSteps = threads.reduce(function(s, t) { return s + (t.steps_count || 0); }, 0);\n"
+            "  var lastUpdate = threads.length ? fmtTime(Math.max.apply(null, threads.map(function(t) { return t.updated_at || 0; }))) : '';\n"
+            "  statusBar.innerHTML = '<span>\\ud83d\\udcca ' + threads.length + ' thread' + (threads.length > 1 ? 's' : '') + '</span>'\n"
+            "    + '<span>|</span>'\n"
+            "    + '<span>' + totalSteps + ' \\u00e9tapes</span>'\n"
+            "    + '<span>|</span>'\n"
+            "    + '<span>' + lastUpdate + '</span>'\n"
+            "    + '<span style=\"flex:1;\"></span>'\n"
+            "    + '<span id=\"' + HUD_ID + '-auto-status\" style=\"color:' + (autoEnabled ? C.success : C.textMuted) + ';\">' + (autoEnabled ? '\\u25cf Auto' : '\\u25cb Manuel') + '</span>';\n"
+            "  hud.appendChild(statusBar);\n"
+            "\n"
+            "  document.body.appendChild(hud);\n"
+            "\n"
+            "  // =============== ÉVÉNEMENTS ===============\n"
+            "\n"
+            "  // Draggable\n"
+            "  header.onmousedown = function(e) {\n"
+            "    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;\n"
+            "    e.preventDefault();\n"
+            "    var ox = e.clientX, oy = e.clientY;\n"
+            "    function move(me) {\n"
+            "      posX += (me.clientX - ox); posY += (me.clientY - oy);\n"
+            "      ox = me.clientX; oy = me.clientY;\n"
+            "      clampHud();\n"
+            "    }\n"
+            "    function up() {\n"
+            "      document.removeEventListener('mousemove', move);\n"
+            "      document.removeEventListener('mouseup', up);\n"
+            "      saveState();\n"
+            "    }\n"
+            "    document.addEventListener('mousemove', move);\n"
+            "    document.addEventListener('mouseup', up);\n"
+            "  };\n"
+            "\n"
+            "  window.addEventListener('resize', clampHud);\n"
+            "\n"
+            "  // Refresh\n"
+            "  document.getElementById(HUD_ID + '-refresh').onclick = function() {\n"
+            "    if (window.echoAgentResolve) {\n"
+            "      window.echoAgentResolve({action: 'refresh'});\n"
+            "    } else {\n"
+            "      var btn = document.getElementById(HUD_ID + '-refresh');\n"
+            "      if (btn) { btn.textContent = '\\u23f3'; setTimeout(function() { if (btn) btn.textContent = '\\ud83d\\udd04'; }, 1000); }\n"
+            "    }\n"
+            "  };\n"
+            "\n"
+            "  // Auto-refresh\n"
+            "  var toggleBtn = document.getElementById(HUD_ID + '-auto-toggle');\n"
+            "  var slider = document.getElementById(HUD_ID + '-auto-slider');\n"
+            "  var autoLabel = document.getElementById(HUD_ID + '-auto-label');\n"
+            "  var autoStatusEl = document.getElementById(HUD_ID + '-auto-status');\n"
+            "\n"
+            "  function updateAutoState() {\n"
+            "    toggleBtn.textContent = autoEnabled ? '\\u23f8' : '\\u25b6';\n"
+            "    toggleBtn.style.borderColor = autoEnabled ? C.success : C.border;\n"
+            "    toggleBtn.style.color = autoEnabled ? C.success : C.textMuted;\n"
+            "    if (autoStatusEl) {\n"
+            "      autoStatusEl.textContent = autoEnabled ? '\\u25cf Auto ' + autoInterval + 's' : '\\u25cb Manuel';\n"
+            "      autoStatusEl.style.color = autoEnabled ? C.success : C.textMuted;\n"
+            "    }\n"
+            "    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }\n"
+            "    if (autoEnabled) {\n"
+            "      autoRefreshTimer = setInterval(function() {\n"
+            "        if (window.echoAgentResolve) window.echoAgentResolve({action: 'refresh'});\n"
+            "      }, autoInterval * 1000);\n"
+            "    }\n"
+            "    saveState();\n"
+            "  }\n"
+            "\n"
+            "  toggleBtn.onclick = function() { autoEnabled = !autoEnabled; updateAutoState(); };\n"
+            "  slider.oninput = function() {\n"
+            "    autoInterval = parseInt(slider.value);\n"
+            "    autoLabel.textContent = autoInterval + 's';\n"
+            "    if (autoEnabled) updateAutoState();\n"
+            "    saveState();\n"
+            "  };\n"
+            "\n"
+            "  // Minimize\n"
+            "  document.getElementById(HUD_ID + '-minimize').onclick = function() {\n"
+            "    isMinimized = !isMinimized;\n"
+            "    body.style.display = isMinimized ? 'none' : 'flex';\n"
+            "    statusBar.style.display = isMinimized ? 'none' : 'flex';\n"
+            "    hud.style.minHeight = isMinimized ? '42px' : '200px';\n"
+            "    hud.style.height = isMinimized ? '42px' : hudH;\n"
+            "    hud.style.resize = isMinimized ? 'none' : 'both';\n"
+            "    saveState();\n"
+            "  };\n"
+            "\n"
+            "  // Close — resolve pour sortir de la boucle Python\n"
+            "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
+            "    if (autoRefreshTimer) clearInterval(autoRefreshTimer);\n"
+            "    hud.remove();\n"
+            "    if (window.echoAgentResolve) window.echoAgentResolve({action: 'close'});\n"
+            "  };\n"
+            "\n"
+            "  // Resize persistence\n"
+            "  new ResizeObserver(function() {\n"
+            "    hudW = hud.style.width;\n"
+            "    hudH = hud.style.height;\n"
+            "    saveState();\n"
+            "  }).observe(hud);\n"
+            "\n"
+            "  // =============== STATUS BAR UPDATE ===============\n"
+            "  function updateStatusBar() {\n"
+            "    var sb = document.getElementById(HUD_ID + '-status');\n"
+            "    if (!sb) return;\n"
+            "    var totalSteps = threads.reduce(function(s, t) { return s + (t.steps_count || 0); }, 0);\n"
+            "    var lastUpdate = threads.length ? fmtTime(Math.max.apply(null, threads.map(function(t) { return t.updated_at || 0; }))) : '';\n"
+            "    sb.innerHTML = '<span>\\ud83d\\udcca ' + threads.length + ' thread' + (threads.length > 1 ? 's' : '') + '</span>'\n"
+            "      + '<span>|</span>'\n"
+            "      + '<span>' + totalSteps + ' \\u00e9tapes</span>'\n"
+            "      + '<span>|</span>'\n"
+            "      + '<span>' + lastUpdate + '</span>'\n"
+            "      + '<span style=\"flex:1;\"></span>'\n"
+            "      + '<span id=\"' + HUD_ID + '-auto-status\" style=\"color:' + (autoEnabled ? C.success : C.textMuted) + ';\">' + (autoEnabled ? '\\u25cf Auto ' + autoInterval + 's' : '\\u25cb Manuel') + '</span>';\n"
+            "    autoStatusEl = document.getElementById(HUD_ID + '-auto-status');\n"
+            "  }\n"
+            "\n"
+            "  // =============== GLOBAL API — Mise à jour live ===============\n"
+            "  window.echoMonitorUpdate = function(newThreads) {\n"
+            "    threads = newThreads;\n"
+            "    if (activeThreadIdx >= threads.length) activeThreadIdx = Math.max(0, threads.length - 1);\n"
+            "    renderSidebar();\n"
+            "    renderTree();\n"
+            "    updateStatusBar();\n"
+            "    var scrollArea = document.getElementById(HUD_ID + '-tree-scroll');\n"
+            "    if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;\n"
+            "  };\n"
+            "\n"
+            "  // =============== INIT ===============\n"
+            "  clampHud();\n"
+            "  renderSidebar();\n"
+            "  renderTree();\n"
+            "  updateAutoState();\n"
+            "  var initialScroll = document.getElementById(HUD_ID + '-tree-scroll');\n"
+            "  if (initialScroll) initialScroll.scrollTop = initialScroll.scrollHeight;\n"
+            "})();\n")
 
+    # =====================================================================
+    # ECHO IDENTITY VAULT — HUD Visualization
+    # =====================================================================
 
-  # =====================================================================
-  # ECHO IDENTITY VAULT — HUD Visualization
-  # =====================================================================
+    @staticmethod
+    def _generate_identity_vault_js(
+            accounts_json: str,
+            schemas_json: str = "{}") -> str:
+        """Génère le script JS complet du HUD ECHO Identity Vault avec schémas dynamiques."""
 
-  @staticmethod
-  def _generate_identity_vault_js(accounts_json: str, schemas_json: str = "{}") -> str:
-    """Génère le script JS complet du HUD ECHO Identity Vault avec schémas dynamiques."""
-    
-    return (
-      "(function() {\n"
-      "  const HUD_ID = 'echo-vault-identity';\n"
-      + EchoUI.get_mobile_guard_js('echo-vault-identity') + "\n"
-      + EchoUI.get_sanitize_html_js() + "\n"
-      "  if (document.getElementById(HUD_ID)) document.getElementById(HUD_ID).remove();\n"
-      "  let accounts = JSON.parse('" + accounts_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
-      "  let schemas = JSON.parse('" + schemas_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
-      "  const isDark = document.documentElement.classList.contains('dark') || document.documentElement.classList.contains('oled-dark');\n"
-      "  \n"
-      "  const vaultConfirm = function(msg, callback) {\n"
-      "    const overlay = document.createElement('div');\n"
-      "    overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:20000; display:flex; align-items:center; justify-content:center;';\n"
-      "    const dialog = document.createElement('div');\n"
-      "    dialog.style.cssText = 'background:' + (isDark ? '#262626' : '#f9f9f9') + '; border:1px solid ' + (isDark ? '#404040' : '#e5e5e5') + '; padding:16px; border-radius:8px; text-align:left; box-shadow:0 10px 40px rgba(0,0,0,0.5); width:90%; max-width:450px; box-sizing:border-box; color:' + (isDark ? '#ececec' : '#171717') + '; font-family:system-ui,sans-serif; max-height:85vh; overflow-y:auto;';\n"
-      "    const cleanMsg = window.echoSanitizeHTML ? window.echoSanitizeHTML(msg) : msg;\n"
-      "    dialog.innerHTML = '<div style=\"margin-bottom:20px; font-size:14px; line-height:1.5;\">' + cleanMsg + '</div>';\n"
-      "    const btnContainer = document.createElement('div');\n"
-      "    btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px; flex-wrap:wrap;';\n"
-      "    const btnCancel = document.createElement('button');\n"
-      "    btnCancel.textContent = 'Annuler';\n"
-      "    btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + (isDark ? '#404040' : '#e5e5e5') + '; background:transparent; color:' + (isDark ? '#ececec' : '#171717') + '; cursor:pointer; font-size:13px;';\n"
-      "    const btnOk = document.createElement('button');\n"
-      "    btnOk.textContent = 'Confirmer';\n"
-      "    btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:#89b4fa; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';\n"
-      "    btnCancel.onclick = function() { overlay.remove(); if(callback) callback(false); };\n"
-      "    btnOk.onclick = function() { overlay.remove(); if(callback) callback(true); };\n"
-      "    btnContainer.appendChild(btnCancel);\n"
-      "    btnContainer.appendChild(btnOk);\n"
-      "    dialog.appendChild(btnContainer);\n"
-      "    overlay.appendChild(dialog);\n"
-      "    document.body.appendChild(overlay);\n"
-      "  };\n"
-      "  const vaultAlert = function(msg) {\n"
-      "    vaultConfirm(msg, function(){});\n"
-      "  };\n"
-      "  \n"
-      "  const css = `\n"
-      "    #${HUD_ID} { position: fixed; top: 15vh; left: calc(50vw - 250px); width: 500px; max-height: 80vh; background: ${isDark ? '#262626' : '#f9f9f9'}; color: ${isDark ? '#ececec' : '#171717'}; border: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; border-radius: 8px; z-index: 10000; display: flex; flex-direction: column; font-family: system-ui, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.5); overflow: hidden; }\n"
-      "    #${HUD_ID}-header { padding: 12px 16px; background: ${isDark ? '#171717' : '#e5e5e5'}; border-bottom: 1px solid ${isDark ? '#404040' : '#d1d5db'}; display: flex; justify-content: space-between; align-items: center; cursor: move; user-select: none; font-weight: bold; font-size: 14px; }\n"
-      "    #${HUD_ID}-close { cursor: pointer; color: #ef4444; font-size: 18px; line-height: 1; }\n"
-      "    #${HUD_ID}-content { flex: 1; min-height: 0; padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }\n"
-      "    .vault-table { width: 100%; border-collapse: collapse; font-size: 13px; }\n"
-      "    .vault-table th, .vault-table td { text-align: left; padding: 8px; border-bottom: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; }\n"
-      "    .vault-table th { color: ${isDark ? '#a3a3a3' : '#6b7280'}; font-weight: 500; }\n"
-      "    .vault-badge { padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }\n"
-      "    .vault-badge.RO { background: rgba(34, 197, 94, 0.2); color: #22c55e; }\n"
-      "    .vault-badge.RW { background: rgba(239, 68, 68, 0.2); color: #ef4444; }\n"
-      "    .vault-btn-del { color: #ef4444; cursor: pointer; background: none; border: none; font-size: 14px; }\n"
-      "    .vault-btn-del:hover { color: #b91c1c; }\n"
-      "    .vault-form { display: flex; flex-direction: column; gap: 8px; background: ${isDark ? '#1a1a1a' : '#ffffff'}; padding: 12px; border: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; border-radius: 6px; }\n"
-      "    .vault-form input, .vault-form select { width: 100%; padding: 6px 8px; background: ${isDark ? '#262626' : '#f3f4f6'}; border: 1px solid ${isDark ? '#404040' : '#d1d5db'}; color: inherit; border-radius: 4px; box-sizing: border-box; font-size: 13px; }\n"
-      "    .vault-form select { appearance: auto; }\n"
-      "    .vault-btn { background: #3b82f6; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; transition: 0.2s; }\n"
-      "    .vault-btn:hover { background: #2563eb; }\n"
-      "  `;\n"
-      "  \n"
-      "  const style = document.createElement('style');\n"
-      "  style.textContent = css;\n"
-      "  document.head.appendChild(style);\n"
-      "  \n"
-      "  const container = document.createElement('div');\n"
-      "  container.id = HUD_ID;\n"
-      "  \n"
-      "  container.innerHTML = `\n"
-      "    <div id=\"${HUD_ID}-header\">\n"
-      "      <span>🔐 ECHO Identity Vault</span>\n"
-      "      <span id=\"${HUD_ID}-close\">&times;</span>\n"
-      "    </div>\n"
-      "    <div id=\"${HUD_ID}-content\">\n"
-      "      <div id=\"${HUD_ID}-list\"></div>\n"
-      "      <div class=\"vault-form\">\n"
-      "        <div id=\"vault-form-title\" style=\"font-weight:bold; margin-bottom:4px;\">➕ Configurer un service</div>\n"
-      "        <div style=\"display:flex; flex-direction:column; gap:8px;\">\n"
-      "          <select id=\"vault-input-service\" style=\"flex:1;\"></select>\n"
-      "          <input type=\"text\" id=\"vault-input-account\" placeholder=\"Nom du Secret (ex: LINKEDIN_COOKIE)\" autocomplete=\"off\" spellcheck=\"false\" />\n"
-      "        </div>\n"
-      "        <div id=\"vault-dynamic-fields\" style=\"display:flex; flex-direction:column; gap:8px;\"></div>\n"
-      "        <div style=\"display:flex; gap:8px;\">\n"
-      "          <button class=\"vault-btn\" id=\"vault-btn-cancel\" style=\"flex:0 0 auto; background: #6b7280;\">Annuler</button>\n"
-      "          <button class=\"vault-btn\" id=\"vault-btn-add\" style=\"flex:1;\">Enregistrer</button>\n"
-      "        </div>\n"
-      "      </div>\n"
-      "    </div>\n"
-      "  `;\n"
-      "  \n"
-      "  document.body.appendChild(container);\n"
-      "  \n"
-      "  // Populate Select Service & Dynamic Fields\n"
-      "  const serviceSelect = document.getElementById('vault-input-service');\n"
-      "  const dynamicFieldsContainer = document.getElementById('vault-dynamic-fields');\n"
-      "  \n"
-      "  Object.keys(schemas).forEach(key => {\n"
-      "    const opt = document.createElement('option');\n"
-      "    opt.value = key;\n"
-      "    opt.textContent = schemas[key].name || key;\n"
-      "    serviceSelect.appendChild(opt);\n"
-      "  });\n"
-      "  \n"
-      "  function renderDynamicFields() {\n"
-      "    const serviceKey = serviceSelect.value;\n"
-      "    dynamicFieldsContainer.innerHTML = '';\n"
-      "    if(serviceKey && schemas[serviceKey] && schemas[serviceKey].fields) {\n"
-      "      schemas[serviceKey].fields.forEach(f => {\n"
-      "        let helpIcon = '';\n"
-      "        if(f.help) {\n"
-      "          helpIcon = `<span title=\"${f.help.replace(/\"/g, '&quot;')}\" style=\"cursor:help; margin-left:4px; font-size:12px;\" onclick=\"alert(this.getAttribute('title'))\">ℹ️</span>`;\n"
-      "        }\n"
-      "        let inputHtml = '';\n"
-      "        if (f.type === 'select') {\n"
-      "          inputHtml = `<select class=\"vault-dynamic-input\" data-key=\"${f.id}\">`;\n"
-      "          if(f.options) {\n"
-      "            f.options.forEach(opt => {\n"
-      "              const val = opt.value !== undefined ? opt.value : opt;\n"
-      "              const lbl = opt.label !== undefined ? opt.label : opt;\n"
-      "              inputHtml += `<option value=\"${val}\">${lbl}</option>`;\n"
-      "            });\n"
-      "          }\n"
-      "          inputHtml += `</select>`;\n"
-      "        } else if (f.type === 'password') {\n"
-      "          inputHtml = `\n"
-      "            <div style=\"position:relative; display:flex; align-items:center;\">\n"
-      "              <input type=\"password\" class=\"vault-dynamic-input\" data-key=\"${f.id}\" placeholder=\"${f.placeholder || ''}\" autocomplete=\"new-password\" spellcheck=\"false\" style=\"width:100%; padding-right:24px; box-sizing:border-box;\" />\n"
-      "              <span onclick=\"const i=this.previousElementSibling; if(i.type==='password'){i.type='text'; this.style.opacity='1';} else {i.type='password'; this.style.opacity='0.5';}\" style=\"position:absolute; right:8px; cursor:pointer; opacity:0.5; font-size:14px; user-select:none;\" title=\"Afficher/Masquer\">👁️</span>\n"
-      "            </div>\n"
-      "          `;\n"
-      "        } else {\n"
-      "          inputHtml = `<input type=\"${f.type || 'text'}\" class=\"vault-dynamic-input\" data-key=\"${f.id}\" placeholder=\"${f.placeholder || ''}\" autocomplete=\"off\" spellcheck=\"false\" />`;\n"
-      "        }\n"
-      "        const fieldHtml = `\n"
-      "          <div style=\"display:flex; flex-direction:column; gap:2px;\">\n"
-      "            <label style=\"font-size:11px; font-weight:bold; color: ${isDark ? '#a3a3a3' : '#6b7280'};\">${f.label} ${helpIcon}</label>\n"
-      "            ${inputHtml}\n"
-      "          </div>\n"
-      "        `;\n"
-      "        dynamicFieldsContainer.insertAdjacentHTML('beforeend', fieldHtml);\n"
-      "      });\n"
-      "    }\n"
-      "  }\n"
-      "  function resetForm() {\n"
-      "    const accountInput = document.getElementById('vault-input-account');\n"
-      "    accountInput.disabled = false;\n"
-      "    accountInput.value = '';\n"
-      "    document.querySelectorAll('.vault-dynamic-input').forEach(input => input.value = '');\n"
-      "    const addBtn = document.getElementById('vault-btn-add');\n"
-      "    addBtn.textContent = 'Enregistrer';\n"
-      "    addBtn.style.background = '#3b82f6';\n"
-      "    document.getElementById('vault-form-title').textContent = '➕ Configurer un service';\n"
-      "  }\n"
-      "  serviceSelect.addEventListener('change', function() { renderDynamicFields(); resetForm(); });\n"
-      "  if(Object.keys(schemas).length > 0) renderDynamicFields();\n"
-      "  \n"
-      "  // Drag logic\n"
-      "  let isDragging = false, startX, startY, initialX, initialY;\n"
-      "  const header = document.getElementById(HUD_ID + '-header');\n"
-      "  header.addEventListener('mousedown', function(e) {\n"
-      "    if(e.target.id === HUD_ID + '-close') return;\n"
-      "    isDragging = true;\n"
-      "    startX = e.clientX; startY = e.clientY;\n"
-      "    const rect = container.getBoundingClientRect();\n"
-      "    initialX = rect.left; initialY = rect.top;\n"
-      "    document.addEventListener('mousemove', onMouseMove);\n"
-      "    document.addEventListener('mouseup', onMouseUp);\n"
-      "  });\n"
-      "  function onMouseMove(e) {\n"
-      "    if(!isDragging) return;\n"
-      "    const dx = e.clientX - startX;\n"
-      "    const dy = e.clientY - startY;\n"
-      "    container.style.left = (initialX + dx) + 'px';\n"
-      "    container.style.top = (initialY + dy) + 'px';\n"
-      "    container.style.bottom = 'auto';\n"
-      "    container.style.right = 'auto';\n"
-      "  }\n"
-      "  function onMouseUp() {\n"
-      "    isDragging = false;\n"
-      "    document.removeEventListener('mousemove', onMouseMove);\n"
-      "    document.removeEventListener('mouseup', onMouseUp);\n"
-      "  }\n"
-      "  \n"
-      "  // Render List\n"
-      "  function renderList() {\n"
-      "    const listDiv = document.getElementById(HUD_ID + '-list');\n"
-      "    if(accounts.length === 0) {\n"
-      "      listDiv.innerHTML = '<div style=\"text-align:center; padding:16px; opacity:0.6;\"><i>Aucun identifiant enregistré.</i></div>';\n"
-      "      return;\n"
-      "    }\n"
-      "    let html = '<table class=\"vault-table\"><thead><tr><th>Service</th><th>Nom</th><th width=\"30\"></th></tr></thead><tbody>';\n"
-      "    accounts.forEach(acc => {\n"
-      "      html += `<tr>\n"
-      "        <td>${acc.service}</td>\n"
-      "        <td><strong>${acc.account_id || ''}</strong></td>\n"
-      "        <td style=\"text-align:right;\">\n"
-      "          <button class=\"vault-btn-del\" style=\"color:#3b82f6; margin-right:8px;\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || ''}\" onclick=\"window.echoVaultEdit(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Écraser (Modifier)\">✏️</button>\n"
-      "          <button class=\"vault-btn-del\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || 'default'}\" onclick=\"window.echoVaultDelete(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Supprimer\">🗑️</button>\n"
-      "        </td>\n"
-      "      </tr>`;\n"
-      "    });\n"
-      "    html += '</tbody></table>';\n"
-      "    listDiv.innerHTML = html;\n"
-      "  }\n"
-      "  renderList();\n"
-      "  \n"
-      "  // Events\n"
-      "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
-      "    container.remove();\n"
-      "    if(window.echoVaultResolve) window.echoVaultResolve({action: 'close'});\n"
-      "  };\n"
-      "  \n"
-      "  document.getElementById('vault-btn-cancel').onclick = function() {\n"
-      "    resetForm();\n"
-      "  };\n"
-      "  \n"
-      "  document.getElementById('vault-btn-add').onclick = function() {\n"
-      "    const service = serviceSelect.value;\n"
-      "    \n"
-      "    if(!service) { vaultAlert('Veuillez sélectionner un Service.'); return; }\n"
-      "    \n"
-      "    const account_id = document.getElementById('vault-input-account').value.trim();\n"
-      "    if(!account_id) { vaultAlert('Veuillez saisir un Nom de Secret.'); return; }\n"
-      "    \n"
-      "    const credObj = {};\n"
-      "    let missingField = false;\n"
-      "    document.querySelectorAll('.vault-dynamic-input').forEach(input => {\n"
-      "      if(!input.value.trim()) missingField = true;\n"
-      "      credObj[input.dataset.key] = input.value.trim();\n"
-      "    });\n"
-      "    \n"
-      "    const processForm = function() {\n"
-      "      const credStr = JSON.stringify(credObj);\n"
-      "      document.querySelectorAll('.vault-dynamic-input').forEach(input => input.value = '');\n"
-      "      resetForm();\n"
-      "      if(window.echoVaultResolve) window.echoVaultResolve({action: 'add_account', service: service, account_id: account_id, credentials: credStr});\n"
-      "    };\n"
-      "    \n"
-      "    if(missingField) {\n"
-      "      vaultConfirm('Certains champs sont vides. Voulez-vous continuer ?', function(agreed) {\n"
-      "        if (agreed) processForm();\n"
-      "      });\n"
-      "    } else {\n"
-      "      processForm();\n"
-      "    }\n"
-      "  };\n"
-      "  \n"
-      "  window.echoVaultDelete = function(service, alias) {\n"
-      "    vaultConfirm('Supprimer les identifiants pour ' + service + ' ?', function(agreed) {\n"
-      "      if(agreed && window.echoVaultResolve) window.echoVaultResolve({action: 'delete_account', service: service, account_id: alias});\n"
-      "    });\n"
-      "  };\n"
-      "  \n"
-      "  window.echoVaultEdit = function(service, alias) {\n"
-      "    serviceSelect.value = service;\n"
-      "    if(serviceSelect.value !== service) {\n"
-      "      const opt = document.createElement('option');\n"
-      "      opt.value = service; opt.textContent = service;\n"
-      "      serviceSelect.appendChild(opt);\n"
-      "      serviceSelect.value = service;\n"
-      "    }\n"
-      "    renderDynamicFields();\n"
-      "    const accountInput = document.getElementById('vault-input-account');\n"
-      "    accountInput.value = alias;\n"
-      "    accountInput.disabled = true;\n"
-      "    const addBtn = document.getElementById('vault-btn-add');\n"
-      "    addBtn.textContent = 'Écraser les secrets';\n"
-      "    addBtn.style.background = '#f59e0b';\n"
-      "    document.getElementById('vault-form-title').textContent = '✏️ Modifier le service';\n"
-      "  };\n"
-      "  \n"
-      "  window.echoVaultUpdate = function(newAccountsJson) {\n"
-      "    accounts = JSON.parse(newAccountsJson);\n"
-      "    renderList();\n"
-      "  }\n"
-      "})();\n"
-      )
+        return (
+            "(function() {\n"
+            "  const HUD_ID = 'echo-vault-identity';\n"
+            + EchoUI.get_mobile_guard_js('echo-vault-identity') + "\n"
+            + EchoUI.get_sanitize_html_js() + "\n"
+            "  if (document.getElementById(HUD_ID)) document.getElementById(HUD_ID).remove();\n"
+            "  let accounts = JSON.parse('" + accounts_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
+            "  let schemas = JSON.parse('" + schemas_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
+            "  const isDark = document.documentElement.classList.contains('dark') || document.documentElement.classList.contains('oled-dark');\n"
+            "  \n"
+            "  const vaultConfirm = function(msg, callback) {\n"
+            "    const overlay = document.createElement('div');\n"
+            "    overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:20000; display:flex; align-items:center; justify-content:center;';\n"
+            "    const dialog = document.createElement('div');\n"
+            "    dialog.style.cssText = 'background:' + (isDark ? '#262626' : '#f9f9f9') + '; border:1px solid ' + (isDark ? '#404040' : '#e5e5e5') + '; padding:16px; border-radius:8px; text-align:left; box-shadow:0 10px 40px rgba(0,0,0,0.5); width:90%; max-width:450px; box-sizing:border-box; color:' + (isDark ? '#ececec' : '#171717') + '; font-family:system-ui,sans-serif; max-height:85vh; overflow-y:auto;';\n"
+            "    const cleanMsg = window.echoSanitizeHTML ? window.echoSanitizeHTML(msg) : msg;\n"
+            "    dialog.innerHTML = '<div style=\"margin-bottom:20px; font-size:14px; line-height:1.5;\">' + cleanMsg + '</div>';\n"
+            "    const btnContainer = document.createElement('div');\n"
+            "    btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px; flex-wrap:wrap;';\n"
+            "    const btnCancel = document.createElement('button');\n"
+            "    btnCancel.textContent = 'Annuler';\n"
+            "    btnCancel.style.cssText = 'padding:6px 14px; border-radius:4px; border:1px solid ' + (isDark ? '#404040' : '#e5e5e5') + '; background:transparent; color:' + (isDark ? '#ececec' : '#171717') + '; cursor:pointer; font-size:13px;';\n"
+            "    const btnOk = document.createElement('button');\n"
+            "    btnOk.textContent = 'Confirmer';\n"
+            "    btnOk.style.cssText = 'padding:6px 14px; border-radius:4px; border:none; background:#89b4fa; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:13px;';\n"
+            "    btnCancel.onclick = function() { overlay.remove(); if(callback) callback(false); };\n"
+            "    btnOk.onclick = function() { overlay.remove(); if(callback) callback(true); };\n"
+            "    btnContainer.appendChild(btnCancel);\n"
+            "    btnContainer.appendChild(btnOk);\n"
+            "    dialog.appendChild(btnContainer);\n"
+            "    overlay.appendChild(dialog);\n"
+            "    document.body.appendChild(overlay);\n"
+            "  };\n"
+            "  const vaultAlert = function(msg) {\n"
+            "    vaultConfirm(msg, function(){});\n"
+            "  };\n"
+            "  \n"
+            "  const css = `\n"
+            "    #${HUD_ID} { position: fixed; top: 15vh; left: calc(50vw - 250px); width: 500px; max-height: 80vh; background: ${isDark ? '#262626' : '#f9f9f9'}; color: ${isDark ? '#ececec' : '#171717'}; border: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; border-radius: 8px; z-index: 10000; display: flex; flex-direction: column; font-family: system-ui, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.5); overflow: hidden; }\n"
+            "    #${HUD_ID}-header { padding: 12px 16px; background: ${isDark ? '#171717' : '#e5e5e5'}; border-bottom: 1px solid ${isDark ? '#404040' : '#d1d5db'}; display: flex; justify-content: space-between; align-items: center; cursor: move; user-select: none; font-weight: bold; font-size: 14px; }\n"
+            "    #${HUD_ID}-close { cursor: pointer; color: #ef4444; font-size: 18px; line-height: 1; }\n"
+            "    #${HUD_ID}-content { flex: 1; min-height: 0; padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }\n"
+            "    .vault-table { width: 100%; border-collapse: collapse; font-size: 13px; }\n"
+            "    .vault-table th, .vault-table td { text-align: left; padding: 8px; border-bottom: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; }\n"
+            "    .vault-table th { color: ${isDark ? '#a3a3a3' : '#6b7280'}; font-weight: 500; }\n"
+            "    .vault-badge { padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }\n"
+            "    .vault-badge.RO { background: rgba(34, 197, 94, 0.2); color: #22c55e; }\n"
+            "    .vault-badge.RW { background: rgba(239, 68, 68, 0.2); color: #ef4444; }\n"
+            "    .vault-btn-del { color: #ef4444; cursor: pointer; background: none; border: none; font-size: 14px; }\n"
+            "    .vault-btn-del:hover { color: #b91c1c; }\n"
+            "    .vault-form { display: flex; flex-direction: column; gap: 8px; background: ${isDark ? '#1a1a1a' : '#ffffff'}; padding: 12px; border: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; border-radius: 6px; }\n"
+            "    .vault-form input, .vault-form select { width: 100%; padding: 6px 8px; background: ${isDark ? '#262626' : '#f3f4f6'}; border: 1px solid ${isDark ? '#404040' : '#d1d5db'}; color: inherit; border-radius: 4px; box-sizing: border-box; font-size: 13px; }\n"
+            "    .vault-form select { appearance: auto; }\n"
+            "    .vault-btn { background: #3b82f6; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; transition: 0.2s; }\n"
+            "    .vault-btn:hover { background: #2563eb; }\n"
+            "  `;\n"
+            "  \n"
+            "  const style = document.createElement('style');\n"
+            "  style.textContent = css;\n"
+            "  document.head.appendChild(style);\n"
+            "  \n"
+            "  const container = document.createElement('div');\n"
+            "  container.id = HUD_ID;\n"
+            "  \n"
+            "  container.innerHTML = `\n"
+            "    <div id=\"${HUD_ID}-header\">\n"
+            "      <span>🔐 ECHO Identity Vault</span>\n"
+            "      <span id=\"${HUD_ID}-close\">&times;</span>\n"
+            "    </div>\n"
+            "    <div id=\"${HUD_ID}-content\">\n"
+            "      <div id=\"${HUD_ID}-list\"></div>\n"
+            "      <div class=\"vault-form\">\n"
+            "        <div id=\"vault-form-title\" style=\"font-weight:bold; margin-bottom:4px;\">➕ Configurer un service</div>\n"
+            "        <div style=\"display:flex; flex-direction:column; gap:8px;\">\n"
+            "          <select id=\"vault-input-service\" style=\"flex:1;\"></select>\n"
+            "          <input type=\"text\" id=\"vault-input-account\" placeholder=\"Nom du Secret (ex: LINKEDIN_COOKIE)\" autocomplete=\"off\" spellcheck=\"false\" />\n"
+            "        </div>\n"
+            "        <div id=\"vault-dynamic-fields\" style=\"display:flex; flex-direction:column; gap:8px;\"></div>\n"
+            "        <div style=\"display:flex; gap:8px;\">\n"
+            "          <button class=\"vault-btn\" id=\"vault-btn-cancel\" style=\"flex:0 0 auto; background: #6b7280;\">Annuler</button>\n"
+            "          <button class=\"vault-btn\" id=\"vault-btn-add\" style=\"flex:1;\">Enregistrer</button>\n"
+            "        </div>\n"
+            "      </div>\n"
+            "    </div>\n"
+            "  `;\n"
+            "  \n"
+            "  document.body.appendChild(container);\n"
+            "  \n"
+            "  // Populate Select Service & Dynamic Fields\n"
+            "  const serviceSelect = document.getElementById('vault-input-service');\n"
+            "  const dynamicFieldsContainer = document.getElementById('vault-dynamic-fields');\n"
+            "  \n"
+            "  Object.keys(schemas).forEach(key => {\n"
+            "    const opt = document.createElement('option');\n"
+            "    opt.value = key;\n"
+            "    opt.textContent = schemas[key].name || key;\n"
+            "    serviceSelect.appendChild(opt);\n"
+            "  });\n"
+            "  \n"
+            "  function renderDynamicFields() {\n"
+            "    const serviceKey = serviceSelect.value;\n"
+            "    dynamicFieldsContainer.innerHTML = '';\n"
+            "    if(serviceKey && schemas[serviceKey] && schemas[serviceKey].fields) {\n"
+            "      schemas[serviceKey].fields.forEach(f => {\n"
+            "        let helpIcon = '';\n"
+            "        if(f.help) {\n"
+            "          helpIcon = `<span title=\"${f.help.replace(/\"/g, '&quot;')}\" style=\"cursor:help; margin-left:4px; font-size:12px;\" onclick=\"alert(this.getAttribute('title'))\">ℹ️</span>`;\n"
+            "        }\n"
+            "        let inputHtml = '';\n"
+            "        if (f.type === 'select') {\n"
+            "          inputHtml = `<select class=\"vault-dynamic-input\" data-key=\"${f.id}\">`;\n"
+            "          if(f.options) {\n"
+            "            f.options.forEach(opt => {\n"
+            "              const val = opt.value !== undefined ? opt.value : opt;\n"
+            "              const lbl = opt.label !== undefined ? opt.label : opt;\n"
+            "              inputHtml += `<option value=\"${val}\">${lbl}</option>`;\n"
+            "            });\n"
+            "          }\n"
+            "          inputHtml += `</select>`;\n"
+            "        } else if (f.type === 'password') {\n"
+            "          inputHtml = `\n"
+            "            <div style=\"position:relative; display:flex; align-items:center;\">\n"
+            "              <input type=\"password\" class=\"vault-dynamic-input\" data-key=\"${f.id}\" placeholder=\"${f.placeholder || ''}\" autocomplete=\"new-password\" spellcheck=\"false\" style=\"width:100%; padding-right:24px; box-sizing:border-box;\" />\n"
+            "              <span onclick=\"const i=this.previousElementSibling; if(i.type==='password'){i.type='text'; this.style.opacity='1';} else {i.type='password'; this.style.opacity='0.5';}\" style=\"position:absolute; right:8px; cursor:pointer; opacity:0.5; font-size:14px; user-select:none;\" title=\"Afficher/Masquer\">👁️</span>\n"
+            "            </div>\n"
+            "          `;\n"
+            "        } else {\n"
+            "          inputHtml = `<input type=\"${f.type || 'text'}\" class=\"vault-dynamic-input\" data-key=\"${f.id}\" placeholder=\"${f.placeholder || ''}\" autocomplete=\"off\" spellcheck=\"false\" />`;\n"
+            "        }\n"
+            "        const fieldHtml = `\n"
+            "          <div style=\"display:flex; flex-direction:column; gap:2px;\">\n"
+            "            <label style=\"font-size:11px; font-weight:bold; color: ${isDark ? '#a3a3a3' : '#6b7280'};\">${f.label} ${helpIcon}</label>\n"
+            "            ${inputHtml}\n"
+            "          </div>\n"
+            "        `;\n"
+            "        dynamicFieldsContainer.insertAdjacentHTML('beforeend', fieldHtml);\n"
+            "      });\n"
+            "    }\n"
+            "  }\n"
+            "  function resetForm() {\n"
+            "    const accountInput = document.getElementById('vault-input-account');\n"
+            "    accountInput.disabled = false;\n"
+            "    accountInput.value = '';\n"
+            "    document.querySelectorAll('.vault-dynamic-input').forEach(input => input.value = '');\n"
+            "    const addBtn = document.getElementById('vault-btn-add');\n"
+            "    addBtn.textContent = 'Enregistrer';\n"
+            "    addBtn.style.background = '#3b82f6';\n"
+            "    document.getElementById('vault-form-title').textContent = '➕ Configurer un service';\n"
+            "  }\n"
+            "  serviceSelect.addEventListener('change', function() { renderDynamicFields(); resetForm(); });\n"
+            "  if(Object.keys(schemas).length > 0) renderDynamicFields();\n"
+            "  \n"
+            "  // Drag logic\n"
+            "  let isDragging = false, startX, startY, initialX, initialY;\n"
+            "  const header = document.getElementById(HUD_ID + '-header');\n"
+            "  header.addEventListener('mousedown', function(e) {\n"
+            "    if(e.target.id === HUD_ID + '-close') return;\n"
+            "    isDragging = true;\n"
+            "    startX = e.clientX; startY = e.clientY;\n"
+            "    const rect = container.getBoundingClientRect();\n"
+            "    initialX = rect.left; initialY = rect.top;\n"
+            "    document.addEventListener('mousemove', onMouseMove);\n"
+            "    document.addEventListener('mouseup', onMouseUp);\n"
+            "  });\n"
+            "  function onMouseMove(e) {\n"
+            "    if(!isDragging) return;\n"
+            "    const dx = e.clientX - startX;\n"
+            "    const dy = e.clientY - startY;\n"
+            "    container.style.left = (initialX + dx) + 'px';\n"
+            "    container.style.top = (initialY + dy) + 'px';\n"
+            "    container.style.bottom = 'auto';\n"
+            "    container.style.right = 'auto';\n"
+            "  }\n"
+            "  function onMouseUp() {\n"
+            "    isDragging = false;\n"
+            "    document.removeEventListener('mousemove', onMouseMove);\n"
+            "    document.removeEventListener('mouseup', onMouseUp);\n"
+            "  }\n"
+            "  \n"
+            "  // Render List\n"
+            "  function renderList() {\n"
+            "    const listDiv = document.getElementById(HUD_ID + '-list');\n"
+            "    if(accounts.length === 0) {\n"
+            "      listDiv.innerHTML = '<div style=\"text-align:center; padding:16px; opacity:0.6;\"><i>Aucun identifiant enregistré.</i></div>';\n"
+            "      return;\n"
+            "    }\n"
+            "    let html = '<table class=\"vault-table\"><thead><tr><th>Service</th><th>Nom</th><th width=\"30\"></th></tr></thead><tbody>';\n"
+            "    accounts.forEach(acc => {\n"
+            "      html += `<tr>\n"
+            "        <td>${acc.service}</td>\n"
+            "        <td><strong>${acc.account_id || ''}</strong></td>\n"
+            "        <td style=\"text-align:right;\">\n"
+            "          <button class=\"vault-btn-del\" style=\"color:#3b82f6; margin-right:8px;\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || ''}\" onclick=\"window.echoVaultEdit(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Écraser (Modifier)\">✏️</button>\n"
+            "          <button class=\"vault-btn-del\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || 'default'}\" onclick=\"window.echoVaultDelete(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Supprimer\">🗑️</button>\n"
+            "        </td>\n"
+            "      </tr>`;\n"
+            "    });\n"
+            "    html += '</tbody></table>';\n"
+            "    listDiv.innerHTML = html;\n"
+            "  }\n"
+            "  renderList();\n"
+            "  \n"
+            "  // Events\n"
+            "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
+            "    container.remove();\n"
+            "    if(window.echoVaultResolve) window.echoVaultResolve({action: 'close'});\n"
+            "  };\n"
+            "  \n"
+            "  document.getElementById('vault-btn-cancel').onclick = function() {\n"
+            "    resetForm();\n"
+            "  };\n"
+            "  \n"
+            "  document.getElementById('vault-btn-add').onclick = function() {\n"
+            "    const service = serviceSelect.value;\n"
+            "    \n"
+            "    if(!service) { vaultAlert('Veuillez sélectionner un Service.'); return; }\n"
+            "    \n"
+            "    const account_id = document.getElementById('vault-input-account').value.trim();\n"
+            "    if(!account_id) { vaultAlert('Veuillez saisir un Nom de Secret.'); return; }\n"
+            "    \n"
+            "    const credObj = {};\n"
+            "    let missingField = false;\n"
+            "    document.querySelectorAll('.vault-dynamic-input').forEach(input => {\n"
+            "      if(!input.value.trim()) missingField = true;\n"
+            "      credObj[input.dataset.key] = input.value.trim();\n"
+            "    });\n"
+            "    \n"
+            "    const processForm = function() {\n"
+            "      const credStr = JSON.stringify(credObj);\n"
+            "      document.querySelectorAll('.vault-dynamic-input').forEach(input => input.value = '');\n"
+            "      resetForm();\n"
+            "      if(window.echoVaultResolve) window.echoVaultResolve({action: 'add_account', service: service, account_id: account_id, credentials: credStr});\n"
+            "    };\n"
+            "    \n"
+            "    if(missingField) {\n"
+            "      vaultConfirm('Certains champs sont vides. Voulez-vous continuer ?', function(agreed) {\n"
+            "        if (agreed) processForm();\n"
+            "      });\n"
+            "    } else {\n"
+            "      processForm();\n"
+            "    }\n"
+            "  };\n"
+            "  \n"
+            "  window.echoVaultDelete = function(service, alias) {\n"
+            "    vaultConfirm('Supprimer les identifiants pour ' + service + ' ?', function(agreed) {\n"
+            "      if(agreed && window.echoVaultResolve) window.echoVaultResolve({action: 'delete_account', service: service, account_id: alias});\n"
+            "    });\n"
+            "  };\n"
+            "  \n"
+            "  window.echoVaultEdit = function(service, alias) {\n"
+            "    serviceSelect.value = service;\n"
+            "    if(serviceSelect.value !== service) {\n"
+            "      const opt = document.createElement('option');\n"
+            "      opt.value = service; opt.textContent = service;\n"
+            "      serviceSelect.appendChild(opt);\n"
+            "      serviceSelect.value = service;\n"
+            "    }\n"
+            "    renderDynamicFields();\n"
+            "    const accountInput = document.getElementById('vault-input-account');\n"
+            "    accountInput.value = alias;\n"
+            "    accountInput.disabled = true;\n"
+            "    const addBtn = document.getElementById('vault-btn-add');\n"
+            "    addBtn.textContent = 'Écraser les secrets';\n"
+            "    addBtn.style.background = '#f59e0b';\n"
+            "    document.getElementById('vault-form-title').textContent = '✏️ Modifier le service';\n"
+            "  };\n"
+            "  \n"
+            "  window.echoVaultUpdate = function(newAccountsJson) {\n"
+            "    accounts = JSON.parse(newAccountsJson);\n"
+            "    renderList();\n"
+            "  }\n"
+            "})();\n"
+        )

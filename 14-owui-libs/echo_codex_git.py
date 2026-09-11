@@ -1,16 +1,18 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.5
+version: 1.6
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.6: Asymétrie de parcours de fichiers (os.listdir vs os.walk) entre main et sandbox.
 # 1.5: Prise en charge des dossiers de workspaces isolés (main/sandbox).
 # 1.4: Wrapper dulwich pour la gestion de dépôts Git par user/chat.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # 1.3: Fix bytes.fromhex → encode('ascii') pour object_store dulwich.
-# 1.2: Ajout rename_file() (rename Git + commit). list_files tri par mtime desc.
+# 1.2: Ajout rename_file() (rename Git + commit). list_files tri par mtime
+# desc.
 
 import os
 import re
@@ -64,10 +66,11 @@ class CodexRepo:
         """Crée un répertoire vide (non tracké par Git mais visible dans l'UI)."""
         safe_name = self._secure_path(path)
         dirpath = os.path.join(self.repo_path, safe_name)
-        
+
         if os.path.exists(dirpath) and not os.path.isdir(dirpath):
-            raise FileExistsError(f"Impossible de créer le dossier '{path}'. Un fichier porte déjà ce nom.")
-            
+            raise FileExistsError(
+                f"Impossible de créer le dossier '{path}'. Un fichier porte déjà ce nom.")
+
         os.makedirs(dirpath, exist_ok=True)
 
     def commit_file(self, filename: str, content: str, message: str,
@@ -87,7 +90,8 @@ class CodexRepo:
             author=f"{author} <codex@echo.local>".encode("utf-8"),
             committer=f"{author} <codex@echo.local>".encode("utf-8"),
         )
-        return commit_sha.decode("ascii") if isinstance(commit_sha, bytes) else str(commit_sha)
+        return commit_sha.decode("ascii") if isinstance(
+            commit_sha, bytes) else str(commit_sha)
 
     def read_file(self, filename: str, start_line: int = None,
                   end_line: int = None) -> Optional[dict]:
@@ -107,7 +111,12 @@ class CodexRepo:
             s = max(1, start_line) - 1
             e = min(total, end_line)
             content = "".join(lines[s:e])
-            return {"content": content, "total_lines": total, "range": [s + 1, e]}
+            return {
+                "content": content,
+                "total_lines": total,
+                "range": [
+                    s + 1,
+                    e]}
 
         return {"content": "".join(lines), "total_lines": total, "range": None}
 
@@ -120,7 +129,8 @@ class CodexRepo:
 
         if os.path.isdir(target_path):
             if os.listdir(target_path):  # Non vide
-                raise ValueError(f"Le répertoire '{path}' n'est pas vide. Suppression annulée.")
+                raise ValueError(
+                    f"Le répertoire '{path}' n'est pas vide. Suppression annulée.")
             os.rmdir(target_path)
             # Git ne traque pas les dossiers vides, mais on lance un cleanup
             paths_to_rm = []
@@ -129,15 +139,18 @@ class CodexRepo:
             paths_to_rm = [safe_name]
 
         if paths_to_rm:
-            try: porcelain.rm(self.repo_path, paths=paths_to_rm)
-            except: pass
+            try:
+                porcelain.rm(self.repo_path, paths=paths_to_rm)
+            except BaseException:
+                pass
         commit_sha = porcelain.commit(
             self.repo_path,
             message=message.encode("utf-8"),
             author=b"ECHO Codex <codex@echo.local>",
             committer=b"ECHO Codex <codex@echo.local>",
         )
-        return commit_sha.decode("ascii") if isinstance(commit_sha, bytes) else str(commit_sha)
+        return commit_sha.decode("ascii") if isinstance(
+            commit_sha, bytes) else str(commit_sha)
 
     def rename_file(self, old_name: str, new_name: str, message: str,
                     author: str = "ECHO Codex") -> Optional[str]:
@@ -162,7 +175,8 @@ class CodexRepo:
             author=f"{author} <codex@echo.local>".encode("utf-8"),
             committer=f"{author} <codex@echo.local>".encode("utf-8"),
         )
-        return commit_sha.decode("ascii") if isinstance(commit_sha, bytes) else str(commit_sha)
+        return commit_sha.decode("ascii") if isinstance(
+            commit_sha, bytes) else str(commit_sha)
 
     def list_files(self) -> List[dict]:
         """Liste tous les fichiers et sous-dossiers trackés ou non (si sandbox).
@@ -177,46 +191,81 @@ class CodexRepo:
         except Exception:
             tracked_files = set()
 
-        for root, dirs, filenames in os.walk(self.repo_path):
-            # Ignorer le dossier .git et autres dossiers cachés
-            dirs[:] = [d for d in dirs if not d.startswith(".")]
+        is_sandbox = os.path.basename(self.repo_path) == "sandbox"
 
-            for d in dirs:
-                rel_dir = os.path.relpath(os.path.join(root, d), self.repo_path).replace("\\", "/")
-                files.append({
-                    "filename": rel_dir,
-                    "type": "directory",
-                    "lang": "folder",
-                    "lines": 0,
-                    "size_bytes": 0,
-                    "mtime": os.path.getmtime(os.path.join(root, d))
-                })
+        if is_sandbox:
+            for root, dirs, filenames in os.walk(self.repo_path):
+                # Ignorer le dossier .git et autres dossiers cachés
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
 
-            for f in filenames:
-                if f.startswith("."): continue
-                rel_file = os.path.relpath(os.path.join(root, f), self.repo_path).replace("\\", "/")
-                # Dans un vrai repo (main), on peut vouloir filtrer les untracked. 
-                # Mais en sandbox, on montre tout. Pour l'UI, on affiche tous les fichiers réels.
-                
-                filepath = os.path.join(root, f)
+                for d in dirs:
+                    rel_dir = os.path.relpath(
+                        os.path.join(
+                            root, d), self.repo_path).replace(
+                        "\\", "/")
+                    files.append({
+                        "filename": rel_dir,
+                        "type": "directory",
+                        "lang": "folder",
+                        "lines": 0,
+                        "size_bytes": 0,
+                        "mtime": os.path.getmtime(os.path.join(root, d))
+                    })
+
+                for f in filenames:
+                    if f.startswith("."):
+                        continue
+                    rel_file = os.path.relpath(
+                        os.path.join(
+                            root, f), self.repo_path).replace(
+                        "\\", "/")
+
+                    filepath = os.path.join(root, f)
+                    try:
+                        with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
+                            line_count = sum(1 for _ in fh)
+                        size = os.path.getsize(filepath)
+                        mtime = os.path.getmtime(filepath)
+                    except BaseException:
+                        line_count = 0
+                        size = 0
+                        mtime = 0
+
+                    files.append({
+                        "filename": rel_file,
+                        "type": "file",
+                        "lang": self.detect_language(f),
+                        "lines": line_count,
+                        "size_bytes": size,
+                        "mtime": mtime,
+                    })
+        else:
+            # MAIN Workspace: Itération plate (os.listdir)
+            for entry in os.listdir(self.repo_path):
+                if entry.startswith(".") or entry not in tracked_files:
+                    continue
+                filepath = os.path.join(self.repo_path, entry)
+                if not os.path.isfile(filepath):
+                    continue
                 try:
                     with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
                         line_count = sum(1 for _ in fh)
                     size = os.path.getsize(filepath)
                     mtime = os.path.getmtime(filepath)
-                except:
+                except BaseException:
                     line_count = 0
                     size = 0
                     mtime = 0
 
                 files.append({
-                    "filename": rel_file,
+                    "filename": entry,
                     "type": "file",
-                    "lang": self.detect_language(f),
+                    "lang": self.detect_language(entry),
                     "lines": line_count,
                     "size_bytes": size,
                     "mtime": mtime,
                 })
+
         return sorted(files, key=lambda x: x["mtime"], reverse=True)
 
     def search_in_file(self, filename: str, pattern: str,
@@ -232,10 +281,12 @@ class CodexRepo:
             try:
                 if is_regex:
                     if re.search(pattern, line):
-                        matches.append({"line_number": i, "line_content": line})
+                        matches.append(
+                            {"line_number": i, "line_content": line})
                 else:
                     if pattern in line:
-                        matches.append({"line_number": i, "line_content": line})
+                        matches.append(
+                            {"line_number": i, "line_content": line})
             except re.error:
                 # Regex invalide, fallback en recherche littérale
                 if pattern in line:
@@ -253,7 +304,8 @@ class CodexRepo:
         """Retourne l'historique des commits. Si filename, filtré pour ce fichier."""
         entries = []
         try:
-            walker = self.repo.get_walker(max_entries=limit * 3)  # Marge pour le filtrage
+            walker = self.repo.get_walker(
+                max_entries=limit * 3)  # Marge pour le filtrage
             for walk_entry in walker:
                 commit = walk_entry.commit
                 msg = commit.message.decode("utf-8", errors="replace").strip()
@@ -261,7 +313,8 @@ class CodexRepo:
                 sha = commit.id.decode("ascii")
 
                 if filename:
-                    # Filtrage : vérifier si le fichier est modifié dans ce commit
+                    # Filtrage : vérifier si le fichier est modifié dans ce
+                    # commit
                     safe_name = self._secure_path(filename)
                     if not self._file_in_commit(commit, safe_name):
                         continue
@@ -287,7 +340,7 @@ class CodexRepo:
             for item in tree.items():
                 if item.path.decode("utf-8") == filename:
                     return True
-        except:
+        except BaseException:
             pass
         return False
 
@@ -318,7 +371,10 @@ class CodexRepo:
         except Exception as e:
             return f"Erreur diff: {e}"
 
-    def get_file_at_commit(self, filename: str, commit_hash: str) -> Optional[str]:
+    def get_file_at_commit(
+            self,
+            filename: str,
+            commit_hash: str) -> Optional[str]:
         """Lit le contenu d'un fichier à un commit donné (checkout virtuel)."""
         try:
             safe_name = self._secure_path(filename)
@@ -362,7 +418,7 @@ class CodexRepo:
         total_commits = 0
         try:
             total_commits = len(list(self.repo.get_walker()))
-        except:
+        except BaseException:
             pass
 
         return {
