@@ -60,6 +60,16 @@ class CodexRepo:
             raise ValueError("Path traversal non autorisé.")
         return path
 
+    def create_directory(self, path: str) -> None:
+        """Crée un répertoire vide (non tracké par Git mais visible dans l'UI)."""
+        safe_name = self._secure_path(path)
+        dirpath = os.path.join(self.repo_path, safe_name)
+        
+        if os.path.exists(dirpath) and not os.path.isdir(dirpath):
+            raise FileExistsError(f"Impossible de créer le dossier '{path}'. Un fichier porte déjà ce nom.")
+            
+        os.makedirs(dirpath, exist_ok=True)
+
     def commit_file(self, filename: str, content: str, message: str,
                     author: str = "ECHO Codex") -> Optional[str]:
         """Crée ou met à jour un fichier, avec création automatique des sous-dossiers. Retourne le hash du commit."""

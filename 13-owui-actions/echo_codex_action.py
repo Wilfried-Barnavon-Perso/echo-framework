@@ -415,31 +415,56 @@ class Action:
                         await events.toast(f"🗑️ Codex réinitialisé ({file_count} fichiers supprimés).", "success")
                         break
 
-                    # ---- NOUVEAU FICHIER ----
+                    # ---- NOUVEAU FICHIER / DOSSIER ----
                     elif action_type == "new_file":
                         filename = response.get("filename", "")
                         if not filename:
                             continue
 
-                        lang = CodexRepo.detect_language(filename)
-                        commit_hash = repo.commit_file(filename, "", f"Create {filename}")
-                        state.save_resource(
-                            id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                            git_tracked=True, language=lang, lines=0,
-                            last_commit=commit_hash[:12], commit_msg=f"Create {filename}", storage_path=f"codex/{filename}",
-                        )
+                        is_dir = filename.endswith("/")
+                        
+                        try:
+                            if is_dir:
+                                repo.create_directory(filename)
+                                clean_name = filename.strip("/")
+                                state.save_resource(
+                                    id=clean_name, name=clean_name, resource_type='codex', 
+                                    status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                                    git_tracked=False, language="folder", lines=0,
+                                    item_type="directory"
+                                )
+                                commit_hash = "Dossier"
+                            else:
+                                lang = CodexRepo.detect_language(filename)
+                                commit_hash = repo.commit_file(filename, "", f"Create {filename}")
+                                state.save_resource(
+                                    id=filename, name=filename, resource_type='codex', 
+                                    status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                                    git_tracked=True, language=lang, lines=0,
+                                    last_commit=commit_hash[:12], commit_msg=f"Create {filename}", 
+                                    storage_path=f"codex/{filename}", item_type="file"
+                                )
 
-                        updated_files = repo.list_files()
-                        files_json = json.dumps(updated_files).decode("utf-8")
-                        escaped_content = json.dumps("").decode("utf-8")
-                        escaped_name = json.dumps(filename).decode("utf-8")
-                
-                        refresh_code = (
-                            f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
-                            f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
-                            f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
-                        )
-                        await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+                            updated_files = repo.list_files()
+                            files_json = json.dumps(updated_files).decode("utf-8")
+                            escaped_content = json.dumps("").decode("utf-8")
+                            escaped_name = json.dumps(filename.strip("/")).decode("utf-8")
+                    
+                            refresh_code = (
+                                f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
+                                f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                            )
+                            # On ne charge pas de contenu vide dans l'éditeur si on vient de créer un dossier
+                            if not is_dir:
+                                refresh_code += f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                
+                            await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+
+                        except Exception as e:
+                            err_msg = json.dumps(str(e)).decode("utf-8")
+                            err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
+                            await __event_call__({"type": "execute", "data": {"code": err_code}})
+                            continue
 
                     # ---- CHARGEMENT CONTENU FICHIER ----
                     elif action_type == "load_file":
