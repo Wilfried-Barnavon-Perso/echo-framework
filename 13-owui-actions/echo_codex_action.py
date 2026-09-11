@@ -30,6 +30,15 @@ icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAw
 # 2.1: Fix Race Condition au chargement initial (Pull au lieu de Push).
 # Affichage direct du contenu vide lors de la création manuelle (new_file).
 
+import sys
+import orjson as json
+import logging
+from typing import Optional
+from pydantic import BaseModel, Field
+
+# Ajout dynamique du chemin pour les libs ECHO avant l'import
+sys.path.append("/app/backend/echo_libs")
+
 from echo_ui import EchoUI
 from echo_codex_git import CodexRepo
 from echo_state_manager import EchoStateManager
@@ -42,13 +51,6 @@ from echo_constants import (
     FILE_INGESTION_STATUS,
     ECHO_CODEX_WORKSPACES
 )
-import sys
-import orjson as json
-import logging
-from typing import Optional
-from pydantic import BaseModel, Field
-
-sys.path.append("/app/backend/echo_libs")
 
 logger = logging.getLogger(__name__)
 

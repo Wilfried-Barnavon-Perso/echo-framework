@@ -24,14 +24,15 @@ description: Composant système interne : ECHO UI Rendering Engine.
 # (pills) pour les options de prompt.
 
 
-from echo_constants import ECHO_GLOBAL_TENANT_PROJECT_ID
-from fastapi.responses import HTMLResponse
 import sys
 import orjson as std_json
 from typing import Optional, Any, List, Dict
+from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
+
+from echo_constants import ECHO_GLOBAL_TENANT_PROJECT_ID
 
 
 class EchoRichUI:
