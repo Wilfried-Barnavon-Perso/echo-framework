@@ -1427,11 +1427,14 @@ return new Promise(function(resolve) {{
                   input.style.cssText = `flex:1; background:rgba(0,0,0,0.4); border:1px solid ${{isDark ? '#cba6f7' : '#8839ef'}}; color:inherit; font-family:inherit; font-size:inherit; padding:1px 4px; outline:none; border-radius:3px; margin-right:8px;`;
                   input.onclick = (ev) => ev.preventDefault();
                   const finalize = () => {{
-                    if (input.parentNode) {{
+                    if (input.parentNode && !input.disabled) {{
                       const newName = input.value.trim();
                       if (newName && newName !== child.name) {{
+                        input.disabled = true;
                         const parentPath = child.path.substring(0, child.path.lastIndexOf('/') + 1);
-                        window.echoCodexResolve({{action:'rename_file', old_name:child.path, new_name: parentPath + newName}});
+                        window.echoCodexResolve({{action:'rename_file', old_name:child.path, new_name: parentPath + newName, current_file:currentFile}});
+                        summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{newName}}</span>`;
+                        summary.appendChild(actionGroup);
                       }} else {{
                         summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
                         summary.appendChild(actionGroup);
@@ -1503,11 +1506,13 @@ return new Promise(function(resolve) {{
                   input.style.cssText = `flex:1; background:rgba(0,0,0,0.4); border:1px solid ${{accentColor}}; color:inherit; font-family:inherit; font-size:inherit; padding:1px 4px; outline:none; border-radius:3px; margin-right:8px;`;
                   input.onclick = (ev) => ev.stopPropagation();
                   const finalize = () => {{
-                    if (input.parentNode) {{
+                    if (input.parentNode && !input.disabled) {{
                       const newName = input.value.trim();
                       if (newName && newName !== child.name) {{
+                        input.disabled = true;
                         const parentPath = f.filename.substring(0, f.filename.lastIndexOf('/') + 1);
-                        window.echoCodexResolve({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName}});
+                        window.echoCodexResolve({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName, current_file:currentFile}});
+                        nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + newName}}`;
                       }} else {{
                         nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
                       }}
@@ -1578,11 +1583,13 @@ return new Promise(function(resolve) {{
               input.style.cssText = `flex:1; background:rgba(0,0,0,0.4); border:1px solid ${{accentColor}}; color:inherit; font-family:inherit; font-size:inherit; padding:1px 4px; outline:none; border-radius:3px; margin-right:8px;`;
               input.onclick = (ev) => ev.stopPropagation();
               const finalize = () => {{
-                if (input.parentNode) {{
+                if (input.parentNode && !input.disabled) {{
                   const newName = input.value.trim();
                   if (newName && newName !== baseName) {{
+                    input.disabled = true;
                     const parentPath = f.filename.substring(0, f.filename.lastIndexOf('/') + 1);
-                    window.echoCodexResolve({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName}});
+                    window.echoCodexResolve({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName, current_file:currentFile}});
+                    nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + newName}}`;
                   }} else {{
                     nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + f.filename}}`;
                   }}
@@ -2406,7 +2413,7 @@ return new Promise(function(resolve) {{
             if (newFilename !== currentFile) {{
               window.echoCustomConfirm('Renommer ' + currentFile + ' \u2192 ' + newFilename + ' ?', (agreed) => {{
                 if (agreed) {{
-                  window.echoCodexResolve({{action:'rename_file', old_name:currentFile, new_name:newFilename}});
+                  window.echoCodexResolve({{action:'rename_file', old_name:currentFile, new_name:newFilename, current_file:currentFile}});
                 }}
               }});
             }}

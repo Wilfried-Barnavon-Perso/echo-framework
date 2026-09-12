@@ -168,9 +168,37 @@ class CodexRepo:
         if os.path.exists(new_path):
             return None  # Nom déjà pris
 
+        paths_to_rm = []
+        if os.path.isdir(old_path):
+            for root, _, files in os.walk(old_path):
+                for f in files:
+                    rel_path = os.path.relpath(os.path.join(root, f), self.repo_path)
+                    paths_to_rm.append(rel_path.replace('\\', '/'))
+        else:
+            paths_to_rm = [safe_old.replace('\\', '/')]
+
         os.rename(old_path, new_path)
-        porcelain.add(self.repo_path, paths=[safe_new])
-        porcelain.rm(self.repo_path, paths=[safe_old])
+
+        paths_to_add = []
+        if os.path.isdir(new_path):
+            for root, _, files in os.walk(new_path):
+                for f in files:
+                    rel_path = os.path.relpath(os.path.join(root, f), self.repo_path)
+                    paths_to_add.append(rel_path.replace('\\', '/'))
+        else:
+            paths_to_add = [safe_new.replace('\\', '/')]
+
+        if paths_to_rm:
+            try:
+                porcelain.rm(self.repo_path, paths=paths_to_rm)
+            except BaseException:
+                pass
+                
+        if paths_to_add:
+            try:
+                porcelain.add(self.repo_path, paths=paths_to_add)
+            except BaseException:
+                pass
         commit_sha = porcelain.commit(
             self.repo_path,
             message=message.encode("utf-8"),

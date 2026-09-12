@@ -660,17 +660,34 @@ class Action:
                                 )
 
                             # Refresh tree + charger le fichier renommé
-                            files_json = json.dumps(
-                                updated_files).decode("utf-8")
-                            escaped_name = json.dumps(new_name).decode("utf-8")
-                            content = result["content"] if result else ""
-                            escaped_content = json.dumps(
-                                content).decode("utf-8")
-                            combined = (
-                                f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
-                                f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
-                                f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
-                            )
+                            files_json = json.dumps(updated_files).decode("utf-8")
+                            current_file = response.get("current_file", "")
+                            
+                            if is_dir:
+                                if current_file.startswith(old_name + "/"):
+                                    new_current_file = new_name + current_file[len(old_name):]
+                                    result = repo.read_file(new_current_file)
+                                    content = result["content"] if result else ""
+                                    escaped_name = json.dumps(new_current_file).decode("utf-8")
+                                    escaped_content = json.dumps(content).decode("utf-8")
+                                    combined = (
+                                        f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
+                                        f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
+                                        f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                    )
+                                else:
+                                    combined = (
+                                        f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
+                                    )
+                            else:
+                                escaped_name = json.dumps(new_name).decode("utf-8")
+                                content = result["content"] if result else ""
+                                escaped_content = json.dumps(content).decode("utf-8")
+                                combined = (
+                                    f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
+                                    f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
+                                    f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                )
                             await __event_call__({"type": "execute", "data": {"code": combined}})
                             await events.status(f"✏️ Renommé : {old_name} → {new_name} ({commit_hash[:7]})", done=True)
                         else:
