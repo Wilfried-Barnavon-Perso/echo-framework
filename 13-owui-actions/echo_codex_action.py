@@ -133,8 +133,9 @@ class Action:
                         current_commit = stats.get("last_commit_hash")
                         updated_files = repo.list_files()
                         files_json = json.dumps(updated_files).decode("utf-8")
-                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
-                        await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
+                        clear_code = "if(window.echoCodexSetContent) window.echoCodexSetContent('', ''); if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
+                        await __event_call__({"type": "execute", "data": {"code": refresh_code + clear_code}})
                         continue
 
                     # ---- PING HEARTBEAT (Auto-refresh) ----
@@ -537,9 +538,15 @@ class Action:
 
                         result = repo.read_file(filename)
                         content = result["content"] if result else ""
+                        
+                        logger.error(f"ECHO CODEX DEBUG: load_file '{filename}', result is None? {result is None}, content len: {len(content)}")
+                        
                         escaped = json.dumps(content).decode("utf-8")
                         escaped_name = json.dumps(filename).decode("utf-8")
                         load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                        
+                        logger.error(f"ECHO CODEX DEBUG: load_code generated, length: {len(load_code)}")
+                        
                         await __event_call__({"type": "execute", "data": {"code": load_code}})
 
                     # ---- SUPPRESSION FICHIER ----

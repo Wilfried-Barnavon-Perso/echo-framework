@@ -1900,8 +1900,9 @@ return new Promise(function(resolve) {{
         }}
       }}
 
-      window.echoCodexRefreshTree = (newFiles) => {{
+      window.echoCodexRefreshTree = (newFiles, newWorkspace) => {{
         files = newFiles;
+        if (newWorkspace) currentWorkspace = newWorkspace;
         renderFileTree();
       }};
 
