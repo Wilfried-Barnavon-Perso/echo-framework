@@ -1,12 +1,12 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.3
+version: 3.4
 description: Éditeur de code natif (HUD) avec intégration Git locale et diffusion en direct des modifications.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Historique des versions :
-# 3.3: Factorisation conservatoire (closures asynchrones) pour le rafraîchissement UI, l'enregistrement SQLite et les erreurs.
+# 3.4: Support de la création de dossiers vides dans l'espace 'main' sans notification/pollution du Registre (SQLite).
 # 3.2: Chargement automatique du dernier fichier lors du changement de workspace.
 # 3.1: Résolution du crash silencieux de la boucle asynchrone (UnboundLocalError sur repo et current_workspace empêchant l'exécution de la boucle et gelant l'UI).
 # 3.0: Asymétrie Main/Sandbox et correction des chemins `storage_path` isolés par workspace.
@@ -484,33 +484,14 @@ class Action:
                         is_dir = filename.endswith("/")
 
                         try:
-                            if current_workspace == "main":
-                                if is_dir:
-                                    err_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Les dossiers ne sont autorisés que dans le Sandbox.');"
-                                    await __event_call__({"type": "execute", "data": {"code": err_code}})
-                                    continue
-
-                                lang = CodexRepo.detect_language(filename)
+                            if is_dir:
+                                repo.create_directory(filename)
+                                commit_hash = "Dossier"
+                            else:
                                 commit_hash = repo.commit_file(
                                     filename, "", f"Create {filename}")
-                                state.save_resource(
-                                    id=filename, name=filename, resource_type='codex',
-                                    status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                                    git_tracked=True, language=lang, lines=0,
-                                    last_commit=commit_hash[:12], commit_msg=f"Create {filename}",
-                                    storage_path=f"codex/{current_workspace}/{filename}"
-                                )
-                            elif current_workspace == "sandbox":
-                                try:
-                                    if is_dir:
-                                        repo.create_directory(filename)
-                                        commit_hash = "Dossier"
-                                    else:
-                                        commit_hash = repo.commit_file(
-                                            filename, "", f"Create {filename}")
-                                except Exception as e:
-                                    await _notify_error(e)
-                                    continue
+                                lang = CodexRepo.detect_language(filename)
+                                _sync_registry(filename, commit_hash, f"Create {filename}", 0, lang)
 
                             updated_files = repo.list_files()
                             files_json = json.dumps(
@@ -531,9 +512,7 @@ class Action:
                             await __event_call__({"type": "execute", "data": {"code": refresh_code}})
 
                         except Exception as e:
-                            err_msg = json.dumps(str(e)).decode("utf-8")
-                            err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
-                            await __event_call__({"type": "execute", "data": {"code": err_code}})
+                            await _notify_error(e)
                             continue
 
                     # ---- CHARGEMENT CONTENU FICHIER ----
