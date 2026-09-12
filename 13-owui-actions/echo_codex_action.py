@@ -193,7 +193,13 @@ class Action:
                             continue
 
                         msg = f"Edit {filename}"
-                        commit_hash = repo.commit_file(filename, content, msg)
+                        try:
+                            commit_hash = repo.commit_file(filename, content, msg)
+                        except Exception as e:
+                            err_msg = json.dumps(str(e)).decode("utf-8")
+                            err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
+                            await __event_call__({"type": "execute", "data": {"code": err_code}})
+                            continue
                         line_count = content.count("\n") + 1
 
                         if current_workspace != "sandbox":
@@ -517,12 +523,18 @@ class Action:
                                     storage_path=f"codex/{current_workspace}/{filename}"
                                 )
                             elif current_workspace == "sandbox":
-                                if is_dir:
-                                    repo.create_directory(filename)
-                                    commit_hash = "Dossier"
-                                else:
-                                    commit_hash = repo.commit_file(
-                                        filename, "", f"Create {filename}")
+                                try:
+                                    if is_dir:
+                                        repo.create_directory(filename)
+                                        commit_hash = "Dossier"
+                                    else:
+                                        commit_hash = repo.commit_file(
+                                            filename, "", f"Create {filename}")
+                                except Exception as e:
+                                    err_msg = json.dumps(str(e)).decode("utf-8")
+                                    err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
+                                    await __event_call__({"type": "execute", "data": {"code": err_code}})
+                                    continue
 
                             updated_files = repo.list_files()
                             files_json = json.dumps(
@@ -574,8 +586,14 @@ class Action:
                         if not filename:
                             continue
 
-                        commit_hash = repo.delete_file(
-                            filename, f"Delete {filename}")
+                        try:
+                            commit_hash = repo.delete_file(
+                                filename, f"Delete {filename}")
+                        except Exception as e:
+                            err_msg = json.dumps(str(e)).decode("utf-8")
+                            err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
+                            await __event_call__({"type": "execute", "data": {"code": err_code}})
+                            continue
                         if commit_hash:
                             state.delete_resource(filename)
 
@@ -615,8 +633,14 @@ class Action:
                         if not old_name or not new_name:
                             continue
 
-                        commit_hash = repo.rename_file(
-                            old_name, new_name, f"Rename {old_name} → {new_name}")
+                        try:
+                            commit_hash = repo.rename_file(
+                                old_name, new_name, f"Rename {old_name} → {new_name}")
+                        except Exception as e:
+                            err_msg = json.dumps(str(e)).decode("utf-8")
+                            err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
+                            await __event_call__({"type": "execute", "data": {"code": err_code}})
+                            continue
                         if commit_hash:
                             updated_files = repo.list_files()
                             is_dir = any(f["filename"] == new_name and f.get("type") == "directory" for f in updated_files)
