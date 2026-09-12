@@ -1411,20 +1411,63 @@ return new Promise(function(resolve) {{
                 summary.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; user-select:none; font-weight:600; color:${{isDark ? '#cba6f7' : '#8839ef'}};`;
                 summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
 
-                // Folder delete button
+                // Folder actions
+                const actionGroup = document.createElement('div');
+                actionGroup.style.cssText = 'margin-left:auto; display:flex; gap:4px;';
+                
+                const renBtn = document.createElement('span');
+                renBtn.innerHTML = '✏️';
+                renBtn.title = 'Renommer le dossier ' + child.path;
+                renBtn.style.cssText = `opacity:0; color:${{isDark ? '#f9e2af' : '#df8e1d'}}; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s;`;
+                renBtn.onclick = (e) => {{
+                  e.preventDefault();
+                  const input = document.createElement('input');
+                  input.type = 'text';
+                  input.value = child.name;
+                  input.style.cssText = `flex:1; background:rgba(0,0,0,0.4); border:1px solid ${{isDark ? '#cba6f7' : '#8839ef'}}; color:inherit; font-family:inherit; font-size:inherit; padding:1px 4px; outline:none; border-radius:3px; margin-right:8px;`;
+                  input.onclick = (ev) => ev.preventDefault();
+                  const finalize = () => {{
+                    if (input.parentNode) {{
+                      const newName = input.value.trim();
+                      if (newName && newName !== child.name) {{
+                        const parentPath = child.path.substring(0, child.path.lastIndexOf('/') + 1);
+                        window.echoCodexResolve({{action:'rename_file', old_name:child.path, new_name: parentPath + newName}});
+                      }} else {{
+                        summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
+                        summary.appendChild(actionGroup);
+                      }}
+                    }}
+                  }};
+                  input.onblur = finalize;
+                  input.onkeydown = (ev) => {{
+                    if (ev.key === 'Enter') {{ ev.preventDefault(); finalize(); }}
+                    if (ev.key === 'Escape') {{ 
+                      summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
+                      summary.appendChild(actionGroup);
+                    }}
+                  }};
+                  summary.innerHTML = `<span style="margin-right:4px;">📁</span>`;
+                  summary.appendChild(input);
+                  input.focus();
+                  input.select();
+                }};
+                
                 const delBtn = document.createElement('span');
                 delBtn.innerHTML = '🗑️';
                 delBtn.title = 'Supprimer le dossier ' + child.path;
-                delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s; margin-left:auto;`;
-                summary.onmouseenter = () => delBtn.style.opacity = '1';
-                summary.onmouseleave = () => delBtn.style.opacity = '0';
+                delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s;`;
                 delBtn.onclick = (e) => {{
                   e.preventDefault();
                   window.echoCustomConfirm('Supprimer le dossier ' + child.path + ' ?', (agreed) => {{
                     if (agreed) window.echoCodexResolve({{action:'delete_file', filename:child.path, current_file:currentFile}});
                   }});
                 }};
-                summary.appendChild(delBtn);
+
+                summary.onmouseenter = () => {{ renBtn.style.opacity = '1'; delBtn.style.opacity = '1'; }};
+                summary.onmouseleave = () => {{ renBtn.style.opacity = '0'; delBtn.style.opacity = '0'; }};
+                actionGroup.appendChild(renBtn);
+                actionGroup.appendChild(delBtn);
+                summary.appendChild(actionGroup);
 
                 details.appendChild(summary);
                 const childrenContainer = document.createElement('div');
@@ -1444,20 +1487,61 @@ return new Promise(function(resolve) {{
                 nameSpan.onclick = () => switchFile(f.filename);
                 item.appendChild(nameSpan);
 
-                // Bouton supprimer
+                // Boutons d'action (fichier arboré)
+                const actionGroup = document.createElement('div');
+                actionGroup.style.cssText = 'margin-left:auto; display:flex; gap:4px; align-items:center;';
+                
+                const renBtn = document.createElement('span');
+                renBtn.innerHTML = '✏️';
+                renBtn.title = 'Renommer ' + f.filename;
+                renBtn.style.cssText = `opacity:0; color:${{isDark ? '#f9e2af' : '#df8e1d'}}; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s;`;
+                renBtn.onclick = (e) => {{
+                  e.stopPropagation();
+                  const input = document.createElement('input');
+                  input.type = 'text';
+                  input.value = child.name;
+                  input.style.cssText = `flex:1; background:rgba(0,0,0,0.4); border:1px solid ${{accentColor}}; color:inherit; font-family:inherit; font-size:inherit; padding:1px 4px; outline:none; border-radius:3px; margin-right:8px;`;
+                  input.onclick = (ev) => ev.stopPropagation();
+                  const finalize = () => {{
+                    if (input.parentNode) {{
+                      const newName = input.value.trim();
+                      if (newName && newName !== child.name) {{
+                        const parentPath = f.filename.substring(0, f.filename.lastIndexOf('/') + 1);
+                        window.echoCodexResolve({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName}});
+                      }} else {{
+                        nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
+                      }}
+                    }}
+                  }};
+                  input.onblur = finalize;
+                  input.onkeydown = (ev) => {{
+                    if (ev.key === 'Enter') {{ ev.preventDefault(); finalize(); }}
+                    if (ev.key === 'Escape') {{ 
+                      nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
+                    }}
+                  }};
+                  nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span>`;
+                  nameSpan.appendChild(input);
+                  input.focus();
+                  input.select();
+                }};
+
                 const delBtn = document.createElement('span');
                 delBtn.innerHTML = '×';
                 delBtn.title = 'Supprimer ' + f.filename;
-                delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px; font-weight:bold; padding:0 4px; transition:opacity 0.15s; margin-left:auto;`;
-                item.onmouseenter = () => delBtn.style.opacity = '1';
-                item.onmouseleave = () => delBtn.style.opacity = '0';
+                delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px; font-weight:bold; padding:0 4px; transition:opacity 0.15s;`;
                 delBtn.onclick = (e) => {{
                   e.stopPropagation();
                   window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
                     if (agreed) window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
                   }});
                 }};
-                item.appendChild(delBtn);
+                
+                item.onmouseenter = () => {{ renBtn.style.opacity = '1'; delBtn.style.opacity = '1'; }};
+                item.onmouseleave = () => {{ renBtn.style.opacity = '0'; delBtn.style.opacity = '0'; }};
+                actionGroup.appendChild(renBtn);
+                actionGroup.appendChild(delBtn);
+                item.appendChild(actionGroup);
                 container.appendChild(item);
               }}
             }});
@@ -1477,20 +1561,62 @@ return new Promise(function(resolve) {{
             nameSpan.onclick = () => switchFile(f.filename);
             item.appendChild(nameSpan);
 
-            // Bouton supprimer
+            // Boutons d'action (fichier liste plate)
+            const actionGroup = document.createElement('div');
+            actionGroup.style.cssText = 'margin-left:auto; display:flex; gap:4px; align-items:center;';
+            
+            const renBtn = document.createElement('span');
+            renBtn.innerHTML = '✏️';
+            renBtn.title = 'Renommer ' + f.filename;
+            renBtn.style.cssText = `opacity:0; color:${{isDark ? '#f9e2af' : '#df8e1d'}}; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s;`;
+            renBtn.onclick = (e) => {{
+              e.stopPropagation();
+              const baseName = f.filename.split('/').pop();
+              const input = document.createElement('input');
+              input.type = 'text';
+              input.value = baseName;
+              input.style.cssText = `flex:1; background:rgba(0,0,0,0.4); border:1px solid ${{accentColor}}; color:inherit; font-family:inherit; font-size:inherit; padding:1px 4px; outline:none; border-radius:3px; margin-right:8px;`;
+              input.onclick = (ev) => ev.stopPropagation();
+              const finalize = () => {{
+                if (input.parentNode) {{
+                  const newName = input.value.trim();
+                  if (newName && newName !== baseName) {{
+                    const parentPath = f.filename.substring(0, f.filename.lastIndexOf('/') + 1);
+                    window.echoCodexResolve({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName}});
+                  }} else {{
+                    nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + f.filename}}`;
+                  }}
+                }}
+              }};
+              input.onblur = finalize;
+              input.onkeydown = (ev) => {{
+                if (ev.key === 'Enter') {{ ev.preventDefault(); finalize(); }}
+                if (ev.key === 'Escape') {{ 
+                  nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + f.filename}}`;
+                }}
+              }};
+              nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span>`;
+              nameSpan.appendChild(input);
+              input.focus();
+              input.select();
+            }};
+
             const delBtn = document.createElement('span');
             delBtn.innerHTML = '×';
             delBtn.title = 'Supprimer ' + f.filename;
-            delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px; font-weight:bold; padding:0 4px; transition:opacity 0.15s; margin-left:auto;`;
-            item.onmouseenter = () => delBtn.style.opacity = '1';
-            item.onmouseleave = () => delBtn.style.opacity = '0';
+            delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px; font-weight:bold; padding:0 4px; transition:opacity 0.15s;`;
             delBtn.onclick = (e) => {{
               e.stopPropagation();
               window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
                 if (agreed) window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
               }});
             }};
-            item.appendChild(delBtn);
+            
+            item.onmouseenter = () => {{ renBtn.style.opacity = '1'; delBtn.style.opacity = '1'; }};
+            item.onmouseleave = () => {{ renBtn.style.opacity = '0'; delBtn.style.opacity = '0'; }};
+            actionGroup.appendChild(renBtn);
+            actionGroup.appendChild(delBtn);
+            item.appendChild(actionGroup);
             treeContainer.appendChild(item);
           }});
         }}

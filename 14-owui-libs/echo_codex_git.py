@@ -128,16 +128,17 @@ class CodexRepo:
         if not os.path.exists(target_path):
             return None
 
+        import shutil
+        paths_to_rm = []
         if os.path.isdir(target_path):
-            if os.listdir(target_path):  # Non vide
-                raise ValueError(
-                    f"Le répertoire '{path}' n'est pas vide. Suppression annulée.")
-            os.rmdir(target_path)
-            # Git ne traque pas les dossiers vides, mais on lance un cleanup
-            paths_to_rm = []
+            for root, _, files in os.walk(target_path):
+                for f in files:
+                    rel_path = os.path.relpath(os.path.join(root, f), self.repo_path)
+                    paths_to_rm.append(rel_path.replace('\\', '/'))
+            shutil.rmtree(target_path)
         else:
             os.remove(target_path)
-            paths_to_rm = [safe_name]
+            paths_to_rm = [safe_name.replace('\\', '/')]
 
         if paths_to_rm:
             try:
