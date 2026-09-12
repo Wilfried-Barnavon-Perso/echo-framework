@@ -1,18 +1,17 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.7
+version: 1.8
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.8: Correction de list_files dans main pour inclure correctement les fichiers dans les sous-dossiers.
 # 1.7: Sécurisation de l'évaluation du path sandbox contre les slashes finaux.
 # 1.6: Asymétrie de parcours de fichiers (os.listdir vs os.walk) entre main et sandbox.
 # 1.5: Prise en charge des dossiers de workspaces isolés (main/sandbox).
 # 1.4: Wrapper dulwich pour la gestion de dépôts Git par user/chat.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
-# 1.3: Fix bytes.fromhex → encode('ascii') pour object_store dulwich.
-# 1.2: Ajout rename_file() (rename Git + commit). list_files tri par mtime
 # desc.
 
 import os
@@ -270,10 +269,8 @@ class CodexRepo:
                         "mtime": mtime,
                     })
         else:
-            # MAIN Workspace: Itération plate (os.listdir)
-            for entry in os.listdir(self.repo_path):
-                if entry.startswith(".") or entry not in tracked_files:
-                    continue
+            # MAIN Workspace: Itération sur les fichiers trackés
+            for entry in tracked_files:
                 filepath = os.path.join(self.repo_path, entry)
                 if not os.path.isfile(filepath):
                     continue
