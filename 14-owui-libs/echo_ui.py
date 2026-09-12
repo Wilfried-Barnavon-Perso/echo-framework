@@ -1,18 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.77
+version: 5.78
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.78: Déverrouillage complet de la Timeline Git (Historique) dans l'espace Sandbox.
 # 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
 # 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
 # 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
 # 5.74: Correction de portée (scope) : déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID au niveau global pour éviter l'erreur "not defined" dans l'évaluation de f-string.
-# 5.73: Ajout de l'affichage du Tenant Global (ECHO_GLOBAL_TENANT_PROJECT_ID) dans le HUD des quotas.
-# 5.69: Support paramètre newUrl dans echoWebPlayerUpdate pour mise à jour HUD asynchrone de l'URL.
-# 5.68: Optimisation Mobile native (dvh, anti-zoom iOS, touch targets 44px, anti-scroll) pour echoCustomPrompt/Confirm.
 # 5.67: Correction échappement backslash JSON pour Identity Vault HUD évitant le SyntaxError muet.
 # 5.66: Retrait des if (!window...) pour permettre le Hot-Reload des fonctions modales.
 # 5.65: Amélioration critique UX Mobile pour les modales système (box-sizing, width 90%, flex-wrap) évitant le débordement sur petits écrans.
@@ -1364,9 +1362,9 @@ return new Promise(function(resolve) {{
         }};
         sb.appendChild(wsSelect);
 
-        // Masquer la Timeline Git (historique) si on est dans la Sandbox
+        // Afficher la Timeline Git (historique) pour TOUS les espaces (main et sandbox)
         const statusBar = document.getElementById(CODEX_ID + '-status');
-        if (statusBar) statusBar.style.display = currentWorkspace === 'sandbox' ? 'none' : 'flex';
+        if (statusBar) statusBar.style.display = 'flex';
 
         // --- 2 & 3. Render Files ---
         const treeContainer = document.createElement('div');
