@@ -1,13 +1,13 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.1
+version: 2.2
 description: Composant système interne : ECHO Codex Editor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.2: Mise à jour de delete_codex pour purger récursivement tous les sous-fichiers SQLite (suite au tuple retourné par delete_file).
 # 2.1: Factorisation de l'écriture au registre via _update_registry et correctif Sandbox.
-# 2.0: Intégration de l'isolation Workspace Codex (main/sandbox) avec le type Literal.
 # 1.9: Ajout d'un Lock asynchrone (user_id:chat_id) pour prévenir les race conditions intra-chat.
 # 1.8: Nettoyage du code : suppression des imports inutilisés (PEP8).
 # 1.7: Nettoyage du code mort (suppression de la Valve KEY_SWITCH_THRESHOLD inutilisée).
@@ -244,15 +244,17 @@ class Tools:
 
         async with _codex_locks[f"{uid}:{cid}"]:
             try:
-                commit_hash = await asyncio.to_thread(repo.delete_file, filename, f"Delete {filename}")
+                delete_result = await asyncio.to_thread(repo.delete_file, filename, f"Delete {filename}")
             except ValueError as e:
                 return wrap_tool_output(text=f"❌ {e}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             
-            if not commit_hash:
+            if not delete_result:
                 return wrap_tool_output(text=f"❌ Fichier/Dossier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
+            commit_hash, paths_to_rm = delete_result
             if workspace != "sandbox":
-                await asyncio.to_thread(state.delete_resource, filename)
+                for path in paths_to_rm:
+                    await asyncio.to_thread(state.delete_resource, path)
         await events.status(f"🗑️ {filename} supprimé (commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(text=f"Fichier `{filename}` supprimé.\n- Commit : `{commit_hash[:12]}`", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
