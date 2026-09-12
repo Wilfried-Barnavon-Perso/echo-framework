@@ -138,11 +138,13 @@ class Action:
                         refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                         
                         if updated_files:
-                            latest_file = updated_files[0]["filename"]
-                            result = repo.read_file(latest_file)
-                            if result:
-                                escaped_content = json.dumps(result["content"]).decode("utf-8")
-                                escaped_name = json.dumps(latest_file).decode("utf-8")
+                            latest_file_entry = next((f for f in updated_files if f.get("type") != "directory"), None)
+                            if latest_file_entry:
+                                latest_file = latest_file_entry["filename"]
+                                result = repo.read_file(latest_file)
+                                if result:
+                                    escaped_content = json.dumps(result["content"]).decode("utf-8")
+                                    escaped_name = json.dumps(latest_file).decode("utf-8")
                                 load_code = (
                                     f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
                                     f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
@@ -172,12 +174,12 @@ class Action:
                                     escaped_name = json.dumps(
                                         current_file).decode("utf-8")
                                     sync_code = (
-                                        f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                                        f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                                         f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
                                     )
                                     await __event_call__({"type": "execute", "data": {"code": sync_code}})
                                     continue
-                            refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                            refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                             await __event_call__({"type": "execute", "data": {"code": refresh_code}})
 
                     # ---- SAUVEGARDE (Ctrl+S dans Monaco) ----
@@ -303,7 +305,7 @@ class Action:
                     elif action_type == "refresh":
                         updated_files = repo.list_files()
                         files_json = json.dumps(updated_files).decode("utf-8")
-                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                         await __event_call__({"type": "execute", "data": {"code": refresh_code}})
                         # Recharger le fichier courant si spécifié
                         filename = response.get("filename", "")
@@ -359,7 +361,7 @@ class Action:
                         # Refresh file tree
                         updated_files = repo.list_files()
                         files_json = json.dumps(updated_files).decode("utf-8")
-                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                         await __event_call__({"type": "execute", "data": {"code": refresh_code}})
                         if len(files_list) == 1:
                             await events.status(f"📂 {files_list[0]['filename']} importé (commit {commit_hash[:7]}).", done=True)
@@ -531,7 +533,7 @@ class Action:
 
                             refresh_code = (
                                 f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
-                                f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                                f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                             )
                             # On ne charge pas de contenu vide dans l'éÉditeur
                             # si on vient de créer un dossier
@@ -579,7 +581,7 @@ class Action:
 
                         updated_files = repo.list_files()
                         files_json = json.dumps(updated_files).decode("utf-8")
-                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                         await __event_call__({"type": "execute", "data": {"code": refresh_code}})
 
                         # Si le fichier supprimé était ouvert, charger le
@@ -636,7 +638,7 @@ class Action:
                                 content).decode("utf-8")
                             combined = (
                                 f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
-                                f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json});"
+                                f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                                 f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
                             )
                             await __event_call__({"type": "execute", "data": {"code": combined}})
