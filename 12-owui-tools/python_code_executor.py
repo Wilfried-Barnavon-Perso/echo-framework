@@ -41,8 +41,8 @@ class Tools:
         Permet au modèle d'exécuter du code (Python, etc.) dans une Sandbox isolée.
         Le script s'exécute avec les accès stricts suivants :
         - '/ro_user_files' : Dossier en Lecture seule contenant les fichiers (pièces jointes) du Registre.
-        - '/ro_user_edits' : Dossier en Lecture seule contenant le code versionné du Codex.
-        - '/workspace' : Espace d'écriture persistant pour le script (sandbox).
+        - '/ro_user_edits' : Dossier en Lecture seule contenant le code versionné (Codex workspace main).
+        - '/workspace' : Espace d'écriture persistant visible dans le Codex (workspace sandbox).
         
         Args:
             code (str): Le code source complet à exécuter.
