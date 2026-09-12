@@ -1,17 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.2
-description: Composant système interne : ECHO Codex Editor.
+version: 2.3
+description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.3: Ajout de l'outil `restore_codex` et support de lecture historique (`commit_hash`) dans `read_codex`.
 # 2.2: Mise à jour de delete_codex pour purger récursivement tous les sous-fichiers SQLite (suite au tuple retourné par delete_file).
 # 2.1: Factorisation de l'écriture au registre via _update_registry et correctif Sandbox.
 # 1.9: Ajout d'un Lock asynchrone (user_id:chat_id) pour prévenir les race conditions intra-chat.
 # 1.8: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 1.7: Nettoyage du code mort (suppression de la Valve KEY_SWITCH_THRESHOLD inutilisée).
-# 1.6: Augmentation du CODEX_EDIT_TIMEOUT à 600s et max_retries=0 pour call_cascade.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -267,30 +266,83 @@ class Tools:
         filename: str,
         start_line: int = None,
         end_line: int = None,
+        commit_hash: str = None,
         workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Lecture du contenu d'un fichier Codex. Paramètres optionnels de plage (start_line/end_line).
+        """Lecture du contenu d'un fichier Codex. Paramètres optionnels de plage (start_line/end_line) ou historique (commit_hash).
         :param filename: Fichier cible.
         :param start_line: (Optionnel) Ligne de début (1-indexed).
         :param end_line: (Optionnel) Ligne de fin (inclusive).
+        :param commit_hash: (Optionnel) Hash du commit pour lire une version historique spécifique.
         """
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        result = repo.read_file(filename, start_line, end_line)
-        if not result:
-            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
         lang = CodexRepo.detect_language(filename)
-        range_info = f"lignes {result['range'][0]}-{result['range'][1]}" if result["range"] else "complet"
 
-        return wrap_tool_output(
-            text=f"**{filename}** ({lang}, {result['total_lines']} lignes total, {range_info})\n\n```{lang}\n{result['content']}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        if commit_hash:
+            # Lecture historique
+            content = await asyncio.to_thread(repo.get_file_at_commit, filename, commit_hash)
+            if content is None:
+                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable au commit `{commit_hash}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            
+            lines = content.split('\n')
+            total_lines = len(lines)
+            s = max(1, start_line) if start_line else 1
+            e = min(total_lines, end_line) if end_line else total_lines
+            content_subset = "\n".join(lines[s-1:e])
+            range_info = f"lignes {s}-{e} (commit {commit_hash[:7]})"
+            
+            return wrap_tool_output(
+                text=f"**{filename}** ({lang}, {total_lines} lignes total, {range_info})\n\n```{lang}\n{content_subset}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        else:
+            # Lecture classique (HEAD)
+            result = await asyncio.to_thread(repo.read_file, filename, start_line, end_line)
+            if not result:
+                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+            range_info = f"lignes {result['range'][0]}-{result['range'][1]}" if result["range"] else "complet"
+            return wrap_tool_output(
+                text=f"**{filename}** ({lang}, {result['total_lines']} lignes total, {range_info})\n\n```{lang}\n{result['content']}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def restore_codex(
+        self,
+        filename: str,
+        commit_hash: str,
+        workspace: Literal["main", "sandbox"] = "main",
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> str:
+        """Restaure un fichier Codex à une version historique spécifique.
+        :param filename: Fichier cible à restaurer.
+        :param commit_hash: Hash du commit contenant la version à restaurer (fourni par history_codex).
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        if not repo:
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+        async with _codex_locks[f"{uid}:{cid}"]:
+            old_content = await asyncio.to_thread(repo.get_file_at_commit, filename, commit_hash)
+            if old_content is None:
+                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable au commit `{commit_hash}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            
+            lang = CodexRepo.detect_language(filename)
+            msg = f"Restore {filename} from {commit_hash[:7]}"
+            new_commit_hash = await asyncio.to_thread(repo.commit_file, filename, old_content, msg)
+            line_count = old_content.count("\n") + 1
+            
+            await self._update_registry(state, filename, lang, line_count, new_commit_hash, msg, workspace)
+            
+        await events.status(f"🔄 {filename} restauré depuis {commit_hash[:7]}.", done=True)
+        return wrap_tool_output(text=f"Fichier `{filename}` restauré avec succès depuis `{commit_hash[:7]}`.\n- Nouveau Commit : `{new_commit_hash[:12]}`", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def search_codex(
         self,
