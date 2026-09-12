@@ -1,18 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.76
+version: 5.77
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
 # 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
 # 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
 # 5.74: Correction de portée (scope) : déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID au niveau global pour éviter l'erreur "not defined" dans l'évaluation de f-string.
 # 5.73: Ajout de l'affichage du Tenant Global (ECHO_GLOBAL_TENANT_PROJECT_ID) dans le HUD des quotas.
-# 5.72: Ajout du bouton Annuler et fiabilisation de la sélection du service en mode édition Vault.
-# 5.71: Ajout de l'édition "Blind" (Modifier) sécurisée dans l'Identity Vault.
-# 5.70: Retrait de la notion d'accès RO/RW du Identity Vault et correctif CSS ascenseur.
 # 5.69: Support paramètre newUrl dans echoWebPlayerUpdate pour mise à jour HUD asynchrone de l'URL.
 # 5.68: Optimisation Mobile native (dvh, anti-zoom iOS, touch targets 44px, anti-scroll) pour echoCustomPrompt/Confirm.
 # 5.67: Correction échappement backslash JSON pour Identity Vault HUD évitant le SyntaxError muet.
@@ -1373,37 +1371,47 @@ return new Promise(function(resolve) {{
         // --- 2 & 3. Render Files ---
         const treeContainer = document.createElement('div');
         treeContainer.style.cssText = 'overflow-y:auto; flex:1; padding-bottom:6px;';
+        // Mode Universel : Arborescence avec treeMap et tri temporel (mtime)
+        const treeMap = {{ '': {{ isDir: true, children: {{}}, mtime: 0 }} }};
+        files.forEach(f => {{
+          const parts = f.filename.split('/');
+          let currentPath = '';
+          let parentNode = treeMap[''];
+          
+          if (f.mtime && f.mtime > parentNode.mtime) parentNode.mtime = f.mtime;
 
-        if (currentWorkspace === 'sandbox') {{
-          // Mode SANDBOX : Arborescence avec treeMap
-          const treeMap = {{ '': {{ isDir: true, children: {{}} }} }};
-          files.forEach(f => {{
-            const parts = f.filename.split('/');
-            let currentPath = '';
-            let parentNode = treeMap[''];
-            for (let i = 0; i < parts.length; i++) {{
-              const part = parts[i];
-              currentPath = currentPath ? currentPath + '/' + part : part;
-              const isLast = (i === parts.length - 1);
-              if (!parentNode.children[part]) {{
-                parentNode.children[part] = {{
-                  name: part,
-                  path: currentPath,
-                  isDir: isLast ? (f.type === 'directory') : true,
-                  file: isLast && f.type === 'file' ? f : null,
-                  children: {{}}
-                }};
+          for (let i = 0; i < parts.length; i++) {{
+            const part = parts[i];
+            currentPath = currentPath ? currentPath + '/' + part : part;
+            const isLast = (i === parts.length - 1);
+            
+            if (!parentNode.children[part]) {{
+              parentNode.children[part] = {{
+                name: part,
+                path: currentPath,
+                isDir: isLast ? (f.type === 'directory') : true,
+                file: isLast && f.type === 'file' ? f : null,
+                children: {{}},
+                mtime: f.mtime || 0
+              }};
+            }} else {{
+              if (f.mtime && f.mtime > parentNode.children[part].mtime) {{
+                parentNode.children[part].mtime = f.mtime;
               }}
-              parentNode = parentNode.children[part];
+              if (!isLast) {{
+                parentNode.children[part].isDir = true;
+              }}
             }}
-          }});
+            parentNode = parentNode.children[part];
+          }}
+        }});
 
-          function renderNode(node, container, level) {{
-            Object.values(node.children).sort((a,b) => {{
-              if(a.isDir && !b.isDir) return -1;
-              if(!a.isDir && b.isDir) return 1;
-              return a.name.localeCompare(b.name);
-            }}).forEach(child => {{
+        function renderNode(node, container, level) {{
+          Object.values(node.children).sort((a,b) => {{
+            if(a.isDir && !b.isDir) return -1;
+            if(!a.isDir && b.isDir) return 1;
+            return (b.mtime || 0) - (a.mtime || 0);
+          }}).forEach(child => {{
               if (child.isDir) {{
                 const details = document.createElement('details');
                 details.open = true; // Par défaut ouvert
@@ -1552,81 +1560,7 @@ return new Promise(function(resolve) {{
             }});
           }}
           renderNode(treeMap[''], treeContainer, 0);
-        }} else {{
-          // Mode MAIN : Liste plate linéaire ultra-rapide
-          files.forEach(f => {{
-            const item = document.createElement('div');
-            const isActive = f.filename === currentFile;
-            item.style.cssText = `padding:4px 10px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; background:${{isActive ? hoverBg : 'transparent'}}; border-left:${{isActive ? '3px solid ' + accentColor : '3px solid transparent'}};`;
 
-            const nameSpan = document.createElement('span');
-            nameSpan.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
-            nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + f.filename}}`;
-            nameSpan.title = f.filename + ' (' + f.lang + ', ' + f.lines + ' lines)';
-            nameSpan.onclick = () => switchFile(f.filename);
-            item.appendChild(nameSpan);
-
-            // Boutons d'action (fichier liste plate)
-            const actionGroup = document.createElement('div');
-            actionGroup.style.cssText = 'margin-left:auto; display:flex; gap:4px; align-items:center;';
-            
-            const renBtn = document.createElement('span');
-            renBtn.innerHTML = '✏️';
-            renBtn.title = 'Renommer ' + f.filename;
-            renBtn.style.cssText = `opacity:0; color:${{isDark ? '#f9e2af' : '#df8e1d'}}; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s;`;
-            renBtn.onclick = (e) => {{
-              e.stopPropagation();
-              const baseName = f.filename.split('/').pop();
-              const input = document.createElement('input');
-              input.type = 'text';
-              input.value = baseName;
-              input.style.cssText = `flex:1; background:rgba(0,0,0,0.4); border:1px solid ${{accentColor}}; color:inherit; font-family:inherit; font-size:inherit; padding:1px 4px; outline:none; border-radius:3px; margin-right:8px;`;
-              input.onclick = (ev) => ev.stopPropagation();
-              const finalize = () => {{
-                if (input.parentNode && !input.disabled) {{
-                  const newName = input.value.trim();
-                  if (newName && newName !== baseName) {{
-                    input.disabled = true;
-                    const parentPath = f.filename.substring(0, f.filename.lastIndexOf('/') + 1);
-                    window.echoCodexResolve({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName, current_file:currentFile}});
-                    nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + newName}}`;
-                  }} else {{
-                    nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + f.filename}}`;
-                  }}
-                }}
-              }};
-              input.onblur = finalize;
-              input.onkeydown = (ev) => {{
-                if (ev.key === 'Enter') {{ ev.preventDefault(); finalize(); }}
-                if (ev.key === 'Escape') {{ 
-                  nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + f.filename}}`;
-                }}
-              }};
-              nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span>`;
-              nameSpan.appendChild(input);
-              input.focus();
-              input.select();
-            }};
-
-            const delBtn = document.createElement('span');
-            delBtn.innerHTML = '×';
-            delBtn.title = 'Supprimer ' + f.filename;
-            delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px; font-weight:bold; padding:0 4px; transition:opacity 0.15s;`;
-            delBtn.onclick = (e) => {{
-              e.stopPropagation();
-              window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
-                if (agreed) window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
-              }});
-            }};
-            
-            item.onmouseenter = () => {{ renBtn.style.opacity = '1'; delBtn.style.opacity = '1'; }};
-            item.onmouseleave = () => {{ renBtn.style.opacity = '0'; delBtn.style.opacity = '0'; }};
-            actionGroup.appendChild(renBtn);
-            actionGroup.appendChild(delBtn);
-            item.appendChild(actionGroup);
-            treeContainer.appendChild(item);
-          }});
-        }}
         sb.appendChild(treeContainer);
 
         // + Créer
