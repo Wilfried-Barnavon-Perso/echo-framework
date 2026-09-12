@@ -1,13 +1,13 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.8
+version: 1.9
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.9: Modification de delete_file pour retourner le tuple (commit_hash, paths_to_rm) afin d'assurer la purge SQLite côté action.
 # 1.8: Correction de list_files dans main pour inclure correctement les fichiers dans les sous-dossiers.
-# 1.7: Sécurisation de l'évaluation du path sandbox contre les slashes finaux.
 # 1.6: Asymétrie de parcours de fichiers (os.listdir vs os.walk) entre main et sandbox.
 # 1.5: Prise en charge des dossiers de workspaces isolés (main/sandbox).
 # 1.4: Wrapper dulwich pour la gestion de dépôts Git par user/chat.
@@ -120,8 +120,8 @@ class CodexRepo:
 
         return {"content": "".join(lines), "total_lines": total, "range": None}
 
-    def delete_file(self, path: str, message: str) -> Optional[str]:
-        """Supprime un fichier ou un dossier vide et commit. Retourne le hash ou None."""
+    def delete_file(self, path: str, message: str) -> Optional[tuple[str, list[str]]]:
+        """Supprime un fichier ou un dossier vide et commit. Retourne le (hash, liste_fichiers_supprimes) ou None."""
         safe_name = self._secure_path(path)
         target_path = os.path.join(self.repo_path, safe_name)
         if not os.path.exists(target_path):
@@ -150,8 +150,9 @@ class CodexRepo:
             author=b"ECHO Codex <codex@echo.local>",
             committer=b"ECHO Codex <codex@echo.local>",
         )
-        return commit_sha.decode("ascii") if isinstance(
+        commit_str = commit_sha.decode("ascii") if isinstance(
             commit_sha, bytes) else str(commit_sha)
+        return commit_str, paths_to_rm
 
     def rename_file(self, old_name: str, new_name: str, message: str,
                     author: str = "ECHO Codex") -> Optional[str]:

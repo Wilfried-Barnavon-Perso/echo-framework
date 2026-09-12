@@ -1,12 +1,13 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.5
+version: 3.6
 description: Éditeur de code natif (HUD) avec intégration Git locale et diffusion en direct des modifications.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle d'Historique : Ne garder que les 5 dernieres versions.
 # Historique des versions :
+# 3.6: Correction de la fuite SQLite (orphelins) lors de la suppression d'un dossier, en purgant tous ses sous-fichiers du Registre.
 # 3.5: Empêche la sélection UI d'un dossier vide (évite PermissionError au save) et nettoyage des logs debug perturbants.
 # 3.4: Support de la création de dossiers vides dans l'espace 'main' sans notification/pollution du Registre (SQLite).
 # 3.2: Chargement automatique du dernier fichier lors du changement de workspace.
@@ -540,14 +541,16 @@ class Action:
                             continue
 
                         try:
-                            commit_hash = repo.delete_file(
+                            delete_result = repo.delete_file(
                                 filename, f"Delete {filename}")
                         except Exception as e:
                             await _notify_error(e)
                             continue
-                        if commit_hash:
+                        if delete_result:
+                            commit_hash, paths_to_rm = delete_result
                             if current_workspace != "sandbox":
-                                state.delete_resource(filename)
+                                for path in paths_to_rm:
+                                    state.delete_resource(path)
 
                         updated_files = repo.list_files()
                         files_json = json.dumps(updated_files).decode("utf-8")
