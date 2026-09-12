@@ -1,11 +1,12 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.1
+version: 3.2
 description: Éditeur de code natif (HUD) avec intégration Git locale et diffusion en direct des modifications.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Historique des versions :
+# 3.2: Chargement automatique du dernier fichier lors du changement de workspace.
 # 3.1: Résolution du crash silencieux de la boucle asynchrone (UnboundLocalError sur repo et current_workspace empêchant l'exécution de la boucle et gelant l'UI).
 # 3.0: Asymétrie Main/Sandbox et correction des chemins `storage_path` isolés par workspace.
 # 2.9: Remplacement du prompt natif par une interface in-line pour la création, résolution du bug de scoping state (currentFile).
@@ -135,6 +136,20 @@ class Action:
                         updated_files = repo.list_files()
                         files_json = json.dumps(updated_files).decode("utf-8")
                         refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
+                        
+                        if updated_files:
+                            latest_file = updated_files[0]["filename"]
+                            result = repo.read_file(latest_file)
+                            if result:
+                                escaped_content = json.dumps(result["content"]).decode("utf-8")
+                                escaped_name = json.dumps(latest_file).decode("utf-8")
+                                load_code = (
+                                    f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                    f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
+                                )
+                                await __event_call__({"type": "execute", "data": {"code": refresh_code + load_code}})
+                                continue
+                        
                         clear_code = "if(window.echoCodexSetContent) window.echoCodexSetContent('', ''); if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
                         await __event_call__({"type": "execute", "data": {"code": refresh_code + clear_code}})
                         continue
