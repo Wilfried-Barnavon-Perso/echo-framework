@@ -1,11 +1,12 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.6
+version: 1.7
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.7: Sécurisation de l'évaluation du path sandbox contre les slashes finaux.
 # 1.6: Asymétrie de parcours de fichiers (os.listdir vs os.walk) entre main et sandbox.
 # 1.5: Prise en charge des dossiers de workspaces isolés (main/sandbox).
 # 1.4: Wrapper dulwich pour la gestion de dépôts Git par user/chat.
@@ -191,7 +192,7 @@ class CodexRepo:
         except Exception:
             tracked_files = set()
 
-        is_sandbox = os.path.basename(self.repo_path) == "sandbox"
+        is_sandbox = os.path.basename(self.repo_path.rstrip("/\\")) == "sandbox"
 
         if is_sandbox:
             for root, dirs, filenames in os.walk(self.repo_path):

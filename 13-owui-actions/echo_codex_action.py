@@ -1,11 +1,12 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.0
+version: 3.1
 description: Éditeur de code natif (HUD) avec intégration Git locale et diffusion en direct des modifications.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Historique des versions :
+# 3.1: Résolution du crash silencieux de la boucle asynchrone (UnboundLocalError sur repo et current_workspace empêchant l'exécution de la boucle et gelant l'UI).
 # 3.0: Asymétrie Main/Sandbox et correction des chemins `storage_path` isolés par workspace.
 # 2.9: Remplacement du prompt natif par une interface in-line pour la création, résolution du bug de scoping state (currentFile).
 # 2.6: Mise à jour de la priorité d'affichage à 70.
@@ -108,7 +109,7 @@ class Action:
 
         # 2. Définition de la boucle événementielle bidirectionnelle (Détachée)
         async def background_loop():
-            nonlocal files_json
+            nonlocal files_json, current_workspace, repo
             try:
                 stats = repo.get_repo_stats()
                 current_commit = stats.get("last_commit_hash")
