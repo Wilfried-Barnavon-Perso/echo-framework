@@ -191,9 +191,7 @@ class Action:
                                                 )
 
                         # Notification dans le HUD
-                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('saved', '{
-                            commit_hash[
-                                :7]}');"
+                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('saved', '{commit_hash[:7]}');"
                         await __event_call__({"type": "execute", "data": {"code": notify_code}})
 
                     # ---- ÉDITION AI (sub-chat) ----
@@ -258,9 +256,7 @@ class Action:
                                                 storage_path=f"codex/{current_workspace}/{filename}",
                                                 )
 
-                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('committed', '{
-                            commit_hash[
-                                :7]}');"
+                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('committed', '{commit_hash[:7]}');"
                         await __event_call__({"type": "execute", "data": {"code": notify_code}})
 
                         # Recharger le fichier dans l'éÉditeur
@@ -452,9 +448,7 @@ class Action:
                         # Purge navigation historique
                         history_nav.pop(filename, None)
 
-                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('restored', '{
-                            commit_hash[
-                                :7]}');"
+                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('restored', '{commit_hash[:7]}');"
                         await __event_call__({"type": "execute", "data": {"code": notify_code}})
 
                     # ---- SORTIR DE L'HISTORIQUE ----
