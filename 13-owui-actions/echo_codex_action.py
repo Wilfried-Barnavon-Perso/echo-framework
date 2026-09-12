@@ -588,15 +588,19 @@ class Action:
                         # premier fichier restant
                         if filename == current_file:
                             if updated_files:
-                                first = updated_files[0]["filename"]
-                                first_escaped = json.dumps(
-                                    first).decode("utf-8")
-                                result = repo.read_file(first)
-                                content = result["content"] if result else ""
-                                escaped_content = json.dumps(
-                                    content).decode("utf-8")
-                                switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({first_escaped}); if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {first_escaped});"
-                                await __event_call__({"type": "execute", "data": {"code": switch_code}})
+                                first_entry = next((f for f in updated_files if f.get("type") != "directory"), None)
+                                if first_entry:
+                                    first = first_entry["filename"]
+                                    first_escaped = json.dumps(first).decode("utf-8")
+                                    result = repo.read_file(first)
+                                    content = result["content"] if result else ""
+                                    escaped_content = json.dumps(content).decode("utf-8")
+                                    switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({first_escaped}); if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {first_escaped});"
+                                    await __event_call__({"type": "execute", "data": {"code": switch_code}})
+                                else:
+                                    empty_escaped = json.dumps("").decode("utf-8")
+                                    switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile(null); if(window.echoCodexSetContent) window.echoCodexSetContent({empty_escaped}, null);"
+                                    await __event_call__({"type": "execute", "data": {"code": switch_code}})
                             else:
                                 empty_escaped = json.dumps("").decode("utf-8")
                                 switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile(null); if(window.echoCodexSetContent) window.echoCodexSetContent({empty_escaped}, null);"
@@ -614,12 +618,15 @@ class Action:
                         commit_hash = repo.rename_file(
                             old_name, new_name, f"Rename {old_name} → {new_name}")
                         if commit_hash:
+                            updated_files = repo.list_files()
+                            is_dir = any(f["filename"] == new_name and f.get("type") == "directory" for f in updated_files)
+                            result = None if is_dir else repo.read_file(new_name)
+
                             # Mettre à jour le registre codex (supprimer
                             # ancien, créer nouveau)
-                            if current_workspace != "sandbox":
+                            if current_workspace != "sandbox" and not is_dir:
                                 state.delete_resource(old_name)
                                 new_lang = CodexRepo.detect_language(new_name)
-                                result = repo.read_file(new_name)
                                 line_count = result["total_lines"] if result else 0
                                 state.save_resource(
                                     id=new_name, name=new_name, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
@@ -629,7 +636,6 @@ class Action:
                                 )
 
                             # Refresh tree + charger le fichier renommé
-                            updated_files = repo.list_files()
                             files_json = json.dumps(
                                 updated_files).decode("utf-8")
                             escaped_name = json.dumps(new_name).decode("utf-8")
