@@ -1,11 +1,12 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.0
+version: 2.1
 description: Composant système interne : ECHO Codex Editor.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.1: Factorisation de l'écriture au registre via _update_registry et correctif Sandbox.
 # 2.0: Intégration de l'isolation Workspace Codex (main/sandbox) avec le type Literal.
 # 1.9: Ajout d'un Lock asynchrone (user_id:chat_id) pour prévenir les race conditions intra-chat.
 # 1.8: Nettoyage du code : suppression des imports inutilisés (PEP8).
@@ -78,6 +79,16 @@ class Tools:
                 return "\n".join(lines[1:-1])
         return raw
 
+    async def _update_registry(self, state, filename: str, lang: str, line_count: int, commit_hash: str, msg: str, workspace: str):
+        """Met à jour le registre unifié (SQLite) en isolant la Sandbox."""
+        if workspace != "sandbox":
+            await asyncio.to_thread(
+                state.save_resource,
+                id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                git_tracked=True, language=lang, lines=line_count,
+                last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}"
+            )
+
     # =========================================================================
     # ÉCRITURE
     # =========================================================================
@@ -116,12 +127,7 @@ class Tools:
 
         async with _codex_locks[f"{uid}:{cid}"]:
             commit_hash = await asyncio.to_thread(repo.commit_file, filename, content, msg)
-            await asyncio.to_thread(
-                state.save_resource,
-                id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                git_tracked=True, language=lang, lines=line_count,
-                last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}"
-            )
+            await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
         await events.status(f"✅ {filename} créé ({line_count} lignes, commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(
@@ -164,12 +170,7 @@ class Tools:
             line_count = new_content.count("\n") + 1
             async with _codex_locks[f"{uid}:{cid}"]:
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, new_content, msg)
-                await asyncio.to_thread(
-                    state.save_resource,
-                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                    git_tracked=True, language=lang, lines=line_count,
-                    last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}"
-                )
+                await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
             await events.status(f"✅ {filename} modifié (commit {commit_hash[:7]}).", done=True)
             return wrap_tool_output(
@@ -215,12 +216,7 @@ class Tools:
             line_count = modified.count("\n") + 1
             async with _codex_locks[f"{uid}:{cid}"]:
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, modified, msg)
-                await asyncio.to_thread(
-                    state.save_resource,
-                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                    git_tracked=True, language=lang, lines=line_count,
-                    last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}"
-                )
+                await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
             await events.status(f"✅ Édition assistée terminée (commit {commit_hash[:7]}).", done=True)
             return wrap_cascade_output(
@@ -255,7 +251,8 @@ class Tools:
             if not commit_hash:
                 return wrap_tool_output(text=f"❌ Fichier/Dossier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-            await asyncio.to_thread(state.delete_resource, filename)
+            if workspace != "sandbox":
+                await asyncio.to_thread(state.delete_resource, filename)
         await events.status(f"🗑️ {filename} supprimé (commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(text=f"Fichier `{filename}` supprimé.\n- Commit : `{commit_hash[:12]}`", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 

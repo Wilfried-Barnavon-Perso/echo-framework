@@ -1,11 +1,12 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.2
+version: 3.3
 description: Éditeur de code natif (HUD) avec intégration Git locale et diffusion en direct des modifications.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Historique des versions :
+# 3.3: Factorisation conservatoire (closures asynchrones) pour le rafraîchissement UI, l'enregistrement SQLite et les erreurs.
 # 3.2: Chargement automatique du dernier fichier lors du changement de workspace.
 # 3.1: Résolution du crash silencieux de la boucle asynchrone (UnboundLocalError sur repo et current_workspace empêchant l'exécution de la boucle et gelant l'UI).
 # 3.0: Asymétrie Main/Sandbox et correction des chemins `storage_path` isolés par workspace.
@@ -111,6 +112,34 @@ class Action:
         # 2. Définition de la boucle événementielle bidirectionnelle (Détachée)
         async def background_loop():
             nonlocal files_json, current_workspace, repo
+
+            async def _refresh_tree():
+                updated_files = repo.list_files()
+                f_json = json.dumps(updated_files).decode("utf-8")
+                r_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({f_json}, '{current_workspace}');"
+                await __event_call__({"type": "execute", "data": {"code": r_code}})
+
+            async def _notify_error(e: Exception):
+                err_msg = json.dumps(str(e)).decode("utf-8")
+                err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
+                await __event_call__({"type": "execute", "data": {"code": err_code}})
+
+            def _sync_registry(filename, commit_hash, msg, line_count=0, lang=None):
+                if current_workspace != "sandbox":
+                    l = lang or CodexRepo.detect_language(filename)
+                    state.save_resource(
+                        id=filename,
+                        name=filename,
+                        resource_type='codex',
+                        status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                        git_tracked=True,
+                        language=l,
+                        lines=line_count,
+                        last_commit=commit_hash[:12],
+                        commit_msg=msg,
+                        storage_path=f"codex/{current_workspace}/{filename}"
+                    )
+
             try:
                 stats = repo.get_repo_stats()
                 current_commit = stats.get("last_commit_hash")
@@ -135,7 +164,7 @@ class Action:
                         current_commit = stats.get("last_commit_hash")
                         updated_files = repo.list_files()
                         files_json = json.dumps(updated_files).decode("utf-8")
-                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
+                        await _refresh_tree()
                         
                         if updated_files:
                             latest_file_entry = next((f for f in updated_files if f.get("type") != "directory"), None)
@@ -149,11 +178,11 @@ class Action:
                                     f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
                                     f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
                                 )
-                                await __event_call__({"type": "execute", "data": {"code": refresh_code + load_code}})
+                                await __event_call__({"type": "execute", "data": {"code": load_code}})
                                 continue
                         
                         clear_code = "if(window.echoCodexSetContent) window.echoCodexSetContent('', ''); if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
-                        await __event_call__({"type": "execute", "data": {"code": refresh_code + clear_code}})
+                        await __event_call__({"type": "execute", "data": {"code": clear_code}})
                         continue
 
                     # ---- PING HEARTBEAT (Auto-refresh) ----
@@ -174,13 +203,12 @@ class Action:
                                     escaped_name = json.dumps(
                                         current_file).decode("utf-8")
                                     sync_code = (
-                                        f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                                         f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
                                     )
+                                    await _refresh_tree()
                                     await __event_call__({"type": "execute", "data": {"code": sync_code}})
                                     continue
-                            refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
-                            await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+                            await _refresh_tree()
 
                     # ---- SAUVEGARDE (Ctrl+S dans Monaco) ----
                     elif action_type == "save":
@@ -196,24 +224,11 @@ class Action:
                         try:
                             commit_hash = repo.commit_file(filename, content, msg)
                         except Exception as e:
-                            err_msg = json.dumps(str(e)).decode("utf-8")
-                            err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
-                            await __event_call__({"type": "execute", "data": {"code": err_code}})
+                            await _notify_error(e)
                             continue
                         line_count = content.count("\n") + 1
 
-                        if current_workspace != "sandbox":
-                            state.save_resource(id=filename,
-                                                name=filename,
-                                                resource_type='codex',
-                                                status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                                                git_tracked=True,
-                                                language=lang,
-                                                lines=line_count,
-                                                last_commit=commit_hash[:12],
-                                                commit_msg=msg,
-                                                storage_path=f"codex/{current_workspace}/{filename}",
-                                                )
+                        _sync_registry(filename, commit_hash, msg, line_count, lang)
 
                         # Notification dans le HUD
                         notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('saved', '{commit_hash[:7]}');"
@@ -268,18 +283,7 @@ class Action:
                         commit_hash = repo.commit_file(filename, content, msg)
                         line_count = content.count("\n") + 1
 
-                        if current_workspace != "sandbox":
-                            state.save_resource(id=filename,
-                                                name=filename,
-                                                resource_type='codex',
-                                                status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                                                git_tracked=True,
-                                                language=lang,
-                                                lines=line_count,
-                                                last_commit=commit_hash[:12],
-                                                commit_msg=msg,
-                                                storage_path=f"codex/{current_workspace}/{filename}",
-                                                )
+                        _sync_registry(filename, commit_hash, msg, line_count, lang)
 
                         notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('committed', '{commit_hash[:7]}');"
                         await __event_call__({"type": "execute", "data": {"code": notify_code}})
@@ -309,10 +313,7 @@ class Action:
 
                     # ---- REFRESH (🔄 dans le header) ----
                     elif action_type == "refresh":
-                        updated_files = repo.list_files()
-                        files_json = json.dumps(updated_files).decode("utf-8")
-                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
-                        await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+                        await _refresh_tree()
                         # Recharger le fichier courant si spécifié
                         filename = response.get("filename", "")
                         if filename:
@@ -352,23 +353,10 @@ class Action:
                             line_count = content.count("\n") + 1
 
                             if current_workspace != "sandbox":
-                                state.save_resource(id=filename,
-                                                    name=filename,
-                                                    resource_type='codex',
-                                                    status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                                                    git_tracked=True,
-                                                    language=lang,
-                                                    lines=line_count,
-                                                    last_commit=commit_hash[:12],
-                                                    commit_msg=f"Import {filename}",
-                                                    storage_path=f"codex/{current_workspace}/{filename}",
-                                                    )
+                                _sync_registry(filename, commit_hash, f"Import {filename}", line_count, lang)
 
                         # Refresh file tree
-                        updated_files = repo.list_files()
-                        files_json = json.dumps(updated_files).decode("utf-8")
-                        refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
-                        await __event_call__({"type": "execute", "data": {"code": refresh_code}})
+                        await _refresh_tree()
                         if len(files_list) == 1:
                             await events.status(f"📂 {files_list[0]['filename']} importé (commit {commit_hash[:7]}).", done=True)
                         else:
@@ -457,18 +445,7 @@ class Action:
                         commit_hash = repo.commit_file(filename, content, msg)
                         line_count = content.count("\n") + 1
 
-                        if current_workspace != "sandbox":
-                            state.save_resource(id=filename,
-                                                name=filename,
-                                                resource_type='codex',
-                                                status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                                                git_tracked=True,
-                                                language=lang,
-                                                lines=line_count,
-                                                last_commit=commit_hash[:12],
-                                                commit_msg=msg,
-                                                storage_path=f"codex/{current_workspace}/{filename}",
-                                                )
+                        _sync_registry(filename, commit_hash, msg, line_count, lang)
 
                         # Purge navigation historique
                         history_nav.pop(filename, None)
@@ -489,7 +466,8 @@ class Action:
                         file_count = len(repo.list_files())
                         # La confirmation est gérée côté JS (confirm dialog)
                         repo.reset_all()
-                        state.clear_resources_by_type('codex')
+                        if current_workspace != "sandbox":
+                            state.clear_resources_by_type('codex')
                         history_nav.clear()
 
                         reset_code = "if(window.echoCodexReset) window.echoCodexReset();"
@@ -531,9 +509,7 @@ class Action:
                                         commit_hash = repo.commit_file(
                                             filename, "", f"Create {filename}")
                                 except Exception as e:
-                                    err_msg = json.dumps(str(e)).decode("utf-8")
-                                    err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
-                                    await __event_call__({"type": "execute", "data": {"code": err_code}})
+                                    await _notify_error(e)
                                     continue
 
                             updated_files = repo.list_files()
@@ -590,12 +566,11 @@ class Action:
                             commit_hash = repo.delete_file(
                                 filename, f"Delete {filename}")
                         except Exception as e:
-                            err_msg = json.dumps(str(e)).decode("utf-8")
-                            err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
-                            await __event_call__({"type": "execute", "data": {"code": err_code}})
+                            await _notify_error(e)
                             continue
                         if commit_hash:
-                            state.delete_resource(filename)
+                            if current_workspace != "sandbox":
+                                state.delete_resource(filename)
 
                         updated_files = repo.list_files()
                         files_json = json.dumps(updated_files).decode("utf-8")
@@ -637,9 +612,7 @@ class Action:
                             commit_hash = repo.rename_file(
                                 old_name, new_name, f"Rename {old_name} → {new_name}")
                         except Exception as e:
-                            err_msg = json.dumps(str(e)).decode("utf-8")
-                            err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
-                            await __event_call__({"type": "execute", "data": {"code": err_code}})
+                            await _notify_error(e)
                             continue
                         if commit_hash:
                             updated_files = repo.list_files()
@@ -652,12 +625,7 @@ class Action:
                                 state.delete_resource(old_name)
                                 new_lang = CodexRepo.detect_language(new_name)
                                 line_count = result["total_lines"] if result else 0
-                                state.save_resource(
-                                    id=new_name, name=new_name, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                                    git_tracked=True, language=new_lang, lines=line_count,
-                                    last_commit=commit_hash[:12], commit_msg=f"Rename {old_name} → {new_name}",
-                                    storage_path=f"codex/{current_workspace}/{new_name}",
-                                )
+                                _sync_registry(new_name, commit_hash, f"Rename {old_name} → {new_name}", line_count, new_lang)
 
                             # Refresh tree + charger le fichier renommé
                             files_json = json.dumps(updated_files).decode("utf-8")
