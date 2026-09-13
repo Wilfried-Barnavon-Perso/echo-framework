@@ -1,15 +1,14 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.3
+version: 2.4
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
-# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.4: Refonte de `search_codex` (recherche multi-fichiers par dossiers) et fusion du voyage temporel (Delta/Pickaxe) via `trace_history`.
 # 2.3: Ajout de l'outil `restore_codex` et support de lecture historique (`commit_hash`) dans `read_codex`.
-# 2.2: Mise à jour de delete_codex pour purger récursivement tous les sous-fichiers SQLite (suite au tuple retourné par delete_file).
-# 2.1: Factorisation de l'écriture au registre via _update_registry et correctif Sandbox.
-# 1.9: Ajout d'un Lock asynchrone (user_id:chat_id) pour prévenir les race conditions intra-chat.
+# 2.2: Purge récursive des sous-ressources orphelines dans `delete_codex` (unpack tuple).
+# 2.1: Purge mémoire (`delete_resource`) lors de delete_codex, ajout des fonctions utilitaires (_get_context).
 # 1.8: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 # ECHO CONFIG NAME : ECHO Codex
@@ -346,33 +345,69 @@ class Tools:
 
     async def search_codex(
         self,
-        filename: str,
         query: str,
+        target_paths: list[str] = [],
         is_regex: bool = False,
+        commit_hash: str = None,
+        trace_history: bool = False,
+        history_depth: int = 50,
         workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Recherche d'un pattern dans un fichier Codex (littéral ou regex).
-        :param query: Motif de recherche.
-        :param is_regex: (Bool) Interprétation regex du motif.
+        """Permet au modèle de rechercher une chaîne de caractères (ou regex) au sein du Codex, que ce soit spatialement (fichiers actuels) ou temporellement (historique de versionnement du Codex).
+        :param query: Motif de recherche (nom de variable, fonction, texte).
+        :param target_paths: (Optionnel) Restreint la recherche à un ou plusieurs dossiers/fichiers du Codex (ex: ["src/api", "main.py"]). Laissez vide pour scruter l'intégralité du Codex.
+        :param is_regex: (Optionnel) Interprète la query comme une expression régulière.
+        :param commit_hash: (Optionnel) Identifiant du commit (obtenu via history_codex) pour effectuer la recherche spatiale à un instant précis du passé du Codex. Ignoré si trace_history est True.
+        :param trace_history: (Optionnel) Si True, bascule en mode 'Voyage Temporel'. Traverse l'historique du Codex et retourne exclusivement les contextes de modification (ajout/suppression) du motif recherché au lieu de sa position statique.
+        :param history_depth: (Optionnel) Nombre maximum d'itérations Git à remonter dans l'historique du Codex en mode trace_history (défaut: 50).
         """
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        matches = repo.search_in_file(filename, query, is_regex)
-        if not matches:
-            return wrap_tool_output(text=f"Aucun résultat pour `{query}` dans `{filename}`.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        if trace_history:
+            # Mode Temporel (Delta / Pickaxe) dans le Codex
+            results = await asyncio.to_thread(repo.trace_history, query, target_paths, history_depth)
+            if not results:
+                scope = f"les chemins `{target_paths}`" if target_paths else "l'historique global du Codex"
+                return wrap_tool_output(text=f"Aucune évolution trouvée pour la chaîne `{query}` dans {scope}.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                
+            lines = [f"## Trace d'évolution de `{query}` dans le Codex"]
+            for entry in results:
+                lines.append(f"\n### Commit `{entry['hash']}` : _{entry['message']}_")
+                for diff in entry['diffs']:
+                    lines.append(f"**Fichier :** `{diff['file']}`")
+                    if diff['removed']:
+                        lines.append("```diff\n" + "\n".join(f"- {r}" for r in diff['removed']) + "\n```")
+                    if diff['added']:
+                        lines.append("```diff\n" + "\n".join(f"+ {a}" for a in diff['added']) + "\n```")
+            return wrap_tool_output(text="\n".join(lines), user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            
+        else:
+            # Mode Spatial (Grep) dans le Codex
+            all_files = [f["filename"] for f in repo.list_files() if f["type"] == "file"]
+            if target_paths:
+                files_to_check = [f for f in all_files if any(f.startswith(p) for p in target_paths)]
+            else:
+                files_to_check = all_files
 
-        lines_text = "\n".join(
-            f"L{m['line_number']:>4}: {m['line_content']}"
-            for m in matches
-        )
-        return wrap_tool_output(
-            text=f"**{len(matches)} résultat(s)** pour `{query}` dans `{filename}` :\n\n```\n{lines_text}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            all_results = []
+            for f in files_to_check:
+                matches = await asyncio.to_thread(repo.search_in_file, f, query, is_regex, commit_hash)
+                if matches:
+                    lines_text = "\n".join(f"L{m['line_number']:>4}: {m['line_content']}" for m in matches)
+                    all_results.append(f"### `{f}` ({len(matches)} match)\n```\n{lines_text}\n```")
+
+            if not all_results:
+                scope = f"dans les chemins `{target_paths}`" if target_paths else "dans l'intégralité du Codex"
+                epoch = f"au commit `{commit_hash}`" if commit_hash else "actuellement"
+                return wrap_tool_output(text=f"Aucun résultat pour `{query}` {scope} {epoch}.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+            return wrap_tool_output(text=f"**Résultats de la recherche Codex pour `{query}` :**\n\n" + "\n\n".join(all_results), user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def summarize_codex(
         self,

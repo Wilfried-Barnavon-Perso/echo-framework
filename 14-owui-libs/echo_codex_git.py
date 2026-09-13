@@ -296,33 +296,96 @@ class CodexRepo:
 
         return sorted(files, key=lambda x: x["mtime"], reverse=True)
 
+    def _get_text_content(self, filename: str, commit_hash: str = None) -> str:
+        """Helper interne : retourne le contenu d'un fichier (HEAD ou commit), ou une chaîne vide."""
+        if commit_hash:
+            return self.get_file_at_commit(filename, commit_hash) or ""
+        else:
+            result = self.read_file(filename)
+            return result["content"] if result else ""
+
+    def _find_lines(self, content: str, pattern: str, is_regex: bool = False) -> List[str]:
+        """Helper interne : retourne uniquement les lignes contenant le pattern (ou matchant la regex)."""
+        lines = content.splitlines()
+        if not is_regex:
+            return [l for l in lines if pattern in l]
+        try:
+            return [l for l in lines if re.search(pattern, l)]
+        except re.error:
+            # Fallback automatique si la regex est invalide
+            return [l for l in lines if pattern in l]
+
     def search_in_file(self, filename: str, pattern: str,
-                       is_regex: bool = False) -> List[dict]:
-        """Recherche un pattern dans un fichier. Retourne [{line_number, line_content}]."""
-        result = self.read_file(filename)
-        if not result:
+                       is_regex: bool = False, commit_hash: str = None) -> List[dict]:
+        """Permet de rechercher une occurrence textuelle ou une expression régulière au sein d'un fichier du Codex.
+        Supporte l'investigation spatio-temporelle : si un identifiant de commit est fourni, la recherche s'opère sur la révision historique correspondante au lieu du fichier actif.
+        """
+        content = self._get_text_content(filename, commit_hash)
+        if not content:
             return []
 
         matches = []
-        lines = result["content"].splitlines()
+        lines = content.splitlines()
         for i, line in enumerate(lines, 1):
             try:
-                if is_regex:
-                    if re.search(pattern, line):
-                        matches.append(
-                            {"line_number": i, "line_content": line})
-                else:
-                    if pattern in line:
-                        matches.append(
-                            {"line_number": i, "line_content": line})
+                match = re.search(pattern, line) if is_regex else (pattern in line)
             except re.error:
-                # Regex invalide, fallback en recherche littérale
-                if pattern in line:
-                    matches.append({"line_number": i, "line_content": line})
-
-            if len(matches) >= 50:  # Cap pour éviter les résultats massifs
-                break
+                match = (pattern in line)
+                
+            if match:
+                matches.append({"line_number": i, "line_content": line})
+                if len(matches) >= 50:
+                    break
         return matches
+
+    def trace_history(self, query: str, target_paths: list[str] = None, limit: int = 50) -> List[dict]:
+        """Traverse l'historique de versionnement du Codex pour trouver les itérations où `query` a été ajouté ou supprimé."""
+        entries = []
+        blob_cache = {} 
+        try:
+            walker = self.repo.get_walker(max_entries=limit * 5)
+            for walk_entry in walker:
+                commit = walk_entry.commit
+                c_id = commit.id.decode("ascii")
+                p_id = commit.parents[0].decode("ascii") if commit.parents else None
+                
+                all_files = [f["filename"] for f in self.list_files() if f["type"] == "file"]
+                if target_paths:
+                    files_to_check = [f for f in all_files if any(f.startswith(p) for p in target_paths)]
+                else:
+                    files_to_check = all_files
+                
+                commit_diffs = []
+                for f in files_to_check:
+                    cache_key_curr = f"{c_id}:{f}"
+                    cache_key_prev = f"{p_id}:{f}" if p_id else None
+                    
+                    curr_content = blob_cache.pop(cache_key_curr, None)
+                    if curr_content is None:
+                        curr_content = self._get_text_content(f, c_id)
+                        
+                    prev_content = self._get_text_content(f, p_id) if p_id else ""
+                    if p_id:
+                        blob_cache[cache_key_prev] = prev_content
+                        
+                    curr_lines = self._find_lines(curr_content, query, is_regex=False)
+                    prev_lines = self._find_lines(prev_content, query, is_regex=False)
+                    
+                    if curr_lines != prev_lines:
+                        added = [l for l in curr_lines if l not in prev_lines]
+                        removed = [l for l in prev_lines if l not in curr_lines]
+                        if added or removed:
+                            commit_diffs.append({"file": f, "added": added, "removed": removed})
+                        
+                if commit_diffs:
+                    msg = commit.message.decode("utf-8", errors="replace").strip()
+                    entries.append({"hash": c_id[:12], "message": msg, "diffs": commit_diffs})
+                    
+                if len(entries) >= limit:
+                    break
+        except Exception:
+            pass
+        return entries
 
     # =========================================================================
     # HISTORIQUE GIT
