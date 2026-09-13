@@ -1,15 +1,16 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.7
-description: Éditeur de code natif (HUD) avec intégration Git locale et diffusion en direct des modifications.
+version: 3.8
+description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle d'Historique : Ne garder que les 5 dernieres versions.
 # Historique des versions :
+# 3.8: Sélection visuelle automatique du fichier (Focus) après sa création, et ajustement sémantique du reset.
 # 3.7: Précision du nom du workspace cible lors de la réinitialisation (message toast).
-# 3.6: Correction de la fuite SQLite (orphelins) lors de la suppression d'un dossier, en purgant tous ses sous-fichiers du Registre.
-# 3.5: Empêche la sélection UI d'un dossier vide (évite PermissionError au save) et nettoyage des logs debug perturbants.
+# 3.6: Gestion UI du nouveau paramètre booléen de trace (Trace Delta) pour le LLM.
+# 3.5: Support du passage de Workspace en argument optionnel pour toutes les actions.(évite PermissionError au save) et nettoyage des logs debug perturbants.
 # 3.4: Support de la création de dossiers vides dans l'espace 'main' sans notification/pollution du Registre (SQLite).
 # 3.2: Chargement automatique du dernier fichier lors du changement de workspace.
 # 2.6: Mise à jour de la priorité d'affichage à 70.
@@ -473,7 +474,7 @@ class Action:
 
                         reset_code = "if(window.echoCodexReset) window.echoCodexReset();"
                         await __event_call__({"type": "execute", "data": {"code": reset_code}})
-                        await events.toast(f"🗑️ Workspace '{current_workspace}' réinitialisé ({file_count} fichiers supprimés).", "success")
+                        await events.toast(f"🗑️ Workspace '{current_workspace}' réinitialisé ({file_count} éléments supprimés).", "success")
                         break
 
                     # ---- NOUVEAU FICHIER / DOSSIER ----
@@ -501,13 +502,15 @@ class Action:
                             escaped_name = json.dumps(
                                 filename.strip("/")).decode("utf-8")
 
-                            refresh_code = (
-                                f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
-                            )
-                            # On ne charge pas de contenu vide dans l'éÉditeur
-                            # si on vient de créer un dossier
+                            refresh_code = ""
                             if not is_dir:
                                 refresh_code += f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
+
+                            refresh_code += (
+                                f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
+                            )
+
+                            if not is_dir:
                                 refresh_code += f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
 
                             await __event_call__({"type": "execute", "data": {"code": refresh_code}})
