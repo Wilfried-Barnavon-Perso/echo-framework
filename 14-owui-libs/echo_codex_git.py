@@ -338,7 +338,7 @@ class CodexRepo:
                     break
         return matches
 
-    def trace_history(self, query: str, target_paths: list[str] = None, limit: int = 50) -> List[dict]:
+    def trace_history(self, query: str, target_paths: List[str] = None, limit: int = 50) -> List[dict]:
         """Traverse l'historique de versionnement du Codex pour trouver les itérations où `query` a été ajouté ou supprimé."""
         entries = []
         blob_cache = {} 

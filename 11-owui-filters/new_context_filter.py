@@ -262,29 +262,27 @@ class Filter:
 
                 tour_conversation = sum(1 for m in msgs if m.get("role") == "user")
 
-                # === AEC : Snapshot minimaliste (sans registres) ===
-                env_snapshot = {
-                    "version_framework_echo": get_echo_version() or "##ECHO_VERSION##",
-                    "modèle_actuel": "##MODEL_ID##",
-                    "modèle_origine": "##MODEL_ORIGIN##",
-                    "nom_utilisateur": display_name,
-                    "tour_conversation": tour_conversation,
-                    "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
-                    "localisation": final_loc,
-                    "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC"),
-                }
+                # === AEC : Méta-données brutes ===
+                date_heure = meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu")
+                timezone = meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
+                version = get_echo_version() or "##ECHO_VERSION##"
+                model_id = "##MODEL_ID##"
+                model_origin = "##MODEL_ORIGIN##"
 
                 body.setdefault("metadata", {})
                 body["metadata"]["_echo_env_info"] = {
                     "nom_utilisateur": display_name, "localisation": final_loc,
-                    "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
-                    "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
+                    "date_et_heure": date_heure,
+                    "timezone": timezone
                 }
 
                 from echo_aec import EchoAEC
 
                 rich_parts = []
-                rich_parts.append({"text": EchoAEC.render_environment_context(env_snapshot)})
+                rich_parts.append({"text": EchoAEC.render_identity_context(display_name)})
+                rich_parts.append({"text": EchoAEC.render_location_context(final_loc)})
+                rich_parts.append({"text": EchoAEC.render_time_context(date_heure, timezone, tour_conversation)})
+                rich_parts.append({"text": EchoAEC.render_model_context(model_id, model_origin, version)})
 
                 # === Configuration ZoneInfo ===
                 try:

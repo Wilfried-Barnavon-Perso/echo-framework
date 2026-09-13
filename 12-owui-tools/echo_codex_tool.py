@@ -346,7 +346,7 @@ class Tools:
     async def search_codex(
         self,
         query: str,
-        target_paths: list[str] = [],
+        target_paths: list[str] = None,
         is_regex: bool = False,
         commit_hash: str = None,
         trace_history: bool = False,

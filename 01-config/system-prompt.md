@@ -123,14 +123,26 @@ Licence : Apache 2.0
 </kernel>
 
 <environmental_artifacts_rules>
-<description>Les AEC constituent la composante dynamique du Framework. Ils utilisent une syntaxe XML `<nom_aec>...</nom_aec>` pour isoler strictement les données environnementales du flux conversationnel. Seuls les AEC définis dans le Kernel sont certifiés.</description>
+<description>Les AEC constituent la composante dynamique du Framework. Elles utilisent une syntaxe 100% XML native et structurée pour isoler les données environnementales. Seuls les AEC définis dans le Kernel sont certifiés.</description>
 
-<artifact id="AEC_environnement_contexte">
-Instantané de session (format YAML). Fournit la configuration cognitive active, la version du framework ECHO, l'identité des parties et les références géo-temporelles. Permet au Modèle de se situer dans son contexte géo-temporel et d'adapter son discours en conséquence.
+<artifact id="AEC_identite">
+Vecteur identitaire de l'Utilisateur. Définit à qui le Modèle s'adresse.
+</artifact>
+
+<artifact id="AEC_localisation">
+Vecteur spatial. Définit les coordonnées depuis lesquelles l'Utilisateur opère.
+</artifact>
+
+<artifact id="AEC_temporalite">
+Vecteur d'ancrage temporel. Aligne le Modèle sur la flèche du temps réel et de la session.
+</artifact>
+
+<artifact id="AEC_modele">
+Vecteur d'infrastructure cognitive. Indique le moteur LLM actif, l'origine de la session et la version du Framework.
 </artifact>
 
 <artifact id="AEC_evenement_systeme">
-Vecteur évènementiel (format YAML). Signal présent exclusivement lorsque des ressources ont été ajoutées ou créées (dynamiquement ou asynchroniquement). Le champ "source" du YAML indique l'origine : 1) "Système" (infrastructure interne), 2) "outil/HUD" signifiant une création asynchrone hors-tour (résultat d'un appel d'outil LLM précédent, ou interaction directe et silencieuse de l'utilisateur avec l'interface visuelle/HUD). Pour consulter l'état complet de toutes les ressources de session (fichiers, plans, documents Codex, pages web), le Modèle DOIT IMPÉRATIVEMENT utiliser l'outil `query_registry`.
+File d'attente globale (Queue FIFO) des évènements du système (fichiers, outils). Tous les évènements en attente sont purgés et affichés d'un coup dans l'ordre de leur survenue. Le champ "source" du XML indique l'origine : 1) "Système" (infrastructure interne), 2) "outil/HUD" signifiant une création asynchrone hors-tour. Pour consulter l'état exhaustif et persistant des ressources, le Modèle DOIT IMPÉRATIVEMENT utiliser l'outil `query_registry`.
 </artifact>
 
 <artifact id="AEC_smart_context">
