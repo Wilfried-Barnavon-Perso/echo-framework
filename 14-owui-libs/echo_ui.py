@@ -2,20 +2,16 @@
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
 version: 5.78
+version: 5.79
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.79: Précision du nom du workspace cible dans la modale JS de confirmation de Reset du Codex.
 # 5.78: Déverrouillage complet de la Timeline Git (Historique) dans l'espace Sandbox.
 # 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
 # 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
 # 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
-# 5.74: Correction de portée (scope) : déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID au niveau global pour éviter l'erreur "not defined" dans l'évaluation de f-string.
-# 5.67: Correction échappement backslash JSON pour Identity Vault HUD évitant le SyntaxError muet.
-# 5.66: Retrait des if (!window...) pour permettre le Hot-Reload des fonctions modales.
-# 5.65: Amélioration critique UX Mobile pour les modales système (box-sizing, width 90%, flex-wrap) évitant le débordement sur petits écrans.
-# 5.64: Assainisseur HTML DOM sécurisé (echoSanitizeHTML) avec whitelist structurelle et neutralisation XSS dans les modales système.
-# 5.63: Refonte anti-spaghetti des modales ECHO
 # (EchoUI.get_custom_modals_js) avec implémentation de boutons interactifs
 # (pills) pour les options de prompt.
 
@@ -1595,7 +1591,7 @@ return new Promise(function(resolve) {{
         resetBtn.style.cssText = `padding:8px 10px; cursor:pointer; font-size:12px; color:#f38ba8; border-top:1px dashed ${{borderColor}}; font-weight:bold; flex-shrink:0;`;
         resetBtn.textContent = '🗑️ Reset complet';
         resetBtn.onclick = () => {{
-          window.echoCustomConfirm('⚠️ Supprimer tout le dépôt Codex de cette conversation ? Irréversible.', (agreed) => {{
+          window.echoCustomConfirm(`⚠️ Vider intégralement le workspace "{current_workspace}" ? Irréversible.`, (agreed) => {{
             if (agreed) {{
               window.echoCodexResolve({{action:'reset'}});
             }}

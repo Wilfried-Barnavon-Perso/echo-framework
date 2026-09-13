@@ -1,19 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.6
+version: 3.7
 description: Éditeur de code natif (HUD) avec intégration Git locale et diffusion en direct des modifications.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle d'Historique : Ne garder que les 5 dernieres versions.
 # Historique des versions :
+# 3.7: Précision du nom du workspace cible lors de la réinitialisation (message toast).
 # 3.6: Correction de la fuite SQLite (orphelins) lors de la suppression d'un dossier, en purgant tous ses sous-fichiers du Registre.
 # 3.5: Empêche la sélection UI d'un dossier vide (évite PermissionError au save) et nettoyage des logs debug perturbants.
 # 3.4: Support de la création de dossiers vides dans l'espace 'main' sans notification/pollution du Registre (SQLite).
 # 3.2: Chargement automatique du dernier fichier lors du changement de workspace.
-# 3.1: Résolution du crash silencieux de la boucle asynchrone (UnboundLocalError sur repo et current_workspace empêchant l'exécution de la boucle et gelant l'UI).
-# 3.0: Asymétrie Main/Sandbox et correction des chemins `storage_path` isolés par workspace.
-# 2.9: Remplacement du prompt natif par une interface in-line pour la création, résolution du bug de scoping state (currentFile).
 # 2.6: Mise à jour de la priorité d'affichage à 70.
 # 2.5: Fix timeout (augmentation du CODEX_EDIT_TIMEOUT à 600s pour permettre la réflexion prolongée du MODEL_PRO sur des contextes massifs sans échec HTTPX).
 # 2.4: Fix du crash silencieux (UnboundLocalError sur files_json), support de l'upload multiple (batch), et correction de la synchronisation UI après une suppression.
@@ -475,7 +473,7 @@ class Action:
 
                         reset_code = "if(window.echoCodexReset) window.echoCodexReset();"
                         await __event_call__({"type": "execute", "data": {"code": reset_code}})
-                        await events.toast(f"🗑️ Codex réinitialisé ({file_count} fichiers supprimés).", "success")
+                        await events.toast(f"🗑️ Workspace '{current_workspace}' réinitialisé ({file_count} fichiers supprimés).", "success")
                         break
 
                     # ---- NOUVEAU FICHIER / DOSSIER ----
