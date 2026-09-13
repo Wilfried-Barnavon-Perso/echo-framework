@@ -2,13 +2,13 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.54
+version: 7.55
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.55: Démantèlement de env_snapshot vers 4 AEC XML natifs (Identité, Localisation, Temporalité, Modèle).
 # 7.54: Correction du bug d'ingestion des fichiers attachés au premier message (chat_id récupéré depuis le body).
-# 7.53: SSOT AEC : Délégation complète du rendu YAML/XML (environnement & système) à la lib dédiée EchoAEC.
 # 7.51: Correction d'un bug critique (NameError) bloquant l'injection de l'AEC via l'import de FILE_INGESTION_STATUS.
 # 7.48: Typage hiérarchique XML de l'AEC et suppression du formateur YAML.
 # 7.47: Délégation des UserValves vers user_native_context_filter et verrouillage de la désactivation.

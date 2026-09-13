@@ -2,9 +2,12 @@
 """
 title: ECHO AEC Manager
 author: Wilfried BARNAVON
-version: 1.0
-description: SSOT pour la gestion, le formatage et le cycle de vie de toutes les balises XML AEC.
+version: 2.0
+description: Composant système interne : ECHO AEC Manager.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 2.0: Suppression de _dict_to_yaml_aec au profit d'un templating XML natif (5 AEC distincts) et implémentation d'un tri chronologique FIFO pour la queue d'évènements.
 
 import time
 from typing import List, Dict, Any
