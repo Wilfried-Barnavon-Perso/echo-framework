@@ -50,7 +50,7 @@ ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
-ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows"]
+ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows", "dependencies"]
 ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 
 # Identité Réseau (Antigravity 2.5.5 — aligné sur AGY IDE product.json:ideVersion)

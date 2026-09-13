@@ -1,19 +1,18 @@
 """
-title: ECHO Python Code Executor
+title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.14
-description: Composant système interne : ECHO Python Code Executor.
+version: 7.0
+description: Composant système interne : ECHO Code Executor (Python & Node.js).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.0: Refonte Multi-langage (Python 3.14 + Node 22). Exécution stricte depuis un fichier du Codex (sandbox). Ajout de la gestion des dépendances (dependencies).
 # 6.10: Délégation de la gestion du timeout (ECHO_MAX_CODE_EXECUTION_TIMEOUT) au modèle.
 # 6.9: Refonte asynchrone via httpx, sécurisation de la sandbox et gestion multi-workspaces.
 # 6.8: Mise à jour sémantique de la docstring (explicitation de l'interdiction de génération UI).
 # 6.7: Précision de la version (Python 3.14) et rappel d'isolation dans la docstring.
-# 6.6: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 6.5: Ajout de l'argument __metadata__ dans l'interface de l'outil pour assurer la compatibilité OWUI.
 
-# ECHO CONFIG NAME : ECHO Python Sandbox
+# ECHO CONFIG NAME : ECHO Code Sandbox
 
 import sys
 from typing import Any
@@ -28,9 +27,10 @@ class Tools:
     def __init__(self):
         pass
 
-    async def execute_python(
+    async def execute_code(
         self,
-        code: str,
+        file_path: str,
+        dependencies: list[str] = None,
         timeout_sec: int = ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT,
         __user__: dict = None,
         __event_emitter__: Any = None,
@@ -38,23 +38,29 @@ class Tools:
         __metadata__: dict = None
     ) -> str:
         """
-        Permet au modèle d'exécuter du code (Python, etc.) dans une Sandbox isolée.
+        Permet au modèle d'exécuter du code (Python ou Node.js) dans une Sandbox isolée.
+        Le modèle DOIT STRICTEMENT écrire le code dans le workspace `sandbox` du Codex avant d'appeler cet outil.
+        L'exécution est déterminée par l'extension du fichier (.py ou .js).
+        
+        S'il y a des dépendances externes requises non pré-installées, l'agent DOIT les lister dans l'argument `dependencies` (ex: ["requests", "pandas"] ou ["axios", "express"]).
+        
+        Dépendances pré-installées (inutile de les redemander) :
+        - Python 3.14 : requests, httpx, pandas, numpy, scipy, beautifulsoup4, lxml, Pillow, pydantic, sqlalchemy, openpyxl, PyPDF2
+        - Node.js 22.x : axios, cheerio, js-yaml, lodash, papaparse, mathjs, zod, dotenv, moment
+        
         Le script s'exécute avec les accès stricts suivants :
         - '/ro_user_files' : Dossier en Lecture seule contenant les fichiers (pièces jointes) du Registre.
         - '/ro_user_edits' : Dossier en Lecture seule contenant le code versionné (Codex workspace main).
         - '/workspace' : Espace d'écriture persistant visible dans le Codex (workspace sandbox).
         
         Args:
-            code (str): Le code source complet à exécuter.
-            timeout_sec (int): Délai maximum accordé au script. Une fois ce délai strictement 
-                               dépassé, l'environnement d'exécution éphémère (la Sandbox) 
-                               disparaît intégralement, entraînant la destruction instantanée 
-                               de tous les processus et variables en mémoire.
-        
-        Note à l'Orchestrateur : Si la tâche de développement ou d'exécution est complexe, il est vivement recommandé de confier l'utilisation de cet outil à un sous-agent spécialisé.
+            file_path (str): Le chemin relatif du fichier à exécuter dans la sandbox (ex: "script.py" ou "dossier/app.js").
+            dependencies (list[str]): Liste des paquets pip/npm additionnels à installer avant l'exécution.
+            timeout_sec (int): Délai maximum accordé au script.
         """
         __user__ = __user__ or {}
         __metadata__ = __metadata__ or {}
+        dependencies = dependencies or []
 
         events = EchoEvents(__event_emitter__, __event_call__)
         
@@ -65,15 +71,19 @@ class Tools:
         
         actual_timeout = timeout_sec
         
-        await events.status(f"🐍 Exécution de code en cours... (Timeout: {actual_timeout}s)")
+        ext = file_path.split('.')[-1]
+        runtime_icon = "🐍" if ext == "py" else "📦" if ext == "js" else "⚙️"
+        await events.status(f"{runtime_icon} Exécution de {file_path} en cours... (Timeout: {actual_timeout}s)")
 
         try:
             import httpx
-            async with httpx.AsyncClient(timeout=actual_timeout + 2.0) as client:
+            # Ajout d'une marge substantielle (ex: 30s) pour couvrir le temps d'installation des dépendances dynamiques
+            async with httpx.AsyncClient(timeout=actual_timeout + 30.0) as client:
                 response = await client.post(
                     ECHO_CODING_WORKER_URL,
                     json={
-                        "code": code,
+                        "file_path": file_path,
+                        "dependencies": dependencies,
                         "user_id": __user__.get("id", "system"),
                         "chat_id": __metadata__.get("chat_id"),
                         "timeout": actual_timeout

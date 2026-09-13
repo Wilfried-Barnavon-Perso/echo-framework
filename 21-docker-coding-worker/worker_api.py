@@ -1,42 +1,20 @@
 """
 ================================================================================
-MODULE : ECHO PYTHON WORKER API
-VERSION : 2.8 (Topologie Codex RO)
+MODULE : ECHO CODE WORKER API
+VERSION : 3.0 (Multi-langage & Isolation)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-09-10
+DATE MAJ : 2026-09-13
 
+CHANGELOG 3.0 :
+- Refonte majeure : Transformation du Python Worker en Code Worker multi-langage (Python 3.14 + NodeJS 22).
+- Le script n'est plus transmis à la volée, mais exécuté depuis un fichier physique préalablement enregistré dans la Sandbox du Codex.
+- Intégration d'un Pre-execution Linting (py_compile, node -c) pour rejeter immédiatement les erreurs de syntaxe.
+- Ajout du montage d'un dossier `dependencies` frère au codex pour l'installation isolée et persistante des dépendances à la volée (via pip et npm).
 CHANGELOG 2.8 :
 - Renommage de /inputs vers /ro_user_files (plus sémantique).
-- Ajout du montage du dépôt Codex en lecture seule vers /ro_user_edits pour permettre au script Python d'exécuter le code généré.
+- Ajout du montage du dépôt Codex en lecture seule vers /ro_user_edits pour permettre au script d'exécuter le code généré.
 CHANGELOG 2.7 :
 - Remplacement du tmpfs en RAM par un bind-mount physique vers `.tmp` dans le workspace pour prévenir les attaques de type OOM-DoS (Saturation RAM).
-CHANGELOG 2.6 :
-- Ajout de montages Bubblewrap ciblés : lib64 (NumPy), resolv.conf/ssl (requests/réseau) et un tmpfs en RAM (Pandas).
-CHANGELOG 2.5 :
-- Fix "Can't mount proc on /proc" en remplaçant la création d'un nouveau procfs (--proc) par un montage en lecture seule du procfs parent (--ro-bind /proc /proc).
-CHANGELOG 2.4 :
-- Remplacement du module json par orjson pour de meilleures performances (lecture binaire de logging.json).
-CHANGELOG 2.3 :
-- Nettoyage des imports (PEP8) et placement de la docstring en tête de fichier.
-CHANGELOG 2.2 :
-- Retrait de l'isolation réseau (--unshare-net) pour permettre l'usage de requests/pandas.
-CHANGELOG 2.1 :
-- Durcissement de Bubblewrap : exécution en tant que nobody (UID/GID 65534) et isolation complète (--unshare-all).
-CHANGELOG 2.0 :
-- Moteur Bubblewrap : Isolation absolue avec dossiers `workspace` (RW) et `inputs` (RO).
-CHANGELOG 1.8 :
-- FIX: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
-CHANGELOG 1.6 :
-- Correction d'un risque de deadlock IPC (utilisation de queue.get avec timeout au lieu de p.join bloquant).
-CHANGELOG 1.5 :
-- Omission du champ 'error' quand stderr est vide (alignement standard ECHO).
-CHANGELOG 1.4 :
-- Ajout de GET /health pour l'orchestration séquentielle Docker Compose.
-CHANGELOG 1.3 :
-- Migrated to orjson and pybase64 for consistency across the framework.
-CHANGELOG 1.2 :
-- Ajout du logging de l'ID utilisateur (X-OpenWebUI-User-Id).
-- Maintien du mode 'threaded' pour le parallélisme.
 ================================================================================
 """
 
@@ -47,7 +25,6 @@ import orjson
 import os
 import queue
 import subprocess
-import tempfile
 import time
 
 from flask import Flask, jsonify, request  # pyright: ignore[reportMissingImports]
@@ -84,22 +61,89 @@ logging.getLogger("werkzeug").addFilter(RateLimitHealthCheckFilter())
 
 app = Flask(__name__)
 
-def run_isolated_process(code, result_queue, target_dir, files_dir, timeout_sec):
+def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, files_dir, deps_dir, timeout_sec):
     try:
-        if target_dir:
-            os.makedirs(target_dir, exist_ok=True)
-            workspace = target_dir
-        else:
-            workspace = tempfile.mkdtemp()
+        if not sandbox_dir:
+            result_queue.put({'status': 'critical_error', 'error': 'Espace d\'exécution non défini.'})
+            return
             
-        sandbox_tmp = os.path.join(workspace, ".tmp")
+        os.makedirs(sandbox_dir, exist_ok=True)
+        sandbox_tmp = os.path.join(sandbox_dir, ".tmp")
         os.makedirs(sandbox_tmp, exist_ok=True)
         
-        script_path = os.path.join(workspace, "script.py")
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(code)
+        # Le dossier de dépendances doit exister pour être monté
+        if deps_dir:
+            os.makedirs(deps_dir, exist_ok=True)
+            # Permettre à tout le monde d'écrire car Bubblewrap (nobody) y installera les libs
+            os.chmod(deps_dir, 0o777)
+            
+        # Résolution du fichier cible dans la sandbox
+        # file_path vient de l'outil et est un chemin relatif au workspace
+        # On s'assure de ne pas sortir de la sandbox (path traversal)
+        abs_file_path = os.path.abspath(os.path.join(sandbox_dir, file_path))
+        if not abs_file_path.startswith(os.path.abspath(sandbox_dir)):
+            result_queue.put({'status': 'error', 'error': 'Accès refusé : Le fichier cible est hors du workspace.'})
+            return
+            
+        if not os.path.isfile(abs_file_path):
+            result_queue.put({'status': 'error', 'error': f"Fichier cible introuvable : {file_path}"})
+            return
 
-        # Isolation Absolue Bubblewrap
+        # =========================================================================
+        # PRE-EXECUTION LINTING
+        # =========================================================================
+        result = {'status': 'success', 'output': ''}
+        is_python = file_path.endswith('.py')
+        is_node = file_path.endswith('.js')
+        
+        if not (is_python or is_node):
+            result_queue.put({'status': 'error', 'error': 'Extension non supportée. Seuls .py et .js sont acceptés.'})
+            return
+            
+        lint_cmd = []
+        if is_python:
+            lint_cmd = ["python", "-m", "py_compile", abs_file_path]
+        else:
+            lint_cmd = ["node", "-c", abs_file_path]
+            
+        try:
+            lint_proc = subprocess.run(lint_cmd, capture_output=True, text=True, timeout=10)
+            if lint_proc.returncode != 0:
+                result['status'] = 'error'
+                err_out = lint_proc.stderr if lint_proc.stderr else lint_proc.stdout
+                result['error'] = f"Erreur de syntaxe (Pre-execution Linting) :\n{err_out}"
+                result_queue.put(result)
+                return
+        except subprocess.TimeoutExpired:
+            result['status'] = 'error'
+            result['error'] = 'Timeout lors de la vérification syntaxique.'
+            result_queue.put(result)
+            return
+
+        # =========================================================================
+        # INSTALLATION DYNAMIQUE DES DEPENDANCES (DANS L'HÔTE)
+        # =========================================================================
+        # L'installation se fait en amont de Bwrap pour simplifier les accès réseau et droits,
+        # ou elle peut se faire via subprocess classique vu qu'on a Node/Pip installés.
+        # Ici on le fait via un subprocess standard avant de cloisonner avec bwrap.
+        if dependencies and deps_dir:
+            if is_python:
+                python_deps_dir = os.path.join(deps_dir, "python")
+                os.makedirs(python_deps_dir, exist_ok=True)
+                os.chmod(python_deps_dir, 0o777)
+                pip_cmd = ["python", "-m", "pip", "install", "--target", python_deps_dir] + dependencies
+                subprocess.run(pip_cmd, capture_output=True, text=True) # Silencieux
+            elif is_node:
+                node_deps_dir = os.path.join(deps_dir, "node")
+                os.makedirs(node_deps_dir, exist_ok=True)
+                os.chmod(node_deps_dir, 0o777)
+                # Installer dans node_deps_dir
+                npm_cmd = ["npm", "install", "--prefix", node_deps_dir] + dependencies
+                subprocess.run(npm_cmd, capture_output=True, text=True)
+
+        # =========================================================================
+        # ISOLATION ABSOLUE BUBBLEWRAP
+        # =========================================================================
         bwrap_cmd = [
             "bwrap",
             "--ro-bind", "/usr", "/usr",
@@ -109,13 +153,13 @@ def run_isolated_process(code, result_queue, target_dir, files_dir, timeout_sec)
             "--ro-bind", "/proc", "/proc",
             "--ro-bind-try", "/lib64", "/lib64", # Requis pour certaines dépendances C (NumPy)
             "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf", # Requis pour la résolution DNS (Internet)
-            "--ro-bind-try", "/etc/ssl/certs", "/etc/ssl/certs", # Requis pour les requêtes HTTPS (requests)
+            "--ro-bind-try", "/etc/ssl/certs", "/etc/ssl/certs", # Requis pour les requêtes HTTPS (requests, axios)
             "--bind", sandbox_tmp, "/tmp", # Remplace le tmpfs en RAM pour éviter un crash OOM DoS
             "--unshare-ipc",
             "--unshare-uts",
             "--unshare-cgroup",
             "--unshare-user", "--uid", "65534", "--gid", "65534", # Exécute en tant qu'utilisateur "nobody"
-            "--bind", workspace, "/workspace", # <- Dossier Sandbox (RW)
+            "--bind", sandbox_dir, "/workspace", # <- Dossier Sandbox (RW)
             "--chdir", "/workspace"
         ]
 
@@ -124,13 +168,27 @@ def run_isolated_process(code, result_queue, target_dir, files_dir, timeout_sec)
             bwrap_cmd.extend(["--ro-bind-try", files_dir, "/ro_user_files"])
             
         # Montage du dépôt Codex (main) en LECTURE SEULE
-        if target_dir:
-            codex_main = os.path.join(os.path.dirname(target_dir), "main")
+        if sandbox_dir:
+            codex_main = os.path.join(os.path.dirname(sandbox_dir), "main")
             bwrap_cmd.extend(["--ro-bind-try", codex_main, "/ro_user_edits"])
+            
+        # Montage du dossier des dépendances en LECTURE/ECRITURE
+        if deps_dir:
+            bwrap_cmd.extend(["--bind-try", deps_dir, "/.deps"])
 
-        bwrap_cmd.extend(["python", "/workspace/script.py"])
+        # Injecter le runtime approprié
+        if is_python:
+            if deps_dir:
+                bwrap_cmd.extend(["--setenv", "PYTHONPATH", "/.deps/python"])
+            bwrap_cmd.extend(["python", f"/workspace/{file_path}"])
+        else: # is_node
+            if deps_dir:
+                # Concaténer les libs système et les libs locales du chat
+                bwrap_cmd.extend(["--setenv", "NODE_PATH", "/.deps/node/node_modules:/usr/lib/node_modules"])
+            else:
+                bwrap_cmd.extend(["--setenv", "NODE_PATH", "/usr/lib/node_modules"])
+            bwrap_cmd.extend(["node", f"/workspace/{file_path}"])
 
-        result = {'status': 'success', 'output': ''}
         try:
             proc = subprocess.run(
                 bwrap_cmd,
@@ -163,25 +221,28 @@ def run_isolated_process(code, result_queue, target_dir, files_dir, timeout_sec)
 @app.route('/execute', methods=['POST'])
 def execute_code():
     data = request.json
-    code = data.get('code', '')
+    file_path = data.get('file_path', '')
+    dependencies = data.get('dependencies', [])
     timeout = data.get('timeout', 30)
     
     user_id = data.get('user_id', 'system')
     chat_id = data.get('chat_id')
     
-    logger.info(f"🚀 Execution START | User: {user_id} | Chat: {chat_id} | Timeout: {timeout}s")
+    logger.info(f"🚀 Execution START | User: {user_id} | Chat: {chat_id} | File: {file_path} | Timeout: {timeout}s")
 
-    target_dir = None
+    sandbox_dir = None
     files_dir = None
+    deps_dir = None
     if user_id != 'system' and chat_id:
         safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
         safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
-        target_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/codex/sandbox"
+        sandbox_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/codex/sandbox"
         files_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/files"
+        deps_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/dependencies"
 
     # Création d'un processus OS distinct
     q_result = multiprocessing.Queue()
-    p = multiprocessing.Process(target=run_isolated_process, args=(code, q_result, target_dir, files_dir, timeout))
+    p = multiprocessing.Process(target=run_isolated_process, args=(file_path, dependencies, q_result, sandbox_dir, files_dir, deps_dir, timeout))
     p.start()
     
     try:
@@ -212,3 +273,4 @@ def health():
 if __name__ == '__main__':
     # threaded=True permet de traiter les requêtes HTTP en parallèle
     app.run(host='0.0.0.0', port=5000, threaded=True)
+

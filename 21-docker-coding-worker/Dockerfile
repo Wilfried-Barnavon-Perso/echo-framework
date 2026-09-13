@@ -8,8 +8,17 @@ WORKDIR /app
 
 # L'image de base comprend déjà les build-essentials (gcc, python3-dev, etc.)
 
+# Installation des packages système et Node.js (22.x LTS)
+RUN apt-get update && apt-get install -y curl bubblewrap && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g axios cheerio js-yaml lodash papaparse mathjs zod dotenv moment && \
+    rm -rf /var/lib/apt/lists/*
+
+# Configurer le NODE_PATH global
+ENV NODE_PATH=/usr/lib/node_modules
+
 # Installation des packages Python
-RUN apt-get update && apt-get install -y bubblewrap && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) pip install --no-cache-dir -r requirements.txt
 
