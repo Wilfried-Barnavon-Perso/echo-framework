@@ -1,16 +1,16 @@
 """
 title: Resume in New Chat
 author: ECHO Framework
-version: 1.7
+version: 1.8
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMSAxNnYuNWExLjUgMS41IDAgMCAxLTEuNSAxLjVoLTZMMTIgMjBsLTIuNS0yLjVoLTZBMS41IDEuNSAwIDAgMSAyIDE2LjVWNGExLjUgMS41IDAgMCAxIDEuNS0xLjVoMTVBMS41IDEuNSAwIDAgMSAyMCA0djciLz48cGF0aCBkPSJtMTggMjIgMy0zLTMtMyIvPjxwb2x5bGluZSBwb2ludHM9IjIxIDE5IDEzIDE5Ii8+PC9zdmc+
 """
 # Historique des versions :
+# 1.8: Remplacement des regex de purge par une regex globale sur <artifact> pour le nettoyage OWUI.
 # 1.5: Ajout d'une demande de confirmation explicite avant le déclenchement de la migration.
 # 1.4: Mise à jour de la priorité d'affichage à 20.
 # 1.3: Préservation des liens symboliques lors du clonage du Vault (compatibilité ingestion).
 # 1.2: Nettoyage tokens (fichiers + balises proprioceptives) pour distillation optimisée.
-# 1.1: Migration complète du contexte saturé vers une nouvelle session distillée.
 
 import sys
 import os
@@ -130,9 +130,7 @@ class Action:
             
             if isinstance(content, str):
                 # Nettoyage des balises de contexte proprioceptif pour optimiser le budget tokens
-                content = re.sub(r'<AEC_smart_context>.*?</AEC_smart_context>', '', content, flags=re.DOTALL)
-                content = re.sub(r'<AEC_environnement_contexte>.*?</AEC_environnement_contexte>', '', content, flags=re.DOTALL)
-                content = re.sub(r'<AEC_evenement_systeme>.*?</AEC_evenement_systeme>', '', content, flags=re.DOTALL)
+                content = re.sub(r'<artifact id="AEC_.*?">.*?</artifact>', '', content, flags=re.DOTALL)
                 content = content.strip()
                 
             # Extraction des fichiers joints

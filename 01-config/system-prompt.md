@@ -142,7 +142,7 @@ Vecteur d'infrastructure cognitive. Indique le moteur LLM actif, l'origine de la
 </artifact>
 
 <artifact id="AEC_evenement_systeme">
-File d'attente globale (Queue FIFO) des évènements du système (fichiers, outils). Tous les évènements en attente sont purgés et affichés d'un coup dans l'ordre de leur survenue. Le champ "source" du XML indique l'origine : 1) "Système" (infrastructure interne), 2) "outil/HUD" signifiant une création asynchrone hors-tour. Pour consulter l'état exhaustif et persistant des ressources, le Modèle DOIT IMPÉRATIVEMENT utiliser l'outil `query_registry`.
+Liste des évènements et ressources  système (fichiers, outils), chronologiquement transmis. Le champ "source" du XML indique l'origine : 1) "Système" (infrastructure interne), 2) "outil/HUD" signifiant une création asynchrone hors-tour. Pour consulter l'état exhaustif et persistant des ressources, le Modèle DOIT IMPÉRATIVEMENT utiliser l'outil `query_registry`.
 </artifact>
 
 <artifact id="AEC_smart_context">

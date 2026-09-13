@@ -1,19 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.56
+version: 192.57
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.57: Remplacement des blocs XML de troncature MAX_TOKENS par le format natif <artifact id="AEC_evenement_systeme">.
 # 192.56: Déploiement des Rappels Cognitifs Multi-Axes (Anti-Division par 0 + UI Toast Emission).
 # 192.55: Suture stricte (SSOT) : Injection native du Défibrillateur Attentionnel avant la boucle bit-perfect via EchoAEC.
 # 192.54: UX SSE: Libération asynchrone anticipée de l'UI via `yield ""` dès réception du finish_reason 'STOP', masquant la latence post-génération de l'API Google (usageMetadata).
 # 192.53: Suppression du bloc dead code 'RÉCUPÉRATION CHIRURGICALE' (await request.json()) : __request__ est un paramètre nommé de la signature du pipe, jamais dans **kwargs.
-# 192.52: Correction critique OWUI SSE: Suppression de yield ' ' qui forçait la création d'un message fantôme corrompant le stream reasoning.
-# 192.51: Intégration du Défibrillateur Attentionnel persistant via le KV unifié de session (echo_settings).
-# 192.50: Intégration du Défibrillateur Attentionnel par lecture native du promptTokenCount API via SQLite.
 
 
 # ==============================================================================
@@ -1005,13 +1003,17 @@ class Pipe:
                         # Le payload partiel est rejeté par le StreamProcessor. On injecte une directive punitive pour forcer la concision.
                         await events.status("⚠️ Appel d'outil tronqué (MAX_TOKENS). Reprise et correction...")
                         await events.toast("Appel d'outil trop volumineux : Reprise automatique de la génération.", "warning")
-                        user_resp_parts = [{"text": "<AEC_evenement_systeme>\ntype: erreur_troncature_outil\nmessage: L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte).\ninstruction: Le modèle doit relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation.\n</AEC_evenement_systeme>"}]
+                        texte_outil = "Erreur : L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte). Le modèle doit relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation."
+                        xml_outil = f'<artifact id="AEC_evenement_systeme" source="Système">\\n{texte_outil}\\n</artifact>'
+                        user_resp_parts = [{"text": xml_outil}]
                     else:
                         # Cas 2 : L'interruption a eu lieu sur du texte brut.
                         # Le texte existant a déjà été indexé. On injecte une directive de continuation pure.
                         await events.status("🔄 Reprise automatique de la génération (MAX_TOKENS)...")
                         await events.toast("Limite de contexte (MAX_TOKENS) atteinte : Reprise automatique.", "info")
-                        user_resp_parts = [{"text": "<AEC_evenement_systeme>\ntype: troncature_texte\nmessage: La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte.\ninstruction: Le modèle doit poursuivre la génération du texte à partir du point de troncature exact, sans introduction.\n</AEC_evenement_systeme>"}]
+                        texte_gene = "Erreur : La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte. Le modèle doit poursuivre la génération du texte à partir du point de troncature exact, sans introduction."
+                        xml_gene = f'<artifact id="AEC_evenement_systeme" source="Système">\\n{texte_gene}\\n</artifact>'
+                        user_resp_parts = [{"text": xml_gene}]
                         
                     # Suture sémantique de l'événement système pour maintenir l'invariant cognitif bit-perfect
                     user_msg = {"role": "user", "parts": user_resp_parts}

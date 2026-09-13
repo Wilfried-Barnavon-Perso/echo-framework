@@ -2,20 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.55
+version: 7.56
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.56: Extraction de dr.get("summary") dans la clé 'message' du delta hors-tour.
 # 7.55: Démantèlement de env_snapshot vers 4 AEC XML natifs (Identité, Localisation, Temporalité, Modèle).
 # 7.54: Correction du bug d'ingestion des fichiers attachés au premier message (chat_id récupéré depuis le body).
 # 7.51: Correction d'un bug critique (NameError) bloquant l'injection de l'AEC via l'import de FILE_INGESTION_STATUS.
 # 7.48: Typage hiérarchique XML de l'AEC et suppression du formateur YAML.
-# 7.47: Délégation des UserValves vers user_native_context_filter et verrouillage de la désactivation.
-# 7.46: Nettoyage des mentions "V2" du registre et de l'AEC.
-# 7.44: Ajout du tour de conversation dans le snapshot AEC (<AEC_environnement_contexte>).
-# 7.43: Nettoyage du code mort (suppression de la Valve DEBUG_MODE inutilisée).
-# 7.42: Factorisation de l'AEC et de l'horodatage zoné, retrait de _dict_to_yaml.
 
 
 from pydantic import BaseModel, Field
@@ -324,7 +320,8 @@ class Filter:
                                     "type": dr["status"], "name": dr["name"],
                                     "mime": dr.get("mime"), "resource_type": dr["resource_type"],
                                     "date": datetime.fromtimestamp(dr.get("created_at", time.time()), tz=user_tz).strftime("%Y-%m-%d %H:%M:%S"),
-                                    "source": "outil/HUD"
+                                    "source": "outil/HUD",
+                                    "message": dr.get("summary")
                                 })
                     # Sauvegarder le timestamp actuel pour le prochain delta
                     body["metadata"]["_echo_last_event_check_at"] = int(time.time())
