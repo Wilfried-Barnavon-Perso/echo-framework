@@ -1,11 +1,12 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 7.1
+version: 7.2
 description: Composant système interne : ECHO Code Executor (Python & Node.js).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.2: Alignement sémantique des montages Bwrap dans la docstring (/sandbox, /main, /files).
 # 7.1: Correction typage (Optional/List) pour Pydantic V2 et renommage de execute_code en code_executor.
 # 7.0: Refonte Multi-langage (Python 3.14 + Node 22). Exécution stricte depuis un fichier du Codex (sandbox). Ajout de la gestion des dépendances (dependencies).
 # 6.10: Délégation de la gestion du timeout (ECHO_MAX_CODE_EXECUTION_TIMEOUT) au modèle.
@@ -50,9 +51,9 @@ class Tools:
         - Node.js 22.x : axios, cheerio, js-yaml, lodash, papaparse, mathjs, zod, dotenv, moment
         
         Le script s'exécute avec les accès stricts suivants :
-        - '/ro_user_files' : Dossier en Lecture seule contenant les fichiers (pièces jointes) du Registre.
-        - '/ro_user_edits' : Dossier en Lecture seule contenant le code versionné (Codex workspace main).
-        - '/workspace' : Espace d'écriture persistant visible dans le Codex (workspace sandbox).
+        - '/files' : Dossier en Lecture seule contenant les fichiers (pièces jointes) du Registre.
+        - '/main' : Dossier en Lecture seule contenant le code versionné (Codex workspace main).
+        - '/sandbox' : Espace d'écriture persistant visible dans le Codex (workspace sandbox).
         
         Args:
             file_path (str): Le chemin relatif du fichier à exécuter dans la sandbox (ex: "script.py" ou "dossier/app.js").

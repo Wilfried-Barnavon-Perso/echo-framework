@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 3.0 (Multi-langage & Isolation)
+VERSION : 3.1 (Multi-langage & Isolation)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-09-13
+DATE MAJ : 2026-09-14
 
+CHANGELOG 3.1 :
+- Alignement sémantique des montages Bwrap sur /sandbox, /main et /files.
 CHANGELOG 3.0 :
 - Refonte majeure : Transformation du Python Worker en Code Worker multi-langage (Python 3.14 + NodeJS 22).
 - Le script n'est plus transmis à la volée, mais exécuté depuis un fichier physique préalablement enregistré dans la Sandbox du Codex.
@@ -159,18 +161,18 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
             "--unshare-uts",
             "--unshare-cgroup",
             "--unshare-user", "--uid", "65534", "--gid", "65534", # Exécute en tant qu'utilisateur "nobody"
-            "--bind", sandbox_dir, "/workspace", # <- Dossier Sandbox (RW)
-            "--chdir", "/workspace"
+            "--bind", sandbox_dir, "/sandbox", # <- Dossier Sandbox (RW)
+            "--chdir", "/sandbox"
         ]
 
         # Montage des uploads utilisateurs en LECTURE SEULE
         if files_dir:
-            bwrap_cmd.extend(["--ro-bind-try", files_dir, "/ro_user_files"])
+            bwrap_cmd.extend(["--ro-bind-try", files_dir, "/files"])
             
         # Montage du dépôt Codex (main) en LECTURE SEULE
         if sandbox_dir:
             codex_main = os.path.join(os.path.dirname(sandbox_dir), "main")
-            bwrap_cmd.extend(["--ro-bind-try", codex_main, "/ro_user_edits"])
+            bwrap_cmd.extend(["--ro-bind-try", codex_main, "/main"])
             
         # Montage du dossier des dépendances en LECTURE/ECRITURE
         if deps_dir:
@@ -180,14 +182,14 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
         if is_python:
             if deps_dir:
                 bwrap_cmd.extend(["--setenv", "PYTHONPATH", "/.deps/python"])
-            bwrap_cmd.extend(["python", f"/workspace/{file_path}"])
+            bwrap_cmd.extend(["python", f"/sandbox/{file_path}"])
         else: # is_node
             if deps_dir:
                 # Concaténer les libs système et les libs locales du chat
                 bwrap_cmd.extend(["--setenv", "NODE_PATH", "/.deps/node/node_modules:/usr/lib/node_modules"])
             else:
                 bwrap_cmd.extend(["--setenv", "NODE_PATH", "/usr/lib/node_modules"])
-            bwrap_cmd.extend(["node", f"/workspace/{file_path}"])
+            bwrap_cmd.extend(["node", f"/sandbox/{file_path}"])
 
         try:
             proc = subprocess.run(
