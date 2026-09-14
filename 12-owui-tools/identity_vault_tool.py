@@ -1,7 +1,7 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 1.4
+version: 1.5
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -39,17 +39,31 @@ class Tools:
             conn.commit()
         return state
 
-    async def list_identities(self, service: Optional[str] = None, __user__: dict = None) -> str:
+    async def list_available_services(self, __user__: dict = None) -> str:
         """
-        Récupère la liste des serveurs ou services tiers enregistrés pour le compte actif, accompagnée de leur description sémantique et rôle. Permet d'identifier si un serveur pertinent est déjà disponible pour accomplir une tâche. Si l'argument 'service' n'est pas fourni, retourne tous les services existants du coffre-fort.
+        Permet au modèle de lister de manière exhaustive les noms de services actuellement configurés dans le coffre-fort.
+        Le Modèle DOIT obligatoirement utiliser cette fonction pour identifier le service cible (ex: 'n8n_workflows') avant toute invocation de 'list_identities'.
         """
-        if not __user__: return "Erreur: Utilisateur inconnu."
+        if not __user__: return "Erreur: Auth requise."
         state = self._init_vault(__user__["id"])
         with state._get_connection() as conn:
-            if service:
-                cursor = conn.execute("SELECT service, account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ?", (__user__["id"], service))
-            else:
-                cursor = conn.execute("SELECT service, account_id, credentials FROM identity_vault WHERE user_id = ?", (__user__["id"],))
+            cursor = conn.execute("SELECT DISTINCT service FROM identity_vault WHERE user_id = ?", (__user__["id"],))
+            rows = cursor.fetchall()
+            
+        if not rows:
+            return "Aucun service configuré."
+        
+        return f"Services disponibles : {', '.join([r[0] for r in rows])}"
+
+    async def list_identities(self, service: str, __user__: dict = None) -> str:
+        """
+        Permet au modèle de récupérer les comptes tiers rattachés à un service spécifique. L'argument 'service' est strictement obligatoire.
+        """
+        if not __user__: return "Erreur: Utilisateur inconnu."
+        if not service: return "Erreur: L'argument 'service' est strictement requis. Invoquez 'list_available_services' en cas de doute."
+        state = self._init_vault(__user__["id"])
+        with state._get_connection() as conn:
+            cursor = conn.execute("SELECT service, account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ?", (__user__["id"], service))
             rows = cursor.fetchall()
             
         result = []
@@ -62,11 +76,11 @@ class Tools:
                 desc = data.get("description", creds)
             except Exception:
                 desc = creds
-            result.append(f"[Service: {svc} | Compte: {account} : {desc}]")
+            result.append(f"[Compte: {account} : {desc}]")
             
         if not result:
-            return f"Aucun serveur trouvé pour le service '{service}'." if service else "Aucun serveur trouvé dans le coffre-fort."
-        return f"Serveurs pour '{service}': " + ", ".join(result) if service else "Tous les serveurs : " + ", ".join(result)
+            return f"Aucun compte trouvé pour '{service}'."
+        return f"[{service}] " + ", ".join(result)
 
     async def manage_identity(self, action: str, service: str, account_id: str, credentials_json: str = "", __user__: dict = None, __event_call__: Any = None) -> str:
         """

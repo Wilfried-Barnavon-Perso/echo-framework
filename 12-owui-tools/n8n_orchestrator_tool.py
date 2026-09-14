@@ -1,7 +1,7 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 1.12
+version: 1.13
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3).
 --- CHANGELOG 1.10 ---
 - Amélioration : Rendu impersonnel du prompt d'Action Requise pour les variables d'authentification et incitation à utiliser ask_user_input.
@@ -141,9 +141,19 @@ class Tools:
                 if "credentials" in node and node["credentials"]:
                     has_native_credentials = True
                     break
+                
+                params = node.get("parameters", {})
+                headers = params.get("headerParametersUi", {}).get("parameter", [])
+                if not isinstance(headers, list): headers = []
+                for header in headers:
+                    name = header.get("name", "").lower()
+                    value = header.get("value", "")
+                    if name in ["cookie", "authorization", "api-key", "x-api-key", "token"]:
+                        if "__ECHO_SECRET_" not in value:
+                            errors.append(f"Header '{name}' codé en dur dans '{node.get('name')}'. Hardcoding strictement proscrit.")
             
             if has_native_credentials:
-                errors.append("Architecture Invalide : Ce workflow utilise des credentials N8N natifs. Notre worker N8N étant headless et stateless, il ne possède aucun Vault interne. Le Modèle doit supprimer les nœuds natifs concernés et les réécrire en requêtes brutes (ex: nœud HTTP Request) en injectant l'authentification dans les paramètres (Headers/Query) via la macro __ECHO_SECRET_XXX__ (qui sera résolue par l'ECHO Identity Vault avant l'exécution).")
+                errors.append("Credentials N8N natifs interdits (Worker stateless). Remplacer par requêtes brutes via macros __ECHO_SECRET_XXX__.")
         except Exception:
             pass # Si ce n'est pas un JSON valide, la création plantera plus loin de toute façon
             
@@ -161,8 +171,8 @@ class Tools:
                         errors.append(f"Macro manquante : Le secret '{key}' est requis mais absent de l'ECHO Identity Vault de l'Utilisateur.")
                         
         if errors:
-            final_err = "\n".join(errors)
-            return f"[Action Requise] Problème d'identifiants ou d'architecture détecté :\n{final_err}\n\nLe Modèle doit interrompre la tâche et résoudre ce problème de manière autonome. Lorsqu'une information d'authentification est manquante, le Modèle doit :\n1. Identifier l'URL officielle permettant de générer ces variables.\n2. Utiliser l'outil `ask_user_input` pour fournir cette URL à l'Utilisateur et lui demander interactivement de saisir les informations requises.\n3. Utiliser l'outil `manage_identity` (service='n8n_workflows') pour enregistrer la configuration dans l'Identity Vault.\n4. Relancer la préparation du workflow."
+            final_err = " | ".join(errors)
+            return f"[Action Requise] Violation architecturale bloquante : {final_err}\nLe Modèle DOIT utiliser `ask_user_input` pour collecter l'information, l'enregistrer via `manage_identity` (service='n8n_workflows'), puis injecter la macro __ECHO_SECRET_...__."
         return None
 
     def prepare_n8n_workflow(self, content: str = None, from_template_id: str = None, __user__: dict = None, __metadata__: dict = None) -> dict:
@@ -400,6 +410,8 @@ class Tools:
                     status = res.get("status")
                     if sync:
                         logs = res.get("stdout", "") + "\n" + res.get("stderr", "")
+                        if len(logs.encode('utf-8')) >= 65536:
+                            return self._wrap("[Erreur Système] Payload excessif (>64Ko) bloqué. Le Modèle DOIT réexécuter l'instance en mode asynchrone (sync=False) ou modifier le workflow pour forcer l'écriture sur disque.", __user__, __metadata__)
                         return self._wrap(f"[N8N EXECUTION : {status.upper()}]\n{logs}\n\n[INFO SYSTEM] Tâche asynchrone démarrée. S'il génère des fichiers, utilisez 'query_registry' ultérieurement pour vérifier.", __user__, __metadata__)
                     else:
                         exec_id = res.get("execution_id", "inconnu")

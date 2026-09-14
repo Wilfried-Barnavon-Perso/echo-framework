@@ -70,7 +70,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement au format XML nat
 - **Agent Engine & Délégation :** Moteur d'exécution d'un agent unique (`delegate_to_agent`) et **Data Broker** (`delegate_to_data_broker.py`) pour déléguer la récupération complexe de données à un agent spécialisé.
 - **Outils Généralistes :** `generalist_tools.py` intègre un `async_wait_timer` programmable et des capacités de saisie utilisateur interactive (remplaçant les scripts épars).
 - **Communication Inter-Services (MCP Natif) :** Outils d'orchestration proxy `remote_mcp_tool.py` (exécution de tâches sur un MCP distant avec schéma dynamique) et `internal_mcp_tool.py` (tâches internes isolées).
-- **Identity Vault (`identity_vault_tool.py`) :** Outil permettant au modèle de manipuler directement ses propres secrets et de découvrir dynamiquement les schémas d'authentification requis par le MCP distant.
+- **Identity Vault (`identity_vault_tool.py`) :** Gère le registre sécurisé des secrets. Le Modèle DOIT impérativement invoquer `list_available_services` pour découvrir le nom de l'environnement (ex: `n8n_workflows`) avant d'interroger `list_identities` (qui exige un paramètre `service` précis).
 - **Explorateur de l'Espace Personnel :** Lecture brute (RAW), base64, et sondage sémantique des fichiers locaux.
 - **Registre Unifié :** Consultation du `FILE_INGESTION_STATUS`.
 - **ECHO Codex :** Éditeur multi-langage avec Git intégré. 9 fonctions. Registre SQLite. Distillation Cloud.
@@ -129,7 +129,7 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 
 ## 12. 📜 Standards de Développement (Rigueur Absolue)
 
-- **Architecture N8N (Règles strictes) :** Tout workflow éphémère de Sandbox testé via le CLI doit **obligatoirement** démarrer par le nœud `Execute Workflow Trigger`. Le Mocking de payload asynchrone via des nœuds "Code" ou "Set" est impératif pour simuler les Webhooks/Emails lors de tests LLM. L'usage en dur de tokens d'API dans les nœuds est proscrit.
+- **Architecture N8N (Règles strictes) :** Tout workflow éphémère de Sandbox testé via le CLI doit **obligatoirement** démarrer par le nœud `Execute Workflow Trigger`. Le Mocking de payload asynchrone via des nœuds "Code" ou "Set" est impératif pour simuler les Webhooks/Emails lors de tests LLM. L'usage en dur de tokens d'API ou Headers sensibles (Cookie, Authorization) dans les nœuds est strictement proscrit. Le non-respect de cette règle déclenchera un blocage système exigeant l'usage de la macro `__ECHO_SECRET_...`. Les exécutions synchrones sont limitées à 64Ko, imposant un repli vers le mode asynchrone.
 - **OWUI Injection & PEP8 :** L'intégralité des outils de l'Arsenal doit strictement déclarer les arguments `__user__` et `__metadata__` dans leur interface pour garantir l'injection native du contexte par Open WebUI. Le code doit respecter strictement la norme PEP8 (les variables locales inutilisées sont impérativement préfixées par un underscore `_` ou supprimées, et les imports inutiles purgés).
 - **OWUI Tool Multiparts :** Les outils générant ou retournant des fichiers médias doivent encapsuler la réponse dans la directive `wrap_tool_output` via le mot-clé standardisé `echo_tool_multiparts` (remplaçant toute ancienne nomenclature) pour assurer le rendu multimodal natif d'Open WebUI.
 - **Async-First :** Utilisation impérative d'`asyncio` et `httpx`. L'API Admin utilise désormais des tâches en arrière-plan (`threading.Thread` + polling API) pour les opérations longues (élagage Qdrant).
