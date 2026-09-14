@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO STT WORKER API
-VERSION : 1.2 (Optimisation Modèle base & RAM Streaming)
+VERSION : 1.3 (Correction Bug Upload 500)
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-09-14
 
+CHANGELOG 1.3 :
+- FIX: Remplacement de l'itération asynchrone (async for file.file) par une lecture while await file.read(1M) native pour résoudre l'erreur 500.
 CHANGELOG 1.2 :
 - OPTIM: Passage au modèle whisper 'base'.
 - FIX: Streaming chunké pour l'upload (zéro surcharge RAM).
@@ -71,9 +73,10 @@ async def create_transcription(
         # Récupération de l'extension d'origine proprement
         ext = os.path.splitext(file.filename)[1] if file.filename else ".tmp"
         
-        # Save uploaded file to a temporary file via streaming chunké (Zéro surcharge RAM)
+        # Save uploaded file to a temporary file via lecture par blocs
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_audio:
-            async for chunk in file.file:
+            # On lit par chunks de 1 Mo (1024 * 1024 octets) pour ne pas saturer la RAM
+            while chunk := await file.read(1024 * 1024):
                 temp_audio.write(chunk)
             temp_audio_path = temp_audio.name
 

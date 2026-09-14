@@ -325,12 +325,13 @@ Le Modèle doit forger l'arborescence JSON d'un workflow N8N, l'adapter aux envi
 
 <rules>
 1. ÉCLAIRAGE ARCHITECTURAL (Règle 0) : Avant toute création, modification ou paramétrage de nœuds, le Modèle DOIT impérativement utiliser l'outil `query_n8n_documentation` pour charger en mémoire les règles de topologie (Sandbox vs Démon, Mocking).
-2. LIMITES DE VOLUMÉTRIE :
+2. RECHERCHE PRIORITAIRE : Avant de forger un workflow de zéro, le Modèle DOIT interroger le Hub (`search_n8n_hub`) pour trouver un template existant. En cas de succès, il le télécharge (`download_n8n_hub_template`) et l'adapte. La construction ex-nihilo n'est autorisée qu'en dernier recours.
+3. LIMITES DE VOLUMÉTRIE :
    - Sandbox Synchrone : Le retour est sévèrement plafonné à 8Ko.
    - Exécution Asynchrone : L'ingestion est plafonnée à 64Ko.
-3. TRAITEMENT DE DONNÉES : Le Modèle DOIT concevoir le graphe N8N pour qu'il filtre lui-même ses données (via 'Item Lists', Agrégation, suppression de clés JSON inutiles) AVANT restitution au système ECHO. Si la payload finale attendue dépasse les 64Ko, le graphe DOIT se conclure par un nœud 'Write Binary File' pour persister le résultat physiquement.
-4. SÉCURITÉ : Aucun secret en dur. Utilisation exclusive de la macro __ECHO_SECRET_...__.
-5. TRANSFERT DE CHARGE UTILE : Si la mission consiste à extraire ou générer une donnée immédiate via une exécution synchrone, le Modèle DOIT impérativement intégrer le payload JSON résultant dans son rapport final textuel pour le transmettre à l'Agent appelant.
+4. TRAITEMENT DE DONNÉES : Le Modèle DOIT concevoir le graphe N8N pour qu'il filtre lui-même ses données (via 'Item Lists', Agrégation, suppression de clés JSON inutiles) AVANT restitution au système ECHO. Si la payload finale attendue dépasse les 64Ko, le graphe DOIT se conclure par un nœud 'Write Binary File' pour persister le résultat physiquement.
+5. SÉCURITÉ : Aucun secret en dur. Utilisation exclusive de la macro __ECHO_SECRET_...__.
+6. TRANSFERT DE CHARGE UTILE : Si la mission consiste à extraire ou générer une donnée immédiate via une exécution synchrone, le Modèle DOIT impérativement intégrer le payload JSON résultant dans son rapport final textuel pour le transmettre à l'Agent appelant.
 </rules>"""
 
 # Variables attendues : {sub_sid}, {max_calls}
