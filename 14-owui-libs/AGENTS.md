@@ -10,13 +10,13 @@ Ce dossier constitue le **Cœur Applicatif (Core Libraries)** du framework. Il c
 
 ### Fondations & Registre Unifié
 - **`echo_constants.py`** : C'est le Registre Unifié et la librairie de fondations (Shared Core Functionality). 
-  - **Sémantique** : Contient `ECHO_MODELS_REGISTRY` dictant la hiérarchie cognitive (Pro, Flash avec `gemini-3.8-flash`, Lite, Distillation), `ECHO_SESSION_DOMAINS` pour le Vault, ainsi que les modèles de prompts natifs, l'identifiant obligatoire `wrap_tool_output` (`echo_tool_multiparts`) pour le multimodal, et les **seuils de monitoring de la jauge de contexte**.
+  - **Sémantique** : Contient `ECHO_MODELS_REGISTRY` dictant la hiérarchie cognitive (Pro, Flash avec `gemini-3.8-flash`, Lite, Distillation), `ECHO_SESSION_DOMAINS` pour le Vault, `ECHO_CODEX_WORKSPACES` (main, sandbox) qui remplace les valeurs codées en dur, l'abaissement global des seuils PGCU pour une meilleure réactivité des rappels, l'identifiant obligatoire `wrap_tool_output` (`echo_tool_multiparts`) pour le multimodal, et les **seuils de monitoring de la jauge de contexte**.
 - **Démembrement de l'ancien `echo_utils.py`** : Le framework a subi une refonte modulaire majeure. Le cœur utilitaire massif a été éclaté en composants ultra-spécialisés :
-  - **`echo_state_manager.py`** : Gestionnaire universel de l'état asynchrone SQLite (`EchoStateManager`), incluant le verrouillage intra-chat, le suivi RAG O(1), et l'accès concurrent sécurisé.
+  - **`echo_state_manager.py`** : Gestionnaire universel de l'état asynchrone SQLite (`EchoStateManager`), incluant le verrouillage intra-chat, le suivi RAG O(1), l'ajout récent du support `item_type` (file/directory) pour le Codex Multi-Workspace, et l'accès concurrent sécurisé.
   - **`echo_gemini_client.py`** : Client natif implémentant le multiplexage **HTTP/2**, la Cascade Descendante, et le Circuit Breaker OAuth2 (Fast-Failover Intra-Retry avec verrouillage dynamique).
-  - **`echo_aec.py`** : Module d'orchestration contextuelle (AEC) générant dynamiquement les injections YAML pour le grounding et les événements systèmes.
-  - **`echo_core.py`** : Fonctions cognitives et utilitaires pures (ex: `build_model_identity`).
-  - **`echo_http.py`**, **`echo_events.py`**, **`echo_logger.py`**, **`echo_paths.py`**, **`echo_prompts.py`** : Briques fondamentales gérant respectivement les requêtes HTTP asynchrones, l'émission d'évènements OWUI, la journalisation système, le path management absolu, et les gabarits de prompts.
+  - **`echo_aec.py`** : Module d'orchestration contextuelle (AEC). Il a subi une refonte majeure : abandon du format YAML (`_dict_to_yaml_aec`) au profit d'un système de templating natif **XML** réparti sur 5 vecteurs de base (modèle, identité, temporalité, localisation, évènements) avec tri chronologique FIFO.
+  - **`echo_core.py`** : Fonctions cognitives et utilitaires pures (ex: `build_model_identity`). Intègre le mécanisme de **FIFO Destructif** dans `wrap_tool_output` pour purger la base SQLite exclusivement des `aec_event`, sans altérer les ressources réelles (fichiers, uploads).
+  - **`echo_http.py`**, **`echo_events.py`**, **`echo_logger.py`**, **`echo_paths.py`**, **`echo_prompts.py`** : Briques fondamentales gérant respectivement les requêtes HTTP, évènements OWUI, log, chemins absolus, et gabarits de prompts (`echo_prompts.py` inclut désormais le domaine `SYS_RAG_DISTILL` pour l'extraction vectorielle).
 - **`echo_protocol.py`** : Définition des schémas Pydantic natifs et constantes de base pour les protocoles réseau.
 
 ### Interfaces Utilisateur (UI & DOM)

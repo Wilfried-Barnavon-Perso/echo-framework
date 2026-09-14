@@ -26,7 +26,7 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 #### C. Classe `StreamProcessor`
 **Rôle** : Moteur de flux temps-réel asynchrone.
 - **Sémantique** : Parse la réponse SSE (Server-Sent Events) du LLM. Capte et compile les appels d'outils, met à jour le HUD d'interface et formate la réponse Markdown.
-- **Gestion de l'Auto-Continue (MAX_TOKENS)** : Le pipeline gère nativement la troncature. Si le modèle s'arrête prématurément (MAX_TOKENS) au milieu d'un texte ou d'un appel d'outil massif, le système injecte dynamiquement un événement système AEC (directif punitif ou de continuation) et relance automatiquement la génération de façon totalement transparente.
+- **Gestion de l'Auto-Continue (MAX_TOKENS)** : Le pipeline gère nativement la troncature. Si le modèle s'arrête prématurément (MAX_TOKENS) au milieu d'un texte ou d'un appel d'outil massif, le système injecte dynamiquement un événement système (directif punitif ou de continuation) via une balise `<artifact id="AEC_evenement_systeme">` stricte et relance automatiquement la génération de façon transparente. Le préfixe UI Toast pour ces rappels d'alignement est `🛤️ Alignement du Modèle`.
 
 #### D. Classe `Pipe` (Point d'Entrée OWUI)
 **Rôle** : Interface de connexion conforme à la signature Open WebUI. Initialise les Valves (paramètres réglables par l'Admin) et lance le pipeline via `pipe()`.

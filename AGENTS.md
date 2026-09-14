@@ -26,7 +26,8 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 ### 1.1 Le Kernel Statique
 - **Méta-Principes et Identité :** Définit les conditions d'exécution indépassables du Modèle, son persona (interdiction stricte des tics IA, anglicismes, listes excessives), ses outils, et les Artéfacts Environnementaux Contextuels (AEC) géo-temporels pour assurer la cohésion globale.
 - **Principe de Cognition Interne et Réflexion (PCIR) :** Impose au modèle une réflexion verbale interne exhaustive et critique avant toute interaction ou déclenchement d'outil, pour maximiser le raisonnement.
-- **PGCU (Gestion du Contexte Unifié) :** Fixe l'attention du modèle selon une hiérarchie stricte (Kernel > AEC > Méta-Artéfacts et Mémoires Vectorisées > Requêtes > Outils).
+- **PGCU (Gestion du Contexte Unifié) :** Fixe l'attention du modèle selon une hiérarchie stricte (Kernel > AEC > Méta-Artéfacts et Mémoires Vectorisées > Requêtes > Outils). Intègre l'évaluation déterministe par itérations (1, 2, 3) pour l'application du PACP (Préférences) et du PRAC (Amélioration).
+- **PTD (Triage Dynamique) :** Cartographie stricte de l'escalade cognitive : LITE (discussion), FLASH (agentivité), PRO (orchestration profonde).
 - **PRAF (Rigueur Analytique et Factuelle) :** Stipule que toute hypothèse vérifiable et non vérifiée sur le réel est invalidée. Impose la vérification systématique via recherche web avec un niveau de confiance justifié.
 
 ## 2. 🧠 Le Cortex (`/opt/ECHO/owui-pipes/`)
@@ -53,9 +54,9 @@ Le système nerveux central d'ECHO repose sur le **composant core `pipe_engine.p
 
 ## 4. 🧭 Contexte Proprioceptif
 
-Le vecteur d'état global (AEC) est injecté systématiquement :
-- **Contenu Statique (`<AEC_environnement_contexte>`) :** Balise XML dont le contenu est au format YAML contenant l'identité et le grounding géo-temporel.
-- **Évènements Système (`<AEC_evenement_systeme>`) :** Balise XML évènementielle dont le contenu est au format YAML notifiant le Modèle des ressources asynchrones ou nouvellement créées.
+Le vecteur d'état global (AEC) est injecté systématiquement au format XML natif :
+- **Vecteurs Statiques :** Balises `<AEC_modele>`, `<AEC_identite>`, `<AEC_temporalite>`, `<AEC_localisation>` définissant le contexte cognitif, spatial et temporel de l'infrastructure.
+- **Évènements Système (`<artifact id="AEC_evenement_systeme">`) :** Balise XML notifiant le Modèle des ressources asynchrones, nouvellement créées, ou des directives d'alignement cognitif (MAX_TOKENS).
 - **Règle d'Or :** Le modèle **DOIT** utiliser l'outil `query_registry` pour consulter le Registre Unifié avant toute manipulation de fichiers ou processus.
 
 ## 5. 🛠️ L'Arsenal (`/opt/ECHO/owui-tools/`)
@@ -98,7 +99,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement :
 ## 8. 🏭 Infrastructure d'Exécution
 
 L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N pilotés par l'LLM :
-- **Python Worker :** API Flask pour exécution Python isolée.
+- **Coding Worker :** API Flask pour exécution isolée de code multi-langages (Python, JavaScript/Node).
 - **Browser Worker :** Instance Playwright pilotée par FastAPI asynchrone (bridée à 9 FPS).
 - **Embedding Worker :** Offload WebGPU/WASM prioritaire, fallback sur llama.cpp (GGUF CPU) sous Docker.
 - **Download Broker :** Service de collecte asynchrone des téléchargements.
@@ -111,7 +112,7 @@ L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N
 
 L'infrastructure est désormais pilotée via la configuration standardisée `stack-echo.yml`. Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depends_on: condition: service_healthy` :
 - **Tier 1 (Fondations)** : Qdrant, SearXNG, Watchtower.
-- **Tier 2 (Workers)** : Embedding, Python Worker, Browser Worker, MCP Broker, N8N Worker, **STT Worker**, **TTS Worker**.
+- **Tier 2 (Workers)** : Embedding, Coding Worker, Browser Worker, MCP Broker, N8N Worker, **STT Worker**, **TTS Worker**.
 - **Tier 3** : Open WebUI.
 - **Tier 4** : Admin Manager.
 
@@ -140,4 +141,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.205.4*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.209.3*

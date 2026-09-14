@@ -17,11 +17,11 @@ Ce dossier constitue **l'Arsenal** du modèle. Il contient l'ensemble des Outils
 ### Communication Inter-Services (MCP) & Sécurité
 - **`remote_mcp_tool.py`** : [NOUVEAU] Exécuteur natif permettant au LLM de requêter des outils exposés par un MCP Server distant via le MCP Broker. L'outil gère la transmission des credentials et du JSON Schema dynamique.
 - **`internal_mcp_tool.py`** : [NOUVEAU] Outil permettant d'exécuter des fonctionnalités internes isolées.
-- **`identity_vault_tool.py`** : [NOUVEAU] Coffre-fort d'identités. Permet au modèle de consulter, de générer ou de révoquer ses propres credentials d'accès de manière sécurisée en base SQLite. La notion d'accès RO/RW a été totalement supprimée pour simplifier le modèle avec un accès unique universel.
+- **`identity_vault_tool.py`** : [NOUVEAU] Coffre-fort d'identités. Permet au modèle de consulter, générer ou révoquer ses propres credentials d'accès de manière sécurisée en base SQLite. Intègre une tolérance aux pannes (parsing JSON) pour garantir la résilience de l'affichage global de `list_identities`. La notion d'accès RO/RW a été totalement supprimée pour un accès unique universel.
 
 ### Persistance & RAG
-- **`memory_and_rag_tool.py`** : Outils de manipulation explicite de la base Qdrant. Implémente `search_sessions_context` (recherche avec le flag `global_search` inter-sessions), `update_meta_artifact` et `search_meta_artifacts` (fusion sémantique avec cartographie d'index et reranking).
-- **`echo_codex_tool.py`** : Éditeur de code intégré avec 9 fonctions. Gère la modification de fichiers, l'intégration Git native, l'enregistrement dans SQLite et un processus de Distillation Cloud pour les revues de code. Il intègre un **Lock asynchrone** (clé `user_id:chat_id`) pour prévenir toute race condition lors des éditions simultanées.
+- **`memory_and_rag_tool.py`** : Outils de manipulation explicite de la base Qdrant. Implémente `search_sessions_context` (recherche avec le flag `global_search` inter-sessions et injection stricte du `score_threshold` vers Qdrant), `update_meta_artifact` et `search_meta_artifacts` (fusion sémantique avec cartographie d'index et reranking).
+- **`echo_codex_tool.py`** : Éditeur de code intégré. Gère la modification de fichiers, l'intégration Git native, l'enregistrement dans SQLite. Intègre un **Lock asynchrone** (clé `user_id:chat_id`) pour prévenir toute race condition. Intègre désormais une capacité de **Voyage Temporel** (`search_codex` avec `trace_history` pour le Pickaxe/Delta) permettant de tracer l'évolution du code, ainsi que `restore_codex` pour restaurer une version historique, et une purge récursive (`delete_codex`) gérant la suppression intégrale de dossiers.
 
 ### Web & Navigation
 - **`navigation_engine_tool.py`** : Pilote de navigateur autonome basé sur Playwright. Fonctionne selon une Boucle OODA, implémente une descente cognitive via l'injection de schémas, un mode hybride Lidar/Vision et un streaming sémantique. Il assure la synchronisation de l'URL en temps réel dans le HUD Live via `stream_proxy`.
@@ -33,7 +33,7 @@ Ce dossier constitue **l'Arsenal** du modèle. Il contient l'ensemble des Outils
 
 ### Utilitaires Spécialisés
 - **`api_client.py`** : ECHO Universal API Client. Composant système interne fournissant une abstraction robuste pour l'exécution des requêtes HTTP asynchrones.
-- **`python_code_executor.py`** : Exécute de manière sécurisée du code Python (incluant numpy/pandas) via le conteneur `python-worker` Flask.
+- **`code_executor_tool.py`** : Sandbox d'exécution unifiée (remplace l'ancien `python_code_executor.py`). Supporte nativement l'exécution multi-langages (Python 🐍, JavaScript/Node 📦), gère dynamiquement l'installation de dépendances (pip, npm) avec timeout calculé, le tout adossé au protocole HTTPX asynchrone sur Pydantic V2.
 - **`strategic_planner.py`** : Gère la planification tactique des sous-agents via un cycle en multi-étapes (multi-stage planning), avec suivi obligatoire des statuts (`update_plan`) et outils d'analyse (`analyze_plan`). La persistance est adossée à un **Codex Git** (Git-backed Codex) pour un versionnement robuste.
 - **`universal_visual_generator.py`** : Génération de diagrammes (Mindmaps, Graphes) et cartes (Leaflet) injectés directement sous forme de Data Islands isolés.
 - **`gemini_maps_grounding.py`** : Interface avec l'API Google Maps Grounding pour des résultats géospatiaux enrichis.

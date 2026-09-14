@@ -13,7 +13,7 @@ Ce dossier gère les **Actions Interactives (Boutons sous les messages)**. Dans 
 - **`web_navigation_replay_action.py`** : Cockpit de rejeu permettant à l'utilisateur de visionner la navigation autonome effectuée par le modèle via Playwright.
 
 ### Ingénierie & Edition
-- **`echo_codex_action.py`** : Interface avancée intégrant un éditeur Monaco (type VS Code), un explorateur de fichiers (File Tree), et un historique Git natif permettant la restauration granulaire de versions.
+- **`echo_codex_action.py`** : Interface avancée intégrant un éditeur Monaco (type VS Code), un explorateur de fichiers (File Tree), et un historique Git natif permettant la restauration granulaire de versions. Gère nativement la création, le renommage et la suppression de **dossiers entiers**, en recalculant récursivement l'arborescence et en synchronisant l'état (fichier vs répertoire) dans SQLite via `_sync_registry`.
 
 ### Sécurité & Identité
 - **`echo_identity_vault_action.py`** : ECHO Identity Vault. Interface centralisée de gestion des secrets pour l'Agent. La notion de permissions d'accès (RO/RW) a été totalement supprimée pour une gestion unifiée.
@@ -22,7 +22,7 @@ Ce dossier gère les **Actions Interactives (Boutons sous les messages)**. Dans 
 - **`reset_auth_action.py`** : Action rapide d'urgence pour purger spécifiquement les tokens et clés liés à l'authentification **Google/PKCE** et OAuth2 en cas de désynchronisation.
 
 ### Gestion Contextuelle (Saturation & Vectoriel)
-- **`resume_in_new_chat_action.py`** : Mécanisme de migration d'état ("Resume in New Chat"). Il transfère de manière propre l'historique pertinent vers une nouvelle conversation pour lutter contre la saturation contextuelle et alléger le LLM.
+- **`resume_in_new_chat_action.py`** : Mécanisme de migration d'état ("Resume in New Chat"). Il transfère de manière propre l'historique pertinent vers une nouvelle conversation pour lutter contre la saturation contextuelle et alléger le LLM. Il applique une regex de purge globale `<artifact id="AEC_.*?">` pour nettoyer intégralement le contexte proprioceptif XML natif avant de déclencher la distillation.
 - **`purge_memory_action.py`** : Interface scrollable permettant la suppression ciblée et granulaire des souvenirs vectoriels (vecteurs orphelins ou erronés) directement dans Qdrant.
 
 ### Export
