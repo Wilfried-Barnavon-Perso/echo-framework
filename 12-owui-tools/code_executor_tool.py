@@ -1,11 +1,12 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 7.0
+version: 7.1
 description: Composant système interne : ECHO Code Executor (Python & Node.js).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.1: Correction typage (Optional/List) pour Pydantic V2 et renommage de execute_code en code_executor.
 # 7.0: Refonte Multi-langage (Python 3.14 + Node 22). Exécution stricte depuis un fichier du Codex (sandbox). Ajout de la gestion des dépendances (dependencies).
 # 6.10: Délégation de la gestion du timeout (ECHO_MAX_CODE_EXECUTION_TIMEOUT) au modèle.
 # 6.9: Refonte asynchrone via httpx, sécurisation de la sandbox et gestion multi-workspaces.
@@ -15,7 +16,7 @@ description: Composant système interne : ECHO Code Executor (Python & Node.js).
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
 import sys
-from typing import Any
+from typing import Any, Optional, List
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
@@ -27,15 +28,15 @@ class Tools:
     def __init__(self):
         pass
 
-    async def execute_code(
+    async def code_executor(
         self,
         file_path: str,
-        dependencies: list[str] = None,
+        dependencies: Optional[List[str]] = None,
         timeout_sec: int = ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT,
-        __user__: dict = None,
+        __user__: Optional[dict] = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None,
-        __metadata__: dict = None
+        __metadata__: Optional[dict] = None
     ) -> str:
         """
         Permet au modèle d'exécuter du code (Python ou Node.js) dans une Sandbox isolée.
