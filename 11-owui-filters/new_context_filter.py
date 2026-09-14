@@ -2,13 +2,13 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.56
+version: 7.57
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.57: Refactorisation algorithmique PGCU et renommage (current_user_multipart_payload).
 # 7.56: Extraction de dr.get("summary") dans la clé 'message' du delta hors-tour.
-# 7.55: Démantèlement de env_snapshot vers 4 AEC XML natifs (Identité, Localisation, Temporalité, Modèle).
 # 7.54: Correction du bug d'ingestion des fichiers attachés au premier message (chat_id récupéré depuis le body).
 # 7.51: Correction d'un bug critique (NameError) bloquant l'injection de l'AEC via l'import de FILE_INGESTION_STATUS.
 # 7.48: Typage hiérarchique XML de l'AEC et suppression du formateur YAML.
@@ -224,7 +224,7 @@ class Filter:
                             })
 
             idx = -1
-            ordered_user_parts = []  # Parts user en ordre (texte + images entrelacés)
+            current_user_multipart_payload = []  # Payload hybride courant (texte + inline_data)
             for i in range(len(msgs)-1, -1, -1):
                 if msgs[i].get("role") == "user":
                     idx = i
@@ -239,11 +239,11 @@ class Filter:
                                     pass
                                 elif p.get("type") == "text":
                                     if p.get("text", "").strip():
-                                        ordered_user_parts.append({"text": p["text"]})
+                                        current_user_multipart_payload.append({"text": p["text"]})
                                 else:
                                     # [PASSTHROUGH] Liste Blanche implicite.
                                     # On laisse passer les 'inline_data' d'ECHO, et tout futur format inattendu.
-                                    ordered_user_parts.append(p)
+                                    current_user_multipart_payload.append(p)
                     break
 
             if idx != -1:
@@ -275,10 +275,10 @@ class Filter:
                 from echo_aec import EchoAEC
 
                 rich_parts = []
-                rich_parts.append({"text": EchoAEC.render_identity_context(display_name)})
-                rich_parts.append({"text": EchoAEC.render_location_context(final_loc)})
-                rich_parts.append({"text": EchoAEC.render_time_context(date_heure, timezone, tour_conversation)})
                 rich_parts.append({"text": EchoAEC.render_model_context(model_id, model_origin, version)})
+                rich_parts.append({"text": EchoAEC.render_identity_context(display_name)})
+                rich_parts.append({"text": EchoAEC.render_time_context(date_heure, timezone, tour_conversation)})
+                rich_parts.append({"text": EchoAEC.render_location_context(final_loc)})
 
                 # === Configuration ZoneInfo ===
                 try:
@@ -326,24 +326,28 @@ class Filter:
                     # Sauvegarder le timestamp actuel pour le prochain delta
                     body["metadata"]["_echo_last_event_check_at"] = int(time.time())
 
-                # Injection factorisée des évènements dans l'AEC
+                # 1. Extraction et injection du Smart Context (RAG) prioritaire (AEC_smart_context)
+                for res in results:
+                    if res.get("status") == "success" and res.get("type") == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]:
+                        rich_parts.append({"text": res["content"]})
+
+                # 2. Injection de la requête utilisateur (Payload Multipart)
+                if current_user_multipart_payload:
+                    rich_parts.extend(current_user_multipart_payload)
+
+                # 3. Injection des évènements système et asynchrones (AEC_evenement_systeme)
                 events_text = EchoAEC.render_system_events(sys_events, error_events)
                 if events_text:
                     rich_parts.append({"text": events_text})
 
-                if ordered_user_parts:
-                    rich_parts.extend(ordered_user_parts)
-
+                # 4. Injection des documents et fichiers intégraux en annexe (PUT_IN_CONTEXT)
                 for res in results:
-                    if res.get("status") == "success":
-                        if res["type"] == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]:
+                    if res.get("status") == "success" and res.get("type") == FILE_INGESTION_STATUS["PUT_IN_CONTEXT"]:
+                        if res["sub_type"] == "text":
                             rich_parts.append({"text": res["content"]})
-                        elif res["type"] == FILE_INGESTION_STATUS["PUT_IN_CONTEXT"]:
-                            if res["sub_type"] == "text":
-                                rich_parts.append({"text": res["content"]})
-                            else:
-                                rich_parts.append({"text": res["content"]["anchor"]})
-                                rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
+                        else:
+                            rich_parts.append({"text": res["content"]["anchor"]})
+                            rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
 
                 body["metadata"]["_echo_user_parts_draft"] = rich_parts
                 body["metadata"]["_echo_user_msg_id"] = msgs[idx].get("id")
