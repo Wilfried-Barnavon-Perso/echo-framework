@@ -61,7 +61,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement au format XML nat
 
 ## 5. 🛠️ L'Arsenal (`/opt/ECHO/owui-tools/`)
 
-- **ECHO N8N Orchestrator (`n8n_orchestrator_tool.py`) :** [NOUVEAU] Moteur d'interaction direct avec l'API locale N8N d'ECHO permettant de déployer, tester, modifier et supprimer des workflows d'automatisation. Il implémente les directives strictes de `n8n_architecture.md` (distinction radicale entre Sandbox Éphémère imposant un `Execute Workflow Trigger` et Déploiement Permanent Démon pour les webhooks/crons).
+- **ECHO N8N Orchestrator (`n8n_orchestrator_tool.py`) :** [NOUVEAU] Moteur d'interaction direct avec l'API locale N8N d'ECHO permettant de déployer, tester, modifier et supprimer des workflows d'automatisation. Il intègre une délégation cognitive (`delegate_to_n8n_grapher`) pour forger les graphes complexes et recherche prioritairement des templates sur le Hub N8N (`search_n8n_hub`). Il implémente les directives strictes de `n8n_architecture.md` (distinction radicale entre Sandbox Éphémère imposant un `Execute Workflow Trigger` et Déploiement Permanent Démon pour les webhooks/crons).
 - **Planification Stratégique :** Agent planificateur LLM (`strategic_planner.py`). Suivi tactique obligatoire de l'état d'avancement (`update_plan`). Persistance Markdown dans le Codex Git et SQLite.
 - **Mémoire & RAG (`memory_and_rag_tool.py`) :** Outils explicites RAG : `update_meta_artifact`, `search_meta_artifacts` (fusionne recherche sémantique ciblée et cartographie d'index avec reranking), `delete_meta_artifact_item`, `save_session_context`, `delete_session_context_source`, et `search_sessions_context` (fusionne recherche RAG et cartographie globale). Le paramètre `global_search` permet d'étendre la recherche à l'intégralité de l'historique inter-sessions, déclenché par des marqueurs temporels (ex: "hier").
 - **Visual Intelligence :** Génération d'interfaces dynamiques (Mindmaps, Graphes, Leaflet) via `universal_visual_generator.py` isolé en Data Island.
@@ -141,4 +141,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.209.3*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.209.7*
