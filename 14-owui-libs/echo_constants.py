@@ -202,21 +202,21 @@ AEC_REMINDERS = [
     },
     {
         "id": "alignment",
-        "token_threshold": 34000,
-        "tool_calls_threshold": 30,
-        "message": "Rappel : Assure-toi de respecter scrupuleusement le Profil d'Alignement et les préférences de formatage de l'utilisateur."
+        "token_threshold": 20000,
+        "tool_calls_threshold": 20,
+        "message": "Rappel : Assure-toi de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Applique PACP."
     },
     {
         "id": "strategy",
-        "token_threshold": 50000,
-        "tool_calls_threshold": 20,
-        "message": "Rappel : Vérifie tes Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel."
+        "token_threshold": 15000,
+        "tool_calls_threshold": 15,
+        "message": "Rappel : Vérifie tes Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel. Applique le PRAC."
     }
 ]
 
 # ==============================================================================
 # 1.1 MODULE : CONSTANTES ET DEFAULTS ECHO (CENTRALISATION)
-# VERSION : 5.999.1
+# VERSION : 5.999.3
 # ==============================================================================
 
 
