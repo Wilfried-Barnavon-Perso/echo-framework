@@ -2,9 +2,10 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 1.3
+version: 1.4
 description: Gestionnaire d'état SQLite et RAG.
 # Historique des versions :
+# 1.4: Délégation de la création d'environnement à un filtre Inlet WebUI.
 # 1.3: Résolution du deadlock de sauvegarde du contexte en permettant l'injection de connexion dans save_session_setting.
 # 1.2: Factorisation du KV session : Remplacement des tables redondantes (session_state, context_stats) par le registre unifié echo_settings.
 # 1.1: Correction du get_agy_endpoint pour fallback sur l'URL de secours (1) au lieu de 0 en cas de verrouillage global.
@@ -30,17 +31,8 @@ class EchoStateManager:
         self.user_dir = os.path.join(ECHO_USERS_ROOT, safe_uid)
         
         if chat_id:
-            for domain in ECHO_SESSION_DOMAINS:
-                if domain != "db":
-                    domain_path = get_echo_session_path(self.user_id, self.chat_id, domain)
-                    os.makedirs(domain_path, exist_ok=True)
-                    if domain == "codex":
-                        for ws in ECHO_CODEX_WORKSPACES.keys():
-                            os.makedirs(os.path.join(domain_path, ws), exist_ok=True)
             self.db_path = get_echo_session_path(self.user_id, self.chat_id, "db")
         else:
-            for domain in ECHO_GLOBAL_DOMAINS:
-                os.makedirs(get_echo_global_path(self.user_id, domain), exist_ok=True)
             self.db_path = os.path.join(self.user_dir, "identity.db")
             
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)

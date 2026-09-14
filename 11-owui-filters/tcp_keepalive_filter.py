@@ -15,7 +15,7 @@ from typing import Optional
 class Filter:
     class Valves(BaseModel):
         priority: int = Field(
-            default=0, 
+            default=1, 
             hidden=True,
             description="Priorité d'exécution (0 = premier)."
         )

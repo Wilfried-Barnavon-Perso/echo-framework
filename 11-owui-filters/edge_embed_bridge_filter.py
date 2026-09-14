@@ -26,7 +26,7 @@ except ImportError:
 
 class Filter:
     class Valves(BaseModel):
-        priority: int = Field(default=1, hidden=True, description="Priorité d'exécution (0 = premier).")
+        priority: int = Field(default=2, hidden=True, description="Priorité d'exécution (0 = premier).")
         ENABLE_EDGE_EMBEDDING: bool = Field(
             default=True,
             description="Activer le pont Edge Embedding (nécessite BunkerWeb ou un proxy WSS configuré)"
