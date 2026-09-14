@@ -408,6 +408,8 @@ services:
       - N8N_RUNNERS_TASK_TIMEOUT=300
       - N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES=2147483648
       - N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES=5000
+      # Relâchement des permissions de fichiers pour le Volume Docker
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
     volumes:
       - echo-browser-data:/app/browser-data:rw
       - echo-n8n-data:/home/node/.n8n:rw
