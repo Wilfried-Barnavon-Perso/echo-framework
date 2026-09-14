@@ -410,6 +410,8 @@ services:
       - N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES=5000
       # Relâchement des permissions de fichiers pour le Volume Docker
       - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+      # Désactivation de la sécurité environnementale bloquant l'accès au Vault d'identité ECHO
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       - echo-browser-data:/app/browser-data:rw
       - echo-n8n-data:/home/node/.n8n:rw

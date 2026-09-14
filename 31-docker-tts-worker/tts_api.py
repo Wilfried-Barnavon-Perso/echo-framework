@@ -1,11 +1,14 @@
 """
 ================================================================================
 MODULE : ECHO TTS WORKER API
-VERSION : 1.2 (Standardisation & Rate-Limit Healthcheck)
+VERSION : 1.3 (Lingua G2P & FFmpeg MP3 Streaming)
 AUTEUR : ECHO Team
-DATE MAJ : 2026-08-19
+DATE MAJ : 2026-09-14
 
-CHANGELOG 1.1 :
+CHANGELOG 1.3 :
+- FEAT: Intégration de lingua-language-detector pour le G2P franglais.
+- FIX: Remplacement de pydub par ffmpeg subprocess pour un vrai streaming MP3.
+CHANGELOG 1.2 :
 - FEAT: Standardisation de l'en-tête du module.
 - FIX: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
 ================================================================================
@@ -14,24 +17,17 @@ from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from kokoro_onnx import Kokoro
-import io
-import langid
-langid.set_languages(['fr', 'en', 'es', 'it', 'pt', 'ja', 'zh', 'hi']) # Restriction des langues pour éviter les faux positifs
-
-from pydub import AudioSegment
 import numpy as np
 import re
-from spellchecker import SpellChecker
+from lingua import Language, LanguageDetectorBuilder
+import subprocess
+import asyncio
 
-print("📚 Loading SpellCheckers for Hybrid G2P...")
-# Chargement en mémoire RAM des dictionnaires disponibles nativement
-dictionaries = {
-    "fr": SpellChecker(language='fr'),
-    "en": SpellChecker(language='en'),
-    "es": SpellChecker(language='es'),
-    "pt": SpellChecker(language='pt'),
-}
-print("✅ Dictionaries loaded.")
+print("📚 Loading Lingua Language Detector...")
+languages = [Language.FRENCH, Language.ENGLISH, Language.SPANISH, Language.PORTUGUESE, 
+             Language.ITALIAN, Language.JAPANESE, Language.CHINESE, Language.HINDI]
+detector = LanguageDetectorBuilder.from_languages(*languages).build()
+print("✅ Lingua loaded.")
 
 import logging
 import time
@@ -101,71 +97,35 @@ def split_text_into_sentences(text: str):
 
 def hybrid_g2p_parse(text: str, main_lang: str):
     """
-    Découpe le texte en blocs de mots de la même langue via dictionnaire.
-    Préserve la ponctuation et les espaces.
+    Découpe hybride via Lingua. Très résilient au code-switching (franglais).
     """
-    tokens = re.findall(r"[\w']+|[^\w\s]+|\s+", text)
+    words = re.findall(r"[\w']+|[^\w\s]+|\s+", text)
     chunks = []
     current_lang = main_lang
     current_text = ""
-    
-    for token in tokens:
-        # Si ce n'est pas un mot avec des lettres (ponctuation, espace, chiffres) -> on ajoute au chunk actuel
-        if not any(c.isalpha() for c in token):
-            current_text += token
+
+    for word in words:
+        if not any(c.isalpha() for c in word):
+            current_text += word
             continue
-            
-        clean_word = token.lower()
-        word_lang = None
+
+        # Détection au niveau du mot (Lingua est plus robuste sur les n-grammes)
+        detected = detector.detect_language_of(word)
+        word_lang = detected.iso_code_639_1.name.lower() if detected else main_lang
         
-        # 1. Test Dico Langue Principale
-        if main_lang in dictionaries and clean_word in dictionaries[main_lang]:
-            word_lang = main_lang
-        else:
-            # 2. Test autres Dicos
-            for l_code, checker in dictionaries.items():
-                if l_code != main_lang and clean_word in checker:
-                    word_lang = l_code
-                    break
-            
-            # 3. Fallbacks (Sigles et Noms propres)
-            if not word_lang:
-                if token.isupper() and len(token) > 1:
-                    # Épellation (séparation par des espaces)
-                    token = " ".join(list(token))
-                    word_lang = main_lang
-                else:
-                    word_lang = main_lang
-                    
         # Logique de Chunking (création de blocs)
         if word_lang != current_lang:
             if current_text:
                 chunks.append((current_text, current_lang))
-            current_text = token
+            current_text = word
             current_lang = word_lang
         else:
-            current_text += token
+            current_text += word
             
     if current_text:
         chunks.append((current_text, current_lang))
         
     return chunks
-
-def encode_numpy_to_mp3(samples, sample_rate):
-    # Convertir le float32 numpy array en PCM 16-bit
-    audio_int16 = (samples * 32767).astype(np.int16)
-    # Créer le segment audio avec pydub
-    audio_segment = AudioSegment(
-        audio_int16.tobytes(),
-        frame_rate=sample_rate,
-        sample_width=2, # 16-bit
-        channels=1      # mono
-    )
-    # Exporter en buffer MP3
-    mp3_io = io.BytesIO()
-    audio_segment.export(mp3_io, format="mp3", bitrate="128k")
-    mp3_io.seek(0)
-    return mp3_io.read()
 
 # OpenAI Compatible Endpoint (Streaming Chunked Transfer MP3)
 @app.post("/v1/audio/speech")
@@ -173,63 +133,102 @@ async def create_speech(req: TTSRequest):
     try:
         # Protection contre les entrées vides (test de l'interface)
         if not req.input or not req.input.strip():
-            print("[TTS] ⚠️ Entrée texte vide, renvoi d'un audio silencieux MP3.")
-            silence = AudioSegment.silent(duration=1000, frame_rate=24000)
-            mp3_io = io.BytesIO()
-            silence.export(mp3_io, format="mp3", bitrate="128k")
-            mp3_io.seek(0)
-            return Response(content=mp3_io.read(), media_type="audio/mpeg")
+            print("[TTS] ⚠️ Entrée texte vide, renvoi d'un 204.")
+            return Response(status_code=204)
             
         print(f"[TTS] 🗣️ Génération streamée MP3 demandée pour '{req.input[:30]}...'")
 
         async def audio_stream_generator():
-            # Découpage du texte en phrases pour préserver la prosodie
-            sentences = split_text_into_sentences(req.input)
+            # Initialisation du processus FFmpeg continu
+            # On stream du PCM brut (s16le, 24000Hz mono) vers l'entrée (stdin) de ffmpeg, 
+            # et on lit le flux MP3 continu sur sa sortie (stdout).
+            process = subprocess.Popen(
+                [
+                    "ffmpeg", "-y",
+                    "-f", "s16le", "-ar", "24000", "-ac", "1", "-i", "pipe:0",
+                    "-f", "mp3", "-b:a", "128k", "pipe:1"
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL
+            )
             
-            for sentence in sentences:
-                # 1. Détection automatique de la langue
-                lang_code, _ = langid.classify(sentence)
-                
-                # 2. Assignation de la voix féminine correspondante
-                voice_id = VOICE_MAP.get(lang_code, "af_bella") # Fallback sur US english si langue non reconnue
-                
-                # 3. Mappage du code langue strict pour le phonémiseur Kokoro
-                kokoro_lang = lang_code
-                if lang_code == "en": kokoro_lang = "en-us"
-                elif lang_code == "fr": kokoro_lang = "fr-fr"
-                elif lang_code == "pt": kokoro_lang = "pt-br"
+            # Fonction asynchrone pour lire stdout en continu et le renvoyer
+            async def read_stdout():
+                while True:
+                    # Lecture asynchrone non-bloquante du stdout de ffmpeg
+                    chunk = await asyncio.to_thread(process.stdout.read, 4096)
+                    if not chunk:
+                        break
+                    yield chunk
 
-                print(f"[TTS] Phrase détectée: '{lang_code}' -> Voix: '{voice_id}' | {sentence[:30]}")
+            # On démarre le lecteur dans une tâche séparée
+            reader_generator = read_stdout()
+            
+            try:
+                # Découpage du texte en phrases pour préserver la prosodie
+                sentences = split_text_into_sentences(req.input)
                 
-                try:
-                    # 4. Hybrid G2P Chunking
-                    chunks = hybrid_g2p_parse(sentence, lang_code)
-                    mixed_phonemes = ""
+                for sentence in sentences:
+                    # 1. Détection automatique de la langue via Lingua
+                    detected_sentence = detector.detect_language_of(sentence)
+                    lang_code = detected_sentence.iso_code_639_1.name.lower() if detected_sentence else "en"
                     
-                    for chunk_text, chunk_lang in chunks:
-                        # Mappage des langues pour le phonémiseur interne
-                        k_lang = chunk_lang
-                        if chunk_lang == "en": k_lang = "en-us"
-                        elif chunk_lang == "fr": k_lang = "fr-fr"
-                        elif chunk_lang == "pt": k_lang = "pt-br"
+                    # 2. Assignation de la voix féminine correspondante
+                    voice_id = VOICE_MAP.get(lang_code, "af_bella") # Fallback sur US english si langue non reconnue
+                    
+                    # 3. Mappage du code langue strict pour le phonémiseur Kokoro
+                    kokoro_lang = lang_code
+                    if lang_code == "en": kokoro_lang = "en-us"
+                    elif lang_code == "fr": kokoro_lang = "fr-fr"
+                    elif lang_code == "pt": kokoro_lang = "pt-br"
+    
+                    print(f"[TTS] Phrase détectée: '{lang_code}' -> Voix: '{voice_id}' | {sentence[:30]}")
+                    
+                    try:
+                        # 4. Hybrid G2P Chunking
+                        chunks = hybrid_g2p_parse(sentence, lang_code)
+                        mixed_phonemes = ""
                         
-                        # Phonémisation spécifique au bloc
-                        chunk_phonemes = kokoro.tokenizer.phonemize(chunk_text, k_lang)
-                        mixed_phonemes += chunk_phonemes
+                        for chunk_text, chunk_lang in chunks:
+                            # Mappage des langues pour le phonémiseur interne
+                            k_lang = chunk_lang
+                            if chunk_lang == "en": k_lang = "en-us"
+                            elif chunk_lang == "fr": k_lang = "fr-fr"
+                            elif chunk_lang == "pt": k_lang = "pt-br"
+                            
+                            # Phonémisation spécifique au bloc
+                            chunk_phonemes = kokoro.tokenizer.phonemize(chunk_text, k_lang)
+                            mixed_phonemes += chunk_phonemes
+                            
+                        print(f"[TTS] Phonèmes hybrides générés : {mixed_phonemes[:60]}...")
                         
-                    print(f"[TTS] Phonèmes hybrides générés : {mixed_phonemes[:60]}...")
-                    
-                    # 5. Inférence Native depuis les phonèmes hybrides
-                    samples, sample_rate = kokoro.create(
-                        mixed_phonemes, voice=voice_id, speed=req.speed, lang=kokoro_lang, is_phonemes=True
-                    )
-                    
-                    if samples is not None and len(samples) > 0:
-                        # Encodage en MP3 à la volée et envoi du chunk HTTP
-                        mp3_bytes = encode_numpy_to_mp3(samples, sample_rate)
-                        yield mp3_bytes
-                except Exception as chunk_err:
-                    print(f"[TTS] ❌ Erreur sur la génération du chunk : {chunk_err}")
+                        # 5. Inférence Native depuis les phonèmes hybrides
+                        samples, sample_rate = kokoro.create(
+                            mixed_phonemes, voice=voice_id, speed=req.speed, lang=kokoro_lang, is_phonemes=True
+                        )
+                        
+                        if samples is not None and len(samples) > 0:
+                            # Injection du PCM dans ffmpeg
+                            audio_int16 = (samples * 32767).astype(np.int16)
+                            process.stdin.write(audio_int16.tobytes())
+                            process.stdin.flush()
+                            
+                            # Rapatriement immédiat des bytes MP3 encodés
+                            chunk = await anext(reader_generator, None)
+                            if chunk:
+                                yield chunk
+                                
+                    except Exception as chunk_err:
+                        print(f"[TTS] ❌ Erreur sur la génération du chunk : {chunk_err}")
+            finally:
+                # Fermeture du flux PCM, FFmpeg finira son encodage MP3
+                if process.stdin:
+                    process.stdin.close()
+                # Yield des derniers bytes
+                async for final_chunk in reader_generator:
+                    yield final_chunk
+                process.wait()
 
         # Retourner une réponse streamée avec le bon type MIME
         return StreamingResponse(audio_stream_generator(), media_type="audio/mpeg")

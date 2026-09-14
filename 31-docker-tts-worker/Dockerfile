@@ -21,9 +21,7 @@ RUN PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) p
     fastapi \
     uvicorn \
     pydantic \
-    langid \
-    pydub \
-    pyspellchecker
+    lingua-language-detector
 
 # Téléchargement du modèle v1.0 et du profil vocal bin
 RUN wget -q https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx && \

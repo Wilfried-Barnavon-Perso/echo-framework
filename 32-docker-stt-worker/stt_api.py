@@ -1,10 +1,13 @@
 """
 ================================================================================
 MODULE : ECHO STT WORKER API
-VERSION : 1.1 (Rate-Limit Healthcheck)
+VERSION : 1.2 (Optimisation Modèle base & RAM Streaming)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-08-19
+DATE MAJ : 2026-09-14
 
+CHANGELOG 1.2 :
+- OPTIM: Passage au modèle whisper 'base'.
+- FIX: Streaming chunké pour l'upload (zéro surcharge RAM).
 CHANGELOG 1.1 :
 - FIX: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
 ================================================================================
@@ -49,13 +52,13 @@ app = FastAPI(title="ECHO STT Worker", description="Faster-Whisper CPU optimized
 
 # Chargement du modèle "small" (idéal compromis vitesse/qualité sur CPU, multilingue)
 # compute_type="int8" permet de diviser la conso RAM par 2 et d'accélérer l'inférence CPU
-print("🧠 Loading Faster-Whisper 'small' model on CPU (INT8)...")
-model = WhisperModel("small", device="cpu", compute_type="int8")
+print("🧠 Loading Faster-Whisper 'base' model on CPU (INT8)...")
+model = WhisperModel("base", device="cpu", compute_type="int8")
 print("✅ Model loaded successfully.")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": "small"}
+    return {"status": "ok", "model": "base"}
 
 # OpenAI Compatible Endpoint
 @app.post("/v1/audio/transcriptions")
@@ -65,10 +68,13 @@ async def create_transcription(
     language: str = Form(None)
 ):
     try:
-        # Save uploaded file to a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
-            content = await file.read()
-            temp_audio.write(content)
+        # Récupération de l'extension d'origine proprement
+        ext = os.path.splitext(file.filename)[1] if file.filename else ".tmp"
+        
+        # Save uploaded file to a temporary file via streaming chunké (Zéro surcharge RAM)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_audio:
+            async for chunk in file.file:
+                temp_audio.write(chunk)
             temp_audio_path = temp_audio.name
 
         # Transcribe
