@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 1.4
+version: 1.5
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.5: Implémentation du FIFO destructif pour purger les aec_event de la base SQLite sans altérer les autres ressources.
 # 1.4: Protection de la QFIFO dans wrap_tool_output contre les sous-agents (is_subagent).
 import re
 import time
@@ -225,6 +226,15 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                     if events_text:
                         text += f"\n\n{events_text}"
                         metadata["_echo_last_event_check_at"] = time.time()
+                        
+                    # FIFO destructif : Purge EXCLUSIVE des événements purement système (AEC).
+                    # Les fichiers (codex, uploads) remontés dans ce delta sont conservés.
+                    for r in delta:
+                        if r.get("resource_type") == "aec_event":
+                            try:
+                                state_manager.delete_resource(r.get("id"))
+                            except Exception as e:
+                                print(f"[wrap_tool_output] Erreur purge AEC {r.get('id')}: {e}")
             except Exception as e:
                 print(f"[wrap_tool_output] Erreur Delta SQLite: {e}")
             
