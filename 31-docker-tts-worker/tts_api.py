@@ -1,12 +1,14 @@
 """
 ================================================================================
 MODULE : ECHO TTS WORKER API
-VERSION : 1.4 (Refonte Streaming Asynchrone)
+VERSION : 1.5 (Multithreading & Anti-Zombie)
 AUTEUR : ECHO Team
 DATE MAJ : 2026-09-14
 
+CHANGELOG 1.5 :
+- FIX: Isolement de Kokoro dans to_thread pour éviter le blocage de l'Event Loop (Timeout serveur).
+- FIX: Annulation explicite de la tâche de génération (Zombie) lors d'une déconnexion HTTP prématurée.
 CHANGELOG 1.4 :
-- FIX: Refonte asynchrone totale (asyncio.create_subprocess_exec + Background Task) pour éliminer le deadlock FFmpeg sur les phrases courtes.
 CHANGELOG 1.3 :
 - FEAT: Intégration de lingua-language-detector pour le G2P franglais.
 - FIX: Remplacement de pydub par ffmpeg subprocess pour un vrai streaming MP3.
@@ -147,7 +149,7 @@ async def create_speech(req: TTSRequest):
                 "-f", "mp3", "-b:a", "128k", "pipe:1",
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.PIPE
             )
             
             # Tâche de génération en arrière-plan (Publisher)
@@ -177,8 +179,9 @@ async def create_speech(req: TTSRequest):
                             
                         print(f"[TTS] Phonèmes hybrides générés : {mixed_phonemes[:60]}...")
                         
-                        samples, sample_rate = kokoro.create(
-                            mixed_phonemes, voice=voice_id, speed=req.speed, lang=kokoro_lang, is_phonemes=True
+                        # Inférence Native depuis les phonèmes hybrides (offloaded to thread)
+                        samples, sample_rate = await asyncio.to_thread(
+                            kokoro.create, mixed_phonemes, voice=voice_id, speed=req.speed, lang=kokoro_lang, is_phonemes=True
                         )
                         
                         if samples is not None and len(samples) > 0:
@@ -198,18 +201,26 @@ async def create_speech(req: TTSRequest):
                         except Exception:
                             pass
                             
-            # Lancement immédiat de la tâche d'arrière-plan
-            asyncio.create_task(generate_audio_task())
+            # Lancement immédiat de la tâche d'arrière-plan avec référence pour annulation
+            bg_task = asyncio.create_task(generate_audio_task())
             
             # Boucle principale (Subscriber) : pompage non-bloquant
             try:
                 while True:
-                    # Lecture asynchrone native de la STD (ne bloque que si aucun octet dispo)
+                    # Lecture asynchrone native de la STD
                     chunk = await process.stdout.read(4096)
                     if not chunk:
+                        # Si FFmpeg s'arrête prématurément, lisons l'erreur
+                        stderr_output = await process.stderr.read()
+                        if stderr_output:
+                            print(f"[TTS] ⚠️ FFmpeg stderr: {stderr_output.decode('utf-8', errors='ignore')}")
                         break
                     yield chunk
             finally:
+                # Annulation de la tâche d'arrière-plan zombie en cas de déconnexion client
+                if not bg_task.done():
+                    bg_task.cancel()
+                    
                 # Sécurité : Tuer le processus orphelin si le client réseau coupe violemment
                 if process.returncode is None:
                     try:
