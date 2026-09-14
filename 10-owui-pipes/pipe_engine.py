@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.57
+version: 192.58
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.58: Modification du préfixe de notification UI (toast) pour les rappels cognitifs (🛤️ Alignement du Modèle).
 # 192.57: Remplacement des blocs XML de troncature MAX_TOKENS par le format natif <artifact id="AEC_evenement_systeme">.
 # 192.56: Déploiement des Rappels Cognitifs Multi-Axes (Anti-Division par 0 + UI Toast Emission).
 # 192.55: Suture stricte (SSOT) : Injection native du Défibrillateur Attentionnel avant la boucle bit-perfect via EchoAEC.
 # 192.54: UX SSE: Libération asynchrone anticipée de l'UI via `yield ""` dès réception du finish_reason 'STOP', masquant la latence post-génération de l'API Google (usageMetadata).
-# 192.53: Suppression du bloc dead code 'RÉCUPÉRATION CHIRURGICALE' (await request.json()) : __request__ est un paramètre nommé de la signature du pipe, jamais dans **kwargs.
 
 
 # ==============================================================================
@@ -225,7 +225,7 @@ class Orchestrator:
                             self.user_data_manager.save_session_setting(setting_key, str(current_tier))
                             
                             if events:
-                                await events.status(f"Émission : {reminder['id']}", done=True)
+                                await events.status(f"🛤️ Alignement du Modèle : {reminder['id']}", done=True)
 
             if sys_events_to_inject:
                 aec_text = EchoAEC.render_system_events(sys_events=sys_events_to_inject)
