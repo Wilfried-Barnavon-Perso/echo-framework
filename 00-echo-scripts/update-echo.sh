@@ -53,17 +53,8 @@ if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then
     exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 
-# --- 2. VERIFICATION DEPENDANCES & RE-CREATION ---
-echo "📦 [UPDATE] Vérification intelligente des dépendances (Buildx Cache)..."
-export COMPOSE_DOCKER_CLI_BUILD=1
-export DOCKER_BUILDKIT=1
-export COMPOSE_PARALLEL_LIMIT=2
-
-$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" build
-$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" up -d
-
-# --- 3. HOT RELOAD (CODE ONLY) ---
-echo "⚡ [UPDATE] Redémarrage pour Hot-Reload (Code métier)..."
+# --- 2. HOT RELOAD ---
+echo "⚡ [UPDATE] Redémarrage des services Python..."
 CONTAINERS_TO_RELOAD=$(docker ps \
     --filter "label=echo.hot-reload=true" \
     --format "{{.Names}}")
