@@ -76,7 +76,7 @@
   "task.query.prompt_template": "",
   "task.tools.prompt_template": "",
   "task.voice.prompt.enable": true,
-  "task.voice.prompt_template": "<artifact id=\"AEC_evenement_systeme\">L'Utilisateur utilise le mode vocal direct de l'Infrastructure. Le Modèle DOIT être concis, naturel et direct. Le Modèle DOIT n'utiliser aucun balisage Markdown ni puces ou listes, ni citation de code, ni Emoji.</artifact>",
+  "task.voice.prompt_template": "<artifact id=\"AEC_evenement_systeme\" source=\"Système\">L'Utilisateur utilise le mode vocal direct de l'Infrastructure. Le Modèle DOIT être concis, naturel et direct. Le Modèle DOIT n'utiliser aucun balisage Markdown ni puces ou listes, ni citation de code, ni Emoji.</artifact>",
   "audio.tts.openai.api_base_url": "http://echo-tts-worker:7996/v1",
   "audio.tts.openai.api_key": "sk-dummy",
   "audio.tts.api_key": "",
