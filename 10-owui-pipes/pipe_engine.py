@@ -289,12 +289,6 @@ class Orchestrator:
                     if draft_parts is not None:
                         restored_parts = []
                         restored_parts.extend(ensure_gemini_parts(draft_parts, model_id, self.model_origin))
-                        user_text = content if isinstance(content, str) else ""
-                        # Si content est une liste (multipart OWUI : texte + images inline),
-                        # le texte est déjà dans le draft via le filtre (ordered_user_parts).
-                        if user_text.strip(): 
-                            resolved_text = resolve_placeholders(user_text, model_id, self.model_origin)
-                            restored_parts.append({"text": f"<REQUETE_UTILISATEUR>\n{resolved_text}\n</REQUETE_UTILISATEUR>"})
                     else:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
                         restored_parts = self.user_data_manager.get_rich_payload(inv_hash) or ensure_gemini_parts(content, model_id, self.model_origin)

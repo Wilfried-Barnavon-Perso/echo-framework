@@ -240,11 +240,14 @@ class Filter:
                                     pass
                                 elif p.get("type") == "text":
                                     if p.get("text", "").strip():
-                                        current_user_multipart_payload.append({"text": p["text"]})
+                                        current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"})
                                 else:
                                     # [PASSTHROUGH] Liste Blanche implicite.
                                     # On laisse passer les 'inline_data' d'ECHO, et tout futur format inattendu.
                                     current_user_multipart_payload.append(p)
+                    else:
+                        if orig_content and str(orig_content).strip():
+                            current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{str(orig_content)}\n</REQUETE_UTILISATEUR>"})
                     break
 
             if idx != -1:
