@@ -15,7 +15,7 @@ WORKDIR /app
 
 # Installation optimisée pour CPU
 RUN --mount=type=cache,target=/root/.cache/pip \
-    PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) pip install \
+    PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=2 pip install \
     faster-whisper \
     fastapi \
     uvicorn \

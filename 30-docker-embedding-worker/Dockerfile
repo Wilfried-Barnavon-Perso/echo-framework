@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Autres dépendances Python
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) pip install -r requirements.txt
+    CMAKE_BUILD_PARALLEL_LEVEL=2 pip install -r requirements.txt
 
 # Copie de l'application
 COPY app.py .
