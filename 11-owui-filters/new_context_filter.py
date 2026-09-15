@@ -2,11 +2,12 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.57
+version: 7.58
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.58: Correction du fallback ZoneInfo (TypeError sur import pytz as ZoneInfo -> from pytz import timezone).
 # 7.57: Refactorisation algorithmique PGCU et renommage (current_user_multipart_payload).
 # 7.56: Extraction de dr.get("summary") dans la clé 'message' du delta hors-tour.
 # 7.54: Correction du bug d'ingestion des fichiers attachés au premier message (chat_id récupéré depuis le body).
@@ -284,7 +285,7 @@ class Filter:
                 try:
                     from zoneinfo import ZoneInfo
                 except ImportError:
-                    import pytz as ZoneInfo
+                    from pytz import timezone as ZoneInfo
                 user_tz_str = meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                 try:
                     user_tz = ZoneInfo(user_tz_str)

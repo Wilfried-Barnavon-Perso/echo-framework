@@ -1,8 +1,10 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 1.15
+version: 1.16
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). Refactorisation institutionnelle et N8N Grapher.
+--- CHANGELOG 1.16 ---
+- Correction : Protection contre la valeur NULL (NoneType) du statut lors de la suppression d'un workflow en base SQLite.
 --- CHANGELOG 1.15 ---
 - Refinement : MAJ docstrings pour incitation au N8N Grapher et correction casse.
 --- CHANGELOG 1.14 ---
@@ -280,7 +282,8 @@ class Tools:
             
             # Extraction du statut pour vérifier si c'est un démon (deployed_as_xxx)
             wf_resource = state.get_resource(n8n_workflow_id)
-            status = wf_resource.get("status", "") if wf_resource else ""
+            status = wf_resource.get("status") if wf_resource else ""
+            if not isinstance(status, str): status = ""
             
             state.delete_resource(n8n_workflow_id)
             logs.append(f"Workflow {n8n_workflow_id} supprimé de la session.")
@@ -413,6 +416,7 @@ class Tools:
                     res = resp.json()
                     status = res.get("status")
                     if sync:
+                        state.update_resource_status(n8n_workflow_id, "ready")
                         logs = res.get("stdout", "") + "\n" + res.get("stderr", "")
                         if len(logs.encode('utf-8')) >= 8192:
                             err_msg = "[Erreur Système] Payload excessif (>8Ko) bloqué en mode Synchrone. Le Modèle DOIT réexécuter l'instance en mode asynchrone (sync=False) ou modifier l'architecture du graphe N8N pour filtrer/stocker la donnée en interne."
@@ -424,12 +428,13 @@ class Tools:
                         exec_id = res.get("execution_id", "inconnu")
                         return wrap_tool_output(f"[N8N EXECUTION : ASYNCHRONE DÉMARRÉE]\nL'exécution de la tâche (ID: {exec_id}) a bien été lancée en tâche de fond.\n\n[INFO SYSTEM] Le workflow N8N tourne en arrière-plan. Ses résultats (et ses logs stdout/stderr) seront écrits dans des fichiers qui seront automatiquement ingérés dès la fin du traitement. Vous pouvez passer à la tâche suivante !", user_id=uid, chat_id=cid, metadata=__metadata__)
                 else:
+                    state.update_resource_status(n8n_workflow_id, "ready")
                     return wrap_tool_output(f"Erreur API Worker HTTP {resp.status_code}: {resp.text}", user_id=uid, chat_id=cid, metadata=__metadata__)
                     
         except Exception as e:
-            return wrap_tool_output(f"Erreur de communication avec le worker: {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
-        finally:
             state.update_resource_status(n8n_workflow_id, "ready")
+            return wrap_tool_output(f"Erreur de communication avec le worker: {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
+
 
     async def deploy_n8n_daemon(self, n8n_workflow_id: str, __user__: dict = None, __metadata__: dict = None) -> dict:
         """

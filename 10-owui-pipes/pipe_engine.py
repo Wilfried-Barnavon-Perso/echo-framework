@@ -1,12 +1,13 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.58
+version: 192.59
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.59: Application de `_mutate_context_identity` et protection du parsing JSON des tool_calls (fallback dict vide).
 # 192.58: Modification du préfixe de notification UI (toast) pour les rappels cognitifs (🛤️ Alignement du Modèle).
 # 192.57: Remplacement des blocs XML de troncature MAX_TOKENS par le format natif <artifact id="AEC_evenement_systeme">.
 # 192.56: Déploiement des Rappels Cognitifs Multi-Axes (Anti-Division par 0 + UI Toast Emission).
@@ -311,7 +312,16 @@ class Orchestrator:
                     restored_parts = ensure_gemini_parts(content, model_id, self.model_origin)
                     tool_calls = m.get("tool_calls", [])
                     if tool_calls:
-                        restored_parts = [{"functionCall": {"name": tc["function"]["name"], "args": std_json.loads(tc["function"]["arguments"])}} for tc in tool_calls] + restored_parts
+                        parsed_tc = []
+                        for tc in tool_calls:
+                            raw_args = tc["function"].get("arguments", "{}")
+                            if not raw_args: raw_args = "{}"
+                            try:
+                                args = std_json.loads(raw_args)
+                            except Exception:
+                                args = {}
+                            parsed_tc.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
+                        restored_parts = parsed_tc + restored_parts
                     else:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
                         current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
@@ -719,6 +729,9 @@ class Pipe:
         
         # Reconstruction contexte (Bit-Perfect)
         context = await orch.prepare_context(body, chat_id, target_model, __metadata__, events)
+        
+        if target_model and origine_model and target_model != origine_model and origine_model != "aucun":
+            orch._mutate_context_identity(context, target_model, origine_model)
 
         # --- [NOUVEAU] CONFIGURATION CASCADE ---
         is_auto = user_valves.MODEL_SELECTION in ["AUTO", "AUTO_PRO"]

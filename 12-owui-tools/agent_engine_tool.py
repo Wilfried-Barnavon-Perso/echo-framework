@@ -19,6 +19,7 @@ import sys
 import uuid
 import re
 import time
+import datetime
 import inspect
 from pydantic import BaseModel, Field
 from typing import Optional, Any, List
@@ -149,7 +150,7 @@ class Tools:
         else:
             base_system = system_prompt
 
-        import datetime
+
         current_time = datetime.datetime.now().isoformat()
         
         if not base_system or ("<directives_globales>" not in base_system and "<context_temporel>" not in base_system):

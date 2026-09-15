@@ -133,7 +133,16 @@ class Filter:
             formatted_text = self._format_messages(turn)
             unique_seed = turn[-1].get("id") or str(turn[-1].get("timestamp"))
             
-            asyncio.create_task(
+            def _handle_rag_exception(task: asyncio.Task):
+                try:
+                    task.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger("ECHO-RAG-FILTER").error(f"Erreur RAG asynchrone: {e}")
+
+            task = asyncio.create_task(
                 EchoGeminiClient.index_text_in_ephemeral_rag(
                     distillate=formatted_text,
                     source_id=SESSION_RAG_CONVERSATION_SOURCE_ID,
@@ -144,6 +153,7 @@ class Filter:
                     unique_seed=str(unique_seed) if unique_seed else None
                 )
             )
+            task.add_done_callback(_handle_rag_exception)
             
             # Marquage immédiat pour court-circuiter le RAG au prochain appel
             if unique_seed:

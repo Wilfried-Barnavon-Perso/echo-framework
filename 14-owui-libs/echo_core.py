@@ -177,6 +177,7 @@ def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
     return text, None
 
 def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[dict] = None, user_id: str = None, chat_id: str = None, metadata: dict = None) -> dict:
+    aec_events = None
     if user_id and chat_id and metadata is not None:
         # [NOUVEAU] Rappels Cognitifs par Outil (AVANT le delta)
         call_count = metadata.get("_echo_tool_call_count", 0) + 1
@@ -224,7 +225,7 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                     # Appel de la fonction factorisée
                     events_text = EchoAEC.render_system_events(sys_events=events)
                     if events_text:
-                        text += f"\n\n{events_text}"
+                        aec_events = events_text
                         metadata["_echo_last_event_check_at"] = time.time()
                         
                     # FIFO destructif : Purge EXCLUSIVE des événements purement système (AEC).
@@ -238,7 +239,7 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
             except Exception as e:
                 print(f"[wrap_tool_output] Erreur Delta SQLite: {e}")
             
-    return {"text": text, "status": status or {"status": "success"}, "echo_tool_multiparts": echo_tool_multiparts or []}
+    return {"text": text, "aec_events": aec_events, "status": status or {"status": "success"}, "echo_tool_multiparts": echo_tool_multiparts or []}
 
 def wrap_cascade_output(text: str, model_requested: str, model_used: str, status: dict = None, echo_tool_multiparts: List[dict] = None, reason: str = None, user_id: str = None, chat_id: str = None, metadata: dict = None) -> dict:
     """
@@ -320,8 +321,14 @@ def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str 
     text_body = content.get("text", "")
     status_meta = content.get("status", {"status": "success"})
     rich_multiparts = content.get("echo_tool_multiparts", [])
+    aec_events = content.get("aec_events")
 
     response_dict = status_meta.copy()
+    
+    # SÉGRÉGATION 100% SAFE POUR L'API : L'AEC est injecté dans une clé XML explicite
+    if aec_events:
+        response_dict["AEC_evenement_systeme"] = aec_events
+
     if text_body:
         response_dict["result"] = resolve_placeholders(text_body, model_id, model_origin)
 
