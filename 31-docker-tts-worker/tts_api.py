@@ -66,8 +66,8 @@ logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 app = FastAPI(title="ECHO TTS Worker", description="Kokoro ONNX CPU API")
 
 print("🧠 Loading Kokoro ONNX model on CPU...")
-# Chargement optimisé CPU
-kokoro = Kokoro("kokoro-v1.0.onnx", "voices-v1.0.bin")
+# Chargement optimisé CPU (INT8 Quantized)
+kokoro = Kokoro("kokoro-v1.0.int8.onnx", "voices-v1.0.bin")
 print("✅ Model loaded successfully.")
 
 class TTSRequest(BaseModel):
