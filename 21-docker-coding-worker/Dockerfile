@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM python:3.14
 
 LABEL maintainer="Wilfried BARNAVON"
@@ -20,7 +21,8 @@ ENV NODE_PATH=/usr/lib/node_modules
 
 # Installation des packages Python
 COPY requirements.txt .
-RUN CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) pip install -r requirements.txt
 
 # Copie de l'application
 COPY worker_api.py /app/app.py

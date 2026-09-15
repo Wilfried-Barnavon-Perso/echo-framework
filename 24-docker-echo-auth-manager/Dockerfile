@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ECHO Auth Server Dockerfile
 FROM python:3.14-slim
 
@@ -8,7 +9,8 @@ ENV TZ=Europe/Paris
 WORKDIR /app
 
 # Installation des dépendances de sécurité et web
-RUN pip install --no-cache-dir \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
     fastapi \
     uvicorn \
     pyotp \

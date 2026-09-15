@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ==============================================================================
 # STAGE 1 : L'extraction (Le vol de N8N pré-compilé)
 # ==============================================================================
@@ -19,7 +20,8 @@ COPY --from=n8n_official /usr/local/lib/node_modules/n8n /usr/local/lib/node_mod
 RUN mkdir -p /usr/local/bin && ln -s /usr/local/lib/node_modules/n8n/bin/n8n /usr/local/bin/n8n
 
 # Installation de l'API ECHO (FastAPI)
-RUN python3 -m pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic httpx bcrypt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m pip install --break-system-packages fastapi uvicorn pydantic httpx bcrypt
 
 # Préparation de l'environnement de travail
 WORKDIR /app

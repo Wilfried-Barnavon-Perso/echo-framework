@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ECHO TTS WORKER (Kokoro ONNX CPU)
 FROM python:3.12-slim
 
@@ -15,7 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Installation optimisée pour CPU
-RUN PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) pip install --no-cache-dir \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) pip install \
     kokoro-onnx \
     soundfile \
     fastapi \

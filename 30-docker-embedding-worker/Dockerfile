@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
 LABEL maintainer="Wilfried BARNAVON"
@@ -15,7 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Autres dépendances Python
 COPY requirements.txt .
-RUN CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) pip install -r requirements.txt
 
 # Copie de l'application
 COPY app.py .

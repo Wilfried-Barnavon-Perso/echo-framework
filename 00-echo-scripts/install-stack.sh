@@ -291,7 +291,6 @@ else
     echo "⚠️ Script de configuration introuvable ($ECHO_SCRIPTS/config-owui.sh)"
 fi
 
-docker buildx prune -f >/dev/null 2>&1
 docker image prune -f >/dev/null 2>&1
 
 echo "✅ DEPLOIEMENT TERMINÉ."
