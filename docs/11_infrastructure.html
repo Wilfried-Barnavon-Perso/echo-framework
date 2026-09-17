@@ -3,67 +3,67 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Overview de l'infrastructure et des pÃ©riphÃ©riques ECHO v5.">
+  <meta name="description" content="Overview de l'infrastructure et des périphériques ECHO v5.">
   <title>ECHO v5 - 11. Périphériques et Infrastructure (Overview)</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
     <h1>11. Périphériques et Infrastructure (Overview)</h1>
 
     <p>
-      Le chapitre 11 dÃ©taille l'ensemble des modules d'infrastructure qui gravitent autour du cÅ“ur d'ECHO. Ces composants pÃ©riphÃ©riques, bien que fonctionnant en autonomie, sont essentiels Ã  la stabilitÃ©, Ã  la sÃ©curitÃ©, Ã  l'expressivitÃ© et Ã  la maintenance globale du framework.
+      Le chapitre 11 détaille l'ensemble des modules d'infrastructure qui gravitent autour du cœur d'ECHO. Ces composants périphériques, bien que fonctionnant en autonomie, sont essentiels à la stabilité, à la sécurité, à l'expressivité et à la maintenance globale du framework.
     </p>
 
     <div class="didactic-box">
-      <h4>ðŸ’¡ RÃ´le des PÃ©riphÃ©riques</h4>
+      <h4>💡 Rôle des Périphériques</h4>
       <p>
-        Si le <strong>Cortex</strong> (Pipe) est le cerveau et la <strong>Conscience</strong> (Filtres) l'esprit, les pÃ©riphÃ©riques d'infrastructure forment le systÃ¨me immunitaire (WAF, Admin Manager), les barriÃ¨res de sÃ©curitÃ© (ECHO Auth), les organes sensoriels (Audio Workers) et le systÃ¨me mÃ©tabolique d'ECHO (Scripts).
+        Si le <strong>Cortex</strong> (Pipe) est le cerveau et la <strong>Conscience</strong> (Filtres) l'esprit, les périphériques d'infrastructure forment le système immunitaire (WAF, Admin Manager), les barrières de sécurité (ECHO Auth), les organes sensoriels (Audio Workers) et le système métabolique d'ECHO (Scripts).
       </p>
     </div>
 
-    <h2>Topologie des Composants PÃ©riphÃ©riques</h2>
+    <h2>Topologie des Composants Périphériques</h2>
 
     <p>
-      L'infrastructure est divisÃ©e en cinq grappes logiques, chacune documentÃ©e de maniÃ¨re exhaustive dans sa section dÃ©diÃ©e :
+      L'infrastructure est divisée en cinq grappes logiques, chacune documentée de manière exhaustive dans sa section dédiée :
     </p>
 
     <div class="cards-grid">
       <div class="card">
         <h3><a href="11a_admin_manager.html">10a. Admin Manager</a></h3>
-        <p>Le centre de contrÃ´le. Il centralise le monitoring Docker, orchestre la purge sÃ©mantique temporelle (TTL Qdrant), gÃ¨re les sessions SSO et les sauvegardes Ã  chaud du Vault de donnÃ©es.</p>
+        <p>Le centre de contrôle. Il centralise le monitoring Docker, orchestre la purge sémantique temporelle (TTL Qdrant), gère les sessions SSO et les sauvegardes à chaud du Vault de données.</p>
       </div>
 
       <div class="card">
         <h3><a href="11b_echo_auth_sso.html">10b. ECHO Auth SSO & MFA</a></h3>
-        <p>Le fournisseur d'identitÃ© souverain (IdP). Il sÃ©curise les accÃ¨s via un flux OAuth2 PKCE strict, couplÃ© Ã  une authentification multifacteur (TOTP) obligatoire.</p>
+        <p>Le fournisseur d'identité souverain (IdP). Il sécurise les accès via un flux OAuth2 PKCE strict, couplé à une authentification multifacteur (TOTP) obligatoire.</p>
       </div>
 
       <div class="card">
         <h3><a href="11c_bunkerweb_waf.html">10c. Bouclier BunkerWeb WAF</a></h3>
-        <p>La forteresse rÃ©seau. Point d'entrÃ©e unique exposÃ© sur le WAN, il protÃ¨ge le cluster des attaques web, gÃ¨re les certificats SSL et intÃ¨gre le Kill-Switch dynamique.</p>
+        <p>La forteresse réseau. Point d'entrée unique exposé sur le WAN, il protège le cluster des attaques web, gère les certificats SSL et intègre le Kill-Switch dynamique.</p>
       </div>
 
       <div class="card">
         <h3><a href="11d_audio_workers.html">10d. Audio Workers</a></h3>
-        <p>Les organes d'expressivitÃ©. Isolation des moteurs de transcription Whisper (STT) et de synthÃ¨se vocale Kokoro (TTS) pour un streaming fluide et multilingue.</p>
+        <p>Les organes d'expressivité. Isolation des moteurs de transcription Whisper (STT) et de synthèse vocale Kokoro (TTS) pour un streaming fluide et multilingue.</p>
       </div>
 
       <div class="card">
         <h3><a href="11e_scripts_infrastructure.html">10e. Scripts d'Infrastructure</a></h3>
-        <p>La couche d'orchestration bas niveau. Les scripts Shell et PowerShell garantissant la reproductibilitÃ© stricte du dÃ©ploiement Windows vers Ubuntu.</p>
+        <p>La couche d'orchestration bas niveau. Les scripts Shell et PowerShell garantissant la reproductibilité stricte du déploiement Windows vers Ubuntu.</p>
       </div>
 
       <div class="card">
         <h3>10f. Download Broker</h3>
-        <p>Worker asynchrone (25-docker-download-broker). Isole et sÃ©curise l'acquisition de fichiers lourds depuis l'Arsenal.</p>
+        <p>Worker asynchrone (25-docker-download-broker). Isole et sécurise l'acquisition de fichiers lourds depuis l'Arsenal.</p>
       </div>
 
       <div class="card">
-        <h3>10g. Monitoring & Logs CentralisÃ©s</h3>
-        <p>IntÃ¨gre un systÃ¨me unifiÃ© de logs JSON (<code>logging.json</code>) et un <strong>System-wide Health Check Rate-Limiting</strong> sur tous les workers (STT, TTS, Embedding, Browser, Python) pour prÃ©venir la saturation du systÃ¨me par les sondes Docker.</p>
+        <h3>10g. Monitoring & Logs Centralisés</h3>
+        <p>Intègre un système unifié de logs JSON (<code>logging.json</code>) et un <strong>System-wide Health Check Rate-Limiting</strong> sur tous les workers (STT, TTS, Embedding, Browser, Python) pour prévenir la saturation du système par les sondes Docker.</p>
       </div>
     </div>
 

@@ -1,84 +1,84 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="DÃ©ploiement du Framework ECHO v5 : provisioning Hyper-V, installation Linux natif, WSL2, cycle de vie des 6 phases, scripts sync-echo et install-stack.">
+  <meta name="description" content="Déploiement du Framework ECHO v5 : provisioning Hyper-V, installation Linux natif, WSL2, cycle de vie des 6 phases, scripts sync-echo et install-stack.">
   <title>ECHO v5 - 4. Déploiement & Infrastructure</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
     <h1>4. Déploiement & Infrastructure</h1>
 
     <p>
-      ECHO est conÃ§u pour transformer une machine standard en un serveur d'intelligence souveraine.
-      Le scÃ©nario nominal consiste Ã  utiliser un poste Windows 11 Pro comme hÃ´te matÃ©riel,
-      exÃ©cutant une Machine Virtuelle Ubuntu 26.04 isolÃ©e via Hyper-V. La totalitÃ© de la pile Docker
-      ECHO s'exÃ©cute dans cette VM, garantissant une Ã©tanchÃ©itÃ© totale entre les outils quotidiens
+      ECHO est conçu pour transformer une machine standard en un serveur d'intelligence souveraine.
+      Le scénario nominal consiste à utiliser un poste Windows 11 Pro comme hôte matériel,
+      exécutant une Machine Virtuelle Ubuntu 26.04 isolée via Hyper-V. La totalité de la pile Docker
+      ECHO s'exécute dans cette VM, garantissant une étanchéité totale entre les outils quotidiens
       de l'utilisateur et son infrastructure IA personnelle.
     </p>
 
     <div class="didactic-box">
-      <h4>ðŸ’¡ Trois voies d'installation</h4>
+      <h4>💡 Trois voies d'installation</h4>
       <p>
-        ECHO supporte trois mÃ©thodes de dÃ©ploiement selon le contexte : <strong>Hyper-V</strong>
-        (production souveraine, isolation maximale), <strong>Linux natif</strong> (serveur dÃ©diÃ©)
-        et <strong>WSL2</strong> (dÃ©veloppement ou test unitaire sur Windows).
-        Toutes convergent vers la mÃªme pile Docker et le mÃªme Ã©tat final.
+        ECHO supporte trois méthodes de déploiement selon le contexte : <strong>Hyper-V</strong>
+        (production souveraine, isolation maximale), <strong>Linux natif</strong> (serveur dédié)
+        et <strong>WSL2</strong> (développement ou test unitaire sur Windows).
+        Toutes convergent vers la même pile Docker et le même état final.
       </p>
     </div>
 
     <h2>Voie A - Hyper-V (Production Souveraine)</h2>
 
     <p>
-      Le scÃ©nario Hyper-V est le plus abouti. Il utilise le script PowerShell
-      <code>install-hyperv.ps1</code> exÃ©cutÃ© depuis le poste Windows, lequel
-      orchestre la crÃ©ation et le provisioning automatique d'une VM Ubuntu fraÃ®che
-      via le mÃ©canisme <strong>cloud-init</strong>.
+      Le scénario Hyper-V est le plus abouti. Il utilise le script PowerShell
+      <code>install-hyperv.ps1</code> exécuté depuis le poste Windows, lequel
+      orchestre la création et le provisioning automatique d'une VM Ubuntu fraîche
+      via le mécanisme <strong>cloud-init</strong>.
     </p>
 
-    <h3>Phase 1 - Assemblage et injection (hÃ´te Windows)</h3>
+    <h3>Phase 1 - Assemblage et injection (hôte Windows)</h3>
     <p>
-      <code>install-hyperv.ps1</code> agit comme assembleur. Il crÃ©e une archive ZIP pointant par dÃ©faut sur la branche <code>dev</code> du projet
-      (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>), gÃ©nÃ¨re un
+      <code>install-hyperv.ps1</code> agit comme assembleur. Il crée une archive ZIP pointant par défaut sur la branche <code>dev</code> du projet
+      (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>), génère un
       disque dur virtuel CIDATA de 100 Mo contenant les fichiers <code>user-data</code> et
-      <code>meta-data</code> cloud-init, puis crÃ©e la VM Hyper-V de GÃ©nÃ©ration 2 (avec 8 Go de RAM allouÃ©s et un VHDX de 70 Go dynamiques, Secure
-      Boot dÃ©sactivÃ©) et le disque Seed attachÃ©.
+      <code>meta-data</code> cloud-init, puis crée la VM Hyper-V de Génération 2 (avec 8 Go de RAM alloués et un VHDX de 70 Go dynamiques, Secure
+      Boot désactivé) et le disque Seed attaché.
     </p>
 
-    <h3>Phase 2 - Provisioning automatisÃ© (VM Linux)</h3>
+    <h3>Phase 2 - Provisioning automatisé (VM Linux)</h3>
     <p>
-      Au premier dÃ©marrage, l'installateur Ubuntu (Subiquity) dÃ©tecte le disque CIDATA et
-      exÃ©cute les instructions cloud-init : installation de Docker, Docker Compose v2,
+      Au premier démarrage, l'installateur Ubuntu (Subiquity) détecte le disque CIDATA et
+      exécute les instructions cloud-init : installation de Docker, Docker Compose v2,
       <code>jq</code>, <code>yq</code>, <code>git</code> et <code>unzip</code>.
       L'archive ZIP est extraite dans <code>/opt/ECHO/source</code>, puis
-      <code>sync-echo.sh --local-only</code> est lancÃ© immÃ©diatement pour distribuer les fichiers.
+      <code>sync-echo.sh --local-only</code> est lancé immédiatement pour distribuer les fichiers.
     </p>
 
     <h3>Phase 3 - Synchronisation des sources (<code>sync-echo.sh</code>)</h3>
     <p>
       Ce script est le <strong>distributeur</strong> du framework. Il copie les fichiers sources
-      vers leur destination dÃ©finitive dans <code>/opt/ECHO/</code> selon la cartographie suivante :
+      vers leur destination définitive dans <code>/opt/ECHO/</code> selon la cartographie suivante :
     </p>
     <table>
       <thead>
-        <tr><th>Source (dÃ©pÃ´t git)</th><th>Destination sur la VM</th><th>Contenu</th></tr>
+        <tr><th>Source (dépôt git)</th><th>Destination sur la VM</th><th>Contenu</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>00-echo-scripts/</code></td><td><code>/opt/ECHO/echo-scripts/</code></td><td>Scripts Bash de contrÃ´le</td></tr>
+        <tr><td><code>00-echo-scripts/</code></td><td><code>/opt/ECHO/echo-scripts/</code></td><td>Scripts Bash de contrôle</td></tr>
         <tr><td><code>01-config/</code></td><td><code>/opt/ECHO/config/</code></td><td>YAML, JSON de configuration</td></tr>
         <tr><td><code>10-owui-pipes/</code></td><td><code>/opt/ECHO/owui-pipes/</code></td><td>Pipe Engine Python</td></tr>
         <tr><td><code>11-owui-filters/</code></td><td><code>/opt/ECHO/owui-filters/</code></td><td>Filtres Python</td></tr>
         <tr><td><code>12-owui-tools/</code></td><td><code>/opt/ECHO/owui-tools/</code></td><td>Outils de l'Arsenal</td></tr>
         <tr><td><code>13-owui-actions/</code></td><td><code>/opt/ECHO/owui-actions/</code></td><td>Actions HUD</td></tr>
-        <tr><td><code>14-owui-libs/</code></td><td><code>/opt/ECHO/owui-libs/</code> et <code>/app/backend/echo_libs/</code></td><td>Librairies partagÃ©es</td></tr>
+        <tr><td><code>14-owui-libs/</code></td><td><code>/opt/ECHO/owui-libs/</code> et <code>/app/backend/echo_libs/</code></td><td>Librairies partagées</td></tr>
         <tr><td><code>20-docker-admin-manager/</code></td><td><code>/opt/ECHO/docker-admin-manager/</code></td><td>Admin Manager</td></tr>
         <tr><td><code>21-docker-coding-worker/</code></td><td><code>/opt/ECHO/docker-coding-worker/</code></td><td>Sandbox Code (Python/Node)</td></tr>
         <tr><td><code>22-docker-browser-worker/</code></td><td><code>/opt/ECHO/docker-browser-worker/</code></td><td>Browser Worker Playwright</td></tr>
-        <tr><td><code>30-docker-embedding-worker/</code></td><td><code>/opt/ECHO/docker-embedding-worker/</code></td><td>InfÃ©rence Harrier-OSS locale</td></tr>
+        <tr><td><code>30-docker-embedding-worker/</code></td><td><code>/opt/ECHO/docker-embedding-worker/</code></td><td>Inférence Harrier-OSS locale</td></tr>
         <tr><td><code>24-docker-echo-auth-manager-manager/</code></td><td><code>/opt/ECHO/docker-echo-auth-manager-manager/</code></td><td>ECHO Auth (Serveur SSO & MFA)</td></tr>
         <tr><td><code>25-docker-download-broker/</code></td><td><code>/opt/ECHO/docker-download-broker/</code></td><td>Download Broker</td></tr>
         <tr><td><code>32-docker-stt-worker/</code></td><td><code>/opt/ECHO/docker-stt-worker/</code></td><td>Worker STT (Faster-Whisper)</td></tr>
@@ -86,17 +86,17 @@
       </tbody>
     </table>
     <p>
-      Le script effectue Ã©galement une normalisation des fins de lignes (CRLF â†’ LF) et supprime
-      les BOM UTF-8, puis crÃ©e des liens symboliques dans <code>/usr/local/bin/</code> pour
+      Le script effectue également une normalisation des fins de lignes (CRLF → LF) et supprime
+      les BOM UTF-8, puis crée des liens symboliques dans <code>/usr/local/bin/</code> pour
       que toutes les commandes ECHO soient accessibles globalement
       (ex. <code>update-echo</code> au lieu de <code>/opt/ECHO/echo-scripts/update-echo.sh</code>).
     </p>
 
     <h3>Phase 4 - Orchestration Docker (<code>install-stack.sh</code>)</h3>
     <p>
-      Ce script orchestre le dÃ©marrage sÃ©quentiel de la pile applicative via le fichier de configuration
-      centralisÃ© <code>stack-echo.yml</code> (v9.3+). Le dÃ©marrage est ordonnÃ© par hostnames stricts (<code>echo-*</code>) via <code>healthcheck</code> et la condition <code>service_healthy</code>. 
-      L'orchestration intÃ¨gre une limitation stricte du parallÃ©lisme de compilation (<code>CMAKE_BUILD_PARALLEL_LEVEL=2</code>) pour prÃ©venir les OOM Killers lors des dÃ©ploiements massifs :
+      Ce script orchestre le démarrage séquentiel de la pile applicative via le fichier de configuration
+      centralisé <code>stack-echo.yml</code> (v9.3+). Le démarrage est ordonné par hostnames stricts (<code>echo-*</code>) via <code>healthcheck</code> et la condition <code>service_healthy</code>. 
+      L'orchestration intègre une limitation stricte du parallélisme de compilation (<code>CMAKE_BUILD_PARALLEL_LEVEL=2</code>) pour prévenir les OOM Killers lors des déploiements massifs :
     </p>
     <ul>
       <li><strong>Tier 1 (Fondations)</strong> : Qdrant, SearXNG, Watchtower.</li>
@@ -105,68 +105,68 @@
       <li><strong>Tier 4</strong> : Admin Manager.</li>
     </ul>
     <p>
-      Il sÃ©curise Ã©galement l'hÃ´te en appliquant une politique Autosafety de rotation des logs Docker (max-size 50m).
-      Il centralise les secrets et variables dans <code>/opt/ECHO/.env</code> (incluant la gÃ©nÃ©ration automatique de <code>ECHO_SSO_SECRET</code>), calcule dynamiquement 
-      les origines CORS autorisÃ©es (<code>ECHO_DETECTED_ORIGINS</code>), puis lÃ¨ve les services.
+      Il sécurise également l'hôte en appliquant une politique Autosafety de rotation des logs Docker (max-size 50m).
+      Il centralise les secrets et variables dans <code>/opt/ECHO/.env</code> (incluant la génération automatique de <code>ECHO_SSO_SECRET</code>), calcule dynamiquement 
+      les origines CORS autorisées (<code>ECHO_DETECTED_ORIGINS</code>), puis lève les services.
     </p>
     <p>
-      Une fois les conteneurs actifs, <code>config-owui.sh</code> exÃ©cute l'initialisation : il injecte 
+      Une fois les conteneurs actifs, <code>config-owui.sh</code> exécute l'initialisation : il injecte 
       l'Arsenal (Pipes, Filtres, Outils, Actions) dans l'API d'Open WebUI, et importe 
       automatiquement la configuration globale depuis <code>webui-settings.json</code>.
-      Ce fichier configure dynamiquement le modÃ¨le par dÃ©faut (<code>pipe_engine</code>),
+      Ce fichier configure dynamiquement le modèle par défaut (<code>pipe_engine</code>),
       configure les moteurs RAG, connecte les API STT et TTS locales (ex: <code>http://echo-tts-worker:7996/v1</code>),
-      et dÃ©sactive l'authentification native de WebUI pour dÃ©lÃ©guer la gestion Ã  Antigravity.
+      et désactive l'authentification native de WebUI pour déléguer la gestion à Antigravity.
     </p>
 
     <div class="note-box">
-      <h4>âš  DÃ©pendances Python additionnelles (stack-echo.yml v9.2)</h4>
+      <h4>⚠ Dépendances Python additionnelles (stack-echo.yml v9.2)</h4>
       <p>
-        Le service <code>open-webui</code> installe des packages Python au dÃ©marrage
+        Le service <code>open-webui</code> installe des packages Python au démarrage
         via la commande <code>/bin/bash -c "pip install mgzip dulwich &amp;&amp; ./start.sh"</code>.
-        <code>mgzip</code> est requis pour les exports gzip, <code>dulwich</code> (ajoutÃ© en v9.2)
-        est la bibliothÃ¨que Git Python pur requise par l'ECHO Codex pour crÃ©er et gÃ©rer
-        les dÃ©pÃ´ts Git sans binaire <code>git</code> installÃ© dans le conteneur.
+        <code>mgzip</code> est requis pour les exports gzip, <code>dulwich</code> (ajouté en v9.2)
+        est la bibliothèque Git Python pur requise par l'ECHO Codex pour créer et gérer
+        les dépôts Git sans binaire <code>git</code> installé dans le conteneur.
       </p>
     </div>
 
-    <h2>Voie B - Linux Natif (Serveur DÃ©diÃ©)</h2>
+    <h2>Voie B - Linux Natif (Serveur Dédié)</h2>
 
     <div class="code-header">Installation Linux natif - branche main</div>
     <pre><code>curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-linux.sh | sudo bash
 
-# Ou sur une branche spÃ©cifique :
+# Ou sur une branche spécifique :
 sudo bash &lt;(curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-linux.sh) --branch dev</code></pre>
 
     <p>
-      <code>install-linux.sh</code> est <strong>idempotent</strong> : si ECHO est dÃ©jÃ  installÃ©,
-      une seconde exÃ©cution effectue une mise Ã  jour propre. Il installe Docker, Docker Compose v2,
+      <code>install-linux.sh</code> est <strong>idempotent</strong> : si ECHO est déjà installé,
+      une seconde exécution effectue une mise à jour propre. Il installe Docker, Docker Compose v2,
       <code>jq</code>, <code>yq</code>, <code>git</code>, <code>chrony</code>, puis clone le
-      dÃ©pÃ´t dans <code>/opt/ECHO/source</code> et enchaÃ®ne <code>sync-echo.sh</code> et
+      dépôt dans <code>/opt/ECHO/source</code> et enchaîne <code>sync-echo.sh</code> et
       <code>install-stack.sh</code>.
     </p>
 
-    <h2>Voie C - WSL2 (DÃ©veloppement)</h2>
+    <h2>Voie C - WSL2 (Développement)</h2>
 
     <div class="code-header">Installation WSL2 - depuis un terminal Ubuntu WSL2</div>
     <pre><code>curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framework/main/install-wsl2.sh | sudo bash</code></pre>
 
     <p>
-      SpÃ©cificitÃ©s gÃ©rÃ©es par <code>install-wsl2.sh</code> :
+      Spécificités gérées par <code>install-wsl2.sh</code> :
     </p>
     <ul>
       <li>
-        <strong>DÃ©tection systemd :</strong> si <code>/etc/wsl.conf</code> dÃ©clare
-        <code>systemd=true</code>, Docker est activÃ© comme service permanent. Sinon,
+        <strong>Détection systemd :</strong> si <code>/etc/wsl.conf</code> déclare
+        <code>systemd=true</code>, Docker est activé comme service permanent. Sinon,
         fallback sur <code>service docker start</code>.
       </li>
       <li>
-        <strong>AccÃ¨s double :</strong> l'interface est accessible depuis WSL2
-        (<code>http://&lt;IP-WSL&gt;:3000</code>) et depuis l'hÃ´te Windows
-        (<code>http://localhost:3000</code>) grÃ¢ce au port forwarding automatique de WSL2.
+        <strong>Accès double :</strong> l'interface est accessible depuis WSL2
+        (<code>http://&lt;IP-WSL&gt;:3000</code>) et depuis l'hôte Windows
+        (<code>http://localhost:3000</code>) grâce au port forwarding automatique de WSL2.
       </li>
       <li>
-        <code>chrony</code> n'est pas installÃ© : la synchronisation de l'heure est assurÃ©e
-        par l'hÃ´te Windows.
+        <code>chrony</code> n'est pas installé : la synchronisation de l'heure est assurée
+        par l'hôte Windows.
       </li>
     </ul>
 
@@ -178,36 +178,36 @@ sudo bash &lt;(curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Pe
       <pre><code>[boot]
 systemd=true</code></pre>
       <p>
-        Puis exÃ©cuter <code>wsl --shutdown</code> depuis PowerShell et relancer la distribution.
-        Docker dÃ©marrera alors automatiquement Ã  chaque ouverture de WSL2.
+        Puis exécuter <code>wsl --shutdown</code> depuis PowerShell et relancer la distribution.
+        Docker démarrera alors automatiquement à chaque ouverture de WSL2.
       </p>
     </div>
 
-    <h2>Comparatif des trois mÃ©thodes</h2>
+    <h2>Comparatif des trois méthodes</h2>
 
     <table>
       <thead>
         <tr>
-          <th>CritÃ¨re</th>
+          <th>Critère</th>
           <th>Hyper-V</th>
           <th>Linux Natif</th>
           <th>WSL2</th>
         </tr>
       </thead>
       <tbody>
-        <tr><td><strong>Isolation</strong></td><td>Maximale (VM dÃ©diÃ©e)</td><td>OS dÃ©diÃ©</td><td>Partielle (noyau partagÃ©)</td></tr>
-        <tr><td><strong>PrÃ©requis</strong></td><td>Windows 11 Pro + Hyper-V + 8 Go RAM</td><td>Ubuntu 22.04+ / Debian 12+</td><td>WSL2 activÃ© sur Windows 10/11</td></tr>
-        <tr><td><strong>ComplexitÃ© de dÃ©marrage</strong></td><td>Ã‰levÃ©e (VM + cloud-init)</td><td>Faible</td><td>Faible</td></tr>
-        <tr><td><strong>Idempotent</strong></td><td>Non (VM recrÃ©Ã©e)</td><td>Oui</td><td>Oui</td></tr>
-        <tr><td><strong>AccÃ¨s depuis Windows</strong></td><td>Via IP statique de la VM</td><td>Non direct</td><td><code>localhost</code> natif</td></tr>
-        <tr><td><strong>Usage recommandÃ©</strong></td><td>Production souveraine</td><td>Serveur dÃ©diÃ©</td><td>DÃ©veloppement / test unitaire</td></tr>
+        <tr><td><strong>Isolation</strong></td><td>Maximale (VM dédiée)</td><td>OS dédié</td><td>Partielle (noyau partagé)</td></tr>
+        <tr><td><strong>Prérequis</strong></td><td>Windows 11 Pro + Hyper-V + 8 Go RAM</td><td>Ubuntu 22.04+ / Debian 12+</td><td>WSL2 activé sur Windows 10/11</td></tr>
+        <tr><td><strong>Complexité de démarrage</strong></td><td>Élevée (VM + cloud-init)</td><td>Faible</td><td>Faible</td></tr>
+        <tr><td><strong>Idempotent</strong></td><td>Non (VM recréée)</td><td>Oui</td><td>Oui</td></tr>
+        <tr><td><strong>Accès depuis Windows</strong></td><td>Via IP statique de la VM</td><td>Non direct</td><td><code>localhost</code> natif</td></tr>
+        <tr><td><strong>Usage recommandé</strong></td><td>Production souveraine</td><td>Serveur dédié</td><td>Développement / test unitaire</td></tr>
       </tbody>
     </table>
 
     <h2>Cycle de vie et maintenance</h2>
 
     <p>
-      Une fois dÃ©ployÃ©e, l'infrastructure ECHO se gÃ¨re via des commandes globales
+      Une fois déployée, l'infrastructure ECHO se gère via des commandes globales
       disponibles partout dans le shell Linux :
     </p>
 
@@ -218,18 +218,18 @@ systemd=true</code></pre>
       <tbody>
         <tr>
           <td><code>update-echo</code></td>
-          <td>Mise Ã  jour du code Python uniquement.</td>
-          <td>RedÃ©marrage Â« hot reload Â» des micro-services. DonnÃ©es prÃ©servÃ©es.</td>
+          <td>Mise à jour du code Python uniquement.</td>
+          <td>Redémarrage « hot reload » des micro-services. Données préservées.</td>
         </tr>
         <tr>
           <td><code>upgrade-echo.sh</code></td>
-          <td>Mise Ã  niveau majeure de l'infrastructure.</td>
-          <td>Re-synchronisation complÃ¨te + rebuild des images Docker locales.</td>
+          <td>Mise à niveau majeure de l'infrastructure.</td>
+          <td>Re-synchronisation complète + rebuild des images Docker locales.</td>
         </tr>
         <tr>
           <td><code>rebuild-echo</code></td>
-          <td>RÃ©initialisation intÃ©grale (destructrice).</td>
-          <td>Suppression de <strong>tous</strong> les conteneurs, volumes, images et secrets. Remise Ã  zÃ©ro totale - donnÃ©es perdues.</td>
+          <td>Réinitialisation intégrale (destructrice).</td>
+          <td>Suppression de <strong>tous</strong> les conteneurs, volumes, images et secrets. Remise à zéro totale - données perdues.</td>
         </tr>
         <tr>
           <td><code>show-echo-admin</code></td>
@@ -242,8 +242,8 @@ systemd=true</code></pre>
 
     <h2>Quickstart depuis sources locales</h2>
 
-    <div class="code-header">DÃ©ploiement automatisÃ© depuis un clone local du dÃ©pÃ´t</div>
-    <pre><code># Depuis la racine du dÃ©pÃ´t git ECHO clonÃ© localement :
+    <div class="code-header">Déploiement automatisé depuis un clone local du dépôt</div>
+    <pre><code># Depuis la racine du dépôt git ECHO cloné localement :
 sudo bash 00-echo-scripts/sync-echo.sh --local-only
 sudo bash 00-echo-scripts/install-stack.sh
 

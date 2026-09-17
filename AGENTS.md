@@ -119,7 +119,7 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ## 10. 🔢 Stratégie de Versioning (`VERSIONING.md`)
 
 - **Version Globale :** Fichier `VERSION` (SemVer 5.Y.Z). 
-- **Encodage Strict :** Les fichiers `VERSION`, `.py`, `.xml`, `.sh`, et `.json` doivent **obligatoirement être encodés en UTF-8 sans BOM**. L'introduction de BOM ou de mojibake est strictement interdite.
+- **Encodage Strict :** Les fichiers `VERSION`, `.py`, `.xml`, `.sh`, `.json`, `.html`, `.css`, `.js` et `.md` doivent **obligatoirement être encodés en UTF-8 sans BOM**. L'introduction de BOM ou de double/triple encodage (mojibake) est strictement interdite sur tous les assets.
 - **Versioning des Composants :** Granularité définie dans les en-têtes de modules.
 
 ## 11. 🔐 Authentification Antigravity 2.1

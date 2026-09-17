@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -17,21 +17,21 @@
     <h1>9l. Serveur MCP Broker</h1>
 
     <h2>Serveur MCP Broker</h2>
-    <p>Le Model Context Protocol (MCP) Broker agit dÃ©sormais comme un <strong>Proxy HTTP complet</strong> (<code>m5_proxy_mcp.py</code>) exposant via ASGI des outils externes Ã  l'architecture ECHO.</p>
-    <p>Il implÃ©mente une architecture robuste intÃ©grant :</p>
+    <p>Le Model Context Protocol (MCP) Broker agit désormais comme un <strong>Proxy HTTP complet</strong> (<code>m5_proxy_mcp.py</code>) exposant via ASGI des outils externes à l'architecture ECHO.</p>
+    <p>Il implémente une architecture robuste intégrant :</p>
     <ul>
-      <li><strong>Forwarding d'erreurs :</strong> RemontÃ©e transparente des erreurs d'exÃ©cution des outils externes directement vers le LLM pour correction autonome.</li>
-      <li><strong>Middleware d'Authentification ASGI :</strong> Interception silencieuse de l'en-tÃªte <code>x-openwebui-user-id</code> au niveau ASGI pour sÃ©curiser toutes les requÃªtes entrantes.</li>
+      <li><strong>Forwarding d'erreurs :</strong> Remontée transparente des erreurs d'exécution des outils externes directement vers le LLM pour correction autonome.</li>
+      <li><strong>Middleware d'Authentification ASGI :</strong> Interception silencieuse de l'en-tête <code>x-openwebui-user-id</code> au niveau ASGI pour sécuriser toutes les requêtes entrantes.</li>
     </ul>
     
     <h3>Modules Actifs</h3>
     <ul>
-      <li><strong>Corporate (Sirene/Bodacc) :</strong> Outils de recherche de donnÃ©es d'entreprise.</li>
-      <li><strong>Academic :</strong> InterfaÃ§age avec des bases de connaissances scientifiques.</li>
+      <li><strong>Corporate (Sirene/Bodacc) :</strong> Outils de recherche de données d'entreprise.</li>
+      <li><strong>Academic :</strong> Interfaçage avec des bases de connaissances scientifiques.</li>
       <li><strong>Omnisearch Jobs :</strong> Moteur de recherche d'offres d'emploi.</li>
     </ul>
     
-    <p>L'Identity Vault fusionne dynamiquement les schÃ©mas de ce Broker avec l'API locale N8N pour la distribution sÃ©curisÃ©e des secrets.</p>
+    <p>L'Identity Vault fusionne dynamiquement les schémas de ce Broker avec l'API locale N8N pour la distribution sécurisée des secrets.</p>
 
     <footer>
       ECHO v5 Documentation - Version <span class="version-badge">5.203.1</span>

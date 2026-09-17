@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ECHO Codex : Ã©diteur de code Monaco multi-langage avec Git intÃ©grÃ© (dulwich), HUD draggable, Ã©dition AI assistÃ©e, WYSIWYG, navigation historique, 9 fonctions LLM (create, edit, read, search, summarize, list, delete, history, restore).">
+  <meta name="description" content="ECHO Codex : éditeur de code Monaco multi-langage avec Git intégré (dulwich), HUD draggable, édition AI assistée, WYSIWYG, navigation historique, 9 fonctions LLM (create, edit, read, search, summarize, list, delete, history, restore).">
   <title>ECHO v5 - 9h. ECHO Codex - Éditeur de Code Souverain</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -13,35 +13,35 @@
   </script>
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
     <h1>9h. ECHO Codex - Éditeur de Code Souverain</h1>
 
     <p>
-      ECHO Codex est un environnement d'Ã©dition de code complet, entiÃ¨rement intÃ©grÃ© dans Open WebUI.
-      Il associe un <strong>Ã©diteur Monaco</strong> (le mÃªme moteur que VS Code) Ã  un
-      <strong>dÃ©pÃ´t Git local</strong> (via <code>dulwich</code>, Python pur, sans binaire Git externe)
-      et Ã  une <strong>assistance AI</strong> (sous-chat Gemini via <code>call_cascade()</code>).
-      Chaque conversation dispose de son propre espace de stockage isolÃ©, persistent et versionnÃ©.
+      ECHO Codex est un environnement d'édition de code complet, entièrement intégré dans Open WebUI.
+      Il associe un <strong>éditeur Monaco</strong> (le même moteur que VS Code) à un
+      <strong>dépôt Git local</strong> (via <code>dulwich</code>, Python pur, sans binaire Git externe)
+      et à une <strong>assistance AI</strong> (sous-chat Gemini via <code>call_cascade()</code>).
+      Chaque conversation dispose de son propre espace de stockage isolé, persistent et versionné.
     </p>
 
     <div class="didactic-box">
-      <h4>ðŸ’¡ Architecture en trois couches</h4>
+      <h4>💡 Architecture en trois couches</h4>
       <p>
-        ECHO Codex repose sur trois composants distincts qui coopÃ¨rent :
+        ECHO Codex repose sur trois composants distincts qui coopèrent :
       </p>
       <ul>
         <li>
-          <strong><code>echo_codex_git.py</code></strong> (<code>14-owui-libs/</code>) - BibliothÃ¨que bas niveau :
-          classe <code>CodexRepo</code> gÃ©rant le dÃ©pÃ´t Git dulwich (CRUD fichiers, commits, historique, diff, lecture Ã  un commit donnÃ©, renommage).
+          <strong><code>echo_codex_git.py</code></strong> (<code>14-owui-libs/</code>) - Bibliothèque bas niveau :
+          classe <code>CodexRepo</code> gérant le dépôt Git dulwich (CRUD fichiers, commits, historique, diff, lecture à un commit donné, renommage).
         </li>
         <li>
           <strong><code>echo_codex_tool.py</code></strong> (<code>12-owui-tools/</code>) - Outil LLM (Tool Call) :
-          9 fonctions exposÃ©es Ã  Gemini pour crÃ©er, lire, modifier, rechercher et gÃ©rer les fichiers du Codex depuis le chat.
+          9 fonctions exposées à Gemini pour créer, lire, modifier, rechercher et gérer les fichiers du Codex depuis le chat.
         </li>
         <li>
           <strong><code>echo_codex_action.py</code></strong> (<code>13-owui-actions/</code>) - Action HUD :
-          Ã©diteur Monaco interactif injectÃ© dans le DOM d'Open WebUI, avec Ã©dition AI, panneau de prÃ©visualisation WYSIWYG, navigation Git et accÃ¨s bidirectionnel Python â†” JS.
+          éditeur Monaco interactif injecté dans le DOM d'Open WebUI, avec édition AI, panneau de prévisualisation WYSIWYG, navigation Git et accès bidirectionnel Python ↔ JS.
         </li>
       </ul>
       <div class="mermaid-wrapper">
@@ -54,7 +54,7 @@ flowchart TD
   U([Utilisateur]) -->|HUD interactif| ACT[echo_codex_action.py<br/>HUD + Monaco + WYSIWYG]
   LLM[Gemini] -->|Tool Calls| TOOL[echo_codex_tool.py<br/>9 Fonctions LLM]
 
-  ACT --> |Python â†” JS Promise| GIT[echo_codex_git.py<br/>CodexRepo dulwich]
+  ACT --> |Python ↔ JS Promise| GIT[echo_codex_git.py<br/>CodexRepo dulwich]
   TOOL --> GIT
 
   GIT --> |CRUD + Git| FS[Vault Codex<br/>/users/id/files/codex/]
@@ -74,48 +74,48 @@ flowchart TD
     <h2>Stockage - Les Workspaces Codex</h2>
 
     <p>
-      Chaque conversation dispose de deux dÃ©pÃ´ts Git distincts, isolÃ©s dans le Vault utilisateur : le <strong>Workspace Main</strong> (lecture seule, rÃ©fÃ©rence absolue) et le <strong>Workspace Sandbox</strong> (lecture/Ã©criture, bac Ã  sable) :
+      Chaque conversation dispose de deux dépôts Git distincts, isolés dans le Vault utilisateur : le <strong>Workspace Main</strong> (lecture seule, référence absolue) et le <strong>Workspace Sandbox</strong> (lecture/écriture, bac à sable) :
     </p>
 
-    <div class="code-header">Chemins des dÃ©pÃ´ts Codex par conversation</div>
+    <div class="code-header">Chemins des dépôts Codex par conversation</div>
     <pre><code>/app/backend/data/users/{user_id}/files/codex/{chat_id}/
-â”œâ”€â”€ main/           â† DÃ©pÃ´t Git (Lecture Seule)
-â”‚   â”œâ”€â”€ .git/
-â”‚   â””â”€â”€ (fichiers de rÃ©fÃ©rence)
-â””â”€â”€ sandbox/        â† DÃ©pÃ´t Git (Lecture / Ã‰criture)
-    â”œâ”€â”€ .git/
-    â””â”€â”€ (fichiers de travail de l'agent)</code></pre>
+├── main/           ← Dépôt Git (Lecture Seule)
+│   ├── .git/
+│   └── (fichiers de référence)
+└── sandbox/        ← Dépôt Git (Lecture / Écriture)
+    ├── .git/
+    └── (fichiers de travail de l'agent)</code></pre>
 
     <p>
-      La sÃ©paration <code>main</code> / <code>sandbox</code> permet au modÃ¨le d'Ã©tudier le code de rÃ©fÃ©rence sans risque de l'altÃ©rer, tout en expÃ©rimentant dans son propre environnement de travail. L'isolation est garantie par <code>user_id</code> et <code>chat_id</code> : un utilisateur ne peut jamais accÃ©der au Codex d'un autre, ni Ã  celui d'une autre conversation.
+      La séparation <code>main</code> / <code>sandbox</code> permet au modèle d'étudier le code de référence sans risque de l'altérer, tout en expérimentant dans son propre environnement de travail. L'isolation est garantie par <code>user_id</code> et <code>chat_id</code> : un utilisateur ne peut jamais accéder au Codex d'un autre, ni à celui d'une autre conversation.
     </p>
 
     <h3>Registre SQLite - <code>codex_docs</code></h3>
 
     <p>
-      Chaque fichier crÃ©Ã© ou modifiÃ© est enregistrÃ© dans la base SQLite unifiÃ©e (Registre) de la base
-      <code>{chat_id}.db</code> (<code>EchoStateManager</code>). Ce registre permet au modÃ¨le 
-      de consulter la liste de ses fichiers Ã  tout moment via l'outil <code>query_registry</code> 
-      et d'obtenir des mÃ©triques sans accÃ¨s I/O sans accÃ¨s disque.
+      Chaque fichier créé ou modifié est enregistré dans la base SQLite unifiée (Registre) de la base
+      <code>{chat_id}.db</code> (<code>EchoStateManager</code>). Ce registre permet au modèle 
+      de consulter la liste de ses fichiers à tout moment via l'outil <code>query_registry</code> 
+      et d'obtenir des métriques sans accès I/O sans accès disque.
     </p>
 
     <table>
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>filename</code></td><td>TEXT (PK)</td><td>Nom du fichier (clÃ© primaire)</td></tr>
-        <tr><td><code>language</code></td><td>TEXT</td><td>Langage Monaco dÃ©tectÃ© depuis l'extension</td></tr>
+        <tr><td><code>filename</code></td><td>TEXT (PK)</td><td>Nom du fichier (clé primaire)</td></tr>
+        <tr><td><code>language</code></td><td>TEXT</td><td>Langage Monaco détecté depuis l'extension</td></tr>
         <tr><td><code>lines</code></td><td>INTEGER</td><td>Nombre de lignes au dernier commit</td></tr>
         <tr><td><code>last_commit</code></td><td>TEXT</td><td>Hash court (12 chars) du dernier commit</td></tr>
         <tr><td><code>commit_msg</code></td><td>TEXT</td><td>Message du dernier commit</td></tr>
-        <tr><td><code>created_at</code></td><td>INTEGER</td><td>Timestamp Unix de crÃ©ation</td></tr>
-        <tr><td><code>updated_at</code></td><td>INTEGER</td><td>Timestamp Unix de derniÃ¨re modification</td></tr>
+        <tr><td><code>created_at</code></td><td>INTEGER</td><td>Timestamp Unix de création</td></tr>
+        <tr><td><code>updated_at</code></td><td>INTEGER</td><td>Timestamp Unix de dernière modification</td></tr>
       </tbody>
     </table>
 
     <div class="tech-spec">
-      <h4>âš™ï¸ DÃ©tection de langage - <code>CodexRepo.detect_language()</code></h4>
+      <h4>⚙️ Détection de langage - <code>CodexRepo.detect_language()</code></h4>
       <p>
-        MÃ©thode statique qui mappe l'extension du fichier vers l'identifiant Monaco Editor.
+        Méthode statique qui mappe l'extension du fichier vers l'identifiant Monaco Editor.
         La table de correspondance <code>CODEX_LANG_MAP</code> (<code>echo_constants.py</code>) couvre
         plus de 30 langages : Python, JavaScript, TypeScript, C/C++, Rust, Go, Java, SQL, Shell,
         PowerShell, HTML, CSS, JSON, YAML, TOML, Markdown, etc. Fallback : <code>plaintext</code>.
@@ -125,18 +125,18 @@ flowchart TD
     <h2>Classe <code>CodexRepo</code> (<code>echo_codex_git.py</code>)</h2>
 
     <p>
-      Abstraction autour de la bibliothÃ¨que <code>dulwich</code> (implÃ©mentation Python pure de Git).
-      Elle Ã©vite toute dÃ©pendance Ã  un binaire <code>git</code> dans le conteneur.
+      Abstraction autour de la bibliothèque <code>dulwich</code> (implémentation Python pure de Git).
+      Elle évite toute dépendance à un binaire <code>git</code> dans le conteneur.
     </p>
 
-    <h3>OpÃ©rations CRUD</h3>
+    <h3>Opérations CRUD</h3>
 
     <table>
-      <thead><tr><th>MÃ©thode</th><th>Description</th></tr></thead>
+      <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
       <tbody>
         <tr>
           <td><code>commit_file(filename, content, message)</code></td>
-          <td>Ã‰crit le contenu sur disque, indexe le fichier et crÃ©e un commit. Retourne le hash SHA du commit (str).</td>
+          <td>Écrit le contenu sur disque, indexe le fichier et crée un commit. Retourne le hash SHA du commit (str).</td>
         </tr>
         <tr>
           <td><code>read_file(filename, start_line, end_line)</code></td>
@@ -144,15 +144,15 @@ flowchart TD
         </tr>
         <tr>
           <td><code>delete_file(filename, message)</code></td>
-          <td>Supprime le fichier avec <code>porcelain.rm()</code> et crÃ©e un commit. Retourne le hash ou None si fichier inexistant.</td>
+          <td>Supprime le fichier avec <code>porcelain.rm()</code> et crée un commit. Retourne le hash ou None si fichier inexistant.</td>
         </tr>
         <tr>
           <td><code>list_files()</code></td>
-          <td>Liste tous les fichiers trackÃ©s (hors <code>.git/</code>). Retourne <code>[{"filename", "lang", "lines", "size_bytes"}]</code> triÃ© alphabÃ©tiquement.</td>
+          <td>Liste tous les fichiers trackés (hors <code>.git/</code>). Retourne <code>[{"filename", "lang", "lines", "size_bytes"}]</code> trié alphabétiquement.</td>
         </tr>
         <tr>
           <td><code>search_in_file(filename, pattern, is_regex)</code></td>
-          <td>Recherche un pattern (littÃ©ral ou regex). Retourne <code>[{"line_number", "line_content"}]</code>. LimitÃ© Ã  50 rÃ©sultats.</td>
+          <td>Recherche un pattern (littéral ou regex). Retourne <code>[{"line_number", "line_content"}]</code>. Limité à 50 résultats.</td>
         </tr>
       </tbody>
     </table>
@@ -160,7 +160,7 @@ flowchart TD
     <h3>Historique Git</h3>
 
     <table>
-      <thead><tr><th>MÃ©thode</th><th>Description</th></tr></thead>
+      <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
       <tbody>
         <tr>
           <td><code>get_log(filename, limit)</code></td>
@@ -168,15 +168,15 @@ flowchart TD
         </tr>
         <tr>
           <td><code>get_file_at_commit(filename, commit_hash)</code></td>
-          <td>Lit le contenu d'un fichier Ã  un commit donnÃ© (checkout virtuel sans modifier le working tree). UtilisÃ© pour la navigation historique â—€ â–¶ dans le HUD.</td>
+          <td>Lit le contenu d'un fichier à un commit donné (checkout virtuel sans modifier le working tree). Utilisé pour la navigation historique ◀ ▶ dans le HUD.</td>
         </tr>
         <tr>
           <td><code>get_file_history_index(filename)</code></td>
-          <td>Retourne la liste ordonnÃ©e des commits touchant un fichier (du plus ancien au plus rÃ©cent). Structure l'index de navigation du HUD.</td>
+          <td>Retourne la liste ordonnée des commits touchant un fichier (du plus ancien au plus récent). Structure l'index de navigation du HUD.</td>
         </tr>
         <tr>
           <td><code>get_diff(commit_a, commit_b)</code></td>
-          <td>Diff unifiÃ© entre deux commits. Si <code>commit_b</code> est None, diff commit_a contre son parent.</td>
+          <td>Diff unifié entre deux commits. Si <code>commit_b</code> est None, diff commit_a contre son parent.</td>
         </tr>
       </tbody>
     </table>
@@ -184,11 +184,11 @@ flowchart TD
     <h3>Administration</h3>
 
     <table>
-      <thead><tr><th>MÃ©thode</th><th>Description</th></tr></thead>
+      <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
       <tbody>
         <tr>
           <td><code>reset_all()</code></td>
-          <td>Supprime entiÃ¨rement le dÃ©pÃ´t (<code>shutil.rmtree</code>). IrrÃ©versible. DÃ©clenchÃ© par l'action Reset du HUD.</td>
+          <td>Supprime entièrement le dépôt (<code>shutil.rmtree</code>). Irréversible. Déclenché par l'action Reset du HUD.</td>
         </tr>
         <tr>
           <td><code>get_repo_stats()</code></td>
@@ -200,7 +200,7 @@ flowchart TD
     <h2>Outil LLM - <code>echo_codex_tool.py</code> (9 fonctions)</h2>
 
     <p>
-      Ces fonctions sont exposÃ©es Ã  Gemini comme Tool Calls. Le modÃ¨le peut les invoquer
+      Ces fonctions sont exposées à Gemini comme Tool Calls. Le modèle peut les invoquer
       autonomement pendant une conversation pour interagir avec les fichiers du Codex.
     </p>
 
@@ -209,18 +209,18 @@ flowchart TD
         <tr>
           <th>Fonction</th>
           <th>Cas d'usage principal</th>
-          <th>ParamÃ¨tres clÃ©s</th>
+          <th>Paramètres clés</th>
         </tr>
       </thead>
       <tbody>
         <tr>
           <td><code>create_codex</code></td>
-          <td>CrÃ©er un fichier vierge avec contenu initial</td>
+          <td>Créer un fichier vierge avec contenu initial</td>
           <td><code>filename</code>, <code>content</code>, <code>commit_msg</code> (optionnel)</td>
         </tr>
         <tr>
           <td><code>edit_codex</code></td>
-          <td>Ã‰craser ou modifier un fichier existant</td>
+          <td>Écraser ou modifier un fichier existant</td>
           <td><code>filename</code>, <code>content</code>, <code>commit_msg</code> (optionnel)</td>
         </tr>
         <tr>
@@ -235,7 +235,7 @@ flowchart TD
         </tr>
         <tr>
           <td><code>summarize_codex</code></td>
-          <td>SynthÃ¨se technique structurÃ©e via API Gemini</td>
+          <td>Synthèse technique structurée via API Gemini</td>
           <td><code>filename</code></td>
         </tr>
         <tr>
@@ -250,34 +250,34 @@ flowchart TD
         </tr>
         <tr>
           <td><code>history_codex</code></td>
-          <td>Afficher l'historique Git global ou d'un fichier spÃ©cifique</td>
-          <td><code>filename</code> (opt.), <code>limit</code> (dÃ©faut 20)</td>
+          <td>Afficher l'historique Git global ou d'un fichier spécifique</td>
+          <td><code>filename</code> (opt.), <code>limit</code> (défaut 20)</td>
         </tr>
         <tr>
           <td><code>restore_codex</code></td>
-          <td>Restaurer un fichier Ã  un commit antÃ©rieur (crÃ©e un commit de restauration)</td>
+          <td>Restaurer un fichier à un commit antérieur (crée un commit de restauration)</td>
           <td><code>filename</code>, <code>commit_hash</code></td>
         </tr>
       </tbody>
     </table>
 
     <div class="didactic-box">
-      <h4>ðŸ’¡ StratÃ©gie de lecture pour les grands fichiers</h4>
+      <h4>💡 Stratégie de lecture pour les grands fichiers</h4>
       <p>
         La docstring de <code>read_codex</code> recommande une approche en deux temps pour les fichiers
         de plus de 300 lignes :
       </p>
       <ol>
         <li>
-          <strong><code>summarize_codex</code></strong> : distillation via Gemini â†’ vue d'ensemble
-          (architecture, classes, dÃ©pendances) sans saturer le contexte.
+          <strong><code>summarize_codex</code></strong> : distillation via Gemini → vue d'ensemble
+          (architecture, classes, dépendances) sans saturer le contexte.
         </li>
         <li>
-          <strong><code>search_codex</code></strong> : localiser la zone d'intÃ©rÃªt (numÃ©ros de ligne).
+          <strong><code>search_codex</code></strong> : localiser la zone d'intérêt (numéros de ligne).
         </li>
         <li>
           <strong><code>read_codex(start_line, end_line)</code></strong> : lecture chirurgicale
-          de la plage ciblÃ©e.
+          de la plage ciblée.
         </li>
       </ol>
     </div>
@@ -286,30 +286,30 @@ flowchart TD
 
     <p>
       <code>summarize_codex</code> appelle <code>EchoGeminiClient.call_distillation()</code> avec
-      le prompt <code>CODEX_SUMMARIZE_PROMPT</code> (dÃ©fini dans <code>echo_constants.py</code>).
-      La sortie est limitÃ©e Ã  8192 tokens.
+      le prompt <code>CODEX_SUMMARIZE_PROMPT</code> (défini dans <code>echo_constants.py</code>).
+      La sortie est limitée à 8192 tokens.
     </p>
 
-    <div class="code-header">Structure du rÃ©sumÃ© gÃ©nÃ©rÃ© - <code>CODEX_SUMMARIZE_PROMPT</code></div>
-    <pre><code>1. Objectif et rÃ´le du fichier
+    <div class="code-header">Structure du résumé généré - <code>CODEX_SUMMARIZE_PROMPT</code></div>
+    <pre><code>1. Objectif et rôle du fichier
 2. Architecture : classes, fonctions, structures principales
-3. DÃ©pendances et imports
-4. Patterns et conventions utilisÃ©s
-5. Points d'attention, complexitÃ©, dette technique Ã©ventuelle</code></pre>
+3. Dépendances et imports
+4. Patterns et conventions utilisés
+5. Points d'attention, complexité, dette technique éventuelle</code></pre>
 
     <h2>Action HUD - <code>echo_codex_action.py</code></h2>
 
     <p>
-      L'Action ECHO Codex injecte un <strong>Ã©diteur Monaco complet</strong> directement dans le DOM
-      d'Open WebUI. C'est un HUD draggable et redimensionnable qui communique en temps rÃ©el avec
+      L'Action ECHO Codex injecte un <strong>éditeur Monaco complet</strong> directement dans le DOM
+      d'Open WebUI. C'est un HUD draggable et redimensionnable qui communique en temps réel avec
       le backend Python via le Pattern Promise (<code>__event_call__</code>).
     </p>
 
     <h3>Architecture HUD</h3>
 
     <p>
-      Le HUD est gÃ©nÃ©rÃ© par <code>EchoUI._generate_codex_js()</code> (<code>echo_ui.py</code>).
-      Il s'agit d'un script JS auto-exÃ©cutable (IIFE) injectÃ© une seule fois dans le DOM,
+      Le HUD est généré par <code>EchoUI._generate_codex_js()</code> (<code>echo_ui.py</code>).
+      Il s'agit d'un script JS auto-exécutable (IIFE) injecté une seule fois dans le DOM,
       qui charge Monaco Editor depuis CDN (<code>monaco-editor@0.52.0</code> sur jsDelivr).
     </p>
 
@@ -318,40 +318,40 @@ flowchart TD
       <tbody>
         <tr>
           <td><strong>Explorateur de Fichiers (panneau gauche)</strong></td>
-          <td>Liste arborescente des fichiers et dossiers triÃ©s dynamiquement. Clic â†’ chargement dans l'Ã©diteur. Gestion native de l'arborescence (OS/Git) incluant dossiers et sous-dossiers. Indicateurs visuels du Workspace (main/sandbox). Clic droit â†’ menu contextuel complet (nouveau fichier/dossier, renommage, suppression).</td>
+          <td>Liste arborescente des fichiers et dossiers triés dynamiquement. Clic → chargement dans l'éditeur. Gestion native de l'arborescence (OS/Git) incluant dossiers et sous-dossiers. Indicateurs visuels du Workspace (main/sandbox). Clic droit → menu contextuel complet (nouveau fichier/dossier, renommage, suppression).</td>
         </tr>
         <tr>
           <td><strong>Monaco Editor (onglets multiples)</strong></td>
-          <td>Ã‰diteur Monaco avancÃ© avec gestion des <strong>onglets multiples</strong> (multi-tabs) permettant de travailler sur plusieurs fichiers simultanÃ©ment. IntÃ¨gre un <strong>panneau de prÃ©visualisation WYSIWYG</strong> (rendu HTML/Markdown). Bouton de sauvegarde explicite. Ctrl+S â†’ sauvegarde + commit immÃ©diat.</td>
+          <td>Éditeur Monaco avancé avec gestion des <strong>onglets multiples</strong> (multi-tabs) permettant de travailler sur plusieurs fichiers simultanément. Intègre un <strong>panneau de prévisualisation WYSIWYG</strong> (rendu HTML/Markdown). Bouton de sauvegarde explicite. Ctrl+S → sauvegarde + commit immédiat.</td>
         </tr>
         <tr>
-          <td><strong>Panneau Git Historique (volet latÃ©ral)</strong></td>
-          <td>Affiche l'historique exhaustif des commits Git (timeline interactive) et la liste des commits. Permet la restauration de versions antÃ©rieures d'un simple clic sans quitter l'interface graphique.</td>
+          <td><strong>Panneau Git Historique (volet latéral)</strong></td>
+          <td>Affiche l'historique exhaustif des commits Git (timeline interactive) et la liste des commits. Permet la restauration de versions antérieures d'un simple clic sans quitter l'interface graphique.</td>
         </tr>
         <tr>
-          <td><strong>Barre d'Ã©tat</strong></td>
-          <td>Affiche le fichier courant, le hash du dernier commit, ou le hash de la version consultÃ©e (mode historique).</td>
+          <td><strong>Barre d'état</strong></td>
+          <td>Affiche le fichier courant, le hash du dernier commit, ou le hash de la version consultée (mode historique).</td>
         </tr>
         <tr>
           <td><strong>Panneau AI (bas)</strong></td>
-          <td>Champ instruction, sÃ©lecteur modÃ¨le (LITE/FLASH/PRO), boutons d'macro-actions prÃ©dÃ©finies, bouton <em>Appliquer</em>.</td>
+          <td>Champ instruction, sélecteur modèle (LITE/FLASH/PRO), boutons d'macro-actions prédéfinies, bouton <em>Appliquer</em>.</td>
         </tr>
         <tr>
           <td><strong>Barre de navigation historique</strong></td>
-          <td>Boutons â—€ â–¶ pour naviguer commit par commit. Mode read-only visuel (fond diffÃ©rent). Bouton Restaurer.</td>
+          <td>Boutons ◀ ▶ pour naviguer commit par commit. Mode read-only visuel (fond différent). Bouton Restaurer.</td>
         </tr>
         <tr>
           <td><strong>Barre Diff (Accept/Reject)</strong></td>
-          <td>AffichÃ©e aprÃ¨s une Ã©dition AI : vue diff cÃ´te-Ã -cÃ´te (original vs. proposition). Accepter â†’ commit. Rejeter â†’ retour HEAD.</td>
+          <td>Affichée après une édition AI : vue diff côte-à-côte (original vs. proposition). Accepter → commit. Rejeter → retour HEAD.</td>
         </tr>
       </tbody>
     </table>
 
-    <h3>Boucle Ã©vÃ©nementielle bidirectionnelle</h3>
+    <h3>Boucle événementielle bidirectionnelle</h3>
 
     <p>
-      La boucle Python est une boucle <code>while True</code> bloquÃ©e sur une Promise JS.
-      Chaque interaction utilisateur dans le HUD rÃ©sout la Promise et renvoie un dictionnaire
+      La boucle Python est une boucle <code>while True</code> bloquée sur une Promise JS.
+      Chaque interaction utilisateur dans le HUD résout la Promise et renvoie un dictionnaire
       <code>{ action: "...", filename: "...", content: "...", ... }</code> au backend Python.
     </p>
 
@@ -360,37 +360,37 @@ flowchart TD
       <tbody>
         <tr><td><code>close</code></td><td>Sortie de la boucle.</td></tr>
         <tr><td><code>save</code></td><td><code>CodexRepo.commit_file()</code> + <code>state.save_resource()</code> + notification JS <code>echoCodexNotify('saved')</code>.</td></tr>
-        <tr><td><code>ai_edit</code></td><td>Appel <code>_codex_ai_edit()</code> â†’ <code>call_cascade()</code> â†’ <code>echoCodexShowDiff()</code>.</td></tr>
+        <tr><td><code>ai_edit</code></td><td>Appel <code>_codex_ai_edit()</code> → <code>call_cascade()</code> → <code>echoCodexShowDiff()</code>.</td></tr>
         <tr><td><code>accept_diff</code></td><td><code>commit_file()</code> + <code>echoCodexNotify('committed')</code> + rechargement contenu.</td></tr>
         <tr><td><code>reject_diff</code></td><td><code>echoCodexRevertDiff()</code> + rechargement contenu HEAD.</td></tr>
-        <tr><td><code>upload</code></td><td>Import fichier PC â†’ <code>commit_file()</code> + refresh tree.</td></tr>
-        <tr><td><code>download</code></td><td>Lecture fichier â†’ <code>echoCodexDownload(name, content)</code> (tÃ©lÃ©chargement navigateur).</td></tr>
-        <tr><td><code>history_prev</code> / <code>history_next</code></td><td><code>get_file_at_commit()</code> â†’ <code>echoCodexLoadVersion()</code> (mode read-only).</td></tr>
+        <tr><td><code>upload</code></td><td>Import fichier PC → <code>commit_file()</code> + refresh tree.</td></tr>
+        <tr><td><code>download</code></td><td>Lecture fichier → <code>echoCodexDownload(name, content)</code> (téléchargement navigateur).</td></tr>
+        <tr><td><code>history_prev</code> / <code>history_next</code></td><td><code>get_file_at_commit()</code> → <code>echoCodexLoadVersion()</code> (mode read-only).</td></tr>
         <tr><td><code>history_restore</code></td><td><code>commit_file()</code> avec message <code>"Restore from {hash}"</code> + <code>echoCodexNotify('restored')</code>.</td></tr>
         <tr><td><code>new_file</code></td><td><code>commit_file(filename, "", "Create ...")</code> + refresh tree.</td></tr>
-        <tr><td><code>load_file</code></td><td><code>read_file()</code> â†’ <code>echoCodexSetContent()</code>.</td></tr>
-        <tr><td><code>rename_file</code></td><td><code>repo.rename_file(old, new)</code> + mise Ã  jour <code>resources</code> + refresh tree.</td></tr>
+        <tr><td><code>load_file</code></td><td><code>read_file()</code> → <code>echoCodexSetContent()</code>.</td></tr>
+        <tr><td><code>rename_file</code></td><td><code>repo.rename_file(old, new)</code> + mise à jour <code>resources</code> + refresh tree.</td></tr>
         <tr><td><code>delete_file</code></td><td><code>delete_file()</code> + <code>delete_resource()</code> + refresh tree + auto-switch vers premier fichier.</td></tr>
         <tr><td><code>reset</code></td><td><code>repo.reset_all()</code> + <code>state.delete_resource()</code> (purge par session) + <code>echoCodexReset()</code> (destroy HUD) + sortie boucle.</td></tr>
-        <tr><td><code>refresh</code></td><td><code>list_files()</code> â†’ <code>echoCodexRefreshTree()</code> + rechargement fichier courant.</td></tr>
+        <tr><td><code>refresh</code></td><td><code>list_files()</code> → <code>echoCodexRefreshTree()</code> + rechargement fichier courant.</td></tr>
       </tbody>
     </table>
 
-    <h3>Ã‰dition AI - <code>_codex_ai_edit()</code></h3>
+    <h3>Édition AI - <code>_codex_ai_edit()</code></h3>
 
     <p>
-      La mÃ©thode privÃ©e <code>_codex_ai_edit()</code> orchestre un sub-chat dÃ©diÃ© (sans historique,
-      sans pensÃ©es) pour modifier le code. Elle retourne <code>(texte_modifiÃ©, model_key_effectif)</code>
-      ou <code>None</code> en cas d'Ã©chec.
+      La méthode privée <code>_codex_ai_edit()</code> orchestre un sub-chat dédié (sans historique,
+      sans pensées) pour modifier le code. Elle retourne <code>(texte_modifié, model_key_effectif)</code>
+      ou <code>None</code> en cas d'échec.
     </p>
 
-    <div class="code-header">Prompt envoyÃ© au LLM lors d'une Ã©dition AI</div>
+    <div class="code-header">Prompt envoyé au LLM lors d'une édition AI</div>
     <pre><code>## Document complet
 ```{lang}
 {content complet du fichier}
 ```
 
-## SÃ©lection ciblÃ©e   â† uniquement si l'utilisateur a sÃ©lectionnÃ© du texte
+## Sélection ciblée   ← uniquement si l'utilisateur a sélectionné du texte
 ```{lang}
 {selection}
 ```
@@ -399,30 +399,30 @@ flowchart TD
 {instruction de l'utilisateur}</code></pre>
 
     <p>
-      Le systÃ¨me prompt (<code>CODEX_EDIT_SYSTEM_PROMPT</code> dans <code>echo_constants.py</code>)
-      impose au LLM de retourner <strong>uniquement le fichier complet modifiÃ©</strong>, sans explication,
-      sans bloc Markdown enveloppant. Le code Python nettoie les backticks parasites rÃ©siduels.
-      La cascade (<code>call_cascade()</code>) gÃ¨re le clamping politique et le basculement
-      LITE/FLASH/PRO selon la disponibilitÃ© des modÃ¨les.
+      Le système prompt (<code>CODEX_EDIT_SYSTEM_PROMPT</code> dans <code>echo_constants.py</code>)
+      impose au LLM de retourner <strong>uniquement le fichier complet modifié</strong>, sans explication,
+      sans bloc Markdown enveloppant. Le code Python nettoie les backticks parasites résiduels.
+      La cascade (<code>call_cascade()</code>) gère le clamping politique et le basculement
+      LITE/FLASH/PRO selon la disponibilité des modèles.
     </p>
 
-    <h3>Macro-actions prÃ©dÃ©finies (<code>CODEX_QUICK_ACTIONS</code>)</h3>
+    <h3>Macro-actions prédéfinies (<code>CODEX_QUICK_ACTIONS</code>)</h3>
 
     <p>
-      L'utilisateur peut dÃ©clencher des transformations courantes via des boutons dans le panneau AI,
-      sans rÃ©diger d'instruction manuelle. Ces raccourcis sont dÃ©finis dans <code>echo_constants.py</code> :
+      L'utilisateur peut déclencher des transformations courantes via des boutons dans le panneau AI,
+      sans rédiger d'instruction manuelle. Ces raccourcis sont définis dans <code>echo_constants.py</code> :
     </p>
 
     <table>
-      <thead><tr><th>Bouton</th><th>Instruction envoyÃ©e au LLM</th></tr></thead>
+      <thead><tr><th>Bouton</th><th>Instruction envoyée au LLM</th></tr></thead>
       <tbody>
         <tr><td><strong>shorter</strong></td><td>Raccourcis ce code/texte sans changer la logique ni le comportement.</td></tr>
-        <tr><td><strong>longer</strong></td><td>DÃ©veloppe avec plus de dÃ©tails, commentaires et documentation.</td></tr>
+        <tr><td><strong>longer</strong></td><td>Développe avec plus de détails, commentaires et documentation.</td></tr>
         <tr><td><strong>comment</strong></td><td>Ajoute des commentaires explicatifs clairs et concis.</td></tr>
-        <tr><td><strong>uncomment</strong></td><td>Supprime tous les commentaires du code. Ne conserve que le code exÃ©cutable.</td></tr>
-        <tr><td><strong>refactor</strong></td><td>Refactorise pour plus de lisibilitÃ©, maintenabilitÃ© et respect des conventions.</td></tr>
+        <tr><td><strong>uncomment</strong></td><td>Supprime tous les commentaires du code. Ne conserve que le code exécutable.</td></tr>
+        <tr><td><strong>refactor</strong></td><td>Refactorise pour plus de lisibilité, maintenabilité et respect des conventions.</td></tr>
         <tr><td><strong>fix</strong></td><td>Identifie et corrige les bugs potentiels. Explique chaque correction dans un commentaire.</td></tr>
-        <tr><td><strong>tests</strong></td><td>GÃ©nÃ¨re les tests unitaires pertinents pour ce code.</td></tr>
+        <tr><td><strong>tests</strong></td><td>Génère les tests unitaires pertinents pour ce code.</td></tr>
         <tr><td><strong>optimize</strong></td><td>Optimise les performances sans changer l'interface publique.</td></tr>
       </tbody>
     </table>
@@ -430,45 +430,45 @@ flowchart TD
     <h3>API JS globale (callable depuis Python)</h3>
 
     <p>
-      Le HUD expose ses fonctions de contrÃ´le sur <code>window</code> pour Ãªtre appelÃ©es
+      Le HUD expose ses fonctions de contrôle sur <code>window</code> pour être appelées
       depuis les pushes Python via <code>__event_call__({ type: "execute", data: { code } })</code> :
     </p>
 
     <table>
-      <thead><tr><th>Fonction JS</th><th>RÃ´le</th></tr></thead>
+      <thead><tr><th>Fonction JS</th><th>Rôle</th></tr></thead>
       <tbody>
-        <tr><td><code>window.echoCodexNotify(type, msg)</code></td><td>Affiche une notification dans la barre d'Ã©tat. Types : <code>'saved'</code>, <code>'committed'</code>, <code>'restored'</code>, gÃ©nÃ©rique.</td></tr>
-        <tr><td><code>window.echoCodexSetContent(content, filename)</code></td><td>Charge un contenu dans l'Ã©diteur Monaco et met Ã  jour le sÃ©lecteur de langage.</td></tr>
-        <tr><td><code>window.echoCodexShowDiff(modifiedContent)</code></td><td>Active le mode Diff (MonacoDiffEditor cÃ´te-Ã -cÃ´te) avec le contenu proposÃ©.</td></tr>
-        <tr><td><code>window.echoCodexRevertDiff()</code></td><td>Quitte le mode Diff et restaure l'Ã©diteur normal.</td></tr>
-        <tr><td><code>window.echoCodexRefreshTree(newFiles)</code></td><td>Met Ã  jour la liste des fichiers dans le file tree.</td></tr>
-        <tr><td><code>window.echoCodexLoadVersion(content, info, idx, total)</code></td><td>Active le mode historique read-only avec le contenu d'un commit donnÃ©.</td></tr>
-        <tr><td><code>window.echoCodexExitHistory()</code></td><td>Quitte le mode historique et restaure l'Ã©diteur normal.</td></tr>
-        <tr><td><code>window.echoCodexDownload(name, content)</code></td><td>DÃ©clenche le tÃ©lÃ©chargement natif du navigateur (Blob URL).</td></tr>
-        <tr><td><code>window.echoCodexSetModel(modelKey)</code></td><td>Repositionne le sÃ©lecteur de modÃ¨le dans le panneau AI (feedback cascade).</td></tr>
-        <tr><td><code>window.echoCodexReset()</code></td><td>Supprime entiÃ¨rement le HUD du DOM.</td></tr>
-        <tr><td><code>window.echoCodexResolve({action, ...})</code></td><td>RÃ©sout la Promise en cours (retour utilisateur â†’ Python).</td></tr>
+        <tr><td><code>window.echoCodexNotify(type, msg)</code></td><td>Affiche une notification dans la barre d'état. Types : <code>'saved'</code>, <code>'committed'</code>, <code>'restored'</code>, générique.</td></tr>
+        <tr><td><code>window.echoCodexSetContent(content, filename)</code></td><td>Charge un contenu dans l'éditeur Monaco et met à jour le sélecteur de langage.</td></tr>
+        <tr><td><code>window.echoCodexShowDiff(modifiedContent)</code></td><td>Active le mode Diff (MonacoDiffEditor côte-à-côte) avec le contenu proposé.</td></tr>
+        <tr><td><code>window.echoCodexRevertDiff()</code></td><td>Quitte le mode Diff et restaure l'éditeur normal.</td></tr>
+        <tr><td><code>window.echoCodexRefreshTree(newFiles)</code></td><td>Met à jour la liste des fichiers dans le file tree.</td></tr>
+        <tr><td><code>window.echoCodexLoadVersion(content, info, idx, total)</code></td><td>Active le mode historique read-only avec le contenu d'un commit donné.</td></tr>
+        <tr><td><code>window.echoCodexExitHistory()</code></td><td>Quitte le mode historique et restaure l'éditeur normal.</td></tr>
+        <tr><td><code>window.echoCodexDownload(name, content)</code></td><td>Déclenche le téléchargement natif du navigateur (Blob URL).</td></tr>
+        <tr><td><code>window.echoCodexSetModel(modelKey)</code></td><td>Repositionne le sélecteur de modèle dans le panneau AI (feedback cascade).</td></tr>
+        <tr><td><code>window.echoCodexReset()</code></td><td>Supprime entièrement le HUD du DOM.</td></tr>
+        <tr><td><code>window.echoCodexResolve({action, ...})</code></td><td>Résout la Promise en cours (retour utilisateur → Python).</td></tr>
       </tbody>
     </table>
 
-    <h2>Proprioception - Registre UnifiÃ©</h2>
+    <h2>Proprioception - Registre Unifié</h2>
 
     <p>
-      L'ancien systÃ¨me d'injection passive (registre_codex) ayant Ã©tÃ© dÃ©prÃ©ciÃ© (AEC) pour Ã©conomiser des tokens,
-      Gemini doit interroger l'Ã©tat du Codex de maniÃ¨re active.
+      L'ancien système d'injection passive (registre_codex) ayant été déprécié (AEC) pour économiser des tokens,
+      Gemini doit interroger l'état du Codex de manière active.
     </p>
 
     <div class="warning-box">
-      <h4>âš ï¸ RÃ¨gle d'Or - Consulter le registre avant toute opÃ©ration</h4>
+      <h4>⚠️ Règle d'Or - Consulter le registre avant toute opération</h4>
       <p>
-        Le modÃ¨le <strong>doit</strong> consulter l'Ã©tat de ses ressources via l'outil <code>query_registry</code> pour vÃ©rifier
+        Le modèle <strong>doit</strong> consulter l'état de ses ressources via l'outil <code>query_registry</code> pour vérifier
         l'existence d'un fichier Codex avant d'appeler <code>read_codex</code>, <code>edit_codex</code>
-        ou <code>delete_codex</code>. Cette rÃ¨gle Ã©vite les erreurs 404 inutiles et les tentatives
-        de crÃ©ation de doublons. Seuls les fichiers nouvellement intÃ©grÃ©s au tour courant lui sont notifiÃ©s via le bloc <code>&lt;AEC_evenement_systeme&gt;</code>.
+        ou <code>delete_codex</code>. Cette règle évite les erreurs 404 inutiles et les tentatives
+        de création de doublons. Seuls les fichiers nouvellement intégrés au tour courant lui sont notifiés via le bloc <code>&lt;AEC_evenement_systeme&gt;</code>.
       </p>
     </div>
 
-    <h2>Tableau rÃ©capitulatif des composants</h2>
+    <h2>Tableau récapitulatif des composants</h2>
 
     <table>
       <thead>
@@ -476,7 +476,7 @@ flowchart TD
           <th>Composant</th>
           <th>Fichier</th>
           <th>Version</th>
-          <th>RÃ´le</th>
+          <th>Rôle</th>
         </tr>
       </thead>
       <tbody>
@@ -484,29 +484,29 @@ flowchart TD
           <td><code>CodexRepo</code></td>
           <td><code>14-owui-libs/echo_codex_git.py</code></td>
           <td>1.0</td>
-          <td>Gestion dÃ©pÃ´t Git dulwich (CRUD, historique, diff)</td>
+          <td>Gestion dépôt Git dulwich (CRUD, historique, diff)</td>
         </tr>
         <tr>
           <td>Outil LLM Codex</td>
           <td><code>12-owui-tools/echo_codex_tool.py</code></td>
           <td>1.4</td>
-          <td>9 Tool Calls exposÃ©s Ã  Gemini</td>
+          <td>9 Tool Calls exposés à Gemini</td>
         </tr>
         <tr>
           <td>Action HUD Codex</td>
           <td><code>13-owui-actions/echo_codex_action.py</code></td>
           <td>1.8</td>
-          <td>Ã‰diteur Monaco interactif avec WYSIWYG (prioritÃ© 5)</td>
+          <td>Éditeur Monaco interactif avec WYSIWYG (priorité 5)</td>
         </tr>
         <tr>
           <td><code>_generate_codex_js()</code></td>
           <td><code>14-owui-libs/echo_ui.py</code></td>
           <td>-</td>
-          <td>GÃ©nÃ©rateur du HUD JS Monaco</td>
+          <td>Générateur du HUD JS Monaco</td>
         </tr>
         <tr>
           <td>Constantes Codex</td>
-          <td><code>14-owui-libs/echo_constants.py</code> Â§1.4</td>
+          <td><code>14-owui-libs/echo_constants.py</code> §1.4</td>
           <td>5.4</td>
           <td><code>CODEX_DIR_NAME</code>, <code>CODEX_LANG_MAP</code>, prompts, macro-actions</td>
         </tr>
@@ -526,14 +526,14 @@ flowchart TD
     </table>
 
     <div class="audit-note">
-      <h4>â„¹ï¸ Exactitude documentaire</h4>
+      <h4>ℹ️ Exactitude documentaire</h4>
       <p>
-        Les informations de cette page sont entiÃ¨rement extraites du code source :
+        Les informations de cette page sont entièrement extraites du code source :
         <code>echo_codex_git.py</code>, <code>echo_codex_tool.py</code>,
         <code>echo_codex_action.py</code>, <code>echo_ui.py</code>,
         <code>echo_constants.py</code>, <code>echo_state_manager.py</code> et
         <code>new_context_filter.py</code>. Toute divergence avec ce document
-        est Ã  rÃ©soudre en faveur du code source.
+        est à résoudre en faveur du code source.
       </p>
     </div>
 

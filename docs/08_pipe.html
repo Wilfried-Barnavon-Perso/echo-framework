@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py) : Suture Bit-Perfect, troncature silencieuse (Smart Pop), routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modÃ¨le centralisÃ©e Pipe â†’ outils.">
+  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py) : Suture Bit-Perfect, troncature silencieuse (Smart Pop), routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modèle centralisée Pipe → outils.">
   <title>ECHO v5 - 8. Le Pipe (Cortex Moteur)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -13,47 +13,47 @@
   </script>
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
     <h1>8. Le Pipe (Cortex Moteur)</h1>
 
 
     <p>
-      Le <code>pipe_engine.py</code> (v192.21) est l'unitÃ© centrale de traitement d'ECHO.
-      Open WebUI le voit comme un modÃ¨le GenAI standard, mais il agit en rÃ©alitÃ© comme un
+      Le <code>pipe_engine.py</code> (v192.21) est l'unité centrale de traitement d'ECHO.
+      Open WebUI le voit comme un modèle GenAI standard, mais il agit en réalité comme un
       <strong>orchestrateur de contexte</strong> : il reconstruit l'historique bit-perfect depuis
-      SQLite, pilote la boucle d'outils de l'Arsenal, gÃ¨re l'authentification et l'infÃ©rence via
+      SQLite, pilote la boucle d'outils de l'Arsenal, gère l'authentification et l'inférence via
       deux backends (AI Studio et API Antigravity), puis scelle chaque tour dans les Ombres Riches.
-      Il orchestre Ã©galement la <strong>politique modÃ¨le centralisÃ©e</strong> - propagÃ©e de ses
+      Il orchestre également la <strong>politique modèle centralisée</strong> - propagée de ses
       <code>UserValves</code> vers tous les outils via <code>__metadata__</code> et le fallback
       SQLite <code>echo_settings</code>.
     </p>
 
 
     <div class="didactic-box">
-      <h4>ðŸ’¡ Le Pipe vu par un architecte</h4>
+      <h4>💡 Le Pipe vu par un architecte</h4>
       <p>
-        Le Pipe est le seul composant qui connaÃ®t l'Ã©tat global du systÃ¨me Ã  un instant donnÃ© :
-        quelle est la version exacte de l'historique ? Quel modÃ¨le est actif ? Quel est le quota
-        restant ? Il centralise ces informations, prend les dÃ©cisions de routage, et garantit que
-        l'IA reÃ§oit toujours la reprÃ©sentation la plus fidÃ¨le possible de la conversation passÃ©e,
-        indÃ©pendamment de ce qu'Open WebUI peut avoir modifiÃ© ou perdu.
+        Le Pipe est le seul composant qui connaît l'état global du système à un instant donné :
+        quelle est la version exacte de l'historique ? Quel modèle est actif ? Quel est le quota
+        restant ? Il centralise ces informations, prend les décisions de routage, et garantit que
+        l'IA reçoit toujours la représentation la plus fidèle possible de la conversation passée,
+        indépendamment de ce qu'Open WebUI peut avoir modifié ou perdu.
       </p>
     </div>
 
-    <h2>Fiche d'identitÃ© technique</h2>
+    <h2>Fiche d'identité technique</h2>
 
     <table>
       <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
       <tbody>
         <tr><td><strong>Fichier source</strong></td><td><code>10-owui-pipes/pipe_engine.py</code></td></tr>
-        <tr><td><strong>Version</strong></td><td>192.21 (dÃ©clarÃ©e dans le docstring du fichier)</td></tr>
-        <tr><td><strong>Type Open WebUI</strong></td><td><code>Pipe</code> - se prÃ©sente comme un modÃ¨le GenAI</td></tr>
-        <tr><td><strong>Point d'entrÃ©e</strong></td><td><code>Pipe.pipe(body, __event_emitter__)</code></td></tr>
-        <tr><td><strong>ExÃ©cution</strong></td><td>In-process dans Python d'Open WebUI, asynchrone (<code>asyncio</code>)</td></tr>
+        <tr><td><strong>Version</strong></td><td>192.21 (déclarée dans le docstring du fichier)</td></tr>
+        <tr><td><strong>Type Open WebUI</strong></td><td><code>Pipe</code> - se présente comme un modèle GenAI</td></tr>
+        <tr><td><strong>Point d'entrée</strong></td><td><code>Pipe.pipe(body, __event_emitter__)</code></td></tr>
+        <tr><td><strong>Exécution</strong></td><td>In-process dans Python d'Open WebUI, asynchrone (<code>asyncio</code>)</td></tr>
         <tr><td><strong>Transport API</strong></td><td>HTTP/2 strict (<code>httpx</code> avec <code>http2=True</code>), SSE streaming</td></tr>
-        <tr><td><strong>DÃ©pendances internes</strong></td><td><code>echo_state_manager</code>, <code>echo_gemini_client</code>, <code>echo_core</code>, <code>echo_auth</code>, <code>echo_protocol</code>, <code>echo_constants</code>, <code>echo_ui</code></td></tr>
+        <tr><td><strong>Dépendances internes</strong></td><td><code>echo_state_manager</code>, <code>echo_gemini_client</code>, <code>echo_core</code>, <code>echo_auth</code>, <code>echo_protocol</code>, <code>echo_constants</code>, <code>echo_ui</code></td></tr>
       </tbody>
     </table>
 
@@ -61,94 +61,94 @@
 
     <p>
       La Suture est l'algorithme central du Pipe. Elle reconstruit le tableau de <code>contents</code>
-      (historique au format Gemini) Ã  partir des Ombres SQLite, garantissant une haute fidÃ©litÃ©
-      quelle que soit la manipulation effectuÃ©e par Open WebUI sur l'historique affichÃ©.
+      (historique au format Gemini) à partir des Ombres SQLite, garantissant une haute fidélité
+      quelle que soit la manipulation effectuée par Open WebUI sur l'historique affiché.
     </p>
 
-    <h3>HiÃ©rarchie de restauration</h3>
+    <h3>Hiérarchie de restauration</h3>
     <p>Pour chaque message de l'historique, le Pipe applique cette cascade :</p>
     <ol>
       <li>
         <strong>Lecture de l'Ombre SQLite :</strong> <code>get_message_shadow(message_id, updated_at)</code>.
-        Le Verrou de Version compare <code>updated_at</code> stockÃ© vs. <code>updated_at</code>
-        fourni par le middleware. Si les timestamps concordent, l'Ombre est validÃ©e.
+        Le Verrou de Version compare <code>updated_at</code> stocké vs. <code>updated_at</code>
+        fourni par le middleware. Si les timestamps concordent, l'Ombre est validée.
       </li>
       <li>
         <strong>Restauration ThoughtSignature :</strong> <code>get_signature_by_id(message_id)</code>
-        rÃ©cupÃ¨re l'Ancre GeminiÂ 3+ scellÃ©e au tour prÃ©cÃ©dent. Elle est rÃ©injectÃ©e dans le
+        récupère l'Ancre Gemini 3+ scellée au tour précédent. Elle est réinjectée dans le
         <em>part</em> correspondant (<code>p["thoughtSignature"] = sig</code>) pour que
-        le modÃ¨le retrouve son Ã©tat de rÃ©flexion sans relire ses pensÃ©es en texte brut.
+        le modèle retrouve son état de réflexion sans relire ses pensées en texte brut.
       </li>
       <li>
-        <strong>Cold Recovery (fallback) :</strong> si l'Ombre est absente ou invalidÃ©e par le
+        <strong>Cold Recovery (fallback) :</strong> si l'Ombre est absente ou invalidée par le
         Verrou de Version (Ghost Message), le Pipe reconstruit le message depuis le texte brut
-        fourni par le middleware. Les piÃ¨ces jointes binaires du tour concernÃ© sont perdues,
-        mais la continuitÃ© conversationnelle est prÃ©servÃ©e.
+        fourni par le middleware. Les pièces jointes binaires du tour concerné sont perdues,
+        mais la continuité conversationnelle est préservée.
       </li>
     </ol>
 
-    <h3>IntÃ©gration du Draft (message courant)</h3>
+    <h3>Intégration du Draft (message courant)</h3>
     <p>
-      Pour le message utilisateur <em>courant</em> (jamais encore scellÃ©), le Pipe rÃ©cupÃ¨re
-      le Draft sÃ©mantique prÃ©parÃ© par le Filtre (<code>metadata._echo_user_parts_draft</code>)
-      et le fusionne avec le texte brut pour construire les <code>parts</code> envoyÃ©es Ã  Gemini.
+      Pour le message utilisateur <em>courant</em> (jamais encore scellé), le Pipe récupère
+      le Draft sémantique préparé par le Filtre (<code>metadata._echo_user_parts_draft</code>)
+      et le fusionne avec le texte brut pour construire les <code>parts</code> envoyées à Gemini.
       C'est ici que les placeholders <code>##MODEL_ID##</code>, <code>##MODEL_ORIGIN##</code>
-      et <code>##ECHO_VERSION##</code> sont rÃ©solus par <code>_resolve_placeholders()</code>.
+      et <code>##ECHO_VERSION##</code> sont résolus par <code>_resolve_placeholders()</code>.
     </p>
 
     <div class="note-box">
       <h4>âš  Content multipart OWUI</h4>
       <p>
         Lorsque l'utilisateur colle des images dans le champ de saisie, Open WebUI transmet
-        <code>content</code> sous forme de <strong>liste</strong> (et non de chaÃ®ne). Le filtre
-        extrait les text-parts et image-parts en ordre dans le Draft. Le Pipe dÃ©tecte ce cas
+        <code>content</code> sous forme de <strong>liste</strong> (et non de chaîne). Le filtre
+        extrait les text-parts et image-parts en ordre dans le Draft. Le Pipe détecte ce cas
         via <code>isinstance(content, str)</code> : si <code>content</code> est une liste,
-        le texte est dÃ©jÃ  intÃ©grÃ© dans le Draft &mdash; pas de double injection.
+        le texte est déjà intégré dans le Draft &mdash; pas de double injection.
       </p>
       <p>
-        Le scellement final applique la mÃªme garde de type : si <code>content</code> est
-        une liste, il est ignorÃ© pour Ã©viter de corrompre le shadow SQLite en passant
-        une structure non-string Ã  <code>_resolve_placeholders()</code>.
+        Le scellement final applique la même garde de type : si <code>content</code> est
+        une liste, il est ignoré pour éviter de corrompre le shadow SQLite en passant
+        une structure non-string à <code>_resolve_placeholders()</code>.
       </p>
     </div>
 
     <div class="tech-spec">
-      <h4>âš™ï¸ StÃ©rilisation des mÃ©dias (Double Ancrage)</h4>
+      <h4>⚙️ Stérilisation des médias (Double Ancrage)</h4>
       <p>
-        Les <code>inlineData</code> (binaires Base64) prÃ©sents dans les Ombres sont rÃ©-injectÃ©s
-        tels quels dans le contexte Gemini. Le contenu binaire n'est jamais retranscodÃ© - garantie
-        d'une fidÃ©litÃ© Ã  l'octet prÃ¨s (<em>bit-perfect</em>). Les piÃ¨ces jointes qui dÃ©passent
-        la limite de taille de l'API sont automatiquement remplacÃ©es par leur slug Qdrant.
+        Les <code>inlineData</code> (binaires Base64) présents dans les Ombres sont ré-injectés
+        tels quels dans le contexte Gemini. Le contenu binaire n'est jamais retranscodé - garantie
+        d'une fidélité à l'octet près (<em>bit-perfect</em>). Les pièces jointes qui dépassent
+        la limite de taille de l'API sont automatiquement remplacées par leur slug Qdrant.
       </p>
     </div>
 
-    <h2>DÃ©fense Passive : Troncature Silencieuse (Smart Pop)</h2>
+    <h2>Défense Passive : Troncature Silencieuse (Smart Pop)</h2>
 
     <p>
-      IntÃ©grÃ©e en version 192.19, la <strong>Troncature Silencieuse</strong> (Smart Pop) est le dernier filet de sÃ©curitÃ© du Pipe contre l'Ã©puisement soudain de la fenÃªtre de contexte longue (1M/2M tokens) avant de l'envoyer au modÃ¨le cible.
+      Intégrée en version 192.19, la <strong>Troncature Silencieuse</strong> (Smart Pop) est le dernier filet de sécurité du Pipe contre l'épuisement soudain de la fenêtre de contexte longue (1M/2M tokens) avant de l'envoyer au modèle cible.
     </p>
 
     <div class="tech-spec">
-      <h4>âš™ï¸ Algorithme de Troncature (Smart Pop)</h4>
+      <h4>⚙️ Algorithme de Troncature (Smart Pop)</h4>
       <p>
-        AprÃ¨s la reconstruction du contexte, le Pipe Ã©value sa taille en tokens via <code>estimate_token_size()</code>.
+        Après la reconstruction du contexte, le Pipe évalue sa taille en tokens via <code>estimate_token_size()</code>.
       </p>
       <ul>
-        <li><strong>Zone d'Alerte (<code>CONTEXT_WARNING_THRESHOLD</code>) :</strong> Un toast UI prÃ©vient l'utilisateur d'envisager une migration via l'action "Resume in New Chat".</li>
-        <li><strong>Zone Critique (<code>CONTEXT_TRUNCATE_THRESHOLD</code>) :</strong> Si la taille dÃ©passe ce seuil (par dÃ©faut 65-80% de la limite API), le Pipe Ã©lague silencieusement l'historique par le bas.</li>
+        <li><strong>Zone d'Alerte (<code>CONTEXT_WARNING_THRESHOLD</code>) :</strong> Un toast UI prévient l'utilisateur d'envisager une migration via l'action "Resume in New Chat".</li>
+        <li><strong>Zone Critique (<code>CONTEXT_TRUNCATE_THRESHOLD</code>) :</strong> Si la taille dépasse ce seuil (par défaut 65-80% de la limite API), le Pipe élague silencieusement l'historique par le bas.</li>
       </ul>
       <p>
-        L'Ã©lagage utilise <code>smart_truncate_history()</code> pour supprimer les messages les plus anciens tout en protÃ©geant le bloc d'instructions systÃ¨me (<code>system</code>). L'algorithme garantit que les paires <code>functionCall</code> / <code>functionResponse</code> ne sont jamais dissociÃ©es, prÃ©servant ainsi l'intÃ©gritÃ© de la structure sÃ©quentielle exigÃ©e par l'API Gemini. Un toast rouge avertit l'utilisateur de cette troncature d'urgence sans que le backend ne crashe ni que la gÃ©nÃ©ration en cours n'Ã©choue.
+        L'élagage utilise <code>smart_truncate_history()</code> pour supprimer les messages les plus anciens tout en protégeant le bloc d'instructions système (<code>system</code>). L'algorithme garantit que les paires <code>functionCall</code> / <code>functionResponse</code> ne sont jamais dissociées, préservant ainsi l'intégrité de la structure séquentielle exigée par l'API Gemini. Un toast rouge avertit l'utilisateur de cette troncature d'urgence sans que le backend ne crashe ni que la génération en cours n'échoue.
       </p>
     </div>
 
     <h2>Routage Cognitif Dynamique</h2>
 
     <p>
-      En mode <code>AUTO</code>, le Pipe adapte le modÃ¨le d'infÃ©rence Ã  la complexitÃ© estimÃ©e
-      de la tÃ¢che et Ã  l'Ã©tat du contexte. Ce routage s'appuie sur deux variables :
-      le <strong>taux de remplissage</strong> de la fenÃªtre contextuelle et la
-      <strong>nature de la requÃªte</strong> (Ã©valuÃ©e au premier appel Ã  <code>MODEL_LITE</code>).
+      En mode <code>AUTO</code>, le Pipe adapte le modèle d'inférence à la complexité estimée
+      de la tâche et à l'état du contexte. Ce routage s'appuie sur deux variables :
+      le <strong>taux de remplissage</strong> de la fenêtre contextuelle et la
+      <strong>nature de la requête</strong> (évaluée au premier appel à <code>MODEL_LITE</code>).
     </p>
 
     <div class="mermaid-wrapper">
@@ -158,27 +158,27 @@
       </div>
       <div class="mermaid">
 flowchart TD
-  START([Nouvelle requÃªte]) --> LITE[Ã‰valuation initiale\nMODEL_LITE]
+  START([Nouvelle requête]) --> LITE[Évaluation initiale\nMODEL_LITE]
 
   LITE --> NCV{new_cognitive_level\nrequested?}
 
-  NCV -->|"Oui - LITE est dÃ©passÃ©"| TRANS["Plan de Transfert\n(Markdown structurÃ©)"]
-  TRANS --> MUTATION["Mutation ModÃ¨le\n(inject into new model)"]
-  MUTATION --> FLASH[ExÃ©cution - MODEL_FLASH]
+  NCV -->|"Oui - LITE est dépassé"| TRANS["Plan de Transfert\n(Markdown structuré)"]
+  TRANS --> MUTATION["Mutation Modèle\n(inject into new model)"]
+  MUTATION --> FLASH[Exécution - MODEL_FLASH]
 
   NCV -->|"Non - LITE suffit"| CTX{Taux de\nRemplissage}
 
-  CTX -->|"< 30% - Zone verte"| LITE_OK["âœ… Continuer en LITE\n(interactions simples)"]
-  CTX -->|"30â€“50% - Zone orange"| FLASH["âš¡ Escalade vers MODEL_FLASH\n(moteur agentique principal)"]
-  CTX -->|"> 50% - Zone rouge"| PRO["ðŸ”´ Escalade PRO impÃ©rative\nquelle que soit la tÃ¢che"]
+  CTX -->|"< 30% - Zone verte"| LITE_OK["✅ Continuer en LITE\n(interactions simples)"]
+  CTX -->|"30–50% - Zone orange"| FLASH["⚡ Escalade vers MODEL_FLASH\n(moteur agentique principal)"]
+  CTX -->|"> 50% - Zone rouge"| PRO["🔴 Escalade PRO impérative\nquelle que soit la tâche"]
 
   FLASH --> NCV2{new_cognitive_level ?}
-  NCV2 -->|"FLASH est dÃ©passÃ©"| PRO
+  NCV2 -->|"FLASH est dépassé"| PRO
   NCV2 -->|"Non"| ORCH{"Orchestration\nMulti-Agents ?"}
 
   ORCH -->|"Oui (consult_council)"| COUNCIL["Table Ronde\nDelphi"]
-  ORCH -->|"Oui (consult_supervised_workers)"| SUPERV["Boucle Critique\nSupervisÃ©e"]
-  ORCH -->|"Non"| OUTPUT([GÃ©nÃ©ration finale])
+  ORCH -->|"Oui (consult_supervised_workers)"| SUPERV["Boucle Critique\nSupervisée"]
+  ORCH -->|"Non"| OUTPUT([Génération finale])
 
   COUNCIL --> OUTPUT
   SUPERV --> OUTPUT
@@ -195,91 +195,91 @@ flowchart TD
     </div>
 
     <table>
-      <thead><tr><th>ModÃ¨le</th><th>RÃ´le dans le routage</th><th>DÃ©clencheur</th></tr></thead>
+      <thead><tr><th>Modèle</th><th>Rôle dans le routage</th><th>Déclencheur</th></tr></thead>
       <tbody>
         <tr>
           <td><strong><code>MODEL_LITE</code></strong> (<code>gemini-3.1-flash-lite</code>)</td>
-          <td>RÃ©flexe - point d'entrÃ©e par dÃ©faut.</td>
-          <td>Toute requÃªte en mode AUTO. Salutations, extractions triviales.</td>
+          <td>Réflexe - point d'entrée par défaut.</td>
+          <td>Toute requête en mode AUTO. Salutations, extractions triviales.</td>
         </tr>
         <tr>
           <td><strong><code>MODEL_FLASH</code></strong> (<code>gemini-3.5-flash</code>)</td>
           <td>Moteur agentique principal.</td>
-          <td>LITE demande une escalade (<code>new_cognitive_level</code>). Le seuil de 30Â % de contexte est un signal de vigilance pour activer prÃ©ventivement la MÃ©moire VectorisÃ©e de Session - pas un basculement automatique.</td>
+          <td>LITE demande une escalade (<code>new_cognitive_level</code>). Le seuil de 30 % de contexte est un signal de vigilance pour activer préventivement la Mémoire Vectorisée de Session - pas un basculement automatique.</td>
         </tr>
         <tr>
           <td><strong><code>MODEL_PRO</code></strong> (<code>gemini-3.1-pro-preview</code>)</td>
           <td>Expertise - dernier recours uniquement.</td>
-          <td>FLASH est manifestement insuffisant, ou contexte â‰¥ 50 % (<em>Loi de CorrÃ©lation Contextuelle</em>).</td>
+          <td>FLASH est manifestement insuffisant, ou contexte ≥ 50 % (<em>Loi de Corrélation Contextuelle</em>).</td>
         </tr>
       </tbody>
     </table>
 
     <h3>L'outil <code>new_cognitive_level</code></h3>
     <p>
-      InjectÃ© dynamiquement dans les outils disponibles de chaque modÃ¨le, cet outil permet au
-      modÃ¨le actif de dÃ©clarer qu'il ne peut pas traiter la tÃ¢che correctement Ã  son niveau cognitif
-      courant. Le Pipe intercepte cet appel, rÃ©cupÃ¨re le <strong>Plan de Transfert</strong> rÃ©digÃ©
-      par le modÃ¨le sortant (document Markdown structurant le contexte et les objectifs pour son
-      successeur), puis re-route la requÃªte vers le modÃ¨le cible sans redÃ©marrer la boucle complÃ¨te.
-      L'outil est <strong>bidirectionnel</strong> : il permet une escalade (LITE â†’ FLASH â†’ PRO)
-      comme une redescente (PRO â†’ FLASH â†’ LITE) selon la charge de la tÃ¢che courante.
+      Injecté dynamiquement dans les outils disponibles de chaque modèle, cet outil permet au
+      modèle actif de déclarer qu'il ne peut pas traiter la tâche correctement à son niveau cognitif
+      courant. Le Pipe intercepte cet appel, récupère le <strong>Plan de Transfert</strong> rédigé
+      par le modèle sortant (document Markdown structurant le contexte et les objectifs pour son
+      successeur), puis re-route la requête vers le modèle cible sans redémarrer la boucle complète.
+      L'outil est <strong>bidirectionnel</strong> : il permet une escalade (LITE → FLASH → PRO)
+      comme une redescente (PRO → FLASH → LITE) selon la charge de la tâche courante.
     </p>
 
     <div class="note-box">
-      <h4>Mutation AEC lors d'un changement de modÃ¨le</h4>
+      <h4>Mutation AEC lors d'un changement de modèle</h4>
       <p>
-        Chaque transfert inter-modÃ¨le (escalade ou cascade technique) dÃ©clenche
-        <code>_mutate_context_identity()</code> : les champs <code>modÃ¨le_actuel</code> et
-        <code>modÃ¨le_origine</code> du bloc AEC sont patchÃ©s <em>in-place</em> par regex dans
-        le contexte actif, garantissant une proprioception cohÃ©rente dans tous les tours suivants.
+        Chaque transfert inter-modèle (escalade ou cascade technique) déclenche
+        <code>_mutate_context_identity()</code> : les champs <code>modèle_actuel</code> et
+        <code>modèle_origine</code> du bloc AEC sont patchés <em>in-place</em> par regex dans
+        le contexte actif, garantissant une proprioception cohérente dans tous les tours suivants.
       </p>
     </div>
 
     <h2>Cascade Descendante Technique</h2>
 
     <p>
-      IndÃ©pendamment de l'escalade cognitive volontaire, le Pipe gÃ¨re les <strong>erreurs
-      d'indisponibilitÃ© API</strong> (429, 503) par une cascade descendante automatique :
-      PRO â†’ FLASH â†’ LITE. Cette cascade est distincte du mÃ©canisme
+      Indépendamment de l'escalade cognitive volontaire, le Pipe gère les <strong>erreurs
+      d'indisponibilité API</strong> (429, 503) par une cascade descendante automatique :
+      PRO → FLASH → LITE. Cette cascade est distincte du mécanisme
       <code>new_cognitive_level</code> et s'active uniquement en mode <code>AUTO</code> ou
       <code>AUTO_PRO</code>.
     </p>
 
     <div class="tech-spec">
-      <h4>âš™ï¸ SÃ©quence de cascade descendante</h4>
+      <h4>⚙️ Séquence de cascade descendante</h4>
       <ol>
-        <li>Un appel stream au modÃ¨le cible lÃ¨ve une exception (erreur rÃ©seau ou quota).</li>
-        <li>Le Pipe identifie les modÃ¨les infÃ©rieurs disponibles via <code>MODEL_HIERARCHY</code>.</li>
-        <li><code>_mutate_context_identity()</code> met Ã  jour l'AEC avec le modÃ¨le cible.</li>
-        <li>Un toast <code>âš¡ Cascade : PRO â†’ FLASH</code> est Ã©mis vers l'interface.</li>
-        <li>La boucle reprend immÃ©diatement sur le modÃ¨le de repli.</li>
-        <li>Si plus aucun modÃ¨le n'est disponible : message d'erreur terminal et sortie.</li>
+        <li>Un appel stream au modèle cible lève une exception (erreur réseau ou quota).</li>
+        <li>Le Pipe identifie les modèles inférieurs disponibles via <code>MODEL_HIERARCHY</code>.</li>
+        <li><code>_mutate_context_identity()</code> met à jour l'AEC avec le modèle cible.</li>
+        <li>Un toast <code>⚡ Cascade : PRO → FLASH</code> est émis vers l'interface.</li>
+        <li>La boucle reprend immédiatement sur le modèle de repli.</li>
+        <li>Si plus aucun modèle n'est disponible : message d'erreur terminal et sortie.</li>
       </ol>
     </div>
 
-    <h2>Politique ModÃ¨le CentralisÃ©e - Pipe â†’ Outils</h2>
+    <h2>Politique Modèle Centralisée - Pipe → Outils</h2>
 
     <p>
-      La <code>UserValve MODEL_SELECTION</code> du Pipe dÃ©finit la politique d'utilisation des
-      modÃ¨les pour <em>tous</em> les outils de l'Arsenal. OWUI ne propageant pas les
-      <code>__metadata__</code> personnalisÃ©s du Pipe vers les outils, deux mÃ©canismes
-      parallÃ¨les assurent la propagation :
+      La <code>UserValve MODEL_SELECTION</code> du Pipe définit la politique d'utilisation des
+      modèles pour <em>tous</em> les outils de l'Arsenal. OWUI ne propageant pas les
+      <code>__metadata__</code> personnalisés du Pipe vers les outils, deux mécanismes
+      parallèles assurent la propagation :
     </p>
 
     <table>
-      <thead><tr><th>MÃ©canisme</th><th>Canal</th><th>Fonctionnement</th></tr></thead>
+      <thead><tr><th>Mécanisme</th><th>Canal</th><th>Fonctionnement</th></tr></thead>
       <tbody>
         <tr>
           <td><strong>Injection <code>__metadata__</code></strong></td>
-          <td>Dans le mÃªme tour de Pipe</td>
-          <td>Les clÃ©s <code>_echo_model_policy</code> et <code>_echo_enable_paid_credits</code>
-          sont injectÃ©es dans <code>__metadata__</code> avant chaque appel d'outil.</td>
+          <td>Dans le même tour de Pipe</td>
+          <td>Les clés <code>_echo_model_policy</code> et <code>_echo_enable_paid_credits</code>
+          sont injectées dans <code>__metadata__</code> avant chaque appel d'outil.</td>
         </tr>
         <tr>
           <td><strong>Fallback SQLite <code>echo_settings</code></strong></td>
           <td>Persistance inter-sessions</td>
-          <td><code>EchoStateManager.save_setting()</code> Ã©crit <code>model_policy</code> et
+          <td><code>EchoStateManager.save_setting()</code> écrit <code>model_policy</code> et
           <code>enable_paid_credits</code> dans <code>identity.db</code>. Les outils lisent
           cette valeur via <code>get_setting()</code> si <code>__metadata__</code> est absent.</td>
         </tr>
@@ -287,24 +287,24 @@ flowchart TD
     </table>
 
     <div class="tech-spec">
-      <h4>âš™ï¸ Filtrage dynamique de l'enum modÃ¨le dans les outils (<code>convert_owui_tools()</code>)</h4>
+      <h4>⚙️ Filtrage dynamique de l'enum modèle dans les outils (<code>convert_owui_tools()</code>)</h4>
       <p>
         Lorsque le Pipe convertit les specs d'outils OWUI au format Gemini, il filtre
-        dynamiquement l'enum des paramÃ¨tres de type modÃ¨le selon la politique active.
-        Un enum <code>["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"]</code> prÃ©sent dans un outil
-        est restreint Ã  <code>MODEL_ENUM_BY_POLICY[MODEL_SELECTION]</code> :
+        dynamiquement l'enum des paramètres de type modèle selon la politique active.
+        Un enum <code>["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"]</code> présent dans un outil
+        est restreint à <code>MODEL_ENUM_BY_POLICY[MODEL_SELECTION]</code> :
       </p>
       <ul>
-        <li><code>AUTO</code> â†’ <code>["MODEL_LITE", "MODEL_FLASH"]</code></li>
-        <li><code>AUTO_PRO</code> â†’ <code>["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"]</code></li>
-        <li>ModÃ¨le fixÃ© â†’ <code>["MODEL_FLASH"]</code> (ou LITE ou PRO selon la valve)</li>
+        <li><code>AUTO</code> → <code>["MODEL_LITE", "MODEL_FLASH"]</code></li>
+        <li><code>AUTO_PRO</code> → <code>["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"]</code></li>
+        <li>Modèle fixé → <code>["MODEL_FLASH"]</code> (ou LITE ou PRO selon la valve)</li>
       </ul>
     </div>
 
-    <h2>Gestion des PensÃ©es (Chain-of-Thought)</h2>
+    <h2>Gestion des Pensées (Chain-of-Thought)</h2>
 
     <p>
-      Lorsque <code>includeThoughts: true</code> est envoyÃ© dans le <code>thinkingConfig</code>
+      Lorsque <code>includeThoughts: true</code> est envoyé dans le <code>thinkingConfig</code>
       (via <code>echo_protocol.build_ca_generation_config()</code>), l'API Gemini retourne des
       parts avec <code>thought: true</code>. <code>StreamProcessor.process()</code> les intercepte
       et les isole du flux principal.
@@ -312,48 +312,48 @@ flowchart TD
 
     <h3>Isolation et affichage</h3>
     <p>
-      Les pensÃ©es sont extraites par <code>split_thought_process(text)</code>
-      (issue de <code>echo_core.py</code>), encapsulÃ©es dans les balises <code>&lt;think&gt;â€¦&lt;/think&gt;</code>
-      et envoyÃ©es en amont du texte final dans le flux SSE. Open WebUI les affiche dans une
-      section repliable. Elles <strong>ne polluent jamais</strong> le texte de la rÃ©ponse.
+      Les pensées sont extraites par <code>split_thought_process(text)</code>
+      (issue de <code>echo_core.py</code>), encapsulées dans les balises <code>&lt;think&gt;…&lt;/think&gt;</code>
+      et envoyées en amont du texte final dans le flux SSE. Open WebUI les affiche dans une
+      section repliable. Elles <strong>ne polluent jamais</strong> le texte de la réponse.
     </p>
 
     <h3>L'Ancre (ThoughtSignature)</h3>
     <p>
-      ECHO ne rÃ©injecte <strong>jamais</strong> le texte brut des pensÃ©es dans l'historique des
-      tours suivants. Ã€ la place, la <code>thoughtSignature</code> est scellÃ©e dans
-      <code>cognitive_signatures</code> (SQLite) et rÃ©injectÃ©e au tour suivant
+      ECHO ne réinjecte <strong>jamais</strong> le texte brut des pensées dans l'historique des
+      tours suivants. À la place, la <code>thoughtSignature</code> est scellée dans
+      <code>cognitive_signatures</code> (SQLite) et réinjectée au tour suivant
       (<code>p["thoughtSignature"] = sig</code>).
     </p>
     <p>
-      La <strong>ThoughtSignature</strong> est un <strong>impÃ©ratif de l'API GeminiÂ 3+</strong>Â :
-      Ã  la fin de chaque gÃ©nÃ©ration, l'API retourne systÃ©matiquement ce blob opaque dont la
-      structure est entiÃ¨rement interne Ã  Google. Sa fonctionÂ : permettre au modÃ¨le de retrouver
-      la continuitÃ© de sa rÃ©flexion entre les tours sans retranscrire ses raisonnements en
+      La <strong>ThoughtSignature</strong> est un <strong>impératif de l'API Gemini 3+</strong> :
+      à la fin de chaque génération, l'API retourne systématiquement ce blob opaque dont la
+      structure est entièrement interne à Google. Sa fonction : permettre au modèle de retrouver
+      la continuité de sa réflexion entre les tours sans retranscrire ses raisonnements en
       texte brut.
     </p>
 
     <div class="note-box">
-      <h4>âš  ThoughtSignature â‰  KV Cache</h4>
+      <h4>⚠ ThoughtSignature ≠ KV Cache</h4>
       <p>
-        Le <strong>KV Cache</strong> est une technique Google d'Ã©conomie de tokensÂ : les
-        activations clÃ©/valeur du prefill sont mises en cache implicite cÃ´tÃ© serveur Google
-        pour Ã©viter de les recalculer lors des tours suivants. C'est une optimisation
-        d'infÃ©rence transparente, opaque pour l'appelant.
+        Le <strong>KV Cache</strong> est une technique Google d'économie de tokens : les
+        activations clé/valeur du prefill sont mises en cache implicite côté serveur Google
+        pour éviter de les recalculer lors des tours suivants. C'est une optimisation
+        d'inférence transparente, opaque pour l'appelant.
       </p>
       <p>
-        La <strong>ThoughtSignature</strong> est un artefact applicatif exposÃ© explicitement
-        dans la rÃ©ponse APIÂ : l'appelant la reÃ§oit, la persiste (SQLite) et la rÃ©injecte
-        manuellement au tour suivant. Les deux mÃ©canismes sont entiÃ¨rement distincts.
+        La <strong>ThoughtSignature</strong> est un artefact applicatif exposé explicitement
+        dans la réponse API : l'appelant la reçoit, la persiste (SQLite) et la réinjecte
+        manuellement au tour suivant. Les deux mécanismes sont entièrement distincts.
       </p>
     </div>
 
     <div class="note-box">
-      <h4>RÃ©duction de la charge contextuelle</h4>
+      <h4>Réduction de la charge contextuelle</h4>
       <p>
-        Ce protocole rÃ©duit la charge contextuelle de <strong>30 % Ã  70 %</strong> selon la
-        complexitÃ© des pensÃ©es, car les milliers de tokens de Chain-of-Thought ne sont jamais
-        retranscrits dans le contexte. Seul le jeton opaque (quelques dizaines d'octets) les reprÃ©sente.
+        Ce protocole réduit la charge contextuelle de <strong>30 % à 70 %</strong> selon la
+        complexité des pensées, car les milliers de tokens de Chain-of-Thought ne sont jamais
+        retranscrits dans le contexte. Seul le jeton opaque (quelques dizaines d'octets) les représente.
       </p>
     </div>
 
@@ -361,11 +361,11 @@ flowchart TD
 
     <p>
       <code>EchoGeminiClient</code> utilise <code>httpx</code> avec l'option <code>http2=True</code>
-      (dÃ©pendance <code>h2</code> obligatoire). Pour les requÃªtes vers l'API Antigravity, les en-tÃªtes
-      de requÃªte reproduisent ceux d'un IDE rÃ©el grÃ¢ce Ã  <code>get_stealth_headers()</code> :
+      (dépendance <code>h2</code> obligatoire). Pour les requêtes vers l'API Antigravity, les en-têtes
+      de requête reproduisent ceux d'un IDE réel grâce à <code>get_stealth_headers()</code> :
     </p>
 
-    <div class="code-header">En-tÃªtes Stealth - ECHO API Antigravity</div>
+    <div class="code-header">En-têtes Stealth - ECHO API Antigravity</div>
     <pre><code>User-Agent: antigravity/2.1.0 (language_server; os_type=Windows; os_version=10.0.26100; arch=x64)
 x-goog-api-client: antigravity/2.1.0
 Authorization: Bearer {oauth_token}
@@ -374,27 +374,27 @@ Content-Type: application/json</code></pre>
     <h2>Bridge <code>_TOOLS_CACHE</code> - Partage des Callables Outils</h2>
 
     <p>
-      OWUI injecte le dictionnaire <code>__tools__</code> (contenant les callables Python rÃ©els
-      des outils associÃ©s au modÃ¨le) dans le <code>Pipe</code>, mais <strong>ne le propage pas</strong>
-      aux tool callables (chaque outil reÃ§oit un <code>__metadata__</code> indÃ©pendant).
-      Cette contrainte architecturale empÃªche <code>delegate_to_agent</code> d'accÃ©der aux
-      callables des autres outils pour les exÃ©cuter au nom du sous-agent.
+      OWUI injecte le dictionnaire <code>__tools__</code> (contenant les callables Python réels
+      des outils associés au modèle) dans le <code>Pipe</code>, mais <strong>ne le propage pas</strong>
+      aux tool callables (chaque outil reçoit un <code>__metadata__</code> indépendant).
+      Cette contrainte architecturale empêche <code>delegate_to_agent</code> d'accéder aux
+      callables des autres outils pour les exécuter au nom du sous-agent.
     </p>
 
     <div class="tech-spec">
-      <h4>âš™ï¸ Solution - Cache module-level</h4>
+      <h4>⚙️ Solution - Cache module-level</h4>
       <p>
         Le Pipe stocke <code>__tools__[chat_id]</code> dans <code>_TOOLS_CACHE</code>,
-        un dictionnaire module-level dÃ©fini dans <code>pipe_engine.py</code>. Comme le Pipe
-        et tous les outils s'exÃ©cutent dans le <strong>mÃªme processus Python</strong> (uvicorn),
-        <code>delegate_tool</code> y accÃ¨de via
+        un dictionnaire module-level défini dans <code>pipe_engine.py</code>. Comme le Pipe
+        et tous les outils s'exécutent dans le <strong>même processus Python</strong> (uvicorn),
+        <code>delegate_tool</code> y accède via
         <code>sys.modules["function_pipe_engine"]._TOOLS_CACHE[chat_id]</code>.
-        Ce cache persiste tant que le processus tourneÂ ; il est reconstituÃ© au premier message
-        de chaque chat aprÃ¨s un redÃ©marrage.
+        Ce cache persiste tant que le processus tourne ; il est reconstitué au premier message
+        de chaque chat après un redémarrage.
       </p>
     </div>
 
-    <h3>Trois formes de <code>__tools__</code> gÃ©rÃ©es</h3>
+    <h3>Trois formes de <code>__tools__</code> gérées</h3>
 
     <table>
       <thead><tr><th>Format</th><th>Type</th><th>Contenu</th><th>Action Pipe</th></tr></thead>
@@ -415,29 +415,29 @@ Content-Type: application/json</code></pre>
           <td><strong>Cas 3</strong> - Aucun outil</td>
           <td><code>None</code> ou vide</td>
           <td>-</td>
-          <td>FallbackÂ : <code>_echo_body_tools = body.get("tools", [])</code></td>
+          <td>Fallback : <code>_echo_body_tools = body.get("tools", [])</code></td>
         </tr>
       </tbody>
     </table>
 
     <p>
-      ClÃ©s injectÃ©es dans <code>__metadata__</code> par ce mÃ©canismeÂ :
+      Clés injectées dans <code>__metadata__</code> par ce mécanisme :
     </p>
     <ul>
-      <li><code>_echo_tools_dict</code> - dict brut OWUI (peut Ãªtre vide)</li>
+      <li><code>_echo_tools_dict</code> - dict brut OWUI (peut être vide)</li>
       <li><code>_echo_body_tools</code> - specs format OpenAI pour tous les outils disponibles</li>
     </ul>
 
     <h2>Phase de Scellement</h2>
 
     <p>
-      Une fois la gÃ©nÃ©ration terminÃ©e et le stream SSE clos, le Pipe scelle le tour en quatre
-      opÃ©rations atomiques :
+      Une fois la génération terminée et le stream SSE clos, le Pipe scelle le tour en quatre
+      opérations atomiques :
     </p>
     <ol>
       <li>
         <strong>Shadow Sealing :</strong> <code>save_message_shadow(parts_finale, updated_at)</code>
-        - enregistre la structure complÃ¨te des <code>parts</code> envoyÃ©es et reÃ§ues dans
+        - enregistre la structure complète des <code>parts</code> envoyées et reçues dans
         <code>message_shadows</code>.
       </li>
       <li>
@@ -450,41 +450,41 @@ Content-Type: application/json</code></pre>
       </li>
       <li>
         <strong>Suture Index :</strong> <code>index_suture(cumulative_hash, parent_hash)</code>
-        - met Ã  jour la chaÃ®ne Merkle de la conversation.
+        - met à jour la chaîne Merkle de la conversation.
       </li>
     </ol>
 
     
     <h3>Suture Asynchrone (UserDataManager)</h3>
     <p>
-      L'orchestrateur intÃ¨gre un mÃ©canisme de <strong>pontage d'Ã©tat (Shadow Suture)</strong> via <code>get_call_bridge()</code>. Ce mÃ©canisme relie cryptographiquement l'ID d'un appel d'outil dÃ©clenchÃ© Ã  la rÃ©ponse asynchrone rÃ©ceptionnÃ©e au tour suivant, garantissant la cohÃ©rence des appels outils en environnement asynchrone.
+      L'orchestrateur intègre un mécanisme de <strong>pontage d'état (Shadow Suture)</strong> via <code>get_call_bridge()</code>. Ce mécanisme relie cryptographiquement l'ID d'un appel d'outil déclenché à la réponse asynchrone réceptionnée au tour suivant, garantissant la cohérence des appels outils en environnement asynchrone.
     </p>
 
-    <h2>HUD Quota - intÃ©gration dans le Pipe</h2>
+    <h2>HUD Quota - intégration dans le Pipe</h2>
 
     <p>
-      Ã€ chaque fin de tour, le Pipe collecte les mÃ©triques de quota et les injecte dans la Context
-      Gauge. Le pipeline prÃ©cis, extrait du code source :
+      À chaque fin de tour, le Pipe collecte les métriques de quota et les injecte dans la Context
+      Gauge. Le pipeline précis, extrait du code source :
     </p>
 
     <div class="code-header">Pipeline HUD Quota - pipe_engine.py</div>
-    <pre><code># 1. RÃ©solution de l'ID modÃ¨le AGY (cloudcode-pa interne)
+    <pre><code># 1. Résolution de l'ID modèle AGY (cloudcode-pa interne)
 ca_id = get_ca_model_id(target_model)
-# ex : MODEL_FLASH â†’ "gemini-3.5-flash"
+# ex : MODEL_FLASH → "gemini-3.5-flash"
 
 # 2. Lecture du quota depuis identity.db (EchoAuth.get_model_quota)
 model_quota = await echo_auth.get_model_quota(ca_id)
-# Retourne le quotaInfo spÃ©cifique ou {} si modÃ¨le inconnu
+# Retourne le quotaInfo spécifique ou {} si modèle inconnu
 
 # 3. Extraction des champs
 quota_fraction = model_quota.get("remainingFraction", 1.0)
-quota_reset    = model_quota.get("resetTime", "N/A")   # â†’ formatÃ© "HH:MM (Xmin)"
+quota_reset    = model_quota.get("resetTime", "N/A")   # → formaté "HH:MM (Xmin)"
 quota_rpd_rem  = model_quota.get("requestsPerDayRemaining", "N/A")
 quota_rpd_lim  = model_quota.get("requestsPerDayLimit", "N/A")
 quota_rpm_rem  = model_quota.get("requestsPerMinuteRemaining", "N/A")
 quota_rpm_lim  = model_quota.get("requestsPerMinuteLimit", "N/A")
 
-# 4. RafraÃ®chissement asynchrone non-bloquant (cooldown 10 min)
+# 4. Rafraîchissement asynchrone non-bloquant (cooldown 10 min)
 asyncio.ensure_future(refresh_quota_if_needed())
 
 # 5. Injection HUD
@@ -492,9 +492,9 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     quota_rpd_rem=quota_rpd_rem, quota_rpd_lim=quota_rpd_lim, ...)</code></pre>
 
 
-    <h2>RÃ©seau et FurtivitÃ©</h2>
+    <h2>Réseau et Furtivité</h2>
     <p>
-      Les requÃªtes web orchestrÃ©es par le Cortex s'appuient sur des connexions HTTP/2 strictes (via <code>httpx</code>) couplÃ©es Ã  l'injection d'en-tÃªtes de navigation haute fidÃ©litÃ© (<code>get_stealth_headers</code>). Cette mÃ©canique simule un navigateur rÃ©el et contourne les protections anti-bot de bas niveau lors des investigations agentiques.
+      Les requêtes web orchestrées par le Cortex s'appuient sur des connexions HTTP/2 strictes (via <code>httpx</code>) couplées à l'injection d'en-têtes de navigation haute fidélité (<code>get_stealth_headers</code>). Cette mécanique simule un navigateur réel et contourne les protections anti-bot de bas niveau lors des investigations agentiques.
     </p>
 
     <div class="transition-text">

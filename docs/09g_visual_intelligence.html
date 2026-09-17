@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 
 <html lang="fr">
 
@@ -18,7 +18,7 @@
 
 <body>
 
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
 
@@ -30,11 +30,11 @@
 
       L'outil <code>generate_rich_visualization</code> (<code>universal_visual_generator.py</code>)
 
-      gÃ©nÃ¨re des interfaces visuelles interactives et les injecte dans la conversation via le HUD.
+      génère des interfaces visuelles interactives et les injecte dans la conversation via le HUD.
 
-      Le moteur est sÃ©lectionnÃ© automatiquement par le modÃ¨le en fonction de l'intention, ou peut
+      Le moteur est sélectionné automatiquement par le modèle en fonction de l'intention, ou peut
 
-      Ãªtre imposÃ© explicitement via le paramÃ¨tre <code>moteur</code>.
+      être imposé explicitement via le paramètre <code>moteur</code>.
 
     </p>
 
@@ -48,13 +48,13 @@
 
       Toutes les interfaces visuelles suivent le <strong>Pattern Data Island</strong> :
 
-      les donnÃ©es (JSON, Markdown, XML, SMILESâ€¦) sont encapsulÃ©es dans un Ã©lÃ©ment HTML
+      les données (JSON, Markdown, XML, SMILES…) sont encapsulées dans un élément HTML
 
       <code>&lt;script type="application/json"&gt;</code> statique, puis lues et rendues par un
 
-      bloc <code>&lt;script&gt;</code> sÃ©parÃ© chargeant la bibliothÃ¨que graphique via CDN.
+      bloc <code>&lt;script&gt;</code> séparé chargeant la bibliothèque graphique via CDN.
 
-      Cette sÃ©paration garantit que les donnÃ©es utilisateur ne sont jamais interpolÃ©es dans
+      Cette séparation garantit que les données utilisateur ne sont jamais interpolées dans
 
       du code JavaScript directement.
 
@@ -62,11 +62,11 @@
 
 
 
-    <h2>Moteurs disponibles - liste complÃ¨te</h2>
+    <h2>Moteurs disponibles - liste complète</h2>
 
 
 
-    <p>Les 16 moteurs suivants sont disponibles via le paramÃ¨tre <code>moteur</code>Â :</p>
+    <p>Les 16 moteurs suivants sont disponibles via le paramètre <code>moteur</code> :</p>
 
 
 
@@ -74,7 +74,7 @@
 
       <thead>
 
-        <tr><th>ClÃ© moteur</th><th>BibliothÃ¨que / Standard</th><th>Usage typique</th><th>Format d'entrÃ©e</th></tr>
+        <tr><th>Clé moteur</th><th>Bibliothèque / Standard</th><th>Usage typique</th><th>Format d'entrée</th></tr>
 
       </thead>
 
@@ -86,9 +86,9 @@
 
           <td>Markmap.js</td>
 
-          <td>Mindmaps et hiÃ©rarchies</td>
+          <td>Mindmaps et hiérarchies</td>
 
-          <td>Markdown hiÃ©rarchique pur (niveaux <code>#</code>)</td>
+          <td>Markdown hiérarchique pur (niveaux <code>#</code>)</td>
 
         </tr>
 
@@ -98,9 +98,9 @@
 
           <td>Mermaid v11.14.0</td>
 
-          <td>Flowcharts, sÃ©quences, UML, ERD</td>
+          <td>Flowcharts, séquences, UML, ERD</td>
 
-          <td>Syntaxe Mermaid v11 (<code>flowchart TD</code>, <code>sequenceDiagram</code>â€¦)</td>
+          <td>Syntaxe Mermaid v11 (<code>flowchart TD</code>, <code>sequenceDiagram</code>…)</td>
 
         </tr>
 
@@ -110,9 +110,9 @@
 
           <td>Mermaid + Rough.js</td>
 
-          <td>SchÃ©mas faÃ§on croquis Ã  main levÃ©e</td>
+          <td>Schémas façon croquis à main levée</td>
 
-          <td>Syntaxe Mermaid (rendu Â« rough Â»)</td>
+          <td>Syntaxe Mermaid (rendu « rough »)</td>
 
         </tr>
 
@@ -124,7 +124,7 @@
 
           <td>Tableaux de bord, Finance, Heatmaps</td>
 
-          <td>JSON ECharts (avec <code>tooltip</code>, <code>legend</code>, <code>series</code>â€¦)</td>
+          <td>JSON ECharts (avec <code>tooltip</code>, <code>legend</code>, <code>series</code>…)</td>
 
         </tr>
 
@@ -134,9 +134,9 @@
 
           <td>Vega-Lite</td>
 
-          <td>Statistiques, Science des donnÃ©es</td>
+          <td>Statistiques, Science des données</td>
 
-          <td>JSON Vega-Lite strict (<code>$schema</code>, <code>data</code>, <code>mark</code>â€¦)</td>
+          <td>JSON Vega-Lite strict (<code>$schema</code>, <code>data</code>, <code>mark</code>…)</td>
 
         </tr>
 
@@ -148,7 +148,7 @@
 
           <td>Chronologies et frises historiques</td>
 
-          <td>JSON TimelineJS (<code>events[].start_date</code>, <code>text.headline</code>â€¦)</td>
+          <td>JSON TimelineJS (<code>events[].start_date</code>, <code>text.headline</code>…)</td>
 
         </tr>
 
@@ -158,7 +158,7 @@
 
           <td>BPMN 2.0</td>
 
-          <td>Processus mÃ©tiers normÃ©s</td>
+          <td>Processus métiers normés</td>
 
           <td>XML BPMN 2.0 valide</td>
 
@@ -182,9 +182,9 @@
 
           <td>A-Frame</td>
 
-          <td>ScÃ¨nes 3D, architecture, volumes</td>
+          <td>Scènes 3D, architecture, volumes</td>
 
-          <td>HTML A-Frame (<code>&lt;a-scene&gt;</code>, <code>&lt;a-box&gt;</code>â€¦)</td>
+          <td>HTML A-Frame (<code>&lt;a-scene&gt;</code>, <code>&lt;a-box&gt;</code>…)</td>
 
         </tr>
 
@@ -194,7 +194,7 @@
 
           <td>SVG natif</td>
 
-          <td>Plans 2D, schÃ©mas vectoriels sur mesure</td>
+          <td>Plans 2D, schémas vectoriels sur mesure</td>
 
           <td>Code XML SVG complet et valide</td>
 
@@ -206,7 +206,7 @@
 
           <td>Cytoscape.js</td>
 
-          <td>RÃ©seaux, graphes de force, clusters</td>
+          <td>Réseaux, graphes de force, clusters</td>
 
           <td>JSON Cytoscape (<code>elements: {nodes: [], edges: []}</code>)</td>
 
@@ -218,7 +218,7 @@
 
           <td>WaveDrom</td>
 
-          <td>Ã‰lectronique, signaux numÃ©riques</td>
+          <td>Électronique, signaux numériques</td>
 
           <td>JSON WaveDrom (<code>signal: []</code>)</td>
 
@@ -230,9 +230,9 @@
 
           <td>RDKit / Ketcher</td>
 
-          <td>Chimie molÃ©culaire</td>
+          <td>Chimie moléculaire</td>
 
-          <td>ChaÃ®ne SMILES (ex. <code>CC(=O)OC1=CC=CC=C1C(=O)O</code>)</td>
+          <td>Chaîne SMILES (ex. <code>CC(=O)OC1=CC=CC=C1C(=O)O</code>)</td>
 
         </tr>
 
@@ -242,7 +242,7 @@
 
           <td>Plotly.js</td>
 
-          <td>Physique &amp; MathÃ©matiques</td>
+          <td>Physique &amp; Mathématiques</td>
 
           <td>JSON Plotly (<code>data: []</code>, <code>layout: {}</code>)</td>
 
@@ -254,7 +254,7 @@
 
           <td>3Dmol.js / PDB</td>
 
-          <td>Biologie structurelle, protÃ©ines 3D</td>
+          <td>Biologie structurelle, protéines 3D</td>
 
           <td>ID PDB (ex. <code>1A8M</code>) ou fichier PDB complet</td>
 
@@ -266,9 +266,9 @@
 
           <td>D3-Celestial</td>
 
-          <td>Exploration cÃ©leste, carte du ciel</td>
+          <td>Exploration céleste, carte du ciel</td>
 
-          <td>JSON D3-Celestial (<code>projection: 'orthographic'</code>â€¦)</td>
+          <td>JSON D3-Celestial (<code>projection: 'orthographic'</code>…)</td>
 
         </tr>
 
@@ -278,17 +278,17 @@
 
 
 
-    <h2>SÃ©lection automatique du moteur</h2>
+    <h2>Sélection automatique du moteur</h2>
 
 
 
     <p>
 
-      Si le paramÃ¨tre <code>moteur</code> n'est pas fourni, le modÃ¨le choisit librement le moteur
+      Si le paramètre <code>moteur</code> n'est pas fourni, le modèle choisit librement le moteur
 
-      le plus adaptÃ© Ã  l'intention. En cas d'ambiguÃ¯tÃ© sur le moteur retournÃ© par le modÃ¨le, le Pipe
+      le plus adapté à l'intention. En cas d'ambiguïté sur le moteur retourné par le modèle, le Pipe
 
-      parcourt les 300 premiers caractÃ¨res de la rÃ©ponse pour dÃ©tecter le mot-clÃ© correspondant.
+      parcourt les 300 premiers caractères de la réponse pour détecter le mot-clé correspondant.
 
       Fallback final : <code>mermaid</code>.
 
@@ -296,13 +296,13 @@
 
 
 
-    <h2>Niveaux cognitifs recommandÃ©s</h2>
+    <h2>Niveaux cognitifs recommandés</h2>
 
 
 
     <table>
 
-      <thead><tr><th>Niveau</th><th>Moteurs conseillÃ©s</th></tr></thead>
+      <thead><tr><th>Niveau</th><th>Moteurs conseillés</th></tr></thead>
 
       <tbody>
 
@@ -320,17 +320,17 @@
 
     <div class="audit-note">
 
-      <h4>âœ… Validation JSON stricte automatique</h4>
+      <h4>✅ Validation JSON stricte automatique</h4>
 
       <p>
 
-        Pour les moteurs Ã  format JSON (<code>echarts</code>, <code>vega</code>, <code>timeline</code>,
+        Pour les moteurs à format JSON (<code>echarts</code>, <code>vega</code>, <code>timeline</code>,
 
         <code>cytoscape</code>, <code>wavedrom</code>, <code>science</code>, <code>astro</code>),
 
         l'outil valide le payload via <code>orjson.loads()</code> avant rendu. En cas d'erreur de
 
-        syntaxe, une requÃªte de correction est automatiquement envoyÃ©e au modÃ¨le avant de passer
+        syntaxe, une requête de correction est automatiquement envoyée au modèle avant de passer
 
         au rendu.
 
@@ -343,7 +343,7 @@
     <div class="transition-text">
       <a href="09f_actions_ui.html">&larr; Actions UI (HUD)</a>
       &nbsp;&nbsp;
-      <a href="09h_codex_editor.html">ECHO Codex (Ã‰diteur) &rarr;</a>
+      <a href="09h_codex_editor.html">ECHO Codex (Éditeur) &rarr;</a>
     </div>
 
 

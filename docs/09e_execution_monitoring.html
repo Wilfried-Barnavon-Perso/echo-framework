@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 
 <html lang="fr">
 
@@ -8,7 +8,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <meta name="description" content="Coding Worker ECHO v5 (worker_api.py v1.4, Flask, port 5000) : exÃ©cution isolÃ©e de code multi-langages (Python/Node) par processus OS, bibliothÃ¨ques rÃ©elles, timeout configurable, sorties stdout.">
+  <meta name="description" content="Coding Worker ECHO v5 (worker_api.py v1.4, Flask, port 5000) : exécution isolée de code multi-langages (Python/Node) par processus OS, bibliothèques réelles, timeout configurable, sorties stdout.">
 
   <title>ECHO v5 - 9e. Exécution & Pilotage</title>
 
@@ -18,17 +18,17 @@
 
 <body>
 
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
     <h1>9e. Exécution & Pilotage</h1>
 
     <p>
-      L'outil d'exÃ©cution de code multi-langages (<code>coding_executor.py</code>) soumet du code (Python ou JavaScript) au
-      <strong>Coding Worker</strong> - un micro-service Docker isolÃ©. L'isolation est garantie par
+      L'outil d'exécution de code multi-langages (<code>coding_executor.py</code>) soumet du code (Python ou JavaScript) au
+      <strong>Coding Worker</strong> - un micro-service Docker isolé. L'isolation est garantie par
       un <strong>processus OS distinct</strong> (<code>multiprocessing.Process</code> ou <code>child_process</code>) pour chaque
-      requÃªte, avec son propre rÃ©pertoire temporaire. Une fois le processus terminÃ© ou expirÃ©, il
-      n'existe plus aucune trace en mÃ©moire.
+      requête, avec son propre répertoire temporaire. Une fois le processus terminé ou expiré, il
+      n'existe plus aucune trace en mémoire.
     </p>
 
     <h2>Coding Worker (Sandbox)</h2>
@@ -37,7 +37,7 @@
 
     <table>
 
-      <thead><tr><th>Attribut</th><th>Valeur vÃ©rifiÃ©e</th></tr></thead>
+      <thead><tr><th>Attribut</th><th>Valeur vérifiée</th></tr></thead>
 
       <tbody>
 
@@ -55,7 +55,7 @@
 
         <tr>
 
-          <td><strong>BibliothÃ¨ques disponibles</strong></td>
+          <td><strong>Bibliothèques disponibles</strong></td>
 
           <td>
 
@@ -65,19 +65,19 @@
 
             <code>regex</code>, <code>sympy</code>, <code>mgzip</code>, <code>orjson</code>,
 
-            <code>pybase64</code>, <code>networkx</code> + bibliothÃ¨que standard Python 3.14
+            <code>pybase64</code>, <code>networkx</code> + bibliothèque standard Python 3.14
 
           </td>
 
         </tr>
 
-        <tr><td><strong>BibliothÃ¨ques absentes</strong></td><td><code>matplotlib</code> et <code>requests</code> ne sont <strong>pas</strong> dans <code>requirements.txt</code></td></tr>
+        <tr><td><strong>Bibliothèques absentes</strong></td><td><code>matplotlib</code> et <code>requests</code> ne sont <strong>pas</strong> dans <code>requirements.txt</code></td></tr>
 
-        <tr><td><strong>Timeout</strong></td><td>30 s par dÃ©faut (paramÃ¨tre <code>timeout</code> de la requÃªte, configurable par l'appelant)</td></tr>
+        <tr><td><strong>Timeout</strong></td><td>30 s par défaut (paramètre <code>timeout</code> de la requête, configurable par l'appelant)</td></tr>
 
-        <tr><td><strong>Isolation</strong></td><td>Processus OS distinct (<code>multiprocessing.Process</code>) + rÃ©pertoire temporaire dÃ©diÃ© (<code>tempfile.TemporaryDirectory</code>)</td></tr>
+        <tr><td><strong>Isolation</strong></td><td>Processus OS distinct (<code>multiprocessing.Process</code>) + répertoire temporaire dédié (<code>tempfile.TemporaryDirectory</code>)</td></tr>
 
-        <tr><td><strong>Sortie</strong></td><td>stdout et stderr capturÃ©s sÃ©parÃ©ment (<code>contextlib.redirect_stdout/stderr</code>)</td></tr>
+        <tr><td><strong>Sortie</strong></td><td>stdout et stderr capturés séparément (<code>contextlib.redirect_stdout/stderr</code>)</td></tr>
 
       </tbody>
 
@@ -88,31 +88,31 @@
     <h2>Outil <code>python_code_executor.py</code> / <code>node_code_executor.py</code></h2>
 
     <p>
-      L'outil soumet un bloc de code (Python ou JavaScript) au Worker via <code>POST /execute</code> (ou une route spÃ©cifique selon le langage).
-      La rÃ©ponse contient :
+      L'outil soumet un bloc de code (Python ou JavaScript) au Worker via <code>POST /execute</code> (ou une route spécifique selon le langage).
+      La réponse contient :
     </p>
 
     <ul>
-      <li><code>output</code> : contenu de stdout (chaÃ®ne de texte).</li>
-      <li><code>error</code> : contenu de stderr (vide si succÃ¨s).</li>
-      <li><code>status</code> : <code>success</code>, <code>error</code> (stderr non vide) ou <code>critical_error</code> (exception non rattrapÃ©e / crash silencieux).</li>
+      <li><code>output</code> : contenu de stdout (chaîne de texte).</li>
+      <li><code>error</code> : contenu de stderr (vide si succès).</li>
+      <li><code>status</code> : <code>success</code>, <code>error</code> (stderr non vide) ou <code>critical_error</code> (exception non rattrapée / crash silencieux).</li>
     </ul>
 
 
 
     <div class="didactic-box">
 
-      <h4>ðŸ’¡ Absence de matplotlib - alternative</h4>
+      <h4>💡 Absence de matplotlib - alternative</h4>
 
       <p>
 
-        <code>matplotlib</code> n'est pas installÃ© dans le Worker. Pour produire des graphiques,
+        <code>matplotlib</code> n'est pas installé dans le Worker. Pour produire des graphiques,
 
         ECHO utilise l'outil <strong>Visual Intelligence</strong> (<code>universal_visual_generator.py</code>)
 
-        qui gÃ©nÃ¨re des interfaces interactives ECharts, Vega ou Mermaid cÃ´tÃ© navigateur - sans
+        qui génère des interfaces interactives ECharts, Vega ou Mermaid côté navigateur - sans
 
-        bibliothÃ¨que de rendu serveur.
+        bibliothèque de rendu serveur.
 
       </p>
 
@@ -122,19 +122,19 @@
 
     <div class="tech-spec">
 
-      <h4>âš™ï¸ Isolation par processus OS - mÃ©canisme exact</h4>
+      <h4>⚙️ Isolation par processus OS - mécanisme exact</h4>
 
       <p>
 
-        Contrairement Ã  un simple <code>exec()</code> dans un thread Python, le Worker crÃ©e un
+        Contrairement à un simple <code>exec()</code> dans un thread Python, le Worker crée un
 
-        <code>multiprocessing.Process</code> pour chaque exÃ©cution. Cela garantit une vraie isolation
+        <code>multiprocessing.Process</code> pour chaque exécution. Cela garantit une vraie isolation
 
-        mÃ©moire (adress space sÃ©parÃ©) et empÃªche les effets de bord entre requÃªtes concurrentes.
+        mémoire (adress space séparé) et empêche les effets de bord entre requêtes concurrentes.
 
-        Flask en mode <code>threaded=True</code> permet de servir plusieurs requÃªtes HTTP en parallÃ¨le,
+        Flask en mode <code>threaded=True</code> permet de servir plusieurs requêtes HTTP en parallèle,
 
-        chacune lanÃ§ant son propre sous-processus.
+        chacune lançant son propre sous-processus.
 
       </p>
 
@@ -144,15 +144,15 @@
 
     <div class="warning-box">
 
-      <h4>âš ï¸ SÃ©curitÃ© de l'exÃ©cution</h4>
+      <h4>⚠️ Sécurité de l'exécution</h4>
 
       <p>
 
-        Le Worker n'est pas une sandbox hermÃ©tique contre du code malveillant intentionnel :
+        Le Worker n'est pas une sandbox hermétique contre du code malveillant intentionnel :
 
-        le sous-processus a accÃ¨s au rÃ©seau Docker interne. Il est conÃ§u pour exÃ©cuter du code
+        le sous-processus a accès au réseau Docker interne. Il est conçu pour exécuter du code
 
-        de confiance gÃ©nÃ©rÃ© par le modÃ¨le, pas du code provenant de sources tierces non vÃ©rifiÃ©es.
+        de confiance généré par le modèle, pas du code provenant de sources tierces non vérifiées.
 
       </p>
 
@@ -161,7 +161,7 @@
 
 
     <div class="transition-text">
-      <a href="09d_memory_cognition.html">&larr; MÃ©moire & Cognition</a>
+      <a href="09d_memory_cognition.html">&larr; Mémoire & Cognition</a>
       &nbsp;&nbsp;
       <a href="09f_actions_ui.html">Actions UI (HUD) &rarr;</a>
     </div>

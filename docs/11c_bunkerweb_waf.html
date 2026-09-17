@@ -1,68 +1,68 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Bouclier BunkerWeb WAF - Protection pÃ©rimÃ©trique de l'infrastructure ECHO, PWA Kill-Switch et gestion ModSecurity.">
+  <meta name="description" content="Bouclier BunkerWeb WAF - Protection périmétrique de l'infrastructure ECHO, PWA Kill-Switch et gestion ModSecurity.">
   <title>ECHO v5 - 11c. Bouclier BunkerWeb WAF</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
     <h1>11c. Bouclier BunkerWeb WAF</h1>
 
     <p>
       L'activation de BunkerWeb (via le script <code>enable-bunkerweb.sh</code>) transforme l'infrastructure locale
-      en une plateforme sÃ©curisÃ©e exposable sur Internet. BunkerWeb agit comme un <strong>Web Application Firewall (WAF)</strong> de type Reverse Proxy, placÃ© en frontal devant Open WebUI et l'Admin Manager.
+      en une plateforme sécurisée exposable sur Internet. BunkerWeb agit comme un <strong>Web Application Firewall (WAF)</strong> de type Reverse Proxy, placé en frontal devant Open WebUI et l'Admin Manager.
     </p>
 
-    <h2>Protection PÃ©rimÃ©trique et ModSecurity</h2>
+    <h2>Protection Périmétrique et ModSecurity</h2>
 
     <p>
-      La stack ECHO implÃ©mente une stratÃ©gie SPA (Single Page Application) de limitation de dÃ©bit (rate limiting) granulaire :
+      La stack ECHO implémente une stratégie SPA (Single Page Application) de limitation de débit (rate limiting) granulaire :
     </p>
     <ul>
-      <li><strong>1000 requÃªtes/s</strong> pour les assets statiques.</li>
-      <li><strong>50 requÃªtes/s</strong> pour la navigation et les appels front-end.</li>
-      <li><strong>20 requÃªtes/s</strong> pour l'API backend.</li>
+      <li><strong>1000 requêtes/s</strong> pour les assets statiques.</li>
+      <li><strong>50 requêtes/s</strong> pour la navigation et les appels front-end.</li>
+      <li><strong>20 requêtes/s</strong> pour l'API backend.</li>
     </ul>
 
     <p>
-      Le moteur ModSecurity intÃ©grÃ© est spÃ©cifiquement paramÃ©trÃ© pour exclure Open WebUI des vÃ©rifications strictes de mauvais comportement (notamment le contournement des erreurs 400 CORS lÃ©gitimes des SPA), Ã©vitant ainsi les faux positifs bloquants lors de l'utilisation normale de l'interface.
-      La configuration persistante de BunkerWeb est stockÃ©e de maniÃ¨re sÃ©curisÃ©e dans <code>/opt/ECHO/bunkerweb/</code>.
+      Le moteur ModSecurity intégré est spécifiquement paramétré pour exclure Open WebUI des vérifications strictes de mauvais comportement (notamment le contournement des erreurs 400 CORS légitimes des SPA), évitant ainsi les faux positifs bloquants lors de l'utilisation normale de l'interface.
+      La configuration persistante de BunkerWeb est stockée de manière sécurisée dans <code>/opt/ECHO/bunkerweb/</code>.
     </p>
 
-    <h3>RÃ¨gles de Reverse Proxy pour l'API REST</h3>
+    <h3>Règles de Reverse Proxy pour l'API REST</h3>
     <p>
-      Le WAF intÃ¨gre une refonte complÃ¨te des rÃ¨gles de reverse proxy pour l'API REST. Il applique une sÃ©paration stricte des codes d'erreurs :
+      Le WAF intègre une refonte complète des règles de reverse proxy pour l'API REST. Il applique une séparation stricte des codes d'erreurs :
     </p>
     <ul>
-      <li><strong>Erreurs applicatives transparentes (400, 401, 404) :</strong> LaissÃ©es passantes de maniÃ¨re transparente vers le LLM et le backend.</li>
-      <li><strong>Erreurs de couche WAF (403, 429, 500, 502) :</strong> InterceptÃ©es par BunkerWeb et formatÃ©es en JSON natif pour garantir un retour structurÃ© au client API.</li>
+      <li><strong>Erreurs applicatives transparentes (400, 401, 404) :</strong> Laissées passantes de manière transparente vers le LLM et le backend.</li>
+      <li><strong>Erreurs de couche WAF (403, 429, 500, 502) :</strong> Interceptées par BunkerWeb et formatées en JSON natif pour garantir un retour structuré au client API.</li>
     </ul>
 
     <h2>Kill-Switch Service Worker (PWA)</h2>
 
     <p>
-      Le WAF intÃ¨gre un mÃ©canisme de "poisoning" non-destructif pour purger le cache agressif du Service Worker de la PWA Open WebUI.
+      Le WAF intègre un mécanisme de "poisoning" non-destructif pour purger le cache agressif du Service Worker de la PWA Open WebUI.
     </p>
     <p>
-      Lorsqu'une mise Ã  jour de l'interface ou une modification de sÃ©curitÃ© nÃ©cessite un rafraÃ®chissement des clients, BunkerWeb intercepte les requÃªtes vers <code>/_app/version.json</code> et les surcharge avec un cache-busting dynamique. 
-      Cette mÃ©thode force le rechargement des assets SvelteKit sans utiliser l'en-tÃªte destructif <code>Clear-Site-Data</code>. Cela garantit la prÃ©servation stricte du cookie JWT de session, Ã©vitant ainsi l'erreur 401 sur les flux audio en cours de lecture.
+      Lorsqu'une mise à jour de l'interface ou une modification de sécurité nécessite un rafraîchissement des clients, BunkerWeb intercepte les requêtes vers <code>/_app/version.json</code> et les surcharge avec un cache-busting dynamique. 
+      Cette méthode force le rechargement des assets SvelteKit sans utiliser l'en-tête destructif <code>Clear-Site-Data</code>. Cela garantit la préservation stricte du cookie JWT de session, évitant ainsi l'erreur 401 sur les flux audio en cours de lecture.
     </p>
 
     <h2>Routage Edge WebGPU</h2>
 
     <p>
-      Le WAF est spÃ©cifiquement configurÃ© pour router le trafic d'infÃ©rence distante vers le Worker d'Embedding. La directive Nginx <code>location = /ws/edge-embed</code> garantit que ce flux WebSocket (wss://) bÃ©nÃ©ficie d'un accÃ¨s direct et prioritaire. En court-circuitant le backend Open WebUI standard, le WAF supprime le goulet d'Ã©tranglement HTTP classique et maintient la connexion persistante requise pour la communication asynchrone bidirectionnelle avec le payload WASM du client, tout en bloquant nativement les tentatives d'inondation (flood).
+      Le WAF est spécifiquement configuré pour router le trafic d'inférence distante vers le Worker d'Embedding. La directive Nginx <code>location = /ws/edge-embed</code> garantit que ce flux WebSocket (wss://) bénéficie d'un accès direct et prioritaire. En court-circuitant le backend Open WebUI standard, le WAF supprime le goulet d'étranglement HTTP classique et maintient la connexion persistante requise pour la communication asynchrone bidirectionnelle avec le payload WASM du client, tout en bloquant nativement les tentatives d'inondation (flood).
     </p>
 
     <div class="warning-box">
-      <h4>âš ï¸ Exposition rÃ©seau et sÃ©curitÃ©</h4>
+      <h4>⚠️ Exposition réseau et sécurité</h4>
       <p>
-        Sans BunkerWeb, ECHO n'Ã©coute que sur le rÃ©seau Docker interne ou l'interface rÃ©seau locale. <strong>N'exposez jamais</strong> les ports 3000 (Open WebUI) ou 8080 (Admin Manager) directement sur le WAN sans activer ce pare-feu applicatif au prÃ©alable. L'activation de BunkerWeb lance Ã©galement automatiquement le module ECHO Auth (SSO IdP).
+        Sans BunkerWeb, ECHO n'écoute que sur le réseau Docker interne ou l'interface réseau locale. <strong>N'exposez jamais</strong> les ports 3000 (Open WebUI) ou 8080 (Admin Manager) directement sur le WAN sans activer ce pare-feu applicatif au préalable. L'activation de BunkerWeb lance également automatiquement le module ECHO Auth (SSO IdP).
       </p>
     </div>
 

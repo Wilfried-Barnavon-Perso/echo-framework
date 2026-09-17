@@ -1,33 +1,33 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Fondations philosophiques et techniques du Framework ECHO v5 : origine, Ã©volution depuis V4, les trois piliers de souverainetÃ© et les phÃ©nomÃ¨nes clÃ©s.">
+  <meta name="description" content="Fondations philosophiques et techniques du Framework ECHO v5 : origine, évolution depuis V4, les trois piliers de souveraineté et les phénomènes clés.">
   <title>ECHO v5 - 0. Fondations & Philosophie</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
     <h1>0. Fondations & Philosophie</h1>
 
     <p>
-      ECHO (<em>Espace Cognitif Heuristique OpÃ©rationnel</em>) est un cadre logiciel d'intelligence artificielle
-      auto-hÃ©bergÃ©e. Contrairement Ã  un simple <em>wrapper</em> d'API, ECHO constitue une couche d'abstraction
-      souveraine qui prend en charge sa propre mÃ©moire, son propre Ã©tat et sa propre interface utilisateur
-      par-dessus <strong>Open WebUI</strong>. Le modÃ¨le de langage - Gemini - y joue le rÃ´le de moteur
-      d'infÃ©rence, tandis qu'ECHO assure la cohÃ©rence, la persistance et la sÃ©curitÃ© de l'ensemble.
+      ECHO (<em>Espace Cognitif Heuristique Opérationnel</em>) est un cadre logiciel d'intelligence artificielle
+      auto-hébergée. Contrairement à un simple <em>wrapper</em> d'API, ECHO constitue une couche d'abstraction
+      souveraine qui prend en charge sa propre mémoire, son propre état et sa propre interface utilisateur
+      par-dessus <strong>Open WebUI</strong>. Le modèle de langage - Gemini - y joue le rôle de moteur
+      d'inférence, tandis qu'ECHO assure la cohérence, la persistance et la sécurité de l'ensemble.
     </p>
 
     <div class="didactic-box">
-      <h4>ðŸ’¡ L'analogie du vÃ©hicule</h4>
+      <h4>💡 L'analogie du véhicule</h4>
       <p>
-        Si Gemini est le moteur, ECHO est le vÃ©hicule complet : chÃ¢ssis (infrastructure Docker), capteurs
-        (filtres d'interception), mÃ©moire Ã  long terme (Qdrant), boÃ®te noire inaltÃ©rable (SQLite Ombres) et
+        Si Gemini est le moteur, ECHO est le véhicule complet : châssis (infrastructure Docker), capteurs
+        (filtres d'interception), mémoire à long terme (Qdrant), boîte noire inaltérable (SQLite Ombres) et
         habitacle de pilotage (HUD). L'utilisateur conduit ; ECHO s'assure que le moteur dispose toujours
-        de l'information complÃ¨te pour avancer.
+        de l'information complète pour avancer.
       </p>
     </div>
 
@@ -35,24 +35,24 @@
 
     <h3>Le nom ECHO</h3>
     <p>
-      L'acronyme dÃ©compose la philosophie du projet en quatre dimensions :
+      L'acronyme décompose la philosophie du projet en quatre dimensions :
     </p>
     <ul>
-      <li><strong>Espace</strong> : un domaine opÃ©rationnel dÃ©limitÃ©, isolÃ© du cloud public.</li>
-      <li><strong>Cognitif</strong> : un lieu oÃ¹ le modÃ¨le peut raisonner avec ses propres outils et sa propre mÃ©moire.</li>
-      <li><strong>Heuristique</strong> : la capacitÃ© du systÃ¨me Ã  s'adapter, Ã  apprendre de ses sessions passÃ©es et Ã  dÃ©couvrir par lui-mÃªme.</li>
-      <li><strong>OpÃ©rationnel</strong> : l'aptitude concrÃ¨te Ã  agir - naviguer sur le web, exÃ©cuter du code, indexer des fichiers.</li>
+      <li><strong>Espace</strong> : un domaine opérationnel délimité, isolé du cloud public.</li>
+      <li><strong>Cognitif</strong> : un lieu où le modèle peut raisonner avec ses propres outils et sa propre mémoire.</li>
+      <li><strong>Heuristique</strong> : la capacité du système à s'adapter, à apprendre de ses sessions passées et à découvrir par lui-même.</li>
+      <li><strong>Opérationnel</strong> : l'aptitude concrète à agir - naviguer sur le web, exécuter du code, indexer des fichiers.</li>
     </ul>
 
-    <h3>Ã‰volution V4 â†’ V5</h3>
+    <h3>Évolution V4 → V5</h3>
     <p>
-      La <strong>V4 (Legacy)</strong>, conservÃ©e dans le rÃ©pertoire <code>_v4-legacy-concept/</code>, est un prompt
-      de personnalisation avancÃ© pour Gemini. Elle Ã©tablit les fondements conceptuels d'ECHO - la MÃ©moire,
-      la Suture, la SouverainetÃ© - mais s'exÃ©cute entiÃ¨rement dans le contexte de la conversation, sans
-      infrastructure dÃ©diÃ©e.
+      La <strong>V4 (Legacy)</strong>, conservée dans le répertoire <code>_v4-legacy-concept/</code>, est un prompt
+      de personnalisation avancé pour Gemini. Elle établit les fondements conceptuels d'ECHO - la Mémoire,
+      la Suture, la Souveraineté - mais s'exécute entièrement dans le contexte de la conversation, sans
+      infrastructure dédiée.
     </p>
     <p>
-      La <strong>V5 (actuelle)</strong> matÃ©rialise ces concepts en une infrastructure conteneurisÃ©e.
+      La <strong>V5 (actuelle)</strong> matérialise ces concepts en une infrastructure conteneurisée.
       Elle introduit l'<em>Ombre Riche</em> (persistance SQLite bit-perfect), le double RAG vectoriel
       (Qdrant), les filtres Python d'interception, et le Pipe comme orchestrateur central. 
     </p>
@@ -64,75 +64,75 @@
         <tr>
           <th>Pilier</th>
           <th>Engagement technique</th>
-          <th>Mise en Å“uvre</th>
+          <th>Mise en œuvre</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td><strong>Auto-HÃ©bergement</strong></td>
-          <td>Isolation locale. Pas de tÃ©lÃ©mÃ©trie. L'Espace Personnel ne quitte jamais l'infrastructure.</td>
-          <td>Docker sur Hyper-V, volumes locaux, BunkerWeb WAF, clÃ©s API stockÃ©es dans <code>identity.db</code>.</td>
+          <td><strong>Auto-Hébergement</strong></td>
+          <td>Isolation locale. Pas de télémétrie. L'Espace Personnel ne quitte jamais l'infrastructure.</td>
+          <td>Docker sur Hyper-V, volumes locaux, BunkerWeb WAF, clés API stockées dans <code>identity.db</code>.</td>
         </tr>
         <tr>
-          <td><strong>VÃ©racitÃ©</strong></td>
-          <td>Recherche contre les hallucinations et la capacitÃ© de mobiliser des connaissances externes.</td>
-          <td>Un prompt systÃ¨me orientÃ© sur la non complaisance dans une hiÃ©rarchie de principes trÃ¨s stricte et des outils de recherche web avancÃ©e.</td>
+          <td><strong>Véracité</strong></td>
+          <td>Recherche contre les hallucinations et la capacité de mobiliser des connaissances externes.</td>
+          <td>Un prompt système orienté sur la non complaisance dans une hiérarchie de principes très stricte et des outils de recherche web avancée.</td>
         </tr>
         <tr>
           <td><strong>Autonomie</strong></td>
-          <td>Arsenal d'outils sensoriels et exÃ©cutifs pilotÃ©s par le Kernel sans intervention humaine.</td>
+          <td>Arsenal d'outils sensoriels et exécutifs pilotés par le Kernel sans intervention humaine.</td>
           <td>Browser Agent, Coding Worker, SearxNG, Qdrant RAG, STT Worker, TTS Worker.</td>
         </tr>
       </tbody>
     </table>
 
-    <h2>PhÃ©nomÃ¨nes architecturaux clÃ©s</h2>
+    <h2>Phénomènes architecturaux clés</h2>
 
-    <h3>La VallÃ©e de la Mort Contextuelle</h3>
+    <h3>La Vallée de la Mort Contextuelle</h3>
     <p>
-      Les modÃ¨les de langage Ã  grande fenÃªtre contextuelle souffrent d'un phÃ©nomÃ¨ne documentÃ© : au-delÃ 
-      d'environ <strong>30 % de remplissage</strong> de la fenÃªtre, le mÃ©canisme d'attention accorde un poids
-      dÃ©croissant aux tours les plus anciens. Les informations restent techniquement prÃ©sentes dans le
-      contexte, mais leur influence sur la gÃ©nÃ©ration devient nÃ©gligeable. Au-delÃ  de <strong>50 %</strong>,
-      la dÃ©gradation est critique.
+      Les modèles de langage à grande fenêtre contextuelle souffrent d'un phénomène documenté : au-delà
+      d'environ <strong>30 % de remplissage</strong> de la fenêtre, le mécanisme d'attention accorde un poids
+      décroissant aux tours les plus anciens. Les informations restent techniquement présentes dans le
+      contexte, mais leur influence sur la génération devient négligeable. Au-delà de <strong>50 %</strong>,
+      la dégradation est critique.
     </p>
-    <p>ECHO y rÃ©pond par une architecture mÃ©morielle Ã  deux niveaux :</p>
+    <p>ECHO y répond par une architecture mémorielle à deux niveaux :</p>
     <ul>
       <li>
-        <strong>RAG Organique</strong> (<code>echo_meta_artifacts</code>) : mÃ©moire long terme permanente,
+        <strong>RAG Organique</strong> (<code>echo_meta_artifacts</code>) : mémoire long terme permanente,
         survit aux sessions. Outils : <code>update_meta_artifact</code> / <code>search_meta_artifacts</code>.
       </li>
       <li>
-        <strong>MÃ©moire VectorisÃ©e de Session</strong> (<code>echo_session_rag</code>) : mÃ©moire de travail de la session courante,
-        purgÃ©e automatiquement en fin de session. Outils : <code>save_session_context</code> / <code>search_sessions_context</code> (consultable Ã©galement depuis d'autres sessions).
+        <strong>Mémoire Vectorisée de Session</strong> (<code>echo_session_rag</code>) : mémoire de travail de la session courante,
+        purgée automatiquement en fin de session. Outils : <code>save_session_context</code> / <code>search_sessions_context</code> (consultable également depuis d'autres sessions).
       </li>
     </ul>
     <div class="note-box">
-      <h4>CorrÃ©lation contextuelle et routage cognitif</h4>
+      <h4>Corrélation contextuelle et routage cognitif</h4>
       <p>
-        Au-delÃ  de 50 % de remplissage de la fenÃªtre contextuelle, le Pipe considÃ¨re qu'une
-        escalade vers <strong>MODEL_PRO</strong> est justifiÃ©e, quelle que soit la complexitÃ©
-        apparente de la tÃ¢che. En pratique, ce basculement s'effectue via l'outil
-        <code>new_cognitive_level</code> - c'est le modÃ¨le actif qui dÃ©clare lui-mÃªme son
-        insuffisance et dÃ©clenche le transfert. Ce n'est pas un switch automatique du Pipe.
-        La MÃ©moire VectorisÃ©e de Session (<code>save_session_context</code>) est la rÃ©ponse prÃ©ventive :
-        dÃ©charger l'information hors du contexte avant saturation.
+        Au-delà de 50 % de remplissage de la fenêtre contextuelle, le Pipe considère qu'une
+        escalade vers <strong>MODEL_PRO</strong> est justifiée, quelle que soit la complexité
+        apparente de la tâche. En pratique, ce basculement s'effectue via l'outil
+        <code>new_cognitive_level</code> - c'est le modèle actif qui déclare lui-même son
+        insuffisance et déclenche le transfert. Ce n'est pas un switch automatique du Pipe.
+        La Mémoire Vectorisée de Session (<code>save_session_context</code>) est la réponse préventive :
+        décharger l'information hors du contexte avant saturation.
       </p>
     </div>
 
-    <h3>L'InfÃ©rence Distante (Edge Computing)</h3>
+    <h3>L'Inférence Distante (Edge Computing)</h3>
     <p>
-      La vectorisation (Embedding) est une opÃ©ration trÃ¨s gourmande en ressources CPU. L'infrastructure ECHO intÃ¨gre un paradigme d'<strong>Edge Computing</strong> : le dÃ©chargement de l'infÃ©rence vectorielle directement vers le navigateur du client via <strong>WebGPU</strong> et <strong>WASM</strong>. 
+      La vectorisation (Embedding) est une opération très gourmande en ressources CPU. L'infrastructure ECHO intègre un paradigme d'<strong>Edge Computing</strong> : le déchargement de l'inférence vectorielle directement vers le navigateur du client via <strong>WebGPU</strong> et <strong>WASM</strong>. 
     </p>
     <p>
-      GrÃ¢ce Ã  ce pont (injectÃ© dynamiquement par le Filtre 3), l'Embedding Worker (serveur) dÃ©lÃ¨gue le calcul des vecteurs <code>Microsoft/Harrier-OSS</code> au client. Ce n'est qu'en cas de non-rÃ©ponse du client (timeout asynchrone de 15s) que le serveur reprend la charge en Fallback CPU local. Cela allÃ¨ge drastiquement la consommation Ã©nergÃ©tique du serveur d'auto-hÃ©bergement et accÃ©lÃ¨re la crÃ©ation de la MÃ©moire VectorisÃ©e de Session.
+      Grâce à ce pont (injecté dynamiquement par le Filtre 3), l'Embedding Worker (serveur) délègue le calcul des vecteurs <code>Microsoft/Harrier-OSS</code> au client. Ce n'est qu'en cas de non-réponse du client (timeout asynchrone de 15s) que le serveur reprend la charge en Fallback CPU local. Cela allège drastiquement la consommation énergétique du serveur d'auto-hébergement et accélère la création de la Mémoire Vectorisée de Session.
     </p>
 
     
-    <h2>Standards de DÃ©veloppement</h2>
-    <h3>RÃ¨gle UTF-8 sans BOM</h3>
+    <h2>Standards de Développement</h2>
+    <h3>Règle UTF-8 sans BOM</h3>
     <p>
-      Le framework impose une rÃ¨gle stricte d'encodage : tous les fichiers (<code>VERSION</code>, <code>.py</code>, <code>.xml</code>, <code>.sh</code>, <code>.json</code>) doivent <strong>obligatoirement Ãªtre encodÃ©s en UTF-8 sans BOM</strong>. L'introduction de BOM ou de mojibake est strictement interdite pour garantir la compatibilitÃ© absolue entre les environnements Windows et Linux de la pile Docker.
+      Le framework impose une règle stricte d'encodage : tous les fichiers (<code>VERSION</code>, <code>.py</code>, <code>.xml</code>, <code>.sh</code>, <code>.json</code>) doivent <strong>obligatoirement être encodés en UTF-8 sans BOM</strong>. L'introduction de BOM ou de mojibake est strictement interdite pour garantir la compatibilité absolue entre les environnements Windows et Linux de la pile Docker.
     </p>
 
 <div class="transition-text">

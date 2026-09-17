@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -8,39 +8,39 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
     <h1>11f. Download Broker</h1>
 
     <p>
       Le <strong>Download Broker</strong> (<code>25-docker-download-broker/download_broker.py</code>) est un service autonome (Daemon)
-      chargÃ© de l'ingestion asynchrone des fichiers tÃ©lÃ©chargÃ©s depuis le web par l'Agent Navigateur. 
-      Il opÃ¨re indÃ©pendamment du flux cognitif principal pour prÃ©venir tout blocage IO.
+      chargé de l'ingestion asynchrone des fichiers téléchargés depuis le web par l'Agent Navigateur. 
+      Il opère indépendamment du flux cognitif principal pour prévenir tout blocage IO.
     </p>
 
     
     <h3>Pont de Permissions N8N (V5.199)</h3>
-    <p>Depuis les derniÃ¨res Ã©volutions architecturales (commit 0af8162), le Download Broker assume le rÃ´le de <strong>pont de sÃ©curitÃ© inter-conteneurs</strong>. Il accorde explicitement l'accÃ¨s en Ã©criture Ã  l'utilisateur systÃ¨me <code>node</code> (qui propulse le Worker N8N) sur le volume partagÃ© <code>browser-data/downloads</code>. Cette mÃ©canique autorise N8N Ã  modifier ou gÃ©nÃ©rer des fichiers en toute fluiditÃ© avec l'Agent Navigateur Playwright.</p>
+    <p>Depuis les dernières évolutions architecturales (commit 0af8162), le Download Broker assume le rôle de <strong>pont de sécurité inter-conteneurs</strong>. Il accorde explicitement l'accès en écriture à l'utilisateur système <code>node</code> (qui propulse le Worker N8N) sur le volume partagé <code>browser-data/downloads</code>. Cette mécanique autorise N8N à modifier ou générer des fichiers en toute fluidité avec l'Agent Navigateur Playwright.</p>
 
     <h2>Architecture et Fonctionnement</h2>
 
     <p>
-      Le Download Broker fonctionne en tant que Worker Docker isolÃ© sans port exposÃ©. 
-      Il boucle de maniÃ¨re asynchrone (polling) sur le rÃ©pertoire des tÃ©lÃ©chargements partagÃ©s (<code>/app/browser-data/downloads</code>) 
-      et traite les Ã©lÃ©ments selon la logique suivante :
+      Le Download Broker fonctionne en tant que Worker Docker isolé sans port exposé. 
+      Il boucle de manière asynchrone (polling) sur le répertoire des téléchargements partagés (<code>/app/browser-data/downloads</code>) 
+      et traite les éléments selon la logique suivante :
     </p>
 
     <ul>
-      <li><strong>Garbage Collection</strong> : Si le chat associÃ© (ID de conversation) n'existe plus dans le Vault de l'utilisateur, la branche de tÃ©lÃ©chargement est identifiÃ©e comme morte et purgÃ©e (<code>shutil.rmtree</code>).</li>
-      <li><strong>DÃ©placement Atomique</strong> : Les fichiers valides sont dÃ©placÃ©s du rÃ©pertoire temporaire vers le Vault global de l'utilisateur via <code>shutil.move()</code>.</li>
-      <li><strong>Leurre Symbolique</strong> : Afin de lier le fichier Ã  la conversation active sans dupliquer la donnÃ©e, un lien symbolique (<code>os.symlink</code>) est crÃ©Ã© dans le sous-dossier de la session.</li>
-      <li><strong>SÃ©rialisation SQLite</strong> : Une fois le fichier validÃ© et placÃ©, le Broker dÃ©termine son MIME via <code>get_gemini_mime</code> et met Ã  jour l'Ã©tat cognitif via <code>EchoStateManager</code>, 
-      dÃ©finissant le statut sur <code>PENDING_INGESTION</code>.</li>
+      <li><strong>Garbage Collection</strong> : Si le chat associé (ID de conversation) n'existe plus dans le Vault de l'utilisateur, la branche de téléchargement est identifiée comme morte et purgée (<code>shutil.rmtree</code>).</li>
+      <li><strong>Déplacement Atomique</strong> : Les fichiers valides sont déplacés du répertoire temporaire vers le Vault global de l'utilisateur via <code>shutil.move()</code>.</li>
+      <li><strong>Leurre Symbolique</strong> : Afin de lier le fichier à la conversation active sans dupliquer la donnée, un lien symbolique (<code>os.symlink</code>) est créé dans le sous-dossier de la session.</li>
+      <li><strong>Sérialisation SQLite</strong> : Une fois le fichier validé et placé, le Broker détermine son MIME via <code>get_gemini_mime</code> et met à jour l'état cognitif via <code>EchoStateManager</code>, 
+      définissant le statut sur <code>PENDING_INGESTION</code>.</li>
     </ul>
 
     <div class="alert info">
-      <strong>DÃ©couplage des ressources</strong> : Cette architecture garantit que ni le Pipe, ni le navigateur headless ne s'encombrent du traitement des transferts disques locaux, et assure la persistance des rÃ©sultats d'exploration Web dans le systÃ¨me documentaire unifiÃ© d'ECHO.
+      <strong>Découplage des ressources</strong> : Cette architecture garantit que ni le Pipe, ni le navigateur headless ne s'encombrent du traitement des transferts disques locaux, et assure la persistance des résultats d'exploration Web dans le système documentaire unifié d'ECHO.
     </div>
 
   </main>

@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Admin Manager ECHO : Dashboard Gridstack interactif, monitoring Docker, purge TTL Qdrant, consolidation SQLite, sauvegardes Ã  chaud, surface de sÃ©curitÃ©.">
+  <meta name="description" content="Admin Manager ECHO : Dashboard Gridstack interactif, monitoring Docker, purge TTL Qdrant, consolidation SQLite, sauvegardes à chaud, surface de sécurité.">
   <title>ECHO v5 - 11a. Admin Manager (Console de Régulation)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -13,72 +13,72 @@
   </script>
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
     <h1>11a. Admin Manager (Console de Régulation)</h1>
 
     <p>
-      L'Admin Manager est le systÃ¨me de gouvernance infrastructure d'ECHO. Il surveille la santÃ©
+      L'Admin Manager est le système de gouvernance infrastructure d'ECHO. Il surveille la santé
       du cluster Docker via un <strong>Dashboard interactif (Gridstack)</strong>, orchestre la purge
-      temporelle de la mÃ©moire vectorielle (Qdrant), gÃ¨re les sauvegardes et la consolidation des
-      bases de donnÃ©es.
+      temporelle de la mémoire vectorielle (Qdrant), gère les sauvegardes et la consolidation des
+      bases de données.
     </p>
 
     <div class="didactic-box">
-      <h4>ðŸ’¡ L'analogie du systÃ¨me immunitaire</h4>
+      <h4>💡 L'analogie du système immunitaire</h4>
       <p>
-        Si ECHO est un organisme vivant, l'Admin Manager est son <strong>systÃ¨me immunitaire
-        et mÃ©tabolique</strong>. Il surveille que tout fonctionne correctement, nettoie les
-        vieux souvenirs devenus inutiles (Ã‰lagage TTL), crÃ©e des copies de sÃ©curitÃ© rÃ©guliÃ¨res,
-        et contrÃ´le les accÃ¨s aux systÃ¨mes critiques. Il opÃ¨re en arriÃ¨re-plan sans interrompre
-        la gÃ©nÃ©ration.
+        Si ECHO est un organisme vivant, l'Admin Manager est son <strong>système immunitaire
+        et métabolique</strong>. Il surveille que tout fonctionne correctement, nettoie les
+        vieux souvenirs devenus inutiles (Élagage TTL), crée des copies de sécurité régulières,
+        et contrôle les accès aux systèmes critiques. Il opère en arrière-plan sans interrompre
+        la génération.
       </p>
     </div>
 
-    <h2>Fiche d'identitÃ© technique</h2>
+    <h2>Fiche d'identité technique</h2>
 
     <table>
       <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
       <tbody>
         <tr><td><strong>Source</strong></td><td><code>20-docker-admin-manager/server.py</code></td></tr>
-        <tr><td><strong>Nature</strong></td><td>Micro-service de rÃ©gulation et monitoring (Flask API)</td></tr>
+        <tr><td><strong>Nature</strong></td><td>Micro-service de régulation et monitoring (Flask API)</td></tr>
         <tr><td><strong>Conteneur</strong></td><td><code>echo-admin-manager</code> (Python 3.11)</td></tr>
-        <tr><td><strong>Docker Daemon</strong></td><td>AccÃ¨s via socket Unix <code>/var/run/docker.sock</code> montÃ© en volume</td></tr>
-        <tr><td><strong>Stockage</strong></td><td>AccÃ¨s direct au volume <code>/app/backend/data/users/</code> pour les backups</td></tr>
-        <tr><td><strong>MÃ©moire</strong></td><td>RequÃªte l'API Qdrant (<code>:6333</code>) pour la maintenance des vecteurs</td></tr>
+        <tr><td><strong>Docker Daemon</strong></td><td>Accès via socket Unix <code>/var/run/docker.sock</code> monté en volume</td></tr>
+        <tr><td><strong>Stockage</strong></td><td>Accès direct au volume <code>/app/backend/data/users/</code> pour les backups</td></tr>
+        <tr><td><strong>Mémoire</strong></td><td>Requête l'API Qdrant (<code>:6333</code>) pour la maintenance des vecteurs</td></tr>
       </tbody>
     </table>
 
     <h2>1. Monitoring Holistique (Dashboard Gridstack)</h2>
 
     <div class="note-box" style="margin-bottom: 20px;">
-      <h4>ðŸ“¸ DÃ©couverte Visuelle</h4>
-      <p>Pour explorer des captures d'Ã©cran de ces diffÃ©rentes interfaces en conditions rÃ©elles, consultez la section <a href="14_manuel_utilisateur.html#admin-manager-visite">Console d'Infrastructure</a> du Manuel Utilisateur.</p>
+      <h4>📸 Découverte Visuelle</h4>
+      <p>Pour explorer des captures d'écran de ces différentes interfaces en conditions réelles, consultez la section <a href="14_manuel_utilisateur.html#admin-manager-visite">Console d'Infrastructure</a> du Manuel Utilisateur.</p>
     </div>
 
     <p>
-      L'interface de l'Admin Manager repose sur un <strong>Dashboard interactif</strong> propulsÃ© par
-      <code>Gridstack.js</code>. Il permet de rÃ©organiser les widgets en drag &amp; drop et affiche
-      en temps rÃ©el les constantes vitales de l'infrastructure :
+      L'interface de l'Admin Manager repose sur un <strong>Dashboard interactif</strong> propulsé par
+      <code>Gridstack.js</code>. Il permet de réorganiser les widgets en drag &amp; drop et affiche
+      en temps réel les constantes vitales de l'infrastructure :
     </p>
     <ul>
       <li>
-        <strong>Sessions actives :</strong> compteur basÃ© sur les fichiers <code>.db</code>
-        prÃ©sents dans les rÃ©pertoires <code>/chats/</code> de l'Espace Personnel de chaque utilisateur.
+        <strong>Sessions actives :</strong> compteur basé sur les fichiers <code>.db</code>
+        présents dans les répertoires <code>/chats/</code> de l'Espace Personnel de chaque utilisateur.
       </li>
       <li>
-        <strong>IdentitÃ© SSO & Sessions :</strong> supervision des sessions d'authentification centralisÃ©es (ECHO Auth) en temps rÃ©el.
+        <strong>Identité SSO & Sessions :</strong> supervision des sessions d'authentification centralisées (ECHO Auth) en temps réel.
       </li>
       <li>
-        <strong>Volume Vault :</strong> taille totale occupÃ©e par les documents, bases SQLite
-        et fichiers d'identitÃ© - exprimÃ©e en Mo/Go.
+        <strong>Volume Vault :</strong> taille totale occupée par les documents, bases SQLite
+        et fichiers d'identité - exprimée en Mo/Go.
       </li>
       <li>
-        <strong>SantÃ© Docker & WAF :</strong> Ã©tat de chaque conteneur de la stack ECHO, avec redÃ©marrage forcÃ© depuis l'interface. En cas d'activation de BunkerWeb, affichage interactif des bannissements actifs.
+        <strong>Santé Docker & WAF :</strong> état de chaque conteneur de la stack ECHO, avec redémarrage forcé depuis l'interface. En cas d'activation de BunkerWeb, affichage interactif des bannissements actifs.
       </li>
       <li>
-        <strong>MÃ©triques systÃ¨me :</strong> CPU, RAM et I/O disque via <code>psutil</code>.
+        <strong>Métriques système :</strong> CPU, RAM et I/O disque via <code>psutil</code>.
       </li>
     </ul>
 
@@ -86,8 +86,8 @@
 
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
-        <span>Cycle de Vie des DonnÃ©es (Admin Manager)</span>
-        <span>[RÃ‰GULATION & PURGE]</span>
+        <span>Cycle de Vie des Données (Admin Manager)</span>
+        <span>[RÉGULATION & PURGE]</span>
       </div>
       <div class="mermaid">
 flowchart TD
@@ -95,7 +95,7 @@ flowchart TD
   AM --> ORPH[Sync Qdrant<br/>Points orphelins]
   AM --> EPH[Purge Post-Session<br/>echo_session_rag]
   AM --> VAC[Vacuum & Consolidation<br/>SQLite]
-  AM --> BAK[Sauvegardes Ã  chaud<br/>/backups]
+  AM --> BAK[Sauvegardes à chaud<br/>/backups]
 
   classDef job fill:#1e1b4b,stroke:#4338ca,color:#fff
   class AM job
@@ -103,17 +103,17 @@ flowchart TD
     </div>
 
     <p>
-      L'Admin Manager centralise la logique d'<strong>Atrophie SÃ©mantique</strong> - la purge
-      des donnÃ©es devenues obsolÃ¨tes - pour allÃ©ger le traitement en temps rÃ©el des filtres.
+      L'Admin Manager centralise la logique d'<strong>Atrophie Sémantique</strong> - la purge
+      des données devenues obsolètes - pour alléger le traitement en temps réel des filtres.
     </p>
 
     <h3><code>run_semantic_pruning()</code> - Purge TTL Asynchrone</h3>
     <p>
-      L'Ã©lagage se fait dorÃ©navant via un <strong>thread dÃ©diÃ© en arriÃ¨re-plan</strong> (Background Task) pour ne jamais bloquer l'interface d'administration. Le Dashboard intÃ¨gre le monitoring de cet Ã©lagage asynchrone via une <strong>long-polling API</strong> (<code>/api/task_status</code>).
-      Cette fonction itÃ¨re sur tous les points de la collection <code>echo_meta_artifacts</code> dans Qdrant et supprime ceux dont l'Ã¢ge dÃ©passe la durÃ©e de rÃ©tention associÃ©e Ã  leur niveau d'importance :
+      L'élagage se fait dorénavant via un <strong>thread dédié en arrière-plan</strong> (Background Task) pour ne jamais bloquer l'interface d'administration. Le Dashboard intègre le monitoring de cet élagage asynchrone via une <strong>long-polling API</strong> (<code>/api/task_status</code>).
+      Cette fonction itère sur tous les points de la collection <code>echo_meta_artifacts</code> dans Qdrant et supprime ceux dont l'âge dépasse la durée de rétention associée à leur niveau d'importance :
     </p>
     <table>
-      <thead><tr><th>Niveau</th><th>Label</th><th>DurÃ©e TTL</th></tr></thead>
+      <thead><tr><th>Niveau</th><th>Label</th><th>Durée TTL</th></tr></thead>
       <tbody>
         <tr><td>1</td><td>Trivial</td><td>30 jours</td></tr>
         <tr><td>2</td><td>Mineur</td><td>60 jours</td></tr>
@@ -124,102 +124,102 @@ flowchart TD
     </table>
 
     <div class="audit-note">
-      <h4>ðŸ›¡ï¸ Garde-fous API & Base de donnÃ©es</h4>
+      <h4>🛡️ Garde-fous API & Base de données</h4>
       <p>
-        Avant d'initier la purge, le systÃ¨me s'authentifie formellement auprÃ¨s de l'API (obtention d'un jeton JWT) et vÃ©rifie la lisibilitÃ© et la non-vacuitÃ© de la base de donnÃ©es SQLite d'Open WebUI. Si la base est corrompue, inaccessible ou vide, la purge est purement et simplement annulÃ©e pour empÃªcher toute destruction accidentelle de la mÃ©moire vectorielle.
+        Avant d'initier la purge, le système s'authentifie formellement auprès de l'API (obtention d'un jeton JWT) et vérifie la lisibilité et la non-vacuité de la base de données SQLite d'Open WebUI. Si la base est corrompue, inaccessible ou vide, la purge est purement et simplement annulée pour empêcher toute destruction accidentelle de la mémoire vectorielle.
       </p>
     </div>
 
     <h3>Sync Qdrant</h3>
     <p>
-      Ã‰limination des points vectoriels <em>orphelins</em> : points liÃ©s Ã  des
-      <code>user_id</code> ou <code>chat_id</code> qui ont Ã©tÃ© supprimÃ©s dans Open WebUI
+      Élimination des points vectoriels <em>orphelins</em> : points liés à des
+      <code>user_id</code> ou <code>chat_id</code> qui ont été supprimés dans Open WebUI
       mais dont les vecteurs subsistent dans Qdrant.
     </p>
 
     <h3>Purge Post-Session (<code>echo_session_rag</code>)</h3>
     <p>
-      Suppression de tous les vecteurs appartenant Ã  un <code>chat_id</code> terminÃ© dans la
-      collection <code>echo_session_rag</code>. Cette purge garantit que les donnÃ©es intermÃ©diaires
-      (analyses web, distillations) ne s'accumulent pas indÃ©finiment.
+      Suppression de tous les vecteurs appartenant à un <code>chat_id</code> terminé dans la
+      collection <code>echo_session_rag</code>. Cette purge garantit que les données intermédiaires
+      (analyses web, distillations) ne s'accumulent pas indéfiniment.
     </p>
 
     <h3>Vacuum & Consolidation SQLite</h3>
     <p>
-      Optimisation physique rÃ©guliÃ¨re des bases de donnÃ©es de session (commande SQL <code>VACUUM</code>)
-      pour rÃ©cupÃ©rer l'espace disque des enregistrements supprimÃ©s et maintenir les performances
-      d'accÃ¨s. L'Admin Manager exÃ©cute Ã©galement une consolidation des fragments de bases en mode WAL. 
-      Le systÃ¨me introduit le script automatisÃ© <code>clean-echo.sh</code> et centralise dÃ©sormais l'<strong>Autosafety Docker</strong> : politique de logs stricte (max 10 Mo) et cron de nettoyage hebdomadaire. Le dashboard <code>server.py</code> permet d'invoquer manuellement une purge profonde (Cache APT, build cache, images orphelines) pour Ã©radiquer tout risque de saturation disque.
+      Optimisation physique régulière des bases de données de session (commande SQL <code>VACUUM</code>)
+      pour récupérer l'espace disque des enregistrements supprimés et maintenir les performances
+      d'accès. L'Admin Manager exécute également une consolidation des fragments de bases en mode WAL. 
+      Le système introduit le script automatisé <code>clean-echo.sh</code> et centralise désormais l'<strong>Autosafety Docker</strong> : politique de logs stricte (max 10 Mo) et cron de nettoyage hebdomadaire. Le dashboard <code>server.py</code> permet d'invoquer manuellement une purge profonde (Cache APT, build cache, images orphelines) pour éradiquer tout risque de saturation disque.
     </p>
 
-    <h2>3. SÃ©curitÃ© SSO et Purge Dynamique</h2>
+    <h2>3. Sécurité SSO et Purge Dynamique</h2>
     
     <p>
-      L'Admin Manager possÃ¨de une intÃ©gration forte avec ECHO Auth (IdP local). Les actions d'administration dÃ©clenchent des rÃ©percussions immÃ©diates sur l'ensemble du systÃ¨me :
+      L'Admin Manager possède une intégration forte avec ECHO Auth (IdP local). Les actions d'administration déclenchent des répercussions immédiates sur l'ensemble du système :
     </p>
     <ul>
       <li>
-        <strong>RÃ©vocation Dynamique des Sessions :</strong> La dÃ©sactivation d'un compte, la rÃ©initialisation de son MFA ou sa suppression entraÃ®nent instantanÃ©ment la destruction de ses jetons de session actifs en mÃ©moire (IdP), forÃ§ant une reconnexion.
+        <strong>Révocation Dynamique des Sessions :</strong> La désactivation d'un compte, la réinitialisation de son MFA ou sa suppression entraînent instantanément la destruction de ses jetons de session actifs en mémoire (IdP), forçant une reconnexion.
       </li>
       <li>
-        <strong>Tunnel SSH Antigravity (PKCE) :</strong> Le systÃ¨me intÃ¨gre un serveur SSH Ã©phÃ©mÃ¨re qui expose dynamiquement les ports 8020 Ã  8024 pour le flux d'autorisation OAuth2 PKCE (RFC 7636).
+        <strong>Tunnel SSH Antigravity (PKCE) :</strong> Le système intègre un serveur SSH éphémère qui expose dynamiquement les ports 8020 à 8024 pour le flux d'autorisation OAuth2 PKCE (RFC 7636).
       </li>
       <li>
-        <strong>BunkerWeb Forward Auth :</strong> ECHO Auth est couplÃ© au WAF BunkerWeb via l'endpoint <code>/api/verify</code>, protÃ©geant l'ensemble de la pile derriÃ¨re une authentification forte (TOTP) sans exposer directement les services.
+        <strong>BunkerWeb Forward Auth :</strong> ECHO Auth est couplé au WAF BunkerWeb via l'endpoint <code>/api/verify</code>, protégeant l'ensemble de la pile derrière une authentification forte (TOTP) sans exposer directement les services.
       </li>
       <li>
-        <strong>Purge de Base de DonnÃ©es Exhaustive :</strong> Lorsqu'un utilisateur est supprimÃ© du systÃ¨me, l'Admin Manager n'efface pas uniquement la table <code>user</code> ou <code>chat</code>. Par une introspection dynamique (<em>sqlite_master</em> et <em>PRAGMA table_info</em>), il scrute <strong>toutes les tables</strong> du moteur Open WebUI possÃ©dant une colonne <code>user_id</code> et supprime les enregistrements orphelins (fichiers, outils personnalisÃ©s, modÃ¨les, mÃ©moires). Cette purge chirurgicale garantit zÃ©ro fuite de donnÃ©es (Data Leak) en base.
+        <strong>Purge de Base de Données Exhaustive :</strong> Lorsqu'un utilisateur est supprimé du système, l'Admin Manager n'efface pas uniquement la table <code>user</code> ou <code>chat</code>. Par une introspection dynamique (<em>sqlite_master</em> et <em>PRAGMA table_info</em>), il scrute <strong>toutes les tables</strong> du moteur Open WebUI possédant une colonne <code>user_id</code> et supprime les enregistrements orphelins (fichiers, outils personnalisés, modèles, mémoires). Cette purge chirurgicale garantit zéro fuite de données (Data Leak) en base.
       </li>
     </ul>
 
-    <h2>4. Sauvegardes et Restauration Ã  Chaud</h2>
+    <h2>4. Sauvegardes et Restauration à Chaud</h2>
 
     <p>
-      Le module de backup garantit une reprise d'activitÃ© aprÃ¨s sinistre :
+      Le module de backup garantit une reprise d'activité après sinistre :
     </p>
     <ul>
       <li>
-        <strong>ProcÃ©dure :</strong> arrÃªt temporaire du conteneur Open WebUI Core, compression
-        atomique (<code>tar.gz</code>) du rÃ©pertoire <code>/app/backend/data/</code>, redÃ©marrage
-        immÃ©diat. L'interruption de service est de l'ordre de quelques secondes.
+        <strong>Procédure :</strong> arrêt temporaire du conteneur Open WebUI Core, compression
+        atomique (<code>tar.gz</code>) du répertoire <code>/app/backend/data/</code>, redémarrage
+        immédiat. L'interruption de service est de l'ordre de quelques secondes.
       </li>
       <li>
         <strong>Rotation :</strong> nettoyage automatique des anciennes archives selon un nombre
-        limite ou un Ã¢ge maximum (configurable). Les archives sont stockÃ©es dans
+        limite ou un âge maximum (configurable). Les archives sont stockées dans
         <code>/opt/ECHO/backups/</code>.
       </li>
     </ul>
 
-    <h2>4. Surface de SÃ©curitÃ©</h2>
+    <h2>4. Surface de Sécurité</h2>
 
     <ul>
       <li>
-        <strong>Reset Auth :</strong> purge instantanÃ©e de tous les tokens Google enregistrÃ©s
+        <strong>Reset Auth :</strong> purge instantanée de tous les tokens Google enregistrés
         dans les fichiers <code>identity.db</code> de l'Espace Personnel.
       </li>
       <li>
-        <strong>Rotation de mot de passe :</strong> modification du mot de passe de l'hÃ´te
-        systÃ¨me via un pont SSH sÃ©curisÃ© utilisant <code>paramiko</code>.
+        <strong>Rotation de mot de passe :</strong> modification du mot de passe de l'hôte
+        système via un pont SSH sécurisé utilisant <code>paramiko</code>.
       </li>
       <li>
-        <strong>Secret MaÃ®tre :</strong> l'endpoint <code>/api/admin/password</code> permet
-        la rÃ©cupÃ©ration sÃ©curisÃ©e du mot de passe administrateur Open WebUI gÃ©nÃ©rÃ© lors du
-        bootstrap (stockÃ© dans <code>/opt/ECHO/.secrets</code>).
+        <strong>Secret Maître :</strong> l'endpoint <code>/api/admin/password</code> permet
+        la récupération sécurisée du mot de passe administrateur Open WebUI généré lors du
+        bootstrap (stocké dans <code>/opt/ECHO/.secrets</code>).
       </li>
     </ul>
 
     <div class="tech-spec">
-      <h4>âš™ï¸ Isolation PrivilÃ©giÃ©e</h4>
+      <h4>⚙️ Isolation Privilégiée</h4>
       <p>
-        Bien que l'Admin Manager ait accÃ¨s au Docker Daemon (via socket Unix), il n'est jamais
-        exposÃ© directement sur le WAN par dÃ©faut. Son accÃ¨s est filtrÃ© par BunkerWeb (WAF) et
-        nÃ©cessite une authentification forte. En dÃ©ploiement local pur, il n'est accessible
-        que depuis le rÃ©seau bridge Docker interne ou le proxy inverse sÃ©curisÃ©.
+        Bien que l'Admin Manager ait accès au Docker Daemon (via socket Unix), il n'est jamais
+        exposé directement sur le WAN par défaut. Son accès est filtré par BunkerWeb (WAF) et
+        nécessite une authentification forte. En déploiement local pur, il n'est accessible
+        que depuis le réseau bridge Docker interne ou le proxy inverse sécurisé.
       </p>
     </div>
 
     <div class="transition-text">
-      <a href="11_infrastructure.html">&larr; PÃ©riphÃ©riques & Infra</a>
+      <a href="11_infrastructure.html">&larr; Périphériques & Infra</a>
       &nbsp;&nbsp;
       <a href="11b_echo_auth_sso.html">ECHO Auth SSO & MFA &rarr;</a>
     </div>

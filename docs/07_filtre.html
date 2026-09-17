@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -13,42 +13,42 @@
   </script>
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
     <h1>7. Les Filtres (Conscience & Mémoire)</h1>
 
     <p>
       En termes Open WebUI, un <em>Filter</em> est un middleware Python qui intercepte les messages
-      <strong>avant</strong> (hook <code>inlet</code>) ou <strong>aprÃ¨s</strong> (hook <code>outlet</code>)
-      qu'ils atteignent le Pipe. ECHO en dÃ©ploie trois, aux rÃ´les complÃ©mentaires :
-      <code>new_context_filter.py</code> prÃ©pare le contexte en amont,
-      <code>conversation_rag_filter.py</code> consolide la mÃ©moire en aval, et
-      <code>edge_embed_bridge_filter.py</code> gÃ¨re l'injection de l'infÃ©rence distante WebGPU.
+      <strong>avant</strong> (hook <code>inlet</code>) ou <strong>après</strong> (hook <code>outlet</code>)
+      qu'ils atteignent le Pipe. ECHO en déploie trois, aux rôles complémentaires :
+      <code>new_context_filter.py</code> prépare le contexte en amont,
+      <code>conversation_rag_filter.py</code> consolide la mémoire en aval, et
+      <code>edge_embed_bridge_filter.py</code> gère l'injection de l'inférence distante WebGPU.
     </p>
 
     <div class="didactic-box">
-      <h4>ðŸ’¡ Pourquoi trois filtres ?</h4>
+      <h4>💡 Pourquoi trois filtres ?</h4>
       <p>
-        La sÃ©paration des responsabilitÃ©s est dÃ©libÃ©rÃ©e. Le filtre de contexte opÃ¨re
-        <strong>avant</strong> la gÃ©nÃ©ration : il analyse les fichiers, construit le Draft et injecte
-        l'AEC. Le filtre mÃ©moire opÃ¨re <strong>aprÃ¨s</strong> la gÃ©nÃ©ration : il distille la rÃ©ponse,
-        la vectorise et l'archive dans Qdrant. Cette architecture garantit que chaque opÃ©ration
-        coÃ»teuse (vectorisation, distillation) n'est jamais sur le chemin critique de la gÃ©nÃ©ration.
+        La séparation des responsabilités est délibérée. Le filtre de contexte opère
+        <strong>avant</strong> la génération : il analyse les fichiers, construit le Draft et injecte
+        l'AEC. Le filtre mémoire opère <strong>après</strong> la génération : il distille la réponse,
+        la vectorise et l'archive dans Qdrant. Cette architecture garantit que chaque opération
+        coûteuse (vectorisation, distillation) n'est jamais sur le chemin critique de la génération.
       </p>
     </div>
 
     <h2>Filtre 1 - <code>new_context_filter.py</code></h2>
 
     <p>
-      Ce filtre est la porte d'entrÃ©e cognitive d'ECHO. Il opÃ¨re en deux phases :
-      en <strong>Inlet</strong> (avant le Pipe) pour prÃ©parer le Draft, et en <strong>Outlet</strong>
-      (aprÃ¨s gÃ©nÃ©ration) pour masquer les secrets.
+      Ce filtre est la porte d'entrée cognitive d'ECHO. Il opère en deux phases :
+      en <strong>Inlet</strong> (avant le Pipe) pour préparer le Draft, et en <strong>Outlet</strong>
+      (après génération) pour masquer les secrets.
     </p>
 
     <h3>Phase Inlet - Pipeline d'aiguillage multimodal</h3>
     <p>
-      Pour chaque fichier joint par l'utilisateur, le filtre dÃ©termine la stratÃ©gie de traitement
+      Pour chaque fichier joint par l'utilisateur, le filtre détermine la stratégie de traitement
       en fonction du type MIME (via <code>get_gemini_mime</code>) et de la taille
       (seuil <code>MAX_DIRECT_TEXT_SIZE</code> = 256 Ko) :
     </p>
@@ -61,28 +61,28 @@
       <div class="mermaid">
 flowchart LR
   U([Utilisateur]) -->|Upload + Texte| OWUI[Open WebUI]
-  OWUI -->|hook.inlet| F5["ðŸŒ’ app_drawer_filter.py (Filtre 5)"]
-  F5 --> F4["ðŸŒ’ user_native_context_filter.py (Filtre 4)"]
-  F4 --> F["ðŸŒ’ new_context_filter.py (Filtre 1)"]
+  OWUI -->|hook.inlet| F5["🌒 app_drawer_filter.py (Filtre 5)"]
+  F5 --> F4["🌒 user_native_context_filter.py (Filtre 4)"]
+  F4 --> F["🌒 new_context_filter.py (Filtre 1)"]
 
   F --> AN{Analyse<br/>MIME + Taille}
 
-  AN -->|"Image/Audio/PDF/VidÃ©o<br/>â‰¤ 256 Ko"| B64["ðŸ“Ž Encapsulation Base64<br/>(inlineData)"]
-  AN -->|"Fichiers Office<br/>(Word/Excel/PPT)"| MID["ðŸ“„ Conversion MarkItDown<br/>+ LITE Vision"]
-  AN -->|"Texte/Code<br/>(ZÃ©ro-RAM)"| CODEX["ðŸ“ DÃ©placement Vault<br/>+ Copie Codex Git"]
+  AN -->|"Image/Audio/PDF/Vidéo<br/>≤ 256 Ko"| B64["📎 Encapsulation Base64<br/>(inlineData)"]
+  AN -->|"Fichiers Office<br/>(Word/Excel/PPT)"| MID["📄 Conversion MarkItDown<br/>+ LITE Vision"]
+  AN -->|"Texte/Code<br/>(Zéro-RAM)"| CODEX["📝 Déplacement Vault<br/>+ Copie Codex Git"]
   
   MID -->|"Texte Markdown"| EXTR
-  CODEX -->|"Si â‰¤ 256 Ko"| TXT["ðŸ“ Injection Texte Brut"]
-  CODEX -->|"Si > 256 Ko"| EXTR["ðŸ” Extraction Transmodale<br/>(API ou Lecture Locale)"]
-  AN -->|"MultimÃ©dia > 256 Ko"| EXTR
+  CODEX -->|"Si ≤ 256 Ko"| TXT["📝 Injection Texte Brut"]
+  CODEX -->|"Si > 256 Ko"| EXTR["🔍 Extraction Transmodale<br/>(API ou Lecture Locale)"]
+  AN -->|"Multimédia > 256 Ko"| EXTR
   
-  EXTR -->|"Texte unifiÃ©"| RAG["ðŸ§± MÃ©moire VectorisÃ©e de Session & SynthÃ¨se GuidÃ©e par RAG (O(1))<br/>(Qdrant echo_session_rag)"]
-  AN -->|"DÃ©jÃ  dans le Vault<br/>(file_id dÃ©tectÃ©)"| VAULT["ðŸ“‚ RÃ©fÃ©rence Vault"]
+  EXTR -->|"Texte unifié"| RAG["🧱 Mémoire Vectorisée de Session & Synthèse Guidée par RAG (O(1))<br/>(Qdrant echo_session_rag)"]
+  AN -->|"Déjà dans le Vault<br/>(file_id détecté)"| VAULT["📂 Référence Vault"]
 
-  OWUI -->|"Images inline<br/>(drag/paste)"| INLINE["ðŸ–¼ï¸ Extraction OrdonnÃ©e<br/>(texte + images entrelacÃ©s)"]
+  OWUI -->|"Images inline<br/>(drag/paste)"| INLINE["🖼️ Extraction Ordonnée<br/>(texte + images entrelacés)"]
 
-  B64 & TXT & RAG & VAULT & INLINE --> DRAFT["ðŸ“¦ Draft SÃ©mantique<br/>(_echo_user_parts_draft)"]
-  DRAFT -->|"MÃ©tadonnÃ©es<br/>+ AEC YAML"| PIPE["âš™ï¸ Pipe Engine"]
+  B64 & TXT & RAG & VAULT & INLINE --> DRAFT["📦 Draft Sémantique<br/>(_echo_user_parts_draft)"]
+  DRAFT -->|"Métadonnées<br/>+ AEC YAML"| PIPE["⚙️ Pipe Engine"]
 
   classDef neutral fill:#1e293b,stroke:#475569,color:#f8fafc
   classDef rag fill:#064e3b,stroke:#10b981,color:#f8fafc
@@ -95,11 +95,11 @@ flowchart LR
       </div>
     </div>
 
-    <h3>Extraction ordonnÃ©e des parts multimodales</h3>
+    <h3>Extraction ordonnée des parts multimodales</h3>
     <p>
       Lorsqu'un utilisateur colle ou glisse des images directement dans le champ de saisie
       d'Open WebUI (sans utiliser le file picker), OWUI construit un <code>content</code>
-      de type <strong>liste multipart</strong> au lieu d'une simple chaÃ®ne :
+      de type <strong>liste multipart</strong> au lieu d'une simple chaîne :
     </p>
 
     <div class="code-header">Format multipart OWUI - content liste</div>
@@ -110,58 +110,58 @@ flowchart LR
  {"type": "text", "text": "Compare-les."}]</code></pre>
 
     <p>
-      Le filtre itÃ¨re sur cette liste en <strong>prÃ©servant l'ordre d'origine</strong> :
+      Le filtre itère sur cette liste en <strong>préservant l'ordre d'origine</strong> :
       chaque part <code>text</code> et chaque part <code>image_url</code> est extraite
-      sÃ©quentiellement dans <code>ordered_user_parts</code>, puis injectÃ©e dans le Draft.
-      Cette extraction ordonnÃ©e garantit que l'entrelacement texte/image voulu par
-      l'utilisateur est fidÃ¨lement reproduit dans le contexte envoyÃ© Ã  Gemini.
+      séquentiellement dans <code>ordered_user_parts</code>, puis injectée dans le Draft.
+      Cette extraction ordonnée garantit que l'entrelacement texte/image voulu par
+      l'utilisateur est fidèlement reproduit dans le contexte envoyé à Gemini.
     </p>
 
     <div class="note-box">
       <h4>âš  Distinction fichiers inline vs. file picker</h4>
       <p>
-        Les <strong>images inline</strong> (collÃ©es/glissÃ©es) arrivent dans
+        Les <strong>images inline</strong> (collées/glissées) arrivent dans
         <code>messages[-1]["content"]</code> (liste). Les <strong>fichiers du file picker</strong>
-        arrivent dans <code>body["files"]</code> et sont traitÃ©s par
-        <code>_process_file_task()</code>. Les deux chemins sont fusionnÃ©s dans le Draft
-        final : parts ordonnÃ©es en premier, rÃ©sultats fichiers ensuite.
+        arrivent dans <code>body["files"]</code> et sont traités par
+        <code>_process_file_task()</code>. Les deux chemins sont fusionnés dans le Draft
+        final : parts ordonnées en premier, résultats fichiers ensuite.
       </p>
     </div>
 
-    <h3>MÃ©moire VectorisÃ©e de Session Transmodale et SynthÃ¨se GuidÃ©e par RAG (O(1))</h3>
+    <h3>Mémoire Vectorisée de Session Transmodale et Synthèse Guidée par RAG (O(1))</h3>
     <p>
-      Lorsqu'un fichier dÃ©passe <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko) ou nÃ©cessite un traitement complexe, le filtre dÃ©clenche
-      un processus approfondi en arriÃ¨re-plan : la <strong>MÃ©moire VectorisÃ©e de Session</strong>. 
-      La premiÃ¨re phase est l'<strong>Extraction Transmodale</strong> : les fichiers textuels sont lus localement. Les fichiers Office (Word, Excel, PowerPoint) sont automatiquement convertis en Markdown via <strong>MarkItDown</strong> (avec description textuelle des images extraites par le modÃ¨le LITE). Les fichiers multimÃ©dias complexes (vidÃ©os) sont transcrits textuellement via API.
+      Lorsqu'un fichier dépasse <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko) ou nécessite un traitement complexe, le filtre déclenche
+      un processus approfondi en arrière-plan : la <strong>Mémoire Vectorisée de Session</strong>. 
+      La première phase est l'<strong>Extraction Transmodale</strong> : les fichiers textuels sont lus localement. Les fichiers Office (Word, Excel, PowerPoint) sont automatiquement convertis en Markdown via <strong>MarkItDown</strong> (avec description textuelle des images extraites par le modèle LITE). Les fichiers multimédias complexes (vidéos) sont transcrits textuellement via API.
     </p>
     <p>
-      Le texte brut unifiÃ© est immÃ©diatement vectorisÃ© par <code>Harrier-OSS</code> (dimension dynamiqued) et stockÃ© dans 
-      la collection <code>echo_session_rag</code>. Ensuite, un processus de <strong>SynthÃ¨se GuidÃ©e par RAG (O(1))</strong>
-      (introduit en v7.37) est exÃ©cutÃ©. PlutÃ´t que de distiller le document de bout en bout, le systÃ¨me gÃ©nÃ¨re une requÃªte vectorielle stratÃ©gique (<em>"Introduction, rÃ©sumÃ© exÃ©cutif, conclusion, thÃ¨mes clÃ©s..."</em>) pour extraire dynamiquement les <code>SMART_CONTEXT_CHUNK_LIMIT</code> (dÃ©faut: 10) passages les plus pertinents depuis la base Qdrant. Le rÃ©sumÃ© est ensuite gÃ©nÃ©rÃ© via l'API Gemini exclusivement Ã  partir de ces extraits. Un <em>Fast-path</em> (court-circuit) est appliquÃ© si le texte est suffisamment court (<code>ECHO_MR_SUMMARY_MAX_WORDS</code>).
+      Le texte brut unifié est immédiatement vectorisé par <code>Harrier-OSS</code> (dimension dynamiqued) et stocké dans 
+      la collection <code>echo_session_rag</code>. Ensuite, un processus de <strong>Synthèse Guidée par RAG (O(1))</strong>
+      (introduit en v7.37) est exécuté. Plutôt que de distiller le document de bout en bout, le système génère une requête vectorielle stratégique (<em>"Introduction, résumé exécutif, conclusion, thèmes clés..."</em>) pour extraire dynamiquement les <code>SMART_CONTEXT_CHUNK_LIMIT</code> (défaut: 10) passages les plus pertinents depuis la base Qdrant. Le résumé est ensuite généré via l'API Gemini exclusivement à partir de ces extraits. Un <em>Fast-path</em> (court-circuit) est appliqué si le texte est suffisamment court (<code>ECHO_MR_SUMMARY_MAX_WORDS</code>).
     </p>
     <p>
-      Le modÃ¨le principal reÃ§oit uniquement le rÃ©sumÃ© exhaustif et le <code>source_id</code>, son statut devenant <code>vectorized_sum_up</code>.
-      Il peut interroger la donnÃ©e brute avec prÃ©cision via l'outil <code>search_sessions_context(source_id, query)</code> 
-      sans saturer sa fenÃªtre de contexte.
+      Le modèle principal reçoit uniquement le résumé exhaustif et le <code>source_id</code>, son statut devenant <code>vectorized_sum_up</code>.
+      Il peut interroger la donnée brute avec précision via l'outil <code>search_sessions_context(source_id, query)</code> 
+      sans saturer sa fenêtre de contexte.
     </p>
 
-    <h3>Ingestion Codex (ZÃ©ro-RAM)</h3>
+    <h3>Ingestion Codex (Zéro-RAM)</h3>
     <p>
-      Les fichiers code et texte pris en charge par le Codex ne sont plus conservÃ©s en mÃ©moire vive. Ils sont instantanÃ©ment dÃ©placÃ©s (snapshot immutable) dans un espace Vault sÃ©curisÃ© puis copiÃ©s dans le dÃ©pÃ´t Git local du Codex pour Ã©dition directe.
+      Les fichiers code et texte pris en charge par le Codex ne sont plus conservés en mémoire vive. Ils sont instantanément déplacés (snapshot immutable) dans un espace Vault sécurisé puis copiés dans le dépôt Git local du Codex pour édition directe.
     </p>
 
     <h3>Le bloc AEC (<code>environnement_contexte</code>)</h3>
     <p>
-      Ã€ la fin de la phase Inlet, le filtre gÃ©nÃ¨re un instantanÃ© plat au format YAML et l'encapsule dans les mÃ©tadonnÃ©es
-      du message (via <code>_dict_to_yaml_aec</code>). Ce bloc, dÃ©limitÃ© par des balises XML structurelles <code>&lt;AEC_environnement_contexte&gt;</code>, constitue la
-      <em>proprioception</em> du modÃ¨le pour le tour courant.
+      À la fin de la phase Inlet, le filtre génère un instantané plat au format YAML et l'encapsule dans les métadonnées
+      du message (via <code>_dict_to_yaml_aec</code>). Ce bloc, délimité par des balises XML structurelles <code>&lt;AEC_environnement_contexte&gt;</code>, constitue la
+      <em>proprioception</em> du modèle pour le tour courant.
     </p>
 
     <div class="code-header">Structure du bloc AEC (<code>environnement_contexte</code> & <code>evenement_systeme</code>)</div>
     <pre><code>&lt;AEC_environnement_contexte&gt;
 version_framework_echo: "5.199.38"
-modÃ¨le_actuel: "##MODEL_ID##"
-modÃ¨le_origine: "##MODEL_ORIGIN##"
+modèle_actuel: "##MODEL_ID##"
+modèle_origine: "##MODEL_ORIGIN##"
 nom_utilisateur: "anonyme"
 localisation: "Paris, France"
 timezone: "Europe/Paris"
@@ -174,102 +174,102 @@ date_et_heure: "2026-08-24 14:00"
   type: "vectorized_sum_up"
   mime: "application/pdf"
   source_id: "U_abc123_C_xyz789_T_1748246400"
-> Utilisez `query_registry` pour consulter l'Ã©tat complet des ressources.
+> Utilisez `query_registry` pour consulter l'état complet des ressources.
 &lt;/AEC_evenement_systeme&gt;
 
 &lt;smart_context filename="rapport.pdf" mime_type="application/pdf" mode="vectorized_sum_up" source_id="U_abc123_C_xyz789_T_1748246400"&gt;
-[RÃ©sumÃ© exhaustif et structurÃ© gÃ©nÃ©rÃ© par SynthÃ¨se GuidÃ©e par RAG]
+[Résumé exhaustif et structuré généré par Synthèse Guidée par RAG]
 
-> âš™ï¸ INFORMATION SYSTÃˆME : Les dÃ©tails du fichier sont vectorisÃ©s et accessibles via `search_sessions_context`
+> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_sessions_context`
 &lt;/AEC_smart_context&gt;</code></pre>
 
     <div class="note-box">
-      <h4>RÃ¨gle d'Or - Registre UnifiÃ©</h4>
+      <h4>Règle d'Or - Registre Unifié</h4>
       <p>
-        Les registres massifs (`registre_fichiers`, etc.) le modÃ¨le <strong>doit</strong> utiliser dynamiquement l'outil <code>query_registry</code> pour connaÃ®tre l'Ã©tat du systÃ¨me et de ses ressources (Codex, fichiers, plans). Seul un delta Ã©vÃ¨nementiel (<code>&lt;AEC_evenement_systeme&gt;</code>) le prÃ©vient des actions asynchrones ou des fichiers du tour courant.
+        Les registres massifs (`registre_fichiers`, etc.) le modèle <strong>doit</strong> utiliser dynamiquement l'outil <code>query_registry</code> pour connaître l'état du système et de ses ressources (Codex, fichiers, plans). Seul un delta évènementiel (<code>&lt;AEC_evenement_systeme&gt;</code>) le prévient des actions asynchrones ou des fichiers du tour courant.
       </p>
     </div>
 
     <h3>Phase Outlet - Masquage chirurgical des secrets</h3>
     <p>
-      AprÃ¨s la gÃ©nÃ©ration, le filtre balaie le texte de la rÃ©ponse via une expression rÃ©guliÃ¨re
-      correspondant au format des clÃ©s API Google (<code>(?:AIza|AQ\.)[0-9A-Za-z_-]{35,}</code>).
-      Toute clÃ© dÃ©tectÃ©e est remplacÃ©e par la chaÃ®ne
-      <code>[CLÃ‰ API GOOGLE MASQUÃ‰E PAR SÃ‰CURITÃ‰]</code>. Ce mÃ©canisme garantit qu'aucun
-      secret ne Â« fuit Â» vers l'interface visuelle quelle que soit la rÃ©ponse du modÃ¨le.
+      Après la génération, le filtre balaie le texte de la réponse via une expression régulière
+      correspondant au format des clés API Google (<code>(?:AIza|AQ\.)[0-9A-Za-z_-]{35,}</code>).
+      Toute clé détectée est remplacée par la chaîne
+      <code>[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]</code>. Ce mécanisme garantit qu'aucun
+      secret ne « fuit » vers l'interface visuelle quelle que soit la réponse du modèle.
     </p>
 
     <h2>Filtre 2 - <code>conversation_rag_filter.py</code></h2>
 
     <p>
-      Ce filtre ne traite que la phase <strong>Outlet</strong> (post-gÃ©nÃ©ration). Son objectif unique est d'injecter sans latence l'historique conversationnel dans la mÃ©moire de travail vectorisÃ©e de la session (<code>echo_session_rag</code>), afin d'allÃ©ger le contexte principal et de permettre l'exploration d'historiques profonds via le RAG.
+      Ce filtre ne traite que la phase <strong>Outlet</strong> (post-génération). Son objectif unique est d'injecter sans latence l'historique conversationnel dans la mémoire de travail vectorisée de la session (<code>echo_session_rag</code>), afin d'alléger le contexte principal et de permettre l'exploration d'historiques profonds via le RAG.
     </p>
 
-    <h3>FenÃªtre de tour dynamique et Validation O(1) ZÃ©ro-Latence</h3>
+    <h3>Fenêtre de tour dynamique et Validation O(1) Zéro-Latence</h3>
     <p>
-      Le dÃ©clenchement de l'indexation s'effectue automatiquement Ã  chaque fin de tour (lorsque l'assistant a terminÃ© sa rÃ©ponse et ses actions).
+      Le déclenchement de l'indexation s'effectue automatiquement à chaque fin de tour (lorsque l'assistant a terminé sa réponse et ses actions).
     </p>
     <p>
-      Le filtre extrait dynamiquement la fenÃªtre complÃ¨te du tour courant et lance l'indexation
-      en arriÃ¨re-plan via <code>asyncio.create_task</code>. Pour empÃªcher la rÃ©indexation redondante sans bloquer le flux, le systÃ¨me applique un mÃ©canisme de <strong>Validation O(1) en amont</strong> : il interroge directement le flag boolÃ©en <code>is_embedded</code> de la table SQLite <code>message_shadows</code>. L'ancien systÃ¨me de fenÃªtre glissante a Ã©tÃ© totalement supprimÃ© au profit de cette architecture stateless ZÃ©ro-RAM.
+      Le filtre extrait dynamiquement la fenêtre complète du tour courant et lance l'indexation
+      en arrière-plan via <code>asyncio.create_task</code>. Pour empêcher la réindexation redondante sans bloquer le flux, le système applique un mécanisme de <strong>Validation O(1) en amont</strong> : il interroge directement le flag booléen <code>is_embedded</code> de la table SQLite <code>message_shadows</code>. L'ancien système de fenêtre glissante a été totalement supprimé au profit de cette architecture stateless Zéro-RAM.
     </p>
 
-    <h3>Pipeline ZÃ©ro-LLM et echo_ingestion.py</h3>
-    <p>Pipeline d'Ingestion ZÃ©ro-RAM asynchrone modulaire pour la base RAG. GÃ¨re de faÃ§on dynamique les fichiers entrants ("dynamic file handling"), les convertit via MarkItDown et les indexe via traitement hybride.</p>
+    <h3>Pipeline Zéro-LLM et echo_ingestion.py</h3>
+    <p>Pipeline d'Ingestion Zéro-RAM asynchrone modulaire pour la base RAG. Gère de façon dynamique les fichiers entrants ("dynamic file handling"), les convertit via MarkItDown et les indexe via traitement hybride.</p>
     <p>
-      Le fonctionnement de ce filtre a Ã©tÃ© radicalement simplifiÃ© et optimisÃ© par rapport Ã  son prÃ©dÃ©cesseur (qui gÃ©rait la distillation long terme). Le processus actuel est le suivant :
+      Le fonctionnement de ce filtre a été radicalement simplifié et optimisé par rapport à son prédécesseur (qui gérait la distillation long terme). Le processus actuel est le suivant :
     </p>
     <ol>
       <li>
-        <strong>Formatage direct et Filtre Anti-Base64 :</strong> Les messages de la fenÃªtre sont formatÃ©s en texte brut. Le filtre assure une extraction textuelle stricte des messages multipart, bloquant spÃ©cifiquement l'ingestion accidentelle de payloads Base64 (images) vers la base vectorielle afin de prÃ©server l'intÃ©gritÃ© et l'espace mÃ©moire.
+        <strong>Formatage direct et Filtre Anti-Base64 :</strong> Les messages de la fenêtre sont formatés en texte brut. Le filtre assure une extraction textuelle stricte des messages multipart, bloquant spécifiquement l'ingestion accidentelle de payloads Base64 (images) vers la base vectorielle afin de préserver l'intégrité et l'espace mémoire.
       </li>
       <li>
-        <strong>Injection Asynchrone :</strong> Le texte formatÃ© est transmis directement Ã  la mÃ©thode <code>index_text_in_ephemeral_rag</code> (avec l'identifiant rÃ©servÃ© <code>SESSION_RAG_CONVERSATION_SOURCE_ID</code>).
+        <strong>Injection Asynchrone :</strong> Le texte formaté est transmis directement à la méthode <code>index_text_in_ephemeral_rag</code> (avec l'identifiant réservé <code>SESSION_RAG_CONVERSATION_SOURCE_ID</code>).
       </li>
       <li>
         <strong>Vectorisation :</strong> L'Embedding Worker (Harrier-OSS) calcule les embeddings et injecte silencieusement les vecteurs et le payload dans Qdrant (<code>echo_session_rag</code>).
       </li>
     </ol>
     <p>
-      Il n'y a <strong>aucun appel LLM</strong> pour rÃ©sumer ces messages. L'exÃ©cution est quasi-instantanÃ©e et prÃ©serve la latence de la rÃ©ponse utilisateur, rendant le RAG de session continuellement Ã  jour pour l'agent de planification ou d'autres outils d'analyse (ex: <code>search_sessions_context</code>).
+      Il n'y a <strong>aucun appel LLM</strong> pour résumer ces messages. L'exécution est quasi-instantanée et préserve la latence de la réponse utilisateur, rendant le RAG de session continuellement à jour pour l'agent de planification ou d'autres outils d'analyse (ex: <code>search_sessions_context</code>).
     </p>
 
     <div class="audit-note">
-      <h4>âœ… DÃ©duplication d'accÃ¨s (DÃ©doublonnage Vault)</h4>
+      <h4>✅ Déduplication d'accès (Dédoublonnage Vault)</h4>
       <p>
-        Avant d'envoyer un fichier au Pipe, le filtre vÃ©rifie si le fichier provient dÃ©jÃ  du Vault
+        Avant d'envoyer un fichier au Pipe, le filtre vérifie si le fichier provient déjà du Vault
         local de l'utilisateur (champ <code>vault_path</code> dans <code>processed_files</code>).
-        Si c'est le cas, seule la rÃ©fÃ©rence est transmise - pas le contenu binaire.
-        Cette optimisation Ã©vite des rÃ©-uploads inutiles pour des fichiers dÃ©jÃ  indexÃ©s.
+        Si c'est le cas, seule la référence est transmise - pas le contenu binaire.
+        Cette optimisation évite des ré-uploads inutiles pour des fichiers déjà indexés.
       </p>
     </div>
 
     <h2>Filtre 3 - <code>edge_embed_bridge_filter.py</code></h2>
 
     <p>
-      Ce filtre intercepte le corps de la page Open WebUI pour injecter dynamiquement le pont JavaScript WebGPU d'infÃ©rence distante (WASM).
-      Il gÃ¨re un <strong>HUD d'initialisation navigateur</strong> natif et une gestion multi-onglets (via l'UUID <code>client_id</code> et la dÃ©tection de <code>visibility</code>).
-      Un mÃ©canisme de blocage actif (conditionnÃ© par la valve <code>WAIT_FOR_EDGE_EMBEDDING</code>) garantit que le client s'est connectÃ© au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
-      Le filtre intÃ¨gre Ã©galement un <strong>Fallback CPU Asynchrone InstantanÃ©</strong> : il annule les requÃªtes <code>asyncio.Future</code> suspendues si la connexion WebSocket est rompue, basculant automatiquement le relais vers l'infrastructure Docker (`Harrier-OSS`).
+      Ce filtre intercepte le corps de la page Open WebUI pour injecter dynamiquement le pont JavaScript WebGPU d'inférence distante (WASM).
+      Il gère un <strong>HUD d'initialisation navigateur</strong> natif et une gestion multi-onglets (via l'UUID <code>client_id</code> et la détection de <code>visibility</code>).
+      Un mécanisme de blocage actif (conditionné par la valve <code>WAIT_FOR_EDGE_EMBEDDING</code>) garantit que le client s'est connecté au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
+      Le filtre intègre également un <strong>Fallback CPU Asynchrone Instantané</strong> : il annule les requêtes <code>asyncio.Future</code> suspendues si la connexion WebSocket est rompue, basculant automatiquement le relais vers l'infrastructure Docker (`Harrier-OSS`).
     </p>
 
 
 
     <h2>Filtre 4 - <code>user_native_context_filter.py</code></h2>
     <p>
-      Filtre d'interception Inlet trÃ¨s prÃ©coce (PrioritÃ© 10). Son rÃ´le est d'hÃ©berger les paramÃ¨tres spÃ©cifiques de l'utilisateur (nom, localisation) et de les injecter de maniÃ¨re sÃ©curisÃ©e dans les mÃ©tadonnÃ©es de la requÃªte.
-      Cette mÃ©canique repose sur l'extraction dynamique de l'identitÃ© via le WAF BunkerWeb, qui propage l'identitÃ© via l'en-tÃªte <code>X-Webui-Name</code>. En dÃ©portant ces informations dans ce filtre purement interface, le cÅ“ur du systÃ¨me (Filtre 1) est protÃ©gÃ© contre toute dÃ©sactivation accidentelle des paramÃ¨tres.
+      Filtre d'interception Inlet très précoce (Priorité 10). Son rôle est d'héberger les paramètres spécifiques de l'utilisateur (nom, localisation) et de les injecter de manière sécurisée dans les métadonnées de la requête.
+      Cette mécanique repose sur l'extraction dynamique de l'identité via le WAF BunkerWeb, qui propage l'identité via l'en-tête <code>X-Webui-Name</code>. En déportant ces informations dans ce filtre purement interface, le cœur du système (Filtre 1) est protégé contre toute désactivation accidentelle des paramètres.
     </p>
 
     <h2>Filtre 5 - <code>app_drawer_filter.py</code></h2>
     <p>
-      Filtre silencieux Inlet de trÃ¨s haute prioritÃ© (1000). Il a pour mission d'injecter nativement le composant Data Island UI "ECHO App Drawer" dans le DOM.
-      Ce HUD flottant (Heads-Up Display) s'interface de maniÃ¨re asynchrone avec les actions des ModÃ¨les, fournissant Ã  l'utilisateur des raccourcis asynchrones et l'accÃ¨s au Vault MCP, le tout sans jamais saturer ou perturber la fenÃªtre de discussion active.
+      Filtre silencieux Inlet de très haute priorité (1000). Il a pour mission d'injecter nativement le composant Data Island UI "ECHO App Drawer" dans le DOM.
+      Ce HUD flottant (Heads-Up Display) s'interface de manière asynchrone avec les actions des Modèles, fournissant à l'utilisateur des raccourcis asynchrones et l'accès au Vault MCP, le tout sans jamais saturer ou perturber la fenêtre de discussion active.
     </p>
 
     <h2>Filtre 6 - <code>tcp_keep_alive_filter.py</code></h2>
     <p>
-      Filtre Inlet spÃ©cialisÃ© visant Ã  maintenir la stabilitÃ© des connexions rÃ©seau prolongÃ©es. Son rÃ´le est d'empÃªcher la dÃ©connexion inopinÃ©e des sessions websocket longues, particuliÃ¨rement critique lors de la sollicitation de workflows Headless N8N ou de consultations Delphi qui nÃ©cessitent des dÃ©lais d'exÃ©cution importants.
+      Filtre Inlet spécialisé visant à maintenir la stabilité des connexions réseau prolongées. Son rôle est d'empêcher la déconnexion inopinée des sessions websocket longues, particulièrement critique lors de la sollicitation de workflows Headless N8N ou de consultations Delphi qui nécessitent des délais d'exécution importants.
     </p>
 
     <div class="transition-text">

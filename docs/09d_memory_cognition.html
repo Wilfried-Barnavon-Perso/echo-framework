@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="MÃ©moire et Cognition ECHO v5 : RAG organique echo_meta_artifacts, MÃ©moire VectorisÃ©e de Session echo_session_rag, systÃ¨me d'importance mÃ©morielle, routage cognitif new_cognitive_level, Agents Cognitifs (Conseil d'Experts) cognitive_agents.py.">
+  <meta name="description" content="Mémoire et Cognition ECHO v5 : RAG organique echo_meta_artifacts, Mémoire Vectorisée de Session echo_session_rag, système d'importance mémorielle, routage cognitif new_cognitive_level, Agents Cognitifs (Conseil d'Experts) cognitive_agents.py.">
   <title>ECHO v5 - 9d. Mémoire & Cognition</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -13,23 +13,23 @@
   </script>
 </head>
 <body>
-  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
   <main>
     <h1>9d. Mémoire & Cognition</h1>
 
     <p>
-      Cette famille d'outils est le cÅ“ur cognitif de l'Arsenal. Elle permet Ã  ECHO de maintenir
-      une mÃ©moire persistante entre les sessions (<em>RAG organique</em>), de gÃ©rer les donnÃ©es
-      de travail Ã  l'intÃ©rieur d'une session (<em>MÃ©moire VectorisÃ©e de Session</em>), et de dÃ©lÃ©guer des tÃ¢ches
-      complexes Ã  un niveau cognitif supÃ©rieur (<em>routage dynamique</em>).
+      Cette famille d'outils est le cœur cognitif de l'Arsenal. Elle permet à ECHO de maintenir
+      une mémoire persistante entre les sessions (<em>RAG organique</em>), de gérer les données
+      de travail à l'intérieur d'une session (<em>Mémoire Vectorisée de Session</em>), et de déléguer des tâches
+      complexes à un niveau cognitif supérieur (<em>routage dynamique</em>).
     </p>
 
     <h2>RAG Organique - <code>echo_meta_artifacts</code></h2>
 
     <p>
-      La mÃ©moire organique est la mÃ©moire Ã  <strong>long terme</strong> d'ECHO. Elle stocke principalement les prÃ©fÃ©rences de l'Utilisateur et l'expÃ©rience du ModÃ¨le (rÃ¨gles, axiomes) dÃ©couvertes au cours des diffÃ©rentes sessions. Ces artÃ©facts
-      y sont stockÃ©s avec un niveau d'importance (1â€“5) qui influence leur rappel et leur durÃ©e de
-      vie via l'algorithme de fusion sÃ©mantique (<code>MEMORY_IMPORTANCE_WEIGHTS</code>). La vectorisation intÃ¨gre une distillation contextuelle automatique par <strong>fenÃªtre de tour dynamique</strong>.
+      La mémoire organique est la mémoire à <strong>long terme</strong> d'ECHO. Elle stocke principalement les préférences de l'Utilisateur et l'expérience du Modèle (règles, axiomes) découvertes au cours des différentes sessions. Ces artéfacts
+      y sont stockés avec un niveau d'importance (1–5) qui influence leur rappel et leur durée de
+      vie via l'algorithme de fusion sémantique (<code>MEMORY_IMPORTANCE_WEIGHTS</code>). La vectorisation intègre une distillation contextuelle automatique par <strong>fenêtre de tour dynamique</strong>.
     </p>
 
     <table>
@@ -37,26 +37,26 @@
       <tbody>
         <tr>
           <td><code>update_meta_artifact(artifact_name, fact, importance)</code></td>
-          <td>Vectorise et stocke un souvenir dans <code>echo_meta_artifacts</code>. Utilise un UUID dÃ©terministe (UUIDv5) basÃ© sur le <code>memory_id</code> technique distillÃ© - un appel avec le mÃªme <code>memory_id</code> <em>remplace</em> le souvenir existant (upsert). ParamÃ¨tre <code>importance</code> de 1 (Trivial) Ã  5 (Axiome), dÃ©faut 3.</td>
+          <td>Vectorise et stocke un souvenir dans <code>echo_meta_artifacts</code>. Utilise un UUID déterministe (UUIDv5) basé sur le <code>memory_id</code> technique distillé - un appel avec le même <code>memory_id</code> <em>remplace</em> le souvenir existant (upsert). Paramètre <code>importance</code> de 1 (Trivial) à 5 (Axiome), défaut 3.</td>
         </tr>
         <tr>
           <td><code>search_meta_artifacts(query, artifact_name, limit, start_date, end_date)</code></td>
-          <td>Outil hybride : Recherche sÃ©mantique ciblÃ©e (si <code>query</code> prÃ©sent) avec <em>Over-fetch</em> Ã—3 et reranking pondÃ©rÃ© (<code>cos_score Ã— MEMORY_IMPORTANCE_WEIGHTS[lvl]</code>), ou <strong>Lecture d'Index/Cartographie</strong> globale (si <code>query</code> absent) pour lister les thÃ¨mes mÃ©morisÃ©s. Filtres temporels disponibles.</td>
+          <td>Outil hybride : Recherche sémantique ciblée (si <code>query</code> présent) avec <em>Over-fetch</em> ×3 et reranking pondéré (<code>cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code>), ou <strong>Lecture d'Index/Cartographie</strong> globale (si <code>query</code> absent) pour lister les thèmes mémorisés. Filtres temporels disponibles.</td>
         </tr>
         <tr>
           <td><code>delete_meta_artifact_item(memory_id)</code></td>
-          <td>Supprime dÃ©finitivement un souvenir de la collection Qdrant par son <code>memory_id</code>. IrrÃ©versible.</td>
+          <td>Supprime définitivement un souvenir de la collection Qdrant par son <code>memory_id</code>. Irréversible.</td>
         </tr>
       </tbody>
     </table>
 
-    <h2>MÃ©moire VectorisÃ©e de Session - <code>echo_session_rag</code></h2>
+    <h2>Mémoire Vectorisée de Session - <code>echo_session_rag</code></h2>
 
     <p>
-      La mÃ©moire Ã©phÃ©mÃ¨re est la <strong>mÃ©moire de travail</strong> d'une session. Elle stocke
-      les distillats de fichiers volumineux, les rÃ©sultats intermÃ©diaires de navigation et toute
-      donnÃ©e volumineuse qu'il serait coÃ»teux de maintenir dans le contexte actif. L'Ã©tat cognitif des ressources est gÃ©rÃ© via le registre d'ingestion (<code>FILE_INGESTION_STATUS</code> : <code>PUT_IN_CONTEXT</code>, <code>VECTORIZED_SUM_UP</code>, <code>INDEXED</code>).
-      Elle est automatiquement purgÃ©e en fin de session par l'Admin Manager.
+      La mémoire éphémère est la <strong>mémoire de travail</strong> d'une session. Elle stocke
+      les distillats de fichiers volumineux, les résultats intermédiaires de navigation et toute
+      donnée volumineuse qu'il serait coûteux de maintenir dans le contexte actif. L'état cognitif des ressources est géré via le registre d'ingestion (<code>FILE_INGESTION_STATUS</code> : <code>PUT_IN_CONTEXT</code>, <code>VECTORIZED_SUM_UP</code>, <code>INDEXED</code>).
+      Elle est automatiquement purgée en fin de session par l'Admin Manager.
     </p>
 
     <table>
@@ -64,27 +64,27 @@
       <tbody>
         <tr>
           <td><code>save_session_context(text, source_id)</code></td>
-          <td>Indexe du texte dans <code>echo_session_rag</code>, partitionÃ© par <code>user_id + chat_id + source_id</code>. Le texte est dÃ©coupÃ© automatiquement en chunks sÃ©mantiques. ParamÃ¨tre <code>text</code> en premier, <code>source_id</code> en second (identifiant natif du fichier).</td>
+          <td>Indexe du texte dans <code>echo_session_rag</code>, partitioné par <code>user_id + chat_id + source_id</code>. Le texte est découpé automatiquement en chunks sémantiques. Paramètre <code>text</code> en premier, <code>source_id</code> en second (identifiant natif du fichier).</td>
         </tr>
         <tr>
           <td><code>search_sessions_context(query, source_id, global_search, limit, start_date, end_date)</code></td>
-          <td>Outil hybride : Recherche RAG sÃ©mantique ciblÃ©e (par dÃ©faut confinÃ©e Ã  la session ou au <code>source_id</code>), extensible via le paramÃ¨tre <code>global_search</code> Ã  l'intÃ©gralitÃ© de l'historique inter-sessions (dÃ©clenchÃ© par des marqueurs temporels comme "hier"). Permet Ã©galement la <strong>Cartographie globale</strong> (si <code>query</code> absent) retournant les sources disponibles, timestamps et tags.</td>
+          <td>Outil hybride : Recherche RAG sémantique ciblée (par défaut confinée à la session ou au <code>source_id</code>), extensible via le paramètre <code>global_search</code> à l'intégralité de l'historique inter-sessions (déclenché par des marqueurs temporels comme "hier"). Permet également la <strong>Cartographie globale</strong> (si <code>query</code> absent) retournant les sources disponibles, timestamps et tags.</td>
         </tr>
         <tr>
           <td><code>delete_session_context_source(source_id)</code></td>
-          <td>Suppression intÃ©grale et irrÃ©versible d'une source du RAG Ã‰phÃ©mÃ¨re.</td>
+          <td>Suppression intégrale et irréversible d'une source du RAG Éphémère.</td>
         </tr>
       </tbody>
     </table>
 
     <div class="note-box">
-      <h4>Usage canonique de la MÃ©moire VectorisÃ©e de Session</h4>
+      <h4>Usage canonique de la Mémoire Vectorisée de Session</h4>
       <p>
-        Lorsque le Filtre effectue l'extraction transmodale et le SynthÃ¨se GuidÃ©e par RAG (O(1)) d'un fichier volumineux, il utilise le
+        Lorsque le Filtre effectue l'extraction transmodale et le Synthèse Guidée par RAG (O(1)) d'un fichier volumineux, il utilise le
         <code>source_id</code> natif (ex. <code>U_abc123_C_xyz789_T_1748246400</code>) et indexe les chunks bruts
-        dans <code>echo_session_rag</code>. Le modÃ¨le reÃ§oit ce <code>source_id</code> dans l'AEC (via <code>evenement_systeme</code> s'il vient d'Ãªtre soumis, ou via l'outil <code>query_registry</code>) et l'utilise pour
-        interroger les dÃ©tails prÃ©cis de la source brute : <code>search_sessions_context("U_abc123_C_xyz789...", "...")</code>.
-        Ce mÃ©canisme de <strong>Smart Context (SynthÃ¨se GuidÃ©e par RAG (O(1)) RAG)</strong> injecte des balises <code>&lt;AEC_smart_context&gt;</code> structurelles dans le prompt, remplaÃ§ant l'injection du fichier complet dans le contexte,
+        dans <code>echo_session_rag</code>. Le modèle reçoit ce <code>source_id</code> dans l'AEC (via <code>evenement_systeme</code> s'il vient d'être soumis, ou via l'outil <code>query_registry</code>) et l'utilise pour
+        interroger les détails précis de la source brute : <code>search_sessions_context("U_abc123_C_xyz789...", "...")</code>.
+        Ce mécanisme de <strong>Smart Context (Synthèse Guidée par RAG (O(1)) RAG)</strong> injecte des balises <code>&lt;AEC_smart_context&gt;</code> structurelles dans le prompt, remplaçant l'injection du fichier complet dans le contexte,
         qui serait prohibitive en tokens.
       </p>
     </div>
@@ -92,20 +92,20 @@
     <h2>Routage Cognitif - <code>new_cognitive_level</code></h2>
 
     <p>
-      L'outil <code>new_cognitive_level(target_model, transfer_plan)</code> permet Ã  un modÃ¨le de
-      dÃ©clarer qu'il est dÃ©passÃ© par la tÃ¢che courante et de demander une escalade vers un niveau
-      cognitif supÃ©rieur. Le Pipe intercepte cet appel, injecte le <code>transfer_plan</code>
-      (Markdown structurÃ© rÃ©digÃ© par le modÃ¨le sortant) dans le contexte du modÃ¨le cible, et relance
-      la gÃ©nÃ©ration sans redÃ©marrer la boucle complÃ¨te.
+      L'outil <code>new_cognitive_level(target_model, transfer_plan)</code> permet à un modèle de
+      déclarer qu'il est dépassé par la tâche courante et de demander une escalade vers un niveau
+      cognitif supérieur. Le Pipe intercepte cet appel, injecte le <code>transfer_plan</code>
+      (Markdown structuré rédigé par le modèle sortant) dans le contexte du modèle cible, et relance
+      la génération sans redémarrer la boucle complète.
     </p>
 
     <table>
-      <thead><tr><th>ModÃ¨le source</th><th>ModÃ¨les cibles possibles</th><th>DÃ©clencheur typique</th></tr></thead>
+      <thead><tr><th>Modèle source</th><th>Modèles cibles possibles</th><th>Déclencheur typique</th></tr></thead>
       <tbody>
         <tr>
           <td><code>MODEL_LITE</code></td>
           <td><code>MODEL_FLASH</code>, <code>MODEL_PRO</code></td>
-          <td>TÃ¢che dÃ©passant les capacitÃ©s de raisonnement de Lite.</td>
+          <td>Tâche dépassant les capacités de raisonnement de Lite.</td>
         </tr>
         <tr>
           <td><code>MODEL_FLASH</code></td>
@@ -116,12 +116,12 @@
     </table>
 
     <div class="tech-spec">
-      <h4>âš™ï¸ MÃ©moire duale et VallÃ©e de la Mort</h4>
+      <h4>⚙️ Mémoire duale et Vallée de la Mort</h4>
       <p>
-        La combinaison des deux RAG est la rÃ©ponse architecturale Ã  la VallÃ©e de la Mort Contextuelle. L'ingestion vectorielle de ces RAG est soutenue par l'Edge Embedding Bridge (WebGPU) qui dÃ©charge l'infÃ©rence Microsoft/Harrier-OSS sur le navigateur client pour optimiser les performances.
-        <code>save_session_context</code> doit Ãªtre utilisÃ© proactivement dÃ¨s qu'une information
-        volumineuse risque de saturer le contexte (au-delÃ  de ~30 % de remplissage).
-        <code>search_meta_artifacts</code> couvre les prÃ©fÃ©rences de l'Utilisateur et l'expÃ©rience du ModÃ¨le dÃ©couvertes au cours des diffÃ©rentes sessions, totalement
+        La combinaison des deux RAG est la réponse architecturale à la Vallée de la Mort Contextuelle. L'ingestion vectorielle de ces RAG est soutenue par l'Edge Embedding Bridge (WebGPU) qui décharge l'inférence Microsoft/Harrier-OSS sur le navigateur client pour optimiser les performances.
+        <code>save_session_context</code> doit être utilisé proactivement dès qu'une information
+        volumineuse risque de saturer le contexte (au-delà de ~30 % de remplissage).
+        <code>search_meta_artifacts</code> couvre les préférences de l'Utilisateur et l'expérience du Modèle découvertes au cours des différentes sessions, totalement
         absentes du contexte actif.
       </p>
       <div class="mermaid-wrapper">
@@ -135,8 +135,8 @@ flowchart TD
   O --> |save_session_context<br/>search_sessions_context<br/>delete_session_context_source| COL2
 
   subgraph Q["Qdrant Engine (Port 6333)"]
-    COL1[("ðŸ§  echo_meta_artifacts<br/>MÃ©moire long terme<br/>TTL, Consolidation, Importance")]
-    COL2[("â³ echo_session_rag<br/>RAG de session<br/>SynthÃ¨se GuidÃ©e par RAG (O(1)), source_id, Purge auto")]
+    COL1[("🧠 echo_meta_artifacts<br/>Mémoire long terme<br/>TTL, Consolidation, Importance")]
+    COL2[("⏳ echo_session_rag<br/>RAG de session<br/>Synthèse Guidée par RAG (O(1)), source_id, Purge auto")]
   end
 
   classDef db fill:#0f172a,stroke:#3b82f6,color:#f8fafc
@@ -148,12 +148,12 @@ flowchart TD
     <h2 id="agents-cognitifs">Agents Cognitifs - <code>cognitive_agents.py</code></h2>
 
     <p>
-      Le Conseil d'Experts est un systÃ¨me d'orchestration cognitive dÃ©diÃ© permettant de dÃ©lÃ©guer
-      des tÃ¢ches Ã  des instances Gemini spÃ©cialisÃ©es selon trois modes : <strong>stateless</strong>
-      (dÃ©lÃ©gation simple), <strong>boucle itÃ©rative 1:1</strong> avec mÃ©moire de thread
+      Le Conseil d'Experts est un système d'orchestration cognitive dédié permettant de déléguer
+      des tâches à des instances Gemini spécialisées selon trois modes : <strong>stateless</strong>
+      (délégation simple), <strong>boucle itérative 1:1</strong> avec mémoire de thread
       (consultation d'expert), ou <strong>table ronde N:N</strong> multi-tours (conseil).
-      Les <code>thoughtSignature</code> Gemini sont capturÃ©es et rÃ©injectÃ©es Ã  chaque tour
-      pour maintenir la cohÃ©rence du raisonnement sans inclure les pensÃ©es en texte brut
+      Les <code>thoughtSignature</code> Gemini sont capturées et réinjectées à chaque tour
+      pour maintenir la cohérence du raisonnement sans inclure les pensées en texte brut
       (<code>includeThoughts: false</code>).
     </p>
 
@@ -162,60 +162,60 @@ flowchart TD
       <tbody>
         <tr>
           <td><code>delegate_to_agent(task, system_prompt, sub_sid)</code></td>
-          <td>DÃ©lÃ©gation cognitive <strong>stateful</strong>. Boucle agentique complÃ¨te avec accÃ¨s aux outils, budget d'appels configurable, montÃ©e cognitive LITE&rarr;FLASH&rarr;PRO. Persistance de l'historique de thread dans SQLite (<code>cognitive_threads</code>). Protocole <code>QUESTION:</code> pour les clarifications.</td>
+          <td>Délégation cognitive <strong>stateful</strong>. Boucle agentique complète avec accès aux outils, budget d'appels configurable, montée cognitive LITE&rarr;FLASH&rarr;PRO. Persistance de l'historique de thread dans SQLite (<code>cognitive_threads</code>). Protocole <code>QUESTION:</code> pour les clarifications.</td>
         </tr>
         <tr>
           <td><code>consult_council(question, participants, target_model, synthesis_model)</code></td>
-          <td>Table Ronde Multi-Experts (<strong>protocole Delphi</strong>). Convoque N experts (2â€“5, CSV de skill_ids) pour une dÃ©libÃ©ration en tours parallÃ©lisÃ©s. <strong>PrÃ©requis :</strong> au minimum 2 participants distincts - si moins de 2 skills sont fournis, l'outil retourne une erreur actionnable incluant la liste des skills disponibles et une invite Ã  utiliser <code>forge_skill</code>. Chaque participant reÃ§oit un nom factice (Â« Participant 1 Â») et voit le roster (rÃ´les) mais <em>pas</em> les instructions des autres. AprÃ¨s les tours de parole, un modÃ¨le synthÃ©tiseur (dÃ©faut <code>MODEL_FLASH</code>) produit une distillation structurÃ©e. ParamÃ¨tres optionnels : <code>rounds</code> (dÃ©faut 3, max 5), <code>history_depth</code>, <code>distillation_focus</code>.</td>
+          <td>Table Ronde Multi-Experts (<strong>protocole Delphi</strong>). Convoque N experts (2–5, CSV de skill_ids) pour une délibération en tours parallélisés. <strong>Prérequis :</strong> au minimum 2 participants distincts - si moins de 2 skills sont fournis, l'outil retourne une erreur actionnable incluant la liste des skills disponibles et une invite à utiliser <code>forge_skill</code>. Chaque participant reçoit un nom factice (« Participant 1 ») et voit le roster (rôles) mais <em>pas</em> les instructions des autres. Après les tours de parole, un modèle synthétiseur (défaut <code>MODEL_FLASH</code>) produit une distillation structurée. Paramètres optionnels : <code>rounds</code> (défaut 3, max 5), <code>history_depth</code>, <code>distillation_focus</code>.</td>
         </tr>
         <tr>
           <td><code>forge_skill(skill_id, name, description, instructions)</code></td>
-          <td>CrÃ©e ou met Ã  jour un profil d'expert (SKILL) au format <code>SKILL.md</code>. Les instructions dÃ©finissent le ton, la mÃ©thodologie et les contraintes de sortie de l'expert. PersistÃ© dans le Vault de l'utilisateur via <code>echo_skills.save_skill()</code>.</td>
+          <td>Crée ou met à jour un profil d'expert (SKILL) au format <code>SKILL.md</code>. Les instructions définissent le ton, la méthodologie et les contraintes de sortie de l'expert. Persisté dans le Vault de l'utilisateur via <code>echo_skills.save_skill()</code>.</td>
         </tr>
         <tr>
           <td><code>list_skills()</code></td>
-          <td>Liste les expertises (Skills) disponibles pour le Conseil courant, avec leurs identifiants et descriptions. Utile pour dÃ©couvrir les rÃ´les dÃ©jÃ  forgÃ©s avant un <code>consult_council</code>.</td>
+          <td>Liste les expertises (Skills) disponibles pour le Conseil courant, avec leurs identifiants et descriptions. Utile pour découvrir les rôles déjà forgés avant un <code>consult_council</code>.</td>
         </tr>
         <tr>
           <td><code>list_agent_sessions()</code></td>
-          <td>Liste les fils de discussion cognitifs actifs pour le chat courant, avec leur <code>sub_sid</code>, rÃ´le et rÃ©sumÃ© du dernier Ã©change. Permet Ã  l'orchestrateur de choisir quel fil reprendre.</td>
+          <td>Liste les fils de discussion cognitifs actifs pour le chat courant, avec leur <code>sub_sid</code>, rôle et résumé du dernier échange. Permet à l'orchestrateur de choisir quel fil reprendre.</td>
         </tr>
       </tbody>
     </table>
 
     <div class="tech-spec">
-      <h4>âš™ï¸ Table Ronde Multi-Experts - Protocole Delphi (N:N)</h4>
+      <h4>⚙️ Table Ronde Multi-Experts - Protocole Delphi (N:N)</h4>
       <p>
-        <code>consult_council</code> orchestre une dÃ©libÃ©ration en quatre phases :
+        <code>consult_council</code> orchestre une délibération en quatre phases :
       </p>
       <ul>
         <li><strong>Phase 0 - Validation</strong> : parsing du CSV <code>participants</code>,
           chargement des Skills via <code>echo_skills.get_skill_content()</code> et
           <code>parse_skill_metadata()</code>, attribution de noms factices
-          (Â« Participant 1 Â», Â« Participant 2 Â», etc.).
-          Limites : 2 Ã  <code>COUNCIL_MAX_PARTICIPANTS</code> (dÃ©faut 5) participants.</li>
-        <li><strong>Phase 1 - Distillation</strong> : rÃ©utilise <code>_distill_context()</code>
-          (identique Ã  <code>consult_expert_consultant</code>) pour rÃ©sumer la branche active
+          (« Participant 1 », « Participant 2 », etc.).
+          Limites : 2 à <code>COUNCIL_MAX_PARTICIPANTS</code> (défaut 5) participants.</li>
+        <li><strong>Phase 1 - Distillation</strong> : réutilise <code>_distill_context()</code>
+          (identique à <code>consult_expert_consultant</code>) pour résumer la branche active
           du chat via <code>MODEL_DISTILLATION</code>.</li>
         <li><strong>Phase 2 - Tours de parole</strong> :
-          <code>COUNCIL_ROUNDS_DEFAULT</code> tours (dÃ©faut 3, max <code>COUNCIL_ROUNDS_MAX</code> = 5).
-          Au Tour 1, chaque expert reÃ§oit la question et le contexte distillÃ©.
-          Aux tours suivants, chaque expert reÃ§oit les contributions des <em>autres</em>
-          participants du tour prÃ©cÃ©dent (il ne se relit pas lui-mÃªme).
-          Tous les appels d'un mÃªme tour sont exÃ©cutÃ©s en parallÃ¨le via <code>asyncio.gather()</code>.
+          <code>COUNCIL_ROUNDS_DEFAULT</code> tours (défaut 3, max <code>COUNCIL_ROUNDS_MAX</code> = 5).
+          Au Tour 1, chaque expert reçoit la question et le contexte distillé.
+          Aux tours suivants, chaque expert reçoit les contributions des <em>autres</em>
+          participants du tour précédent (il ne se relit pas lui-même).
+          Tous les appels d'un même tour sont exécutés en parallèle via <code>asyncio.gather()</code>.
           Les <code>parts</code> brutes de l'API (incluant les <code>thoughtSignature</code>)
-          sont conservÃ©es dans un dictionnaire in-memory par participant, assurant la continuitÃ©
+          sont conservées dans un dictionnaire in-memory par participant, assurant la continuité
           cognitive entre les tours sans persistance DB.</li>
-        <li><strong>Phase 3 - SynthÃ¨se</strong> : la transcription complÃ¨te (question + tous
-          les tours de tous les participants avec leur rÃ´le) est envoyÃ©e Ã  un modÃ¨le synthÃ©tiseur
-          (dÃ©faut <code>MODEL_FLASH</code>, configurable via <code>synthesis_model</code>)
-          avec un prompt gÃ©nÃ©rique de rapporteur neutre. La synthÃ¨se identifie consensus,
+        <li><strong>Phase 3 - Synthèse</strong> : la transcription complète (question + tous
+          les tours de tous les participants avec leur rôle) est envoyée à un modèle synthétiseur
+          (défaut <code>MODEL_FLASH</code>, configurable via <code>synthesis_model</code>)
+          avec un prompt générique de rapporteur neutre. La synthèse identifie consensus,
           divergences et recommandations.</li>
       </ul>
       <p>
-        Un participant qui Ã©choue (429, timeout) ne bloque pas le conseil - son absence est notÃ©e
-        dans le transcript et les participants restants poursuivent la dÃ©libÃ©ration.
-        Le dictionnaire des historiques est libÃ©rÃ© Ã  la fin de l'appel (pas de persistance
+        Un participant qui échoue (429, timeout) ne bloque pas le conseil - son absence est notée
+        dans le transcript et les participants restants poursuivent la délibération.
+        Le dictionnaire des historiques est libéré à la fin de l'appel (pas de persistance
         inter-appels).
       </p>
     </div>
@@ -223,7 +223,7 @@ flowchart TD
     <div class="transition-text">
       <a href="09c_vault_explorer.html">&larr; Explorateur de l'Espace Personnel</a>
       &nbsp;&nbsp;
-      <a href="09e_execution_monitoring.html">ExÃ©cution & Pilotage &rarr;</a>
+      <a href="09e_execution_monitoring.html">Exécution & Pilotage &rarr;</a>
     </div>
 
     <footer>
