@@ -1,16 +1,17 @@
 """
 title: Resume in New Chat
 author: ECHO Framework
-version: 1.7
+version: 1.9
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMSAxNnYuNWExLjUgMS41IDAgMCAxLTEuNSAxLjVoLTZMMTIgMjBsLTIuNS0yLjVoLTZBMS41IDEuNSAwIDAgMSAyIDE2LjVWNGExLjUgMS41IDAgMCAxIDEuNS0xLjVoMTVBMS41IDEuNSAwIDAgMSAyMCA0djciLz48cGF0aCBkPSJtMTggMjIgMy0zLTMtMyIvPjxwb2x5bGluZSBwb2ludHM9IjIxIDE5IDEzIDE5Ii8+PC9zdmc+
 """
 # Historique des versions :
+# 1.9: Correction extraction des messages (compatibilité OWUI v0.3+), nettoyage de la clé redondante, cohérence ID HUD.
+# 1.8: Remplacement des regex de purge par une regex globale sur <artifact> pour le nettoyage OWUI.
 # 1.5: Ajout d'une demande de confirmation explicite avant le déclenchement de la migration.
 # 1.4: Mise à jour de la priorité d'affichage à 20.
 # 1.3: Préservation des liens symboliques lors du clonage du Vault (compatibilité ingestion).
 # 1.2: Nettoyage tokens (fichiers + balises proprioceptives) pour distillation optimisée.
-# 1.1: Migration complète du contexte saturé vers une nouvelle session distillée.
 
 import sys
 import os
@@ -120,7 +121,13 @@ class Action:
         
         # Reconstruire le contexte brut depuis OWUI API
         old_chat = await Chats.get_chat_by_id(old_chat_id)
-        messages = old_chat.chat.get("messages", []) if old_chat else body.get("messages", [])
+        
+        # Priorité absolue au body (fourni par OWUI) car depuis v0.3+, old_chat.chat stocke
+        # les messages dans 'history' sous forme de graphe, rendant get("messages") obsolète.
+        messages = body.get("messages")
+        if not messages:
+            # Fallback sur l'ancien format si le body est vide (sécurité)
+            messages = old_chat.chat.get("messages", []) if old_chat else []
         
         # Conversion du format messages (OpenAI) en texte lisible pour la distillation
         messages_text = ""
@@ -130,9 +137,7 @@ class Action:
             
             if isinstance(content, str):
                 # Nettoyage des balises de contexte proprioceptif pour optimiser le budget tokens
-                content = re.sub(r'<AEC_smart_context>.*?</AEC_smart_context>', '', content, flags=re.DOTALL)
-                content = re.sub(r'<AEC_environnement_contexte>.*?</AEC_environnement_contexte>', '', content, flags=re.DOTALL)
-                content = re.sub(r'<AEC_evenement_systeme>.*?</AEC_evenement_systeme>', '', content, flags=re.DOTALL)
+                content = re.sub(r'<artifact id="AEC_.*?">.*?</artifact>', '', content, flags=re.DOTALL)
                 content = content.strip()
                 
             # Extraction des fichiers joints
@@ -181,8 +186,7 @@ class Action:
                         "role": "assistant",
                         "content": f"**Session migrée et distillée.**\n\n*Résumé cognitif :*\n{distilled_summary}"
                     }
-                },
-                "currentId": message_id
+                }
             }
         }
         form = ChatForm(chat=new_chat_payload)
@@ -272,7 +276,7 @@ class Action:
         await update_hud(100, "✅ Téléportation vers la nouvelle session...")
         await asyncio.sleep(1) # Laisser l'UI s'afficher
         if __event_call__:
-            cleanup_js = f"const h = document.getElementById('migration-hud'); if(h) h.remove(); window.location.href = '/c/{new_chat_id}';"
+            cleanup_js = f"const h = document.getElementById('echo-migration-hud'); if(h) h.remove(); window.location.href = '/c/{new_chat_id}';"
             await __event_call__({"type": "execute", "data": {"code": cleanup_js}})
 
         return None

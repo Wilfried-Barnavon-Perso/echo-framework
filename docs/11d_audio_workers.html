@@ -1,0 +1,87 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Architecture des Audio Workers ECHO v5 : Kokoro TTS (G2P hybride, streaming MP3) et Whisper STT.">
+  <title>ECHO v5 - 11d. Audio Workers (TTS & STT)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>11d. Audio Workers (TTS & STT)</h1>
+
+    <p>
+      ECHO intÃ¨gre deux moteurs dÃ©diÃ©s au traitement du signal vocal : <strong>Kokoro TTS</strong> (synthÃ¨se vocale) et <strong>Whisper STT</strong> (transcription). Ces services opÃ¨rent comme des micro-services isolÃ©s au sein de l'infrastructure Docker, exposant des API compatibles OpenAI (endpoints <code>/v1/audio/speech</code> et <code>/v1/audio/transcriptions</code>) consommÃ©es nativement par Open WebUI.
+    </p>
+
+    <h2>Fiche d'identitÃ© technique</h2>
+
+    <table>
+      <thead><tr><th>Attribut</th><th>TTS Worker</th><th>STT Worker</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Image</strong></td><td><code>echo-tts-worker</code></td><td><code>echo-stt-worker</code></td></tr>
+        <tr><td><strong>Port Interne</strong></td><td>7996</td><td>7995</td></tr>
+        <tr><td><strong>Technologie</strong></td><td>Kokoro (ONNX) + Pydub</td><td>Faster-Whisper (INT8)</td></tr>
+        <tr><td><strong>ModÃ¨le Actif</strong></td><td><code>kokoro-v0.19</code> (~80Mo)</td><td><code>whisper-base/small</code></td></tr>
+        <tr><td><strong>Endpoint</strong></td><td><code>/v1/audio/speech</code></td><td><code>/v1/audio/transcriptions</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2>Architecture du Worker Kokoro TTS</h2>
+
+    <p>
+      Le moteur de synthÃ¨se vocale (<code>tts_api.py</code>) implÃ©mente une architecture de flux audio asynchrone conÃ§ue pour minimiser le TTFB (Time To First Byte) et prÃ©server la fidÃ©litÃ© prosodique multilingue.
+    </p>
+
+    <h3>Pipeline Hybride G2P (Grapheme-to-Phoneme)</h3>
+    <p>
+      La gestion du texte multilingue repose sur l'algorithme <code>hybrid_g2p_parse(text, main_lang)</code>. Le traitement s'effectue en trois phases :
+    </p>
+    <ol>
+      <li><strong>DÃ©coupage sÃ©mantique :</strong> Le texte entrant est fractionnÃ© en phrases (via expressions rÃ©guliÃ¨res) pour respecter le souffle et le rythme naturel.</li>
+      <li><strong>Analyse lexicale :</strong> Chaque phrase est dÃ©composÃ©e en mots. Chaque mot est testÃ© contre le dictionnaire de la langue principale (<code>main_lang</code>). En cas d'Ã©chec, les dictionnaires secondaires sont interrogÃ©s.</li>
+      <li><strong>Reconstitution phonÃ©mique :</strong> Les phonÃ¨mes issus de diffÃ©rentes langues sont concatÃ©nÃ©s. Ce mÃ©canisme prÃ©serve la prosodie exacte lors des changements de langue (code-switching) au sein d'une mÃªme phrase.</li>
+    </ol>
+
+    <h3>Encodage et Streaming MP3 Ã  la volÃ©e</h3>
+    <p>
+      L'infÃ©rence du modÃ¨le Kokoro produit des tenseurs audio bruts (<code>numpy.ndarray</code> en <code>float32</code>). Pour Ãªtre consommables par les navigateurs web, ces donnÃ©es subissent une conversion asynchrone :
+    </p>
+    <ul>
+      <li><strong>Quantification :</strong> Les Ã©chantillons <code>float32</code> sont convertis en PCM 16-bit.</li>
+      <li><strong>Encodage :</strong> La bibliothÃ¨que <code>pydub</code> encode le flux PCM en MP3 Ã  128 kbps (<code>encode_numpy_to_mp3</code>).</li>
+      <li><strong>Distribution :</strong> Le binaire MP3 est distribuÃ© au client via une <code>StreamingResponse</code> FastAPI utilisant le <strong>Chunked Transfer Encoding</strong>, permettant la lecture audio avant la fin de la gÃ©nÃ©ration totale.</li>
+    </ul>
+
+    <h3>Mappage Dynamique des ModÃ¨les Vocaux</h3>
+    <p>
+      Les voix sont assignÃ©es dynamiquement via le dictionnaire <code>VOICE_MAP</code> en fonction de la langue dÃ©tectÃ©e. Les modÃ¨les fÃ©minins de rÃ©fÃ©rence sont :
+    </p>
+    <ul>
+      <li><strong>FranÃ§ais (fr) :</strong> <code>ff_siwis</code></li>
+      <li><strong>Anglais (en) :</strong> <code>af_bella</code></li>
+    </ul>
+
+    <h2>Architecture du Worker Whisper STT</h2>
+
+    <p>
+      Le service de reconnaissance vocale utilise l'implÃ©mentation <code>faster-whisper</code>, offrant une transcription locale Ã  faible latence sans dÃ©pendance cloud. Le service traite les flux audio entrants via l'endpoint compatible OpenAI, extrait le texte et le retourne immÃ©diatement Ã  l'interface pour injection dans le prompt utilisateur.
+    </p>
+
+    <div class="transition-text">
+      <a href="11c_bunkerweb_waf.html">&larr; Bouclier BunkerWeb WAF</a>
+      &nbsp;&nbsp;
+      <a href="11e_scripts_infrastructure.html">Scripts d'Infrastructure &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

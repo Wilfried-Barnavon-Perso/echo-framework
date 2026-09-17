@@ -1,16 +1,16 @@
 """
 title: ECHO App Drawer Filter
 author: Wilfried BARNAVON
-version: 1.8
+version: 1.10
 description: Composant système interne : ECHO App Drawer Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.10: Différenciation du seuil tactile (15px) vs souris (3px) pour empêcher l'hyper-sensibilité mobile.
+# 1.9: Implémentation HUD Mobile (Drag tactile, persistance, clamping anti-débordement).
+# 1.8: Historique ajusté.
 # 1.7: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
 # 1.6: Renommage du titre et de la description pour standardisation en "Filter".
-# 1.4: Correction critique d'une erreur de syntaxe JS (bloc try/catch non fermé).
-# 1.3: Optimisation Zéro-Requête (Extraction DOM Svelte) au lieu du téléchargement complet du chat.
-# 1.2: Correction de l'endpoint API des actions (OWUI V0.3.x) vers /api/chat/actions.
 
 import logging
 from pydantic import BaseModel, Field
@@ -61,7 +61,6 @@ class Filter:
                 position: fixed;
                 width: 48px;
                 height: 48px;
-                bottom: 120px;
                 right: 20px;
                 z-index: 99999;
                 touch-action: none; 
@@ -228,6 +227,18 @@ class Filter:
         // 3. CONSTRUCTION DU CONTENEUR
         const container = document.createElement('div');
         container.id = 'echo-hud-container';
+
+        // Initialisation de la position dynamique (Milieu ou Persistance)
+        const savedTop = localStorage.getItem('echo-hud-top');
+        if (savedTop) {
+            let parsedTop = parseInt(savedTop, 10);
+            const maxTop = window.innerHeight - 48;
+            parsedTop = Math.max(0, Math.min(parsedTop, maxTop));
+            container.style.top = parsedTop + 'px';
+        } else {
+            // Milieu de l'écran par défaut
+            container.style.top = Math.max(0, (window.innerHeight / 2) - 24) + 'px';
+        }
         
         const menu = document.createElement('div');
         menu.className = 'echo-hud-menu direction-up collapsed';
@@ -376,11 +387,20 @@ class Filter:
         };
 
         updateDirection();
-        window.addEventListener('resize', updateDirection);
+        window.addEventListener('resize', () => {
+            updateDirection();
+            // Clamping dynamique anti-débordement (ex: ouverture clavier mobile)
+            const maxTop = window.innerHeight - 48;
+            if (container.offsetTop > maxTop) {
+                container.style.top = Math.max(0, maxTop) + 'px';
+            }
+        });
 
-        toggleBtn.addEventListener('mousedown', (e) => {
+        const onDragStart = (e) => {
+            if (e.type === 'mousedown' && e.button !== 0) return; // Ignorer clic droit
+            
             isDragging = false; 
-            startY = e.clientY;
+            startY = e.touches ? e.touches[0].clientY : e.clientY;
             
             const rect = container.getBoundingClientRect();
             initialTop = rect.top;
@@ -388,18 +408,20 @@ class Filter:
             container.style.bottom = 'auto';
             container.style.top = initialTop + 'px';
             
-            const onMouseMove = (moveEvent) => {
-                const dy = moveEvent.clientY - startY;
+            const onDragMove = (moveEvent) => {
+                const clientY = moveEvent.touches ? moveEvent.touches[0].clientY : moveEvent.clientY;
+                const dy = clientY - startY;
                 
-                if (!isDragging && Math.abs(dy) > 3) {
+                const threshold = moveEvent.touches ? 15 : 3;
+                
+                if (!isDragging && Math.abs(dy) > threshold) {
                     isDragging = true;
                     container.classList.add('dragging');
-                    // On nettoie les éventuels tooltips
-                    const tips = document.querySelectorAll('.echo-tooltip-floating');
-                    tips.forEach(t => t.remove());
+                    document.querySelectorAll('.echo-tooltip-floating').forEach(t => t.remove());
                 }
 
                 if (isDragging) {
+                    if (moveEvent.cancelable) moveEvent.preventDefault(); // Bloque scroll mobile
                     let newTop = initialTop + dy;
                     const maxTop = window.innerHeight - 48; 
                     newTop = Math.max(0, Math.min(newTop, maxTop));
@@ -408,21 +430,31 @@ class Filter:
                 }
             };
 
-            const onMouseUp = () => {
-                window.removeEventListener('mousemove', onMouseMove);
-                window.removeEventListener('mouseup', onMouseUp);
+            const onDragEnd = () => {
+                window.removeEventListener('mousemove', onDragMove);
+                window.removeEventListener('mouseup', onDragEnd);
+                window.removeEventListener('touchmove', onDragMove);
+                window.removeEventListener('touchend', onDragEnd);
                 
                 if (!isDragging) {
                     updateDirection();
                     menu.classList.toggle('collapsed');
                     toggleBtn.classList.toggle('open');
+                } else {
+                    // Sauvegarde de la nouvelle position post-glissement
+                    localStorage.setItem('echo-hud-top', container.style.top);
                 }
                 setTimeout(() => container.classList.remove('dragging'), 50);
             };
 
-            window.addEventListener('mousemove', onMouseMove);
-            window.addEventListener('mouseup', onMouseUp);
-        });
+            window.addEventListener('mousemove', onDragMove, { passive: false });
+            window.addEventListener('mouseup', onDragEnd);
+            window.addEventListener('touchmove', onDragMove, { passive: false });
+            window.addEventListener('touchend', onDragEnd);
+        };
+
+        toggleBtn.addEventListener('mousedown', onDragStart);
+        toggleBtn.addEventListener('touchstart', onDragStart, { passive: false });
 
     } catch (e) {
         console.error("ECHO App Drawer Error:", e);

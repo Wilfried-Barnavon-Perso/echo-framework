@@ -2,15 +2,16 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.4
+version: 1.5
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.5: Normalisation camelCase de inline_data en inlineData pour compatibilité stricte AI Studio.
 # 1.4: Ajout du code HTTP 420 aux conditions de failover (surcharge/rate limit).
-# 1.3: Alignement strict du payload gRPC/JSON Code Assist (OAuth2) sur le format Antigravity (camelCase + headers d'agent)
-# 1.2: Standardisation PEP8, déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID en en-tête de fichier.
-# 1.1: Injection du tenant global ECHO_GLOBAL_TENANT_PROJECT_ID pour éviter les limites de quota (429) OAuth2 persos.
+# 1.3: Alignement strict du payload gRPC/JSON Code Assist (OAuth2) sur le format Antigravity.
+# 1.2: Standardisation PEP8, déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID en en-tête.
+# 1.1: Injection du tenant global ECHO_GLOBAL_TENANT_PROJECT_ID pour éviter les limites OAuth2.
 import os
 import time
 import random
@@ -255,8 +256,16 @@ class EchoGeminiClient:
             # Harmonisation stricte pour l'API publique AI Studio
             t_conf = payload.get("toolConfig") or payload.get("tool_config")
             
+            import copy
+            contents = copy.deepcopy(payload.get("contents", []))
+            # Normalisation camelCase exigée par AI Studio (Correction API)
+            for msg in contents:
+                for part in msg.get("parts", []):
+                    if "inline_data" in part:
+                        part["inlineData"] = part.pop("inline_data")
+            
             request_body = {
-                "contents": payload.get("contents", []),
+                "contents": contents,
                 "systemInstruction": payload.get("systemInstruction"),
                 "generationConfig": payload.get("generationConfig", {}),
                 "tools": payload.get("tools"),
@@ -425,7 +434,11 @@ class EchoGeminiClient:
                         else:
                             if current:
                                 merged.append(current)
-                            current = sentence
+                            if len(sentence) > max_chunk:
+                                merged.append(sentence[:max_chunk])
+                                current = sentence[max_chunk:]
+                            else:
+                                current = sentence
                 else:
                     current = para
         if current:
@@ -435,8 +448,11 @@ class EchoGeminiClient:
         if len(merged) > 1:
             overlapped = [merged[0]]
             for i in range(1, len(merged)):
-                prev_last = merged[i - 1].split("\n\n")[-1]
-                overlapped.append(prev_last + "\n\n" + merged[i])
+                prev_last = merged[i - 1][-150:]
+                overlap_text = prev_last + "\n\n" + merged[i]
+                if len(overlap_text) > max_chunk * 1.5:
+                    overlap_text = overlap_text[:int(max_chunk * 1.5)]
+                overlapped.append(overlap_text)
             chunks = overlapped
         else:
             chunks = merged if merged else [distillate[:max_chunk]]

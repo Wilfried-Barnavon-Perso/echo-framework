@@ -32,7 +32,7 @@ services:
   
   # 1. BunkerWeb (Frontal HTTP/HTTPS)
   bunkerweb:
-    image: bunkerity/bunkerweb:1.6.11
+    image: bunkerity/bunkerweb:1.6.14
     container_name: bunkerweb
     restart: unless-stopped
     ports:
@@ -62,7 +62,7 @@ services:
 
   # 2. Autoconf (Contrôleur Dynamique)
   bw-autoconf:
-    image: bunkerity/bunkerweb-autoconf:1.6.11
+    image: bunkerity/bunkerweb-autoconf:1.6.14
     container_name: bw-autoconf
     restart: unless-stopped
     depends_on:
@@ -83,7 +83,7 @@ services:
 
   # 3. Scheduler (Tâches de fond)
   bw-scheduler:
-    image: bunkerity/bunkerweb-scheduler:1.6.11
+    image: bunkerity/bunkerweb-scheduler:1.6.14
     container_name: bw-scheduler
     restart: unless-stopped
     depends_on:

@@ -20,13 +20,13 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 **Rôle** : Traduction des schémas OWUI vers l'API cible, gestion du *Clamping Dynamique*.
 - **`convert_owui_tools()`** : Parse les schémas d'outils OWUI et les traduit dans le format strict Gemini (OpenAPI), en appliquant les politiques de sécurité (Tool Forcing, Model Policy) via `ECHO_MODELS_REGISTRY`.
 - **`_mutate_context_identity()`** : Modifie à la volée le System Prompt ou l'identité si un *reverse-lookup* (Auto-heal) impose un changement de modèle. Gère désormais le nouveau format AEC XML hiérarchisé avec regex de substitution durcie et rétrocompatibilité YAML. La cascade et le clamping dynamique gèrent élégamment les modèles sans hiérarchie stricte (ex: `MODEL_DISTILLATION`).
-- **`_unbox_tool_output()`** : Extrait et normalise les réponses asynchrones des outils (comme la réception multimédia issue de `echo_tool_multiparts`).
+- **`_unbox_tool_output()`** : Extrait et normalise les réponses asynchrones des outils (comme la réception multimédia issue de `echo_tool_multiparts`). Injecte désormais explicitement le `call_id` dans `functionResponse` pour prévenir l'erreur 400 Bad Request de l'API Gemini lors du déballage.
 - **Routage HTTP/2 (`EchoGeminiClient`)** : S'appuie désormais intégralement sur le client modulaire `EchoGeminiClient` (provenant de `echo_gemini_client.py`) pour bénéficier du Circuit Breaker OAuth2 et du multiplexage H2, déportant ainsi la logique réseau hors du Pipe.
 
 #### C. Classe `StreamProcessor`
 **Rôle** : Moteur de flux temps-réel asynchrone.
 - **Sémantique** : Parse la réponse SSE (Server-Sent Events) du LLM. Capte et compile les appels d'outils, met à jour le HUD d'interface et formate la réponse Markdown.
-- **Gestion de l'Auto-Continue (MAX_TOKENS)** : Le pipeline gère nativement la troncature. Si le modèle s'arrête prématurément (MAX_TOKENS) au milieu d'un texte ou d'un appel d'outil massif, le système injecte dynamiquement un événement système AEC (directif punitif ou de continuation) et relance automatiquement la génération de façon totalement transparente.
+- **Gestion de l'Auto-Continue (MAX_TOKENS)** : Le pipeline gère nativement la troncature. Si le modèle s'arrête prématurément (MAX_TOKENS) au milieu d'un texte ou d'un appel d'outil massif, le système injecte dynamiquement un événement système (directif punitif ou de continuation) via une balise `<artifact id="AEC_evenement_systeme">` stricte et relance automatiquement la génération de façon transparente. Le préfixe UI Toast pour ces rappels d'alignement est `🛤️ Alignement du Modèle`.
 
 #### D. Classe `Pipe` (Point d'Entrée OWUI)
 **Rôle** : Interface de connexion conforme à la signature Open WebUI. Initialise les Valves (paramètres réglables par l'Admin) et lance le pipeline via `pipe()`.

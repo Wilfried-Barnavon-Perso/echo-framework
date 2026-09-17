@@ -1,9 +1,9 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 1.5 (Correction Race Condition Event Loop I/O)
+VERSION : 1.6 (Passage 403 vers 401 pour session OWUI)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-09-08
+DATE MAJ : 2026-09-14
 ================================================================================
 """
 import os
@@ -260,7 +260,7 @@ def is_safe_url(url: str) -> bool:
     )
 
 @app.get("/logout")
-async def logout_sso(request: Request, next: str = "/", echo_auth_session: Optional[str] = Cookie(None)):
+async def logout_sso(next: str = "/", echo_auth_session: Optional[str] = Cookie(None)):
     """Endpoint de déconnexion globale du SSO."""
     if echo_auth_session:
         # 1. Invalider la session interne d'Open WebUI pour éviter les collisions (Erreur 500)
@@ -293,7 +293,7 @@ async def logout_sso(request: Request, next: str = "/", echo_auth_session: Optio
     return response
 
 @app.api_route("/api/verify", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
-def verify_auth(request: Request, echo_auth_session: Optional[str] = Cookie(None)):
+def verify_auth(echo_auth_session: Optional[str] = Cookie(None)):
     """Endpoint de Forward-Auth appelé par BunkerWeb."""
     if not echo_auth_session:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -312,7 +312,7 @@ def verify_auth(request: Request, echo_auth_session: Optional[str] = Cookie(None
         return response
     
     # Non authentifié : Session expiré ou utilisateur révoqué
-    raise HTTPException(status_code=403, detail="Forbidden")
+    raise HTTPException(status_code=401, detail="Unauthorized")
 
 # ==============================================================================
 # PAGES UI & LOGIQUE METIER

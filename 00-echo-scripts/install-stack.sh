@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.27
+# VERSION : 6.28
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 6.28 : Limitation du parallélisme Docker Compose et Hot Reload (OOM Killer).
 # CHANGELOG 6.27 : Redémarrage parallèle des services Python lors du Hot Reload.
 # CHANGELOG 6.26 : Centralisation du cron de nettoyage Docker et ajustement des logs à 10 Mo.
 # CHANGELOG 6.25 : Ajout de ensure_docker_autosafety() pour rotation logs globale (idempotent).
@@ -251,6 +252,8 @@ ENV_FILE="$ECHO_ENV_FILE"
 export COMPOSE_DOCKER_CLI_BUILD=1
 export DOCKER_BUILDKIT=1
 
+export COMPOSE_PARALLEL_LIMIT=2
+
 if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -qE "^ECHO_DOMAIN=.+" "$ENV_FILE"; then
     echo "🔒 Mode SECURE EDGE détecté. Lancement de l'infrastructure complète (ECHO + BunkerWeb)..."
     $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans
@@ -274,7 +277,7 @@ CONTAINERS_TO_RELOAD=$(docker ps \
     --filter "label=echo.hot-reload=true" \
     --format "{{.Names}}")
 if [ -n "$CONTAINERS_TO_RELOAD" ]; then
-    echo "$CONTAINERS_TO_RELOAD" | xargs -n 1 -P 0 docker restart >/dev/null 2>&1
+    echo "$CONTAINERS_TO_RELOAD" | xargs -n 1 -P 2 docker restart >/dev/null 2>&1
     FORMATTED_LIST=$(echo "$CONTAINERS_TO_RELOAD" | tr '\n' ' ')
     echo "   ✅ Services rechargés : $FORMATTED_LIST"
 else
@@ -288,7 +291,6 @@ else
     echo "⚠️ Script de configuration introuvable ($ECHO_SCRIPTS/config-owui.sh)"
 fi
 
-docker buildx prune -f >/dev/null 2>&1
 docker image prune -f >/dev/null 2>&1
 
 echo "✅ DEPLOIEMENT TERMINÉ."

@@ -1,15 +1,17 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 1.3
+version: 1.5
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.4: Refonte list_identities (tolérance aux fautes, import json global).
 # 1.2: Suppression totale de la notion d'accès RO/RW (access_level).
 # 1.1: Refonte du Lazy-Loading JS des modales ECHO (get_custom_modals_js) pour éviter les fallbacks moches hors-Codex.
 # 1.0: Outil initial.
 import sys
+import json
 from typing import Optional, Any, List, Dict
 from pydantic import BaseModel, Field
 
@@ -37,26 +39,48 @@ class Tools:
             conn.commit()
         return state
 
-    async def list_identities(self, service: str, __user__: dict = None) -> str:
+    async def list_available_services(self, __user__: dict = None) -> str:
         """
-        Récupère la liste des serveurs ou services tiers enregistrés pour le compte actif, accompagnée de leur description sémantique et rôle. Permet d'identifier si un serveur pertinent est déjà disponible pour accomplir une tâche.
+        Permet au modèle de lister de manière exhaustive les noms de services actuellement configurés dans le coffre-fort.
+        Le Modèle DOIT obligatoirement utiliser cette fonction pour identifier le service cible (ex: 'n8n_workflows') avant toute invocation de 'list_identities'.
         """
-        if not __user__: return "Erreur: Utilisateur inconnu."
+        if not __user__: return "Erreur: Auth requise."
         state = self._init_vault(__user__["id"])
         with state._get_connection() as conn:
-            cursor = conn.execute("SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ?", (__user__["id"], service))
+            cursor = conn.execute("SELECT DISTINCT service FROM identity_vault WHERE user_id = ?", (__user__["id"],))
             rows = cursor.fetchall()
             
-        import json
+        if not rows:
+            return "Aucun service configuré."
+        
+        return f"Services disponibles : {', '.join([r[0] for r in rows])}"
+
+    async def list_identities(self, service: str, __user__: dict = None) -> str:
+        """
+        Permet au modèle de récupérer les comptes tiers rattachés à un service spécifique. L'argument 'service' est strictement obligatoire.
+        """
+        if not __user__: return "Erreur: Utilisateur inconnu."
+        if not service: return "Erreur: L'argument 'service' est strictement requis. Invoquez 'list_available_services' en cas de doute."
+        state = self._init_vault(__user__["id"])
+        with state._get_connection() as conn:
+            cursor = conn.execute("SELECT service, account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ?", (__user__["id"], service))
+            rows = cursor.fetchall()
+            
         result = []
         for r in rows:
+            svc = r[0]
+            account = r[1]
+            creds = r[2]
             try:
-                data = json.loads(r[1])
-                desc = data.get("description", r[1])
-            except:
-                desc = r[1]
-            result.append(f"[{r[0]} : {desc}]")
-        return f"Serveurs pour {service}: " + ", ".join(result) if result else f"Aucun serveur trouvé pour {service}."
+                data = json.loads(creds)
+                desc = data.get("description", creds)
+            except Exception:
+                desc = creds
+            result.append(f"[Compte: {account} : {desc}]")
+            
+        if not result:
+            return f"Aucun compte trouvé pour '{service}'."
+        return f"[{service}] " + ", ".join(result)
 
     async def manage_identity(self, action: str, service: str, account_id: str, credentials_json: str = "", __user__: dict = None, __event_call__: Any = None) -> str:
         """
@@ -65,8 +89,6 @@ class Tools:
         if not __user__ or not __event_call__: return "Erreur: Contexte OWUI manquant."
         
         if action in ["add", "update"]:
-            import json
-            
             try:
                 payload_dict = json.loads(credentials_json)
                 payload_html = "<ul>" + "".join([f"<li><i>{k}</i> : {str(v)}</li>" for k, v in payload_dict.items()]) + "</ul>"
@@ -116,8 +138,6 @@ class Tools:
             return f"Succès: Source '{account_id}' ({service}) configurée avec succès."
 
         elif action == "delete":
-            import json
-            
             fallback_msg = f"Confirmer la suppression définitive de {account_id} ({service}) ?"
             
             if service == "mcp":

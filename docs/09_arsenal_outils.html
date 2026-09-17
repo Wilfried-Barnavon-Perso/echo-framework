@@ -1,0 +1,265 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="L'Arsenal des Outils ECHO v5 : Ã©cosystÃ¨me de micro-services souverains, protocole Multipart wrap_tool_output, systÃ¨me Vault, six familles d'outils.">
+  <title>ECHO v5 - 9. L'Arsenal des Outils</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>9. L'Arsenal des Outils</h1>
+
+    <p>
+      Un modÃ¨le de langage, sans accÃ¨s au monde rÃ©el, est confinÃ© Ã  ses donnÃ©es d'entraÃ®nement.
+      L'Arsenal rompt cet enfermement : il fournit au Pipe les capacitÃ©s exÃ©cutives nÃ©cessaires
+      pour naviguer sur le Web, exÃ©cuter du code Python de maniÃ¨re isolÃ©e, gÃ©rer des fichiers,
+      lire des documents, mÃ©moriser des informations et produire des interfaces visuelles riches.
+    </p>
+
+    <div class="didactic-box">
+      <h4>ðŸ’¡ Comment fonctionne un outil ECHO ?</h4>
+      <p>
+        Lorsque Gemini dÃ©cide d'utiliser un outil, il gÃ©nÃ¨re un <strong>Tool Call</strong> : un
+        objet JSON dÃ©crivant le nom de la fonction et ses arguments. Le Pipe intercepte ce
+        Tool Call, exÃ©cute la fonction Python correspondante (ou appelle le micro-service Docker
+        via son API REST interne), puis retourne la rÃ©ponse Ã  Gemini sous forme de
+        <strong>Tool Response</strong>. Gemini intÃ¨gre ce rÃ©sultat dans sa gÃ©nÃ©ration suivante.
+      </p>
+    </div>
+
+    <h2>Principes directeurs</h2>
+
+    <ul>
+      <li>
+        <strong>SouverainetÃ© des donnÃ©es :</strong> les donnÃ©es traitÃ©es par l'Arsenal ne quittent
+        jamais l'infrastructure ECHO, sauf pour les appels API chiffrÃ©s en HTTPS (Gemini, Web).
+      </li>
+      <li>
+        <strong>MultimodalitÃ© native :</strong> chaque outil peut retourner du texte, des images,
+        des PDFs et des mÃ©tadonnÃ©es de fichiers dans un seul flux structurÃ©.
+      </li>
+      <li>
+        <strong>TraÃ§abilitÃ© :</strong> chaque appel d'outil est journalisÃ© dans la table SQLite
+        <code>tool_journal</code>, liÃ© au <code>cumulative_hash</code> du tour courant.
+      </li>
+      <li>
+        <strong>Isolation utilisateur :</strong> toutes les opÃ©rations sur l'Espace Personnel
+        sont filtrÃ©es par <code>user_id</code>. Un utilisateur ne peut jamais accÃ©der aux fichiers
+        d'un autre.
+      </li>
+    </ul>
+
+    <h2>Le Protocole Multipart (<code>wrap_tool_output</code>)</h2>
+
+    <p>
+      La fonction <code>wrap_tool_output()</code> (<code>echo_core.py</code>) est le point
+      d'entrÃ©e unique pour toute rÃ©ponse d'outil. Elle construit un dictionnaire standardisÃ©
+      que le Pipe sait dÃ©construire pour alimenter le contexte Gemini.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>ParamÃ¨tre</th><th>Type</th><th>Comportement</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>text</code></td>
+          <td>ChaÃ®ne Markdown (obligatoire)</td>
+          <td>Injecte la rÃ©ponse principale sous forme de <code>functionResponse</code> dans le contexte Gemini. Si <code>nouveaux_fichiers</code> est fourni, leurs mÃ©tadonnÃ©es sont appendÃ©es Ã  <code>text</code> sous forme d'un bloc <code>```json:nouveaux_artefacts</code>.</td>
+        </tr>
+        <tr>
+          <td><code>status</code></td>
+          <td>Dict optionnel</td>
+          <td>DÃ©faut <code>{"status": "success"}</code>. PropagÃ© tel quel dans le dictionnaire de sortie. InterprÃ©tÃ© par le Pipe pour le reporting HUD.</td>
+        </tr>
+        <tr>
+          <td><code>echo_tool_multiparts</code></td>
+          <td>Liste de dicts Gemini (optionnel)</td>
+          <td>Parts Gemini natives (Ã©lÃ©ments <code>inlineData</code> avec <code>mime_type</code> + <code>data</code> en base64, ou <code>text</code>). Transmis directement au Pipe pour Ãªtre injectÃ©s dans le <code>functionResponse</code> multipart. Permet de retourner des images, des PDFs ou du HTML en plus du texte.</td>
+        </tr>
+        <tr>
+          <td><code>nouveaux_fichiers</code></td>
+          <td>Liste de dicts mÃ©tadonnÃ©es (optionnel)</td>
+          <td>MÃ©tadonnÃ©es des artefacts produits (exÂ : captures d'Ã©cran, fichiers gÃ©nÃ©rÃ©s). Elles sont sÃ©rialisÃ©es en JSON et appendÃ©es au champ <code>text</code> dans un bloc <code>```json:nouveaux_artefacts</code>. Le Pipe les extrait pour mettre Ã  jour le Registre AEC.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Le SystÃ¨me Vault (Espace Personnel)</h2>
+
+    <p>
+      Chaque utilisateur dispose d'un espace de stockage persistant et isolÃ© :
+      <code>/app/backend/data/users/{user_id}/files/</code>. Cet espace est le Vault.
+    </p>
+    <ul>
+      <li>
+        <strong>Indexation :</strong> chaque fichier reÃ§oit un <code>source_id</code> unique au
+        format <code>U_{uid}_C_{cid}_T_{timestamp}</code>, garantissant l'unicitÃ© par utilisateur,
+        par session et par instant.
+      </li>
+      <li>
+        <strong>Persistance :</strong> les artefacts produits par les outils (captures d'Ã©cran,
+        logs, fichiers gÃ©nÃ©rÃ©s) sont automatiquement scellÃ©s dans le Vault aprÃ¨s chaque tour,
+        en tant qu'entrÃ©es dans <code>processed_files</code>.
+      </li>
+      <li>
+        <strong>RÃ©utilisation :</strong> si un fichier est rÃ©fÃ©rencÃ© dans une session ultÃ©rieure,
+        le Filtre le reconnaÃ®t via son <code>source_id</code> et transmet uniquement la rÃ©fÃ©rence,
+        sans rÃ©-uploader le contenu binaire.
+      </li>
+    </ul>
+
+    <h2>L'Ã‰cosystÃ¨me des Outils</h2>
+
+    <div class="grid-container">
+      <div class="card">
+        <h3>ðŸ“‹ Planification StratÃ©gique</h3>
+        <p>Construction, modification et gestion de plans d'action via un agent planificateur LLM (cascade PROâ†’FLASHâ†’LITE). Plans persistÃ©s dÃ©sormais entiÃ¨rement adossÃ©s Ã  un <strong>Codex Git</strong> (Git-backed Codex) pour un versionnement robuste et enregistrÃ©s dans un registre SQLite par chat.</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/strategic_planner.py</code></p>
+        <a href="09a_strategic_planner.html">Explorer âž”</a>
+      </div>
+      <div class="card">
+        <h3>ðŸŒ Web Intelligence</h3>
+        <p>Navigation autonome Chromium (Playwright) via API Ã  4 piliers, Vision-On-Demand,
+        extraction de contenu et recherche souveraine (incluant le Deep Research Agent). Action HUD de Replay Web.</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/navigation_engine_tool.py</code></p>
+        <a href="09b_web_intelligence.html">Explorer âž”</a>
+      </div>
+      <div class="card">
+        <h3>ðŸ”Œ Client API Universel</h3>
+        <p>Client HTTP avec protection SSRF (Server-Side Request Forgery) pour requÃªter des APIs externes en toute sÃ©curitÃ©, formatant les payloads JSON proprement via <code>orjson</code>.</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/api_client.py</code></p>
+      </div>
+      <div class="card">
+        <h3>ðŸ“‚ Explorateur de l'Espace Personnel</h3>
+        <p>Analyse de fichiers locaux, multimodalitÃ© (image, PDF, audio), indexation sÃ©mantique
+        et gestion des mÃ©tadonnÃ©es du Vault.</p>
+        <p><strong>SourceÂ :</strong> <code>12-owui-tools/file_content_explorer.py</code></p>
+        <a href="09c_vault_explorer.html">Explorer âž”</a>
+      </div>
+      <div class="card">
+        <h3>ðŸ§  MÃ©moire &amp; MÃ©ta-ArtÃ©facts</h3>
+        <p>Architecture mÃ©morielle scindÃ©e en deux espaces distincts. La <strong>MÃ©moire MÃ©ta-ArtÃ©facts</strong> Ã  long terme 
+        (<code>update_meta_artifact</code>, <code>search_meta_artifacts</code>, <code>delete_meta_artifact_item</code>) stockÃ©e dÃ©finitivement, et la 
+        <strong>MÃ©moire VectorisÃ©e de Session</strong> (<code>save_session_context</code>, <code>search_sessions_context</code>, <code>delete_session_context_source</code>) servant 
+        d'espace de travail temporaire confinÃ© Ã  la session courante.</p>
+        <p><strong>SourceÂ :</strong> <code>12-owui-tools/memory_and_rag_tool.py</code></p>
+        <a href="09d_memory_cognition.html">Explorer â†’</a>
+      </div>
+      <div class="card">
+        <h3>â±ï¸ Jauge de Contexte</h3>
+        <p>Lecture en temps rÃ©el de l'utilisation du contexte (tokens prompt/candidats) via la base <code>context_stats</code> SQLite. Le systÃ¨me utilise des seuils stricts (Alerte Ã  40.0%, Critique Ã  60.0%) pour dÃ©clencher une recommandation d'escalade d'architecture indÃ©pendamment du toast visuel.</p>
+        <p><strong>SourceÂ :</strong> <code>12-owui-tools/context_gauge.py</code></p>
+      </div>
+      <div class="card">
+        <h3>ðŸ ExÃ©cution &amp; Pilotage</h3>
+        <p>Sandbox Python isolÃ©e (Docker Coding Worker), exÃ©cution de code arbitraire avec
+        support des bibliothÃ¨ques scientifiques, journalisation des rÃ©sultats.</p>
+        <p><strong>SourceÂ :</strong> <code>12-owui-tools/python_code_executor.py</code></p>
+        <a href="09e_execution_monitoring.html">Explorer âž”</a>
+      </div>
+      <div class="card">
+        <h3>ðŸŽ® Actions UI (Cockpits)</h3>
+        <p>Boutons de contrÃ´le manuel et interfaces riches (HUDs) injectÃ©s dans l'UI Open WebUI : Cockpit de purge sÃ©lective 
+        (MÃ©moire long terme), Print / PDF export, Sub-Agent Monitor (visualisation arborescente des threads cognitifs), RÃ©initialisation Auth (Google/PKCE), Replay Web.</p>
+        <p><strong>Source :</strong> <code>13-owui-actions/</code></p>
+        <a href="09f_actions_ui.html">Explorer âž”</a>
+      </div>
+      <div class="card">
+        <h3>ðŸŽ¨ Visual Intelligence</h3>
+        <p>GÃ©nÃ©ration d'interfaces visuelles dynamiques riches : Mindmaps (Markmap), graphes
+        (Mermaid, ECharts), cartes gÃ©ographiques (Google Maps), images premium.</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/universal_visual_generator.py</code></p>
+        <a href="09g_visual_intelligence.html">Explorer âž”</a>
+      </div>
+      <div class="card">
+        <h3>ðŸ§  Agents Cognitifs & DÃ©lÃ©gation</h3>
+        <p><strong>Table Ronde Delphi</strong> (<code>consult_council</code> - N experts en
+        tours parallÃ©lisÃ©s avec thoughtSignatures, synthÃ¨se par modÃ¨le dÃ©diÃ©), intÃ©grant le <strong>Skill Management</strong> (avec modales de confirmation interactives) et le <strong>Web Grounding</strong>,
+        forge et gestion des Skills (<code>forge_skill</code>, <code>list_skills</code>),
+        <strong>Agent stateful</strong> (<code>delegate_to_agent</code>) et
+        <strong>Data Broker</strong> (<code>delegate_to_data_broker.py</code>) pour dÃ©lÃ©guer la rÃ©cupÃ©ration complexe de donnÃ©es Ã  un agent spÃ©cialisÃ©.</p>
+        <p><strong>SourcesÂ :</strong> <code>12-owui-tools/agent_orchestration_tool.py</code>,
+        <code>12-owui-tools/agent_engine_tool.py</code>, <code>12-owui-tools/delegate_to_data_broker.py</code></p>
+        <a href="09i_delegate_agent.html">Delegate Agent â†’</a>
+        &nbsp;|
+        <a href="09j_agent_orchestration.html">Orchestration â†’</a>
+      </div>
+      <div class="card">
+        <h3>ðŸ—ºï¸ Maps Grounding</h3>
+        <p>Recherche gÃ©ographique avec rendu interactif Google Maps natif via
+        l'outil <code>googleMaps</code> de l'API Gemini (grounding natif). Route sur
+        <code>MODEL_LITE</code> via <code>call_cascade()</code> avec
+        <code>THINKING_LEVEL_GROUNDING_TOOLS</code> (MINIMAL).
+        Contexte gÃ©ographique optionnel (<code>latitude</code>,
+        <code>longitude</code>).</p>
+        <p><strong>SourceÂ :</strong> <code>12-owui-tools/gemini_maps_grounding.py</code></p>
+      </div>
+      <div class="card">
+        <h3>ðŸ“ ECHO Codex (Ã‰diteur de Code)</h3>
+        <p>Ã‰diteur Monaco multi-langage avec Git intÃ©grÃ© (dulwich, Python pur). Le Codex opÃ¨re dÃ©sormais avec deux environnements de travail (Workspaces) : <strong>main</strong> (lecture seule, rÃ©fÃ©rence absolue) et <strong>sandbox</strong> (lecture/Ã©criture, bac Ã  sable pour l'agent). Fonctions
+        Tool Call de contrÃ´le complet (CRUD, search, git history/restore, rename). Action HUD draggable avec
+        panneau de prÃ©visualisation WYSIWYG, Ã©dition AI assistÃ©e (cascade Gemini), diff accept/reject et 
+        navigation historique temporelle. PropriÃ©ception via l'outil <code>query_registry</code>.</p>
+        <p><strong>SourcesÂ :</strong> <code>12-owui-tools/echo_codex_tool.py</code>,
+        <code>13-owui-actions/echo_codex_action.py</code></p>
+        <a href="09h_codex_editor.html">Explorer â†’</a>
+      </div>
+      <div class="card">
+        <h3>âš¡ ECHO N8N Orchestrator</h3>
+        <p>Pont asynchrone entre l'agent ECHO et le Worker N8N. Permet d'exÃ©cuter des workflows Headless, de mocker des payloads asynchrones et d'initier des Child Chats (Mode DÃ©mon).</p>
+        <p><strong>Source :</strong> <code>12-owui-tools/n8n_orchestrator_tool.py</code></p>
+        <a href="09k_n8n_orchestrator.html">Explorer âž”</a>
+      </div>
+      <div class="card">
+        <h3>ðŸ”Œ MCP Broker & Inter-Services</h3>
+        <p>Proxy ASGI (FastMCP) agissant comme Proxy HTTP complet pour les outils externes (Sirene, Bodacc). IntÃ¨gre la <strong>Communication Inter-Services</strong> via <code>remote_mcp_tool.py</code> et <code>internal_mcp_tool.py</code> pour orchestrer les tÃ¢ches avec un schÃ©ma dynamique.</p>
+        <p><strong>Outils :</strong> <code>12-owui-tools/remote_mcp_tool.py</code>, <code>12-owui-tools/internal_mcp_tool.py</code></p>
+        <a href="09l_mcp_broker.html">Explorer âž”</a>
+      </div>
+      <div class="card">
+        <h3>ðŸ” Identity Vault & GÃ©nÃ©ralistes</h3>
+        <p><strong>Identity Vault</strong> permet au modÃ¨le de manipuler ses propres secrets (SQLite) et de dÃ©couvrir les schÃ©mas d'authentification MCP et N8N (<code>identity_vault_tool.py</code>). <strong>Outils GÃ©nÃ©ralistes</strong> intÃ¨gre un <code>async_wait_timer</code> et des capacitÃ©s de saisie utilisateur interactive (<code>generalist_tools.py</code>).</p>
+        <p><strong>Sources :</strong> <code>12-owui-tools/identity_vault_tool.py</code>, <code>12-owui-tools/generalist_tools.py</code></p>
+      </div>
+    </div>
+
+    <div class="audit-note">
+      <h4>âœ… ConformitÃ© au Protocole Multipart</h4>
+      <p>
+        Tous les outils de l'Arsenal retournent leurs rÃ©sultats via <code>wrap_tool_output()</code>
+        et garantissent l'isolation des donnÃ©es entre utilisateurs (filtrage systÃ©matique par
+        <code>user_id</code>). Les appels d'outils et leurs sorties sont journalisÃ©s dans
+        <code>tool_journal</code> (SQLite), liÃ© au <code>cumulative_hash</code> du tour courant.
+      </p>
+    </div>
+
+
+    <h2>Standards de DÃ©veloppement (Injection & PEP8)</h2>
+    <p>
+      L'arsenal des outils respecte des standards de dÃ©veloppement rigoureux :
+    </p>
+    <ul>
+      <li><strong>Injection OWUI :</strong> L'intÃ©gralitÃ© des outils doit dÃ©clarer les arguments <code>__user__</code> et <code>__metadata__</code> dans leur interface pour garantir l'injection native du contexte (identitÃ©, chat id) par Open WebUI.</li>
+      <li><strong>ConformitÃ© PEP8 :</strong> Le code doit Ãªtre exempt de variables ou d'imports inutilisÃ©s pour maximiser la sÃ©curitÃ© et l'efficacitÃ© de l'exÃ©cution.</li>
+      <li><strong>Protocoles Multiparts :</strong> Les outils retournant ou gÃ©nÃ©rant des mÃ©dias au format image/vidÃ©o utilisent dÃ©sormais la clÃ© standardisÃ©e <code>echo_tool_multiparts</code> (remplaÃ§ant <code>nouveaux_fichiers</code>) pour assurer un rendu multimodal sans friction.</li>
+    </ul>
+
+    <div class="transition-text">
+      <a href="08_pipe.html">&larr; Pipe (Cortex)</a>
+      &nbsp;&nbsp;
+      <a href="10_system_prompt.html">Kernel (System Prompt) &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

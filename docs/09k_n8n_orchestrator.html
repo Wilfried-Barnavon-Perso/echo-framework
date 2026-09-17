@@ -1,0 +1,38 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>ECHO v5 - 9k. ECHO N8N Orchestrator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+</script>
+
+  <div class="sidebar"></div>
+
+  <main>
+    <h1>9k. ECHO N8N Orchestrator</h1>
+
+    <h2>N8N Worker (Sandbox & DÃ©mon)</h2>
+    <p>L'outil <code>n8n_orchestrator_tool.py</code> est le pont entre l'agent ECHO et le sous-systÃ¨me N8N Worker (Tier 2). N8N s'exÃ©cute de maniÃ¨re "Headless" sur SQLite (volume <code>echo-n8n-data</code>) via l'image <code>n8nio/n8n</code> native, adossÃ©e Ã  Node.js.</p>
+    
+    <h3>RÃ¨gles d'Architecture strictes</h3>
+    <ul>
+      <li><strong>Sandbox Ã‰phÃ©mÃ¨re :</strong> Tout workflow testÃ© dynamiquement par le modÃ¨le (pour rÃ©soudre un problÃ¨me temporaire) doit OBLIGATOIREMENT dÃ©marrer par le nÅ“ud <code>Execute Workflow Trigger</code>. Le mocking de payload asynchrone est impÃ©ratif pour simuler les Webhooks/Emails lors des tests LLM. Les exÃ©cutions synchrones Ã©tant limitÃ©es, le repli vers le mode asynchrone est souvent nÃ©cessaire.</li>
+      <li><strong>DÃ©ploiements Permanents (Mode DÃ©mon) :</strong> RÃ©servÃ©s aux webhooks de production et crons, destinÃ©s Ã  tourner en arriÃ¨re-plan indÃ©finiment. Ces workflows interagissent avec les outils externes.</li>
+      <li><strong>Child Chats & MCP :</strong> Les workflows N8N en mode DÃ©mon agissent comme des clients MCP, requÃªtant les services d'ECHO et ouvrant asynchronement de nouveaux "Child Chats" dans le systÃ¨me ECHO pour exÃ©cuter des tÃ¢ches LLM complexes avec traÃ§abilitÃ©.</li>
+      <li><strong>IdentitÃ© & Secrets :</strong> L'usage en dur de tokens d'API ou Headers sensibles (Cookie, Authorization) dans les nÅ“uds est strictement proscrit. L'outil exige l'usage de la macro <code>__ECHO_SECRET_...</code> qui est rÃ©solue via l'Identity Vault.</li>
+    </ul>
+
+    <footer>
+      ECHO v5 Documentation - Version <span class="version-badge">5.203.1</span>
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+  
+</body>
+</html>

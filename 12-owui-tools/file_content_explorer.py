@@ -1,18 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.28
+version: 5.109.30
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.109.30: Intégration de l'accès aux espaces Codex (main/sandbox) via _resolve_extended_file_path et mise à jour des docstrings.
+# 5.109.29: Fix read_raw_file_content (numérotation factice sur offset et troncature silencieuse).
 # 5.109.27: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
-# 5.109.25: Ajout de la sécurité de taille maximale (MAX_MULTIMODAL_SIZE_KB) dans semantic_probe et read_multimedia_file.
-# 5.109.24: Correction 400 Bad Request (inlineData -> inline_data) et interception robuste des exceptions sondes.
-# 5.109.17: Suppression de la classe UserValves vide pour éviter le bug UI Open WebUI (Aucune vanne trouvée).
-# 5.109.16: Transformation de show_image_to_user en Sonde Visuelle pour les URL distantes (3 états: success, warning, error). 5.109.15: Délégation des URLs distantes au Markdown, WebPlayer limité au Base64 local. 5.109.5: Refactorisation terminologique (Vault Explorer → Explorateur de l'Espace Personnel). 5.109.6: Correction show_image_to_user (injection JS via events). 5.109.7: Ajout UserValves ANALYSE_MODEL pour semantic_probe (MODEL_FLASH → niveau cognitif paramétrable). 5.109.8: Fix import manquant TEMP_DEFAULT/TOP_P_DEFAULT (NameError dans semantic_probe). 5.109.9: Fix semantic_probe — thinkingLevel forcé à HIGH, suppression du paramètre libre thinking_level (confusion LLM avec le nom de modèle). 5.109.10: show_image_to_user — fallback client si vérification serveur échoue (CDN restrictifs type Wikimedia). 5.109.11: Suppression ANALYSE_MODEL UserValve, migration semantic_probe vers call_cascade(). 5.109.12: Injection __metadata__ et chat_id pour respect isolation fichiers par session. 5.109.13: Fix hallucination ID fichiers via docstring explicite et résolution résiliente. 5.109.14: Registre Unifié V2 — mark_processed → save_resource.
-# 5.109.18: Suppression de download_from_url (redondant, court-circuitage Registre V2).
 # 5.109.26: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 5.109.25: Ajout de la sécurité de taille maximale (MAX_MULTIMODAL_SIZE_KB) dans semantic_probe et read_multimedia_file.
 
 import os
 import sys
@@ -28,7 +26,8 @@ from pydantic import BaseModel, Field
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
 from echo_core import wrap_tool_output, wrap_cascade_output, split_thought_process
-from echo_paths import resolve_upload_file_path
+from echo_paths import resolve_upload_file_path, get_echo_session_path
+from echo_state_manager import EchoStateManager
 from echo_gemini_client import EchoGeminiClient
 from echo_http import get_stealth_headers
 from echo_ui import EchoUI
@@ -48,6 +47,31 @@ class Tools:
         self.valves = self.Valves()
         self.uploads_dir = ECHO_UPLOADS_TRANSIT_DIR
 
+    def _resolve_extended_file_path(self, uid: str, cid: str, target: str) -> str:
+        """Résout le chemin d'un fichier (main, upload, ou sandbox)."""
+        if not target: return None
+        target = target.strip()
+        safe_target = target.replace("\\", "/").strip("/")
+        
+        if cid:
+            # 1. Résolution Registre (Codex 'main')
+            state = EchoStateManager(user_id=uid, chat_id=cid)
+            resource = state.get_resource(target)
+            if resource and resource.get("resource_type") == "codex":
+                return os.path.join(get_echo_session_path(uid, cid, "codex"), "main", resource.get("name", target))
+                
+        # 2. Upload Standard (files)
+        fpath = resolve_upload_file_path(uid, target, self.uploads_dir, chat_id=cid)
+        if fpath: return fpath
+            
+        # 3. Fallback 'Sandbox' (fichier brut non indexé)
+        if cid and ".." not in safe_target.split("/"):
+            sandbox_path = os.path.join(get_echo_session_path(uid, cid, "codex"), "sandbox", safe_target)
+            if os.path.exists(sandbox_path) and os.path.isfile(sandbox_path):
+                return sandbox_path
+                
+        return None
+
     async def read_raw_file_content(
         self, 
         file_id: str, 
@@ -61,9 +85,9 @@ class Tools:
         __event_call__: Any = None
     ) -> str:
         """
-        Lecture sécurisée d'un fichier personnel (Espace Utilisateur). Validation Registre (query_registry) requise.
+        Lecture d'un fichier personnel (Uploads, Codex 'main', ou 'sandbox'). Validation Registre requise (sauf sandbox).
         [CONTRAINTE CRITIQUE : byte_offset est mutuellement exclusif avec start_line/end_line. Maximum conseillé pour byte_offset/lignes : éviter de saturer le contexte (ex: 100 lignes max).]
-        :param file_id: Identifiant strict Registre (ex: a1b2c3d4).
+        :param file_id: Identifiant Registre ou nom de fichier exact (si ciblage du sandbox).
         :param start_line: (Optionnel) Ligne de départ.
         :param end_line: (Optionnel) Ligne de fin.
         :param output_mode: (Optionnel) Format: 'text' (défaut/extraction standard), 'base64' (pour injection multimodale ou encapsulation de binaires), 'hex' (analyse structurelle).
@@ -71,7 +95,7 @@ class Tools:
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
-        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
+        fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), file_id)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         size = os.path.getsize(fpath)
@@ -97,20 +121,35 @@ class Tools:
                 with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
                     f.seek(byte_offset)
                     
-                    # ALGORITHMIC FIX: Skip lines if byte_offset is 0 and start_line > 1
-                    if byte_offset == 0 and start_line > 1:
-                        for _ in range(start_line - 1):
-                            if not f.readline(MAX_CHARS): break
+                    if byte_offset == 0:
+                        if start_line > 1:
+                            for _ in range(start_line - 1):
+                                if not f.readline(MAX_CHARS): break
+                                
+                        total_read = 0
+                        for i in range(start_line, end_line + 1):
+                            line = f.readline(MAX_CHARS)
+                            if not line: break
                             
-                    # Start reading from the actual requested range
-                    for i in range(start_line, end_line + 1):
-                        line = f.readline(MAX_CHARS)
-                        if not line: break
-                        clean_line = line.replace('\x00', '').rstrip()
-                        lines.append(f"+{i} | {clean_line}")
-                        if len("\n".join(lines)) >= MAX_CHARS: break
-                    new_offset = f.tell()
-                res_text = f"--- CONTENU TEXTE (Lignes {start_line} à {end_line}, Offset {byte_offset} à {new_offset}) ---\n\n" + "\n".join(lines) + warning_msg
+                            # Détection de la troncature d'une ligne trop longue
+                            if len(line) == MAX_CHARS and not line.endswith('\n'):
+                                f.readline()  # purge le reste de la ligne dans le flux
+                                line += " [...tronqué]"
+                                
+                            total_read += len(line)
+                            clean_line = line.replace('\x00', '').rstrip('\r\n')
+                            lines.append(f"{i} | {clean_line}")
+                            if total_read >= MAX_CHARS:
+                                lines.append(f"... [Tronqué : limite de {self.valves.MAX_READ_SIZE_KB} Ko atteinte]")
+                                break
+                        new_offset = f.tell()
+                        res_text = f"--- CONTENU TEXTE (Lignes {start_line} à {end_line}, Offset 0 à {new_offset}) ---\n\n" + "\n".join(lines) + warning_msg
+                    else:
+                        # Lecture brute par offset (évite l'hallucination des lignes virtuelles)
+                        raw_chunk = f.read(MAX_CHARS).replace('\x00', '')
+                        lines.append(raw_chunk)
+                        new_offset = f.tell()
+                        res_text = f"--- CONTENU TEXTE (Offset {byte_offset} à {new_offset}) ---\n\n" + raw_chunk + warning_msg
             elif output_mode == "base64":
                 with open(fpath, 'rb') as f:
                     f.seek(byte_offset)
@@ -139,13 +178,13 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Sonde sémantiquement un fichier volumineux ou complexe. Validation Registre requise.
-        :param file_id: Identifiant strict Registre (utiliser query_registry, ne jamais l'inventer).
+        """Sonde sémantiquement un fichier volumineux (Upload, Codex 'main', 'sandbox'). Validation Registre requise (sauf sandbox).
+        :param file_id: Identifiant Registre ou nom de fichier exact (pour le sandbox).
         :param query: Motif d'analyse sémantique.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
-        fpath = resolve_upload_file_path(user_id, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
+        fpath = self._resolve_extended_file_path(user_id, __metadata__.get("chat_id"), file_id)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         mime, supported = get_gemini_mime(fpath)
@@ -220,10 +259,12 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Sonde sensorielle : Délègue l'analyse d'un média à un sous-agent pour obtenir un rapport textuel (Zéro-RAM)."""
+        """Sonde sensorielle (Média) pour obtenir un rapport textuel (Zéro-RAM). Supporte Uploads, Codex 'main' et 'sandbox'.
+        :param file_id: Identifiant Registre ou nom de fichier exact (pour le sandbox).
+        """
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
-        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
+        fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), file_id)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         mime, supported = get_gemini_mime(fpath)
@@ -350,7 +391,7 @@ class Tools:
                         status={"status": "warning"}
                     , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             else:
-                fpath = resolve_upload_file_path(uid, target, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
+                fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), target)
                 if not fpath:
                     return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                 mime, _ = mimetypes.guess_type(fpath)
@@ -374,7 +415,7 @@ class Tools:
     async def get_file_metadata(self, file_id: str, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> str:
         """Récupère les métadonnées techniques d'un fichier."""
         uid = __user__.get("id", "anonymous")
-        fpath = resolve_upload_file_path(uid, file_id, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
+        fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), file_id)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         stat = os.stat(fpath)
         mime, _ = get_gemini_mime(fpath)
@@ -396,7 +437,7 @@ class Tools:
         uid = __user__.get("id", "anonymous")
         res = []
         for fid in file_ids:
-            p = resolve_upload_file_path(uid, fid, self.uploads_dir, chat_id=__metadata__.get("chat_id"))
+            p = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), fid)
             if p:
                 if algorithm == "crc32":
                     crc = 0

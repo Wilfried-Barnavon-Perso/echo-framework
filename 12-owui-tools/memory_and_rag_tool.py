@@ -1,16 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.22
+version: 2.26
 description: Composant système interne : ECHO Memory & RAG Tool.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 2.21: Renommage search_session_context -> search_sessions_context et maximisation du SNR de sa docstring.
-# 2.20: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 2.19: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
-# 2.18: Alignement sur Harrier-OSS (EMBEDDING_DIM), tri chronologique inverse pour search_session_context, directives de mise à jour de faits via memory_id et notes SNR RAG éphémère vs méta-artéfacts.
-# 2.17: Ajout start_date/end_date dans consult_session_context. Clarification SNR purge.
+# 2.26: Fix RAG (Purge idempotente pré-indexation, bridage de l'overlap max_chunk).
+# 2.25: Correctif (Recall) : Injection du paramètre score_threshold vers Qdrant.
+# 2.24: Améliorations de formatage PEP8 (espacements, indentations, ifs sur ligne unique).
+# 2.23: Correction (HTTP 400) : Remplacement d'une valeur par défaut mutable.
+# 2.21: Renommage search_session_context -> search_sessions_context.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -191,13 +191,15 @@ class Tools:
                 qdrant_filter = {"must": [{"key": "user_id", "match": {"value": user_id}}]}
                 if artifact_name:
                     qdrant_filter["must"].append({"key": "artifact_name", "match": {"value": artifact_name}})
-                
+
                 ts_start = self._parse_iso_date(start_date, False)
                 ts_end = self._parse_iso_date(end_date, True)
                 if ts_start or ts_end:
                     rng = {}
-                    if ts_start: rng["gte"] = ts_start
-                    if ts_end: rng["lte"] = ts_end
+                    if ts_start:
+                        rng["gte"] = ts_start
+                    if ts_end:
+                        rng["lte"] = ts_end
                     qdrant_filter["must"].append({"key": "timestamp", "range": rng})
 
                 if query:
@@ -242,8 +244,7 @@ class Tools:
                             print(f"[ECHO-MEMORY] search_memory : Aucun souvenir pour '{query}' après reranking (seuil {self.valves.SCORE_THRESHOLD}).", flush=True)
                         return wrap_tool_output(
                             text="Aucun souvenir pertinent après reranking.",
-                            status={"status": "success", "results": []}
-                        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                            status={"status": "success", "results": []}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
                     if self.valves.DEBUG_MODE:
                         print(f"[ECHO-MEMORY] search_memory : {len(reranked)} résultats retournés pour '{query}' après reranking.", flush=True)
@@ -253,10 +254,10 @@ class Tools:
                         p = r["payload"]
                         imp = int(p.get("memory_importance", p.get("importance", 3)))
                         label = MEMORY_IMPORTANCE_LABELS.get(imp, "?")
-                        
+
                         ts = p.get("timestamp")
                         date_str = f" | {datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}" if ts else ""
-                        
+
                         md += (
                             f"- **{p.get('memory_id', p.get('slug', 'Note'))}** "
                             f"[{label} / score: {r['_weighted']:.2f}{date_str}]\n"
@@ -296,7 +297,7 @@ class Tools:
                         pay_tags = pay.get('tags') or []
                         imp = int(pay.get("memory_importance", pay.get("importance", 1)))
                         label = MEMORY_IMPORTANCE_LABELS.get(imp, "?")
-                        
+
                         md += (
                             f"- **{pay.get('memory_id', pay.get('slug', 'Note'))}** "
                             f"({pay.get('artifact_name', 'Global')}) | [{label}{date_str}] | `{', '.join(pay_tags)}`\n"
@@ -318,7 +319,7 @@ class Tools:
         memory_id: str,
         __user__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
-        __metadata__: dict = {},
+        __metadata__: Optional[dict] = None,
     ) -> dict:
         """Supprime une information obsolète ou erronée d'un Méta-Artéfact par son memory_id."""
         events = EchoEvents(__event_emitter__)
@@ -369,6 +370,11 @@ class Tools:
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
+        
+        # PURGE PRÉVENTIVE DES VECTEURS FANTÔMES (Data Leak)
+        await events.status(f"🧠 Nettoyage préalable de la source {source_id}...")
+        await self.delete_session_context_source(source_id, __user__, __metadata__, __event_emitter__, __event_call__)
+
         await events.status(f"🧠 Indexation dans la Mémoire Vectorisée de Session ({source_id})...", done=False)
 
         try:
@@ -383,14 +389,12 @@ class Tools:
             if nb_points == 0:
                 return wrap_tool_output(
                     text=f"❌ Échec indexation Mémoire Vectorisée de Session ({source_id}) : {err}",
-                    status={"status": "error"}
-                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             await events.status("🧠 Indexation terminée.", done=True)
             return wrap_tool_output(
                 text=f"✅ `{source_id}` indexé dans la Mémoire Vectorisée de Session ({nb_points} vecteurs). "
-                     f"Utilisez search_session_context(source_id=\"{source_id}\", ...) pour l'interroger.",
-                status={"status": "success", "source_id": source_id, "vectors": nb_points}
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                f"Utilisez search_session_context(source_id=\"{source_id}\", ...) pour l'interroger.",
+                status={"status": "success", "source_id": source_id, "vectors": nb_points}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -434,14 +438,13 @@ class Tools:
                 )
                 if count_resp.status_code != 200:
                     return wrap_tool_output(text=f"❌ Erreur de vérification Qdrant : {count_resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-                
+
                 count = count_resp.json().get("result", {}).get("count", 0)
                 if count == 0:
                     return wrap_tool_output(
                         text="❌ Échec : Source introuvable ou isolée dans une autre session. Suppression inter-session bloquée par sécurité.",
-                        status={"status": "error"}
-                    , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-                
+                        status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
                 delete_payload = {
                     "filter": {"must": must_filters}
                 }
@@ -501,13 +504,15 @@ class Tools:
                     must_filters.append({"key": "chat_id", "match": {"value": chat_id}})
                 if source_id:
                     must_filters.append({"key": "source_id", "match": {"value": source_id}})
-                
+
                 ts_start = self._parse_iso_date(start_date, False)
                 ts_end = self._parse_iso_date(end_date, True)
                 if ts_start or ts_end:
                     rng = {}
-                    if ts_start: rng["gte"] = ts_start
-                    if ts_end: rng["lte"] = ts_end
+                    if ts_start:
+                        rng["gte"] = ts_start
+                    if ts_end:
+                        rng["lte"] = ts_end
                     must_filters.append({"key": "timestamp", "range": rng})
 
                 if query:
@@ -519,6 +524,7 @@ class Tools:
 
                     search_payload = {
                         "vector": vector, "limit": limit, "with_payload": True,
+                        "score_threshold": self.valves.SCORE_THRESHOLD,
                         "filter": {
                             "must": must_filters
                         }
@@ -527,12 +533,12 @@ class Tools:
                         f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/search",
                         json=search_payload
                     )
-                    
+
                     if resp.status_code == 404:
                         return wrap_tool_output(text="❌ Erreur: Aucune donnée indexée.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                     if resp.status_code != 200:
                         return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-                    
+
                     results = resp.json().get("result", [])
 
                     # Tri chronologique inverse (le plus récent en premier)
@@ -594,7 +600,7 @@ class Tools:
                         ts_str = datetime.fromtimestamp(data["timestamp"], timezone.utc).strftime('%Y-%m-%d %H:%M UTC') if data["timestamp"] else "Inconnu"
                         md += f"- **`{sid}`** [{ts_str}] : _{data['preview']}_\n"
                     md += f"\n**Tags détectés :** `{', '.join(sorted(tags))}`"
-                    
+
                     await events.status("🧠 Cartographie terminée.", done=True)
                     return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 

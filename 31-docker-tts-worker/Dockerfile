@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ECHO TTS WORKER (Kokoro ONNX CPU)
 FROM python:3.12-slim
 
@@ -15,18 +16,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Installation optimisée pour CPU
-RUN PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=$(nproc --ignore=1) pip install --no-cache-dir \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=2 pip install \
     kokoro-onnx \
     soundfile \
     fastapi \
     uvicorn \
     pydantic \
-    langid \
-    pydub \
-    pyspellchecker
+    lingua-language-detector
 
 # Téléchargement du modèle v1.0 et du profil vocal bin
-RUN wget -q https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx && \
+RUN wget -q https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx && \
     wget -q https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 
 COPY tts_api.py /app/

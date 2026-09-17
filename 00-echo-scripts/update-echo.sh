@@ -59,7 +59,7 @@ CONTAINERS_TO_RELOAD=$(docker ps \
     --filter "label=echo.hot-reload=true" \
     --format "{{.Names}}")
 if [ -n "$CONTAINERS_TO_RELOAD" ]; then
-    echo "$CONTAINERS_TO_RELOAD" | xargs -n 1 -P 0 docker restart >/dev/null 2>&1
+    echo "$CONTAINERS_TO_RELOAD" | xargs -n 1 -P 2 docker restart >/dev/null 2>&1
     FORMATTED_LIST=$(echo "$CONTAINERS_TO_RELOAD" | tr '\n' ' ')
     echo "   ✅ Services rechargés : $FORMATTED_LIST"
 else

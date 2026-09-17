@@ -1,0 +1,313 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Ã‰cosystÃ¨me HUD et UI du Framework ECHO v5 : Context Gauge, Monitor visuel, signature deploy_context_gauge, persistance LocalStorage, architecture Backend/Frontend.">
+  <title>ECHO v5 - 6. Écosystème HUD & UI</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>6. L'Écosystème HUD & UI</h1>
+
+    <p>
+      ECHO ne se limite pas Ã  gÃ©nÃ©rer du texte dans une fenÃªtre de chat. Il dispose d'un moteur
+      d'interface dynamique capable d'injecter des composants visuels directement dans le DOM d'Open WebUI :
+      jauges, moniteurs, indicateurs de quota et interfaces de replay. Cet Ã©cosystÃ¨me est pilotÃ© par
+      <code>echo_ui.py</code>, assistÃ© de <code>echo_visuals.py</code> pour les interfaces
+      riches multi-moteurs.
+    </p>
+
+    <div class="didactic-box">
+      <h4>ðŸ’¡ Qu'est-ce que le HUD ?</h4>
+      <p>
+        Le <strong>HUD (Heads-Up Display)</strong> n'est pas une interface sÃ©parÃ©e : c'est une
+        <strong>surcouche d'affichage</strong> injectÃ©e dynamiquement par-dessus le DOM d'Open WebUI.
+        Elle permet d'afficher en temps rÃ©el des informations techniques (Ã©tat du contexte, quota d'API,
+        statut d'authentification) directement dans le flux de conversation, sans polluer le texte
+        produit par le modÃ¨le.
+      </p>
+    </div>
+
+    <h2>Architecture de communication Backend â†” Frontend</h2>
+
+    <p>
+      Le systÃ¨me repose sur un pipeline Ã  trois niveaux :
+    </p>
+    <ol>
+      <li>
+        <strong>Backend (<code>echo_ui.EchoUI</code>) :</strong> gÃ©nÃ¨re des payloads JavaScript
+        polymorphes encapsulant les donnÃ©es (mÃ©triques de contexte, quota, images Base64).
+        Ces payloads sont de simples chaÃ®nes de caractÃ¨res contenant du code JS.
+      </li>
+      <li>
+        <strong>Canal d'Ã‰vÃ©nements (<code>EchoEvents</code>) :</strong> les ponts <code>emit</code>
+        et <code>call</code> d'Open WebUI servent de tunnel pour injecter le code JS dans le DOM global
+        de l'interface. Cette injection est possible uniquement depuis les hooks Pipe et Filter.
+      </li>
+      <li>
+        <strong>Runtime Frontend :</strong> un singleton JavaScript Ã©phÃ©mÃ¨re
+        (ex. <code>window.echoEngine_HUD_{uuid}</code>) est crÃ©Ã© dans le navigateur de l'utilisateur
+        et gÃ¨re les interactions locales (zoom, pan, Ã©tat du drag).
+      </li>
+    </ol>
+
+    <h2>La Context Gauge (Cortex Monitoring)</h2>
+
+    <p>
+      La Context Gauge est l'outil central de pilotage de l'Ã©tat cognitif. Elle est injectÃ©e dans la
+      barre de navigation d'Open WebUI via <code>EchoUI.deploy_context_gauge()</code> et mise Ã  jour
+      Ã  chaque tour de conversation par le Pipe.
+    </p>
+
+    <h3>A. Barre de contexte (tokens)</h3>
+    <p>
+      Une barre colorÃ©e Ã  quatre segments reprÃ©sente l'utilisation de la fenÃªtre contextuelle en cours :
+    </p>
+    <table>
+      <thead>
+        <tr><th>Segment</th><th>Couleur</th><th>Variable source</th><th>Signification</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Cache</td>
+          <td>Violet <code>#8b5cf6</code></td>
+          <td><code>cache_pct</code></td>
+          <td>Tokens dÃ©jÃ  ingÃ©rÃ©s et mis en cache par Google (Ã©conomie de coÃ»t de ~90 %).</td>
+        </tr>
+        <tr>
+          <td>Prompt actif</td>
+          <td>Vert <code>#10b981</code></td>
+          <td><code>prompt_pct</code></td>
+          <td>Charge active du message courant.</td>
+        </tr>
+        <tr>
+          <td>GÃ©nÃ©ration</td>
+          <td>Orange <code>#f59e0b</code></td>
+          <td><code>gen_pct</code></td>
+          <td>Tokens produits par ECHO lors de ce tour.</td>
+        </tr>
+        <tr>
+          <td>Vide</td>
+          <td>Transparent</td>
+          <td>-</td>
+          <td>Espace mÃ©moire de travail restant avant saturation.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Au survol de la barre, un tooltip affiche les valeurs absolues : cache, prompt actif,
+      gÃ©nÃ©ration, total et maximum de la fenÃªtre contextuelle.
+    </p>
+
+    <h3>B. IcÃ´ne Quota (jauge circulaire SVG)</h3>
+    <p>
+      Une icÃ´ne cadenas Ã  gauche de la barre reprÃ©sente le quota restant du modÃ¨le API Antigravity
+      actuellement actif. La jauge circulaire SVG est calculÃ©e via l'attribut
+      <code>stroke-dashoffset</code> Ã  partir de <code>quota_fraction</code>
+      (0,0 = Ã©puisÃ©, 1,0 = plein). La couleur varie selon trois seuils :
+    </p>
+    <ul>
+      <li><strong>Vert <code>#10b981</code> :</strong> <code>quota_fraction > 0,50</code></li>
+      <li><strong>Orange <code>#f59e0b</code> :</strong> <code>0,20 &lt; quota_fraction â‰¤ 0,50</code></li>
+      <li><strong>Rouge <code>#f85149</code> :</strong> <code>quota_fraction â‰¤ 0,20</code></li>
+    </ul>
+
+    <h3>C. Tooltip Authentification / Quotas</h3>
+    <p>Au survol de l'icÃ´ne cadenas, un tooltip affiche deux sections :</p>
+
+    <div class="code-header">Section AUTHENTIFICATION</div>
+    <pre><code>ðŸ” Source  : mÃ©thode d'auth (OAUTH2, API_KEY, etc.)
+ðŸ‘¤ Compte  : google_user_email (depuis identity.db)
+ðŸ—ï¸ Projet  : google_project_id (depuis identity.db)</code></pre>
+
+    <div class="code-header">Section QUOTAS (donnÃ©es fraÃ®ches via fetch_available_models)</div>
+    <pre><code>ðŸ’³ CrÃ©dits      : google_credits_total (crÃ©dits AI disponibles)
+ðŸ¤– ModÃ¨le CA    : ca_model_id actif (ex: gemini-3.5-flash)
+ðŸ“Š Quota        : quota_fraction Ã— 100% - colorÃ© selon seuils
+ðŸ“… Req/jour     : requestsPerDayRemaining / requestsPerDayLimit (N/A si non fourni)
+âš¡ Req/min      : requestsPerMinuteRemaining / requestsPerMinuteLimit (N/A si non fourni)
+ðŸ”„ Reset        : heure de reset du quota - formatÃ©e HH:MM (Xmin restantes)
+ðŸ·ï¸ Type         : google_quota_type (ex: CODE_ASSIST)</code></pre>
+
+    <div class="note-box">
+      <h4>Source et fraÃ®cheur des donnÃ©es quota</h4>
+      <p>
+        Les donnÃ©es de quota proviennent de <code>fetch_available_models()</code> (endpoint API Antigravity
+        <code>:fetchAvailableModels</code>), stockÃ©es dans <code>google_quota_by_model</code>
+        (JSON dict dans <code>identity.db</code>). Le rafraÃ®chissement est dÃ©clenchÃ© de maniÃ¨re
+        asynchrone et non-bloquante via <code>refresh_quota_if_needed()</code> avec un cooldown
+        de 10 minutes. Les champs <code>requestsPerDay/Min</code> peuvent Ãªtre absents selon les
+        rÃ©ponses de l'API - dans ce cas, Â« N/A Â» est affichÃ©. Cela n'affecte pas la
+        <code>quota_fraction</code>, calculÃ©e sÃ©parÃ©ment.
+      </p>
+    </div>
+
+    <h3>D. Signature complÃ¨te de <code>deploy_context_gauge()</code></h3>
+    <p>
+      La fonction principale du HUD accepte les paramÃ¨tres suivants (tous avec valeurs par dÃ©faut
+      sÃ©curisÃ©es) :
+    </p>
+    <div class="code-header">echo_ui.py - deploy_context_gauge()</div>
+    <pre><code>deploy_context_gauge(
+    events,                        # EchoEvents - canal d'injection JS
+    plan_name, credits_val,        # IdentitÃ© du plan et crÃ©dits disponibles
+    quota_str,                     # RÃ©sumÃ© quota formatÃ©
+    c_t, active_p_t, g_t, max_t,  # Tokens absolus (cache, prompt, gÃ©nÃ©ration, max)
+    cache_pct, prompt_pct, gen_pct,# Pourcentages de la barre (0â€“100)
+    user_email, user_tier,         # IdentitÃ© utilisateur
+    project_id,                    # google_project_id
+    auth_sources,                  # Liste des mÃ©thodes d'auth actives
+    quota_amount,                  # Montant quota brut (hÃ©ritage - N/A si non dispo)
+    quota_fraction,                # Fraction restante du quota modÃ¨le (0.0â€“1.0)
+    quota_reset,                   # Heure de reset formatÃ©e (HH:MM ou HH:MM (Xmin))
+    quota_type,                    # Type de quota (ex: CODE_ASSIST)
+    quota_model,                   # CA model_id de ce quota
+    quota_rpd_rem,                 # Requests per day remaining (ou "N/A")
+    quota_rpd_lim,                 # Requests per day limit (ou "N/A")
+    quota_rpm_rem,                 # Requests per minute remaining (ou "N/A")
+    quota_rpm_lim                  # Requests per minute limit (ou "N/A")
+)</code></pre>
+
+    <h2>Le Monitor ECHO / Image Viewer (Visualiseur Intelligent)</h2>
+
+    <p>
+      InvoquÃ© via <code>EchoUI.monitor_ECHO()</code> (navigation web) ou
+      <code>EchoUI.show_image_js()</code> (affichage d'images), ce composant est une fenÃªtre flottante
+      surdimensionnable, dÃ©plaÃ§able et zoomable injectÃ©e dans le DOM.
+    </p>
+
+    <div class="note-box">
+      <h4>Unification du moteur visuel</h4>
+      <p>
+        La mÃ©thode <code>show_image_js()</code> rÃ©utilise le mÃªme moteur
+        <code>_generate_webplayer_js()</code> que le navigateur web. Deux paramÃ¨tres pilotent la personnalisation :
+      </p>
+      <ul>
+        <li><strong><code>direct_url</code></strong> : si fourni, l'image est chargÃ©e directement
+        depuis l'URL au lieu d'un <code>data:â€¦;base64,â€¦</code>. UtilisÃ© par <code>show_image_to_user</code>.</li>
+        <li><strong><code>icon</code></strong> : emoji affichÃ© dans l'en-tÃªte du HUD. Par dÃ©faut
+        <code>ðŸ‘ï¸</code> (image viewer), <code>ðŸŒ</code> pour le navigateur web.</li>
+      </ul>
+    </div>
+
+    <h3>FonctionnalitÃ©s techniques</h3>
+    <ul>
+      <li>
+        <strong>AccÃ©lÃ©ration GPU :</strong> utilisation de <code>translate3d(x, y, 0)</code>
+        pour forcer la crÃ©ation de calques de composition matÃ©rielle et assurer une fluiditÃ© 60 fps
+        mÃªme sur des images haute rÃ©solution.
+      </li>
+      <li>
+        <strong>Calcul de ratio dynamique :</strong> la fonction <code>getBestSize</code> ajuste
+        automatiquement les dimensions de la fenÃªtre pour respecter le ratio natif de l'image
+        (<em>aspect ratio</em>).
+      </li>
+      <li>
+        <strong>Zoom &amp; Pan universel :</strong> <strong>Ctrl + Molette</strong> pour le zoom
+        (jusqu'Ã  15Ã—), <strong>Clic + Glisser</strong> pour le dÃ©placement. Pilotage via la
+        propriÃ©tÃ© CSS <code>transform: scale()</code> sur le conteneur image.
+      </li>
+      <li>
+        <strong>Crop-Box interactif :</strong> boÃ®te de sÃ©lection redimensionnable permettant de
+        dÃ©finir une zone d'intÃ©rÃªt Ã  transmettre au modÃ¨le pour une analyse ciblÃ©e.
+      </li>
+    </ul>
+
+    <h3>Persistance de l'Ã©tat (LocalStorage)</h3>
+    <p>
+      Le Monitor mÃ©morise sa position et son zoom dans le <code>localStorage</code> du navigateur,
+      sous la clÃ© <code>STATE_KEY</code> gÃ©nÃ©rÃ©e par le backend. Format :
+    </p>
+    <pre><code>{ "x": 120, "y": 45, "s": 1.5, "ix": 0, "iy": 0, "m": false }</code></pre>
+    <p>
+      OÃ¹ <code>s</code> est le facteur d'Ã©chelle, <code>ix</code>/<code>iy</code> l'offset pan,
+      et <code>m</code> l'Ã©tat du mode crop.
+    </p>
+
+    <h2>SystÃ¨me OWUI Tools et Modales Natives Asynchrones</h2>
+
+    <p>
+      Le moteur <code>echo_ui.py</code> intÃ¨gre dÃ©sormais un systÃ¨me natif d'interaction <strong>"OWUI Tools"</strong> avec des optimisations 100% Mobile Natives (unitÃ©s dvh, anti-zoom iOS, touch targets 44px, anti-scroll du body). Ce systÃ¨me dÃ©ploie des modales asynchrones interactives (ex: <code>window.echoCustomPrompt</code>, <code>window.echoCustomConfirm</code> enrichies par des boutons 'pills' pour les options) permettant de solliciter l'utilisateur ou d'afficher des alertes critiques sans jamais bloquer l'Event Loop du navigateur.
+    </p>
+
+    <ul>
+      <li><strong>SÃ©curitÃ© DOM & ResponsivitÃ© :</strong> Le moteur HUD est intÃ©gralement optimisÃ© pour le mobile (gestion native de wrap, max-width, overflow). Ces modales sont injectÃ©es de maniÃ¨re isolÃ©e, respectent le mode sombre/clair, et sÃ©curisent strictement les rendus via la fonction d'assainissement <code>window.echoSanitizeHTML</code>. L'interface intÃ¨gre par ailleurs des redimensionnements fluides (<code>splitter</code>).</li>
+      <li><strong>Asynchronisme :</strong> En encapsulant ces interactions dans des Promises, l'agent peut s'interfacer en temps rÃ©el avec l'humain tout en maintenant la rÃ©activitÃ© totale de l'application.</li>
+    </ul>
+
+    <div class="transition-text">
+      <a href="05_echo_libs.html">&larr; Librairies Partagées</a>
+      &nbsp;&nbsp;
+      <a href="07_filtre.html">Filtres (Conscience) &rarr;</a>
+    </div>
+
+    
+    <h2>Vault UI et <code>echoWebPlayerUpdate</code></h2>
+    <p>
+      L'Ã©cosystÃ¨me intÃ¨gre Ã©galement le <strong>Vault UI</strong>, un gestionnaire de fichiers avancÃ©. Il se met Ã  jour en temps rÃ©el via <code>echoWebPlayerUpdate</code>, assurant une synchronisation parfaite entre les processus d'arriÃ¨re-plan (N8N, MCP) et l'interface client, sans nÃ©cessiter de rafraÃ®chissement global de la page.
+    </p>
+
+    <h2><code>_generate_codex_js()</code> - Moteur HUD Monaco Codex</h2>
+
+    <p>
+      La mÃ©thode <code>_generate_codex_js()</code> gÃ©nÃ¨re
+      le script JavaScript complet du HUD Monaco Codex (voir
+      <a href="09h_codex_editor.html">ECHO Codex â†’</a>). Comme tous les HUDs ECHO,
+      il est injectÃ© via <code>__event_call__({type: 'execute', data: {code: ...}})</code>.
+    </p>
+
+    <table>
+      <thead><tr><th>ParamÃ¨tre</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>files_json</code></td><td><code>str</code></td><td>JSON des fichiers Codex existants (liste <code>[{filename, language, content}]</code>).</td></tr>
+        <tr><td><code>quick_actions_json</code></td><td><code>str</code></td><td>JSON de <code>CODEX_QUICK_ACTIONS</code> - boutons prÃ©definis dans le mini-chat AI.</td></tr>
+        <tr><td><code>chat_id</code></td><td><code>str</code></td><td>Identifiant du chat courant - clÃ© <code>localStorage</code> de persistance position/taille HUD.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="tech-spec">
+      <h4>âš™ï¸ CaractÃ©ristiques techniques</h4>
+      <ul>
+        <li><strong>Monaco Editor 0.52.2</strong> - chargÃ© via CDN jsDelivr (AMD loader)</li>
+        <li><strong>DÃ©tection thÃ¨me</strong> - <code>document.documentElement.classList.contains('dark')</code> â†’ <code>vs-dark</code> ou <code>vs</code></li>
+        <li><strong>Persistance HUD</strong> - position/taille stockÃ©es dans <code>localStorage['echo_codex_{chat_id}']</code></li>
+        <li><strong>Pattern draggable</strong> - mÃªme architecture que <code>monitor_ECHO()</code> (mousedown/move/up)</li>
+      </ul>
+    </div>
+
+    <h2><code>_generate_agent_monitor_js()</code> - HUD Cognitive Monitor</h2>
+    
+    <p>
+      La mÃ©thode <code>_generate_agent_monitor_js()</code> propulse 
+      le HUD interactif permettant de visualiser l'architecture d'orchestration multi-agentique.
+    </p>
+
+    <table>
+      <thead><tr><th>ParamÃ¨tre</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>threads_json</code></td><td><code>str</code></td><td>JSON reconstruit des threads d'agents actifs, avec le dÃ©tail des Ã©tapes de rÃ©flexion.</td></tr>
+        <tr><td><code>chat_id</code></td><td><code>str</code></td><td>Identifiant du chat courant - clÃ© <code>localStorage</code> de persistance.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="tech-spec">
+      <h4>âš™ï¸ CaractÃ©ristiques spÃ©cifiques au HUD Multi-Agent</h4>
+      <ul>
+        <li><strong>Support multi-agentique</strong> : Fusion chronologique des threads membres d'un mÃªme conseil, et rendu arborescent hiÃ©rarchique pour les superviseurs (via <code>worker_branch</code> et <code>indent_override</code>).</li>
+        <li><strong>RafraÃ®chissement live</strong> : La boucle Ã©vÃ©nementielle permet un rafraÃ®chissement manuel ou automatique (via un composant Promise rÃ©cursif).</li>
+        <li><strong>Clamp Viewport</strong> : MÃ©canisme <code>clampHud</code> pour s'assurer que le HUD reste toujours accessible dans la fenÃªtre du navigateur.</li>
+      </ul>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

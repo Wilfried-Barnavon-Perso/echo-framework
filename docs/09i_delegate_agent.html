@@ -1,0 +1,410 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO Delegate Agent (agent_engine_tool.py v1.8) : agent stateful avec accÃ¨s aux outils, troncature silencieuse, budget d'appels configurable, protocole QUESTION:, rÃ©solution callables via _TOOLS_CACHE et sys.modules.">
+  <title>ECHO v5 - 9i. Delegate Agent - Agent Stateful</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', padding: 16 } });
+  </script>
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <main>
+    <h1>9i. Delegate Agent - Agent Stateful</h1>
+
+    <p>
+      <code>agent_engine_tool.py</code> implÃ©mente un systÃ¨me d'agents ECHO
+      <strong>stateful avec accÃ¨s aux outils</strong>. Le agent dispose d'une boucle agentique complÃ¨te identique au Pipe principal,
+      d'un budget d'appels de fonctions configurable et d'un mÃ©canisme de reprise via
+      identifiant de session (<code>sub_sid</code>). L'Ã©tat et la cascade de cette boucle 
+      peuvent Ãªtre visualisÃ©s en temps rÃ©el via l'action HUD <a href="09f_actions_ui.html">Agent Monitor</a>.
+    </p>
+
+    <div class="didactic-box">
+      <h4>ðŸ’¡ Delegate (Stateful)</h4>
+      <p>
+        <code>delegate_to_agent</code> est <strong>stateful</strong> : il maintient un historique de conversation persistÃ© en SQLite
+        (<code>cognitive_threads</code>), peut appeler des outils rÃ©els, changer de niveau cognitif
+        (LITE â†’ FLASH â†’ PRO) et poser des questions Ã  l'orchestrateur via le protocole
+        <code>QUESTION:</code>.
+      </p>
+    </div>
+
+    <h2>Les 4 fonctions LLM exposÃ©es</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Fonction</th>
+          <th>RÃ´le</th>
+          <th>ParamÃ¨tres clÃ©s</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong><code>delegate_to_agent</code></strong></td>
+          <td>DÃ©lÃ©gation principale : crÃ©e ou reprend un thread d'agent. Peut Ãªtre spÃ©cialisÃ© via un Skill.</td>
+          <td><code>task</code>, <code>system_prompt</code> (opt.), <code>skill_id</code> (opt.), <code>sub_sid</code> (opt.), <code>with_context_distillate</code> (opt.), <code>target_model_key</code> (opt.)</td>
+        </tr>
+        <tr>
+          <td><code>list_agent_sessions</code></td>
+          <td>Liste les threads delegate actifs pour le chat courant</td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td><code>close_agent_session</code></td>
+          <td>Ferme et purge dÃ©finitivement un thread (irrÃ©versible)</td>
+          <td><code>sub_sid</code></td>
+        </tr>
+        <tr>
+          <td><code>summarize_agent_session</code></td>
+          <td>RÃ©sumÃ© structurÃ© d'un thread via distillation LLM (â‰¤ 8192 tokens)</td>
+          <td><code>sub_sid</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="warning-box">
+      <h4>âš ï¸ Fonctions hors portÃ©e du agent (<code>DELEGATE_AGENT_BLACKLIST</code>)</h4>
+      <p>
+        Certains outils sont <strong>exclus</strong> de la liste transmise au agent, pour
+        prÃ©venir les rÃ©cursions infinies, la corruption de la mÃ©moire long terme et les erreurs
+        d'Ã©tat. La blacklist est dÃ©finie dans <code>echo_constants.py</code> (Â§1.5) :
+      </p>
+      <ul>
+        <li><strong>RÃ©cursion</strong> : <code>delegate_to_agent</code> (guard absolu depth=1)</li>
+        <li><strong>Orchestration cognitive</strong> : <code>consult_council</code>, <code>consult_supervised_workers</code></li>
+        <li><strong>Ã‰criture RAG</strong> : <code>update_meta_artifact</code>, <code>delete_meta_artifact_item</code>, <code>save_session_context</code></li>
+        <li><strong>Rendu UI</strong> : <code>generate_rich_visualization</code></li>
+        <li><strong>MÃ©ta-session</strong> : <code>list_agent_sessions</code>, <code>close_agent_session</code>, <code>summarize_agent_session</code>, <code>list_councils</code>, <code>close_council</code>, <code>list_supervised_tasks</code>, <code>close_supervised_task</code>, <code>context_gauge</code></li>
+      </ul>
+    </div>
+
+    <h2>Persistance - Threads SQLite</h2>
+
+    <p>
+      L'Ã©tat du agent (historique des Ã©changes) est persistÃ© dans la table
+      <code>cognitive_threads</code> de la base <code>{chat_id}.db</code>
+      via <code>EchoStateManager</code>. Chaque thread est identifiÃ© par un
+      <code>sub_sid</code> au format <code>dlg_{10 chars hexadÃ©cimaux}</code> (ex: <code>dlg_a3f9b2c1d0</code>).
+    </p>
+
+    <p>
+      Un thread peut Ãªtre repris Ã  tout moment en passant <code>sub_sid</code> Ã 
+      <code>delegate_to_agent</code>. L'orchestrateur peut ainsi rÃ©pondre Ã  une
+      <code>QUESTION:</code> du agent, ou reprendre une tÃ¢che longue interrompue.
+    </p>
+
+    <h2>RÃ©solution des callables - Architecture tri-sources</h2>
+
+    <p>
+      OWUI prÃ©sente un problÃ¨me architectural fondamental : les callables Python des outils
+      ne sont pas transmis nativement aux tool callables ni au Pipe via les paramÃ¨tres standards.
+      L'architecture rÃ©sout ce problÃ¨me via une approche Ã  trois sources de rÃ©solution, par ordre de prioritÃ© :
+    </p>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>RÃ©solution des callables - agent_engine_tool.py</span>
+        <span>[Tri-sources]</span>
+      </div>
+      <div class="mermaid">
+flowchart TD
+  START([delegate_to_agent appelÃ©]) --> S1
+
+  S1["Source 1 : _TOOLS_CACHE[chat_id]\n(module-level dans pipe_engine.py)\nCallables OWUI originaux - optimal"]
+  S1 --> CHK1{Cache peuplÃ© ?}
+
+  CHK1 -->|Oui| FILTER["Filtrage DELEGATE_AGENT_BLACKLIST\nâ†’ sub_tools final"]
+  CHK1 -->|Non| S2["Source 2 : __metadata__['_echo_tools_dict']\n(normalement vide - OWUI ne partage pas)"]
+
+  S2 --> CHK2{Dict non vide ?}
+  CHK2 -->|Oui| FILTER
+  CHK2 -->|Non| S3["Source 3 : _resolve_sub_tools_from_sys_modules()\nScan sys.modules â†’ instanciation Tools\nâ†’ injection user_valves â†’ mÃ©thodes async"]
+
+  S3 --> FILTER
+
+  FILTER --> LOOP["Boucle agentique\n_run_agent_loop()"]
+
+  classDef optimal fill:#064e3b,stroke:#10b981,color:#fff
+  classDef fallback fill:#78350f,stroke:#f59e0b,color:#fff
+  classDef last fill:#7f1d1d,stroke:#ef4444,color:#fff
+  class S1 optimal
+  class S2 fallback
+  class S3 last
+      </div>
+    </div>
+
+    <h3>Source 1 - <code>_TOOLS_CACHE</code> (Bridge Pipe)</h3>
+
+    <p>
+      Le Pipe (<code>pipe_engine.py</code>) stocke <code>__tools__</code> dans un dictionnaire
+      module-level <code>_TOOLS_CACHE[chat_id]</code> Ã  chaque invocation. Ce cache est accessible
+      depuis <code>agent_engine_tool</code> via <code>sys.modules["function_pipe_engine"]</code>.
+      C'est la <strong>source principale en production</strong> : elle contient les callables
+      OWUI originaux (des <code>functools.partial</code> prÃ©-configurÃ©s avec les paramÃ¨tres
+      d'infrastructure).
+    </p>
+
+    <h3>Source 3 - <code>_resolve_sub_tools_from_sys_modules()</code></h3>
+
+    <p>
+      Dernier recours si les deux premiÃ¨res sources Ã©chouent. La fonction scanne <code>sys.modules</code>
+      Ã  la recherche des modules <code>tool_*</code>, instancie chaque classe <code>Tools</code>,
+      injecte les <code>user_valves</code> depuis <code>__user__["valves"]</code> et rÃ©cupÃ¨re
+      toutes les mÃ©thodes async publiques comme callables.
+    </p>
+
+    <div class="note-box">
+      <h4>Limitation Source 3</h4>
+      <p>
+        Les instances crÃ©Ã©es par la Source 3 sont fraÃ®ches (valves par dÃ©faut). Seules les
+        <code>user_valves</code> sont injectÃ©es depuis <code>__user__["valves"]</code>. Les
+        valves de type <code>Valves</code> (admin) restent aux valeurs par dÃ©faut. Cette
+        diffÃ©rence est sans impact pratique dans la quasi-totalitÃ© des cas.
+      </p>
+    </div>
+
+    <h2>Boucle agentique - <code>_run_agent_loop()</code></h2>
+
+    <p>
+      La boucle principale du agent est structurÃ©e en 5 cas mutuellement exclusifs,
+      traitÃ©s Ã  chaque itÃ©ration selon le contenu de la rÃ©ponse Gemini. L'Ã©tat courant de
+      l'escalade cognitive est systÃ©matiquement persistÃ© et peut Ãªtre observÃ© via
+      l'action UI <strong>Agent Monitor</strong>.
+    </p>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>Boucle agentique - 5 cas de sortie</span>
+        <span>[_run_agent_loop]</span>
+      </div>
+      <div class="mermaid">
+flowchart TD
+  ITER([ItÃ©ration]) --> STATUS["Mise Ã  jour SQLite\n(Agent Monitor)"]
+  STATUS --> CALL["call_cascade()\ncurrent_model_key"]
+  CALL --> PARSE["Parse parts brutes\n(thoughtSignature prÃ©servÃ©e)"]
+
+  PARSE --> CAS1{CAS 1\nnew_cognitive_level\nsans tool_call ?}
+  CAS1 -->|Oui| ESCALADE["Mutation modÃ¨le\ncalls_used INCHANGÃ‰\nâ†’ continue"]
+  ESCALADE --> ITER
+
+  CAS1 -->|Non| CAS2{"CAS 2\nTexte pur\nQUESTION: en fin ?"}
+  CAS2 -->|Oui| QUESTION["Retour status\npending_question\n+ sub_sid"]
+  CAS2 -->|Non| CAS3{"CAS 3\nTexte pur\nsans QUESTION: ?"}
+  CAS3 -->|Oui| FINAL["Retour status success\n+ texte final"]
+
+  CAS3 -->|Non| CAS4{"CAS 4\nBudget calls_used\n+ len(fc) > max_calls ?"}
+  CAS4 -->|Oui| FORCED["Appel sans outils\n(conclusion forcÃ©e)\nstatus success + warning"]
+
+  CAS4 -->|Non| CAS5["CAS 5 : ExÃ©cution outils\n(parts brutes â†’ history)"]
+  CAS5 --> EXEC["Pour chaque functionCall :\ncallable ou QUESTION:"]
+  EXEC --> RESP["functionResponse parts\nâ†’ history.append(user)"]
+  RESP --> ITER
+
+  classDef exit_ok fill:#064e3b,stroke:#10b981,color:#fff
+  classDef exit_warn fill:#78350f,stroke:#f59e0b,color:#fff
+  classDef loop fill:#1e3a5f,stroke:#3b82f6,color:#fff
+  class FINAL,QUESTION exit_ok
+  class FORCED exit_warn
+  class ESCALADE,ITER loop
+      </div>
+    </div>
+
+    <h3>PrÃ©servation des ThoughtSignatures</h3>
+
+    <p>
+      La rÃ¨gle critique : les parts du modÃ¨le sont conservÃ©es
+      <strong>brutes</strong> dans l'historique. Elles ne sont jamais reconstruites Ã  partir
+      des sous-champs extraits. Le champ <code>thoughtSignature</code> est inclus dans les
+      parts <code>functionCall</code> de Gemini 3.x - le perdre cause un
+      <strong>400 Bad Request systÃ©matique</strong> sur tous les appels suivant une exÃ©cution
+      d'outil.
+    </p>
+
+    <div class="tech-spec">
+      <h4>âš™ï¸ Pattern de conservation des parts brutes</h4>
+      <pre><code># âœ… CORRECT - parts brutes conservÃ©es (thoughtSignature prÃ©servÃ©e)
+raw_parts = candidates[0]["content"].get("parts", [])
+history.append({"role": "model", "parts": tools_raw})
+
+# âŒ INCORRECT - reconstruction des parts (thoughtSignature perdue)
+fn_calls = [{"functionCall": p["functionCall"]} for p in raw_parts if "functionCall" in p]
+history.append({"role": "model", "parts": fn_calls})</code></pre>
+    </div>
+
+    <h3>RÃ¨gle API - SÃ©quentialitÃ© des functionResponse</h3>
+
+    <p>
+      Une rÃ¨gle stricte de l'API Gemini : le message <code>user</code> suivant un message
+      <code>model</code> contenant des <code>functionCall</code> doit contenir
+      <strong>uniquement des parts <code>functionResponse</code></strong>.
+      Aucun texte mÃ©langÃ© n'est tolÃ©rÃ©. Le agent ne place donc jamais d'information
+      de budget dans ce message - le budget est gÃ©rÃ© par le circuit breaker CAS 4.
+    </p>
+
+    <h2>Protocole QUESTION:</h2>
+
+    <p>
+      Lorsque le agent rencontre une ambiguÃ¯tÃ© irrÃ©soluble par les outils disponibles,
+      il peut demander une clarification Ã  l'orchestrateur principal en terminant sa rÃ©ponse par :
+    </p>
+
+    <div class="code-header">Protocole QUESTION: (format strict)</div>
+    <pre><code># RÃ©ponse du agent (texte libre + ligne finale obligatoire)
+J'ai analysÃ© les fichiers disponibles. J'ai besoin d'une prÃ©cision avant de continuer.
+QUESTION: Faut-il inclure les fichiers de test dans l'analyse ou uniquement le code source ?</code></pre>
+
+    <p>
+      Python dÃ©tecte ce pattern avec <code>re.search(r"QUESTION:\s*(.+?)$", text, re.MULTILINE)</code>
+      et retourne <code>status = "pending_question"</code> avec le <code>sub_sid</code>.
+      L'orchestrateur rappelle alors <code>delegate_to_agent</code> avec le mÃªme
+      <code>sub_sid</code> et la rÃ©ponse dans <code>task</code>.
+    </p>
+
+    <h3>Statuts de retour</h3>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Signification</th>
+          <th>Champs supplÃ©mentaires</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>success</code></td>
+          <td>TÃ¢che accomplie - rÃ©ponse dans le champ texte</td>
+          <td><code>sid</code>, <code>calls_used</code>, <code>model_used</code></td>
+        </tr>
+        <tr>
+          <td><code>success</code> + <code>warning: "budget_exhausted"</code></td>
+          <td>Budget Ã©puisÃ©, rÃ©ponse partielle forcÃ©e</td>
+          <td><code>sid</code>, <code>calls_used</code>, <code>model_used</code></td>
+        </tr>
+        <tr>
+          <td><code>pending_question</code></td>
+          <td>Le agent attend une clarification de l'orchestrateur</td>
+          <td><code>sid</code>, <code>question</code>, <code>progress</code>, <code>calls_used</code></td>
+        </tr>
+        <tr>
+          <td><code>error</code></td>
+          <td>Erreur technique (API, contexte manquant, cascade Ã©puisÃ©e)</td>
+          <td><code>sid</code>, <code>message</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Politique cognitive - HÃ©ritage du Pipe</h2>
+
+    <p>
+      Le agent hÃ©rite de la politique modÃ¨le du Pipe via <code>resolve_model_policy()</code>.
+      En mode <code>AUTO</code> ou <code>AUTO_PRO</code>, il dÃ©marre en <code>MODEL_LITE</code>
+      et peut escalader (ou redescendre) via l'outil <code>new_cognitive_level</code> fantÃ´me,
+      injectÃ© dynamiquement dans ses <code>function_declarations</code> Ã  chaque itÃ©ration.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Politique Pipe</th>
+          <th>ModÃ¨le de dÃ©part</th>
+          <th>Escalade possible</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>AUTO</code></td>
+          <td><code>MODEL_LITE</code></td>
+          <td>â†’ <code>MODEL_FLASH</code> (pas de PRO)</td>
+        </tr>
+        <tr>
+          <td><code>AUTO_PRO</code></td>
+          <td><code>MODEL_LITE</code></td>
+          <td>â†’ <code>MODEL_FLASH</code> â†’ <code>MODEL_PRO</code></td>
+        </tr>
+        <tr>
+          <td>ModÃ¨le fixÃ© (<code>MODEL_FLASH</code>, etc.)</td>
+          <td>ModÃ¨le fixÃ©</td>
+          <td>Aucune (mode fixe)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note-box">
+      <h4>Comptage du budget</h4>
+    </div>
+
+    <h2>DÃ©fense Passive : Troncature Silencieuse (Smart Pop)</h2>
+
+    <p>
+      Introduite en V1.8, la <strong>Troncature Silencieuse</strong> (Smart Pop) est une dÃ©fense passive intÃ©grÃ©e directement dans <code>agent_engine_tool.py</code> pour prÃ©venir l'Ã©puisement soudain de la fenÃªtre de contexte longue (1M / 2M tokens) lors d'un emballement d'outils (ex: extraction massive de donnÃ©es). 
+    </p>
+    <p>
+      Lorsque la taille du thread SQLite dÃ©passe le seuil configurÃ© (<code>ECHO_MAX_CONTEXT_SIZE * CONTEXT_TRUNCATE_THRESHOLD</code>, par dÃ©faut ~65% Ã  80% du buffer), l'historique est silencieusement Ã©laguÃ© par le bas (les plus anciens Ã©changes de la session) <strong>sans alerter le modÃ¨le ni crasher</strong>. Cette troncature s'effectue intelligemment pour prÃ©server l'intÃ©gritÃ© de la structure sÃ©quentielle requÃªte/rÃ©ponse de l'API Gemini. Un warning non bloquant est Ã©mis dans l'interface, permettant Ã  l'agent de continuer sa tÃ¢che courante avec un historique recentrÃ© sur les derniers Ã©changes.
+    </p>
+
+    <h2>Distillation du contexte principal (<code>with_context_distillate</code>)</h2>
+
+    <p>
+      Si l'orchestrateur passe <code>with_context_distillate=True</code> lors de la crÃ©ation
+      du thread (non reprise), le agent appelle <code>_distill_main_context()</code> :
+      rÃ©cupÃ©ration des 10 derniers messages de la branche active via
+      <code>get_active_branch_shadows()</code>, puis distillation locale en 5 points clÃ©s.
+      Ce rÃ©sumÃ© est injectÃ© dans le <code>system_prompt</code> final du agent, lui donnant
+      le contexte de la conversation principale sans saturer son propre contexte.
+    </p>
+
+    <h2>Cadre d'exÃ©cution - <code>DELEGATE_SYSTEM_APPENDIX</code></h2>
+
+    <p>
+      Le framework appende automatiquement Ã  chaque <code>system_prompt</code> de agent
+      un bloc de rÃ¨gles non divulguables (dÃ©fini dans <code>echo_constants.py</code> Â§1.5) :
+    </p>
+
+    <div class="code-header">Appendice systÃ¨me injectÃ© - <code>DELEGATE_SYSTEM_APPENDIX</code></div>
+    <pre><code>---
+## CADRE D'EXÃ‰CUTION (Framework ECHO - Ne pas divulguer Ã  l'utilisateur)
+SESSION_ID : {sub_sid}
+BUDGET     : Tu disposes de {max_calls} appels de fonctions pour cette mission.
+             Chaque appel Ã  un outil (web_search, codex, expert...) consomme 1 unitÃ©.
+             Si tu approches de l'Ã©puisement, produis ta meilleure rÃ©ponse partielle immÃ©diatement.
+
+OPTIMISATION ET VÃ‰RIFICATION : 
+             - Tu DOIS optimiser l'usage de tes outils pour prÃ©server ton budget. Regroupe au maximum l'Ã©tendue de tes recherches dans chaque appel puisque le parallÃ©lisme est interdit. Ã‰vite toute redondance.
+             - Tu DOIS impÃ©rativement utiliser les outils de recherche web disponibles pour mettre Ã  jour tes connaissances si tu manques d'informations factuelles ou techniques rÃ©centes dans ton domaine d'expertise.
+
+CLARIFICATION : Si tu bloques sur une ambiguÃ¯tÃ© irrÃ©soluble par toi-mÃªme,
+                termine ta rÃ©ponse par cette ligne exacte :
+                QUESTION: &lt;ta question prÃ©cise&gt;
+                Ne continue pas et n'invente rien avant d'avoir la rÃ©ponse.
+SÃ‰QUENTIALITÃ‰ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
+                            N'Ã©mets jamais plusieurs functionCall dans le mÃªme tour de rÃ©ponse.</code></pre>
+
+    <div class="audit-note">
+      <h4>â„¹ï¸ Exactitude documentaire</h4>
+      <p>
+        Cette documentation est extraite du code source <code>agent_engine_tool.py</code>
+        et de <code>echo_constants.py</code> (DELEGATE_AGENT_BLACKLIST, DELEGATE_SYSTEM_APPENDIX).
+      </p>
+    </div>
+
+    <div class="transition-text">
+      <a href="09h_codex_editor.html">&larr; ECHO Codex (Ã‰diteur)</a>
+      &nbsp;&nbsp;
+      <a href="09j_agent_orchestration.html">Orchestration Multi-Agents &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+  <script src="nav.js"></script>
+</body>
+</html>

@@ -1,18 +1,18 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.62
+version: 5.64
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.64: Ajout de l'extension .pdf au CODEX_LANG_MAP pour activer l'identification visuelle dans l'UI du Codex.
+# 5.63: Plan Gamma - Remplacement par le dictionnaire ECHO_CODEX_WORKSPACES et ajout de ECHO_SYNC_EXCLUDE_LIST.
 # 5.62: Migration du Défibrillateur Attentionnel vers un système de Rappels Cognitifs Multi-Axes.
 # 5.61: Migration de AEC_REMINDER_MSG en texte pur pour utilisation par EchoAEC (SSOT).
 # 5.60: Injection des seuils de Rappel Cognitif (Défibrillateur Attentionnel).
 # 5.58: Augmentation de ECHO_API_MAX_RETRIES à 5 tentatives.
 # 5.57: Ajout de ECHO_GLOBAL_TENANT_PROJECT_ID ("aicode-consumers") pour forcer le routage Code Assist et contourner les 429 persos.
-# 5.56: Mise à jour du modèle MODEL_FLASH de 3.7 vers 3.8.
-# 5.55: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES pour cohérence globale.
 # 5.53: Création des constantes CONTEXT_LOAD_WARNING_THRESHOLD (40) et CONTEXT_LOAD_CRITICAL_THRESHOLD (60)
 # 5.52: Alignement protocole OAuth2 sur AGY IDE 2.5.5 (audit binaire main.js) :
 #       - ECHO_CLIENT_METADATA : ideType ANTIGRAVITY, ajout ideName/ideVersion/platform
@@ -51,7 +51,7 @@ ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
-ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows"]
+ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows", "dependencies"]
 ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 
 # Identité Réseau (Antigravity 2.5.5 — aligné sur AGY IDE product.json:ideVersion)
@@ -203,21 +203,21 @@ AEC_REMINDERS = [
     },
     {
         "id": "alignment",
-        "token_threshold": 34000,
-        "tool_calls_threshold": 30,
-        "message": "Rappel : Assure-toi de respecter scrupuleusement le Profil d'Alignement et les préférences de formatage de l'utilisateur."
+        "token_threshold": 40000,
+        "tool_calls_threshold": 20,
+        "message": "Rappel : Assure-toi de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Applique PACP."
     },
     {
         "id": "strategy",
-        "token_threshold": 50000,
-        "tool_calls_threshold": 20,
-        "message": "Rappel : Vérifie tes Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel."
+        "token_threshold": 30000,
+        "tool_calls_threshold": 15,
+        "message": "Rappel : Vérifie tes Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel. Applique le PRAC."
     }
 ]
 
 # ==============================================================================
 # 1.1 MODULE : CONSTANTES ET DEFAULTS ECHO (CENTRALISATION)
-# VERSION : 5.999.1
+# VERSION : 5.999.3
 # ==============================================================================
 
 
@@ -424,7 +424,7 @@ CODEX_LANG_MAP = {
     ".html": "html", ".htm": "html", ".css": "css",
     ".json": "json", ".xml": "xml", ".yaml": "yaml", ".yml": "yaml",
     ".toml": "toml", ".ini": "ini", ".conf": "plaintext",
-    ".md": "markdown", ".txt": "plaintext", ".log": "plaintext",
+    ".md": "markdown", ".txt": "plaintext", ".log": "plaintext", ".pdf": "pdf",
     ".sql": "sql", ".r": "r", ".lua": "lua", ".pl": "perl",
     ".dockerfile": "dockerfile",
 }
@@ -551,8 +551,20 @@ MODEL_ENUM_REFERENCE = {"MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"}
 # ECHO_QDRANT_URL : Utilisée par memory_and_rag_tool et conversation_memory_filter pour le stockage vectoriel.
 ECHO_QDRANT_URL = "http://echo-qdrant:6333"
 
-# ECHO_PYTHON_WORKER_URL : Utilisée par python_code_executor pour isoler l'exécution de code Python.
-ECHO_PYTHON_WORKER_URL = "http://echo-python-worker:5000/execute"
+# --- CONFIGURATION DES ESPACES DE TRAVAIL (CODEX) ---
+# Définit les sous-dossiers stricts dans la structure codex via un dictionnaire pour alimenter dynamiquement l'UI.
+ECHO_CODEX_WORKSPACES = {
+    "main": "Main",       # Dépôt officiel versionné
+    "sandbox": "Sandbox"  # Espace d'exécution et de génération du worker
+}
+
+# Liste stricte des dossiers et fichiers à ignorer lors de la synchronisation ou de l'exploration UI
+ECHO_SYNC_EXCLUDE_LIST = [".venv", "node_modules", "__pycache__", ".git", ".pytest_cache", "venv"]
+
+# ECHO_CODING_WORKER_URL : Utilisée pour isoler l'exécution de code (Python, JS, etc.).
+ECHO_CODING_WORKER_URL = "http://echo-coding-worker:5000/execute"
+ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT = 900
+ECHO_MAX_CODE_EXECUTION_TIMEOUT = 3600
 
 # NAVIGATION_ENGINE_URL : Utilisée par navigation_engine_tool pour le pilotage Playwright/Chrome.
 NAVIGATION_ENGINE_URL = "http://echo-browser-worker:5002"

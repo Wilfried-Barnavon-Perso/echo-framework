@@ -10,11 +10,13 @@ Ce dossier contient le service **TTS Worker** (Text-To-Speech). C'est un microse
 
 ### `tts_api.py`
 Fichier Python hébergeant le service de synthèse vocale.
-- **API Compatible OpenAI** : Le service expose des endpoints HTTP (généralement `/v1/audio/speech`) structurés selon le standard de l'API audio d'OpenAI. Cela permet à Open WebUI d'interagir avec ce service sans aucune modification de son code natif.
-- **Streaming Audio** : Il implémente souvent un streaming binaire direct (Chunking) pour permettre la lecture de la voix par l'interface utilisateur avant même que la totalité de la phrase ne soit générée.
+- **Moteur Kokoro ONNX Quantisé** : Utilise désormais `kokoro-v1.0.int8.onnx` pour une optimisation drastique de la RAM et du CPU (INT8).
+- **Découpage Syntaxique** : Implémente un algorithme hybride de découpage par propositions (clauses) préservant la ponctuation, divisant la charge CPU par 10 par rapport à l'ancien découpage par mot de Lingua.
+- **Anti-Zombie & Multithreading** : L'inférence est isolée via `asyncio.to_thread` pour empêcher le blocage de l'Event Loop (FastAPI). Intègre une annulation explicite des tâches de génération asynchrones (zombies) lors d'une déconnexion HTTP prématurée.
+- **API Compatible OpenAI** : Le service expose des endpoints HTTP (`/v1/audio/speech`) structurés selon le standard OpenAI, couplé à un streaming binaire asynchrone direct via FFmpeg.
 
 ### `Dockerfile`
-- Build d'une image Docker contenant les moteurs de synthèse vocale (comme `coqui-tts`, `piper`, ou `xtts_v2`). Ces moteurs nécessitant souvent des dépendances lourdes (PyTorch, espeak-ng), ils sont isolés dans ce Tier 2.
+- Build d'une image Docker contenant le moteur de synthèse vocale Kokoro ONNX, ainsi que FFmpeg et espeak-ng. L'installation pip est désormais optimisée en limitant le parallélisme de compilation (`CMAKE_BUILD_PARALLEL_LEVEL=2`).
 
 ## 3. Dépendances Logiques
 - Connecté en tant que "Audio Engine" dans les paramètres de l'interface Open WebUI.

@@ -11,7 +11,7 @@ Ce dossier contient le sous-système **Headless N8N Worker**. Il s'agit d'un con
 ### `n8n_api.py`
 Le contrôleur Python (FastAPI).
 - **Sémantique** : Il agit comme une couche d'abstraction (middleware) entre l'outil `n8n_orchestrator_tool.py` exécuté par l'agent et l'API interne de n8n.
-- **Rôle Actif** : Il permet à l'agent IA de pousser des workflows JSON (déploiement), de requêter l'état d'une exécution, de récupérer les logs d'erreurs d'un nœud spécifique, et de purger les exécutions.
+- **Rôle Actif** : Il permet à l'agent IA de pousser des workflows JSON (déploiement), de requêter l'état d'une exécution, de récupérer les logs d'erreurs, et de purger les exécutions. Il intègre un mécanisme natif de **Child Chats** permettant aux workflows N8N d'invoquer l'API locale Open WebUI pour déclencher de nouvelles sessions LLM (sous-agents asynchrones) pour accomplir des tâches complexes, garantissant une traçabilité totale au sein du Framework ECHO.
 
 ### `n8n_architecture.md`
 Le manifeste des règles de conception N8N imposées à l'agent.

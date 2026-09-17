@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.31
+version: 5.32
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.32: Protection de delete_user_skill contre l'invocation headless (vérification de __event_call__).
 # 5.31: Ajout du paramètre timeout_seconds (5 min par défaut) à delete_user_skill et modale auto-annulable.
 # 5.29: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 5.28: Ajout du paramètre require_web_grounding dans forge_skill pour actualisation experte conditionnelle.
@@ -163,6 +164,9 @@ class Tools:
 
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Validation requise pour supprimer le skill {skill_id}...", "done": False}})
+
+        if not __event_call__:
+            return wrap_tool_output(text="Erreur : L'interface utilisateur (__event_call__) est requise pour confirmer cette action.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
 
@@ -570,7 +574,7 @@ class Tools:
             deliverables_text = "\n\n---\n\n".join(
                 f"### WORKER: {w_id}\n{text}" for w_id, text in deliverables.items()
             )
-            import datetime
+
             current_time = datetime.datetime.now().isoformat()
             
             critic_prompt = (
@@ -704,7 +708,7 @@ class Tools:
         consolidation_text = "\n\n---\n\n".join(
             f"### WORKER: {w_id}\n{text}" for w_id, text in deliverables.items()
         )
-        import datetime
+
         current_time = datetime.datetime.now().isoformat()
         
         consolidation_prompt = (

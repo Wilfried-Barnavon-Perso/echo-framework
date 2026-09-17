@@ -1,19 +1,18 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.56
+version: 192.59
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.59: Application de `_mutate_context_identity` et protection du parsing JSON des tool_calls (fallback dict vide).
+# 192.58: Modification du préfixe de notification UI (toast) pour les rappels cognitifs (🛤️ Alignement du Modèle).
+# 192.57: Remplacement des blocs XML de troncature MAX_TOKENS par le format natif <artifact id="AEC_evenement_systeme">.
 # 192.56: Déploiement des Rappels Cognitifs Multi-Axes (Anti-Division par 0 + UI Toast Emission).
 # 192.55: Suture stricte (SSOT) : Injection native du Défibrillateur Attentionnel avant la boucle bit-perfect via EchoAEC.
 # 192.54: UX SSE: Libération asynchrone anticipée de l'UI via `yield ""` dès réception du finish_reason 'STOP', masquant la latence post-génération de l'API Google (usageMetadata).
-# 192.53: Suppression du bloc dead code 'RÉCUPÉRATION CHIRURGICALE' (await request.json()) : __request__ est un paramètre nommé de la signature du pipe, jamais dans **kwargs.
-# 192.52: Correction critique OWUI SSE: Suppression de yield ' ' qui forçait la création d'un message fantôme corrompant le stream reasoning.
-# 192.51: Intégration du Défibrillateur Attentionnel persistant via le KV unifié de session (echo_settings).
-# 192.50: Intégration du Défibrillateur Attentionnel par lecture native du promptTokenCount API via SQLite.
 
 
 # ==============================================================================
@@ -227,7 +226,7 @@ class Orchestrator:
                             self.user_data_manager.save_session_setting(setting_key, str(current_tier))
                             
                             if events:
-                                await events.status(f"Émission : {reminder['id']}", done=True)
+                                await events.status(f"🛤️ Alignement du Modèle : {reminder['id']}", done=True)
 
             if sys_events_to_inject:
                 aec_text = EchoAEC.render_system_events(sys_events=sys_events_to_inject)
@@ -273,7 +272,7 @@ class Orchestrator:
                     m_tool = messages[i]; content_tool = m_tool.get("content", "")
                     call_id = m_tool.get("tool_call_id"); bridge = self.user_data_manager.get_call_bridge(call_id)
                     func_name = bridge["name"] if bridge else "unknown"
-                    rich_tool_parts = unbox_tool_output(func_name, content_tool, model_id, self.model_origin)
+                    rich_tool_parts = unbox_tool_output(func_name, content_tool, model_id, self.model_origin, call_id)
                     aggregated_tool_parts.extend(rich_tool_parts)
                     i += 1
                 restored_parts = aggregated_tool_parts
@@ -290,12 +289,6 @@ class Orchestrator:
                     if draft_parts is not None:
                         restored_parts = []
                         restored_parts.extend(ensure_gemini_parts(draft_parts, model_id, self.model_origin))
-                        user_text = content if isinstance(content, str) else ""
-                        # Si content est une liste (multipart OWUI : texte + images inline),
-                        # le texte est déjà dans le draft via le filtre (ordered_user_parts).
-                        if user_text.strip(): 
-                            resolved_text = resolve_placeholders(user_text, model_id, self.model_origin)
-                            restored_parts.append({"text": f"<REQUETE_UTILISATEUR>\n{resolved_text}\n</REQUETE_UTILISATEUR>"})
                     else:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
                         restored_parts = self.user_data_manager.get_rich_payload(inv_hash) or ensure_gemini_parts(content, model_id, self.model_origin)
@@ -313,12 +306,24 @@ class Orchestrator:
                     restored_parts = ensure_gemini_parts(content, model_id, self.model_origin)
                     tool_calls = m.get("tool_calls", [])
                     if tool_calls:
-                        restored_parts = [{"functionCall": {"name": tc["function"]["name"], "args": std_json.loads(tc["function"]["arguments"])}} for tc in tool_calls] + restored_parts
+                        parsed_tc = []
+                        for tc in tool_calls:
+                            raw_args = tc["function"].get("arguments", "{}")
+                            if not raw_args: raw_args = "{}"
+                            try:
+                                args = std_json.loads(raw_args)
+                            except Exception:
+                                args = {}
+                            call_part = {"name": tc["function"]["name"], "args": args}
+                            if "id" in tc:
+                                call_part["id"] = tc["id"]
+                            parsed_tc.append({"functionCall": call_part})
+                        restored_parts = parsed_tc + restored_parts
                     else:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
                         current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
                         tool_io = self.user_data_manager.state_manager.get_tool_io(current_cumul)
-                        if tool_io: restored_parts = [{"functionCall": {"name": tc["name"], "args": tc["args"]}} for tc in tool_io.get("calls", [])] + restored_parts
+                        if tool_io: restored_parts = [{"functionCall": {"name": tc["name"], "args": tc["args"], **({"id": tc["id"]} if "id" in tc else {})}} for tc in tool_io.get("calls", [])] + restored_parts
 
                     if sig and restored_parts:
                         for p in restored_parts:
@@ -721,6 +726,9 @@ class Pipe:
         
         # Reconstruction contexte (Bit-Perfect)
         context = await orch.prepare_context(body, chat_id, target_model, __metadata__, events)
+        
+        if target_model and origine_model and target_model != origine_model and origine_model != "aucun":
+            orch._mutate_context_identity(context, target_model, origine_model)
 
         # --- [NOUVEAU] CONFIGURATION CASCADE ---
         is_auto = user_valves.MODEL_SELECTION in ["AUTO", "AUTO_PRO"]
@@ -875,40 +883,43 @@ class Pipe:
                 new_target = get_model_identity(target_req)
                 
                 if not new_target:
+                    sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
                     # Signalement d'erreur de paramètre au modèle actuel
                     context.append({
                         "role": "model",
-                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi MODEL_LITE, MODEL_FLASH ou MODEL_PRO."}}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi MODEL_LITE, MODEL_FLASH ou MODEL_PRO."}, "id": sys_tc_id}}]
                     })
                     continue
                 
                 # Vérification des droits (Valve)
                 if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PRO:
                     await events.status(f"⚠️ï¸  Transfert vers MODEL_PRO refusé (Valve AUTO).")
+                    sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
                     # Signalement de refus au modèle actuel
                     context.append({
                         "role": "model",
-                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": f"{target_req} unavailable (policy)", "message": f"Transfert vers {target_req} refusé. Traitez avec {target_model}."}}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": f"{target_req} unavailable (policy)", "message": f"Transfert vers {target_req} refusé. Traitez avec {target_model}."}, "id": sys_tc_id}}]
                     })
                     continue # On reboucle avec le MÊME target_model
                 
                 if new_target == target_model:
+                    sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
                     await events.status(f"⚠️ï¸  Auto-transfert annulé ({target_req}).")
                     context.append({
                         "role": "model",
-                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": "Déjà sur le modèle", "message": f"ERREUR : Vous êtes déjà sur le modèle {target_req}. Poursuivez votre tâche."}}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": "Déjà sur le modèle", "message": f"ERREUR : Vous êtes déjà sur le modèle {target_req}. Poursuivez votre tâche."}, "id": sys_tc_id}}]
                     })
                     continue
 
@@ -924,17 +935,20 @@ class Pipe:
                 
                 # 2. Suture Sémantique (Relais Protocolé avec réinjection signée du texte précédent)
                 sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
-                tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
+                tool_io = {"calls": [{"id": c.get("id"), "name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
                 model_parts = []
                 if proc.accumulated_text:
                     model_parts.append({"text": proc.accumulated_text, "thoughtSignature": sig_to_apply})
 
-                model_parts.append({"functionCall": {"name": "new_cognitive_level", "args": req}, "thoughtSignature": sig_to_apply})
+                sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
+                model_parts.append({"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}, "thoughtSignature": sig_to_apply})
 
                 # Récupération des appels parallèles orphelins
                 if proc.accumulated_calls:
                     for c in proc.accumulated_calls:
-                        model_parts.append({"functionCall": {"name": c["name"], "args": c["args"]}, "thoughtSignature": sig_to_apply})
+                        call_part = {"name": c["name"], "args": c["args"]}
+                        if "id" in c: call_part["id"] = c["id"]
+                        model_parts.append({"functionCall": call_part, "thoughtSignature": sig_to_apply})
 
                 # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
                 model_msg = {"role": "model", "parts": model_parts}
@@ -952,7 +966,7 @@ class Pipe:
                     "model_used": target_req,  # À ce stade l'escalade est approuvée (clamping fait en amont)
                 }
                 msg = f"Transfert effectué vers {target_req}."
-                user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {**escalation_status, "message": msg, "plan": plan_md}}}]
+                user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {**escalation_status, "message": msg, "plan": plan_md}, "id": sys_tc_id}}]
                 
                 # Annulation formelle des appels parallèles orphelins pour préserver le schéma strict
                 if proc.accumulated_calls:
@@ -979,13 +993,15 @@ class Pipe:
             else:
                 # [NOUVEAU] INDEXATION FINALE (SUTURE)
                 sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
-                tool_io = {"calls": [{"name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
+                tool_io = {"calls": [{"id": c.get("id"), "name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
                 model_parts = []
                 if proc.accumulated_text:
                     model_parts.append({"text": proc.accumulated_text, "thoughtSignature": sig_to_apply})
                 if proc.accumulated_calls:
                     for c in proc.accumulated_calls:
-                        model_parts.append({"functionCall": {"name": c["name"], "args": c["args"]}, "thoughtSignature": sig_to_apply})
+                        call_part = {"name": c["name"], "args": c["args"]}
+                        if "id" in c: call_part["id"] = c["id"]
+                        model_parts.append({"functionCall": call_part, "thoughtSignature": sig_to_apply})
                 
                 if model_parts:
                     model_msg = {"role": "model", "parts": model_parts}
@@ -1005,13 +1021,17 @@ class Pipe:
                         # Le payload partiel est rejeté par le StreamProcessor. On injecte une directive punitive pour forcer la concision.
                         await events.status("⚠️ Appel d'outil tronqué (MAX_TOKENS). Reprise et correction...")
                         await events.toast("Appel d'outil trop volumineux : Reprise automatique de la génération.", "warning")
-                        user_resp_parts = [{"text": "<AEC_evenement_systeme>\ntype: erreur_troncature_outil\nmessage: L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte).\ninstruction: Le modèle doit relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation.\n</AEC_evenement_systeme>"}]
+                        texte_outil = "Erreur : L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte). Le modèle doit relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation."
+                        xml_outil = f'<artifact id="AEC_evenement_systeme" source="Système">\\n{texte_outil}\\n</artifact>'
+                        user_resp_parts = [{"text": xml_outil}]
                     else:
                         # Cas 2 : L'interruption a eu lieu sur du texte brut.
                         # Le texte existant a déjà été indexé. On injecte une directive de continuation pure.
                         await events.status("🔄 Reprise automatique de la génération (MAX_TOKENS)...")
                         await events.toast("Limite de contexte (MAX_TOKENS) atteinte : Reprise automatique.", "info")
-                        user_resp_parts = [{"text": "<AEC_evenement_systeme>\ntype: troncature_texte\nmessage: La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte.\ninstruction: Le modèle doit poursuivre la génération du texte à partir du point de troncature exact, sans introduction.\n</AEC_evenement_systeme>"}]
+                        texte_gene = "Erreur : La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte. Le modèle doit poursuivre la génération du texte à partir du point de troncature exact, sans introduction."
+                        xml_gene = f'<artifact id="AEC_evenement_systeme" source="Système">\\n{texte_gene}\\n</artifact>'
+                        user_resp_parts = [{"text": xml_gene}]
                         
                     # Suture sémantique de l'événement système pour maintenir l'invariant cognitif bit-perfect
                     user_msg = {"role": "user", "parts": user_resp_parts}

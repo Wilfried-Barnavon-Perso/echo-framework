@@ -1,0 +1,532 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Actions UI ECHO v5 : mÃ©canique des Actions Open WebUI, pattern __event_call__ + Promise, purge mÃ©moire Qdrant, reset OAuth2 PKCE, cockpit de replay web, export PDF avec dÃ©tection Same-Origin.">
+  <title>ECHO v5 - 9f. Actions UI (HUD)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <main>
+    <h1>9f. Actions UI (HUD)</h1>
+
+    <p>
+      En termes Open WebUI, une <em>Action</em> est un bouton interactif injectÃ© dans l'interface
+      de chat, dÃ©clenchÃ© explicitement par l'utilisateur. ECHO dÃ©ploie cinq actions couvrant la
+      maintenance cognitive, l'archivage visuel, l'export documentaire et l'Ã©dition de code souverain.
+      Elles sont dÃ©finies dans le rÃ©pertoire <code>13-owui-actions/</code> du dÃ©pÃ´t.
+    </p>
+
+    <div class="didactic-box">
+      <h4>ðŸ’¡ Actions vs Outils - Distinction fondamentale</h4>
+      <p>
+        Les <strong>Outils</strong> (<code>12-owui-tools/</code>) sont dÃ©clenchÃ©s par le modÃ¨le
+        (Tool Call) au cours de la gÃ©nÃ©ration d'une rÃ©ponse. Les <strong>Actions</strong>
+        (<code>13-owui-actions/</code>) sont dÃ©clenchÃ©es par l'utilisateur via un bouton visible
+        sous chaque message. Elles exÃ©cutent du code Python cÃ´tÃ© serveur (dans le conteneur
+        <code>echo-open-webui</code>) sans interagir avec le flux de gÃ©nÃ©ration Gemini.
+      </p>
+    </div>
+
+    <h2>MÃ©canique interne - <code>__event_call__</code> et le Pattern Promise</h2>
+
+    <p>
+      Les Actions ECHO n'utilisent pas de <code>HTMLResponse</code> (iframe). Elles injectent
+      du JavaScript directement dans le DOM d'Open WebUI via le mÃ©canisme
+      <code>__event_call__({ "type": "execute", "data": { "code": js } })</code>.
+      Ce JS s'exÃ©cute dans le contexte de la page principale, avec un accÃ¨s complet au DOM
+      et aux APIs du navigateur.
+    </p>
+
+    <p>
+      La communication bidirectionnelle Python â†” JS repose sur le <strong>Pattern Promise</strong> :
+      le code JS retournÃ© Ã  <code>__event_call__</code> peut Ãªtre une <code>Promise</code>
+      dont la valeur rÃ©solue est renvoyÃ©e comme rÃ©sultat de l'appel Python. Cela permet une
+      boucle de dialogue asynchrone :
+    </p>
+
+    <pre><code># CÃ´tÃ© Python (action)
+result = await __event_call__({
+    "type": "execute",
+    "data": { "code": "return new Promise(r => window.myResolve = r);" }
+})
+# result contient la valeur passÃ©e Ã  window.myResolve(...) depuis le JS
+
+# CÃ´tÃ© JS (injectÃ© dans le DOM)
+document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'ok' });</code></pre>
+
+    <p>
+      Ce pattern est utilisÃ© pour les HUD interactifs (confirmation, sÃ©lection, choix) et
+      pour la boucle de streaming frame-par-frame du Cockpit de Replay Web.
+    </p>
+
+    <h2>PrioritÃ© d'affichage et ordre des boutons</h2>
+
+    <p>
+      Chaque action dÃ©clare un entier <code>priority</code> dans sa classe <code>Valves</code>.
+      Open WebUI trie les boutons d'action par valeur croissante : la prioritÃ© <code>1</code>
+      s'affiche en premier Ã  gauche, la prioritÃ© la plus haute Ã  droite.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Fichier</th>
+          <th>Titre OWUI</th>
+          <th>PrioritÃ©</th>
+          <th>RÃ´le rÃ©sumÃ©</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><code>reset_auth_action.py</code></td>
+          <td>RÃ©initialiser Authentification Gemini /!\</td>
+          <td><code>1</code></td>
+          <td>Invalide les tokens OAuth2 / clÃ©s PKCE</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td><code>purge_memory_action.py</code></td>
+          <td>Purge MÃ©moire Long Terme /!\</td>
+          <td><code>2</code></td>
+          <td>Suppression granulaire de la collection Qdrant utilisateur</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td><code>web_navigation_replay_action.py</code></td>
+          <td>Revue Navigation Web</td>
+          <td><code>3</code></td>
+          <td>Cockpit de rejeu des sessions de navigation Playwright</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td><code>print_pdf_action.py</code></td>
+          <td>Export PDF</td>
+          <td><code>4</code></td>
+          <td>Capture conversation &rarr; PDF (texte + Rich Embeds)</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td><code>agent_monitor_action.py</code></td>
+          <td>Agent Monitor</td>
+          <td><code>4</code></td>
+          <td>HUD de visualisation arborescente des threads cognitifs en temps rÃ©el</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td><code>echo_codex_action.py</code></td>
+          <td>ECHO Codex</td>
+          <td><code>5</code></td>
+          <td>HUD Monaco Ã©diteur de code avec Git intÃ©grÃ© et assistance AI</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Action 1 - RÃ©initialiser Authentification Gemini (<code>reset_auth_action.py</code>)</h2>
+
+    <p>
+      Invalide l'ensemble des tokens OAuth2 et clÃ©s API enregistrÃ©s dans
+      <code>identity.db</code> pour l'utilisateur courant. Au prochain message, le Cortex
+      (<code>pipe_engine.py</code>) dÃ©tecte l'absence de token valide et dÃ©clenche
+      automatiquement un flux d'authentification PKCE via
+      <code>echo_auth.py</code>.
+    </p>
+    <p>
+      Cette action est utile dans les cas suivants :
+    </p>
+    <ul>
+      <li>RÃ©vocation de droits Google (compte suspendu, changement d'organisation)</li>
+      <li>Changement de compte Google AI Studio</li>
+      <li>Suspicion de compromission d'un refresh token</li>
+      <li>Expiration anormale d'une session (erreur 401 persistante)</li>
+    </ul>
+
+    <div class="warning-box">
+      <h4>âš ï¸ Effet immÃ©diat</h4>
+      <p>
+        L'invalidation est immÃ©diate et ne nÃ©cessite pas de redÃ©marrage du conteneur.
+        L'utilisateur sera invitÃ© Ã  se rÃ©-authentifier dÃ¨s l'envoi du prochain message.
+        Aucune donnÃ©e de mÃ©moire ou de conversation n'est supprimÃ©e.
+      </p>
+    </div>
+
+    <h2>Action 2 - Purge MÃ©moire Long Terme (<code>purge_memory_action.py</code>)</h2>
+
+    <p>
+      Supprime des souvenirs ciblÃ©s depuis la collection <code>echo_meta_artifacts</code> dans Qdrant,
+      filtrÃ©s obligatoirement par <code>user_id</code> (clause <code>must</code>). L'action
+      concerne exclusivement la <strong>mÃ©moire long terme</strong> (organique) ; la mÃ©moire
+      de travail de la session en cours n'est pas affectÃ©e. L'utilisateur est guidÃ© via
+      un flux de dialogue en 5 Ã©tapes :
+    </p>
+    <ol>
+      <li>
+        <strong>Analyse multidimensionnelle</strong> : rÃ©cupÃ©ration et agrÃ©gation de tous les
+        tags de l'utilisateur avec mÃ©tadonnÃ©es (<code>memory_importance</code>,
+        frÃ©quence d'apparition). Tri hiÃ©rarchique : importance croissante â†’ frÃ©quence
+        dÃ©croissante â†’ ordre alphabÃ©tique. Affichage dans un <strong>HUD dÃ©roulant</strong>
+        (div scrollable, <code>max-height: 200px</code>) avec indicateurs colorÃ©s par niveau
+        d'importance (ðŸŸ¢ 1, ðŸ”µ 2, ðŸŸ¡ 3, ðŸŸ  4, ðŸ”´ 5).
+      </li>
+      <li>
+        <strong>SÃ©lection des catÃ©gories</strong> : l'utilisateur saisit les numÃ©ros des tags
+        Ã  purger, avec support des plages (ex : <code>1-4, 7, 10-12</code>).
+        <strong>Si le champ est laissÃ© vide</strong>, toutes les catÃ©gories sont sÃ©lectionnÃ©es
+        et une confirmation supplÃ©mentaire (<code>events.confirm</code>) est requise avant de
+        continuer. OWUI retournant <code>False</code> (boolÃ©en) pour un input vide confirmÃ©,
+        le code utilise <code>isinstance(selection_raw, str)</code> pour distinguer les types.
+      </li>
+      <li>
+        <strong>Choix du pÃ©rimÃ¨tre</strong> : un encart explicatif (voix ECHO, 1<sup>re</sup> personne)
+        prÃ©cise que seule la mÃ©moire long terme est concernÃ©e. Deux options :
+        <em>Â« Uniquement ce que j'ai retenu de cette discussion Â»</em> (filtre <code>chat_id</code>)
+        ou <em>Â« TOUT ce que je sais sur ces sujets, toutes discussions confondues Â»</em> (global).
+      </li>
+      <li>
+        <strong>Dry Run</strong> : prÃ©visualisation des <em>slugs</em> des souvenirs ciblÃ©s,
+        triÃ©s par ordre alphabÃ©tique et affichÃ©s dans un conteneur scrollable
+        (<code>max-height: 150px</code>). Tous les slugs sont listÃ©s (pas de limite Ã  10).
+      </li>
+      <li>
+        <strong>Suppression</strong> : appel <code>POST /collections/echo_meta_artifacts/points/delete</code>
+        sur l'API Qdrant interne (<code>http://echo-qdrant:6333</code>), avec le filtre
+        <code>must</code> incluant systÃ©matiquement <code>user_id</code> + <code>tags</code>
+        (et optionnellement <code>chat_id</code>).
+      </li>
+    </ol>
+
+    <div class="warning-box">
+      <h4>âš ï¸ OpÃ©ration irrÃ©versible</h4>
+      <p>
+        La suppression des vecteurs Qdrant est dÃ©finitive. Les souvenirs purgÃ©s ne peuvent
+        Ãªtre restaurÃ©s qu'Ã  partir d'une sauvegarde de volume Qdrant effectuÃ©e par l'Admin
+        Manager (<code>echo-backups</code>). L'action prÃ©sente systÃ©matiquement une
+        confirmation finale avant toute suppression effective.
+      </p>
+    </div>
+
+    <h2>Action 3 - Revue Navigation Web (<code>web_navigation_replay_action.py</code>)</h2>
+
+    <p>
+      Ouvre un cockpit visuel plein Ã©cran permettant de consulter et de rejouer les captures
+      d'Ã©cran des sessions de navigation web effectuÃ©es pendant la conversation courante par
+      l'outil <code>navigation_engine_tool.py</code>.
+    </p>
+
+    <h3>Source de donnÃ©es - Le Vault utilisateur</h3>
+    <p>
+      Les captures sont stockÃ©es sous forme de fichiers PNG horodatÃ©s dans le Vault de
+      l'utilisateur : <code>/opt/ECHO/users/&lt;user_id&gt;/files/U_&lt;uid&gt;_C_&lt;cid&gt;_T_&lt;ts&gt;.png</code>.
+      L'action scanne ce rÃ©pertoire, filtre par prÃ©fixe de conversation (<code>chat_id</code>)
+      et trie chronologiquement.
+    </p>
+
+    <h3>Architecture de streaming frame-par-frame</h3>
+    <p>
+      L'action utilise le Pattern Promise en boucle bloquante pour un dialogue
+      temps-rÃ©el entre Python et JS :
+    </p>
+    <ol>
+      <li>
+        <strong>Injection du Shell</strong> : le cockpit HTML/JS est injectÃ© dans le DOM
+        via <code>__event_call__({ type: "execute" })</code>.
+      </li>
+      <li>
+        <strong>Boucle <code>while True</code></strong> : Python encode la frame courante
+        en base64 et appelle <code>execute</code> pour mettre Ã  jour l'image dans le cockpit
+        (<code>window.echoReplayUpdate(b64, ts, idx, total)</code>).
+      </li>
+      <li>
+        <strong>Attente de commande</strong> : Python se bloque sur une Promise JS
+        (<code>window.echoReplayResolve</code>) jusqu'Ã  ce que l'utilisateur clique sur
+        un bouton (PrÃ©cÃ©dent, Suivant, Play, Fermer).
+      </li>
+      <li>
+        <strong>RÃ©solution</strong> : le bouton rÃ©sout la Promise avec
+        <code>{ action: "goto", index: N }</code> ou <code>{ action: "close" }</code>.
+        Python met Ã  jour l'index et reboucle, ou sort de la boucle.
+      </li>
+    </ol>
+
+    <h3>FonctionnalitÃ©s du Cockpit</h3>
+    <table>
+      <thead>
+        <tr><th>Fonction</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Navigation</td><td>PremiÃ¨re, PrÃ©cÃ©dente, Suivante, DerniÃ¨re frame</td></tr>
+        <tr><td>Lecture automatique</td><td>Play avant / arriÃ¨re avec vitesse rÃ©glable (1â€“30s)</td></tr>
+        <tr><td>Zoom</td><td>Ctrl+Molette dans la viewport</td></tr>
+        <tr><td>SÃ©lection Crop</td><td>Zone de recadrage redimensionnable par poignÃ©es</td></tr>
+        <tr><td>Export</td><td>TÃ©lÃ©chargement PNG (plein ou recadrÃ©) / Copie presse-papier</td></tr>
+        <tr><td>MÃ©tadonnÃ©es</td><td>Horodatage ISO de chaque capture, index / total</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Action 4 - Print / PDF (<code>print_pdf_action.py</code>)</h2>
+
+    <p>
+      Capture l'intÃ©gralitÃ© de la conversation courante et gÃ©nÃ¨re un fichier PDF
+      tÃ©lÃ©chargeable directement dans le navigateur. L'action est entiÃ¨rement
+      <strong>cÃ´tÃ© client</strong> (aucun appel backend, aucun stockage serveur) et
+      s'adapte automatiquement Ã  la configuration de sandboxing des iframes.
+    </p>
+
+    <h3>BibliothÃ¨ques utilisÃ©es</h3>
+    <table>
+      <thead>
+        <tr><th>BibliothÃ¨que</th><th>Version</th><th>RÃ´le</th><th>Source</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>html2canvas</strong></td>
+          <td><code>1.4.1</code></td>
+          <td>Rasterisation du DOM en canvas PNG</td>
+          <td>CDN Cloudflare (chargement dynamique)</td>
+        </tr>
+        <tr>
+          <td><strong>jsPDF</strong></td>
+          <td><code>2.5.1</code></td>
+          <td>Composition et export du fichier PDF</td>
+          <td>CDN Cloudflare (chargement dynamique)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="didactic-box">
+      <h4>ðŸ’¡ Pourquoi les iframes disparaissent dans le PDF natif Open WebUI</h4>
+      <p>
+        Le pipeline Â« Download as PDF Â» d'Open WebUI utilise Playwright/Chromium en mode
+        headless (<code>page.pdf()</code>). Les <code>&lt;iframe&gt;</code> sandboxÃ©es
+        ne sont pas sÃ©rialisÃ©es dans ce snapshot - leur contenu reste vide. C'est une
+        limite structurelle de Chromium : les iframes sont des documents isolÃ©s, non
+        aplatis dans le flux d'impression du document parent.
+      </p>
+      <p>
+        L'action ECHO contourne ce problÃ¨me en capturant le contenu de chaque iframe
+        directement via <code>iframe.contentDocument</code> (accÃ¨s possible uniquement
+        si <strong>Iframe Same-Origin Access</strong> est activÃ©), puis en substituant
+        chaque iframe par un snapshot image avant de rasteriser le conteneur parent.
+      </p>
+    </div>
+
+    <h3>PrÃ©requis - ParamÃ¨tres Interface Open WebUI</h3>
+
+    <div class="warning-box">
+      <h4>âš ï¸ Configuration requise pour le Mode complet</h4>
+      <p>
+        Pour capturer le contenu des Rich Embeds (mindmaps, graphes D3, cartes, tableaux
+        de bord), les deux paramÃ¨tres suivants doivent Ãªtre activÃ©s dans Open WebUI :
+      </p>
+      <p><strong>Settings â†’ Interface</strong></p>
+      <ul>
+        <li><strong>Iframe Same-Origin Access</strong> - permet l'accÃ¨s Ã 
+          <code>iframe.contentDocument</code> depuis le JS de la page parente.</li>
+        <li><strong>Iframe Allow Forms</strong> - requis pour certains Ã©lÃ©ments
+          interactifs des Rich Embeds.</li>
+      </ul>
+      <p>
+        Ces paramÃ¨tres sont stockÃ©s par utilisateur dans la table <code>user</code>
+        de <code>webui.db</code> (clÃ©s JSON : <code>ui.iframeSandboxAllowSameOrigin</code>
+        et <code>ui.iframeSandboxAllowForms</code>). Il n'existe pas de variable
+        d'environnement Docker pour les forcer globalement.
+      </p>
+    </div>
+
+    <h3>DÃ©tection automatique et deux modes d'exÃ©cution</h3>
+
+    <p>
+      Au lancement, l'action tente d'accÃ©der Ã  <code>iframe.contentDocument</code> sur
+      la premiÃ¨re iframe trouvÃ©e dans la conversation. Ce test non-destructif dÃ©termine
+      le mode d'exÃ©cution :
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Condition dÃ©tectÃ©e</th>
+          <th>Mode</th>
+          <th>Comportement</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Same-Origin activÃ© <em>ou</em> aucune iframe dans la conversation</td>
+          <td><strong>Mode A - Complet</strong></td>
+          <td>Capture texte + iframes Rich Embeds â†’ PDF haute rÃ©solution</td>
+        </tr>
+        <tr>
+          <td>Same-Origin absent <em>et</em> iframes prÃ©sentes</td>
+          <td><strong>Mode B - HUD de choix</strong></td>
+          <td>
+            Affichage d'un overlay expliquant le prÃ©requis.<br>
+            â€¢ <em>Continuer sans schÃ©mas</em> â†’ Mode B1 : PDF texte uniquement,
+            iframes remplacÃ©es par un placeholder textuel.<br>
+            â€¢ <em>Annuler</em> â†’ Fermeture sans gÃ©nÃ©ration.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Pipeline de capture (Mode A)</h3>
+    <ol>
+      <li>
+        <strong>Capture des iframes</strong> : pour chaque <code>&lt;iframe&gt;</code>
+        Rich Embed, <code>html2canvas(iframe.contentDocument.body)</code> produit un canvas.
+        L'iframe est temporairement remplacÃ©e dans le DOM par un Ã©lÃ©ment image (<code>&lt;div&gt;</code>
+        contenant un <code>&lt;img&gt;</code>) pour que la capture parent la voit comme
+        un contenu plat.
+      </li>
+      <li>
+        <strong>Capture globale</strong> : <code>html2canvas(container)</code> rasterise
+        l'intÃ©gralitÃ© du conteneur de conversation (dÃ©filement complet, <code>scrollY: 0</code>
+        avant capture, restauration aprÃ¨s).
+      </li>
+      <li>
+        <strong>Restauration du DOM</strong> : les iframes originales sont rÃ©affichÃ©es,
+        les placeholders supprimÃ©s.
+      </li>
+      <li>
+        <strong>Composition PDF</strong> : jsPDF dÃ©coupe le canvas en tranches A4, ajoute
+        un en-tÃªte (titre + date) et un pied de page numÃ©rotÃ© sur chaque page.
+      </li>
+      <li>
+        <strong>TÃ©lÃ©chargement</strong> : <code>pdf.save('ECHO_Export_AAAAMMJJ_HHMM.pdf')</code>
+        dÃ©clenche le tÃ©lÃ©chargement natif du navigateur.
+      </li>
+    </ol>
+
+    <h3>Limites connues</h3>
+    <table>
+      <thead>
+        <tr><th>Limite</th><th>Cause</th><th>Impact</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Images externes dans les messages</td>
+          <td>Politique CORS des serveurs tiers</td>
+          <td>Images remplacÃ©es par un rectangle vide (<code>useCORS: true</code> attÃ©nue)</td>
+        </tr>
+        <tr>
+          <td>Webfonts dans les iframes</td>
+          <td>html2canvas ne charge pas les fonts cross-origin</td>
+          <td>Fallback system-font dans les Rich Embeds capturÃ©s</td>
+        </tr>
+        <tr>
+          <td>TrÃ¨s longue conversation</td>
+          <td>Canvas gÃ©ant en mÃ©moire</td>
+          <td>Latence de 2â€“5s sur conversations de +50 messages ; risque OOM navigateur</td>
+        </tr>
+        <tr>
+          <td>Rich Embeds A-Frame / 3D</td>
+          <td>WebGL non supportÃ© par html2canvas</td>
+          <td>Capture noire ou vide pour les scÃ¨nes 3D</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="audit-note">
+      <h4>âœ… ParamÃ¨tres configurables (Valves)</h4>
+      <p>
+        <code>image_scale</code> (dÃ©faut : <code>2.0</code>) contrÃ´le la rÃ©solution de
+        rasterisation. Une valeur de <code>1.0</code> rÃ©duit la taille du fichier PDF au
+        dÃ©triment de la nettetÃ©. <code>pdf_orientation</code> accepte
+        <code>portrait</code> (dÃ©faut, A4 210Ã—297mm) ou <code>landscape</code>.
+      </p>
+    </div>
+
+    <h2>Action 5 - Agent Monitor (<code>agent_monitor_action.py</code>)</h2>
+
+    <p>
+      Ouvre un HUD interactif (div draggable et redimensionnable) injectÃ© dans le DOM permettant de
+      visualiser l'arborescence des threads des agents cognitifs en temps rÃ©el. Ce module est propulsÃ© par
+      le moteur de rendu natif <strong>EchoUI</strong>.
+    </p>
+    <p>
+      BasÃ© sur une boucle d'Ã©vÃ©nements bidirectionnelle avec le frontend (Pattern Promise), ce cockpit
+      interroge le statut des agents pour afficher l'Ã©tat courant de l'escalade cognitive.
+    </p>
+    
+    <h3>Taxonomie visuelle et Orchestration Multi-Agentique</h3>
+    <p>
+      L'interface classifie et regroupe les threads de rÃ©flexion de l'orchestrateur selon une taxonomie stricte :
+    </p>
+    <ul>
+      <li>ðŸ¤– <strong>Agent</strong> : Agent stateful classique.</li>
+      <li>ðŸŽ“ <strong>Expert</strong> : Agent expert qualifiÃ© selon un rÃ´le mÃ©tier dÃ©fini.</li>
+      <li>ðŸ›ï¸ <strong>Conseil (Council)</strong> : StratÃ©gie de Table Ronde Delphi. L'interface fusionne <em>chronologiquement</em> tous les threads des membres du conseil en une vue unifiÃ©e.</li>
+      <li>ðŸ“‹ <strong>Superviseur (Supervisor)</strong> : Orchestration hiÃ©rarchique. L'interface affiche l'agent superviseur avec le regroupement arborescent des <em>workers</em> sous sa tutelle.</li>
+      <li>ðŸŒ <strong>Navigateur Web</strong> : Agent pilotant le navigateur web avec analyse DOM en temps rÃ©el.</li>
+    </ul>
+
+    <h2>Action 6 - ECHO Codex (<code>echo_codex_action.py</code>)</h2>
+
+    <p>
+      Ouvre un Ã©diteur de code Monaco complet dans un HUD draggable et redimensionnable,
+      directement intÃ©grÃ© dans le DOM d'Open WebUI. Chaque conversation dispose de
+      son propre dÃ©pÃ´t Git isolÃ© (via <code>dulwich</code>, Python pur sans binaire git)
+      dans le Vault utilisateur. La position et la taille du HUD sont persistantes
+      via <code>localStorage</code> (clÃ© <code>echo_codex_{chat_id}</code>).
+    </p>
+
+    <h3>FonctionnalitÃ©s principales</h3>
+    <table>
+      <thead>
+        <tr><th>FonctionnalitÃ©</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>File Tree</strong></td><td>Panneau gaucheÂ : liste des fichiers du Codex (tri dynamique par <code>mtime</code>). Clic &rarr; chargement dans l'Ã©diteur. Action contextuelle &rarr; Renommage intÃ©grÃ© (OS + Git). Bouton &times; &rarr; suppression avec commit. Bouton + &rarr; crÃ©ation fichier.</td></tr>
+        <tr><td><strong>Ã‰diteur Monaco</strong></td><td>Monaco Editor 0.52.2 via CDN jsDelivr. Coloration syntaxique 30+ langages. IntÃ¨gre un <strong>panneau de prÃ©visualisation WYSIWYG</strong>. Bouton de sauvegarde explicite et Ctrl+S &rarr; sauvegarde + commit immÃ©diat.</td></tr>
+        <tr><td><strong>Ã‰dition AI</strong></td><td>Instruction libre ou macro-action prÃ©dÃ©finie (shorter, comment, refactor, fix, testsâ€¦). SÃ©lecteur LITE/FLASH/PRO. Affiche un diff cÃ´te-Ã -cÃ´te Accept/Rejeter.</td></tr>
+        <tr><td><strong>Navigation Git &#9664; &#9654;</strong></td><td>Navigation commit par commit pour un fichier. Mode read-only visuel. Bouton Restaurer &rarr; nouveau commit de restauration.</td></tr>
+        <tr><td><strong>Import/Export</strong></td><td>TÃ©lÃ©chargement depuis le PC vers le Codex (upload), tÃ©lÃ©chargement du fichier vers le PC (download natif navigateur).</td></tr>
+        <tr><td><strong>Reset</strong></td><td>Suppression intÃ©grale du dÃ©pÃ´t (confirmation JS + purge SQLite). IrrÃ©versible.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="didactic-box">
+      <h4>ðŸ’¡ ComplÃ©mentaritÃ© HUD (Action) vs. Outil LLM (Tool Call)</h4>
+      <p>
+        L'Action ECHO Codex (ce HUD) est complÃ©mentaire de l'outil LLM
+        <code>echo_codex_tool.py</code>Â : le HUD est pilotÃ© <strong>par l'utilisateur</strong>
+        (bouton sous le message), l'outil LLM est pilotÃ© <strong>par Gemini</strong>
+        (Tool Call au cours d'une gÃ©nÃ©ration). Les deux accÃ¨dent au mÃªme dÃ©pÃ´t Git
+        et au mÃªme registre SQLite <code>resources</code> (Registre UnifiÃ©).
+      </p>
+    </div>
+
+    <p>Pour la documentation technique complÃ¨te (architecture, API JS, protocole Pythonâ†”JS),
+    voir <a href="09h_codex_editor.html">ECHO Codex &rarr;</a>.</p>
+
+
+    <h2>5. ECHO Identity Vault (<code>echo_identity_vault_action.py</code>)</h2>
+    <p>
+      Cette action dÃ©ploie une interface d'authentification centralisÃ©e <strong>fusionnant MCP et N8N</strong>. Elle se synchronise dynamiquement avec l'API des schÃ©mas du MCP Broker (<code>echo-mcp-broker</code>) et de N8N pour permettre Ã  l'utilisateur de configurer les clÃ©s et mots de passe requis.
+      Les <em>credentials</em> mÃ©tier sont stockÃ©s de maniÃ¨re chiffrÃ©e et isolÃ©e dans une base locale (SQLite). Elle orchestre la distribution des secrets via <code>ECHO_N8N_VAULT_KEY</code> et maintient une Ã©tanchÃ©itÃ© stricte : le LLM n'a jamais accÃ¨s en clair aux clÃ©s, mais bÃ©nÃ©ficie indirectement des outils authentifiÃ©s.
+    </p>
+
+
+    <h2>6. RÃ©surrection de Contexte (<code>resume_in_new_chat_action.py</code>)</h2>
+    <p>
+      Permet la migration complÃ¨te d'un contexte saturÃ© vers une nouvelle session. Effectue la duplication du FS Vault, la mutation SQLite (<code>session.db</code>) et le clonage vectoriel Qdrant.
+    </p>
+
+    <div class="transition-text">
+
+
+      <a href="09e_execution_monitoring.html">&larr; ExÃ©cution & Pilotage</a>
+      &nbsp;&nbsp;
+      <a href="09g_visual_intelligence.html">Visual Intelligence &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+  <script src="nav.js"></script>
+</body>
+</html>

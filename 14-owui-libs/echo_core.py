@@ -2,9 +2,13 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 1.3
+version: 1.5
 description: Fonctions cognitives et utilitaires pures.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 1.5: Implémentation du FIFO destructif pour purger les aec_event de la base SQLite sans altérer les autres ressources.
+# 1.4: Protection de la QFIFO dans wrap_tool_output contre les sous-agents (is_subagent).
 import re
 import time
 from datetime import datetime
@@ -173,6 +177,7 @@ def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
     return text, None
 
 def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[dict] = None, user_id: str = None, chat_id: str = None, metadata: dict = None) -> dict:
+    aec_events = None
     if user_id and chat_id and metadata is not None:
         # [NOUVEAU] Rappels Cognitifs par Outil (AVANT le delta)
         call_count = metadata.get("_echo_tool_call_count", 0) + 1
@@ -192,7 +197,8 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                 )
 
         last_check = metadata.get("_echo_last_event_check_at")
-        if last_check:
+        is_subagent = metadata.get("is_subagent", False)
+        if last_check and not is_subagent:
             try:
                 state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
                 delta = EchoAEC.get_pending_events(state_manager, float(last_check))
@@ -219,12 +225,21 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                     # Appel de la fonction factorisée
                     events_text = EchoAEC.render_system_events(sys_events=events)
                     if events_text:
-                        text += f"\n\n{events_text}"
+                        aec_events = events_text
                         metadata["_echo_last_event_check_at"] = time.time()
+                        
+                    # FIFO destructif : Purge EXCLUSIVE des événements purement système (AEC).
+                    # Les fichiers (codex, uploads) remontés dans ce delta sont conservés.
+                    for r in delta:
+                        if r.get("resource_type") == "aec_event":
+                            try:
+                                state_manager.delete_resource(r.get("id"))
+                            except Exception as e:
+                                print(f"[wrap_tool_output] Erreur purge AEC {r.get('id')}: {e}")
             except Exception as e:
                 print(f"[wrap_tool_output] Erreur Delta SQLite: {e}")
             
-    return {"text": text, "status": status or {"status": "success"}, "echo_tool_multiparts": echo_tool_multiparts or []}
+    return {"text": text, "aec_events": aec_events, "status": status or {"status": "success"}, "echo_tool_multiparts": echo_tool_multiparts or []}
 
 def wrap_cascade_output(text: str, model_requested: str, model_used: str, status: dict = None, echo_tool_multiparts: List[dict] = None, reason: str = None, user_id: str = None, chat_id: str = None, metadata: dict = None) -> dict:
     """
@@ -290,7 +305,7 @@ def clamp_model(requested: str, metadata: dict, user_id: str = None) -> str:
     ceil_level = ceil_level if ceil_level is not None else -1
     return ceiling if req_level > ceil_level else requested
 
-def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str = "unknown") -> List[Dict]:
+def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str = "unknown", call_id: str = None) -> List[Dict]:
     import ast
     if isinstance(content, str):
         try:
@@ -306,8 +321,14 @@ def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str 
     text_body = content.get("text", "")
     status_meta = content.get("status", {"status": "success"})
     rich_multiparts = content.get("echo_tool_multiparts", [])
+    aec_events = content.get("aec_events")
 
     response_dict = status_meta.copy()
+    
+    # SÉGRÉGATION 100% SAFE POUR L'API : L'AEC est injecté dans une clé XML explicite
+    if aec_events:
+        response_dict["AEC_evenement_systeme"] = aec_events
+
     if text_body:
         response_dict["result"] = resolve_placeholders(text_body, model_id, model_origin)
 
@@ -317,6 +338,9 @@ def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str 
             "response": response_dict
         }
     }
+
+    if call_id:
+        func_resp_part["functionResponse"]["id"] = call_id
 
     final_parts = [func_resp_part]
     for mp in rich_multiparts:

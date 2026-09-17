@@ -1,0 +1,235 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO Web Intelligence v5 : navigation autonome Chromium (Playwright), Browser Agent FastAPI v9.2, port 5002, 14 actions disponibles, SearxNG souverain, Cockpit Replay.">
+  <title>ECHO v5 - 9b. Web Intelligence</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+  <main>
+    <h1>9b. Web Intelligence</h1>
+
+    <p>
+      Les outils de Web Intelligence confÃ¨rent Ã  ECHO la capacitÃ© de naviguer sur le Web de maniÃ¨re
+      autonome, de lire et d'interagir avec des pages dynamiques via une boucle OODA (Observation, Orientation, DÃ©cision, Action), d'en extraire le contenu sÃ©mantique,
+      et d'effectuer des recherches via un moteur souverain. Ces capacitÃ©s reposent sur deux
+      composants complÃ©mentaires : le <strong>Browser Agent</strong> (micro-service Docker FastAPI +
+      Playwright) et le <strong>SearxNG Proxy</strong> (moteur de recherche mÃ©ta souverain, outil
+      sÃ©parÃ© <code>sovereign_web_search.py</code>).
+    </p>
+
+    <h2>Architecture - Browser Agent (Playwright)</h2>
+
+    <p>
+      Le Browser Agent est un micro-service Docker dÃ©diÃ© (<code>browser_api.py</code> v9.2, FastAPI
+      + Playwright asyncio). Il pilote une instance <strong>Chromium headless</strong> via Playwright.
+      Il gÃ¨re plusieurs sessions navigateur simultanÃ©es (jusqu'Ã  20), chacune liÃ©e Ã  un
+      <code>chat_id</code> ECHO et nettoyÃ©e automatiquement aprÃ¨s 1 heure d'inactivitÃ©.
+    </p>
+
+    <table>
+      <thead><tr><th>Attribut</th><th>Valeur</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Conteneur</strong></td><td><code>echo-browser-worker</code></td></tr>
+        <tr><td><strong>Port interne</strong></td><td><strong>5002</strong> (exposÃ© via <code>uvicorn host="0.0.0.0" port=5002</code>)</td></tr>
+        <tr><td><strong>Source</strong></td><td><code>22-docker-browser-worker/browser_api.py</code></td></tr>
+        <tr><td><strong>Version</strong></td><td>9.2 (HEALTHCHECK)</td></tr>
+        <tr><td><strong>Moteur</strong></td><td>Playwright Chromium headless, mode Mobile (iPad) ou Desktop configurable</td></tr>
+        <tr><td><strong>BibliothÃ¨ques</strong></td><td><code>fastapi</code>, <code>playwright</code>, <code>orjson</code>, <code>pybase64</code>, <code>html2text</code></td></tr>
+        <tr><td><strong>Max sessions simultanÃ©es</strong></td><td>20 (<code>MAX_SESSIONS</code>)</td></tr>
+        <tr><td><strong>Timeout inactivitÃ©</strong></td><td>3 600 s = 1 heure (<code>IDLE_TIMEOUT_DEFAULT</code>)</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Agent Navigateur : Boucle OODA et API Ã  4 Piliers</h2>
+
+    <p>
+      La navigation n'est plus manuelle : elle est dÃ©lÃ©guÃ©e Ã  un agent autonome via <code>delegate_web_browsing</code>.
+      <strong>Cet agent opÃ¨re de maniÃ¨re strictement isolÃ©e dans une boucle fermÃ©e : il n'a ni l'autorisation ni la capacitÃ© technique d'invoquer d'autres sous-agents.</strong>
+      Il fonctionne selon sa propre boucle OODA (Observe, Orient, Decide, Act) et interagit avec la page via une API structurÃ©e en 4 piliers :
+    </p>
+
+    <ul>
+      <li><strong>Inspect (<code>action_inspect_page</code>)</strong> : Perception sÃ©quentielle de la page (A11y tree, lecture texte brut, HTML).</li>
+      <li><strong>A11y (<code>action_interact_a11y</code>)</strong> : Interaction prioritaire basÃ©e sur l'arbre d'accessibilitÃ© (rÃ´le, nom textuel).</li>
+      <li><strong>DOM (<code>action_interact_dom</code>)</strong> : Interaction par index DOM strict ou sÃ©lecteur (clics, saisies).</li>
+      <li><strong>Control (<code>action_browser_control</code>)</strong> : Manipulation du navigateur (navigation, scroll, gestion des onglets, touches clavier).</li>
+    </ul>
+
+    <div class="tech-spec">
+      <h4>âš™ï¸ Optimisation de l'ExÃ©cution (Gemini 3.x)</h4>
+      <ul>
+        <li><strong>Parallel Function Calling</strong> : L'agent est autorisÃ© Ã  grouper plusieurs actions non mutantes dans le mÃªme tour (rÃ¨gle 3), et Ã  demander simultanÃ©ment plusieurs extractions de l'Ã©tat (rÃ¨gle 1) pour accÃ©lÃ©rer sa boucle OODA.</li>
+        <li><strong>Injection Multimodale Native</strong> : Les captures d'Ã©cran sont injectÃ©es directement via l'attribut <code>parts</code> de la <code>functionResponse</code>, Ã©vitant la perte du contexte visuel et les erreurs 400.</li>
+      </ul>
+    </div>
+
+    <div class="note-box">
+      <h4>Vision-On-Demand et Mode Lidar</h4>
+      <p>
+        Pour limiter l'explosion du contexte, la vision multimodale n'est plus systÃ©matique. L'agent utilise le <strong>Vision-On-Demand</strong> : il doit explicitement demander une capture d'Ã©cran s'il est bloquÃ© (ex: bouton sans texte). Il dispose Ã©galement d'un mode hybride <strong>Lidar/Vision</strong> gÃ©nÃ©rant une grille de coordonnÃ©es (<code>VISION_GRID_STEP</code>, dÃ©faut 100px) pour cibler spatialement les Ã©lÃ©ments rÃ©calcitrants.
+      </p>
+    </div>
+
+    
+    <div class="alert warning">
+      <h4>ðŸš¨ Restriction de Recherche Strictement CodÃ©e</h4>
+      <p>
+        Bien que l'outil de recherche <code>search_web</code> accepte techniquement l'argument moteur <code>google</code> via SearXNG, le <strong>Navigateur Autonome</strong> (Browser Agent) et l'<strong>Agent de Recherche Profonde</strong> ont formellement l'interdiction de l'utiliser. Les rÃ¨gles 5 et 8 de leurs System Prompts internes proscrivent l'usage des moteurs de recherche gÃ©nÃ©ralistes. Le navigateur est strictement restreint Ã  l'extraction sur URL absolue prÃ©cise. Toute recherche doit obligatoirement passer par les outils dÃ©diÃ©s (<code>search_web</code>, <code>search_instant_answer</code>).
+      </p>
+    </div>
+
+    
+    <div class="tech-spec">
+      <h4>âš™ï¸ La Descente Cognitive (Superoutils)</h4>
+      <p>
+        L'ancienne mÃ©thode de distillation monolithique a Ã©tÃ© supprimÃ©e au profit de la <strong>Descente Cognitive</strong>. 
+        Le schÃ©ma injecte dynamiquement deux "superoutils" dans le contexte de l'Agent Navigateur : 
+        <code>action_analyze_page</code> (qui exploite le Streaming SÃ©mantique natif d'ECHO pour lire le DOM en temps rÃ©el) et 
+        <code>action_archive_page</code> (qui procÃ¨de Ã  un archivage asynchrone RAG). L'agent devient totalement autonome dans son traitement.
+      </p>
+    </div>
+
+    <h2>Actions internes disponibles (API <code>/action</code>)</h2>
+
+    <p>
+      Toutes les actions transitent par le endpoint <code>POST /action</code> avec un champ
+      <code>action</code> identifiant l'opÃ©ration. Le tool ECHO <code>navigation_engine_tool.py</code>
+      encapsule ces appels HTTP REST.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Action</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>goto</code></td>
+          <td>Navigue vers une URL. Attend <code>networkidle</code> (timeout 60 s). Retourne <code>title</code> et <code>url</code>.</td>
+        </tr>
+        <tr>
+          <td><code>click</code></td>
+          <td>Clique sur un Ã©lÃ©ment par <code>index</code> (<code>data-echo-index</code>) ou <code>selector</code> CSS/XPath. Mouse shake anti-bot.</td>
+        </tr>
+        <tr>
+          <td><code>type</code></td>
+          <td>Saisit du texte dans un champ via <code>page.fill()</code> (remplace le contenu). Cible par index ou selector.</td>
+        </tr>
+        <tr>
+          <td><code>press</code></td>
+          <td>Presse une touche clavier (ex. <code>Enter</code>, <code>Tab</code>). Attend <code>networkidle</code> aprÃ¨s.</td>
+        </tr>
+        <tr>
+          <td><code>hover</code></td>
+          <td>Survole un Ã©lÃ©ment (dÃ©clenche les menus dÃ©roulants, tooltips).</td>
+        </tr>
+        <tr>
+          <td><code>scroll</code></td>
+          <td>Fait dÃ©filer la page : <code>down</code>, <code>up</code>, <code>top</code>, <code>bottom</code>.</td>
+        </tr>
+        <tr>
+          <td><code>read</code></td>
+          <td>Extrait le contenu textuel de la page en Markdown via <code>html2text</code>. LimitÃ© Ã  30 000 caractÃ¨res.</td>
+        </tr>
+        <tr>
+          <td><code>read_html</code></td>
+          <td>Retourne le code HTML source complet, encodÃ© en Base64 pour protÃ©ger le JSON.</td>
+        </tr>
+        <tr>
+          <td><code>get_attribute</code></td>
+          <td>RÃ©cupÃ¨re un attribut HTML (ex. <code>href</code>, <code>src</code>) d'un Ã©lÃ©ment ciblÃ© par index.</td>
+        </tr>
+        <tr>
+          <td><code>highlight</code></td>
+          <td>Cartographie tous les Ã©lÃ©ments interactifs de la page avec numÃ©rotation visuelle (<em>ECHO markers</em>), prend un screenshot. Retourne <code>screenshot_b64</code>, liste des Ã©lÃ©ments (<code>metadata</code>) et <code>count</code>.</td>
+        </tr>
+        <tr>
+          <td><code>tab_new</code></td>
+          <td>Ouvre un nouvel onglet (jusqu'Ã  N onglets simultanÃ©s par session). Retourne l'index du nouvel onglet.</td>
+        </tr>
+        <tr>
+          <td><code>tab_switch</code></td>
+          <td>Bascule sur l'onglet d'index donnÃ©.</td>
+        </tr>
+        <tr>
+          <td><code>tab_close</code></td>
+          <td>Ferme l'onglet actif (refuse si dernier onglet restant).</td>
+        </tr>
+        <tr>
+          <td><code>reset</code></td>
+          <td>RÃ©initialisation complÃ¨te de la session : ferme le contexte Playwright et purge l'entrÃ©e dans <code>SESSIONS</code>.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="tech-spec">
+      <h4>âš™ï¸ ECHO DOM Markers - cartographie visuelle</h4>
+      <p>
+        L'action <code>highlight</code> injecte un script JS (<code>HIGHLIGHT_JS</code>) qui scanne tous
+        les Ã©lÃ©ments interactifs (liens, boutons, inputs, Ã©lÃ©ments <code>cursor:pointer</code>) et leur
+        attache une Ã©tiquette numÃ©rotÃ©e rouge (<code>.echo-marker</code>). Le modÃ¨le peut alors cibler
+        un Ã©lÃ©ment prÃ©cis par son <code>index</code> - plus fiable qu'un sÃ©lecteur CSS fragile sur des
+        pages dynamiques.
+      </p>
+    </div>
+
+    <h2>Session Navigateur et Profils</h2>
+    <p>
+      Chaque session est initialisÃ©e via <code>POST /start_session</code> avec un <code>session_id</code>
+      (= <code>chat_id</code> ECHO). Deux profils de navigateur sont disponibles :
+    </p>
+    <ul>
+      <li><strong>mobile</strong> (dÃ©faut) : iPad 820Ã—1180, User-Agent Safari iOS 16.</li>
+      <li><strong>desktop</strong> : Chrome 120, 1280Ã—800 - pour les sites nÃ©cessitant un viewport large.</li>
+    </ul>
+
+    <h2>DÃ©fense Passive et Gestion du Contexte</h2>
+    <p>
+      Pour Ã©viter l'explosion du contexte avec de multiples itÃ©rations et des DOM lourds, le systÃ¨me implÃ©mente une double approche :
+    </p>
+    <ul>
+      <li><strong>Proactive Context Pruning :</strong> Ã‰lagage dynamique des cartes DOM, arbres A11y et images obsolÃ¨tes dans les anciens messages de l'historique (seuil configurable via <code>PRUNE_CONTENT_THRESHOLD</code>).</li>
+      <li><strong>Troncature Silencieuse (Smart Pop) :</strong> Ã‰valuation de la taille globale en tokens (<code>estimate_token_size</code>). Si le contexte approche la limite maximale (<code>CONTEXT_TRUNCATE_THRESHOLD</code>), les messages les plus anciens sont purgÃ©s en garantissant l'intÃ©gritÃ© des paires ToolCall/ToolResponse pour prÃ©venir tout crash de l'API Gemini.</li>
+    </ul>
+
+    <h2>Recherche Web Souveraine</h2>
+    <p>
+      La recherche Web est fournie par l'outil sÃ©parÃ© <code>sovereign_web_search.py</code>, qui offre un double moteur :
+      une recherche instantanÃ©e via <strong>DuckDuckGo</strong> (mode anonyme) et une recherche approfondie (deep search) 
+      via l'instance <strong>SearxNG</strong> interne (<code>http://echo-searxng:8080</code>). 
+      Aucune donnÃ©e de recherche ne transite par un moteur tiers tracÃ©. ConformÃ©ment aux principes de souverainetÃ©, l'usage de moteurs de recherche gÃ©nÃ©ralistes (comme Google ou Bing) est proscrit.
+    </p>
+
+    <div class="note-box">
+      <h4>Distillation via <code>call_cascade()</code> centralisÃ©</h4>
+      <p>
+        L'action <code>action_archive_page</code> utilise <code>EchoGeminiClient.call_cascade()</code>
+        avec <code>MODEL_FLASH</code> clampÃ© par la politique Pipe.
+        La propagation du <code>user_id</code> vers <code>clamp_model</code> garantit que le fallback
+        SQLite <code>echo_settings</code> est lu correctement.
+      </p>
+    </div>
+
+    <h2>Cockpit de Replay Web</h2>
+    <p>
+      AprÃ¨s une session de navigation, l'action <code>web_navigation_replay_action.py</code> gÃ©nÃ¨re
+      une interface HUD listant toutes les actions effectuÃ©es avec leurs captures d'Ã©cran. L'utilisateur
+      peut rejouer ou exporter la session.
+    </p>
+
+    <div class="transition-text">
+      <a href="09a_strategic_planner.html">&larr; Planification StratÃ©gique</a>
+      &nbsp;&nbsp;
+      <a href="09c_vault_explorer.html">Explorateur de l'Espace Personnel &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+  <script src="nav.js"></script>
+</body>
+</html>

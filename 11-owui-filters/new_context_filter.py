@@ -2,20 +2,17 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.54
+version: 7.58
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.58: Correction du fallback ZoneInfo (TypeError sur import pytz as ZoneInfo -> from pytz import timezone).
+# 7.57: Refactorisation algorithmique PGCU et renommage (current_user_multipart_payload).
+# 7.56: Extraction de dr.get("summary") dans la clé 'message' du delta hors-tour.
 # 7.54: Correction du bug d'ingestion des fichiers attachés au premier message (chat_id récupéré depuis le body).
-# 7.53: SSOT AEC : Délégation complète du rendu YAML/XML (environnement & système) à la lib dédiée EchoAEC.
 # 7.51: Correction d'un bug critique (NameError) bloquant l'injection de l'AEC via l'import de FILE_INGESTION_STATUS.
 # 7.48: Typage hiérarchique XML de l'AEC et suppression du formateur YAML.
-# 7.47: Délégation des UserValves vers user_native_context_filter et verrouillage de la désactivation.
-# 7.46: Nettoyage des mentions "V2" du registre et de l'AEC.
-# 7.44: Ajout du tour de conversation dans le snapshot AEC (<AEC_environnement_contexte>).
-# 7.43: Nettoyage du code mort (suppression de la Valve DEBUG_MODE inutilisée).
-# 7.42: Factorisation de l'AEC et de l'horodatage zoné, retrait de _dict_to_yaml.
 
 
 from pydantic import BaseModel, Field
@@ -228,7 +225,7 @@ class Filter:
                             })
 
             idx = -1
-            ordered_user_parts = []  # Parts user en ordre (texte + images entrelacés)
+            current_user_multipart_payload = []  # Payload hybride courant (texte + inline_data)
             for i in range(len(msgs)-1, -1, -1):
                 if msgs[i].get("role") == "user":
                     idx = i
@@ -243,11 +240,14 @@ class Filter:
                                     pass
                                 elif p.get("type") == "text":
                                     if p.get("text", "").strip():
-                                        ordered_user_parts.append({"text": p["text"]})
+                                        current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"})
                                 else:
                                     # [PASSTHROUGH] Liste Blanche implicite.
                                     # On laisse passer les 'inline_data' d'ECHO, et tout futur format inattendu.
-                                    ordered_user_parts.append(p)
+                                    current_user_multipart_payload.append(p)
+                    else:
+                        if orig_content and str(orig_content).strip():
+                            current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{str(orig_content)}\n</REQUETE_UTILISATEUR>"})
                     break
 
             if idx != -1:
@@ -262,35 +262,33 @@ class Filter:
 
                 tour_conversation = sum(1 for m in msgs if m.get("role") == "user")
 
-                # === AEC : Snapshot minimaliste (sans registres) ===
-                env_snapshot = {
-                    "version_framework_echo": get_echo_version() or "##ECHO_VERSION##",
-                    "modèle_actuel": "##MODEL_ID##",
-                    "modèle_origine": "##MODEL_ORIGIN##",
-                    "nom_utilisateur": display_name,
-                    "tour_conversation": tour_conversation,
-                    "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
-                    "localisation": final_loc,
-                    "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC"),
-                }
+                # === AEC : Méta-données brutes ===
+                date_heure = meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu")
+                timezone = meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
+                version = get_echo_version() or "##ECHO_VERSION##"
+                model_id = "##MODEL_ID##"
+                model_origin = "##MODEL_ORIGIN##"
 
                 body.setdefault("metadata", {})
                 body["metadata"]["_echo_env_info"] = {
                     "nom_utilisateur": display_name, "localisation": final_loc,
-                    "date_et_heure": meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu"),
-                    "timezone": meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
+                    "date_et_heure": date_heure,
+                    "timezone": timezone
                 }
 
                 from echo_aec import EchoAEC
 
                 rich_parts = []
-                rich_parts.append({"text": EchoAEC.render_environment_context(env_snapshot)})
+                rich_parts.append({"text": EchoAEC.render_model_context(model_id, model_origin, version)})
+                rich_parts.append({"text": EchoAEC.render_identity_context(display_name)})
+                rich_parts.append({"text": EchoAEC.render_time_context(date_heure, timezone, tour_conversation)})
+                rich_parts.append({"text": EchoAEC.render_location_context(final_loc)})
 
                 # === Configuration ZoneInfo ===
                 try:
                     from zoneinfo import ZoneInfo
                 except ImportError:
-                    import pytz as ZoneInfo
+                    from pytz import timezone as ZoneInfo
                 user_tz_str = meta_vars.get("{{CURRENT_TIMEZONE}}", "UTC")
                 try:
                     user_tz = ZoneInfo(user_tz_str)
@@ -326,29 +324,34 @@ class Filter:
                                     "type": dr["status"], "name": dr["name"],
                                     "mime": dr.get("mime"), "resource_type": dr["resource_type"],
                                     "date": datetime.fromtimestamp(dr.get("created_at", time.time()), tz=user_tz).strftime("%Y-%m-%d %H:%M:%S"),
-                                    "source": "outil/HUD"
+                                    "source": "outil/HUD",
+                                    "message": dr.get("summary")
                                 })
                     # Sauvegarder le timestamp actuel pour le prochain delta
                     body["metadata"]["_echo_last_event_check_at"] = int(time.time())
 
-                # Injection factorisée des évènements dans l'AEC
+                # 1. Extraction et injection du Smart Context (RAG) prioritaire (AEC_smart_context)
+                for res in results:
+                    if res.get("status") == "success" and res.get("type") == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]:
+                        rich_parts.append({"text": res["content"]})
+
+                # 2. Injection de la requête utilisateur (Payload Multipart)
+                if current_user_multipart_payload:
+                    rich_parts.extend(current_user_multipart_payload)
+
+                # 3. Injection des évènements système et asynchrones (AEC_evenement_systeme)
                 events_text = EchoAEC.render_system_events(sys_events, error_events)
                 if events_text:
                     rich_parts.append({"text": events_text})
 
-                if ordered_user_parts:
-                    rich_parts.extend(ordered_user_parts)
-
+                # 4. Injection des documents et fichiers intégraux en annexe (PUT_IN_CONTEXT)
                 for res in results:
-                    if res.get("status") == "success":
-                        if res["type"] == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]:
+                    if res.get("status") == "success" and res.get("type") == FILE_INGESTION_STATUS["PUT_IN_CONTEXT"]:
+                        if res["sub_type"] == "text":
                             rich_parts.append({"text": res["content"]})
-                        elif res["type"] == FILE_INGESTION_STATUS["PUT_IN_CONTEXT"]:
-                            if res["sub_type"] == "text":
-                                rich_parts.append({"text": res["content"]})
-                            else:
-                                rich_parts.append({"text": res["content"]["anchor"]})
-                                rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
+                        else:
+                            rich_parts.append({"text": res["content"]["anchor"]})
+                            rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
 
                 body["metadata"]["_echo_user_parts_draft"] = rich_parts
                 body["metadata"]["_echo_user_msg_id"] = msgs[idx].get("id")

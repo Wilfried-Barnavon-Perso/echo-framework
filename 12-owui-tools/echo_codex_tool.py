@@ -1,16 +1,15 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 1.9
-description: Composant système interne : ECHO Codex Editor.
+version: 2.4
+description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
-# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.8: Ajout d'un Lock asynchrone (user_id:chat_id) pour prévenir les race conditions intra-chat.
-# 1.7: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 1.6: Nettoyage du code mort (suppression de la Valve KEY_SWITCH_THRESHOLD inutilisée).
-# 1.5: Augmentation du CODEX_EDIT_TIMEOUT à 600s et max_retries=0 pour call_cascade.
-# 1.4: [précédent]
+# 2.4: Refonte de `search_codex` (recherche multi-fichiers par dossiers) et fusion du voyage temporel (Delta/Pickaxe) via `trace_history`.
+# 2.3: Ajout de l'outil `restore_codex` et support de lecture historique (`commit_hash`) dans `read_codex`.
+# 2.2: Purge récursive des sous-ressources orphelines dans `delete_codex` (unpack tuple).
+# 2.1: Purge mémoire (`delete_resource`) lors de delete_codex, ajout des fonctions utilitaires (_get_context).
+# 1.8: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -18,7 +17,7 @@ import sys
 import asyncio
 from collections import defaultdict
 from pydantic import BaseModel, Field
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 
 sys.path.append("/app/backend/echo_libs")
 from echo_core import wrap_tool_output, wrap_cascade_output
@@ -53,13 +52,13 @@ class Tools:
     # HELPERS
     # =========================================================================
 
-    def _get_context(self, __user__: dict, __metadata__: dict):
+    def _get_context(self, __user__: dict, __metadata__: dict, workspace: str = "main"):
         """Extrait user_id, chat_id et initialise CodexRepo + StateManager."""
         uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
         cid = (__metadata__ or {}).get("chat_id")
         if not cid:
             return None, None, None, None
-        repo = CodexRepo(uid, cid)
+        repo = CodexRepo(uid, cid, workspace)
         state = EchoStateManager(user_id=uid, chat_id=cid)
         return uid, cid, repo, state
 
@@ -78,6 +77,16 @@ class Tools:
                 return "\n".join(lines[1:-1])
         return raw
 
+    async def _update_registry(self, state, filename: str, lang: str, line_count: int, commit_hash: str, msg: str, workspace: str):
+        """Met à jour le registre unifié (SQLite) en isolant la Sandbox."""
+        if workspace != "sandbox":
+            await asyncio.to_thread(
+                state.save_resource,
+                id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
+                git_tracked=True, language=lang, lines=line_count,
+                last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}"
+            )
+
     # =========================================================================
     # ÉCRITURE
     # =========================================================================
@@ -88,6 +97,7 @@ class Tools:
         content: str,
         language: str = None,
         commit_message: str = None,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -100,7 +110,7 @@ class Tools:
         :param commit_message: (Optionnel) Message Git.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -115,12 +125,7 @@ class Tools:
 
         async with _codex_locks[f"{uid}:{cid}"]:
             commit_hash = await asyncio.to_thread(repo.commit_file, filename, content, msg)
-            await asyncio.to_thread(
-                state.save_resource,
-                id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                git_tracked=True, language=lang, lines=line_count,
-                last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}"
-            )
+            await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
         await events.status(f"✅ {filename} créé ({line_count} lignes, commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(
@@ -132,6 +137,7 @@ class Tools:
         new_content: str = None,
         instructions: str = None,
         commit_message: str = None,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -145,7 +151,7 @@ class Tools:
         :param instructions: (Optionnel) Directives d'édition (exclut new_content).
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -162,12 +168,7 @@ class Tools:
             line_count = new_content.count("\n") + 1
             async with _codex_locks[f"{uid}:{cid}"]:
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, new_content, msg)
-                await asyncio.to_thread(
-                    state.save_resource,
-                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                    git_tracked=True, language=lang, lines=line_count,
-                    last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}"
-                )
+                await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
             await events.status(f"✅ {filename} modifié (commit {commit_hash[:7]}).", done=True)
             return wrap_tool_output(
@@ -213,12 +214,7 @@ class Tools:
             line_count = modified.count("\n") + 1
             async with _codex_locks[f"{uid}:{cid}"]:
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, modified, msg)
-                await asyncio.to_thread(
-                    state.save_resource,
-                    id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                    git_tracked=True, language=lang, lines=line_count,
-                    last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}"
-                )
+                await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
             await events.status(f"✅ Édition assistée terminée (commit {commit_hash[:7]}).", done=True)
             return wrap_cascade_output(
@@ -232,6 +228,7 @@ class Tools:
     async def delete_codex(
         self,
         filename: str,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -239,16 +236,23 @@ class Tools:
     ) -> str:
         """Suppression d'un fichier du Codex. Validation Registre requise."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         async with _codex_locks[f"{uid}:{cid}"]:
-            commit_hash = await asyncio.to_thread(repo.delete_file, filename, f"Delete {filename}")
-            if not commit_hash:
-                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            try:
+                delete_result = await asyncio.to_thread(repo.delete_file, filename, f"Delete {filename}")
+            except ValueError as e:
+                return wrap_tool_output(text=f"❌ {e}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            
+            if not delete_result:
+                return wrap_tool_output(text=f"❌ Fichier/Dossier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-            await asyncio.to_thread(state.delete_resource, filename)
+            commit_hash, paths_to_rm = delete_result
+            if workspace != "sandbox":
+                for path in paths_to_rm:
+                    await asyncio.to_thread(state.delete_resource, path)
         await events.status(f"🗑️ {filename} supprimé (commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(text=f"Fichier `{filename}` supprimé.\n- Commit : `{commit_hash[:12]}`", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -261,62 +265,154 @@ class Tools:
         filename: str,
         start_line: int = None,
         end_line: int = None,
+        commit_hash: str = None,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Lecture du contenu d'un fichier Codex. Paramètres optionnels de plage (start_line/end_line).
+        """Lecture du contenu d'un fichier Codex. Paramètres optionnels de plage (start_line/end_line) ou historique (commit_hash).
         :param filename: Fichier cible.
         :param start_line: (Optionnel) Ligne de début (1-indexed).
         :param end_line: (Optionnel) Ligne de fin (inclusive).
+        :param commit_hash: (Optionnel) Hash du commit pour lire une version historique spécifique.
         """
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        result = repo.read_file(filename, start_line, end_line)
-        if not result:
-            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
         lang = CodexRepo.detect_language(filename)
-        range_info = f"lignes {result['range'][0]}-{result['range'][1]}" if result["range"] else "complet"
 
-        return wrap_tool_output(
-            text=f"**{filename}** ({lang}, {result['total_lines']} lignes total, {range_info})\n\n```{lang}\n{result['content']}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        if commit_hash:
+            # Lecture historique
+            content = await asyncio.to_thread(repo.get_file_at_commit, filename, commit_hash)
+            if content is None:
+                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable au commit `{commit_hash}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            
+            lines = content.split('\n')
+            total_lines = len(lines)
+            s = max(1, start_line) if start_line else 1
+            e = min(total_lines, end_line) if end_line else total_lines
+            content_subset = "\n".join(lines[s-1:e])
+            range_info = f"lignes {s}-{e} (commit {commit_hash[:7]})"
+            
+            return wrap_tool_output(
+                text=f"**{filename}** ({lang}, {total_lines} lignes total, {range_info})\n\n```{lang}\n{content_subset}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        else:
+            # Lecture classique (HEAD)
+            result = await asyncio.to_thread(repo.read_file, filename, start_line, end_line)
+            if not result:
+                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-    async def search_codex(
+            range_info = f"lignes {result['range'][0]}-{result['range'][1]}" if result["range"] else "complet"
+            return wrap_tool_output(
+                text=f"**{filename}** ({lang}, {result['total_lines']} lignes total, {range_info})\n\n```{lang}\n{result['content']}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def restore_codex(
         self,
         filename: str,
-        query: str,
-        is_regex: bool = False,
+        commit_hash: str,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Recherche d'un pattern dans un fichier Codex (littéral ou regex).
-        :param query: Motif de recherche.
-        :param is_regex: (Bool) Interprétation regex du motif.
+        """Restaure un fichier Codex à une version historique spécifique.
+        :param filename: Fichier cible à restaurer.
+        :param commit_hash: Hash du commit contenant la version à restaurer (fourni par history_codex).
         """
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        events = EchoEvents(__event_emitter__, __event_call__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        matches = repo.search_in_file(filename, query, is_regex)
-        if not matches:
-            return wrap_tool_output(text=f"Aucun résultat pour `{query}` dans `{filename}`.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        async with _codex_locks[f"{uid}:{cid}"]:
+            old_content = await asyncio.to_thread(repo.get_file_at_commit, filename, commit_hash)
+            if old_content is None:
+                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable au commit `{commit_hash}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            
+            lang = CodexRepo.detect_language(filename)
+            msg = f"Restore {filename} from {commit_hash[:7]}"
+            new_commit_hash = await asyncio.to_thread(repo.commit_file, filename, old_content, msg)
+            line_count = old_content.count("\n") + 1
+            
+            await self._update_registry(state, filename, lang, line_count, new_commit_hash, msg, workspace)
+            
+        await events.status(f"🔄 {filename} restauré depuis {commit_hash[:7]}.", done=True)
+        return wrap_tool_output(text=f"Fichier `{filename}` restauré avec succès depuis `{commit_hash[:7]}`.\n- Nouveau Commit : `{new_commit_hash[:12]}`", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        lines_text = "\n".join(
-            f"L{m['line_number']:>4}: {m['line_content']}"
-            for m in matches
-        )
-        return wrap_tool_output(
-            text=f"**{len(matches)} résultat(s)** pour `{query}` dans `{filename}` :\n\n```\n{lines_text}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+    async def search_codex(
+        self,
+        query: str,
+        target_paths: list[str] = None,
+        is_regex: bool = False,
+        commit_hash: str = None,
+        trace_history: bool = False,
+        history_depth: int = 50,
+        workspace: Literal["main", "sandbox"] = "main",
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> str:
+        """Permet au modèle de rechercher une chaîne de caractères (ou regex) au sein du Codex, que ce soit spatialement (fichiers actuels) ou temporellement (historique de versionnement du Codex).
+        :param query: Motif de recherche (nom de variable, fonction, texte).
+        :param target_paths: (Optionnel) Restreint la recherche à un ou plusieurs dossiers/fichiers du Codex (ex: ["src/api", "main.py"]). Laissez vide pour scruter l'intégralité du Codex.
+        :param is_regex: (Optionnel) Interprète la query comme une expression régulière.
+        :param commit_hash: (Optionnel) Identifiant du commit (obtenu via history_codex) pour effectuer la recherche spatiale à un instant précis du passé du Codex. Ignoré si trace_history est True.
+        :param trace_history: (Optionnel) Si True, bascule en mode 'Voyage Temporel'. Traverse l'historique du Codex et retourne exclusivement les contextes de modification (ajout/suppression) du motif recherché au lieu de sa position statique.
+        :param history_depth: (Optionnel) Nombre maximum d'itérations Git à remonter dans l'historique du Codex en mode trace_history (défaut: 50).
+        """
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        if not repo:
+            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+        if trace_history:
+            # Mode Temporel (Delta / Pickaxe) dans le Codex
+            results = await asyncio.to_thread(repo.trace_history, query, target_paths, history_depth)
+            if not results:
+                scope = f"les chemins `{target_paths}`" if target_paths else "l'historique global du Codex"
+                return wrap_tool_output(text=f"Aucune évolution trouvée pour la chaîne `{query}` dans {scope}.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                
+            lines = [f"## Trace d'évolution de `{query}` dans le Codex"]
+            for entry in results:
+                lines.append(f"\n### Commit `{entry['hash']}` : _{entry['message']}_")
+                for diff in entry['diffs']:
+                    lines.append(f"**Fichier :** `{diff['file']}`")
+                    if diff['removed']:
+                        lines.append("```diff\n" + "\n".join(f"- {r}" for r in diff['removed']) + "\n```")
+                    if diff['added']:
+                        lines.append("```diff\n" + "\n".join(f"+ {a}" for a in diff['added']) + "\n```")
+            return wrap_tool_output(text="\n".join(lines), user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            
+        else:
+            # Mode Spatial (Grep) dans le Codex
+            all_files = [f["filename"] for f in repo.list_files() if f["type"] == "file"]
+            if target_paths:
+                files_to_check = [f for f in all_files if any(f.startswith(p) for p in target_paths)]
+            else:
+                files_to_check = all_files
+
+            all_results = []
+            for f in files_to_check:
+                matches = await asyncio.to_thread(repo.search_in_file, f, query, is_regex, commit_hash)
+                if matches:
+                    lines_text = "\n".join(f"L{m['line_number']:>4}: {m['line_content']}" for m in matches)
+                    all_results.append(f"### `{f}` ({len(matches)} match)\n```\n{lines_text}\n```")
+
+            if not all_results:
+                scope = f"dans les chemins `{target_paths}`" if target_paths else "dans l'intégralité du Codex"
+                epoch = f"au commit `{commit_hash}`" if commit_hash else "actuellement"
+                return wrap_tool_output(text=f"Aucun résultat pour `{query}` {scope} {epoch}.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+            return wrap_tool_output(text=f"**Résultats de la recherche Codex pour `{query}` :**\n\n" + "\n\n".join(all_results), user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def summarize_codex(
         self,
         filename: str,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -324,7 +420,7 @@ class Tools:
     ) -> str:
         """Résumé technique structuré d'un fichier Codex par distillation Gemini."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -353,13 +449,14 @@ class Tools:
 
     async def list_codex(
         self,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
         """Liste tous les fichiers du Codex de la session courante."""
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -384,6 +481,7 @@ class Tools:
         self,
         filename: Optional[str] = None,
         limit: int = 20,
+        workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -394,7 +492,7 @@ class Tools:
         :param filename: (Optionnel) Nom du fichier pour filtrer l'historique.
         :param limit: (Optionnel) Nombre maximum de commits à retourner. Le Modèle doit limiter (Maximum conseillé: 100) pour éviter la surcharge cognitive.
         """
-        uid, cid, repo, state = self._get_context(__user__, __metadata__)
+        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 

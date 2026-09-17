@@ -1,15 +1,18 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.4
+version: 1.9
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.0: Wrapper dulwich pour la gestion de dépôts Git par user/chat.
+# 1.9: Modification de delete_file pour retourner le tuple (commit_hash, paths_to_rm) afin d'assurer la purge SQLite côté action.
+# 1.8: Correction de list_files dans main pour inclure correctement les fichiers dans les sous-dossiers.
+# 1.6: Asymétrie de parcours de fichiers (os.listdir vs os.walk) entre main et sandbox.
+# 1.5: Prise en charge des dossiers de workspaces isolés (main/sandbox).
+# 1.4: Wrapper dulwich pour la gestion de dépôts Git par user/chat.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
-# 1.1: Fix bytes.fromhex → encode('ascii') pour object_store dulwich.
-# 1.2: Ajout rename_file() (rename Git + commit). list_files tri par mtime desc.
+# desc.
 
 import os
 import re
@@ -35,8 +38,10 @@ class CodexRepo:
     Un dépôt isolé par couple (user_id, chat_id).
     Toutes les opérations sont synchrones et sans effet de bord réseau."""
 
-    def __init__(self, user_id: str, chat_id: str):
-        self.repo_path = get_echo_session_path(user_id, chat_id, "codex")
+    def __init__(self, user_id: str, chat_id: str, workspace: str = "main"):
+        base_codex = get_echo_session_path(user_id, chat_id, "codex")
+        self.repo_path = os.path.join(base_codex, workspace)
+        os.makedirs(self.repo_path, exist_ok=True)
         self.repo = self._ensure_repo()
 
     def _ensure_repo(self) -> Repo:
@@ -50,13 +55,30 @@ class CodexRepo:
     # CRUD FICHIERS
     # =========================================================================
 
+    def _secure_path(self, path: str) -> str:
+        """Sécurise un chemin relatif et empêche le path traversal."""
+        path = path.replace("\\", "/").strip("/")
+        if ".." in path.split("/"):
+            raise ValueError("Path traversal non autorisé.")
+        return path
+
+    def create_directory(self, path: str) -> None:
+        """Crée un répertoire vide (non tracké par Git mais visible dans l'UI)."""
+        safe_name = self._secure_path(path)
+        dirpath = os.path.join(self.repo_path, safe_name)
+
+        if os.path.exists(dirpath) and not os.path.isdir(dirpath):
+            raise FileExistsError(
+                f"Impossible de créer le dossier '{path}'. Un fichier porte déjà ce nom.")
+
+        os.makedirs(dirpath, exist_ok=True)
+
     def commit_file(self, filename: str, content: str, message: str,
-                    author: str = "ECHO Codex") -> str:
-        """Écrit un fichier, l'ajoute au staging et commit.
-        Crée ou met à jour le fichier. Retourne le hash du commit (hex)."""
-        # Sécurisation du nom de fichier (pas de traversée de répertoire)
-        safe_name = os.path.basename(filename)
+                    author: str = "ECHO Codex") -> Optional[str]:
+        """Crée ou met à jour un fichier, avec création automatique des sous-dossiers. Retourne le hash du commit."""
+        safe_name = self._secure_path(filename)
         filepath = os.path.join(self.repo_path, safe_name)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
@@ -68,12 +90,13 @@ class CodexRepo:
             author=f"{author} <codex@echo.local>".encode("utf-8"),
             committer=f"{author} <codex@echo.local>".encode("utf-8"),
         )
-        return commit_sha.decode("ascii") if isinstance(commit_sha, bytes) else str(commit_sha)
+        return commit_sha.decode("ascii") if isinstance(
+            commit_sha, bytes) else str(commit_sha)
 
     def read_file(self, filename: str, start_line: int = None,
                   end_line: int = None) -> Optional[dict]:
         """Lit un fichier. Retourne {content, total_lines, range} ou None."""
-        safe_name = os.path.basename(filename)
+        safe_name = self._secure_path(filename)
         filepath = os.path.join(self.repo_path, safe_name)
         if not os.path.exists(filepath):
             return None
@@ -88,54 +111,106 @@ class CodexRepo:
             s = max(1, start_line) - 1
             e = min(total, end_line)
             content = "".join(lines[s:e])
-            return {"content": content, "total_lines": total, "range": [s + 1, e]}
+            return {
+                "content": content,
+                "total_lines": total,
+                "range": [
+                    s + 1,
+                    e]}
 
         return {"content": "".join(lines), "total_lines": total, "range": None}
 
-    def delete_file(self, filename: str, message: str) -> Optional[str]:
-        """Supprime un fichier et commit. Retourne le hash ou None."""
-        safe_name = os.path.basename(filename)
-        filepath = os.path.join(self.repo_path, safe_name)
-        if not os.path.exists(filepath):
+    def delete_file(self, path: str, message: str) -> Optional[tuple[str, list[str]]]:
+        """Supprime un fichier ou un dossier vide et commit. Retourne le (hash, liste_fichiers_supprimes) ou None."""
+        safe_name = self._secure_path(path)
+        target_path = os.path.join(self.repo_path, safe_name)
+        if not os.path.exists(target_path):
             return None
 
-        porcelain.rm(self.repo_path, paths=[safe_name])
+        import shutil
+        paths_to_rm = []
+        if os.path.isdir(target_path):
+            for root, _, files in os.walk(target_path):
+                for f in files:
+                    rel_path = os.path.relpath(os.path.join(root, f), self.repo_path)
+                    paths_to_rm.append(rel_path.replace('\\', '/'))
+            shutil.rmtree(target_path)
+        else:
+            os.remove(target_path)
+            paths_to_rm = [safe_name.replace('\\', '/')]
+
+        if paths_to_rm:
+            try:
+                porcelain.rm(self.repo_path, paths=paths_to_rm)
+            except BaseException:
+                pass
         commit_sha = porcelain.commit(
             self.repo_path,
             message=message.encode("utf-8"),
             author=b"ECHO Codex <codex@echo.local>",
             committer=b"ECHO Codex <codex@echo.local>",
         )
-        return commit_sha.decode("ascii") if isinstance(commit_sha, bytes) else str(commit_sha)
+        commit_str = commit_sha.decode("ascii") if isinstance(
+            commit_sha, bytes) else str(commit_sha)
+        return commit_str, paths_to_rm
 
     def rename_file(self, old_name: str, new_name: str, message: str,
                     author: str = "ECHO Codex") -> Optional[str]:
-        """Renomme un fichier dans le dépôt (rename OS + git add/rm + commit).
-        Retourne le hash du commit ou None si échec."""
-        safe_old = os.path.basename(old_name)
-        safe_new = os.path.basename(new_name)
+        """Renomme un fichier ou un dossier dans le dépôt. Retourne le hash du commit ou None."""
+        safe_old = self._secure_path(old_name)
+        safe_new = self._secure_path(new_name)
         old_path = os.path.join(self.repo_path, safe_old)
         new_path = os.path.join(self.repo_path, safe_new)
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
 
         if not os.path.exists(old_path) or safe_old == safe_new:
             return None
         if os.path.exists(new_path):
             return None  # Nom déjà pris
 
+        paths_to_rm = []
+        if os.path.isdir(old_path):
+            for root, _, files in os.walk(old_path):
+                for f in files:
+                    rel_path = os.path.relpath(os.path.join(root, f), self.repo_path)
+                    paths_to_rm.append(rel_path.replace('\\', '/'))
+        else:
+            paths_to_rm = [safe_old.replace('\\', '/')]
+
         os.rename(old_path, new_path)
-        porcelain.add(self.repo_path, paths=[safe_new])
-        porcelain.rm(self.repo_path, paths=[safe_old])
+
+        paths_to_add = []
+        if os.path.isdir(new_path):
+            for root, _, files in os.walk(new_path):
+                for f in files:
+                    rel_path = os.path.relpath(os.path.join(root, f), self.repo_path)
+                    paths_to_add.append(rel_path.replace('\\', '/'))
+        else:
+            paths_to_add = [safe_new.replace('\\', '/')]
+
+        if paths_to_rm:
+            try:
+                porcelain.rm(self.repo_path, paths=paths_to_rm)
+            except BaseException:
+                pass
+                
+        if paths_to_add:
+            try:
+                porcelain.add(self.repo_path, paths=paths_to_add)
+            except BaseException:
+                pass
         commit_sha = porcelain.commit(
             self.repo_path,
             message=message.encode("utf-8"),
             author=f"{author} <codex@echo.local>".encode("utf-8"),
             committer=f"{author} <codex@echo.local>".encode("utf-8"),
         )
-        return commit_sha.decode("ascii") if isinstance(commit_sha, bytes) else str(commit_sha)
+        return commit_sha.decode("ascii") if isinstance(
+            commit_sha, bytes) else str(commit_sha)
 
     def list_files(self) -> List[dict]:
-        """Liste tous les fichiers trackés dans le working tree.
-        Triés par date de modification décroissante (dernier modifié en premier)."""
+        """Liste tous les fichiers et sous-dossiers trackés ou non (si sandbox).
+        Retourne une liste plate (pour compatibilité) avec chemins relatifs complets et type (file/directory)."""
         files = []
         if not os.path.exists(self.repo_path):
             return files
@@ -146,58 +221,171 @@ class CodexRepo:
         except Exception:
             tracked_files = set()
 
-        for entry in os.listdir(self.repo_path):
-            if entry.startswith("."):
-                continue
-            if entry not in tracked_files:
-                continue
-            filepath = os.path.join(self.repo_path, entry)
-            if not os.path.isfile(filepath):
-                continue
-            try:
-                with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-                    line_count = sum(1 for _ in f)
-                size = os.path.getsize(filepath)
-                mtime = os.path.getmtime(filepath)
-            except:
-                line_count = 0
-                size = 0
-                mtime = 0
+        is_sandbox = os.path.basename(self.repo_path.rstrip("/\\")) == "sandbox"
 
-            files.append({
-                "filename": entry,
-                "lang": self.detect_language(entry),
-                "lines": line_count,
-                "size_bytes": size,
-                "mtime": mtime,
-            })
+        if is_sandbox:
+            for root, dirs, filenames in os.walk(self.repo_path):
+                # Ignorer le dossier .git et autres dossiers cachés
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+
+                for d in dirs:
+                    rel_dir = os.path.relpath(
+                        os.path.join(
+                            root, d), self.repo_path).replace(
+                        "\\", "/")
+                    files.append({
+                        "filename": rel_dir,
+                        "type": "directory",
+                        "lang": "folder",
+                        "lines": 0,
+                        "size_bytes": 0,
+                        "mtime": os.path.getmtime(os.path.join(root, d))
+                    })
+
+                for f in filenames:
+                    if f.startswith("."):
+                        continue
+                    rel_file = os.path.relpath(
+                        os.path.join(
+                            root, f), self.repo_path).replace(
+                        "\\", "/")
+
+                    filepath = os.path.join(root, f)
+                    try:
+                        with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
+                            line_count = sum(1 for _ in fh)
+                        size = os.path.getsize(filepath)
+                        mtime = os.path.getmtime(filepath)
+                    except BaseException:
+                        line_count = 0
+                        size = 0
+                        mtime = 0
+
+                    files.append({
+                        "filename": rel_file,
+                        "type": "file",
+                        "lang": self.detect_language(f),
+                        "lines": line_count,
+                        "size_bytes": size,
+                        "mtime": mtime,
+                    })
+        else:
+            # MAIN Workspace: Itération sur les fichiers trackés
+            for entry in tracked_files:
+                filepath = os.path.join(self.repo_path, entry)
+                if not os.path.isfile(filepath):
+                    continue
+                try:
+                    with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
+                        line_count = sum(1 for _ in fh)
+                    size = os.path.getsize(filepath)
+                    mtime = os.path.getmtime(filepath)
+                except BaseException:
+                    line_count = 0
+                    size = 0
+                    mtime = 0
+
+                files.append({
+                    "filename": entry,
+                    "type": "file",
+                    "lang": self.detect_language(entry),
+                    "lines": line_count,
+                    "size_bytes": size,
+                    "mtime": mtime,
+                })
+
         return sorted(files, key=lambda x: x["mtime"], reverse=True)
 
+    def _get_text_content(self, filename: str, commit_hash: str = None) -> str:
+        """Helper interne : retourne le contenu d'un fichier (HEAD ou commit), ou une chaîne vide."""
+        if commit_hash:
+            return self.get_file_at_commit(filename, commit_hash) or ""
+        else:
+            result = self.read_file(filename)
+            return result["content"] if result else ""
+
+    def _find_lines(self, content: str, pattern: str, is_regex: bool = False) -> List[str]:
+        """Helper interne : retourne uniquement les lignes contenant le pattern (ou matchant la regex)."""
+        lines = content.splitlines()
+        if not is_regex:
+            return [l for l in lines if pattern in l]
+        try:
+            return [l for l in lines if re.search(pattern, l)]
+        except re.error:
+            # Fallback automatique si la regex est invalide
+            return [l for l in lines if pattern in l]
+
     def search_in_file(self, filename: str, pattern: str,
-                       is_regex: bool = False) -> List[dict]:
-        """Recherche un pattern dans un fichier. Retourne [{line_number, line_content}]."""
-        result = self.read_file(filename)
-        if not result:
+                       is_regex: bool = False, commit_hash: str = None) -> List[dict]:
+        """Permet de rechercher une occurrence textuelle ou une expression régulière au sein d'un fichier du Codex.
+        Supporte l'investigation spatio-temporelle : si un identifiant de commit est fourni, la recherche s'opère sur la révision historique correspondante au lieu du fichier actif.
+        """
+        content = self._get_text_content(filename, commit_hash)
+        if not content:
             return []
 
         matches = []
-        lines = result["content"].splitlines()
+        lines = content.splitlines()
         for i, line in enumerate(lines, 1):
             try:
-                if is_regex:
-                    if re.search(pattern, line):
-                        matches.append({"line_number": i, "line_content": line})
-                else:
-                    if pattern in line:
-                        matches.append({"line_number": i, "line_content": line})
+                match = re.search(pattern, line) if is_regex else (pattern in line)
             except re.error:
-                # Regex invalide, fallback en recherche littérale
-                if pattern in line:
-                    matches.append({"line_number": i, "line_content": line})
-
-            if len(matches) >= 50:  # Cap pour éviter les résultats massifs
-                break
+                match = (pattern in line)
+                
+            if match:
+                matches.append({"line_number": i, "line_content": line})
+                if len(matches) >= 50:
+                    break
         return matches
+
+    def trace_history(self, query: str, target_paths: List[str] = None, limit: int = 50) -> List[dict]:
+        """Traverse l'historique de versionnement du Codex pour trouver les itérations où `query` a été ajouté ou supprimé."""
+        entries = []
+        blob_cache = {} 
+        try:
+            walker = self.repo.get_walker(max_entries=limit * 5)
+            for walk_entry in walker:
+                commit = walk_entry.commit
+                c_id = commit.id.decode("ascii")
+                p_id = commit.parents[0].decode("ascii") if commit.parents else None
+                
+                all_files = [f["filename"] for f in self.list_files() if f["type"] == "file"]
+                if target_paths:
+                    files_to_check = [f for f in all_files if any(f.startswith(p) for p in target_paths)]
+                else:
+                    files_to_check = all_files
+                
+                commit_diffs = []
+                for f in files_to_check:
+                    cache_key_curr = f"{c_id}:{f}"
+                    cache_key_prev = f"{p_id}:{f}" if p_id else None
+                    
+                    curr_content = blob_cache.pop(cache_key_curr, None)
+                    if curr_content is None:
+                        curr_content = self._get_text_content(f, c_id)
+                        
+                    prev_content = self._get_text_content(f, p_id) if p_id else ""
+                    if p_id:
+                        blob_cache[cache_key_prev] = prev_content
+                        
+                    curr_lines = self._find_lines(curr_content, query, is_regex=False)
+                    prev_lines = self._find_lines(prev_content, query, is_regex=False)
+                    
+                    if curr_lines != prev_lines:
+                        added = [l for l in curr_lines if l not in prev_lines]
+                        removed = [l for l in prev_lines if l not in curr_lines]
+                        if added or removed:
+                            commit_diffs.append({"file": f, "added": added, "removed": removed})
+                        
+                if commit_diffs:
+                    msg = commit.message.decode("utf-8", errors="replace").strip()
+                    entries.append({"hash": c_id[:12], "message": msg, "diffs": commit_diffs})
+                    
+                if len(entries) >= limit:
+                    break
+        except Exception:
+            pass
+        return entries
 
     # =========================================================================
     # HISTORIQUE GIT
@@ -207,7 +395,8 @@ class CodexRepo:
         """Retourne l'historique des commits. Si filename, filtré pour ce fichier."""
         entries = []
         try:
-            walker = self.repo.get_walker(max_entries=limit * 3)  # Marge pour le filtrage
+            walker = self.repo.get_walker(
+                max_entries=limit * 3)  # Marge pour le filtrage
             for walk_entry in walker:
                 commit = walk_entry.commit
                 msg = commit.message.decode("utf-8", errors="replace").strip()
@@ -215,8 +404,9 @@ class CodexRepo:
                 sha = commit.id.decode("ascii")
 
                 if filename:
-                    # Filtrage : vérifier si le fichier est modifié dans ce commit
-                    safe_name = os.path.basename(filename)
+                    # Filtrage : vérifier si le fichier est modifié dans ce
+                    # commit
+                    safe_name = self._secure_path(filename)
                     if not self._file_in_commit(commit, safe_name):
                         continue
 
@@ -241,7 +431,7 @@ class CodexRepo:
             for item in tree.items():
                 if item.path.decode("utf-8") == filename:
                     return True
-        except:
+        except BaseException:
             pass
         return False
 
@@ -272,10 +462,13 @@ class CodexRepo:
         except Exception as e:
             return f"Erreur diff: {e}"
 
-    def get_file_at_commit(self, filename: str, commit_hash: str) -> Optional[str]:
+    def get_file_at_commit(
+            self,
+            filename: str,
+            commit_hash: str) -> Optional[str]:
         """Lit le contenu d'un fichier à un commit donné (checkout virtuel)."""
         try:
-            safe_name = os.path.basename(filename)
+            safe_name = self._secure_path(filename)
             commit = self.repo.object_store[commit_hash.encode("ascii")]
             tree = self.repo.object_store[commit.tree]
 
@@ -316,7 +509,7 @@ class CodexRepo:
         total_commits = 0
         try:
             total_commits = len(list(self.repo.get_walker()))
-        except:
+        except BaseException:
             pass
 
         return {

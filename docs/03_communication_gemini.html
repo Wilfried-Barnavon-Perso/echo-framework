@@ -1,0 +1,105 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Communication avec l'API Gemini : authentification, prioritÃ©s des identitÃ©s, protocole PKCE et architecture Antigravity 2.1.">
+  <title>ECHO v5 - 3. Communication Gemini & Authentification</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu gÃ©nÃ©rÃ© dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>3. Communication Gemini & Authentification</h1>
+
+    <p>
+      Cette section dÃ©taille les protocoles et mÃ©canismes de sÃ©curitÃ© permettant Ã  ECHO
+      d'interagir avec l'API de Google Gemini de maniÃ¨re structurÃ©e.
+    </p>
+
+    <h2>MÃ©canismes d'Authentification API</h2>
+
+    <p>Pour communiquer avec les modÃ¨les de Google (Gemini), le Framework s'appuie sur une architecture multi-provider. Cette conception garantit la connectivitÃ© via diffÃ©rentes mÃ©thodes d'accÃ¨s, selon le contexte (Local ou Cloud).</p>
+
+    <ul>
+      <li><strong>RÃ©solution Multi-Provider :</strong> L'authentification est priorisÃ©e au sein du module <code>EchoAuth.get_ordered_auth_providers()</code>. Le systÃ¨me tente en prioritÃ© de s'authentifier par OAuth2, puis bascule sur les clÃ©s API statiques si l'OAuth2 n'est pas configurÃ©.</li>
+      <li><strong>Le protocole d'authentification PKCE :</strong> ECHO utilise le flux <strong>Authorization Code + PKCE (RFC 7636)</strong> pour l'authentification OAuth2 headless dans Docker. PKCE (<em>Proof Key for Code Exchange</em>) est une extension du flux OAuth2 empÃªchant l'interception du code d'autorisation. Il gÃ©nÃ¨re une paire de secrets Ã©phÃ©mÃ¨res (<em>code_verifier</em> et <em>code_challenge</em>) Ã  usage unique.</li>
+      <li><strong>ClÃ©s API :</strong> En solution de repli (ou par choix utilisateur), de simples clÃ©s API AI Studio (commenÃ§ant par <code>AIzaâ€¦</code> ou <code>AQ.â€¦</code>) peuvent Ãªtre dÃ©finies dans l'interface et utilisÃ©es directement.</li>
+    </ul>
+
+    <p>
+      En pratique pour l'OAuth2 : lorsqu'aucun fournisseur d'accÃ¨s n'est configurÃ© et qu'aucune clÃ© API n'est fournie, le Pipe dÃ©clenche le flux PKCE automatiquement au premier message. Un tunnel SSH Ã©phÃ©mÃ¨re (<code>asyncssh</code>) est ouvert sur un port dynamique de la plage <code>8020â€“8024</code>, et le callback OAuth2 est reÃ§u sur un port interne (<code>8025â€“8034</code>). L'utilisateur reÃ§oit un lien cliquable dans l'interface et n'a qu'Ã  autoriser ECHO sur son compte Google pour rÃ©cupÃ©rer ses identifiants.
+    </p>
+
+    <div class="tech-spec">
+      <h4>âš™ï¸ PrioritÃ© des identitÃ©s d'accÃ¨s</h4>
+      <p>
+        Le registre des fournisseurs d'accÃ¨s aux modÃ¨les est rÃ©solu dans cet ordre par
+        <code>EchoAuth.get_ordered_auth_providers()</code> :
+      </p>
+      <ol>
+        <li><strong>OAuth2 (API Antigravity)</strong> - prioritaire, accÃ¨s aux modÃ¨les <code>gemini-3.1-pro-preview</code> et <code>gemini-3.5-flash</code>.</li>
+        <li><strong>ClÃ© API primaire</strong> - AI Studio (<code>google_api_key</code>).</li>
+        <li><strong>ClÃ© API secondaire</strong> - fallback de secours (<code>google_api_key_secondary</code>).</li>
+      </ol>
+    </div>
+
+    
+    <h3>Fast-Failover Intra-Retry (OAuth2)</h3>
+    <p>Le routage intÃ¨gre un mÃ©canisme de <em>Fast-Failover</em> exclusif Ã  OAuth2. Lors d'une surcharge (HTTP 429), le systÃ¨me verrouille instantanÃ©ment l'URL en cause via <code>state_mgr.lock_agy_endpoint</code> et pivote sur une nouvelle URL saine issue du pool <code>AGY_BASE_URLS</code>, annulant la nÃ©cessitÃ© du backoff exponentiel lent. Les dÃ©connexions inattendues de flux SSE (timeouts) sont par ailleurs gÃ©rÃ©es sans provoquer de Retry API inutiles.</p>
+
+    <h2>MÃ©thodes FactorisÃ©es d'Appel (EchoGeminiClient)</h2>
+
+    <p>
+      Le framework centralise toutes les communications sortantes vers les modÃ¨les de langage au sein du module <code>EchoGeminiClient</code>. Ce client HTTP/2 asynchrone orchestre le routage, la rÃ©silience et la mise en forme canonique des requÃªtes.
+    </p>
+
+    <ul>
+      <li><strong>Routage Transparent :</strong> Le client bascule dynamiquement entre l'API publique (AI Studio) et l'API interne (Antigravity) selon l'identitÃ© d'accÃ¨s prioritaire, en appliquant les traductions de noms de modÃ¨les nÃ©cessaires.</li>
+      <li><strong>Failover Hybride et RÃ©silience :</strong> En cas de surcharge (HTTP 429, 500, 503), le client applique un backoff exponentiel avec <em>jitter</em>. Si le seuil d'Ã©checs consÃ©cutifs est franchi, il bascule automatiquement sur la source d'accÃ¨s suivante (par exemple, d'OAuth2 vers la clÃ© de secours). Si le modÃ¨le lui-mÃªme est inaccessible, une cascade descendante (PRO â†’ FLASH â†’ LITE) est enclenchÃ©e.</li>
+      <li><strong>Statut Tri-Ã©tat :</strong> Chaque appel LLM, qu'il provienne du Pipe ou d'un outil agentique, renvoie un statut standardisÃ© (<code>success</code>, <code>warning</code>, <code>error</code>). Une divergence (clamping de politique ou cascade) est marquÃ©e comme <code>warning</code> avec le dÃ©tail du motif.</li>
+    </ul>
+
+    <div class="code-header">Exemple de Code - Signatures et Routage</div>
+    <pre><code># 1. PrÃ©paration du contexte rÃ©seau (HTTP/2, Headers furtifs, Auth)
+req_ctx = await EchoGeminiClient._prepare_request_context(
+    provider=active_provider,
+    target_model="gemini-3.5-flash",
+    payload={"contents": [...]},
+    method="streamGenerateContent",
+    chat_id=chat_id,
+    enable_paid_credits=True
+)
+
+# 2. Appel CentralisÃ© avec Cascade Cognitive (PRO -> FLASH -> LITE)
+data, model_key, reason = await EchoGeminiClient.call_cascade(
+    target_model_key="MODEL_FLASH", 
+    payload=payload,
+    user_id=user_id,
+    metadata=__metadata__,
+    events=events,
+    include_thoughts=False
+)
+
+# Analyse du statut tri-Ã©tat
+if reason:
+    status = "warning"  # Ex: "policy clamping" ou "cascade downgrade"
+else:
+    status = "success"
+</code></pre>
+
+    <div class="transition-text">
+      <a href="02_hld_architecture.html">&larr; High-Level Design</a>
+      &nbsp;&nbsp;
+      <a href="04_deploiement.html">Déploiement & Infra &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

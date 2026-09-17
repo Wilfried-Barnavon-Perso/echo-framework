@@ -8,26 +8,31 @@ Ce dossier représente la **Conscience et l'Injection Contextuelle** de l'agent.
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
+### `build_environment_domain.py` (Inlet - Priorité 0)
+**Rôle** : Amorçage à froid de l'Environnement ECHO.
+- **Sémantique** : Filtre Inlet critique (priorité absolue 0). S'exécute avant toute logique applicative ou requête LLM.
+- **Algorithme Clé** : Il est responsable de la création dynamique et de l'injection complète de l'arborescence du Framework (dossiers virtuels Codex, RAG, uploads, n8n_workflows) en distinguant les Domaines Globaux (`get_echo_global_path`) et les Domaines de Session (`get_echo_session_path`) dès la première interaction de l'utilisateur avec l'API WebUI. Il applique également un masquage strict (chmod 0o711) sur le dossier `files` pour empêcher son exploration directe par le LLM au sein de l'environnement isolé (bwrap).
+
 ### `conversation_rag_filter.py` (Outlet)
 **Rôle** : Pipeline d'Ingestion Conversationnelle Zéro-Latence.
 - **Sémantique** : Filtre asynchrone qui s'exécute après la génération de la réponse. Il découpe l'historique en fenêtres de tours de parole (turns) et les envoie au système d'Embedding (Qdrant).
-- **Algorithme Clé** : Implémente l'**Upsert Idempotent Zéro-Latence**. Pour garantir une performance **O(1)** et empêcher la réindexation redondante, il interroge systématiquement la méthode `EchoStateManager.is_message_embedded()` (qui vérifie le flag booléen `is_embedded` dans SQLite) *avant* d'initier toute communication avec Qdrant. Il utilise également un `unique_seed` pour éviter les doublons et bloque fermement les payloads Base64 (images).
+- **Algorithme Clé** : Implémente l'**Upsert Idempotent Zéro-Latence**. Pour garantir une performance **O(1)** et empêcher la réindexation redondante, il interroge systématiquement la méthode `EchoStateManager.is_message_embedded()` (qui vérifie le flag booléen `is_embedded` dans SQLite) *avant* d'initier toute communication avec Qdrant. Il intègre désormais une gestion anti-zombie explicite des erreurs asynchrones via un callback (pour absorber `asyncio.CancelledError`). Il utilise également un `unique_seed` pour éviter les doublons et bloque fermement les payloads Base64 (images).
 
 ### `new_context_filter.py` (Inlet)
 **Rôle** : Smart Context RAG Injector.
 - **Sémantique** : Intercepte la requête entrante et interroge Qdrant pour récupérer les souvenirs persistants.
-- **Algorithme Clé** : Fusion sémantique qui préserve le score `memory_importance`. Injecte les mémoires récupérées ainsi que les événements systèmes formatés en **YAML plat** (via le module `echo_aec.py`) dans la balise native `<AEC_smart_context>`, associant des `source_id` pour la traçabilité.
+- **Algorithme Clé** : Fusion sémantique qui préserve le score `memory_importance`. Injecte les mémoires récupérées ainsi que les événements systèmes formatés dans la structure **XML native et modulaire** (via le module `echo_aec.py`) au sein de la balise `<artifact id="AEC_smart_context">`, associant des `source_id` pour la traçabilité. Il intègre une correction résiliente pour l'import de `ZoneInfo` (compatibilité stricte). N'utilise plus le format YAML plat.
 
 ### `app_drawer_filter.py` (Inlet - Priorité 1000)
 **Rôle** : Interface Homme-Machine Flottante.
-- **Sémantique** : Filtre Inlet silencieux. Il n'altère pas la requête LLM mais injecte dans le DOM de l'interface Open WebUI un composant *Data Island* (le HUD ECHO App Drawer). Ce HUD communique en temps réel avec l'API WebUI pour déclencher des actions interactives (ECHO Codex, Agent Monitor) sans rechargement de la page.
+- **Sémantique** : Filtre Inlet silencieux. Il n'altère pas la requête LLM mais injecte dans le DOM de l'interface Open WebUI un composant *Data Island* (le HUD ECHO App Drawer). Ce HUD communique en temps réel avec l'API WebUI pour déclencher des actions interactives (ECHO Codex, Agent Monitor) sans rechargement de la page. Il intègre dorénavant le support complet du **HUD Mobile** (déplacement tactile, persistance de la position top `echo-hud-top`, et différenciation des seuils de drag pour prévenir l'hyper-sensibilité).
 
-### `edge_embed_bridge_filter.py` (Inlet/Outlet)
+### `edge_embed_bridge_filter.py` (Inlet/Outlet - Priorité 2)
 **Rôle** : Déport de la puissance de calcul (Offload) et WebUI Bridge.
 - **Sémantique** : Intercepte les requêtes nécessitant une vectorisation massive et déporte l'inférence (Harrier-OSS) vers le navigateur client via la technologie WebGPU/WASM et WebSocket.
 - **Algorithme Clé** : Injecte un **HUD d'initialisation WebGPU** natif dans l'interface avec support du rechargement automatique (auto-reload). Embarque un support natif Mobile WebGPU (quantification q4). Gère rigoureusement l'état asynchrone des **onglets multiples** via des `client_id` uniques et la détection de visibilité (`visibility`). Il implémente un mécanisme de **Fallback CPU asynchrone instantané** (via `sendIncompatibleAndExit`) qui rejette de manière proactive le hardware incompatible, et extrait avec précision les tenseurs (`sentence_embedding`) au lieu d'une simple observation masquée.
 
-### `tcp_keepalive_filter.py` (Inlet)
+### `tcp_keepalive_filter.py` (Inlet - Priorité 1)
 **Rôle** : Maintien de connexion.
 - **Sémantique** : Filtre Inlet dédié au maintien des sessions (Keep-Alive) sur les connexions WebSocket longues, empêchant le WAF (BunkerWeb) de couper silencieusement la connexion.
 

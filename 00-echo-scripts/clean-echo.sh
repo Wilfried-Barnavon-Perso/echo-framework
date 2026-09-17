@@ -24,9 +24,8 @@ DISK_USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
 
 # Purge inconditionnelle des images orphelines (dangling) et du build cache orphelin
 # Cette étape ne supprime aucune image nommée, mais libère instantanément les déchets de build.
-echo "-> Nettoyage inconditionnel des images orphelines (<none>:<none>) et du cache de build..."
+echo "-> Nettoyage inconditionnel des images orphelines (<none>:<none>)..."
 docker image prune -f
-docker buildx prune -f
 
 if [ "$DISK_USAGE" -ge 90 ]; then
     echo "🚨 ALERTE CRITIQUE ($DISK_USAGE%) : Survie système menacée."
@@ -40,6 +39,7 @@ else
     echo "✅ Espace disque sain ($DISK_USAGE%)."
     echo "-> Purge Docker de ROUTINE (Conservation : 7 jours)..."
     docker system prune -af --filter "until=168h"
+    docker buildx prune -f --filter "until=168h"
 fi
 
 echo "✅ Fin de la maintenance."

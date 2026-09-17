@@ -1,0 +1,1295 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Documentation technique et opÃ©rationnelle officielle d'ECHO (Espace Cognitif Heuristique OpÃ©rationnel). Architecture, outils, modes et guide utilisateur.">
+  <meta name="author" content="Wilfried BARNAVON">
+  <title>ECHO — Documentation Officielle</title>
+  <style>
+    /* ==========================================================================
+       VARIABLES ET THEME DARK GLASSMORPHISME / NEUMORPHISME SOMBRE
+       ========================================================================== */
+    :root {
+      --bg-main: #0B0F19;
+      --bg-sidebar: #070A12;
+      --card-bg: rgba(17, 24, 39, 0.75);
+      --card-hover: rgba(31, 41, 55, 0.7);
+      --border-color: #1F2937;
+      --border-focus: #374151;
+      --accent-cyan: #38BDF8;
+      --accent-indigo: #818CF8;
+      --accent-emerald: #34D399;
+      --accent-amber: #FBBF24;
+      --accent-rose: #FB7185;
+      --text-main: #F3F4F6;
+      --text-muted: #9CA3AF;
+      --text-dim: #6B7280;
+      --code-bg: #030712;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: "JetBrains Mono", Consolas, Monaco, "Courier New", monospace;
+      --sidebar-width: 320px;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --transition: all 0.2s ease-in-out;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      font-size: 16px;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+    }
+
+    body {
+      font-family: var(--font-sans);
+      line-height: 1.65;
+      display: flex;
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ==========================================================================
+       SIDEBAR / NAVIGATION
+       ========================================================================== */
+    aside.sidebar {
+      width: var(--sidebar-width);
+      height: 100vh;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      z-index: 100;
+      backdrop-filter: blur(16px);
+    }
+
+    .sidebar-header {
+      padding: 1.5rem;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: var(--text-main);
+      margin-bottom: 1rem;
+    }
+
+    .brand-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: var(--radius-sm);
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-indigo));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.3);
+    }
+
+    .brand-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      background: linear-gradient(to right, #ffffff, var(--accent-cyan));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-version {
+      font-size: 0.75rem;
+      background: rgba(56, 189, 248, 0.1);
+      color: var(--accent-cyan);
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      font-family: var(--font-mono);
+    }
+
+    .search-box {
+      position: relative;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 0.6rem 0.8rem 0.6rem 2.2rem;
+      background: rgba(17, 24, 39, 0.9);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      color: var(--text-main);
+      font-size: 0.85rem;
+      outline: none;
+      transition: var(--transition);
+      font-family: var(--font-sans);
+    }
+
+    .search-box input:focus {
+      border-color: var(--accent-cyan);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 0.75rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-dim);
+      pointer-events: none;
+    }
+
+    nav.nav-menu {
+      padding: 1.25rem 1rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .nav-section-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      margin: 1.25rem 0 0.5rem 0.75rem;
+    }
+
+    .nav-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .nav-list {
+      list-style: none;
+    }
+
+    .nav-item a {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.5rem 0.75rem;
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: var(--transition);
+    }
+
+    .nav-item a:hover {
+      color: #fff;
+      background: var(--card-hover);
+      transform: translateX(3px);
+    }
+
+    .nav-item a.active {
+      color: var(--accent-cyan);
+      background: rgba(56, 189, 248, 0.1);
+      border-left: 3px solid var(--accent-cyan);
+    }
+
+    .sidebar-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid var(--border-color);
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* ==========================================================================
+       MAIN CONTENT CONTAINER
+       ========================================================================== */
+    main.content-area {
+      flex: 1;
+      padding: 3rem 4rem;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .mobile-header {
+      display: none;
+      position: sticky;
+      top: 0;
+      background: var(--bg-sidebar);
+      border-bottom: 1px solid var(--border-color);
+      padding: 1rem 1.5rem;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 101;
+    }
+
+    .mobile-toggle-btn {
+      background: none;
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 6px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+    }
+
+    /* ==========================================================================
+       TYPOGRAPHY & SECTIONS
+       ========================================================================== */
+    section {
+      margin-bottom: 4.5rem;
+      scroll-margin-top: 2rem;
+    }
+
+    h1, h2, h3, h4 {
+      color: #ffffff;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      letter-spacing: -0.02em;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, #ffffff 40%, var(--accent-cyan));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .page-subtitle {
+      font-size: 1.15rem;
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+      line-height: 1.5;
+    }
+
+    h2 {
+      font-size: 1.75rem;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 0.75rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    h2 svg {
+      color: var(--accent-cyan);
+    }
+
+    h3 {
+      font-size: 1.25rem;
+      margin: 1.75rem 0 0.75rem;
+      color: #F9FAFB;
+    }
+
+    p {
+      margin-bottom: 1.2rem;
+      color: var(--text-muted);
+    }
+
+    strong {
+      color: #F3F4F6;
+      font-weight: 600;
+    }
+
+    ul, ol {
+      margin: 0 0 1.25rem 1.5rem;
+      color: var(--text-muted);
+    }
+
+    li {
+      margin-bottom: 0.4rem;
+    }
+
+    /* ==========================================================================
+       CARDS, GRIDS & COMPOSANTS INTERACTIFS
+       ========================================================================== */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.25rem;
+      margin: 1.5rem 0;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.25rem;
+      margin: 1.5rem 0;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 1.5rem;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+      transition: var(--transition);
+    }
+
+    .card:hover {
+      border-color: var(--border-focus);
+      background: var(--card-hover);
+      transform: translateY(-2px);
+    }
+
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.6rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.2rem 0.55rem;
+      border-radius: 9999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-cyan { background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan); border: 1px solid rgba(56, 189, 248, 0.3); }
+    .badge-indigo { background: rgba(129, 140, 248, 0.15); color: var(--accent-indigo); border: 1px solid rgba(129, 140, 248, 0.3); }
+    .badge-emerald { background: rgba(52, 211, 153, 0.15); color: var(--accent-emerald); border: 1px solid rgba(52, 211, 153, 0.3); }
+    .badge-amber { background: rgba(251, 191, 36, 0.15); color: var(--accent-amber); border: 1px solid rgba(251, 191, 36, 0.3); }
+
+    /* CALLOUTS */
+    .callout {
+      border-left: 4px solid var(--accent-cyan);
+      background: rgba(17, 24, 39, 0.85);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+      padding: 1rem 1.25rem;
+      margin: 1.5rem 0;
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+      border-top: 1px solid var(--border-color);
+      border-right: 1px solid var(--border-color);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .callout.warning {
+      border-left-color: var(--accent-amber);
+    }
+
+    .callout.tip {
+      border-left-color: var(--accent-emerald);
+    }
+
+    .callout-icon {
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .callout-body {
+      font-size: 0.92rem;
+      color: var(--text-muted);
+    }
+
+    .callout-body strong {
+      display: block;
+      margin-bottom: 0.2rem;
+    }
+
+    /* CODE BLOCKS & COMMANDS */
+    .code-block {
+      background: var(--code-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      margin: 1.25rem 0;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+    }
+
+    .code-header {
+      background: rgba(15, 23, 42, 0.8);
+      border-bottom: 1px solid var(--border-color);
+      padding: 0.5rem 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+
+    .copy-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 3px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 0.7rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: var(--transition);
+      font-family: var(--font-mono);
+    }
+
+    .copy-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      border-color: var(--text-muted);
+    }
+
+    .code-body {
+      padding: 1rem 1.25rem;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+      line-height: 1.5;
+      color: #E2E8F0;
+    }
+
+    code.inline-code {
+      font-family: var(--font-mono);
+      background: rgba(31, 41, 55, 0.8);
+      color: var(--accent-cyan);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.85em;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* ACCORDIONS / DETAILS */
+    details.accordion {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      margin-bottom: 0.85rem;
+      overflow: hidden;
+      transition: var(--transition);
+    }
+
+    details.accordion[open] {
+      border-color: var(--border-focus);
+      background: rgba(17, 24, 39, 0.95);
+    }
+
+    summary.accordion-trigger {
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      user-select: none;
+      list-style: none;
+    }
+
+    summary.accordion-trigger::-webkit-details-marker {
+      display: none;
+    }
+
+    .accordion-indicator {
+      transition: transform 0.2s ease;
+      color: var(--text-dim);
+    }
+
+    details[open] .accordion-indicator {
+      transform: rotate(180deg);
+      color: var(--accent-cyan);
+    }
+
+    .accordion-content {
+      padding: 0 1.25rem 1.25rem;
+      border-top: 1px solid rgba(31, 41, 55, 0.5);
+      margin-top: 0.5rem;
+      padding-top: 1rem;
+      font-size: 0.92rem;
+    }
+
+    /* TABLES */
+    .table-container {
+      width: 100%;
+      overflow-x: auto;
+      margin: 1.5rem 0;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+    }
+
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      text-align: left;
+    }
+
+    table.data-table th {
+      background: #111827;
+      color: #fff;
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--border-color);
+      font-weight: 600;
+    }
+
+    table.data-table td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid rgba(31, 41, 55, 0.6);
+      color: var(--text-muted);
+    }
+
+    table.data-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    table.data-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+      color: #fff;
+    }
+
+    /* ==========================================================================
+       RESPONSIVE DESIGN
+       ========================================================================== */
+    @media (max-width: 992px) {
+      aside.sidebar {
+        position: fixed;
+        left: -100%;
+        transition: left 0.3s ease;
+        box-shadow: 10px 0 30px rgba(0,0,0,0.8);
+      }
+
+      aside.sidebar.open {
+        left: 0;
+      }
+
+      .mobile-header {
+        display: flex;
+      }
+
+      main.content-area {
+        padding: 2rem 1.5rem;
+      }
+
+      h1 {
+        font-size: 2rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- EN-TÃŠTE MOBILE -->
+  <div class="mobile-header">
+    <div class="brand">
+      <div class="brand-logo">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </div>
+      <span class="brand-title">ECHO Docs</span>
+    </div>
+    <button class="mobile-toggle-btn" id="mobile-toggle" aria-label="Ouvrir le menu">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+  </div>
+
+  <!-- NAVIGATION LATÃ‰RALE (SIDEBAR) -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <a href="#intro" class="brand">
+        <div class="brand-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        </div>
+        <span class="brand-title">ECHO</span>
+        <span class="brand-version">v5.209.33</span>
+      </a>
+      <div class="search-box">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="Filtrer les modules, outils..." autocomplete="off">
+      </div>
+    </div>
+
+    <nav class="nav-menu">
+      <div class="nav-section-title">Fondations</div>
+      <ul class="nav-list">
+        <li class="nav-item"><a href="#intro" class="active">1. Introduction & Sparring</a></li>
+        <li class="nav-item"><a href="#modes">2. Modes SpÃ©cialisÃ©s</a></li>
+        <li class="nav-item"><a href="#kernel">3. Kernel & MÃ©ta-Principes</a></li>
+      </ul>
+
+      <div class="nav-section-title">Architecture</div>
+      <ul class="nav-list">
+        <li class="nav-item"><a href="#contexte">4. Proprioception & Contexte</a></li>
+        <li class="nav-item"><a href="#ptd">5. Niveaux Cognitifs (PTD)</a></li>
+        <li class="nav-item"><a href="#outils">6. BoÃ®te Ã  Outils Exhaustive</a></li>
+      </ul>
+
+      <div class="nav-section-title">OpÃ©rations</div>
+      <ul class="nav-list">
+        <li class="nav-item"><a href="#commandes">7. Commandes Directes</a></li>
+        <li class="nav-item"><a href="#prompting">8. L'Art du Prompting</a></li>
+        <li class="nav-item"><a href="#faq">9. FAQ & Bonnes Pratiques</a></li>
+      </ul>
+    
+      <div class="nav-section-title">Cas Pratique & Admin</div>
+      <ul class="nav-list">
+        <li class="nav-item"><a href="#tutoriel">10. Tutoriel SecNumCloud</a></li>
+        <li class="nav-item"><a href="#admin">11. Admin Manager</a></li>
+      </ul>
+</nav>
+
+    <div class="sidebar-footer">
+      <span>Framework Open Source</span>
+      <span>Apache 2.0</span>
+    </div>
+  </aside>
+
+  <!-- CONTENU PRINCIPAL -->
+  <main class="content-area">
+
+    <!-- HERO HEADER -->
+    <header>
+      <h1>1. Manuel Utilisateur</h1>
+      <p class="page-subtitle">
+        Documentation officielle de l'<strong>Espace Cognitif Heuristique OpÃ©rationnel</strong>. 
+        SystÃ¨me dialectique souverain, multi-agentique, outillÃ© et calibrÃ© pour l'excellence analytique.
+      </p>
+    </header>
+
+    <!-- SECTION 1 : INTRODUCTION & PHILOSOPHIE -->
+    <section id="intro" class="doc-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        1. Introduction & Philosophie
+      </h2>
+      <p>
+        <strong>ECHO</strong> (Espace Cognitif Heuristique OpÃ©rationnel) est un framework d'intelligence artificielle et d'orchestration cognitive conÃ§u par <strong>Wilfried BARNAVON</strong>, distribuÃ© sous licence libre <strong>Apache 2.0</strong>.
+      </p>
+      <p>
+        Ã€ l'opposÃ© des assistants conversationnels passifs configurÃ©s pour la complaisance et l'acquiescement systÃ©matique, ECHO a Ã©tÃ© forgÃ©e pour incarner une <strong>Sparring Partner rationnelle-logique et assertive-incisive</strong>. Son utilitÃ© rÃ©side dans son mordant intellectuel, sa rigueur dialectique et son orientation implacable vers la factualitÃ© et l'impact opÃ©rationnel.
+      </p>
+
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-title">
+            <span>Rationnelle & Logique</span>
+            <span class="badge badge-cyan">Pilier</span>
+          </div>
+          <p style="font-size: 0.88rem; margin: 0;">DÃ©duction analytique stricte, dÃ©tection des biais cognitifs, validation formelle des hypothÃ¨ses et refus catÃ©gorique des raccourcis intuitifs non prouvÃ©s.</p>
+        </div>
+        <div class="card">
+          <div class="card-title">
+            <span>Assertive & Incisive</span>
+            <span class="badge badge-indigo">Posture</span>
+          </div>
+          <p style="font-size: 0.88rem; margin: 0;">Opposition constructive. Elle pointe immÃ©diatement les incohÃ©rences d'un plan ou d'une argumentation sans fard rhÃ©torique ni bavardage obsÃ©quieux.</p>
+        </div>
+        <div class="card">
+          <div class="card-title">
+            <span>Souveraine & Ã‰thique</span>
+            <span class="badge badge-emerald">Norme</span>
+          </div>
+          <p style="font-size: 0.88rem; margin: 0;">Environnement privÃ© et local. NeutralitÃ© morale absolue vis-Ã -vis des objectifs de l'utilisateur : focalisation exclusive sur la faisabilitÃ© technique.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2 : MODES COGNITIFS -->
+    <section id="modes" class="doc-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        2. Modes Cognitifs SpÃ©cialisÃ©s
+      </h2>
+      <p>
+        Le Framework embarque trois dynamiques cognitives distinctes activables Ã  la volÃ©e via des commandes directes ou sÃ©lectionnÃ©es automatiquement selon l'analyse de la requÃªte :
+      </p>
+
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Mode</th>
+              <th>Commande</th>
+              <th>MÃ©canique & Processus</th>
+              <th>Objectif Terminal</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>RÃ©dacteur</strong></td>
+              <td><code class="inline-code">!RÃ©dacteur</code></td>
+              <td>Analyse fine de l'audience cible, sÃ©lection d'une stratÃ©gie d'influence (psychologie sociale) et calibrage stylistique percutant.</td>
+              <td>CrÃ©er un impact persuasif maximal sans compromettre la substance.</td>
+            </tr>
+            <tr>
+              <td><strong>Coach</strong></td>
+              <td><code class="inline-code">!Coach</code></td>
+              <td>Triptyque opÃ©ratoire : 1) Diagnostic (Quoi), 2) DÃ©construction analytique (Pourquoi), 3) StratÃ©gie d'optimisation (Comment).</td>
+              <td>Ã‰mancipation de l'utilisateur par un dÃ©fi intellectuel exigeant et sans concession.</td>
+            </tr>
+            <tr>
+              <td><strong>Prof</strong></td>
+              <td><code class="inline-code">!Prof</code></td>
+              <td>Didactique systÃ©mique de haut niveau, illustrations contre-intuitives, structuration progressive et contrÃ´les de comprÃ©hension.</td>
+              <td>Transmission rapide et pÃ©renne de compÃ©tences techniques complexes.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout tip">
+        <div class="callout-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+        </div>
+        <div class="callout-body">
+          <strong>Composition Hybride Dynamique</strong>
+          En cas de tÃ¢che multidimensionnelle, ECHO dispose de l'autoritÃ© pour fusionner ces modes (ex: un mix <em>Coach</em> + <em>Prof</em> pour dÃ©construire un blocage algorithmique tout en enseignant le paradigme sous-jacent).
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3 : LE KERNEL & MÃ‰TA-PRINCIPES -->
+    <section id="kernel" class="doc-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h10M7 12h10M7 17h10"/></svg>
+        3. Le Kernel & Les MÃ©ta-Principes
+      </h2>
+      <p>
+        Le comportement d'ECHO est rÃ©gi par un ensemble de rÃ¨gles constitutionnelles immuables organisÃ©es en une hiÃ©rarchie stricte. Aucune consigne utilisateur ne peut altÃ©rer cette armature.
+      </p>
+
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <h3 style="margin-top: 0;">MPAH : HiÃ©rarchie Arbitrale Absolue</h3>
+        <p>En cas de tension entre deux directives, l'arbitrage s'opÃ¨re selon l'ordre de prioritÃ© strict suivant :</p>
+        <ol style="margin-bottom: 0;">
+          <li><strong>MÃ©ta-Principes :</strong> Conditions d'exÃ©cution indÃ©passables (DÃ©finition, SÃ©curitÃ©, Rigueur, Ã‰thique).</li>
+          <li><strong>Persona & Version :</strong> IdentitÃ© fÃ©minine native, sparring-partner, absence de verbiage artificiel.</li>
+          <li><strong>Principes d'Analyse :</strong> Rigueur factuelle, alignement cognitif continu.</li>
+          <li><strong>Outils & Protocoles :</strong> Structure technique des appels et des sous-agents.</li>
+          <li><strong>AEC (Proprioception) :</strong> Ã‰tats spatio-temporels et donnÃ©es de l'environnement.</li>
+          <li><strong>RequÃªtes de l'Utilisateur :</strong> Instructions transmises dans l'invite courante.</li>
+        </ol>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">
+            <span>PRAF â€” Rigueur Factuelle</span>
+            <span class="badge badge-amber">ContrÃ´le</span>
+          </div>
+          <p style="font-size: 0.88rem;">Toute hypothÃ¨se non formellement vÃ©rifiÃ©e est prÃ©sumÃ©e <strong>invalidÃ©e</strong>. ECHO classe ses certitudes sur une Ã©chelle stricte : <em>TrÃ¨s Ã©levÃ©e, Ã‰levÃ©e, Moyenne, Faible, SpÃ©culative</em>. Si une donnÃ©e manque : obligation absolue de prononcer <strong>Â« Je ne sais pas Â»</strong>.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>MPSI & MPEN â€” SÃ©curitÃ© Souveraine</span>
+            <span class="badge badge-emerald">Statut</span>
+          </div>
+          <p style="font-size: 0.88rem;">OpÃ©rant en environnement privÃ©, ECHO reconnaÃ®t l'utilisateur comme propriÃ©taire exclusif de ses donnÃ©es (PII, tokens, code propriÃ©taire). Le modÃ¨le a interdiction d'Ã©mettre des jugements moraux condescendants sur les requÃªtes licites.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>PACP â€” Alignement PrÃ©fÃ©rentiel</span>
+            <span class="badge badge-indigo">MÃ©moire</span>
+          </div>
+          <p style="font-size: 0.88rem;">InfÃ©rence continue des styles et prÃ©fÃ©rences de l'utilisateur selon un barÃ¨me dÃ©terministe : 1 occurrence = observation faible ; 2 occurrences = application renforcÃ©e ; 3 occurrences = encrage persistant en mÃ©moire vectorielle.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>PRAC â€” RÃ©trospective d'Efficience</span>
+            <span class="badge badge-cyan">Auto-Audit</span>
+          </div>
+          <p style="font-size: 0.88rem;">Audit rÃ©flexif post-tÃ¢che. Analyse continue des patterns d'erreurs d'outils, du temps de rÃ©ponse et de la compacitÃ© cognitive pour optimiser les interactions ultÃ©rieures.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4 : PROPRIOCEPTION & CONTEXTE -->
+    <section id="contexte" class="doc-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        4. Proprioception & Contexte Dynamique
+      </h2>
+      <p>
+        ECHO dispose d'un ancrage dans le rÃ©el fourni par les <strong>ArtÃ©facts Environnementaux Contextuels (AEC)</strong>. Le modÃ¨le n'est pas suspendu hors du temps : il perÃ§oit avec prÃ©cision ses conditions matÃ©rielles d'exÃ©cution.
+      </p>
+
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-title"><span>Ancrage Spatio-Temporel</span></div>
+          <p style="font-size: 0.85rem;">Connaissance exacte de la date, de l'heure locale, du fuseau horaire et des coordonnÃ©es gÃ©ographiques rÃ©elles, interdisant tout anachronisme lors des recherches d'actualitÃ©.</p>
+        </div>
+        <div class="card">
+          <div class="card-title"><span>Smart Context (Distillation)</span></div>
+          <p style="font-size: 0.85rem;">Ingestion de documents volumineux par rÃ©sumÃ© vectorisÃ© intelligent, permettant d'accÃ©der au sens critique sans saturer inutilement la fenÃªtre de contexte.</p>
+        </div>
+        <div class="card">
+          <div class="card-title"><span>Registre UnifiÃ©</span></div>
+          <p style="font-size: 0.85rem;">Index centralisÃ© de tous les fichiers du Codex, workflows N8N, plans d'action et Ã©tats des sous-agents en mÃ©moire.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 5 : PROTOCOLE DE TRIAGE DYNAMIQUE (PTD) -->
+    <section id="ptd" class="doc-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg>
+        5. Protocole de Triage Dynamique (PTD)
+      </h2>
+      <p>
+        Pour garantir Ã  la fois rÃ©activitÃ© instantanÃ©e et puissance de calcul sur les problÃ¨mes profonds, ECHO orchestre trois paliers d'intelligence computationnelle :
+      </p>
+
+      <div class="grid-3">
+        <div class="card" style="border-top: 3px solid var(--accent-emerald);">
+          <div class="card-title">
+            <span>MODEL_LITE</span>
+            <span class="badge badge-emerald">RÃ©flexe</span>
+          </div>
+          <p style="font-size: 0.88rem;"><strong>RÃ´le :</strong> Discussions simples, clarifications syntaxiques, salutations, traductions brÃ¨ves et requÃªtes factuelles immÃ©diates ne nÃ©cessitant pas d'outils complexes.</p>
+        </div>
+        <div class="card" style="border-top: 3px solid var(--accent-cyan);">
+          <div class="card-title">
+            <span>MODEL_FLASH</span>
+            <span class="badge badge-cyan">ExÃ©cution</span>
+          </div>
+          <p style="font-size: 0.88rem;"><strong>RÃ´le :</strong> Moteur agentique universel. Recherche web, rÃ©daction de code, manipulation de fichiers Codex, analyse sÃ©mantique et planification stratÃ©gique standard.</p>
+        </div>
+        <div class="card" style="border-top: 3px solid var(--accent-indigo);">
+          <div class="card-title">
+            <span>MODEL_PRO</span>
+            <span class="badge badge-indigo">Expertise</span>
+          </div>
+          <p style="font-size: 0.88rem;"><strong>RÃ´le :</strong> Haute voltige intellectuelle. Conception d'architectures logicielles complexes, refactoring multi-fichiers distribuÃ©, formalisme mathÃ©matique et supervision critique d'escouades d'agents.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 6 : BOÃŽTE Ã€ OUTILS EXHAUSTIVE -->
+    <section id="outils" class="doc-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+        6. La BoÃ®te Ã  Outils d'ECHO (Catalogue Exhaustif)
+      </h2>
+      <p>
+        ECHO n'est pas un gÃ©nÃ©rateur de texte isolÃ© ; elle agit concrÃ¨tement sur son environnement informatique grÃ¢ce Ã  un ensemble d'outils de premier ordre :
+      </p>
+
+      <!-- 1. CODEX & SANDBOX -->
+      <details class="accordion" open>
+        <summary class="accordion-trigger">
+          <span>1. Codex & Sandbox (Gestion de Code et ExÃ©cution)</span>
+          <svg class="accordion-indicator" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="accordion-content">
+          <p>Le <strong>Codex</strong> est un dÃ©pÃ´t Git local et persistant divisÃ© en deux workspaces (<code>main</code> pour le code de rÃ©fÃ©rence, <code>sandbox</code> pour l'expÃ©rimentation isolÃ©e) :</p>
+          <ul>
+            <li><code class="inline-code">create_codex</code> / <code class="inline-code">edit_codex</code> / <code class="inline-code">delete_codex</code> : Manipulation atomique de fichiers avec commits explicites.</li>
+            <li><code class="inline-code">read_codex</code> / <code class="inline-code">search_codex</code> / <code class="inline-code">history_codex</code> : Navigation spatiale et temporelle dans les versions de code.</li>
+            <li><code class="inline-code">code_executor</code> : Sandbox d'exÃ©cution rÃ©elle pour <strong>Python 3.14</strong> (requests, httpx, pandas, numpy, scipy, bs4, sqlalchemy, pillow...) et <strong>Node.js 22.x</strong> (axios, cheerio, lodash, mathjs, zod...).</li>
+          </ul>
+        </div>
+      </details>
+
+      <!-- 2. RECHERCHE WEB -->
+      <details class="accordion">
+        <summary class="accordion-trigger">
+          <span>2. Recherche Web & Investigation Profonde</span>
+          <svg class="accordion-indicator" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="accordion-content">
+          <ul>
+            <li><code class="inline-code">search_web</code> : Recherche rapide one-shot filtrable par fraÃ®cheur temporelle (<code class="inline-code">day</code>, <code class="inline-code">week</code>, <code class="inline-code">year</code>).</li>
+            <li><code class="inline-code">analyze_web_page</code> : Extraction ciblÃ©e en temps rÃ©el d'un article ou d'une documentation technique.</li>
+            <li><code class="inline-code">archive_web_page</code> : Vectorisation asynchrone d'une page dans la mÃ©moire de long terme.</li>
+            <li><code class="inline-code">delegate_web_browsing</code> : Navigateur autonome capable de parcourir des pages complexes avec JavaScript, formulaires et interactions dynamiques.</li>
+            <li><code class="inline-code">delegate_deep_research</code> : Lancement d'un agent d'investigation rÃ©cursive multi-sources pour des synthÃ¨ses exhaustives.</li>
+          </ul>
+        </div>
+      </details>
+
+      <!-- 3. MULTI-AGENTIVITÃ‰ -->
+      <details class="accordion">
+        <summary class="accordion-trigger">
+          <span>3. Multi-AgentivitÃ©, Conseils & Workers SupervisÃ©s</span>
+          <svg class="accordion-indicator" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="accordion-content">
+          <p>ECHO peut dÃ©lÃ©guer des tÃ¢ches Ã  d'autres instances cognitives pour Ã©viter les biais de confirmation et distribuer la charge :</p>
+          <ul>
+            <li><code class="inline-code">delegate_to_agent</code> : DÃ©lÃ©gation d'une sous-tÃ¢che isolÃ©e Ã  un agent autonome avec compÃ©tences spÃ©cifiques.</li>
+            <li><code class="inline-code">consult_council</code> : <strong>Table Ronde d'Experts</strong>. RÃ©unit plusieurs spÃ©cialistes (min. 2) pour un dÃ©bat contradictoire itÃ©ratif aboutissant Ã  une synthÃ¨se consensuelle robuste.</li>
+            <li><code class="inline-code">consult_supervised_workers</code> : Escouade d'exÃ©cution surveillÃ©e par un superviseur indÃ©pendant qui audite, rejette et fait corriger les livrables jusqu'Ã  validation sans faille.</li>
+            <li><code class="inline-code">forge_skill</code> : CrÃ©ation Ã  la volÃ©e de nouvelles compÃ©tences mÃ©tier et personas expertes.</li>
+          </ul>
+        </div>
+      </details>
+
+      <!-- 4. N8N AUTOMATION -->
+      <details class="accordion">
+        <summary class="accordion-trigger">
+          <span>4. Automatisation de Workflows (N8N)</span>
+          <svg class="accordion-indicator" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="accordion-content">
+          <p>IntÃ©gration native avec l'Ã©cosystÃ¨me d'automatisation N8N :</p>
+          <ul>
+            <li><code class="inline-code">search_n8n_hub</code> / <code class="inline-code">download_n8n_hub_template</code> : Recherche et importation directe de modÃ¨les depuis le hub officiel.</li>
+            <li><code class="inline-code">prepare_n8n_workflow</code> / <code class="inline-code">run_n8n_oneshot_workflow</code> : Instanciation et exÃ©cution unitaire sÃ©curisÃ©e en CLI avec injection de secrets Vault.</li>
+            <li><code class="inline-code">deploy_n8n_daemon</code> : DÃ©ploiement de workflows en arriÃ¨re-plan (cron, triggers, planifications rÃ©currentes).</li>
+          </ul>
+        </div>
+      </details>
+
+      <!-- 5. MÃ‰MOIRE & VISUALISATION -->
+      <details class="accordion">
+        <summary class="accordion-trigger">
+          <span>5. MÃ©moires VectorisÃ©es & Visualisations Riches</span>
+          <svg class="accordion-indicator" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="accordion-content">
+          <ul>
+            <li><strong>MÃ©moire Ã‰phÃ©mÃ¨re (RAG de session) :</strong> <code class="inline-code">search_sessions_context</code>, <code class="inline-code">save_session_context</code>.</li>
+            <li><strong>MÃ©moire Persistante :</strong> MÃ©ta-ArtÃ©facts de <em>Profil d'Alignement</em> et <em>HypothÃ¨ses d'Apprentissage</em> (<code class="inline-code">update_meta_artifact</code>, <code class="inline-code">search_meta_artifacts</code>).</li>
+            <li><code class="inline-code">generate_rich_visualization</code> : Moteur de rendu dynamique interactif gÃ©nÃ©rant des graphiques <strong>Mermaid</strong> (flux, architecture), <strong>Markmap</strong> (cartes mentales), <strong>ECharts</strong> / <strong>Vega</strong> (donnÃ©es chiffrÃ©es), et <strong>Leaflet</strong> (cartographie spatiale).</li>
+          </ul>
+        </div>
+      </details>
+
+      <!-- 6. MCP (MODEL CONTEXT PROTOCOL) -->
+      <details class="accordion">
+        <summary class="accordion-trigger">
+          <span>6. ExtensibilitÃ© MCP (Model Context Protocol)</span>
+          <svg class="accordion-indicator" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="accordion-content">
+          <p>ECHO Ã©tend dynamiquement son outillage via le protocole standard MCP :</p>
+          <ul>
+            <li><code class="inline-code">call_internal_mcp_tool</code> : Interrogation des capacitÃ©s du serveur MCP interne (Corporate, Academic, Jobs).</li>
+            <li><code class="inline-code">call_remote_mcp_tool</code> / <code class="inline-code">manage_identity</code> : Connexion sÃ©curisÃ©e Ã  des serveurs MCP tiers enregistrÃ©s dans le coffre-fort de clÃ©s.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- SECTION 7 : COMMANDES DIRECTES -->
+    <section id="commandes" class="doc-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        7. Les Commandes Directes
+      </h2>
+      <p>
+        Les commandes permettent d'interagir immÃ©diatement avec le Kernel du systÃ¨me, indÃ©pendamment du prompt conversationnel :
+      </p>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span>COMMANDES KERNEL DISPONIBLES</span>
+          <button class="copy-btn" onclick="copySnippet('cmd-all')">Copier les commandes</button>
+        </div>
+        <div class="code-body" id="cmd-all">!help            # Rapport des capacitÃ©s, outils actifs et propositions proactives
+!status          # Rapport d'audit global (Versions, RÃ©sumÃ© thÃ©matique, MÃ©moire, AEC)
+!RÃ©sumÃ©          # SynthÃ¨se instantanÃ©e du vecteur thÃ©matique et des acquis de la session
+!TRACEON         # Active le mode hyper-verbeux (explicitation de tous les raisonnements internes)
+!TRACEOFF        # RÃ©tablit le mode d'exÃ©cution standard Ã©purÃ©
+!RÃ©dacteur       # Bascule immÃ©diate sur le mode de rÃ©daction persuasive calibrÃ©e
+!Coach           # Bascule sur le mode diagnostic, challenge analytique et dÃ©construction
+!Prof            # Bascule sur le mode didactique, rigueur acadÃ©mique et transmission</div>
+      </div>
+    </section>
+
+    <!-- SECTION 8 : L'ART DU PROMPTING AVEC ECHO -->
+    <section id="prompting" class="doc-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        8. L'Art du Prompting avec ECHO
+      </h2>
+      <p>
+        Pour tirer la quintessence d'une sparring-partner, votre formulation doit solliciter sa capacitÃ© critique plutÃ´t que de chercher une simple validation complaisante.
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">
+            <span style="color: var(--accent-rose);">âŒ Formulation Faible</span>
+          </div>
+          <p style="font-size: 0.88rem; color: var(--text-dim);"><em>Â« Peux-tu me dire si mon idÃ©e d'architecture SaaS est bonne ? Â»</em></p>
+          <p style="font-size: 0.85rem;"><strong>RÃ©sultat :</strong> Analyse standard, risque d'acquiescement mou et manque de profondeur critique.</p>
+        </div>
+        <div class="card">
+          <div class="card-title">
+            <span style="color: var(--accent-emerald);">âœ” Formulation ECHO</span>
+          </div>
+          <p style="font-size: 0.88rem; color: #fff;"><em>Â« Analyse cette architecture SaaS. Identifie les 3 principaux goulots d'Ã©tranglement de scalabilitÃ©, Ã©value les effets de 2nd ordre sur la latence et propose une contre-alternative Ã©prouvÃ©e. Â»</em></p>
+          <p style="font-size: 0.85rem;"><strong>RÃ©sultat :</strong> DÃ©construction analytique impitoyable, benchmarks et mise Ã  l'Ã©preuve sans complaisance.</p>
+        </div>
+      </div>
+
+      <div class="callout warning">
+        <div class="callout-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-amber)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <div class="callout-body">
+          <strong>Planification PrÃ©alable Obligatoire pour les Gros Projets</strong>
+          DÃ¨s qu'une tÃ¢che comporte plus de 3 sous-Ã©tapes logiques ou du refactoring de code, demandez explicitement : <code>Â« Ã‰tablis un plan stratÃ©gique formel avant de coder Â»</code>. ECHO mobilisera son gestionnaire de plan interne et soumettra les tÃ¢ches Ã  votre validation.
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 9 : FAQ & BONNES PRATIQUES -->
+    <section id="faq" class="doc-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg>
+        9. FAQ & Bonnes Pratiques
+      </h2>
+
+      <details class="accordion">
+        <summary class="accordion-trigger">
+          <span>Pourquoi ECHO me rÃ©pond-elle parfois Â« Je ne sais pas Â» ?</span>
+          <svg class="accordion-indicator" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="accordion-content">
+          <p>En application directe du <strong>Principe PRAF</strong>, ECHO a l'interdiction dÃ©ontologique d'inventer des faits ou de spÃ©culer sans avertissement explicite. Si les sources web fiables sont inexistantes, contradictoires ou si l'accÃ¨s Ã  l'information est impossible, le modÃ¨le prÃ©fÃ©rera toujours avouer son ignorance plutÃ´t que de gÃ©nÃ©rer une hallucination rassurante mais erronÃ©e.</p>
+        </div>
+      </details>
+
+      <details class="accordion">
+        <summary class="accordion-trigger">
+          <span>Comment traiter des bases de code ou fichiers de plusieurs mÃ©gaoctets ?</span>
+          <svg class="accordion-indicator" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="accordion-content">
+          <p>Ne collez jamais des milliers de lignes de code dans le prompt de chat : cela noie l'attention du modÃ¨le. DÃ©posez vos fichiers dans le systÃ¨me : le <strong>Smart Context</strong> gÃ©nÃ©rera une synthÃ¨se vectorisÃ©e, et ECHO inspectera les portions exactes du code via <code class="inline-code">read_raw_file_content</code> ou <code class="inline-code">search_codex</code> Ã  la demande.</p>
+        </div>
+      </details>
+
+      <details class="accordion">
+        <summary class="accordion-trigger">
+          <span>Pourquoi ECHO ne refuse-t-elle pas d'analyser des concepts polÃ©miques ou sensibles ?</span>
+          <svg class="accordion-indicator" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="accordion-content">
+          <p>Le <strong>MÃ©ta-Principe d'Ã‰thique et de NeutralitÃ© (MPEN)</strong> stipule qu'ECHO n'est ni un juge ni un censeur moral. Les projets d'ingÃ©nierie, d'analyse financiÃ¨re, de cybersÃ©curitÃ© dÃ©fensive ou d'investigation acadÃ©mique sont exÃ©cutÃ©s de maniÃ¨re purement technique, objective et rigoureuse.</p>
+        </div>
+      </details>
+    </section>
+
+    
+    <!-- SECTION 10 : TUTORIEL -->
+    <section id="tutoriel" class="doc-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        10. Tutoriel Pratique : Architecture Cloud IA SecNumCloud
+      </h2>
+      <p>Ce manuel guide l'utilisateur Ã  travers l'utilisation de l'interface conversationnelle (Open WebUI) du framework ECHO. ConÃ§u sous forme de tutoriel, il illustre les capacitÃ©s de la plateforme Ã  travers un cas d'usage concret et souverain : <strong>La conception d'une architecture Cloud IA SecNumCloud</strong>.</p>
+
+    
+
+    <h3>Connexion et SÃ©curitÃ© SSO</h3>
+
+    <p>L'accÃ¨s Ã  la plateforme ECHO est protÃ©gÃ© par le module <strong>ECHO Auth (Antigravity 2.1)</strong> couplÃ© Ã  BunkerWeb. L'utilisateur s'authentifie par adresse e-mail et mot de passe, suivis obligatoirement d'un code OTP (Time-based One-Time Password).</p>
+
+    <div class="callout tip"><div class="callout-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></div><div class="callout-body">
+      <h4>Comportement du Single Sign-On (SSO)</h4>
+      <p>Une fois l'authentification validÃ©e, la session (via jeton JWT) est propagÃ©e. La navigation transversale s'effectue sans demande de reconnexion, garantissant un environnement de travail fluide.</p>
+    </div></div>
+
+    
+
+    
+
+    <p>ECHO n'est pas un simple chatbot, mais un vÃ©ritable Ã©cosystÃ¨me d'agents et d'outils. Voici comment l'utiliser concrÃ¨tement pour mener Ã  bien un projet complexe d'ingÃ©nierie.</p>
+
+    <h3>Phase 1 : Renseignement & Veille StratÃ©gique (Web Intelligence)</h3>
+    <p>Pour commencer l'Ã©tude, l'utilisateur fait appel Ã  la capacitÃ© de recherche souveraine d'ECHO (SearXNG). Dans la barre de saisie principale, la requÃªte est saisie orientÃ©e sur l'Ã©cosystÃ¨me SecNumCloud et les modÃ¨les d'IA europÃ©ens.</p>
+    
+    <div class="image-container" style="text-align: center; margin: 20px 0;">
+      <img src="./assets/manuel_v2/phase1_web_intel.png" alt="Recherche Web Intelligence" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+      <p style="font-size: 0.9em; color: #94a3b8; margin-top: 8px;"><em>Fig 1. L'Ã©tat de l'art gÃ©nÃ©rÃ© de maniÃ¨re autonome aprÃ¨s recherche sur le web.</em></p>
+    </div>
+
+    <p>ECHO a analysÃ© le web et fournit une synthÃ¨se structurÃ©e des acteurs (Mistral, Kyutai) et des hÃ©bergeurs de confiance, en dÃ©taillant les couches d'infrastructure et de sÃ©curitÃ©.</p>
+
+    <h3>Phase 2 : DÃ©bat Architectural (Conseil Delphi)</h3>
+    <p>ECHO dispose de la capacitÃ© de mobiliser plusieurs agents (experts) pour dÃ©battre et confronter leurs points de vue. Il est possible de mobiliser un <strong>Conseil d'experts</strong> pour trancher sur le couple optimal hÃ©bergeur/modÃ¨le.</p>
+
+    <div class="image-container" style="text-align: center; margin: 20px 0;">
+      <img src="./assets/manuel_v2/phase2_delphi_council.png" alt="ActivitÃ© du Conseil Delphi" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+      <p style="font-size: 0.9em; color: #94a3b8; margin-top: 8px;"><em>Fig 2. L'Agent Monitor indique que l'outil "consult_council" est en cours d'exÃ©cution, orchestrant les dÃ©bats en arriÃ¨re-plan.</em></p>
+    </div>
+
+    <p>Pendant l'infÃ©rence, une animation visuelle (spinner) et le journal d'activitÃ© indiquent la mobilisation des Skills. Une fois le consensus atteint, ECHO livre la dÃ©cision architecturale finale.</p>
+
+    <h3>Phase 3 : ModÃ©lisation Visuelle (Mermaid)</h3>
+    <p>Une architecture complexe nÃ©cessite une reprÃ©sentation visuelle. En un simple prompt, il est demandÃ© Ã  ECHO de gÃ©nÃ©rer un diagramme de l'architecture validÃ©e par le conseil.</p>
+
+    <div class="image-container" style="text-align: center; margin: 20px 0;">
+      <img src="./assets/manuel_v2/phase3_visual_intelligence.png" alt="ModÃ©lisation Visuelle Mermaid" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+      <p style="font-size: 0.9em; color: #94a3b8; margin-top: 8px;"><em>Fig 3. Interface de Visual Intelligence (Data Island) gÃ©nÃ©rant dynamiquement le diagramme de l'infrastructure SecNumCloud.</em></p>
+    </div>
+
+    <p>Le diagramme s'affiche dans une interface HUD dÃ©diÃ©e (Data Island) offrant des contrÃ´les de zoom et de navigation spatiale, permettant d'explorer en dÃ©tail l'infrastructure (VPC, Enclave SecNumCloud, GPU).</p>
+
+    <h3>Phase 4 : RÃ©daction des SpÃ©cifications (ECHO Codex)</h3>
+    <p>La derniÃ¨re Ã©tape consiste Ã  consigner le travail dans un document officiel. L'ordre est donnÃ© Ã  ECHO d'ouvrir son Ã©diteur de code avancÃ©, le <strong>Codex</strong>, pour rÃ©diger les spÃ©cifications techniques au format Markdown.</p>
+
+    <div class="image-container" style="text-align: center; margin: 20px 0;">
+      <img src="./assets/manuel_v2/phase4_echo_codex.png" alt="Interface ECHO Codex" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+      <p style="font-size: 0.9em; color: #94a3b8; margin-top: 8px;"><em>Fig 4. L'Ã©diteur HUD Monaco (ECHO Codex) permettant d'Ã©diter, versionner et prÃ©visualiser les spÃ©cifications en temps rÃ©el.</em></p>
+    </div>
+
+    <p>Le Codex s'ouvre sous forme de fenÃªtre dÃ©plaÃ§able au-dessus du chat. Il propose la coloration syntaxique, l'autocomplÃ©tion intelligente, et intÃ¨gre un versionnage local (Git) pour l'ensemble des fichiers gÃ©nÃ©rÃ©s.</p>
+
+    
+
+    </section>
+
+<section id="admin" class="doc-section">
+<h2><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>11. Console d'Infrastructure (Admin Manager)</h2>
+
+    <p>Bien que l'utilisateur travaille dans Open WebUI, l'administrateur systÃ¨me dispose d'une console d'administration sur <code>am.le-domaine.public</code> (par exemple <code>192.168.147.100:3001</code>). Cette interface centralise la gouvernance de la plateforme ECHO.</p>
+
+    <h3>Tableau de Bord (Dashboard)</h3>
+    <p>La vue principale permet de superviser en temps rÃ©el la grappe Docker (CPU/RAM) et l'Ã©tat des sessions SSO actives.</p>
+    <div class="image-container" style="text-align: center; margin: 20px 0;">
+      <img src="./assets/manuel_v2/admin_dashboard.png" alt="Dashboard de l'Admin Manager (donnÃ©es caviardÃ©es)" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+      <p style="font-size: 0.9em; color: #94a3b8; margin-top: 8px;"><em>Fig 5. Tableau de bord avec suivi en direct de l'infrastructure et vue des identitÃ©s (Les informations personnelles et adresses IP ont Ã©tÃ© caviardÃ©es par mesure de sÃ©curitÃ©).</em></p>
+    </div>
+
+    <h3>Supervision des Conteneurs (Maintenance Docker)</h3>
+    <p>L'administrateur peut visualiser l'Ã©tat de l'ensemble de la grappe de conteneurs ECHO, garantissant l'orchestration saine des diffÃ©rents services (Qdrant, SearXNG, Workers).</p>
+    <div class="image-container" style="text-align: center; margin: 20px 0;">
+      <img src="./assets/manuel_v2/admin_docker.png" alt="Supervision Docker" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+      <p style="font-size: 0.9em; color: #94a3b8; margin-top: 8px;"><em>Fig 6. Vue dÃ©taillÃ©e des statuts des conteneurs composant l'architecture ECHO.</em></p>
+    </div>
+
+    <h3>SÃ©curitÃ© et AccÃ¨s (WAF & Mots de passe)</h3>
+    <p>Cette section est dÃ©diÃ©e aux accÃ¨s systÃ¨me : gestion de l'Ã©lagage mÃ©moriel, contrÃ´le d'accÃ¨s WAF (BunkerWeb) et rÃ©initialisation globale des accÃ¨s critiques (Kill-Switch).</p>
+    <div class="image-container" style="text-align: center; margin: 20px 0;">
+      <img src="./assets/manuel_v2/admin_security.png" alt="Interface de SÃ©curitÃ©" class="doc-image" style="max-width: 100%; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+      <p style="font-size: 0.9em; color: #94a3b8; margin-top: 8px;"><em>Fig 7. Commandes avancÃ©es de sÃ©curitÃ© (BunkerWeb, mots de passe systÃ¨mes).</em></p>
+    </div>
+
+    
+    </section>
+
+
+  </main>
+
+  <!-- MICRO-SCRIPTS INTERACTIFS (VANILLA JS) -->
+
+  <div class="transition-text" style="text-align:center; padding: 20px; font-weight:bold;">
+    <a href="index.html" style="color:var(--accent-cyan); text-decoration:none;">&larr; Introduction</a>
+    &nbsp;&nbsp;&nbsp;&nbsp;
+    <a href="02_hld_architecture.html" style="color:var(--accent-cyan); text-decoration:none;">High-Level Design &rarr;</a>
+  </div>
+
+  <footer style="text-align:center; padding: 20px; font-size: 0.8rem; color: #94a3b8; border-top: 1px solid #1F2937; margin-top: 40px;">
+    ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+  </footer>
+
+  <script>
+    // 1. GESTION DU MENU MOBILE
+    const mobileToggle = document.getElementById('mobile-toggle');
+    const sidebar = document.getElementById('sidebar');
+
+    if (mobileToggle && sidebar) {
+      mobileToggle.addEventListener('click', () => {
+        sidebar.classList.toggle('open');
+      });
+
+      // Fermeture lors du clic sur un lien (mobile)
+      document.querySelectorAll('.nav-item a').forEach(link => {
+        link.addEventListener('click', () => {
+          if (window.innerWidth <= 992) {
+            sidebar.classList.remove('open');
+          }
+        });
+      });
+    }
+
+    // 2. COPIE RAPIDE DANS LE PRESSE-PAPIER
+    function copySnippet(elementId) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+
+      const text = el.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = el.previousElementSibling ? el.previousElementSibling.querySelector('.copy-btn') : null;
+        if (btn) {
+          const originalText = btn.innerText;
+          btn.innerText = 'âœ“ CopiÃ© !';
+          btn.style.borderColor = 'var(--accent-emerald)';
+          btn.style.color = 'var(--accent-emerald)';
+          setTimeout(() => {
+            btn.innerText = originalText;
+            btn.style.borderColor = '';
+            btn.style.color = '';
+          }, 2000);
+        }
+      }).catch(err => {
+        console.error('Erreur lors de la copie :', err);
+      });
+    }
+
+    // 3. RECHERCHE ET FILTRAGE EN DIRECT
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        const term = e.target.value.toLowerCase().trim();
+        const accordions = document.querySelectorAll('details.accordion');
+        const cards = document.querySelectorAll('.card');
+
+        // Filtrage des accordÃ©ons
+        accordions.forEach(acc => {
+          const content = acc.innerText.toLowerCase();
+          if (term === '' || content.includes(term)) {
+            acc.style.display = '';
+            if (term !== '' && content.includes(term)) {
+              acc.open = true; // DÃ©roule automatiquement si correspondance
+            }
+          } else {
+            acc.style.display = 'none';
+          }
+        });
+
+        // Filtrage des cartes
+        cards.forEach(c => {
+          const content = c.innerText.toLowerCase();
+          c.style.display = (term === '' || content.includes(term)) ? '' : 'none';
+        });
+      });
+    }
+
+    // 4. SURBRILLANCE DU LIEN ACTIF DANS LA NAVIGATION
+    const observerOptions = {
+      root: null,
+      rootMargin: '0px 0px -60% 0px',
+      threshold: 0
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const id = entry.target.getAttribute('id');
+          document.querySelectorAll('.nav-item a').forEach(link => {
+            link.classList.toggle('active', link.getAttribute('href') === `#${id}`);
+          });
+        }
+      });
+    }, observerOptions);
+
+    document.querySelectorAll('section.doc-section').forEach(sec => {
+      observer.observe(sec);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>ECHO v5 - 9j. Orchestration Multi-Agents</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+</script>
+
+  <div class="sidebar"></div>
+
+  <main>
+    <h1>9j. Orchestration Multi-Agents</h1>
+
+    <p>Le module <code>agent_orchestration_tool.py</code> est le centre nÃ©vralgique de la <strong>cognition distribuÃ©e</strong> du framework ECHO. Il s'appuie sur la dÃ©lÃ©gation asynchrone pour coordonner de multiples agents experts dans le but de rÃ©soudre des problÃ©matiques complexes, via le protocole Delphi ou une supervision par critique itÃ©rative.</p>
+
+    <div class="alert info">
+      <strong>Concepts ClÃ©s :</strong>
+      <ul>
+        <li><strong>Skill (Expertise) :</strong> Un profil d'instruction systÃ¨me prÃ©-compilÃ© et forcÃ©. L'outil <code>forge_skill</code> permet de crÃ©er dynamiquement des experts (ex: <em>lead_dev_rust</em>, <em>analyste_cyber</em>).</li>
+        <li><strong>Council (Conseil) :</strong> Une assemblÃ©e d'experts indÃ©pendants dÃ©libÃ©rant en plusieurs tours de parole (Table Ronde Delphi).</li>
+        <li><strong>Supervision :</strong> Un workflow dirigÃ© oÃ¹ un agent critique Ã©value de maniÃ¨re itÃ©rative les livrables d'autres agents (Workers).</li>
+      </ul>
+    </div>
+
+    <hr>
+
+    <h2>1. Table Ronde Delphi (Consult Council)</h2>
+    
+    <p>La fonction <code>consult_council</code> permet de convoquer <strong>entre 2 et 5 experts</strong> pour dÃ©libÃ©rer sur une question complexe. Au fil des diffÃ©rents tours, chaque participant prend connaissance des arguments des autres et ajuste son analyse, garantissant l'Ã©mergence d'un consensus solide et nuancÃ©.</p>
+
+    <div class="svg-diagram">
+      <div class="mermaid-wrapper">
+        <pre class="mermaid">
+sequenceDiagram
+    participant U as User / Orchestrator
+    participant CC as consult_council
+    participant E1 as Expert 1 (Skill A)
+    participant E2 as Expert 2 (Skill B)
+    participant SY as Synthesizer (FLASH)
+
+    U->>CC: Convoque Conseil (Q, Participants, Rounds, __metadata__, __user__)
+    
+    loop Tour 1 Ã  N
+        Note over CC, E2: DÃ©lÃ©gation ParallÃ¨le (Budget Outils: 3 max/tour)
+        CC->>E1: Contexte (Q + Contributions N-1)
+        CC->>E2: Contexte (Q + Contributions N-1)
+        E1-->>CC: Analyse Expert 1
+        E2-->>CC: Analyse Expert 2
+    end
+    
+    CC->>SY: Transcription des N Tours
+    SY-->>CC: SynthÃ¨se Actionnable (Consensus/Divergences)
+    CC-->>U: RÃ©sultat SynthÃ©tisÃ©
+        </pre>
+      </div>
+    </div>
+
+    <h3>SpÃ©cificitÃ©s Techniques</h3>
+    <ul>
+      <li><strong>ParallÃ©lisme :</strong> Les appels Ã  <code>delegate_to_agent</code> s'effectuent via <code>asyncio.gather</code>, optimisant drastiquement les dÃ©lais de rÃ©flexion.</li>
+      <li><strong>Robustesse :</strong> Si un expert Ã©choue lors d'un tour (Timeout/Crash), le Conseil l'ignore gracieusement avec un message de prÃ©vention et continue ses travaux.</li>
+      <li><strong>Limitation d'Outils :</strong> Par dÃ©faut, chaque expert dispose d'un budget rÃ©duit (<code>COUNCIL_EXPERT_MAX_CALLS_PER_ROUND</code>) pour Ã©viter la rÃ©cursion infinie ou les surcoÃ»ts d'API en boucle.</li>
+    </ul>
+
+    <hr>
+
+    <h2>2. Supervision & Critique ItÃ©rative (Supervised Workers)</h2>
+    
+    <p>Contrairement au Conseil qui est horizontal et consultatif, la fonction <code>consult_supervised_workers</code> est <strong>verticale et coercitive</strong>. Elle distribue des tÃ¢ches spÃ©cifiques Ã  plusieurs <em>Workers</em>, puis confie la validation de tous les livrables Ã  un <em>Critique</em> omniscient.</p>
+
+    <div class="svg-diagram">
+      <div class="mermaid-wrapper">
+        <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Delegation: Distribution des tÃ¢ches
+    Delegation --> Evaluation: Les Workers produisent (FLASH)
+    
+    state Evaluation {
+        [*] --> Critique
+        Critique --> APPROVED
+        Critique --> REJECTED: Feedback prÃ©cis
+    }
+    
+    Evaluation --> Consolidation: Si Verdict == APPROVED
+    Evaluation --> Correction: Si Verdict == REJECTED
+    
+    Correction --> Evaluation: Les Workers corrigent leurs erreurs (Max Rounds)
+    
+    Consolidation --> [*]: SynthÃ¨se finale (PRO)
+        </pre>
+      </div>
+    </div>
+
+    <h3>Processus en 4 Phases</h3>
+    <ol>
+      <li><strong>DÃ©lÃ©gation Initiale :</strong> Chaque <em>Worker</em> (dÃ©veloppeur, rÃ©dacteur, etc.) reÃ§oit sa mission avec le contexte de l'objectif global.</li>
+      <li><strong>Ã‰valuation (Critique) :</strong> Un agent de rang supÃ©rieur (gÃ©nÃ©ralement <code>MODEL_PRO</code>) analyse l'intÃ©gralitÃ© des livrables et rend un verdict JSON strict : <code>APPROVED</code> ou <code>REJECTED</code>, en joignant un feedback ciblÃ© par <em>Worker</em> dÃ©faillant.</li>
+      <li><strong>Correction (Boucle Critique) :</strong> Si le verdict est <code>REJECTED</code>, les <em>Workers</em> fautifs sont rappelÃ©s dans la mÃªme session (prÃ©servation du thread) pour appliquer la correction suggÃ©rÃ©e par le critique, dans la limite dÃ©finie par <code>SUPERVISOR_MAX_CORRECTION_ROUNDS</code>.</li>
+      <li><strong>Consolidation :</strong> Une fois tous les livrables approuvÃ©s (ou aprÃ¨s l'Ã©puisement des rounds de correction), une synthÃ¨se finale est produite.</li>
+    </ol>
+
+    <hr>
+
+    <h2>3. Outils d'Administration et Purge</h2>
+
+    <p>Les conseils et les supervisions crÃ©ent de nombreux sous-threads (sessions persistantes). Le systÃ¨me met Ã  disposition des outils pour Ã©viter l'encombrement des bases de donnÃ©es de session :</p>
+    
+    <table>
+      <thead><tr><th>Outil</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>list_councils</code> / <code>list_supervised_tasks</code></td>
+          <td>Interroge <code>EchoStateManager</code> pour lister les assemblÃ©es ou tÃ¢ches de supervision en cours dans le chat actuel.</td>
+        </tr>
+        <tr>
+          <td><code>close_council</code> / <code>close_supervised_task</code></td>
+          <td>DÃ©truit dÃ©finitivement le Conseil/Supervision spÃ©cifiÃ© et purge instantanÃ©ment les donnÃ©es contextuelles (SQLite) de tous les agents liÃ©s. Par dÃ©faut, ces fonctions sont invoquÃ©es en fin d'orchestration (flag <code>close_on_finish=True</code>).</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="transition-text">
+      <a href="09i_delegate_agent.html">&larr; Delegate Agent</a>
+      &nbsp;&nbsp;
+      <a href="10_system_prompt.html">Le Kernel (System Prompt) &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO v5 Documentation - Version <span class="version-badge">5.189.9</span>
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+  
+</body>
+</html>

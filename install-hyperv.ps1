@@ -1,8 +1,8 @@
 # ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.203.1
-# DATE    : 2026-09-09
+# VERSION : 5.209.33
+# DATE    : 2026-09-17
 
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -59,7 +59,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.203.1"
+$SCRIPT_VERSION = "5.209.33"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
@@ -184,7 +184,7 @@ autoinstall:
       - chrony
       - docker.io
       - docker-compose-v2
-      - docker-buildx-plugin
+      - docker-buildx
     write_files:
       - path: /etc/chrony/conf.d/hyperv.conf
         content: |
