@@ -1,11 +1,12 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.81
+version: 5.82
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.82: Fix - Modification du type MIME fallback de la vue Navigation (monitor_ECHO) en image/jpeg.
 # 5.81: Intégration du lecteur PDF WYSIWYG natif (reconstruction par Blob) dans le HUD Codex.
 # 5.80: Fiabilisation de la sauvegarde Codex (verrou JS et hook clavier Monaco natif).
 # 5.79: Précision du nom du workspace cible dans la modale JS de confirmation de Reset du Codex.
@@ -584,7 +585,7 @@ class EchoUI(EchoRichUI):
                 icon="🌐")
         else:
             js_code = EchoUI._generate_webplayer_js(
-                b64, "image/png", metadata or [], current_url, hud_id, state_key, icon="🌐")
+                b64, "image/jpeg", metadata or [], current_url, hud_id, state_key, icon="🌐")
         await events.emit("execute", {"code": js_code})
 
     @staticmethod

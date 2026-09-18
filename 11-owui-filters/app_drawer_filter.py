@@ -1,16 +1,16 @@
 """
 title: ECHO App Drawer Filter
 author: Wilfried BARNAVON
-version: 1.10
+version: 1.11
 description: Composant système interne : ECHO App Drawer Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.11: Correction du ciblage DOM pendant la génération du modèle (boucle pipe) pour cibler le message complet.
 # 1.10: Différenciation du seuil tactile (15px) vs souris (3px) pour empêcher l'hyper-sensibilité mobile.
 # 1.9: Implémentation HUD Mobile (Drag tactile, persistance, clamping anti-débordement).
 # 1.8: Historique ajusté.
 # 1.7: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
-# 1.6: Renommage du titre et de la description pour standardisation en "Filter".
 
 import logging
 from pydantic import BaseModel, Field
@@ -312,35 +312,31 @@ class Filter:
                 if (!currentChatId) return;
 
                 try {
-                    // 1. On extrait l'ID du dernier message directement depuis le DOM Svelte
-                    // La classe .message-assistant n'existe plus, on cherche le dernier VRAI message
+                    // 1. Recherche du dernier message contenant effectivement le bouton d'action
                     const messageElements = document.querySelectorAll('[id^="message-"]');
-                    let lastMsg = null;
+                    let nativeBtn = null;
                     
                     for (let i = messageElements.length - 1; i >= 0; i--) {
                         const el = messageElements[i];
                         const id = el.id;
                         // On ignore la zone de texte, l'édition, les notes, et les messages utilisateur
                         if (!id.includes('input') && !id.includes('edit') && !id.includes('index') && !id.includes('feedback') && !el.classList.contains('user-message')) {
-                            lastMsg = el;
-                            break;
+                            
+                            // On tente de trouver le bouton d'action natif dans CE message
+                            const btn = el.querySelector(`button[aria-label="${action.name}"]`);
+                            if (btn) {
+                                nativeBtn = btn;
+                                break;
+                            }
                         }
                     }
 
-                    if (!lastMsg) {
-                        console.warn('ECHO HUD: Aucun message d\'assistant valide trouvé dans le DOM.');
-                        return;
-                    }
-                    const messageId = lastMsg.id.replace('message-', '');
-                    
-                    // 2. On clique sur le bouton natif Svelte correspondant à cette action
-                    const nativeBtn = lastMsg.querySelector(`button[aria-label="${action.name}"]`);
-                    
+                    // 2. Déclenchement si le bouton est trouvé dans l'historique affiché
                     if (nativeBtn) {
                         console.log(`ECHO HUD: Déclenchement du bouton natif pour "${action.name}"`);
                         nativeBtn.click();
                     } else {
-                        console.warn(`ECHO HUD: Bouton natif "${action.name}" introuvable. Le message est-il terminé ou le modèle le supporte-t-il ?`);
+                        console.warn(`ECHO HUD: Bouton natif "${action.name}" introuvable dans l'historique récent.`);
                     }
                 } catch (err) {
                     console.error("Erreur lors de l'appel d'action:", err);

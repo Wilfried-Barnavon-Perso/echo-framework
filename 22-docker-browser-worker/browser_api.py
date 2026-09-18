@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.19 (URL Streaming)
+VERSION : 9.20 (JPEG Compression)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-09-02
+DATE MAJ : 2026-09-18
 
+CHANGELOG 9.20 :
+- FIX: Migration de la capture `/highlight` de PNG vers JPEG (qualité 60) pour éviter le blocage de 1Mo sur Socket.IO.
 CHANGELOG 9.19 :
 - FEAT: Synchronisation continue de l'URL courante de la page dans le flux screencast pour le HUD.
 CHANGELOG 9.18 :
@@ -931,7 +933,7 @@ async def browser_action(request: Request):
                     await page.bring_to_front()
                     await asyncio.sleep(0.5)
                 
-                    clean_bytes = await page.screenshot(type="png")
+                    clean_bytes = await page.screenshot(type="jpeg", quality=60)
                     clean_b64 = base64.b64encode(clean_bytes).decode('utf-8')
                 
                     all_elements = []

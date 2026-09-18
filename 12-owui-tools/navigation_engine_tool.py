@@ -1,11 +1,12 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.24
+version: 11.25
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 11.25: Fix - Migration intégrale des captures complètes en JPEG pour réduire l'empreinte mémoire et résoudre la saturation WebSocket 1Mo.
 # 11.14: Descente Cognitive - Injection dynamique de action_analyze_page et action_archive_page dans BROWSER_TOOLS_SCHEMA pour rendre le Sous-Agent autonome, et correction d'un bug de payload sur inspect_page.
 # 11.13: Refonte - Remplacement du distillateur web monolithique par une dichotomie stricte (analyze_web_page via Streaming Sémantique natif ECHO et archive_web_page asynchrone).
 # 11.12: Optim - Ajout de la règle interdisant explicitement l'usage des moteurs de recherche généralistes au niveau du navigateur autonome.
@@ -64,7 +65,7 @@ async def _deploy_navigation_monitor(res_view: dict, chat_id: str, uid: str, u_v
     if b64:
         try:
             file_id = generate_echo_file_id(uid, chat_id)
-            filename = f"{file_id}_frame.png"
+            filename = f"{file_id}_frame.jpg"
             state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
             vault_path = get_echo_session_path(uid, chat_id, "files")
             filepath = os.path.join(vault_path, filename)
@@ -78,7 +79,7 @@ async def _deploy_navigation_monitor(res_view: dict, chat_id: str, uid: str, u_v
             
             state_manager.save_resource(
                 id=file_id, name=filename, resource_type='media',
-                status=FILE_INGESTION_STATUS['INDEXED'], mime='image/png',
+                status=FILE_INGESTION_STATUS['INDEXED'], mime='image/jpeg',
                 storage_path=filepath
             )
         except Exception:
@@ -197,7 +198,7 @@ class Tools:
             nonlocal vision_requested
             if use_vision and vision_requested and res_view_dict.get("screenshot_b64"):
                 parts.append({"text": "Voici la capture d'écran demandée. Analyse-la attentivement pour résoudre ton blocage."})
-                parts.append({"inlineData": {"mimeType": "image/png", "data": res_view_dict["screenshot_b64"]}})
+                parts.append({"inlineData": {"mimeType": "image/jpeg", "data": res_view_dict["screenshot_b64"]}})
                 vision_requested = False
                 
             history.append({"role": "user", "parts": parts})
