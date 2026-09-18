@@ -80,12 +80,10 @@
     <div class="note-box">
       <h4>Usage canonique de la Mémoire Vectorisée de Session</h4>
       <p>
-        Lorsque le Filtre effectue l'extraction transmodale et le Synthèse Guidée par RAG (O(1)) d'un fichier volumineux, il utilise le
-        <code>source_id</code> natif (ex. <code>U_abc123_C_xyz789_T_1748246400</code>) et indexe les chunks bruts
-        dans <code>echo_session_rag</code>. Le modèle reçoit ce <code>source_id</code> dans l'AEC (via <code>evenement_systeme</code> s'il vient d'être soumis, ou via l'outil <code>query_registry</code>) et l'utilise pour
-        interroger les détails précis de la source brute : <code>search_sessions_context("U_abc123_C_xyz789...", "...")</code>.
-        Ce mécanisme de <strong>Smart Context (Synthèse Guidée par RAG (O(1)) RAG)</strong> injecte des balises <code>&lt;AEC_smart_context&gt;</code> structurelles dans le prompt, remplaçant l'injection du fichier complet dans le contexte,
-        qui serait prohibitive en tokens.
+        La <strong>Mémoire Vectorisée de Session</strong> est un espace d'indexation éphémère (nettoyé en fin de session) dédié à l'ingestion de fichiers volumineux. Lorsqu'un fichier est téléversé, il n'est pas injecté brutalement dans le prompt. Le système lui attribue un identifiant (<code>source_id</code>) et le vectorise.
+        <br><br>
+        <strong>Comment l'utiliser :</strong><br>
+        Le modèle est informé de la présence du fichier via une balise <code>&lt;AEC_evenement_systeme&gt;</code> contenant le <code>source_id</code>. Pour lire le contenu, le modèle <strong>doit impérativement utiliser l'outil <code>search_sessions_context</code></strong> avec ce <code>source_id</code>. Ce mécanisme de <em>Smart Context</em> permet de récupérer uniquement les extraits pertinents, préservant ainsi la fenêtre de tokens pour la réflexion.
       </p>
     </div>
 

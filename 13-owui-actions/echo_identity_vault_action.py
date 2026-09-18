@@ -1,7 +1,7 @@
 """
 title: ECHO Identity Vault
 author: ECHO
-version: 2.2
+version: 2.3
 description: Coffre-fort universel pour l'authentification des agents (MCP et N8N).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xMiAyMnM4LTQgOC0xMFY1bC04LTMtOCAzdjdjMCA2IDggMTAgOCAxMHoiLz48L3N2Zz4=
 """
@@ -66,7 +66,7 @@ class Action:
             )
             conn.commit()
 
-    async def action(self, body: dict, __user__: Optional[dict] = None, __event_emitter__: Any = None, __event_call__: Any = None, **kwargs):
+    async def action(self, body: dict, __user__: Optional[dict] = None, __event_emitter__: Any = None, __event_call__: Any = None, __metadata__: Optional[dict] = None, **kwargs):
         events = EchoEvents(__event_emitter__, __event_call__)
         
         if not __event_call__:

@@ -37,7 +37,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const navItems = [
         { href: 'index.html',              text: 'Introduction' },
         { href: '00_fondations.html',      text: '0. Fondations & Philosophie' },
-        { href: '01_manuel_utilisateur_officiel.html', text: '1. Manuel Utilisateur (Officiel)' },
+        { href: '01_manuel_utilisateur.html', text: '1. Manuel Utilisateur' },
+        { href: '01a_exemples_prompts.html',  text: '↳ 1a. Exemples & Autonomie' },
+        { href: '01b_tutoriel_pratique.html', text: '↳ 1b. Tutoriel Pratique' },
         { href: '02_hld_architecture.html',text: '2. High-Level Design (HLD)' },
         { href: '03_communication_gemini.html', text: '3. Communication Gemini' },
         { href: '04_deploiement.html',     text: '4. Déploiement & Infra' },
@@ -60,7 +62,9 @@ document.addEventListener('DOMContentLoaded', () => {
             { href: '09i_delegate_agent.html', text: '9i. Delegate Agent' },
             { href: '09j_agent_orchestration.html', text: '9j. Orchestration Multi-Agents' },
             { href: '09k_n8n_orchestrator.html', text: '9k. ECHO N8N Orchestrator' },
-            { href: '09l_mcp_broker.html', text: '9l. Serveur MCP Broker' }
+            { href: '09l_mcp_broker.html', text: '9l. Serveur MCP Broker' },
+            { href: '09m_identity_vault.html',   text: '9m. ECHO Identity Vault' },
+            { href: '09n_maps_grounding.html',   text: '9n. Maps Grounding' }
           ]
         },
         { href: '10_system_prompt.html',   text: '10. Le Kernel (System Prompt)' },

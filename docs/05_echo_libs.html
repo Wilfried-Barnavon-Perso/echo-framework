@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Librairies partagées du Framework ECHO v5 : echo_utils, echo_auth, echo_protocol, echo_constants - EchoStateManager, EchoGeminiClient, authentification PKCE, protocole API Antigravity.">
+  <meta name="description" content="Librairies partagées du Framework ECHO v5 : echo_utils, echo_auth, echo_protocol, echo_constants - EchoStateManager, EchoGeminiClient, authentification PKCE, protocole API native.">
   <title>ECHO v5 - 5. Librairies Partagées</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -44,7 +44,7 @@
 <h3>Identifiants de modèles Gemini</h3>
     <table>
       <thead>
-        <tr><th>Constante ECHO</th><th>Nom AI Studio</th><th>Nom API Antigravity</th><th>Usage</th></tr>
+        <tr><th>Constante ECHO</th><th>Nom AI Studio</th><th>Nom API native</th><th>Usage</th></tr>
       </thead>
       <tbody>
         <tr>
@@ -193,10 +193,10 @@
           <td>Noms canoniques ECHO (<code>gemini-3.5-flash</code>, etc.)</td>
         </tr>
         <tr>
-          <td><strong>API Antigravity</strong></td>
+          <td><strong>API native</strong></td>
           <td>OAuth2 Bearer (token)</td>
           <td><code>cloudcode-pa.googleapis.com/v1internal</code></td>
-          <td>IDs internes Antigravity (<code>gemini-3.5-flash</code>, etc.)</td>
+          <td>IDs internes ECHO (<code>gemini-3.5-flash</code>, etc.)</td>
         </tr>
       </tbody>
     </table>
@@ -227,7 +227,7 @@
     <div class="note-box">
       <h4>v7.15 - Crédits OAuth2 opt-in</h4>
       <p>
-        Le champ <code>enabled_credit_types</code> dans les requêtes API Antigravity est
+        Le champ <code>enabled_credit_types</code> dans les requêtes API native est
         <strong>omis par défaut</strong> (alignement sur le comportement natif d'AGY-IDE).
         Sans ce champ, le serveur utilise les quotas gratuits sans consommer de crédits payants Google One AI.
         L'activation est possible via la UserValve <code>ENABLE_PAID_CREDITS</code> du Pipe,
@@ -408,31 +408,31 @@
       </p>
     </div>
 
-    <h3>Méthodes de quota API Antigravity (v7.x)</h3>
+    <h3>Méthodes de quota API native (v7.x)</h3>
     <table>
       <thead>
         <tr><th>Méthode</th><th>Rôle</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>fetch_available_models()</code></td><td>Appel <code>:fetchAvailableModels</code> (API Antigravity). Parse le <code>quotaInfo</code> de chaque modèle et stocke dans <code>google_quota_by_model</code> (JSON dict dans <code>identity.db</code>).</td></tr>
+        <tr><td><code>fetch_available_models()</code></td><td>Appel <code>:fetchAvailableModels</code> (API native). Parse le <code>quotaInfo</code> de chaque modèle et stocke dans <code>google_quota_by_model</code> (JSON dict dans <code>identity.db</code>).</td></tr>
         <tr><td><code>fetch_user_quota()</code></td><td>Appel <code>:loadCodeAssist</code> mode <code>HEALTH_CHECK</code>. Extrait les crédits disponibles depuis <code>paidTier.availableCredits</code>.</td></tr>
         <tr><td><code>get_model_quota(ca_model_id)</code></td><td>Lecture du <code>quotaInfo</code> spécifique à un modèle CA depuis <code>identity.db</code>. Fallback <code>{}</code> si modèle inconnu. Utilisé par le HUD.</td></tr>
         <tr><td><code>refresh_quota_if_needed()</code></td><td>Déclenche <code>fetch_available_models()</code> de manière asynchrone non-bloquante si les données ont plus de 10 minutes. Ne bloque jamais la génération.</td></tr>
       </tbody>
     </table>
 
-    <h2><code>echo_protocol.py</code> - Adaptateur API Antigravity (v1.1)</h2>
+    <h2><code>echo_protocol.py</code> - Adaptateur API native (v1.1)</h2>
 
     <p>
       Module de <strong>fonctions pures</strong> (sans état, sans appel réseau) : point de modification
-      unique pour adapter les requêtes ECHO au format de l'API Antigravity interne.
+      unique pour adapter les requêtes ECHO au format de l'API native interne.
       Il centralise la traduction des identifiants de modèles et la normalisation de
       <code>generationConfig</code>.
     </p>
 
     <h3><code>get_ca_model_id(echo_model)</code></h3>
     <p>
-      Traduit un nom de modèle canonique ECHO (AI Studio) vers l'ID interne API Antigravity.
+      Traduit un nom de modèle canonique ECHO (AI Studio) vers l'ID interne API native.
       La correspondance est définie dans <code>ECHO_MODELS_REGISTRY</code> (source de vérité dans
       <code>echo_constants.py</code>).
       <em>Note : le préfixe <code>_ca_</code> dans les noms de fonctions est l'abréviation interne
@@ -440,7 +440,7 @@
     </p>
     <table>
       <thead>
-        <tr><th>Nom ECHO (AI Studio)</th><th>ID API Antigravity</th></tr>
+        <tr><th>Nom ECHO (AI Studio)</th><th>ID API native</th></tr>
       </thead>
       <tbody>
         <tr><td><code>gemini-3.1-pro-preview</code></td><td><code>gemini-3.1-pro-preview</code></td></tr>
@@ -451,7 +451,7 @@
 
     <h3><code>build_ca_generation_config(raw_gen_conf)</code></h3>
     <p>
-      Normalise le <code>generationConfig</code> pour le backend API Antigravity v1internal :
+      Normalise le <code>generationConfig</code> pour le backend API native v1internal :
     </p>
     <ul>
       <li>
@@ -460,7 +460,7 @@
       </li>
       <li>
         <strong><code>thinkingConfig</code> passe intégralement</strong> - <code>includeThoughts: true</code>
-        est requis pour que l'API Antigravity retourne les parts <code>thought: true</code> lisibles
+        est requis pour que l'API native retourne les parts <code>thought: true</code> lisibles
         dans le stream (balises <code>&lt;think&gt;</code>). Sans ce champ, seule la
         <code>thoughtSignature</code> opaque est retournée.
       </li>
@@ -512,7 +512,7 @@
     
     <h2 id="echo-constants"><code>echo_constants.py</code></h2>
     <p>
-      Ce fichier agit comme le registre central des configurations du framework. Il unifie la topologie système (adresses internes Docker), les protocoles d'authentification (Antigravity 2.1), et les configurations par défaut des modèles IA.
+      Ce fichier agit comme le registre central des configurations du framework. Il unifie la topologie système (adresses internes Docker), les protocoles d'authentification (ECHO 2.1), et les configurations par défaut des modèles IA.
     </p>
     <div class="transition-text">
       <a href="04_deploiement.html">&larr; Déploiement & Infra</a>

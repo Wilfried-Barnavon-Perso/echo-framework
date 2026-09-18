@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO Web Intelligence v5 : navigation autonome Chromium (Playwright), Browser Agent FastAPI v9.2, port 5002, 14 actions disponibles, SearxNG souverain, Cockpit Replay.">
+  <title>ECHO v5 - 9b. Web Intelligence</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+  <main>
+      <header>
+        <h1>9m. ECHO Identity Vault</h1>
+        <p class="page-subtitle">
+          Gestion sécurisée des secrets, identifiants et clés API pour les orchestrateurs N8N et MCP.
+        </p>
+      </header>
+
+      <section class="doc-section">
+        <h2>Architecture Sécurisée</h2>
+        <p>
+          L'outil <code>identity_vault_tool.py</code> gère le registre sécurisé des secrets. Il permet au modèle de lister et de manipuler les identités nécessaires à l'exécution de tâches complexes via des services tiers (ex: requêtes HTTP authentifiées dans N8N ou MCP).
+        </p>
+        
+        <div class="note-box">
+          <h4>Règle d'or de consultation</h4>
+          <p>
+            Le modèle <strong>doit impérativement</strong> invoquer <code>list_available_services</code> pour découvrir le nom de l'environnement (ex: <code>n8n_workflows</code>) <em>avant</em> d'interroger <code>list_identities</code>, car cette dernière exige un paramètre <code>service</code> précis.
+          </p>
+        </div>
+
+        <h2>Interface et Synchronisation</h2>
+        <p>
+          L'ECHO Identity Vault bénéficie également d'une interface centralisée (<code>echo_identity_vault_action.py</code>) fusionnant MCP et N8N. Elle se synchronise dynamiquement avec l'API des schémas du MCP Broker et de N8N pour sauvegarder les credentials dans SQLite de manière étanche et chiffrée. Elle orchestre la distribution des secrets via <code>ECHO_N8N_VAULT_KEY</code>.
+        </p>
+      </section>
+</main>
+  <script src="nav.js"></script>
+</body>
+</html>

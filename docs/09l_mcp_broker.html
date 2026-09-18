@@ -16,13 +16,17 @@
   <main>
     <h1>9l. Serveur MCP Broker</h1>
 
-    <h2>Serveur MCP Broker</h2>
-    <p>Le Model Context Protocol (MCP) Broker agit désormais comme un <strong>Proxy HTTP complet</strong> (<code>m5_proxy_mcp.py</code>) exposant via ASGI des outils externes à l'architecture ECHO.</p>
-    <p>Il implémente une architecture robuste intégrant :</p>
-    <ul>
-      <li><strong>Forwarding d'erreurs :</strong> Remontée transparente des erreurs d'exécution des outils externes directement vers le LLM pour correction autonome.</li>
-      <li><strong>Middleware d'Authentification ASGI :</strong> Interception silencieuse de l'en-tête <code>x-openwebui-user-id</code> au niveau ASGI pour sécuriser toutes les requêtes entrantes.</li>
-    </ul>
+    <h2>Serveur MCP Broker (Model Context Protocol)</h2>
+    <p>Le <strong>MCP Broker</strong> est un composant stratégique (Tier 2) qui permet à l'agent ECHO de s'interfacer de manière standardisée avec des sources de données et outils externes. Agissant comme un <strong>Proxy HTTP complet</strong> (<code>m5_proxy_mcp.py</code>) en ASGI, il expose dynamiquement un schéma d'outils (JSON Schema) que le LLM peut consommer nativement.</p>
+    
+    <div class="note-box">
+      <h4>Architecture Proxy & Sécurité</h4>
+      <ul>
+        <li><strong>Délégation d'API :</strong> Le modèle n'appelle jamais directement les API externes. Il délègue cette tâche au MCP Broker via l'outil <code>remote_mcp_tool.py</code>. L'Identity Vault fusionne dynamiquement les schémas du Broker pour injecter les secrets requis avant l'exécution.</li>
+        <li><strong>Forwarding Transparent d'Erreurs :</strong> Contrairement à une simple interception, le Broker capture les erreurs d'exécution des outils externes (ex: timeout API, erreur de validation) et les formate en JSON natif pour les remonter <em>directement</em> dans le contexte du LLM. Le modèle peut ainsi appliquer une correction autonome (auto-heal) de sa requête.</li>
+        <li><strong>Middleware d'Authentification ASGI :</strong> La sécurité est assurée par une interception silencieuse de l'en-tête <code>x-openwebui-user-id</code> au niveau le plus bas du proxy, garantissant que chaque appel MCP est strictement isolé et authentifié.</li>
+      </ul>
+    </div>
     
     <h3>Modules Actifs</h3>
     <ul>
@@ -36,7 +40,13 @@
     <footer>
       ECHO v5 Documentation - Version <span class="version-badge">5.203.1</span>
     </footer>
-  </main>
+  
+    <h3>Forwarding et Inter-Services</h3>
+    <p>
+      Le MCP Broker agit comme un <strong>Proxy HTTP complet</strong> avec un middleware ASGI. Il intercepte le header <code>x-openwebui-user-id</code> pour authentifier silencieusement les requêtes, et remonte les erreurs applicatives de manière transparente vers le modèle (Forwarding d'erreurs) sans masquer le contexte via des erreurs 500 génériques.
+    </p>
+
+</main>
 
   <script src="nav.js"></script>
   

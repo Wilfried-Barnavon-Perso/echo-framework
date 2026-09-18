@@ -154,7 +154,13 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 2 - Purge Mémoire Long Terme (<code>purge_memory_action.py</code>)</h2>
+    <h2>Action 2 - Résurrection de Contexte (<code>resume_in_new_chat_action.py</code>)</h2>
+    <p>
+      Permet la migration complète d'un contexte saturé vers une nouvelle session. Effectue la duplication du FS Vault, la mutation SQLite (<code>session.db</code>) et le clonage vectoriel Qdrant.
+    </p>
+
+    
+<h2>Action 3 - Purge Mémoire Long Terme (<code>purge_memory_action.py</code>)</h2>
 
     <p>
       Supprime des souvenirs ciblés depuis la collection <code>echo_meta_artifacts</code> dans Qdrant,
@@ -209,7 +215,38 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 3 - Revue Navigation Web (<code>web_navigation_replay_action.py</code>)</h2>
+    <h2>Action 4 - ECHO Identity Vault (<code>echo_identity_vault_action.py</code>)</h2>
+    <p>
+      Cette action déploie une interface d'authentification centralisée <strong>fusionnant MCP et N8N</strong>. Elle se synchronise dynamiquement avec l'API des schémas du MCP Broker (<code>echo-mcp-broker</code>) et de N8N pour permettre à l'utilisateur de configurer les clés et mots de passe requis.
+      Les <em>credentials</em> métier sont stockés de manière chiffrée et isolée dans une base locale (SQLite). Elle orchestre la distribution des secrets via <code>ECHO_N8N_VAULT_KEY</code> et maintient une étanchéité stricte : le LLM n'a jamais accès en clair aux clés, mais bénéficie indirectement des outils authentifiés.
+    </p>
+
+
+    <h2>Action 5 - Agent Monitor (<code>agent_monitor_action.py</code>)</h2>
+
+    <p>
+      Ouvre un HUD interactif (div draggable et redimensionnable) injecté dans le DOM permettant de
+      visualiser l'arborescence des threads des agents cognitifs en temps réel. Ce module est géré par
+      le moteur de rendu natif <strong>EchoUI</strong>.
+    </p>
+    <p>
+      Basé sur une boucle d'événements bidirectionnelle avec le frontend (Pattern Promise), ce cockpit
+      interroge le statut des agents pour afficher l'état courant de l'escalade cognitive.
+    </p>
+    
+    <h3>Taxonomie visuelle et Orchestration Multi-Agentique</h3>
+    <p>
+      L'interface classifie et regroupe les threads de réflexion de l'orchestrateur selon une taxonomie stricte :
+    </p>
+    <ul>
+      <li>🤖 <strong>Agent</strong> : Agent stateful classique.</li>
+      <li>🎓 <strong>Expert</strong> : Agent expert qualifié selon un rôle métier défini.</li>
+      <li>🏛️ <strong>Conseil (Council)</strong> : Stratégie de Table Ronde Delphi. L'interface fusionne <em>chronologiquement</em> tous les threads des membres du conseil en une vue unifiée.</li>
+      <li>📋 <strong>Superviseur (Supervisor)</strong> : Orchestration hiérarchique. L'interface affiche l'agent superviseur avec le regroupement arborescent des <em>workers</em> sous sa tutelle.</li>
+      <li>🌐 <strong>Navigateur Web</strong> : Agent pilotant le navigateur web avec analyse DOM en temps réel.</li>
+    </ul>
+
+    <h2>Action 6 - Revue Navigation Web (<code>web_navigation_replay_action.py</code>)</h2>
 
     <p>
       Ouvre un cockpit visuel plein écran permettant de consulter et de rejouer les captures
@@ -267,7 +304,47 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </tbody>
     </table>
 
-    <h2>Action 4 - Print / PDF (<code>print_pdf_action.py</code>)</h2>
+    <h2>Action 7 - ECHO Codex (<code>echo_codex_action.py</code>)</h2>
+
+    <p>
+      Ouvre un éditeur de code Monaco complet dans un HUD draggable et redimensionnable,
+      directement intégré dans le DOM d'Open WebUI. Chaque conversation dispose de
+      son propre dépôt Git isolé (via <code>dulwich</code>, Python pur sans binaire git)
+      dans le Vault utilisateur. La position et la taille du HUD sont persistantes
+      via <code>localStorage</code> (clé <code>echo_codex_{chat_id}</code>).
+    </p>
+
+    <h3>Fonctionnalités principales</h3>
+    <table>
+      <thead>
+        <tr><th>Fonctionnalité</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>File Tree</strong></td><td>Panneau gauche : liste des fichiers du Codex (tri dynamique par <code>mtime</code>). Clic &rarr; chargement dans l'éditeur. Action contextuelle &rarr; Renommage intégré (OS + Git). Bouton &times; &rarr; suppression avec commit. Bouton + &rarr; création fichier.</td></tr>
+        <tr><td><strong>Éditeur Monaco</strong></td><td>Monaco Editor 0.52.2 via CDN jsDelivr. Coloration syntaxique 30+ langages. Intègre un <strong>panneau de prévisualisation WYSIWYG</strong>. Bouton de sauvegarde explicite et Ctrl+S &rarr; sauvegarde + commit immédiat.</td></tr>
+        <tr><td><strong>Édition AI</strong></td><td>Instruction libre ou macro-action prédéfinie (shorter, comment, refactor, fix, tests…). Sélecteur LITE/FLASH/PRO. Affiche un diff côte-à-côte Accept/Rejeter.</td></tr>
+        <tr><td><strong>Navigation Git &#9664; &#9654;</strong></td><td>Navigation commit par commit pour un fichier. Mode read-only visuel. Bouton Restaurer &rarr; nouveau commit de restauration.</td></tr>
+        <tr><td><strong>Import/Export</strong></td><td>Téléchargement depuis le PC vers le Codex (upload), téléchargement du fichier vers le PC (download natif navigateur).</td></tr>
+        <tr><td><strong>Reset</strong></td><td>Suppression intégrale du dépôt (confirmation JS + purge SQLite). Irréversible.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="didactic-box">
+      <h4>💡 Complémentarité HUD (Action) vs. Outil LLM (Tool Call)</h4>
+      <p>
+        L'Action ECHO Codex (ce HUD) est complémentaire de l'outil LLM
+        <code>echo_codex_tool.py</code> : le HUD est piloté <strong>par l'utilisateur</strong>
+        (bouton sous le message), l'outil LLM est piloté <strong>par Gemini</strong>
+        (Tool Call au cours d'une génération). Les deux accèdent au même dépôt Git
+        et au même registre SQLite <code>resources</code> (Registre Unifié).
+      </p>
+    </div>
+
+    <p>Pour la documentation technique complète (architecture, API JS, protocole Python↔JS),
+    voir <a href="09h_codex_editor.html">ECHO Codex &rarr;</a>.</p>
+
+
+    <h2>Action 8 - Print / PDF (<code>print_pdf_action.py</code>)</h2>
 
     <p>
       Capture l'intégralité de la conversation courante et génère un fichier PDF
@@ -439,83 +516,8 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
       </p>
     </div>
 
-    <h2>Action 5 - Agent Monitor (<code>agent_monitor_action.py</code>)</h2>
-
-    <p>
-      Ouvre un HUD interactif (div draggable et redimensionnable) injecté dans le DOM permettant de
-      visualiser l'arborescence des threads des agents cognitifs en temps réel. Ce module est propulsé par
-      le moteur de rendu natif <strong>EchoUI</strong>.
-    </p>
-    <p>
-      Basé sur une boucle d'événements bidirectionnelle avec le frontend (Pattern Promise), ce cockpit
-      interroge le statut des agents pour afficher l'état courant de l'escalade cognitive.
-    </p>
     
-    <h3>Taxonomie visuelle et Orchestration Multi-Agentique</h3>
-    <p>
-      L'interface classifie et regroupe les threads de réflexion de l'orchestrateur selon une taxonomie stricte :
-    </p>
-    <ul>
-      <li>🤖 <strong>Agent</strong> : Agent stateful classique.</li>
-      <li>🎓 <strong>Expert</strong> : Agent expert qualifié selon un rôle métier défini.</li>
-      <li>🏛️ <strong>Conseil (Council)</strong> : Stratégie de Table Ronde Delphi. L'interface fusionne <em>chronologiquement</em> tous les threads des membres du conseil en une vue unifiée.</li>
-      <li>📋 <strong>Superviseur (Supervisor)</strong> : Orchestration hiérarchique. L'interface affiche l'agent superviseur avec le regroupement arborescent des <em>workers</em> sous sa tutelle.</li>
-      <li>🌐 <strong>Navigateur Web</strong> : Agent pilotant le navigateur web avec analyse DOM en temps réel.</li>
-    </ul>
-
-    <h2>Action 6 - ECHO Codex (<code>echo_codex_action.py</code>)</h2>
-
-    <p>
-      Ouvre un éditeur de code Monaco complet dans un HUD draggable et redimensionnable,
-      directement intégré dans le DOM d'Open WebUI. Chaque conversation dispose de
-      son propre dépôt Git isolé (via <code>dulwich</code>, Python pur sans binaire git)
-      dans le Vault utilisateur. La position et la taille du HUD sont persistantes
-      via <code>localStorage</code> (clé <code>echo_codex_{chat_id}</code>).
-    </p>
-
-    <h3>Fonctionnalités principales</h3>
-    <table>
-      <thead>
-        <tr><th>Fonctionnalité</th><th>Description</th></tr>
-      </thead>
-      <tbody>
-        <tr><td><strong>File Tree</strong></td><td>Panneau gauche : liste des fichiers du Codex (tri dynamique par <code>mtime</code>). Clic &rarr; chargement dans l'éditeur. Action contextuelle &rarr; Renommage intégré (OS + Git). Bouton &times; &rarr; suppression avec commit. Bouton + &rarr; création fichier.</td></tr>
-        <tr><td><strong>Éditeur Monaco</strong></td><td>Monaco Editor 0.52.2 via CDN jsDelivr. Coloration syntaxique 30+ langages. Intègre un <strong>panneau de prévisualisation WYSIWYG</strong>. Bouton de sauvegarde explicite et Ctrl+S &rarr; sauvegarde + commit immédiat.</td></tr>
-        <tr><td><strong>Édition AI</strong></td><td>Instruction libre ou macro-action prédéfinie (shorter, comment, refactor, fix, tests…). Sélecteur LITE/FLASH/PRO. Affiche un diff côte-à-côte Accept/Rejeter.</td></tr>
-        <tr><td><strong>Navigation Git &#9664; &#9654;</strong></td><td>Navigation commit par commit pour un fichier. Mode read-only visuel. Bouton Restaurer &rarr; nouveau commit de restauration.</td></tr>
-        <tr><td><strong>Import/Export</strong></td><td>Téléchargement depuis le PC vers le Codex (upload), téléchargement du fichier vers le PC (download natif navigateur).</td></tr>
-        <tr><td><strong>Reset</strong></td><td>Suppression intégrale du dépôt (confirmation JS + purge SQLite). Irréversible.</td></tr>
-      </tbody>
-    </table>
-
-    <div class="didactic-box">
-      <h4>💡 Complémentarité HUD (Action) vs. Outil LLM (Tool Call)</h4>
-      <p>
-        L'Action ECHO Codex (ce HUD) est complémentaire de l'outil LLM
-        <code>echo_codex_tool.py</code> : le HUD est piloté <strong>par l'utilisateur</strong>
-        (bouton sous le message), l'outil LLM est piloté <strong>par Gemini</strong>
-        (Tool Call au cours d'une génération). Les deux accèdent au même dépôt Git
-        et au même registre SQLite <code>resources</code> (Registre Unifié).
-      </p>
-    </div>
-
-    <p>Pour la documentation technique complète (architecture, API JS, protocole Python↔JS),
-    voir <a href="09h_codex_editor.html">ECHO Codex &rarr;</a>.</p>
-
-
-    <h2>5. ECHO Identity Vault (<code>echo_identity_vault_action.py</code>)</h2>
-    <p>
-      Cette action déploie une interface d'authentification centralisée <strong>fusionnant MCP et N8N</strong>. Elle se synchronise dynamiquement avec l'API des schémas du MCP Broker (<code>echo-mcp-broker</code>) et de N8N pour permettre à l'utilisateur de configurer les clés et mots de passe requis.
-      Les <em>credentials</em> métier sont stockés de manière chiffrée et isolée dans une base locale (SQLite). Elle orchestre la distribution des secrets via <code>ECHO_N8N_VAULT_KEY</code> et maintient une étanchéité stricte : le LLM n'a jamais accès en clair aux clés, mais bénéficie indirectement des outils authentifiés.
-    </p>
-
-
-    <h2>6. Résurrection de Contexte (<code>resume_in_new_chat_action.py</code>)</h2>
-    <p>
-      Permet la migration complète d'un contexte saturé vers une nouvelle session. Effectue la duplication du FS Vault, la mutation SQLite (<code>session.db</code>) et le clonage vectoriel Qdrant.
-    </p>
-
-    <div class="transition-text">
+<div class="transition-text">
 
 
       <a href="09e_execution_monitoring.html">&larr; Exécution & Pilotage</a>
@@ -526,7 +528,9 @@ document.getElementById('mon-btn').onclick = () => window.myResolve({ action: 'o
     <footer>
       ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
-  </main>
+  
+    
+</main>
   <script src="nav.js"></script>
 </body>
 </html>

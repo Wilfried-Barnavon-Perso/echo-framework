@@ -119,7 +119,6 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ## 10. 🔢 Stratégie de Versioning (`VERSIONING.md`)
 
 - **Version Globale :** Fichier `VERSION` (SemVer 5.Y.Z). 
-- **Encodage Strict :** Les fichiers `VERSION`, `.py`, `.xml`, `.sh`, `.json`, `.html`, `.css`, `.js` et `.md` doivent **obligatoirement être encodés en UTF-8 sans BOM**. L'introduction de BOM ou de double/triple encodage (mojibake) est strictement interdite sur tous les assets.
 - **Versioning des Composants :** Granularité définie dans les en-têtes de modules.
 
 ## 11. 🔐 Authentification Antigravity 2.1
@@ -128,6 +127,8 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 - **OAuth2 PKCE :** Flow Authorization Code via tunnel SSH éphémère (Ports 8020-8024).
 
 ## 12. 📜 Standards de Développement (Rigueur Absolue)
+
+- **Méthodologie Stricte (Top-Down) :** La conception logicielle doit impérativement partir de l'**Architecture** (vision systémique, HLD), descendre vers l'**Ingénierie** (choix des patterns, contrats d'interface), et seulement en dernier recours faire appel à l'usage d'un **Vibe Coding encadré strictement** (génération de code par IA). L'IA ne doit jamais coder sans un plan architectural validé.
 
 - **Architecture N8N (Règles strictes) :** Tout workflow éphémère de Sandbox testé via le CLI doit **obligatoirement** démarrer par le nœud `Execute Workflow Trigger`. Le Mocking de payload asynchrone via des nœuds "Code" ou "Set" est impératif pour simuler les Webhooks/Emails lors de tests LLM. L'usage en dur de tokens d'API ou Headers sensibles (Cookie, Authorization) dans les nœuds est strictement proscrit. Le non-respect de cette règle déclenchera un blocage système exigeant l'usage de la macro `__ECHO_SECRET_...`. Les exécutions synchrones sont limitées à 64Ko, imposant un repli vers le mode asynchrone.
 - **OWUI Injection & PEP8 :** L'intégralité des outils de l'Arsenal doit strictement déclarer les arguments `__user__` et `__metadata__` dans leur interface pour garantir l'injection native du contexte par Open WebUI. Le code doit respecter strictement la norme PEP8 (les variables locales inutilisées sont impérativement préfixées par un underscore `_` ou supprimées, et les imports inutiles purgés).

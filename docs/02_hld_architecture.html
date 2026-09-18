@@ -212,7 +212,7 @@ flowchart TD
         <text x="376" y="416" fill="#475569" font-size="8.5" font-family="monospace">Fonctions pures - aucun</text>
         <text x="376" y="429" fill="#475569" font-size="8.5" font-family="monospace">appel réseau, aucun état.</text>
         <text x="376" y="443" fill="#475569" font-size="8.5" font-family="monospace">Point unique de traduction</text>
-        <text x="376" y="456" fill="#475569" font-size="8.5" font-family="monospace">ECHO → API Antigravity.</text>
+        <text x="376" y="456" fill="#475569" font-size="8.5" font-family="monospace">ECHO → API native.</text>
 
         <!-- echo_constants.py -->
         <rect x="512" y="334" width="60" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.2"/>
@@ -590,7 +590,7 @@ flowchart TB
   subgraph APP ["🖥️ ZONE 2 : APPLICATION & KERNEL TIER"]
     direction TB
     AUTH["🔑 echo-auth-manager (SSO IdP)<br/>[:8000 Interne]"]
-    SSH["🚇 ECHO SSH Tunnel (Antigravity)<br/>[:8020-8024]"]
+    SSH["🚇 ECHO SSH Tunnel (ECHO)<br/>[:8020-8024]"]
     OWUI["🖥️ Open WebUI<br/>[:3000]"]
     subgraph Kernel ["🧠 ECHO Kernel (In-Process)"]
       direction LR

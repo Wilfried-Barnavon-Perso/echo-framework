@@ -1,7 +1,7 @@
 """
 title: Réinitialiser Authentification Gemini /!\
 author: Wilfried BARNAVON
-version: 4.10
+version: 4.11
 description: Révocation d'urgence : déconnecte la session et purge les tokens OAuth2 Google.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgeD0iMyIgeT0iMTEiIHJ4PSIyIiByeT0iMiIvPjxwYXRoIGQ9Ik03IDExVjdhNSA1IDAgMCAxIDEwIDB2NCIvPjwvc3ZnPg==
 """
@@ -11,6 +11,7 @@ icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAw
 # 4.7: Mise à jour de la priorité d'affichage à 10.
 
 import os
+from typing import Optional
 import sqlite3
 import sys
 from pydantic import BaseModel, Field
@@ -28,7 +29,7 @@ class Action:
         self.valves = self.Valves()
         self.user_dbs_dir = ECHO_USERS_ROOT
 
-    async def action(self, body: dict, __user__=None, __event_emitter__=None, __event_call__=None, **kwargs):
+    async def action(self, body: dict, __user__=None, __event_emitter__=None, __event_call__=None, __metadata__: Optional[dict] = None, **kwargs):
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or "id" not in __user__:
             await events.toast("❌ Erreur : Utilisateur non identifié.", "error")

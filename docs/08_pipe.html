@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py) : Suture Bit-Perfect, troncature silencieuse (Smart Pop), routage cognitif LITE/FLASH/PRO, boucle Arsenal, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modèle centralisée Pipe → outils.">
+  <meta name="description" content="Le Pipe Engine ECHO v5 (pipe_engine.py) : Suture Bit-Perfect, troncature silencieuse (Smart Pop), routage cognitif LITE/FLASH/PRO, orchestration des Outils, gestion ThoughtSignature, scellement SQLite, cascade descendante technique, politique modèle centralisée Pipe → outils.">
   <title>ECHO v5 - 8. Le Pipe (Cortex Moteur)</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
@@ -17,14 +17,15 @@
 
   <main>
     <h1>8. Le Pipe (Cortex Moteur)</h1>
+<p class="page-subtitle">Documentation officielle de l'<strong>Espace Cognitif Heuristique Opérationnel</strong>.<br><em>Ce manuel a été co-rédigé par l'intelligence artificielle ECHO elle-même.</em></p>
 
 
     <p>
       Le <code>pipe_engine.py</code> (v192.21) est l'unité centrale de traitement d'ECHO.
       Open WebUI le voit comme un modèle GenAI standard, mais il agit en réalité comme un
       <strong>orchestrateur de contexte</strong> : il reconstruit l'historique bit-perfect depuis
-      SQLite, pilote la boucle d'outils de l'Arsenal, gère l'authentification et l'inférence via
-      deux backends (AI Studio et API Antigravity), puis scelle chaque tour dans les Ombres Riches.
+      SQLite, pilote l'orchestration (déléguée à l'Arsenal des Outils), gère l'authentification et l'inférence via
+      deux backends (AI Studio et API native), puis scelle chaque tour dans les Ombres Riches.
       Il orchestre également la <strong>politique modèle centralisée</strong> - propagée de ses
       <code>UserValves</code> vers tous les outils via <code>__metadata__</code> et le fallback
       SQLite <code>echo_settings</code>.
@@ -142,6 +143,19 @@
       </p>
     </div>
 
+    
+    <h2>Mémoire duale et Vallée de la Mort</h2>
+    <p>
+      ECHO combine la mémoire sémantique structurée et la mémoire épisodique conversationnelle 
+      pour surmonter la <strong>Vallée de la Mort Contextuelle</strong>. Cette zone (généralement entre 30% et 50% 
+      de la capacité de la fenêtre) représente le moment où l'attention du modèle se dilue, causant la 
+      perte de détails cruciaux.
+    </p>
+    <p>
+      Plutôt que d'attendre la troncature silencieuse, le Pipe exploite un <strong>Routage Cognitif</strong> 
+      multidirectionnel et un élagage chirurgical (RAG) pour conserver un contexte dense et pertinent.
+    </p>
+
     <h2>Routage Cognitif Dynamique</h2>
 
     <p>
@@ -174,15 +188,10 @@ flowchart TD
 
   FLASH --> NCV2{new_cognitive_level ?}
   NCV2 -->|"FLASH est dépassé"| PRO
-  NCV2 -->|"Non"| ORCH{"Orchestration\nMulti-Agents ?"}
+  NCV2 -->|"Non"| OUTPUT([Génération finale])
 
-  ORCH -->|"Oui (consult_council)"| COUNCIL["Table Ronde\nDelphi"]
-  ORCH -->|"Oui (consult_supervised_workers)"| SUPERV["Boucle Critique\nSupervisée"]
-  ORCH -->|"Non"| OUTPUT([Génération finale])
-
-  COUNCIL --> OUTPUT
-  SUPERV --> OUTPUT
-  PRO --> OUTPUT
+      
+      PRO --> OUTPUT
   LITE_OK --> OUTPUT
 
   classDef zone_vert fill:#064e3b,stroke:#10b981,color:#fff
@@ -222,7 +231,7 @@ flowchart TD
       courant. Le Pipe intercepte cet appel, récupère le <strong>Plan de Transfert</strong> rédigé
       par le modèle sortant (document Markdown structurant le contexte et les objectifs pour son
       successeur), puis re-route la requête vers le modèle cible sans redémarrer la boucle complète.
-      L'outil est <strong>bidirectionnel</strong> : il permet une escalade (LITE → FLASH → PRO)
+      L'outil est <strong>multidirectionnel</strong> : il permet une escalade (LITE → FLASH → PRO)
       comme une redescente (PRO → FLASH → LITE) selon la charge de la tâche courante.
     </p>
 
@@ -262,7 +271,7 @@ flowchart TD
 
     <p>
       La <code>UserValve MODEL_SELECTION</code> du Pipe définit la politique d'utilisation des
-      modèles pour <em>tous</em> les outils de l'Arsenal. OWUI ne propageant pas les
+      modèles pour les outils sous-jacents. OWUI ne propageant pas les
       <code>__metadata__</code> personnalisés du Pipe vers les outils, deux mécanismes
       parallèles assurent la propagation :
     </p>
@@ -356,20 +365,6 @@ flowchart TD
         retranscrits dans le contexte. Seul le jeton opaque (quelques dizaines d'octets) les représente.
       </p>
     </div>
-
-    <h2>Transport HTTP/2 et Headers Stealth</h2>
-
-    <p>
-      <code>EchoGeminiClient</code> utilise <code>httpx</code> avec l'option <code>http2=True</code>
-      (dépendance <code>h2</code> obligatoire). Pour les requêtes vers l'API Antigravity, les en-têtes
-      de requête reproduisent ceux d'un IDE réel grâce à <code>get_stealth_headers()</code> :
-    </p>
-
-    <div class="code-header">En-têtes Stealth - ECHO API Antigravity</div>
-    <pre><code>User-Agent: antigravity/2.1.0 (language_server; os_type=Windows; os_version=10.0.26100; arch=x64)
-x-goog-api-client: antigravity/2.1.0
-Authorization: Bearer {oauth_token}
-Content-Type: application/json</code></pre>
 
     <h2>Bridge <code>_TOOLS_CACHE</code> - Partage des Callables Outils</h2>
 
@@ -492,22 +487,9 @@ await EchoUI.deploy_context_gauge(events, ..., quota_model=ca_id,
     quota_rpd_rem=quota_rpd_rem, quota_rpd_lim=quota_rpd_lim, ...)</code></pre>
 
 
-    <h2>Réseau et Furtivité</h2>
-    <p>
-      Les requêtes web orchestrées par le Cortex s'appuient sur des connexions HTTP/2 strictes (via <code>httpx</code>) couplées à l'injection d'en-têtes de navigation haute fidélité (<code>get_stealth_headers</code>). Cette mécanique simule un navigateur réel et contourne les protections anti-bot de bas niveau lors des investigations agentiques.
-    </p>
+    
 
-    <div class="transition-text">
-      <a href="07_filtre.html">&larr; Filtres (Conscience)</a>
-      &nbsp;&nbsp;
-      <a href="09_arsenal_outils.html">Arsenal Outils &rarr;</a>
-    </div>
-
-    <footer>
-      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-    </footer>
   </main>
-
   <script src="nav.js"></script>
 </body>
 </html>

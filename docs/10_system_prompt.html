@@ -12,6 +12,7 @@
 
   <main>
     <h1>10. Le Kernel (System Prompt)</h1>
+<p class="page-subtitle">Documentation officielle de l'<strong>Espace Cognitif Heuristique Opérationnel</strong>.<br><em>Ce manuel a été co-rédigé par l'intelligence artificielle ECHO elle-même.</em></p>
 
     <p>
       Le <strong>System Prompt</strong> d'ECHO - désigné Kernel - est le document fondamental
@@ -25,10 +26,15 @@
       <p>
         Un système de chat standard dispose d'un system prompt unique, statique. ECHO dispose
         d'un Kernel (system prompt de base), augmenté dynamiquement à chaque tour par les
-        deux filtres : l'AEC (<code>&lt;AEC_environnement_contexte&gt;</code>) et le Smart Context
-        (<code>&lt;AEC_smart_context&gt;</code>). Le modèle reçoit donc à chaque inférence un contexte
-        système complet et actualisé.
-      </p>
+                multiples filtres et balises (les Artéfacts Environnementaux Contextuels, ou AEC) :
+        <ul>
+          <li><code>&lt;AEC_environnement_contexte&gt;</code> : Fournit les chemins du système, de l'espace personnel, et des workers Docker.</li>
+          <li><code>&lt;AEC_smart_context&gt;</code> : Injecte des faits et des fichiers locaux via un filtrage vectoriel au fil de l'eau.</li>
+          <li><code>&lt;AEC_evenement_systeme&gt;</code> : Injecte de façon éphémère des notifications sur l'issue des outils asynchrones (ex: N8N Worker, Elagage vectoriel).</li>
+          <li><code>&lt;AEC_identite&gt;</code> / <code>&lt;AEC_localisation&gt;</code> : Cimente l'ancrage géospatial et l'identité stricte d'ECHO.</li>
+          <li><code>&lt;AEC_modele&gt;</code> : Précise le modèle courant (LITE/FLASH/PRO) issu de la cascade cognitive.</li>
+        </ul>
+        Le modèle reçoit donc à chaque inférence un contexte système complet et actualisé.</p>
     </div>
 
     <h2>Hiérarchie des Normes</h2>

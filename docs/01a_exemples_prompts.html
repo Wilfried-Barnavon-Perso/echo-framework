@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ECHO v5 - Exemples de Prompts & Autonomie</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+<!-- CONTENU PRINCIPAL -->
+  <main class="content-area">
+      <header>
+        <h1>1a. Exemples de Prompts & Autonomie</h1>
+        <p class="page-subtitle">
+          Comment interagir efficacement avec ECHO et tirer parti de son autonomie complète.
+        </p>
+      </header>
+      
+      <section class="doc-section">
+        <h2>L'Autonomie Pure d'ECHO</h2>
+        <p>ECHO n'est pas un modèle conversationnel standard : c'est un agent autonome. Lorsqu'on lui confie une tâche, ECHO est capable d'analyser le problème, de forger un plan d'action, et d'exécuter ce plan de manière itérative sans intervention humaine. Elle lira des fichiers, cherchera sur le web, compilera du code, et corrigera ses propres erreurs.</p>
+        
+        <h3>L'Adaptation Dynamique via le Kernel</h3>
+        <p>Le comportement d'ECHO s'adapte dynamiquement sans nécessiter de configuration externe. Pour l'utilisateur, le <strong>Prompt Système</strong> (Le Kernel) est strictement immuable. Cependant, ce cœur cognitif statique contient les méta-principes et les algorithmes qui permettent à ECHO de s'ajuster automatiquement à vos besoins immédiats, qu'il s'agisse de recherche académique ou de développement logiciel brut.</p>
+      </section>
+
+      <section class="doc-section">
+        <h2>Exemples de Prompts pour Déclencher les Outils</h2>
+        
+        <div class="card">
+          <div class="card-title">
+            <span>Recherche & Synthèse (Web Intelligence)</span>
+          </div>
+          <p><em>"Analyse les 3 dernières publications sur les modèles de langage open-source européens et fais-moi un rapport détaillé."</em></p>
+          <p style="font-size: 0.88rem; color: var(--text-muted);">ECHO déclenchera automatiquement l'outil de navigation Playwright et SearXNG, lira les pages, et synthétisera le contenu.</p>
+        </div>
+        
+        <br>
+        
+        <div class="card">
+          <div class="card-title">
+            <span>Développement et Sandbox (Codex & Code Executor)</span>
+          </div>
+          <p><em>"Écris un script Python pour nettoyer ce jeu de données CSV, enregistre-le dans le Codex, puis exécute-le dans la sandbox pour me donner les résultats statistiques."</em></p>
+          <p style="font-size: 0.88rem; color: var(--text-muted);">ECHO utilisera le Codex pour créer le fichier, puis l'outil Code Executor pour lancer le script de manière isolée et lire la sortie standard.</p>
+        </div>
+
+        <br>
+
+        <div class="card">
+          <div class="card-title">
+            <span>Orchestration & Débat (Conseil Delphi)</span>
+          </div>
+          <p><em>"Convoque le conseil Delphi avec 3 experts (un architecte cloud, un expert sécurité, un développeur frontend) pour débattre du choix entre AWS et une infrastructure souveraine SecNumCloud."</em></p>
+          <p style="font-size: 0.88rem; color: var(--text-muted);">ECHO instanciera les experts, animera le débat en arrière-plan, et vous fournira le consensus final.</p>
+        </div>
+      </section>
+  </main>
+  <script src="nav.js"></script>
+</body>
+</html>

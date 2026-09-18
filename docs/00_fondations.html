@@ -130,9 +130,9 @@
 
     
     <h2>Standards de Développement</h2>
-    <h3>Règle UTF-8 sans BOM</h3>
+    <h3>Méthodologie Stricte (Top-Down)</h3>
     <p>
-      Le framework impose une règle stricte d'encodage : tous les fichiers (<code>VERSION</code>, <code>.py</code>, <code>.xml</code>, <code>.sh</code>, <code>.json</code>) doivent <strong>obligatoirement être encodés en UTF-8 sans BOM</strong>. L'introduction de BOM ou de mojibake est strictement interdite pour garantir la compatibilité absolue entre les environnements Windows et Linux de la pile Docker.
+      La conception logicielle doit impérativement partir de l'<strong>Architecture</strong> (vision systémique, HLD), descendre vers l'<strong>Ingénierie</strong> (choix des patterns, contrats d'interface), et seulement en dernier recours faire appel à l'usage d'un <strong>Vibe Coding encadré strictement</strong>. L'IA ne doit jamais coder sans un plan architectural validé.
     </p>
 
 <div class="transition-text">

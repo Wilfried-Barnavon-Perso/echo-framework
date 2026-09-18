@@ -57,7 +57,7 @@ flowchart TD
   ACT --> |Python ↔ JS Promise| GIT[echo_codex_git.py<br/>CodexRepo dulwich]
   TOOL --> GIT
 
-  GIT --> |CRUD + Git| FS[Vault Codex<br/>/users/id/files/codex/]
+  GIT --> |CRUD + Git| FS[Vault Codex<br/>/users/<id>/codex/]
   GIT --> |Proprioception| DB[(SQLite codex_docs)]
 
   classDef frontend fill:#4a1d96,stroke:#8b5cf6,color:#f8fafc
@@ -546,7 +546,13 @@ flowchart TD
     <footer>
       ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
-  </main>
+  
+    <h2>Coding Worker & Sandbox</h2>
+    <p>
+      Le <strong>Coding Worker</strong> d'ECHO est une API (Flask) encapsulant une sandbox sécurisée. L'outil <code>code_executor_tool.py</code> délègue l'exécution de code à cette API, via le fichier <code>worker_api.py</code> qui gère nativement et simultanément l'exécution de <strong>Python</strong> et de <strong>Node.JS (JavaScript)</strong>.
+    </p>
+
+</main>
   <script src="nav.js"></script>
 </body>
 </html>

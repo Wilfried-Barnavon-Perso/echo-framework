@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Communication avec l'API Gemini : authentification, priorités des identités, protocole PKCE et architecture Antigravity 2.1.">
+  <meta name="description" content="Communication avec l'API Gemini : authentification, priorités des identités, protocole PKCE et architecture ECHO 2.1.">
   <title>ECHO v5 - 3. Communication Gemini & Authentification</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -39,7 +39,7 @@
         <code>EchoAuth.get_ordered_auth_providers()</code> :
       </p>
       <ol>
-        <li><strong>OAuth2 (API Antigravity)</strong> - prioritaire, accès aux modèles <code>gemini-3.1-pro-preview</code> et <code>gemini-3.5-flash</code>.</li>
+        <li><strong>OAuth2 (API native)</strong> - prioritaire, accès aux modèles <code>gemini-3.1-pro-preview</code> et <code>gemini-3.5-flash</code>.</li>
         <li><strong>Clé API primaire</strong> - AI Studio (<code>google_api_key</code>).</li>
         <li><strong>Clé API secondaire</strong> - fallback de secours (<code>google_api_key_secondary</code>).</li>
       </ol>
@@ -56,7 +56,7 @@
     </p>
 
     <ul>
-      <li><strong>Routage Transparent :</strong> Le client bascule dynamiquement entre l'API publique (AI Studio) et l'API interne (Antigravity) selon l'identité d'accès prioritaire, en appliquant les traductions de noms de modèles nécessaires.</li>
+      <li><strong>Routage Transparent :</strong> Le client bascule dynamiquement entre l'API publique (AI Studio) et l'API interne (ECHO) selon l'identité d'accès prioritaire, en appliquant les traductions de noms de modèles nécessaires.</li>
       <li><strong>Failover Hybride et Résilience :</strong> En cas de surcharge (HTTP 429, 500, 503), le client applique un backoff exponentiel avec <em>jitter</em>. Si le seuil d'échecs consécutifs est franchi, il bascule automatiquement sur la source d'accès suivante (par exemple, d'OAuth2 vers la clé de secours). Si le modèle lui-même est inaccessible, une cascade descendante (PRO → FLASH → LITE) est enclenchée.</li>
       <li><strong>Statut Tri-état :</strong> Chaque appel LLM, qu'il provienne du Pipe ou d'un outil agentique, renvoie un statut standardisé (<code>success</code>, <code>warning</code>, <code>error</code>). Une divergence (clamping de politique ou cascade) est marquée comme <code>warning</code> avec le détail du motif.</li>
     </ul>

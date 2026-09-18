@@ -80,7 +80,9 @@
     <footer>
       ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
-  </main>
+      <h2>Sécurité et Rate-Limiting</h2>
+    <p>Conformément à l'architecture ECHO, tous les workers locaux (STT, TTS, Embedding, Browser, Python) implémentent un <strong>System-wide Health Check Rate-Limiting</strong>. Ce mécanisme protège les instances contre la saturation CPU/RAM provoquée par des sondes Docker (healthchecks) trop agressives ou des requêtes aberrantes.</p>
+</main>
 
   <script src="nav.js"></script>
 </body>

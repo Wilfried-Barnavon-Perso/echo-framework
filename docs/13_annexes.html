@@ -348,7 +348,42 @@
     <footer>
       ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
+  <h2>Transport HTTP/2 et Headers Stealth</h2>
+
+    <p>
+      <code>EchoGeminiClient</code> utilise <code>httpx</code> avec l'option <code>http2=True</code>
+      (dépendance <code>h2</code> obligatoire). Pour les requêtes vers l'API Antigravity, les en-têtes
+      de requête reproduisent ceux d'un IDE réel grâce à <code>get_stealth_headers()</code> :
+    </p>
+
+    <div class="code-header">En-têtes Stealth - ECHO API Antigravity</div>
+    <pre><code>User-Agent: antigravity/2.1.0 (language_server; os_type=Windows; os_version=10.0.26100; arch=x64)
+x-goog-api-client: antigravity/2.1.0
+Authorization: Bearer {oauth_token}
+Content-Type: application/json</code></pre>
+
+    
+<h2>Réseau et Furtivité</h2>
+    <p>
+      Les requêtes web orchestrées par le Cortex s'appuient sur des connexions HTTP/2 strictes (via <code>httpx</code>) couplées à l'injection d'en-têtes de navigation haute fidélité (<code>get_stealth_headers</code>). Cette mécanique simule un navigateur réel et contourne les protections anti-bot de bas niveau lors des investigations agentiques.
+    </p>
+
+    <div class="transition-text">
+      <a href="07_filtre.html">&larr; Filtres (Conscience)</a>
+      &nbsp;&nbsp;
+      <a href="09_arsenal_outils.html">Arsenal Outils &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
   </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>
+
+</main>
 
   <script src="nav.js"></script>
 </body>

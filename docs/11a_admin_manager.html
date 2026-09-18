@@ -58,7 +58,7 @@
     </div>
 
     <p>
-      L'interface de l'Admin Manager repose sur un <strong>Dashboard interactif</strong> propulsé par
+      L'interface de l'Admin Manager repose sur un <strong>Dashboard interactif</strong> géré par
       <code>Gridstack.js</code>. Il permet de réorganiser les widgets en drag &amp; drop et affiche
       en temps réel les constantes vitales de l'infrastructure :
     </p>
@@ -162,7 +162,7 @@ flowchart TD
         <strong>Révocation Dynamique des Sessions :</strong> La désactivation d'un compte, la réinitialisation de son MFA ou sa suppression entraînent instantanément la destruction de ses jetons de session actifs en mémoire (IdP), forçant une reconnexion.
       </li>
       <li>
-        <strong>Tunnel SSH Antigravity (PKCE) :</strong> Le système intègre un serveur SSH éphémère qui expose dynamiquement les ports 8020 à 8024 pour le flux d'autorisation OAuth2 PKCE (RFC 7636).
+        <strong>Tunnel SSH ECHO (PKCE) :</strong> Le système intègre un serveur SSH éphémère qui expose dynamiquement les ports 8020 à 8024 pour le flux d'autorisation OAuth2 PKCE (RFC 7636).
       </li>
       <li>
         <strong>BunkerWeb Forward Auth :</strong> ECHO Auth est couplé au WAF BunkerWeb via l'endpoint <code>/api/verify</code>, protégeant l'ensemble de la pile derrière une authentification forte (TOTP) sans exposer directement les services.

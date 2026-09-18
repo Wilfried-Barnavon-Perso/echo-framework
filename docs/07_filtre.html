@@ -38,7 +38,46 @@
       </p>
     </div>
 
-    <h2>Filtre 1 - <code>new_context_filter.py</code></h2>
+    <h2>Filtre 1 - <code>build_environment_domain.py</code></h2>
+    <p>
+      Ce filtre (priorité 0) s'exécute en tout premier. Il construit et initialise les variables d'environnement globales du domaine avant même que le traitement sémantique ou contextuel ne commence.
+    </p><h2>Filtre 2 - <code>tcp_keep_alive_filter.py</code></h2>
+    <p>
+      Filtre Inlet spécialisé visant à maintenir la stabilité des connexions réseau prolongées. Son rôle est d'empêcher la déconnexion inopinée des sessions websocket longues, particulièrement critique lors de la sollicitation de workflows Headless N8N ou de consultations Delphi qui nécessitent des délais d'exécution importants.
+    </p>
+
+    <div class="transition-text">
+      <a href="06_hud_ui.html">&larr; HUD & UI</a>
+      &nbsp;&nbsp;
+      <a href="08_pipe.html">Pipe (Cortex) &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>
+<h2>Filtre 3 - <code>edge_embed_bridge_filter.py</code></h2>
+
+    <p>
+      Ce filtre intercepte le corps de la page Open WebUI pour injecter dynamiquement le pont JavaScript WebGPU d'inférence distante (WASM).
+      Il gère un <strong>HUD d'initialisation navigateur</strong> natif et une gestion multi-onglets (via l'UUID <code>client_id</code> et la détection de <code>visibility</code>).
+      Un mécanisme de blocage actif (conditionné par la valve <code>WAIT_FOR_EDGE_EMBEDDING</code>) garantit que le client s'est connecté au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
+      Le filtre intègre également un <strong>Fallback CPU Asynchrone Instantané</strong> : il annule les requêtes <code>asyncio.Future</code> suspendues si la connexion WebSocket est rompue, basculant automatiquement le relais vers l'infrastructure Docker (`Harrier-OSS`).
+    </p>
+
+
+
+    <h2>Filtre 4 - <code>user_native_context_filter.py</code></h2>
+    <p>
+      Filtre d'interception Inlet très précoce (Priorité 10). Son rôle est d'héberger les paramètres spécifiques de l'utilisateur (nom, localisation) et de les injecter de manière sécurisée dans les métadonnées de la requête.
+      Cette mécanique repose sur l'extraction dynamique de l'identité via le WAF BunkerWeb, qui propage l'identité via l'en-tête <code>X-Webui-Name</code>. En déportant ces informations dans ce filtre purement interface, le cœur du système (Filtre 1) est protégé contre toute désactivation accidentelle des paramètres.
+    </p>
+
+    <h2>Filtre 5 - <code>new_context_filter.py</code></h2>
 
     <p>
       Ce filtre est la porte d'entrée cognitive d'ECHO. Il opère en deux phases :
@@ -199,7 +238,7 @@ date_et_heure: "2026-08-24 14:00"
       secret ne « fuit » vers l'interface visuelle quelle que soit la réponse du modèle.
     </p>
 
-    <h2>Filtre 2 - <code>conversation_rag_filter.py</code></h2>
+    <h2>Filtre 6 - <code>conversation_rag_filter.py</code></h2>
 
     <p>
       Ce filtre ne traite que la phase <strong>Outlet</strong> (post-génération). Son objectif unique est d'injecter sans latence l'historique conversationnel dans la mémoire de travail vectorisée de la session (<code>echo_session_rag</code>), afin d'alléger le contexte principal et de permettre l'exploration d'historiques profonds via le RAG.
@@ -244,45 +283,10 @@ date_et_heure: "2026-08-24 14:00"
       </p>
     </div>
 
-    <h2>Filtre 3 - <code>edge_embed_bridge_filter.py</code></h2>
-
-    <p>
-      Ce filtre intercepte le corps de la page Open WebUI pour injecter dynamiquement le pont JavaScript WebGPU d'inférence distante (WASM).
-      Il gère un <strong>HUD d'initialisation navigateur</strong> natif et une gestion multi-onglets (via l'UUID <code>client_id</code> et la détection de <code>visibility</code>).
-      Un mécanisme de blocage actif (conditionné par la valve <code>WAIT_FOR_EDGE_EMBEDDING</code>) garantit que le client s'est connecté au WebSocket de l'Embedding Worker avant d'afficher l'interface graphique.
-      Le filtre intègre également un <strong>Fallback CPU Asynchrone Instantané</strong> : il annule les requêtes <code>asyncio.Future</code> suspendues si la connexion WebSocket est rompue, basculant automatiquement le relais vers l'infrastructure Docker (`Harrier-OSS`).
-    </p>
-
-
-
-    <h2>Filtre 4 - <code>user_native_context_filter.py</code></h2>
-    <p>
-      Filtre d'interception Inlet très précoce (Priorité 10). Son rôle est d'héberger les paramètres spécifiques de l'utilisateur (nom, localisation) et de les injecter de manière sécurisée dans les métadonnées de la requête.
-      Cette mécanique repose sur l'extraction dynamique de l'identité via le WAF BunkerWeb, qui propage l'identité via l'en-tête <code>X-Webui-Name</code>. En déportant ces informations dans ce filtre purement interface, le cœur du système (Filtre 1) est protégé contre toute désactivation accidentelle des paramètres.
-    </p>
-
-    <h2>Filtre 5 - <code>app_drawer_filter.py</code></h2>
+    <h2>Filtre 7 - <code>app_drawer_filter.py</code></h2>
     <p>
       Filtre silencieux Inlet de très haute priorité (1000). Il a pour mission d'injecter nativement le composant Data Island UI "ECHO App Drawer" dans le DOM.
       Ce HUD flottant (Heads-Up Display) s'interface de manière asynchrone avec les actions des Modèles, fournissant à l'utilisateur des raccourcis asynchrones et l'accès au Vault MCP, le tout sans jamais saturer ou perturber la fenêtre de discussion active.
     </p>
 
-    <h2>Filtre 6 - <code>tcp_keep_alive_filter.py</code></h2>
-    <p>
-      Filtre Inlet spécialisé visant à maintenir la stabilité des connexions réseau prolongées. Son rôle est d'empêcher la déconnexion inopinée des sessions websocket longues, particulièrement critique lors de la sollicitation de workflows Headless N8N ou de consultations Delphi qui nécessitent des délais d'exécution importants.
-    </p>
-
-    <div class="transition-text">
-      <a href="06_hud_ui.html">&larr; HUD & UI</a>
-      &nbsp;&nbsp;
-      <a href="08_pipe.html">Pipe (Cortex) &rarr;</a>
-    </div>
-
-    <footer>
-      ECHO Framework - Version 5.209.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
-    </footer>
-  </main>
-
-  <script src="nav.js"></script>
-</body>
-</html>
+    

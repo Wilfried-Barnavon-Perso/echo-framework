@@ -17,7 +17,15 @@
     <h1>9k. ECHO N8N Orchestrator</h1>
 
     <h2>N8N Worker (Sandbox & Démon)</h2>
-    <p>L'outil <code>n8n_orchestrator_tool.py</code> est le pont entre l'agent ECHO et le sous-système N8N Worker (Tier 2). N8N s'exécute de manière "Headless" sur SQLite (volume <code>echo-n8n-data</code>) via l'image <code>n8nio/n8n</code> native, adossée à Node.js.</p>
+    <p>L'outil <code>n8n_orchestrator_tool.py</code> est le pont exclusif entre l'agent ECHO et le sous-système N8N Worker (Tier 2). N8N s'exécute de manière "Headless" sur SQLite (volume <code>echo-n8n-data</code>) via l'image <code>n8nio/n8n</code> native, adossée à Node.js.</p>
+    
+    <div class="note-box">
+      <h4>Dichotomie Architecturale : Sandbox vs Démon</h4>
+      <p>
+        <strong>1. Sandbox Éphémère (Test & Développement) :</strong> Tout workflow créé dynamiquement par ECHO pour tester une logique <em>doit obligatoirement</em> commencer par un nœud <code>Execute Workflow Trigger</code>. Cela permet une exécution unitaire isolée (limitée à 64Ko pour les réponses synchrones). L'utilisation de données mockées (nœuds <code>Code</code> ou <code>Set</code>) est impérative pour simuler des webhooks sans exposer l'infrastructure réseau.<br><br>
+        <strong>2. Déploiement Permanent (Démon) :</strong> Une fois le workflow validé, il peut être activé (Activation). Les triggers de type <code>Webhook</code> ou <code>Cron/Schedule</code> prennent le relais. Le workflow s'exécute de manière asynchrone en toile de fond. Ces workflows démons peuvent agir comme des clients MCP autonomes, et même initier de nouveaux "Child Chats" (threads de discussion dérivés) pour confier des sous-tâches complexes à d'autres agents ECHO, garantissant une traçabilité totale sans bloquer le flux principal.
+      </p>
+    </div>
     
     <h3>Règles d'Architecture strictes</h3>
     <ul>
@@ -30,7 +38,13 @@
     <footer>
       ECHO v5 Documentation - Version <span class="version-badge">5.203.1</span>
     </footer>
-  </main>
+  
+    <h3>Orchestration Headless</h3>
+    <p>
+      L'orchestrateur N8N agit en mode démon pour des webhooks et des crons permanents. Cependant, lors des tests en sandbox via le CLI, tout workflow éphémère <strong>doit impérativement</strong> démarrer par un nœud <code>Execute Workflow Trigger</code>. Le système distingue radicalement les déploiements de production (permanents) de l'exploration interactive (sandbox).
+    </p>
+
+</main>
 
   <script src="nav.js"></script>
   

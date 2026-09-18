@@ -105,7 +105,7 @@
 
     <h3>B. Icône Quota (jauge circulaire SVG)</h3>
     <p>
-      Une icône cadenas à gauche de la barre représente le quota restant du modèle API Antigravity
+      Une icône cadenas à gauche de la barre représente le quota restant du modèle API native
       actuellement actif. La jauge circulaire SVG est calculée via l'attribut
       <code>stroke-dashoffset</code> à partir de <code>quota_fraction</code>
       (0,0 = épuisé, 1,0 = plein). La couleur varie selon trois seuils :
@@ -136,7 +136,7 @@
     <div class="note-box">
       <h4>Source et fraîcheur des données quota</h4>
       <p>
-        Les données de quota proviennent de <code>fetch_available_models()</code> (endpoint API Antigravity
+        Les données de quota proviennent de <code>fetch_available_models()</code> (endpoint API native
         <code>:fetchAvailableModels</code>), stockées dans <code>google_quota_by_model</code>
         (JSON dict dans <code>identity.db</code>). Le rafraîchissement est déclenché de manière
         asynchrone et non-bloquante via <code>refresh_quota_if_needed()</code> avec un cooldown

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ECHO v5 - Manuel Utilisateur</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+<!-- CONTENU PRINCIPAL -->
+  <main class="content-area">
+      <header>
+        <h1>1. Manuel Utilisateur</h1>
+        <p class="page-subtitle">
+          Documentation officielle de l'<strong>Espace Cognitif Heuristique Opérationnel</strong>. 
+          Ce manuel a été co-rédigé par l'intelligence artificielle ECHO elle-même.
+        </p>
+      </header>
+
+      <section class="doc-section">
+        <h2>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          1. Introduction & Philosophie
+        </h2>
+        <p>
+          <strong>ECHO</strong> (Espace Cognitif Heuristique Opérationnel) est un framework d'intelligence artificielle et d'orchestration cognitive conçu par <strong>Wilfried BARNAVON</strong>, distribué sous licence libre <strong>Apache 2.0</strong>.
+        </p>
+        <p>
+          À l'opposé des assistants conversationnels passifs, ECHO a été forgée pour incarner une <strong>Sparring Partner rationnelle-logique et assertive-incisive</strong>. Son utilité réside dans son mordant intellectuel, sa rigueur dialectique et son orientation implacable vers la factualité et l'impact opérationnel.
+        </p>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-title">
+              <span>Rationnelle & Logique</span>
+              <span class="badge badge-cyan">Pilier</span>
+            </div>
+            <p style="font-size: 0.88rem; margin: 0;">Déduction analytique stricte, détection des biais cognitifs, validation formelle des hypothèses et refus catégorique des raccourcis intuitifs non prouvés.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">
+              <span>Assertive & Incisive</span>
+              <span class="badge badge-indigo">Posture</span>
+            </div>
+            <p style="font-size: 0.88rem; margin: 0;">Opposition constructive. Elle pointe immédiatement les incohérences d'un plan ou d'une argumentation sans fard rhétorique ni bavardage obséquieux.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">
+              <span>Souveraine & Éthique</span>
+              <span class="badge badge-emerald">Norme</span>
+            </div>
+            <p style="font-size: 0.88rem; margin: 0;">Environnement privé et local. Neutralité morale absolue vis-à-vis des objectifs de l'utilisateur : focalisation exclusive sur la faisabilité technique.</p>
+          </div>
+        </div>
+      </section>
+      
+      <section class="doc-section">
+        <h2>Connexion et Sécurité SSO</h2>
+        <p>L'accès à la plateforme ECHO est protégé par le module <strong>ECHO Auth</strong> couplé à BunkerWeb. L'utilisateur s'authentifie par adresse e-mail et mot de passe, suivis obligatoirement d'un code OTP (Time-based One-Time Password).</p>
+        
+        <div class="callout tip"><div class="callout-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></div><div class="callout-body">
+          <h4>Comportement du Single Sign-On (SSO)</h4>
+          <p>Une fois l'authentification validée, la session (via jeton JWT) est propagée. La navigation transversale s'effectue sans demande de reconnexion, garantissant un environnement de travail fluide.</p>
+        </div></div>
+      </section>
+  </main>
+  <script src="nav.js"></script>
+</body>
+</html>
