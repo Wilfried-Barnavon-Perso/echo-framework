@@ -1,7 +1,11 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.65
-# --- CHANGELOG 9.65 ---
+# Version : 9.68
+# --- CHANGELOG 9.68 ---
+# - Docker Compose (BunkerWeb) : Uniformisation des filtres d'erreurs (405, 444) sur l'Admin Manager et assouplissement des seuils globaux de Bad Behavior (50 erreurs, ban 5 min) pour tolérer les reconnexions de la SPA.
+# --- CHANGELOG 9.67 ---
+# - Docker Compose (BunkerWeb) : Injection d'un Auto-Heal JS via sub_filter pour intercepter le routage SPA vers /auth et forcer un hard-reload (Contournement de la restriction Clear-Site-Data sur 302).
+# --- CHANGELOG 9.66 ---
 # - Docker Compose : Ajout des volumes externes (Hot-Reload) pour STT Worker et N8N Worker.
 # --- CHANGELOG 9.64 ---
 # - Docker Compose : Limitation du parallélisme à 2 (CMAKE_BUILD_PARALLEL_LEVEL=2) pour empêcher le déclenchement du OOM Killer sur la VM lors des upgrades.
@@ -162,8 +166,8 @@ services:
       # 💀 SERVICE WORKER KILL-SWITCH (PROPRE) : Retourne 404 pour forcer le navigateur à désenregistrer la PWA en silence, sans causer de race condition au rechargement.
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_sw=location = /sw.js { auth_request off; return 404; }"
 
-      # 🧹 PURGE SW VIA LOGOUT : Point de chute de la déconnexion
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_ssologout=location = /sso-logout { auth_request off; return 302 https://auth.${ECHO_DOMAIN:-localhost}/logout?next=https://ui.${ECHO_DOMAIN:-localhost}; }"
+      # 🧹 PURGE SW VIA LOGOUT : Point de chute de la déconnexion avec purge cache PWA (Clear-Site-Data)
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_ssologout=location = /sso-logout { auth_request off; add_header Clear-Site-Data '\"cache\"' always; return 302 https://auth.${ECHO_DOMAIN:-localhost}/logout?next=https://ui.${ECHO_DOMAIN:-localhost}; }"
 
 
       # 🔓 EXCLUSION API PUBLIQUES : Permet au frontend de s'initialiser avant de rediriger proprement
@@ -185,6 +189,8 @@ services:
       # 4. SECURITE (Anti-Ban)
       - "bunkerweb.USE_MODSECURITY=no"
       - "bunkerweb.USE_BAD_BEHAVIOR=yes"
+      - "bunkerweb.BAD_BEHAVIOR_THRESHOLD=50"
+      - "bunkerweb.BAD_BEHAVIOR_BAN_TIME=300"
       # EXCLUSION CRITIQUE : Ne pas bannir sur les erreurs 5xx (timeout ou surcharge applicative)
       # 400 retiré : les SPA génèrent légitimement des 400 sur les preflight CORS
       - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=405 444"
@@ -198,6 +204,9 @@ services:
 
       # 5. UX & PERFORMANCE
       - "bunkerweb.USE_BROTLI=yes"
+      
+      # 🩹 AUTO-HEAL SPA : Injection JS pour détecter le routage interne vers /auth et forcer un hard-reload vers BunkerWeb
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_autoheal=sub_filter '</head>' '<script>setInterval(function(){if(window.location.pathname===\"/auth\"){window.location.replace(\"/\");}},500);</script></head>'; sub_filter_once on;"
       
       # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
@@ -269,6 +278,9 @@ services:
         }
       # 🛡️ SECURITE ADMIN : Assouplissement WAF pour l'Admin (Burst toléré)
       - "bunkerweb.USE_BAD_BEHAVIOR=yes"
+      - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=405 444"
+      - "bunkerweb.BAD_BEHAVIOR_THRESHOLD=50"
+      - "bunkerweb.BAD_BEHAVIOR_BAN_TIME=300"
       - "bunkerweb.USE_LIMIT_REQ=yes"
       - "bunkerweb.LIMIT_REQ_RATE=50r/s"
       - "bunkerweb.LIMIT_REQ_BURST=150"

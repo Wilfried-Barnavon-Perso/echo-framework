@@ -1,15 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.59
+version: 192.61
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.61: Correction GC asynchrone sur la tâche PKCE (Connection refused) et alignement strict PEP8 (E722/E701).
+# 192.60: Restauration de l'usage d'AuthService pour le support PKCE et API keys.
 # 192.59: Application de `_mutate_context_identity` et protection du parsing JSON des tool_calls (fallback dict vide).
-# 192.58: Modification du préfixe de notification UI (toast) pour les rappels cognitifs (🛤️ Alignement du Modèle).
-# 192.57: Remplacement des blocs XML de troncature MAX_TOKENS par le format natif <artifact id="AEC_evenement_systeme">.
+# 192.58: Modification du préfixe de notification UI (toast) pour les rappels cognitifs (⚡ Alignement du Modèle).
+# 192.57: Remplacement des blocs XML de troncature MAX_TOKENS par le format natif <artifact id="AEC_evenement_systeme">.systeme">.
 # 192.56: Déploiement des Rappels Cognitifs Multi-Axes (Anti-Division par 0 + UI Toast Emission).
 # 192.55: Suture stricte (SSOT) : Injection native du Défibrillateur Attentionnel avant la boucle bit-perfect via EchoAEC.
 # 192.54: UX SSE: Libération asynchrone anticipée de l'UI via `yield ""` dès réception du finish_reason 'STOP', masquant la latence post-génération de l'API Google (usageMetadata).
@@ -18,17 +20,12 @@ description: Composant système interne : ECHO Engine.
 # ==============================================================================
 # SECTION 0 : IMPORTS & CONFIGURATION
 # ==============================================================================
-import os
 import sys
 import copy
 import secrets
-import hashlib
 import re
 import time
-import random
-import pybase64 as base64
 import codecs
-import asyncio
 import orjson as std_json 
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Any, Union
@@ -39,7 +36,6 @@ sys.path.append("/app/backend/echo_libs")
 # --- IMPORTATIONS ECHO STRICTES (Consolidées) ---
 from echo_events import EchoEvents
 from echo_state_manager import EchoStateManager
-from echo_paths import get_echo_version
 from echo_core import (
     split_thought_process,
     estimate_token_size,
@@ -309,7 +305,8 @@ class Orchestrator:
                         parsed_tc = []
                         for tc in tool_calls:
                             raw_args = tc["function"].get("arguments", "{}")
-                            if not raw_args: raw_args = "{}"
+                            if not raw_args:
+                                raw_args = "{}"
                             try:
                                 args = std_json.loads(raw_args)
                             except Exception:
@@ -323,17 +320,21 @@ class Orchestrator:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
                         current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
                         tool_io = self.user_data_manager.state_manager.get_tool_io(current_cumul)
-                        if tool_io: restored_parts = [{"functionCall": {"name": tc["name"], "args": tc["args"], **({"id": tc["id"]} if "id" in tc else {})}} for tc in tool_io.get("calls", [])] + restored_parts
+                        if tool_io:
+                            restored_parts = [{"functionCall": {"name": tc["name"], "args": tc["args"], **({"id": tc["id"]} if "id" in tc else {})}} for tc in tool_io.get("calls", [])] + restored_parts
 
                     if sig and restored_parts:
                         for p in restored_parts:
-                            if "functionCall" in p: p["thoughtSignature"] = sig; break
+                            if "functionCall" in p:
+                                p["thoughtSignature"] = sig; break
                         else:
                             for p in restored_parts:
-                                if "text" in p: p["thoughtSignature"] = sig; break
+                                if "text" in p:
+                                    p["thoughtSignature"] = sig; break
                     elif tool_calls:
                         for p in restored_parts:
-                            if "functionCall" in p: p["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION; break
+                            if "functionCall" in p:
+                                p["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION; break
 
                 restored_parts = ensure_gemini_parts(restored_parts, model_id, self.model_origin)
                 i += 1
@@ -368,7 +369,8 @@ class Orchestrator:
                 await events.toast("🚨 Troncature active : les messages les plus anciens sont ignorés pour éviter le crash.", "error", "ECHO V5")
 
         body["_echo_last_cumul"] = last_cumul
-        if self.logger: self.logger.log("context_reconstructed", final_contents)
+        if self.logger:
+            self.logger.log("context_reconstructed", final_contents)
         return final_contents
 
 # ==============================================================================
@@ -437,7 +439,8 @@ class StreamProcessor:
                         data = std_json.loads(full_json_str); self.full_raw_accumulator.append(data)
                         target = data.get("response", {}) if "response" in data else data
                         if "usageMetadata" in target:
-                            if self.usage_stats is None: self.usage_stats = {}
+                            if self.usage_stats is None:
+                                self.usage_stats = {}
                             self.usage_stats.update(target["usageMetadata"])
                             self.user_data_manager.save_context_stats(self.usage_stats)
                         
@@ -456,7 +459,8 @@ class StreamProcessor:
                                     return
                             if content:
                                 for part in content["parts"]:
-                                    if "thoughtSignature" in part: self.captured_sig = part["thoughtSignature"]
+                                    if "thoughtSignature" in part:
+                                        self.captured_sig = part["thoughtSignature"]
                                     if part.get("thought"):
                                         if not in_think:
                                             in_think = True
@@ -466,7 +470,8 @@ class StreamProcessor:
                                     elif part.get("functionCall"):
                                         # [AUTO-CONTINUE] Verrouillage d'état lors de la construction d'un appel d'outil
                                         self.is_generating_tool = True
-                                        if in_think: in_think = False
+                                        if in_think:
+                                            in_think = False
                                         tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
                                         if tool_call:
                                             yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
@@ -475,21 +480,27 @@ class StreamProcessor:
                                         # [AUTO-CONTINUE] Libération du verrou après complétion de l'appel d'outil
                                         self.is_generating_tool = False
                                     elif "text" in part:
-                                        if in_think: in_think = False
+                                        if in_think:
+                                            in_think = False
                                         raw_t = part["text"].replace("<think>", "").replace("</think>", "")
-                                        if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t: continue
+                                        if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t:
+                                            continue
                                         self.accumulated_text += raw_t; yield raw_t
                     except std_json.JSONDecodeError:
                         # Trame réseau probablement fragmentée, réintégration dans le tampon d'attente
                         buffered_lines = [full_json_str]
                         continue
                     except Exception as e:
-                        if self.logger: self.logger.log("stream_decode_error", {"error": str(e), "chunk": full_json_str})
+                        if self.logger:
+                            self.logger.log("stream_decode_error", {"error": str(e), "chunk": full_json_str})
                         log.error(f"[StreamProcessor] Erreur de décodage du flux: {e} - Chunk: {full_json_str[:200]}")
-                        if in_think: in_think = False
+                        if in_think:
+                            in_think = False
                         yield f"\n\n> ❌ **Erreur critique de décodage du flux API** : {str(e)}\n"
-        if in_think: in_think = False
-        if self.logger: self.logger.log("api_response", self.full_raw_accumulator)
+        if in_think:
+            in_think = False
+        if self.logger:
+            self.logger.log("api_response", self.full_raw_accumulator)
 
 # ==============================================================================
 # SECTION 8 : LE PIPE
@@ -534,7 +545,8 @@ class Pipe:
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
         events = EchoEvents(__event_emitter__)
-        if not __user__: yield "❌ Identité manquante."; return
+        if not __user__:
+            yield "❌ Identité manquante."; return
         user_valves = __user__.get("valves") or self.UserValves()
         chat_id = kwargs.get("__chat_id__") or body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
@@ -617,12 +629,14 @@ class Pipe:
         # --- [NOUVEAU] DETECTION ET INTERCEPTION DE CLÉ API ---
         api_key_from_filter = body.get("_api_key")
 
-        # Résolution du Registre des Fournisseurs d'Accès (Cache local pour ce tour de pipe)
-        auth_providers = await echo_auth.get_ordered_auth_providers(__user__["id"])
+        # auth = AuthService(user_id=__user__["id"])  # [192.36] DÉSACTIVÉ : AuthService n'existe plus.
+        from echo_auth import AuthService
+        auth = AuthService(user_id=__user__["id"])
+        echo_auth = EchoAuth(user_id=__user__["id"])
 
         if api_key_from_filter:
             await events.status("🔒  Validation de l'authentification Google...")
-            success, msg = False, 'Désactivé'
+            success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
             if success:
                 yield (
                     "✅ **Configuration d'accès ECHO Configurée avec Succès**\n\n"
@@ -632,8 +646,11 @@ class Pipe:
                 )
                 return
             else:
-                yield f"❌ **Échec de validation**\n\n{msg}\n\n" + ''
+                yield f"❌ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
                 return
+
+        # Résolution du Registre des Fournisseurs d'Accès (Cache local pour ce tour de pipe)
+        auth_providers = await echo_auth.get_ordered_auth_providers(__user__["id"])
 
         # --- AUTHENTIFICATION PKCE (Authorization Code + PKCE RFC 7636) ---
         # Tunnel SSH ephemere asyncssh - ports dynamiques - multi-user natif.
@@ -655,21 +672,36 @@ class Pipe:
                     return
 
                 await events.status("\U0001f510 Lancement authentification PKCE...")
-                ok, auth_url, server_ip, ssh_port, cb_port, temp_pwd = False, '', '', '', '', ''
+                ok, auth_url, server_ip, ssh_port, cb_port, temp_pwd = \
+                    await auth.initiate_pkce_flow(request=__request__)
                 if not ok:
-                    yield f"\u274c Impossible de lancer le flow PKCE.\n\n" + ''
+                    yield f"\u274c Impossible de lancer le flow PKCE.\n\n" + auth.get_auth_prompt()
                     return
 
                 # Persister l'URL pour les messages suivants
                 _ea.save_api_key("pkce_auth_url", auth_url)
 
                 # Lancer le serveur callback en background (non bloquant)
-                # PKCE désactivé
+                # Préservation de la référence pour éviter le Garbage Collection de la tâche
+                import asyncio
+                global _BACKGROUND_TASKS
+                if '_BACKGROUND_TASKS' not in globals():
+                    _BACKGROUND_TASKS = set()
+                
+                pkce_task = asyncio.create_task(auth.await_pkce_callback())
+                _BACKGROUND_TASKS.add(pkce_task)
+                pkce_task.add_done_callback(_BACKGROUND_TASKS.discard)
 
-                yield ''
+                yield auth.get_auth_prompt(
+                    auth_url=auth_url,
+                    server_ip=server_ip,
+                    ssh_port=ssh_port,
+                    cb_port=cb_port,
+                    temp_pwd=temp_pwd
+                )
 
             except Exception as e:
-                yield f"\u274c Erreur PKCE : {str(e)}\n\n" + ''
+                yield f"\u274c Erreur PKCE : {str(e)}\n\n" + auth.get_auth_prompt()
             return
 
         # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
@@ -734,7 +766,8 @@ class Pipe:
         is_auto = user_valves.MODEL_SELECTION in ["AUTO", "AUTO_PRO"]
         # Détermination des niveaux autorisés pour le schéma de l'outil (Approach: Clean Prompt)
         niveaux_autorises = ["MODEL_FLASH"]
-        if user_valves.MODEL_SELECTION == "AUTO_PRO": niveaux_autorises.append("MODEL_PRO")
+        if user_valves.MODEL_SELECTION == "AUTO_PRO":
+            niveaux_autorises.append("MODEL_PRO")
         
         max_cascade_attempts = user_valves.MAX_CASCADE_ATTEMPTS
         cascade_attempt = 0
@@ -814,14 +847,16 @@ class Pipe:
                             "required": ["niveau_requis", "plan_de_transfert"]
                         }
                     }
-                    if not tools: tools = [{"function_declarations": []}]
+                    if not tools:
+                        tools = [{"function_declarations": []}]
                     tools[0]["function_declarations"].append(escalation_tool)
 
             if tools:
                 payload["tools"] = tools
                 payload["tool_config"] = {"function_calling_config": {"mode": "AUTO"}}
 
-            if orch.logger: orch.logger.log("google_request", payload, metadata={"cascade_attempt": cascade_attempt, "model": target_model})
+            if orch.logger:
+                orch.logger.log("google_request", payload, metadata={"cascade_attempt": cascade_attempt, "model": target_model})
             proc = StreamProcessor(orch.user_data_manager, chat_id, events, logger=orch.logger)
 
             # Tentative d'appel au moteur Gemini
@@ -844,7 +879,8 @@ class Pipe:
                 # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
                 if is_auto and cascade_attempt < max_cascade_attempts:
                     target_identity = get_model_identity(target_model)
-                    if target_identity == 'UNKNOWN': target_identity = 'MODEL_FLASH'
+                    if target_identity == 'UNKNOWN':
+                        target_identity = 'MODEL_FLASH'
                     target_hierarchy = ECHO_MODELS_REGISTRY.get(target_identity, {}).get("hierarchy")
                     target_hierarchy = target_hierarchy if target_hierarchy is not None else 0
                     cascade_order_keys = sorted(
@@ -947,7 +983,8 @@ class Pipe:
                 if proc.accumulated_calls:
                     for c in proc.accumulated_calls:
                         call_part = {"name": c["name"], "args": c["args"]}
-                        if "id" in c: call_part["id"] = c["id"]
+                        if "id" in c:
+                            call_part["id"] = c["id"]
                         model_parts.append({"functionCall": call_part, "thoughtSignature": sig_to_apply})
 
                 # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
@@ -1000,7 +1037,8 @@ class Pipe:
                 if proc.accumulated_calls:
                     for c in proc.accumulated_calls:
                         call_part = {"name": c["name"], "args": c["args"]}
-                        if "id" in c: call_part["id"] = c["id"]
+                        if "id" in c:
+                            call_part["id"] = c["id"]
                         model_parts.append({"functionCall": call_part, "thoughtSignature": sig_to_apply})
                 
                 if model_parts:
@@ -1071,8 +1109,10 @@ class Pipe:
             for f in files_to_seal:
                 if f.get("status") == "success":
                     content_to_save = None
-                    if f.get("type") == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]: content_to_save = f.get("content")
-                    elif f.get("type") == FILE_INGESTION_STATUS["PUT_IN_CONTEXT"] and f.get("sub_type") == "text": content_to_save = f.get("content")
+                    if f.get("type") == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]:
+                        content_to_save = f.get("content")
+                    elif f.get("type") == FILE_INGESTION_STATUS["PUT_IN_CONTEXT"] and f.get("sub_type") == "text":
+                        content_to_save = f.get("content")
                     # Résolution du resource_type depuis le MIME et le type de traitement
                     mime = f.get('mime', '')
                     if f.get('sub_type') == 'text' or 'text/' in mime or 'json' in mime:
@@ -1162,7 +1202,8 @@ class Pipe:
                     diff_min = int((reset_dt - datetime.now(timezone.utc)).total_seconds() / 60)
                     if diff_min > 0:
                         q_reset = f"{q_reset} ({diff_min}')"
-                except: pass
+                except Exception:
+                    pass
 
             # Champs détaillés du quota modèle (RPD / RPM)
             q_rpd_rem = str(model_quota.get("requestsPerDayRemaining", "N/A"))
