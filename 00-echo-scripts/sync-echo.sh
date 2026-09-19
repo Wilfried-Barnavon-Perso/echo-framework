@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 4.8
+# VERSION : 4.9
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 4.9 : Nettoyage conditionnel (sed) des caractères CRLF/BOM pour préserver le cache BuildKit.
 # ROLE : 
 # 1. SYNCHRONISATION DU CODE SOURCE (GitHub -> Local Source)
 # 2. DÉPLOIEMENT DES FICHIERS (Local Source -> /opt/ECHO/...)
@@ -191,12 +192,17 @@ if [ -f "$SRC_DIR/VERSION" ]; then
 fi
 
 # Nettoyage et Permissions
-echo "   🧹 Nettoyage des caractères Windows et permissions..."
-# Liste des dossiers à nettoyer (tous les dossiers de prod sous ECHO_ROOT)
-PROD_DIRS="$ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/docker-admin-manager $ECHO_ROOT/docker-coding-worker $ECHO_ROOT/docker-browser-worker $ECHO_ROOT/docker-embedding-worker $ECHO_ROOT/docker-echo-auth-manager $ECHO_ROOT/docker-stt-worker $ECHO_ROOT/docker-tts-worker $ECHO_ROOT/docker-download-broker $ECHO_ROOT/docker-mcp-broker $ECHO_ROOT/docker-n8n-worker"
+echo "   🧹 Nettoyage intelligent des caractères Windows (Maintien du Cache Docker)..."
+# Liste des dossiers à nettoyer (tous les dossiers de prod sous ECHO_ROOT + SRC_DIR pour éviter la recopie)
+PROD_DIRS="$SRC_DIR $ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/docker-admin-manager $ECHO_ROOT/docker-coding-worker $ECHO_ROOT/docker-browser-worker $ECHO_ROOT/docker-embedding-worker $ECHO_ROOT/docker-echo-auth-manager $ECHO_ROOT/docker-stt-worker $ECHO_ROOT/docker-tts-worker $ECHO_ROOT/docker-download-broker $ECHO_ROOT/docker-mcp-broker $ECHO_ROOT/docker-n8n-worker"
 
-find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec sed -i '1s/^\xEF\xBB\xBF//' {} +
-find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec sed -i 's/\r$//' {} +
+find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec bash -c '
+for f; do
+    if grep -q $'\''\r'\'' "$f" 2>/dev/null || head -c 3 "$f" | grep -q $'\''\xEF\xBB\xBF'\'' 2>/dev/null; then
+        sed -i '\''1s/^\xEF\xBB\xBF//; s/\r$//'\'' "$f"
+    fi
+done
+' _ {} +
 chmod +x "$ECHO_SCRIPTS"/*.sh
 
 # RELANCE DU SCRIPT SI MIS A JOUR

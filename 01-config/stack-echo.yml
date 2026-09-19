@@ -1,6 +1,10 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.68
+# Version : 9.70
+# --- CHANGELOG 9.70 ---
+# - Docker Compose (BunkerWeb) : Rollback de la syntaxe limit_req off invalide et augmentation du Rate Limiting global (Burst 1000, Rate 300r/s) pour encaisser les reconnexions WebSocket.
+# --- CHANGELOG 9.69 ---
+# - Docker Compose (BunkerWeb) : Bypass du rate limiting (limit_req off) sur les fichiers statiques de l'Open WebUI pour empêcher l'erreur 500 SvelteKit (429) causée par l'épuisement du quota lors des reconnexions WebSocket.
 # --- CHANGELOG 9.68 ---
 # - Docker Compose (BunkerWeb) : Uniformisation des filtres d'erreurs (405, 444) sur l'Admin Manager et assouplissement des seuils globaux de Bad Behavior (50 erreurs, ban 5 min) pour tolérer les reconnexions de la SPA.
 # --- CHANGELOG 9.67 ---
@@ -65,6 +69,7 @@ services:
       - WEBUI_AUTH_TRUSTED_NAME_HEADER=${ECHO_DOMAIN:+X-Webui-Name}
       - JWT_EXPIRES_IN=${ECHO_JWT_EXPIRES_IN:-4w}
       - WEBUI_NAME=ECHO AI
+      - PIP_CACHE_DIR=/app/backend/data/.cache/pip
       # - CSRF_TRUSTED_ORIGINS=https://ui.${ECHO_DOMAIN:-localhost}
       - FORWARDED_ALLOW_IPS=*
       - TZ=Europe/Paris
@@ -183,8 +188,8 @@ services:
 
       # 3. RATE LIMITING (Stratégie SPA Robuste)
       - "bunkerweb.USE_LIMIT_REQ=yes"
-      - "bunkerweb.LIMIT_REQ_RATE=100r/s"
-      - "bunkerweb.LIMIT_REQ_BURST=300"
+      - "bunkerweb.LIMIT_REQ_RATE=300r/s"
+      - "bunkerweb.LIMIT_REQ_BURST=1000"
 
       # 4. SECURITE (Anti-Ban)
       - "bunkerweb.USE_MODSECURITY=no"

@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.29
+# VERSION : 6.30
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 6.30 : Correction du parsing yq/grep pour cibler le service echo-open-webui.
 # CHANGELOG 6.29 : Implémentation du verrou mensuel (throttle) sur le pull des images de base (:latest).
 # CHANGELOG 6.28 : Limitation du parallélisme Docker Compose et Hot Reload (OOM Killer).
 # CHANGELOG 6.27 : Redémarrage parallèle des services Python lors du Hot Reload.
@@ -158,6 +159,7 @@ LAST_PULL_FILE="$ECHO_ROOT/.last_base_pull"
 if [ ! -f "$LAST_PULL_FILE" ] || [ -n "$(find "$LAST_PULL_FILE" -mtime +30 -print -quit 2>/dev/null)" ]; then
     echo "📅 Cycle mensuel (30 jours). Mise à jour forcée des images de base autorisée."
     docker pull alpine:latest >/dev/null 2>&1
+    docker pull n8nio/n8n:latest >/dev/null 2>&1
     PULL_FLAG="--pull"
     touch "$LAST_PULL_FILE"
 else
@@ -229,9 +231,9 @@ fi
 # --- 2.3 Détection Dynamique des Origines CORS ---
 echo "🌍 Calcul des origines CORS locales..."
 if command -v yq >/dev/null 2>&1; then
-    OWUI_PORT=$(yq '.services.open-webui.ports[0]' "$COMPOSE_FILE" | cut -d: -f1)
+    OWUI_PORT=$(yq '.services["echo-open-webui"].ports[0]' "$COMPOSE_FILE" | cut -d: -f1)
 else
-    OWUI_PORT=$(grep -A 10 "open-webui:" "$COMPOSE_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
+    OWUI_PORT=$(grep -A 10 "echo-open-webui:" "$COMPOSE_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
 fi
 
 if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi

@@ -1,10 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : enable-bunkerweb.sh
-# VERSION : 4.0
+# VERSION : 4.1
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Activation de la couche de sécurité BunkerWeb (Secure Edge).
+# CHANGELOG 4.1 : Correction du grep pour le parsing de echo-open-webui.
 # CHANGELOG 4.0 : set -euo pipefail, idempotence (détection BW déjà actif),
 #                 validation format domaine, meilleur feedback post-déploiement.
 # ==============================================================================
@@ -102,7 +103,7 @@ fi
 
 # --- 3. DÉTECTION CORS & IP ---
 echo "🌍 Calcul des origines CORS locales..."
-OWUI_PORT=$(grep -A 10 "open-webui:" "$ECHO_STACK_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
+OWUI_PORT=$(grep -A 10 "echo-open-webui:" "$ECHO_STACK_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
 if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi
 HOST_IPS=$(hostname -I 2>/dev/null || ip addr show | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1)
 ECHO_DETECTED_ORIGINS=""

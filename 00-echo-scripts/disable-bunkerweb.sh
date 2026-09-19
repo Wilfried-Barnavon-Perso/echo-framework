@@ -1,11 +1,12 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : disable-bunkerweb.sh
-# VERSION : 2.0
+# VERSION : 2.1
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Désactivation de la couche de sécurité BunkerWeb (Secure Edge)
 #        et retour au mode d'accès local direct (HTTP).
+# CHANGELOG 2.1 : Correction du grep pour le parsing de echo-open-webui.
 # CHANGELOG 2.0 : set -euo pipefail.
 #                 CORRECTION CRITIQUE : suppression du "docker rm -f $(docker ps -a)"
 #                 global qui détruisait TOUS les conteneurs de la machine.
@@ -69,7 +70,7 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then echo "Annulé."; exit 0; f
 
 # --- 2. DÉTECTION CORS & IP (Maintien de l'accès local) ---
 echo "🌍 Calcul des origines CORS locales..."
-OWUI_PORT=$(grep -A 10 "open-webui:" "$ECHO_STACK_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
+OWUI_PORT=$(grep -A 10 "echo-open-webui:" "$ECHO_STACK_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
 if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi
 HOST_IPS=$(hostname -I 2>/dev/null || ip addr show | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1)
 ECHO_DETECTED_ORIGINS=""

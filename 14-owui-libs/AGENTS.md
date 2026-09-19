@@ -27,6 +27,7 @@ Ce dossier constitue le **Cœur Applicatif (Core Libraries)** du framework. Il c
 ### Authentification Antigravity 2.1
 - **`echo_auth.py`** : IdP (Identity Provider) Autonome. 
   - **Sémantique** : Gère l'authentification Multi-Provider (OAuth2, TOTP, Master Keys). Intègre l'invalidation proactive de la session Open WebUI (`/api/v1/auths/signout`) lors du SSO logout pour éviter les collisions. Il purge intégralement les bases de données (Chat, Identity, MCP, N8N) lors de la suppression d'un utilisateur.
+  - **Fallback API Keys** : Implémente la méthode `validate_and_save_api_key` traitant les clés API Google (AI Studio) comme solution de secours si le flux OAuth2 échoue. Valide le réseau (`/models?key=...`) et sauvegarde en `AUTH_METHOD_KEY_PRIMARY` et `SECONDARY` dans SQLite.
 - **`echo_pkce_server.py`** & **`echo_ssh_tunnel.py`** : Implémentent le flow OAuth2 PKCE strict via un serveur callback éphémère et un tunnel SSH (Ports 8020-8024).
 
 ### Pipelines Spécialisés

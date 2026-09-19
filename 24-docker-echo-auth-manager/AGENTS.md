@@ -15,7 +15,7 @@ Le cœur du gestionnaire d'identités.
 - **Synchronisation avec BunkerWeb** : Le serveur gère la validation des tokens de session et renvoie les headers d'autorisation appropriés à BunkerWeb pour laisser passer le trafic légitime ou bloquer l'accès. Il bascule dorénavant d'une erreur 403 vers une erreur 401 en cas d'expiration pour garantir une déconnexion transparente côté Open WebUI. Intègre également un délai anti-race condition (`asyncio.sleep`) pour fiabiliser le Single Sign-On (SSO).
 
 ### Dossiers `static/` & `templates/`
-- Contiennent les interfaces de connexion front-end (HTML/CSS/JS) présentées à l'utilisateur lors de son authentification, stylisées selon l'esthétique du projet ECHO.
+- Contiennent les interfaces de connexion front-end (HTML/CSS/JS) présentées à l'utilisateur lors de son authentification, stylisées selon l'esthétique du projet ECHO. Le formulaire d'enrôlement (`enroll.html`) a été réagencé ergonomiquement pour exiger la **Question de Sécurité** *avant* la saisie du code TOTP.
 
 ## 3. Dépendances Logiques
 - Ce Worker s'interface intimement avec la librairie `echo_auth.py` (dans `14-owui-libs`) pour appliquer les règles de révocation.
