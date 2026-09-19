@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.20 (JPEG Compression)
+VERSION : 9.21 (JSON orjson fix)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-09-18
+DATE MAJ : 2026-09-19
 
+CHANGELOG 9.21 :
+- FIX: Restauration de l'usage d'orjson (écrasé par json standard) et suppression de l'erreur AttributeError sur le decode('utf-8').
 CHANGELOG 9.20 :
 - FIX: Migration de la capture `/highlight` de PNG vers JPEG (qualité 60) pour éviter le blocage de 1Mo sur Socket.IO.
 CHANGELOG 9.19 :
@@ -91,12 +93,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
 
 import logging.config
-import json
 import os
 
 if os.path.exists('/app/logging.json'):
-    with open('/app/logging.json', 'r') as f:
-        logging.config.dictConfig(json.load(f))
+    with open('/app/logging.json', 'rb') as f:
+        logging.config.dictConfig(json.loads(f.read()))
 else:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("echo-browser")
@@ -933,7 +934,13 @@ async def browser_action(request: Request):
                     await page.bring_to_front()
                     await asyncio.sleep(0.5)
                 
-                    clean_bytes = await page.screenshot(type="jpeg", quality=60)
+                    # ALGORITHME ADAPTATIF : Qualité maximale OCR garantie sans crash Socket.IO (1Mo)
+                    # 720 000 octets bruts = ~960 Ko en Base64.
+                    quality_step = 95
+                    clean_bytes = await page.screenshot(type="jpeg", quality=quality_step)
+                    while len(clean_bytes) > 720000 and quality_step > 40:
+                        quality_step -= 5
+                        clean_bytes = await page.screenshot(type="jpeg", quality=quality_step)
                     clean_b64 = base64.b64encode(clean_bytes).decode('utf-8')
                 
                     all_elements = []
@@ -1025,7 +1032,7 @@ async def browser_action(request: Request):
                             img.style.position = 'absolute';
                             img.style.top = '0';
                             img.style.left = '0';
-                            img.src = 'data:image/png;base64,{clean_b64}';
+                            img.src = 'data:image/jpeg;base64,{clean_b64}';
                             img.onload = () => {{
                                 const canvas = document.createElement('canvas');
                                 canvas.width = window.innerWidth;
@@ -1066,7 +1073,12 @@ async def browser_action(request: Request):
                         if done: break
                         await asyncio.sleep(0.1)
                     
-                    annotated_bytes = await ghost_page.screenshot(type="png")
+                    # Compression adaptative de l'image finale annotée
+                    quality_step = 95
+                    annotated_bytes = await ghost_page.screenshot(type="jpeg", quality=quality_step)
+                    while len(annotated_bytes) > 720000 and quality_step > 40:
+                        quality_step -= 5
+                        annotated_bytes = await ghost_page.screenshot(type="jpeg", quality=quality_step)
                     await ghost_page.close()
                     result["screenshot_b64"] = base64.b64encode(annotated_bytes).decode('utf-8')
                     result["url"] = page.url

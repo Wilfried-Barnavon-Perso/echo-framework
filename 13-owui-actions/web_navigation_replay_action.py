@@ -1,11 +1,12 @@
 """
 title: Revue Navigation Web
 author: Wilfried BARNAVON
-version: 4.15
+version: 4.16
 description: Cockpit vidéo interactif permettant de visionner et d'extraire des captures de la navigation autonome.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiIC8+PHBhdGggZD0iTTcgM3YxOCIgLz48cGF0aCBkPSJNMyA3LjVoNCIgLz48cGF0aCBkPSJNMyAxMmgxOCIgLz48cGF0aCBkPSJNMyAxNi41aDQiIC8+PHBhdGggZD0iTTE3IDN2MTgiIC8+PHBhdGggZD0iTTE3IDcuNWg0IiAvPjxwYXRoIGQ9Ik0xNyAxNi41aDQiIC8+PC9zdmc+
 """
 # Historique des versions :
+# 4.16: Fix - Levée d'une Exception explicite en cas d'absence d'archives pour forcer l'affichage d'un toast d'erreur côté OWUI frontend.
 # 4.15: Optimisation UX - Suppression du statut persistant lors de l'absence d'archives visuelles au profit d'un simple toast transitoire.
 # 4.14: Fix - Adaptation du moteur de rendu asynchrone (updateUI) pour supporter le header data:image/jpeg natif issu de l'optimisation des captures Browser Worker.
 # 4.10: Ajout d'un toast informatif si l'historique visuel est vide.
@@ -402,8 +403,7 @@ class Action:
             return None
 
         if not files:
-            await events.toast("ℹ️ Aucune archive de navigation web trouvée pour ce chat.", "info")
-            return None
+            raise Exception("🤷‍♂️ Aucune archive de navigation web trouvée pour ce chat.")
 
         # 1. Installation de la Console
         shell_code = _generate_replay_shell(files, cid)

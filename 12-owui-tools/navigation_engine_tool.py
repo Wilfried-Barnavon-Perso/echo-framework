@@ -1,11 +1,12 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.25
+version: 11.26
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 11.26: Fix - Ajout du log explicite de l'exception dans _deploy_navigation_monitor pour faciliter le debug de l'écriture SQLite/Disque.
 # 11.25: Fix - Migration intégrale des captures complètes en JPEG pour réduire l'empreinte mémoire et résoudre la saturation WebSocket 1Mo.
 # 11.14: Descente Cognitive - Injection dynamique de action_analyze_page et action_archive_page dans BROWSER_TOOLS_SCHEMA pour rendre le Sous-Agent autonome, et correction d'un bug de payload sur inspect_page.
 # 11.13: Refonte - Remplacement du distillateur web monolithique par une dichotomie stricte (analyze_web_page via Streaming Sémantique natif ECHO et archive_web_page asynchrone).
@@ -82,8 +83,9 @@ async def _deploy_navigation_monitor(res_view: dict, chat_id: str, uid: str, u_v
                 status=FILE_INGESTION_STATUS['INDEXED'], mime='image/jpeg',
                 storage_path=filepath
             )
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.error(f"Echo navigation_engine_tool write error: {e}")
 
     if not getattr(u_valves, 'SHOW_BROWSER_HUD', True) or not events:
         return
