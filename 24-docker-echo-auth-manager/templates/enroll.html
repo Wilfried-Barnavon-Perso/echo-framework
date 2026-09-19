@@ -44,6 +44,22 @@
     <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
 
     <div class="form-group">
+        <label for="security_question">Question de sécurité (Récupération)</label>
+        <select id="security_question" name="security_question" required style="width: 100%; padding: 0.75rem 1rem; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); font-size: 0.9rem; margin-bottom: 1rem;">
+            <option value="" disabled selected>-- Choisissez une question --</option>
+            <option value="Quel est le nom de votre premier animal de compagnie ?">Quel est le nom de votre premier animal de compagnie ?</option>
+            <option value="Dans quelle ville êtes-vous né(e) ?">Dans quelle ville êtes-vous né(e) ?</option>
+            <option value="Quel est le nom de jeune fille de votre mère ?">Quel est le nom de jeune fille de votre mère ?</option>
+            <option value="Quel était le modèle de votre première voiture ?">Quel était le modèle de votre première voiture ?</option>
+        </select>
+        
+        <label for="security_answer">Réponse secrète</label>
+        <input type="text" id="security_answer" name="security_answer" required placeholder="Votre réponse...">
+    </div>
+
+    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
+
+    <div class="form-group">
         <label>1. Scannez ce QR Code avec Google Authenticator ou Authy</label>
         <div class="qr-container">
             <img src="{{ qr_code_b64 }}" alt="QR Code MFA">
@@ -56,22 +72,6 @@
     <div class="form-group">
         <label for="totp_code">2. Saisissez le code généré pour valider</label>
         <input type="text" id="totp_code" name="totp_code" required inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="off">
-    </div>
-
-    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
-
-    <div class="form-group">
-        <label for="security_question">Question de sécurité (Récupération)</label>
-        <select id="security_question" name="security_question" required style="width: 100%; padding: 0.75rem 1rem; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); font-size: 0.9rem; margin-bottom: 1rem;">
-            <option value="" disabled selected>-- Choisissez une question --</option>
-            <option value="Quel est le nom de votre premier animal de compagnie ?">Quel est le nom de votre premier animal de compagnie ?</option>
-            <option value="Dans quelle ville êtes-vous né(e) ?">Dans quelle ville êtes-vous né(e) ?</option>
-            <option value="Quel est le nom de jeune fille de votre mère ?">Quel est le nom de jeune fille de votre mère ?</option>
-            <option value="Quel était le modèle de votre première voiture ?">Quel était le modèle de votre première voiture ?</option>
-        </select>
-        
-        <label for="security_answer">Réponse secrète</label>
-        <input type="text" id="security_answer" name="security_answer" required placeholder="Votre réponse...">
     </div>
     
     <button type="submit" class="btn" style="transition: opacity 0.3s;" id="submit_btn">Valider mon enrôlement</button>
