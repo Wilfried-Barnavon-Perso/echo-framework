@@ -47,8 +47,8 @@ $GATEWAY_IP = "192.168.147.254"
 $DNS_SERVERS = "[86.54.11.100, 1.1.1.1, 8.8.8.8]"
 
 # --- CONFIGURATION BRANCHE ---
-#$BRANCHE = "dev"
-$BRANCHE = "main"
+$BRANCHE = "dev"
+#$BRANCHE = "main"
 
 function Pause-OnError {
   param([string]$Message)
