@@ -1,6 +1,8 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.64
+# Version : 9.65
+# --- CHANGELOG 9.65 ---
+# - Docker Compose : Ajout des volumes externes (Hot-Reload) pour STT Worker et N8N Worker.
 # --- CHANGELOG 9.64 ---
 # - Docker Compose : Limitation du parallélisme à 2 (CMAKE_BUILD_PARALLEL_LEVEL=2) pour empêcher le déclenchement du OOM Killer sur la VM lors des upgrades.
 # --- CHANGELOG 9.63 ---
@@ -415,6 +417,8 @@ services:
       # Désactivation de la sécurité environnementale bloquant l'accès au Vault d'identité ECHO
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
+      - /opt/ECHO/docker-n8n-worker/n8n_api.py:/app/n8n_api.py:ro
+      - /opt/ECHO/docker-n8n-worker/start.sh:/app/start.sh:ro
       - echo-browser-data:/app/browser-data:rw
       - echo-n8n-data:/home/node/.n8n:rw
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
@@ -442,6 +446,7 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
     volumes:
+      - /opt/ECHO/docker-stt-worker/stt_api.py:/app/stt_api.py:ro
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:7995/health\")' 2>/dev/null || exit 1"]

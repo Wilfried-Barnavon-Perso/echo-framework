@@ -15,6 +15,7 @@ Le cœur du service de transcription (actuellement en v1.3).
 
 ### `Dockerfile`
 - Construit une image Docker optimisée pour l'inférence audio. Ce conteneur nécessite l'installation des dépendances systèmes comme `ffmpeg` (pour la conversion des codecs audio à la volée) et des bibliothèques Python de Deep Learning.
+- **Volume Externe (Hot-Reload)** : Le fichier principal `stt_api.py` est désormais monté en Read-Only (ro) depuis le volume hôte via `stack-echo.yml`, permettant l'itération instantanée sur le code (Hot-Reload) sans avoir à re-builder l'image lourde de ML.
 
 ## 3. Dépendances Logiques
 - Interagit directement avec le client Web (Open WebUI) qui envoie les requêtes de transcription.

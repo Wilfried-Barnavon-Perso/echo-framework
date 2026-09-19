@@ -95,15 +95,23 @@
     <h3>Phase 4 - Orchestration Docker (<code>install-stack.sh</code>)</h3>
     <p>
       Ce script orchestre le démarrage séquentiel de la pile applicative via le fichier de configuration
-      centralisé <code>stack-echo.yml</code> (v9.3+). Le démarrage est ordonné par hostnames stricts (<code>echo-*</code>) via <code>healthcheck</code> et la condition <code>service_healthy</code>. 
+      centralisé <code>stack-echo.yml</code> (v9.65). Le démarrage est ordonné par hostnames stricts (<code>echo-*</code>) via <code>healthcheck</code> et la condition <code>service_healthy</code>. 
       L'orchestration intègre une limitation stricte du parallélisme de compilation (<code>CMAKE_BUILD_PARALLEL_LEVEL=2</code>) pour prévenir les OOM Killers lors des déploiements massifs :
     </p>
     <ul>
       <li><strong>Tier 1 (Fondations)</strong> : Qdrant, SearXNG, Watchtower.</li>
-      <li><strong>Tier 2 (Workers)</strong> : Embedding, Coding Worker, Browser Worker, MCP Broker, N8N Worker, STT Worker, TTS Worker.</li>
+      <li><strong>Tier 2 (Workers)</strong> : Embedding, Coding Worker, Browser Worker, MCP Broker, N8N Worker (Volumes Hot-Reload), STT Worker (Volume Hot-Reload), TTS Worker.</li>
       <li><strong>Tier 3</strong> : Open WebUI.</li>
       <li><strong>Tier 4</strong> : Admin Manager.</li>
     </ul>
+    
+    <div class="note-box">
+      <h4>⚡ Hot-Reload (Volumes Read-Only)</h4>
+      <p>
+        Pour les workers N8N et STT, les fichiers critiques (<code>n8n_api.py</code>, <code>start.sh</code>, <code>stt_api.py</code>) sont montés dynamiquement en Read-Only (ro) depuis le volume hôte. Ce mécanisme permet l'itération instantanée sur le code (Hot-Reload) sans avoir à re-builder les lourdes images de conteneurs ML ou Node.
+      </p>
+    </div>
+
     <p>
       Il sécurise également l'hôte en appliquant une politique Autosafety de rotation des logs Docker (max-size 50m).
       Il centralise les secrets et variables dans <code>/opt/ECHO/.env</code> (incluant la génération automatique de <code>ECHO_SSO_SECRET</code>), calcule dynamiquement 
@@ -256,7 +264,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.209.35 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.209.40 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

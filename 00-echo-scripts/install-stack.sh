@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.28
+# VERSION : 6.29
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 6.29 : Implémentation du verrou mensuel (throttle) sur le pull des images de base (:latest).
 # CHANGELOG 6.28 : Limitation du parallélisme Docker Compose et Hot Reload (OOM Killer).
 # CHANGELOG 6.27 : Redémarrage parallèle des services Python lors du Hot Reload.
 # CHANGELOG 6.26 : Centralisation du cron de nettoyage Docker et ajustement des logs à 10 Mo.
@@ -150,8 +151,18 @@ if [ ! -f "$COMPOSE_FILE" ]; then
     exit 1
 fi
 
-echo "📦 Vérification de l'image utilitaire (alpine)..."
-docker pull alpine:latest >/dev/null 2>&1 || echo "⚠️  Impossible de télécharger alpine:latest (déjà présent ?)"
+echo "📦 Vérification du cycle de mise à jour des images de base (:latest)..."
+PULL_FLAG=""
+LAST_PULL_FILE="$ECHO_ROOT/.last_base_pull"
+
+if [ ! -f "$LAST_PULL_FILE" ] || [ -n "$(find "$LAST_PULL_FILE" -mtime +30 -print -quit 2>/dev/null)" ]; then
+    echo "📅 Cycle mensuel (30 jours). Mise à jour forcée des images de base autorisée."
+    docker pull alpine:latest >/dev/null 2>&1
+    PULL_FLAG="--pull"
+    touch "$LAST_PULL_FILE"
+else
+    echo "⏳ Images de base verrouillées (Mise à jour mensuelle non atteinte)."
+fi
 
 # --- 2. PROVISIONING RESSOURCES (AUTOMATIQUE) ---
 echo "🏗️  Analyse du fichier Docker Compose pour les ressources externes..."
@@ -256,10 +267,12 @@ export COMPOSE_PARALLEL_LIMIT=2
 
 if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -qE "^ECHO_DOMAIN=.+" "$ENV_FILE"; then
     echo "🔒 Mode SECURE EDGE détecté. Lancement de l'infrastructure complète (ECHO + BunkerWeb)..."
-    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans
+    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$COMPOSE_FILE" build $PULL_FLAG
+    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
 else
     echo "🔓 Mode STANDARD (Local) détecté."
-    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans
+    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build $PULL_FLAG
+    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
 fi
 
 if [ $? -eq 0 ]; then

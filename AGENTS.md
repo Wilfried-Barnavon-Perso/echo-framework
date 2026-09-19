@@ -81,7 +81,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement au format XML nat
 - **ECHO Auth (SSO & MFA) :** IdP autonome gérant l'authentification forte (TOTP) couplé à BunkerWeb. Prise en charge des comptes locaux et OAuth2. Intègre désormais l'invalidation proactive de la session interne d'Open WebUI lors de la déconnexion globale du SSO pour éviter les collisions. La suppression d'une identité entraîne la **purge atomique totale** sur toutes les bases SQLite associées (chat, identity, MCP, N8N).
 - **Dashboard Actif :** Interface interactive de monitoring du cluster Docker (Révocations granulaires, Kill-Switch, stats). Intègre désormais le monitoring de l'élagage vectoriel asynchrone (Background Task) via long-polling API (`/api/task_status`).
 - **Sécurité Périmétrique :** BunkerWeb (WAF) protégeant le WebSocket WebGPU et l'API IdP. Refonte des règles de reverse proxy pour l'API REST (séparation stricte des codes d'erreurs applicatifs `400, 401, 404` laissés passants de manière transparente vers le LLM vs les erreurs de couche WAF `403, 429, 500, 502` interceptées et formatées en JSON natif).
-- **Régulation & Consolidation :** Optimisation SQLite (Vacuum/WAL) et sauvegardes à chaud. Introduction du script automatisé `clean-echo.sh`. Le script d'installation centralise désormais l'**Autosafety Docker** : politique de logs stricte (max 10 Mo) et cron de nettoyage. Le dashboard `server.py` permet d'invoquer manuellement une purge profonde (Cache APT, build cache, images orphelines) pour éradiquer tout risque de saturation disque.
+- **Régulation & Consolidation :** Optimisation SQLite (Vacuum/WAL) et sauvegardes à chaud. Introduction du script automatisé `clean-echo.sh`. Le script d'installation centralise désormais l'**Autosafety Docker** : politique de logs stricte (max 10 Mo) et cron de nettoyage. Il implémente aussi un verrou mensuel (throttle de 30 jours, `.last_base_pull`) sur le pull de l'image `alpine:latest` pour préserver la bande passante. Le dashboard `server.py` permet d'invoquer manuellement une purge profonde (Cache APT, build cache, images orphelines) pour éradiquer tout risque de saturation disque.
 - **Purge Vectorielle & SQLite (Asynchrone) :** Élagage temporel (TTL) automatisé des orphelins dans Qdrant et SQLite. L'élagage se fait dorénavant via un thread dédié en arrière-plan (`run_semantic_pruning`) pour ne jamais bloquer l'interface d'administration.
 - **Configuration OWUI :** Script de post-déploiement automatisé des modèles et permissions.
 
@@ -112,7 +112,7 @@ L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N
 
 L'infrastructure est désormais pilotée via la configuration standardisée `stack-echo.yml`. Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depends_on: condition: service_healthy`. Elle intègre une limitation stricte du parallélisme de compilation (`CMAKE_BUILD_PARALLEL_LEVEL=2`) pour prévenir les OOM Killers lors des déploiements massifs :
 - **Tier 1 (Fondations)** : Qdrant, SearXNG, Watchtower.
-- **Tier 2 (Workers)** : Embedding, Coding Worker, Browser Worker, MCP Broker, N8N Worker, **STT Worker**, **TTS Worker**.
+- **Tier 2 (Workers)** : Embedding, Coding Worker, Browser Worker, MCP Broker, N8N Worker (Volumes Hot-Reload), **STT Worker** (Volume Hot-Reload), **TTS Worker**.
 - **Tier 3** : Open WebUI.
 - **Tier 4** : Admin Manager.
 
@@ -142,4 +142,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.209.35*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.209.40*

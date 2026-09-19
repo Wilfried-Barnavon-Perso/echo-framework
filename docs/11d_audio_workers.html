@@ -65,11 +65,21 @@
       <li><strong>Anglais (en) :</strong> <code>af_bella</code></li>
     </ul>
 
-    <h2>Architecture du Worker Whisper STT</h2>
+    <h2>Architecture du Worker Whisper STT & Hot-Reload</h2>
 
     <p>
       Le service de reconnaissance vocale utilise l'implémentation <code>faster-whisper</code>, offrant une transcription locale à faible latence sans dépendance cloud. Le service traite les flux audio entrants via l'endpoint compatible OpenAI, extrait le texte et le retourne immédiatement à l'interface pour injection dans le prompt utilisateur.
     </p>
+
+    <div class="note-box">
+      <h4>⚡ Volume Externe (Hot-Reload)</h4>
+      <p>
+        Le fichier principal <code>stt_api.py</code> est désormais monté en Read-Only (ro) depuis le volume hôte via <code>stack-echo.yml</code>, permettant l'itération instantanée sur le code (Hot-Reload) sans avoir à re-builder l'image lourde de Machine Learning.
+      </p>
+    </div>
+
+    <h2>Sécurité et Rate-Limiting</h2>
+    <p>Conformément à l'architecture ECHO, tous les workers locaux (STT, TTS, Embedding, Browser, Python) implémentent un <strong>System-wide Health Check Rate-Limiting</strong>. Ce mécanisme protège les instances contre la saturation CPU/RAM provoquée par des sondes Docker (healthchecks) trop agressives ou des requêtes aberrantes.</p>
 
     <div class="transition-text">
       <a href="11c_bunkerweb_waf.html">&larr; Bouclier BunkerWeb WAF</a>
@@ -78,10 +88,8 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.209.35 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.209.40 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
-      <h2>Sécurité et Rate-Limiting</h2>
-    <p>Conformément à l'architecture ECHO, tous les workers locaux (STT, TTS, Embedding, Browser, Python) implémentent un <strong>System-wide Health Check Rate-Limiting</strong>. Ce mécanisme protège les instances contre la saturation CPU/RAM provoquée par des sondes Docker (healthchecks) trop agressives ou des requêtes aberrantes.</p>
 </main>
 
   <script src="nav.js"></script>

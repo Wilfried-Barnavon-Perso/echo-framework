@@ -23,6 +23,7 @@ Le manifeste des règles de conception N8N imposées à l'agent.
 ### `Dockerfile` & `start.sh`
 - **Build Hybride** : Le `Dockerfile` part de l'image officielle n8n (Node.js) mais installe un environnement Python 3 en parallèle.
 - **`start.sh`** : Script d'amorçage asynchrone lançant le processus principal n8n en tâche de fond et l'API Python (`n8n_api.py`) au premier plan.
+- **Volumes Externes (Hot-Reload)** : Les fichiers critiques `n8n_api.py` et `start.sh` sont désormais montés en Read-Only (ro) depuis le volume hôte via `stack-echo.yml`. Cela active le mécanisme de Hot-Reload et accélère considérablement le développement en s'affranchissant de la recompilation du conteneur.
 
 ## 3. Dépendances Logiques
 - Persistance locale : Ce Worker utilise la base de données **SQLite native** de n8n, montée via le volume Docker `echo-n8n-data`. Il n'utilise *jamais* Postgres.

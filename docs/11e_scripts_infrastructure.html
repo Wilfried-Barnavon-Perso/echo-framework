@@ -84,7 +84,7 @@
       Il s'agit de l'ordonnanceur principal de la grappe Docker. Ses responsabilités incluent :
     </p>
     <ul>
-      <li><strong>Autosafety Docker :</strong> Configuration idempotente (via <code>jq</code>) de la politique de rotation des logs globaux (<code>max-size: 50m</code>, <code>max-file: 3</code>) dans <code>/etc/docker/daemon.json</code> pour garantir la stabilité de l'hôte.</li>
+      <li><strong>Autosafety Docker & Throttle Lock :</strong> Configuration idempotente (via <code>jq</code>) de la politique de rotation des logs globaux (<code>max-size: 10m</code>, <code>max-file: 3</code>) dans <code>/etc/docker/daemon.json</code>. Le script implémente également un <strong>Verrou Mensuel (Throttle Lock)</strong> sur le pull de l'image de base <code>alpine:latest</code> (via le traceur <code>.last_base_pull</code> de 30 jours) pour préserver la bande passante et accélérer l'orchestration.</li>
       <li><strong>Génération du contexte :</strong> Calcul dynamique des <code>ECHO_DETECTED_ORIGINS</code> (CORS) à partir des interfaces réseau actives (Wi-Fi, Ethernet, Tailscale).</li>
       <li><strong>Injection des secrets :</strong> Génération automatique (si absents) de <code>BW_DB_PASSWORD</code>, <code>SEARXNG_SECRET</code>, et <code>ECHO_SSO_SECRET</code>, et consolidation dans le fichier <code>/opt/ECHO/.env</code> de production.</li>
       <li><strong>Lancement de la pile :</strong> Exécution conditionnelle avec <code>bunkerweb-stack.yml</code> (si mode SECURE EDGE actif) ou <code>stack-echo.yml</code> standard.</li>
@@ -107,7 +107,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.209.35 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.209.40 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

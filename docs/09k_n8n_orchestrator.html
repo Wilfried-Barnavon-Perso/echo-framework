@@ -35,15 +35,20 @@
       <li><strong>Identité & Secrets :</strong> L'usage en dur de tokens d'API ou Headers sensibles (Cookie, Authorization) dans les nœuds est strictement proscrit. L'outil exige l'usage de la macro <code>__ECHO_SECRET_...</code> qui est résolue via l'Identity Vault.</li>
     </ul>
 
-    <footer>
-      ECHO v5 Documentation - Version <span class="version-badge">5.203.1</span>
-    </footer>
-  
-    <h3>Orchestration Headless</h3>
+    <h3>Orchestration Headless & Hot-Reload</h3>
     <p>
       L'orchestrateur N8N agit en mode démon pour des webhooks et des crons permanents. Cependant, lors des tests en sandbox via le CLI, tout workflow éphémère <strong>doit impérativement</strong> démarrer par un nœud <code>Execute Workflow Trigger</code>. Le système distingue radicalement les déploiements de production (permanents) de l'exploration interactive (sandbox).
     </p>
+    <div class="note-box">
+      <h4>⚡ Volumes Externes (Hot-Reload)</h4>
+      <p>
+        Les fichiers critiques de l'API N8N Worker (<code>n8n_api.py</code> et <code>start.sh</code>) sont désormais montés en Read-Only (ro) depuis le volume hôte via <code>stack-echo.yml</code>. Cela active le mécanisme de Hot-Reload et accélère considérablement le développement en s'affranchissant de la recompilation du conteneur.
+      </p>
+    </div>
 
+    <footer>
+      ECHO Framework - Version 5.209.40 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
 </main>
 
   <script src="nav.js"></script>
