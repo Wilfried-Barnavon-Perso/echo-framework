@@ -32,6 +32,7 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 #### D. Classe `Pipe` (Point d'Entrée OWUI)
 **Rôle** : Interface de connexion conforme à la signature Open WebUI. Initialise les Valves (paramètres réglables par l'Admin) et lance le pipeline via `pipe()`.
 
-## 3. Dépendances Logiques
+## 3. Dépendances Logiques & Infrastructure
 - Ce composant dépend intimement des nouvelles librairies modulaires de `14-owui-libs` (`echo_constants.py` pour le Registre Cognitif et `echo_state_manager.py` pour le requêtage de base de données).
 - Il s'exécute de manière asynchrone dans le Tier 3 (Open WebUI).
+- **Mise en cache PIP** : L'environnement d'exécution (Open WebUI) dispose désormais d'un cache local persistant (`PIP_CACHE_DIR=/app/backend/data/.cache/pip`) via le volume de données. Cela accélère considérablement l'installation à froid des dépendances Python requises par les modules Pipes.
