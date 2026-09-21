@@ -1,15 +1,16 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.62
+version: 192.63
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.63: Correction SUTURE algorithme thoughtSignature (indexing) et fix de scope asst_msg_id.
 # 192.62: Intégration de resource_type='aec_directive' pour les rappels cognitifs et l'auto-continue MAX_TOKENS.
 # 192.61: Correction GC asynchrone sur la tâche PKCE (Connection refused) et alignement strict PEP8 (E722/E701).
-# 192.60: Restauration de l'usage d'AuthService pour le support PKCE et API keys.
+# 192.60: Restructuration _cascade_cognitive (Suture Bit-Perfect) et intégration de save_cognitive.
 # 192.59: Application de `_mutate_context_identity` et protection du parsing JSON des tool_calls (fallback dict vide).
 # 192.58: Modification du préfixe de notification UI (toast) pour les rappels cognitifs (⚡ Alignement du Modèle).
 # 192.57: Remplacement des blocs XML de troncature MAX_TOKENS par le format natif <artifact id="AEC_evenement_systeme">.systeme">.
@@ -781,6 +782,7 @@ class Pipe:
         cascade_history = [] 
         current_cumul = body.get("_echo_last_cumul")
         user_msg_id = (__metadata__ or {}).get("_echo_user_msg_id")
+        asst_msg_id = kwargs.get("__message_id__")
 
         while cascade_attempt < max_cascade_attempts:
             cascade_attempt += 1
@@ -975,10 +977,10 @@ class Pipe:
                 tool_io = {"calls": [{"id": c.get("id"), "name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
                 model_parts = []
                 if proc.accumulated_text:
-                    model_parts.append({"text": proc.accumulated_text, "thoughtSignature": sig_to_apply})
+                    model_parts.append({"text": proc.accumulated_text})
 
                 sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
-                model_parts.append({"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}, "thoughtSignature": sig_to_apply})
+                model_parts.append({"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}})
 
                 # Récupération des appels parallèles orphelins
                 if proc.accumulated_calls:
@@ -986,14 +988,17 @@ class Pipe:
                         call_part = {"name": c["name"], "args": c["args"]}
                         if "id" in c:
                             call_part["id"] = c["id"]
-                        model_parts.append({"functionCall": call_part, "thoughtSignature": sig_to_apply})
+                        model_parts.append({"functionCall": call_part})
+
+                if model_parts:
+                    model_parts[0]["thoughtSignature"] = sig_to_apply
 
                 # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
                 model_msg = {"role": "model", "parts": model_parts}
                 inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
                 new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
                 orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, user_msg_id)
-                orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, user_msg_id, target_model)
+                orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, asst_msg_id, target_model)
                 cascade_history.append(model_msg)
                 current_cumul = new_cumul
 
@@ -1034,20 +1039,21 @@ class Pipe:
                 tool_io = {"calls": [{"id": c.get("id"), "name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
                 model_parts = []
                 if proc.accumulated_text:
-                    model_parts.append({"text": proc.accumulated_text, "thoughtSignature": sig_to_apply})
+                    model_parts.append({"text": proc.accumulated_text})
                 if proc.accumulated_calls:
                     for c in proc.accumulated_calls:
                         call_part = {"name": c["name"], "args": c["args"]}
                         if "id" in c:
                             call_part["id"] = c["id"]
-                        model_parts.append({"functionCall": call_part, "thoughtSignature": sig_to_apply})
+                        model_parts.append({"functionCall": call_part})
                 
                 if model_parts:
+                    model_parts[0]["thoughtSignature"] = sig_to_apply
                     model_msg = {"role": "model", "parts": model_parts}
                     inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
                     new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
                     orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, user_msg_id)
-                    orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, user_msg_id, target_model)
+                    orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, asst_msg_id, target_model)
                     cascade_history.append(model_msg)
                     current_cumul = new_cumul
 
@@ -1140,8 +1146,6 @@ class Pipe:
             # ACTION : Sauvegarder l'historique complet dans le Shadow du message assistant si on a un ID.
             # En l'absence d'ID (courant pour la réponse en cours), la suture indexée via current_cumul suffit.
             # Si on a un ID dans kwargs (ex: retry), on scelle.
-            asst_msg_id = kwargs.get("__message_id__")
-            
             if asst_msg_id and cascade_history:
                 final_shadow_content = proc._filter_cascade_for_shadow(cascade_history)
                 if final_shadow_content:
