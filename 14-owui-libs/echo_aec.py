@@ -2,11 +2,12 @@
 """
 title: ECHO AEC Manager
 author: Wilfried BARNAVON
-version: 2.1
+version: 2.2
 description: Composant système interne : ECHO AEC Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.2: Rendu spécifique de <artifact id="AEC_directive"> pour les types aec_directive.
 # 2.1: Refonte totale de render_system_events pour supporter le XML natif et migration globale vers <artifact>.
 # 2.0: Suppression de _dict_to_yaml_aec au profit d'un templating XML natif (5 AEC distincts) et implémentation d'un tri chronologique FIFO pour la queue d'évènements.
 
@@ -52,7 +53,10 @@ class EchoAEC:
                         output += f"Nouveau fichier asynchrone ingéré : {evt.get('name', '')}. Le contexte est disponible.\n"
                         output += f'</artifact>\n'
                 elif msg: # RAPPEL COGNITIF OU ERREUR
-                    output += f'<artifact id="AEC_evenement_systeme" source="{evt.get("source", "Système")}">\n{msg}\n</artifact>\n'
+                    if evt.get('resource_type') == 'aec_directive':
+                        output += f'<artifact id="AEC_directive" source="{evt.get("source", "Système")}">\n{msg}\n</artifact>\n'
+                    else:
+                        output += f'<artifact id="AEC_evenement_systeme" source="{evt.get("source", "Système")}">\n{msg}\n</artifact>\n'
                 else: # FICHIERS SYNCHRONES UPLOADÉS
                     texte = f"Nouveau fichier attaché : {evt.get('name', '')} (MIME: {evt.get('mime', '')})"
                     if evt.get('source_id'):

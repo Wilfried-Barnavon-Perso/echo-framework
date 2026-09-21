@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 1.5
+version: 1.6
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.6: Assignation de resource_type='aec_directive' pour les avertissements outils et purge FIFO étendue.
 # 1.5: Implémentation du FIFO destructif pour purger les aec_event de la base SQLite sans altérer les autres ressources.
 # 1.4: Protection de la QFIFO dans wrap_tool_output contre les sous-agents (is_subagent).
 import re
@@ -193,7 +194,8 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                     state_manager=state_manager, 
                     event_name=reminder["id"], 
                     status="avertissement", 
-                    summary=reminder["message"]
+                    summary=reminder["message"],
+                    resource_type="aec_directive"
                 )
 
         last_check = metadata.get("_echo_last_event_check_at")
@@ -215,8 +217,9 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                         "name": r.get("name", "unnamed"),
                         "mime": r.get("mime"),
                         "date": datetime.fromtimestamp(r.get("created_at", time.time()), tz=user_tz).strftime("%Y-%m-%d %H:%M:%S"),
-                        "source": "Système" if r.get("resource_type") == "aec_event" else "outil/HUD",
-                        "message": r.get("summary")
+                        "source": "Système" if r.get("resource_type") in ("aec_event", "aec_directive") else "outil/HUD",
+                        "message": r.get("summary"),
+                        "resource_type": r.get("resource_type")
                     } for r in delta]
                     
                     # Nettoyage des clés avec des valeurs None
@@ -231,7 +234,7 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                     # FIFO destructif : Purge EXCLUSIVE des événements purement système (AEC).
                     # Les fichiers (codex, uploads) remontés dans ce delta sont conservés.
                     for r in delta:
-                        if r.get("resource_type") == "aec_event":
+                        if r.get("resource_type") in ("aec_event", "aec_directive"):
                             try:
                                 state_manager.delete_resource(r.get("id"))
                             except Exception as e:

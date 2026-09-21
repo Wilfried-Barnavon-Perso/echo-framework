@@ -1,12 +1,13 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.61
+version: 192.62
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.62: Intégration de resource_type='aec_directive' pour les rappels cognitifs et l'auto-continue MAX_TOKENS.
 # 192.61: Correction GC asynchrone sur la tâche PKCE (Connection refused) et alignement strict PEP8 (E722/E701).
 # 192.60: Restauration de l'usage d'AuthService pour le support PKCE et API keys.
 # 192.59: Application de `_mutate_context_identity` et protection du parsing JSON des tool_calls (fallback dict vide).
@@ -211,7 +212,7 @@ class Orchestrator:
                                 event_name=reminder["id"],
                                 status="active",
                                 summary=reminder["message"],
-                                resource_type="aec_event"
+                                resource_type="aec_directive"
                             )
                             sys_events_to_inject.append({
                                 "id": event_id,
@@ -1060,7 +1061,7 @@ class Pipe:
                         await events.status("⚠️ Appel d'outil tronqué (MAX_TOKENS). Reprise et correction...")
                         await events.toast("Appel d'outil trop volumineux : Reprise automatique de la génération.", "warning")
                         texte_outil = "Erreur : L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte). Le modèle doit relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation."
-                        xml_outil = f'<artifact id="AEC_evenement_systeme" source="Système">\\n{texte_outil}\\n</artifact>'
+                        xml_outil = f'<artifact id="AEC_directive" source="Système">\\n{texte_outil}\\n</artifact>'
                         user_resp_parts = [{"text": xml_outil}]
                     else:
                         # Cas 2 : L'interruption a eu lieu sur du texte brut.
@@ -1068,7 +1069,7 @@ class Pipe:
                         await events.status("🔄 Reprise automatique de la génération (MAX_TOKENS)...")
                         await events.toast("Limite de contexte (MAX_TOKENS) atteinte : Reprise automatique.", "info")
                         texte_gene = "Erreur : La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte. Le modèle doit poursuivre la génération du texte à partir du point de troncature exact, sans introduction."
-                        xml_gene = f'<artifact id="AEC_evenement_systeme" source="Système">\\n{texte_gene}\\n</artifact>'
+                        xml_gene = f'<artifact id="AEC_directive" source="Système">\\n{texte_gene}\\n</artifact>'
                         user_resp_parts = [{"text": xml_gene}]
                         
                     # Suture sémantique de l'événement système pour maintenir l'invariant cognitif bit-perfect
