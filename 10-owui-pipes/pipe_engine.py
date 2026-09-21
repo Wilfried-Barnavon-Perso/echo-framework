@@ -356,7 +356,7 @@ class Orchestrator:
             max_tokens = getattr(self.valves, "MAX_CONTEXT_SIZE", ECHO_MAX_CONTEXT_SIZE)
             
             if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
-                await events.toast("⚠️ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "warning", "ECHO V5")
+                await events.toast("⚠️ Approche de la limite contextuelle. Migration recommandée (Action 'Résume et Transfert vers un nouveau chat').", "warning", "ECHO V5")
             
             if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                 system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None

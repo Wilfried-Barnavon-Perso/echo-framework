@@ -653,7 +653,7 @@ MIME_MAPPING_BIN = {
 # ==============================================================================
 CHARS_PER_TOKEN = 4
 ECHO_MAX_CONTEXT_SIZE = 1000000  # Limite technique 1M (on peut cibler plus bas si Gemini Flash/Pro a des limites strictes pour ECHO)
-CONTEXT_WARNING_THRESHOLD = 0.80  # 80% : Toast d'alerte jaune (Resume in New Chat conseillé)
+CONTEXT_WARNING_THRESHOLD = 0.80  # 80% : Toast d'alerte jaune (Résume et Transfert vers un nouveau chat conseillé)
 CONTEXT_TRUNCATE_THRESHOLD = 0.90 # 90% : Troncature silencieuse
 
 # Seuils de saturation pour l'outil context_gauge (déclencheurs d'escalade)

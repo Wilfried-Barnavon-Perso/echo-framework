@@ -1,11 +1,13 @@
 """
-title: Resume in New Chat
+title: Résume et Transfert vers un nouveau chat
 author: ECHO Framework
-version: 1.10
+version: 1.11
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMSAxNnYuNWExLjUgMS41IDAgMCAxLTEuNSAxLjVoLTZMMTIgMjBsLTIuNS0yLjVoLTZBMS41IDEuNSAwIDAgMSAyIDE2LjVWNGExLjUgMS41IDAgMCAxIDEuNS0xLjVoMTVBMS41IDEuNSAwIDAgMSAyMCA0djciLz48cGF0aCBkPSJtMTggMjIgMy0zLTMtMyIvPjxwb2x5bGluZSBwb2ludHM9IjIxIDE5IDEzIDE5Ii8+PC9zdmc+
 """
 # Historique des versions :
+# 1.11: Renommage de l'action et augmentation de l'historique de distillation à 80 messages.
+# 1.10: Version précédente.
 # 1.9: Correction extraction des messages (compatibilité OWUI v0.3+), nettoyage de la clé redondante, cohérence ID HUD.
 # 1.8: Remplacement des regex de purge par une regex globale sur <artifact> pour le nettoyage OWUI.
 # 1.5: Ajout d'une demande de confirmation explicite avant le déclenchement de la migration.
@@ -131,7 +133,7 @@ class Action:
         
         # Conversion du format messages (OpenAI) en texte lisible pour la distillation
         messages_text = ""
-        for m in messages[-20:]: # On limite aux 20 derniers messages pour ne pas surcharger la distillation
+        for m in messages[-80:]: # Augmentation à 80 derniers messages pour une distillation exhaustive
             role = m.get("role", "user")
             content = m.get("content", "")
             

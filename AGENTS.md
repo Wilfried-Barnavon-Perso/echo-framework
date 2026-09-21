@@ -94,7 +94,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement au format XML nat
 - **Agent Monitor :** HUD offrant une vue arborescente des agents (y compris navigateur web Playwright) en temps réel.
 - **Réinitialisation Auth :** Purge des tokens OAuth2.
 - **ECHO Codex :** HUD Monaco Editor, file tree, historique Git, restauration de version.
-- **Resume in New Chat :** Migration d'état pour lutter contre la saturation contextuelle.
+- **Résume et Transfert vers un nouveau chat :** Migration d'état pour lutter contre la saturation contextuelle.
 
 ## 8. 🏭 Infrastructure d'Exécution
 

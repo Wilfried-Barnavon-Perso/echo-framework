@@ -22,7 +22,7 @@ Ce dossier gère les **Actions Interactives (Boutons sous les messages)**. Dans 
 - **`reset_auth_action.py`** : Action rapide d'urgence pour purger spécifiquement les tokens et clés liés à l'authentification **Google/PKCE** et OAuth2 en cas de désynchronisation.
 
 ### Gestion Contextuelle (Saturation & Vectoriel)
-- **`resume_in_new_chat_action.py`** : Mécanisme de migration d'état ("Resume in New Chat"). Il transfère de manière propre l'historique pertinent vers une nouvelle conversation pour lutter contre la saturation contextuelle et alléger le LLM. Il applique une regex de purge globale `<artifact id="AEC_.*?">` pour nettoyer intégralement le contexte proprioceptif XML natif avant de déclencher la distillation. L'extraction des messages donne désormais la priorité absolue à la variable `body` fournie par l'API (contournant l'obsolescence de l'ancien format `chat.messages` lié au mode graph d'Open WebUI v0.3+).
+- **`resume_in_new_chat_action.py`** : Mécanisme de migration d'état ("Résume et Transfert vers un nouveau chat"). Il transfère de manière propre l'historique pertinent vers une nouvelle conversation pour lutter contre la saturation contextuelle et alléger le LLM. Il applique une regex de purge globale `<artifact id="AEC_.*?">` pour nettoyer intégralement le contexte proprioceptif XML natif avant de déclencher la distillation. L'extraction des messages donne désormais la priorité absolue à la variable `body` fournie par l'API (contournant l'obsolescence de l'ancien format `chat.messages` lié au mode graph d'Open WebUI v0.3+).
 - **`purge_memory_action.py`** : Interface scrollable permettant la suppression ciblée et granulaire des souvenirs vectoriels (vecteurs orphelins ou erronés) directement dans Qdrant.
 
 ### Export
