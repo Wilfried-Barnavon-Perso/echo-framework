@@ -55,6 +55,8 @@ class EchoStateManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_chat_id ON message_shadows (chat_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_id ON suture_index (chat_id)")
                 conn.execute("CREATE TABLE IF NOT EXISTS cognitive_signatures (cumulative_hash TEXT PRIMARY KEY, thought_signature TEXT NOT NULL, message_id TEXT, model_id TEXT, updated_at INTEGER)")
+                # Index crucial pour les cascades cognitives où le même message_id est stocké avec
+                # de multiples cumulative_hash. Empêche les full table scans.
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sig_msg_id ON cognitive_signatures (message_id)")
                 conn.execute("CREATE TABLE IF NOT EXISTS tool_journal (cumulative_hash TEXT PRIMARY KEY, io_json TEXT NOT NULL, updated_at INTEGER)")
 
@@ -243,6 +245,9 @@ class EchoStateManager:
     def get_signature_by_id(self, message_id: str) -> Optional[str]:
         try:
             with self._get_connection() as conn:
+                # ORDER BY updated_at DESC LIMIT 1 garantit le déterminisme de la suture : 
+                # dans une cascade (outils/MAX_TOKENS), le même message_id est inséré 
+                # plusieurs fois avec des cumulative_hash différents. On extrait toujours le plus récent.
                 row = conn.execute("SELECT thought_signature FROM cognitive_signatures WHERE message_id = ? ORDER BY updated_at DESC LIMIT 1", (message_id,)).fetchone()
                 return row[0] if row else None
         except: pass
