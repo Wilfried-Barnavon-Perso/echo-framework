@@ -295,14 +295,20 @@ class Orchestrator:
                                 p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
                 else:
                     # Assistant
+                    tool_calls = m.get("tool_calls", [])
                     sig = self.user_data_manager.get_signature_by_id(msg_id) if msg_id else None
+                    if not sig and tool_calls:
+                        for tc in tool_calls:
+                            cb = self.user_data_manager.get_call_bridge(tc.get("id"))
+                            if cb and cb.get("signature"):
+                                sig = cb["signature"]
+                                break
                     if not sig:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
                         current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
                         sig = self.user_data_manager.get_signature(current_cumul)
                     
                     restored_parts = ensure_gemini_parts(content, model_id, self.model_origin)
-                    tool_calls = m.get("tool_calls", [])
                     if tool_calls:
                         parsed_tc = []
                         for tc in tool_calls:
