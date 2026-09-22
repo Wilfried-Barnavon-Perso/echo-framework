@@ -55,6 +55,7 @@ class EchoStateManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_chat_id ON message_shadows (chat_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_id ON suture_index (chat_id)")
                 conn.execute("CREATE TABLE IF NOT EXISTS cognitive_signatures (cumulative_hash TEXT PRIMARY KEY, thought_signature TEXT NOT NULL, message_id TEXT, model_id TEXT, updated_at INTEGER)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_sig_msg_id ON cognitive_signatures (message_id)")
                 conn.execute("CREATE TABLE IF NOT EXISTS tool_journal (cumulative_hash TEXT PRIMARY KEY, io_json TEXT NOT NULL, updated_at INTEGER)")
 
                 try: conn.execute("ALTER TABLE message_shadows ADD COLUMN is_embedded INTEGER DEFAULT 0")
@@ -242,7 +243,7 @@ class EchoStateManager:
     def get_signature_by_id(self, message_id: str) -> Optional[str]:
         try:
             with self._get_connection() as conn:
-                row = conn.execute("SELECT thought_signature FROM cognitive_signatures WHERE message_id = ?", (message_id,)).fetchone()
+                row = conn.execute("SELECT thought_signature FROM cognitive_signatures WHERE message_id = ? ORDER BY updated_at DESC LIMIT 1", (message_id,)).fetchone()
                 return row[0] if row else None
         except: pass
         return None
