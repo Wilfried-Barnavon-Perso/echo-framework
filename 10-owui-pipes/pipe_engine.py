@@ -1,22 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.63
+version: 192.64
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.64: Fix thoughtSignature API Gemini : injection exclusive sur le premier functionCall (résolution erreur 400 et support des appels parallèles).
 # 192.63: Correction SUTURE algorithme thoughtSignature (indexing) et fix de scope asst_msg_id.
 # 192.62: Intégration de resource_type='aec_directive' pour les rappels cognitifs et l'auto-continue MAX_TOKENS.
 # 192.61: Correction GC asynchrone sur la tâche PKCE (Connection refused) et alignement strict PEP8 (E722/E701).
 # 192.60: Restructuration _cascade_cognitive (Suture Bit-Perfect) et intégration de save_cognitive.
-# 192.59: Application de `_mutate_context_identity` et protection du parsing JSON des tool_calls (fallback dict vide).
-# 192.58: Modification du préfixe de notification UI (toast) pour les rappels cognitifs (⚡ Alignement du Modèle).
-# 192.57: Remplacement des blocs XML de troncature MAX_TOKENS par le format natif <artifact id="AEC_evenement_systeme">.systeme">.
-# 192.56: Déploiement des Rappels Cognitifs Multi-Axes (Anti-Division par 0 + UI Toast Emission).
-# 192.55: Suture stricte (SSOT) : Injection native du Défibrillateur Attentionnel avant la boucle bit-perfect via EchoAEC.
-# 192.54: UX SSE: Libération asynchrone anticipée de l'UI via `yield ""` dès réception du finish_reason 'STOP', masquant la latence post-génération de l'API Google (usageMetadata).
 
 
 # ==============================================================================
@@ -996,8 +991,13 @@ class Pipe:
                             call_part["id"] = c["id"]
                         model_parts.append({"functionCall": call_part})
 
-                if model_parts:
-                    model_parts[0]["thoughtSignature"] = sig_to_apply
+                # Injection de la thoughtSignature requise par l'API Gemini 3+
+                # Selon la spec, pour des appels parallèles, seul le PREMIER functionCall doit recevoir la signature.
+                # (https://ai.google.dev/gemini-api/docs/thinking#signatures)
+                for part in model_parts:
+                    if "functionCall" in part:
+                        part["thoughtSignature"] = sig_to_apply
+                        break
 
                 # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
                 model_msg = {"role": "model", "parts": model_parts}

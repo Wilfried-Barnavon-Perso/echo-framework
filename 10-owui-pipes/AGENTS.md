@@ -14,7 +14,7 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 **Rôle** : Gestionnaire de l'état asynchrone SQLite. Il reconstruit l'historique exact de la conversation.
 - **Invariant & Hash Cumulatif** (`calculate_invariant`, `calculate_cumulative`) : Crée une empreinte unique (hash) pour chaque tour de parole, assurant le verrouillage de version (Version Lock) de la conversation.
 - **Shadow Suture** (`save_shadow`, `get_shadow`) : Persiste les requêtes et réponses structurées (incluant les tool_calls et payloads Base64 complexes) en base SQLite locale pour pallier les limitations de persistance d'Open WebUI.
-- **Signature & Bridge** (`save_signature_by_id`, `get_call_bridge`) : Fait le pont entre un appel d'outil déclenché (call_id) et son résultat renvoyé par OWUI au tour suivant.
+- **Signature & Bridge** (`save_signature_by_id`, `get_call_bridge`) : Fait le pont entre un appel d'outil déclenché (call_id) et son résultat renvoyé par OWUI au tour suivant. L'injection de la `thoughtSignature` (obligatoire pour Gemini 3+) est traitée dynamiquement et associée exclusivement au premier appel `functionCall` en cas d'appels parallèles, conformément à la spécification de l'API ([API Docs](https://ai.google.dev/gemini-api/docs/thinking#signatures)).
 
 #### B. Classe `Orchestrator` (Le Cerveau Exécutif)
 **Rôle** : Traduction des schémas OWUI vers l'API cible, gestion du *Clamping Dynamique*.
