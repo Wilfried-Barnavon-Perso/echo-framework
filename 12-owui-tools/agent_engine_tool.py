@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.18
+version: 1.19
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.19: Injection de sub_sid dans subagent_metadata pour le RAG sécurisé des sous-agents.
 # 1.18: Injection du paramètre is_subagent dans les métadonnées pour bypasser les modales UI.
 # 1.17: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 1.12: Précision docstring sur l'héritage du système prompt de l'orchestrateur.
@@ -721,6 +722,7 @@ async def _run_agent_loop(
                     # Paramètres infrastructure — passage explicite (binding OWUI non garanti)
                     subagent_metadata = dict(__metadata__ or {})
                     subagent_metadata["is_subagent"] = True
+                    subagent_metadata["sub_sid"] = sid
                     
                     infra_kwargs = {
                         "__user__": __user__,

@@ -1,11 +1,12 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.64
+version: 5.65
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.65: Retrait de save_session_context et delete_session_context_source de la blacklist.
 # 5.64: Ajout de l'extension .pdf au CODEX_LANG_MAP pour activer l'identification visuelle dans l'UI du Codex.
 # 5.63: Plan Gamma - Remplacement par le dictionnaire ECHO_CODEX_WORKSPACES et ajout de ECHO_SYNC_EXCLUDE_LIST.
 # 5.62: Migration du Défibrillateur Attentionnel vers un système de Rappels Cognitifs Multi-Axes.
@@ -483,8 +484,7 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     # 2. Écriture RAG
     "update_meta_artifact",   # Écrit en mémoire long terme (Qdrant)
     "delete_meta_artifact_item", # Supprime de la mémoire long terme
-    "save_session_context",   # Écrit dans la Mémoire Vectorisée de Session
-    "delete_session_context_source", # Supprime un fichier du RAG éphémère
+    # Note: save_session_context et delete_session_context_source sont autorisés pour l'agent
     # 3. Rendu UI
     "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
     # 4. Méta-session (gestion des sessions du tool delegate)

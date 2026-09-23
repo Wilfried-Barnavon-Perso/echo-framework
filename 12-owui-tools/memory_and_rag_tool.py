@@ -1,11 +1,12 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.26
+version: 2.27
 description: Composant système interne : ECHO Memory & RAG Tool.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.27: Isolation du RAG pour les sous-agents (filtrage strict par sub_sid).
 # 2.26: Fix RAG (Purge idempotente pré-indexation, bridage de l'overlap max_chunk).
 # 2.25: Correctif (Recall) : Injection du paramètre score_threshold vers Qdrant.
 # 2.24: Améliorations de formatage PEP8 (espacements, indentations, ifs sur ligne unique).
@@ -429,6 +430,10 @@ class Tools:
                     {"key": "chat_id", "match": {"value": chat_id}},
                     {"key": "source_id", "match": {"value": source_id}}
                 ]
+                
+                # Isolation RAG : Si le caller est un sous-agent, il ne peut manipuler que ses propres créations.
+                if __metadata__.get("is_subagent") and __metadata__.get("sub_sid"):
+                    must_filters.append({"key": "sub_sid", "match": {"value": __metadata__["sub_sid"]}})
                 count_payload = {
                     "filter": {"must": must_filters}
                 }

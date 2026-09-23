@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.5
+version: 1.6
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.6: Injection de sub_sid dans le payload Qdrant pour isoler le RAG des sous-agents.
 # 1.5: Normalisation camelCase de inline_data en inlineData pour compatibilité stricte AI Studio.
 # 1.4: Ajout du code HTTP 420 aux conditions de failover (surcharge/rate limit).
 # 1.3: Alignement strict du payload gRPC/JSON Code Assist (OAuth2) sur le format Antigravity.
@@ -478,16 +479,21 @@ class EchoGeminiClient:
                     if vector:
                         seed_str = f"{uid}_{chat_id}_{source_id}_{unique_seed}_{i}" if unique_seed else f"{uid}_{chat_id}_{source_id}_{i}"
                         point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, seed_str))
+                        
+                        payload_data = {
+                            "user_id": uid,
+                            "chat_id": chat_id,
+                            "source_id": source_id,
+                            "text": chunk,
+                            "timestamp": int(time.time())
+                        }
+                        if __metadata__.get("is_subagent") and __metadata__.get("sub_sid"):
+                            payload_data["sub_sid"] = __metadata__["sub_sid"]
+
                         points.append({
                             "id": point_id,
                             "vector": vector,
-                            "payload": {
-                                "user_id": uid,
-                                "chat_id": chat_id,
-                                "source_id": source_id,
-                                "text": chunk,
-                                "timestamp": int(time.time())
-                            }
+                            "payload": payload_data
                         })
 
                 if not points:
