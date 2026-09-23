@@ -1,11 +1,12 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.9
+version: 1.10
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.10: Migration du blocage Headless de ask_user_input vers ECHO_SUBAGENT_CONTEXT pour contourner le partial d'OWUI.
 # 1.9: Protection Headless de ask_user_input (bloque gracieusement si __event_call__ est indisponible).
 # 1.8: Précision sur la saisie libre pour l'argument options de ask_user_input.
 # 1.6: Précision dans la docstring de ask_user_input (les options génèrent des listes/boutons cliquables).
@@ -160,7 +161,8 @@ class Tools:
         if not __user__:
             return wrap_tool_output(text="Erreur : Contexte manquant.", status={"status": "error"})
 
-        if not __event_call__:
+        from echo_constants import ECHO_SUBAGENT_CONTEXT
+        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
             return wrap_tool_output(
                 text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de poser une question interactive à l'Utilisateur.",
                 status={"status": "error"},

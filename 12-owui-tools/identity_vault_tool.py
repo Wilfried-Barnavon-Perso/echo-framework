@@ -1,11 +1,12 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 1.5
+version: 1.6
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.6: Remplacement de la vérification __event_call__ par ECHO_SUBAGENT_CONTEXT pour l'interdiction Headless.
 # 1.4: Refonte list_identities (tolérance aux fautes, import json global).
 # 1.2: Suppression totale de la notion d'accès RO/RW (access_level).
 # 1.1: Refonte du Lazy-Loading JS des modales ECHO (get_custom_modals_js) pour éviter les fallbacks moches hors-Codex.
@@ -86,7 +87,10 @@ class Tools:
         """
         Ajoute, modifie ou supprime un serveur public distant (MCP) dans le registre sécurisé du système. Permet au modèle d'étendre dynamiquement ses propres capacités cognitives. Si la résolution d'une tâche exige un outil inexistant localement, permet au modèle d'effectuer une recherche web pour identifier un serveur MCP pertinent, puis d'invoquer cette fonction pour l'installer à la volée. Action = 'add', 'update' ou 'delete'. Une demande d'autorisation explicite est envoyée à l'utilisateur avant toute modification.
         """
-        if not __user__ or not __event_call__: return "Erreur: Contexte OWUI manquant."
+        if not __user__: return "Erreur: Contexte OWUI manquant."
+        from echo_constants import ECHO_SUBAGENT_CONTEXT
+        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
+            return "Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de gérer les identités."
         
         if action in ["add", "update"]:
             try:

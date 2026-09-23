@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.32
+version: 5.33
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.33: Remplacement de la vérification __event_call__ par ECHO_SUBAGENT_CONTEXT pour la protection Headless de delete_user_skill.
 # 5.32: Protection de delete_user_skill contre l'invocation headless (vérification de __event_call__).
 # 5.31: Ajout du paramètre timeout_seconds (5 min par défaut) à delete_user_skill et modale auto-annulable.
 # 5.29: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
@@ -165,8 +166,9 @@ class Tools:
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Validation requise pour supprimer le skill {skill_id}...", "done": False}})
 
-        if not __event_call__:
-            return wrap_tool_output(text="Erreur : L'interface utilisateur (__event_call__) est requise pour confirmer cette action.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        from echo_constants import ECHO_SUBAGENT_CONTEXT
+        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
+            return wrap_tool_output(text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de requérir une confirmation de suppression.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
 
