@@ -19,6 +19,9 @@ Ce dossier constitue **l'Arsenal** du modèle. Il contient l'ensemble des Outils
 - **`internal_mcp_tool.py`** : [NOUVEAU] Outil permettant d'exécuter des fonctionnalités internes isolées.
 - **`identity_vault_tool.py`** : [NOUVEAU] Coffre-fort d'identités. Permet au modèle de consulter, générer ou révoquer ses propres credentials d'accès de manière sécurisée en base SQLite. Intègre une tolérance aux pannes (parsing JSON) pour garantir la résilience de l'affichage global de `list_identities`. La notion d'accès RO/RW a été totalement supprimée pour un accès unique universel.
 
+### Utilitaires Généralistes
+- **`generalist_tools.py`** : Regroupe des outils transverses. L'outil d'interaction `ask_user_input` intègre une protection Headless interdisant son utilisation par des sous-agents (dépourvus d'interface `__event_call__`).
+
 ### Persistance & RAG
 - **`memory_and_rag_tool.py`** : Outils de manipulation explicite de la base Qdrant. Implémente `search_sessions_context` (recherche avec le flag `global_search` inter-sessions et injection stricte du `score_threshold` vers Qdrant), `update_meta_artifact` et `search_meta_artifacts` (fusion sémantique avec cartographie d'index et reranking). Intègre désormais une purge idempotente pré-indexation pour empêcher toute fuite de vecteurs fantômes, ainsi qu'un bridage optimisé du chevauchement (overlap) des chunks.
 - **`echo_codex_tool.py`** : Éditeur de code intégré. Gère la modification de fichiers, l'intégration Git native, l'enregistrement dans SQLite. Intègre un **Lock asynchrone** (clé `user_id:chat_id`) pour prévenir toute race condition. Intègre désormais une capacité de **Voyage Temporel** (`search_codex` avec `trace_history` pour le Pickaxe/Delta) permettant de tracer l'évolution du code, ainsi que `restore_codex` pour restaurer une version historique, et une purge récursive (`delete_codex`) gérant la suppression intégrale de dossiers.

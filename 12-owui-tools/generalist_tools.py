@@ -1,12 +1,13 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.8
+version: 1.9
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.7: Précision sur la saisie libre pour l'argument options de ask_user_input.
+# 1.9: Protection Headless de ask_user_input (bloque gracieusement si __event_call__ est indisponible).
+# 1.8: Précision sur la saisie libre pour l'argument options de ask_user_input.
 # 1.6: Précision dans la docstring de ask_user_input (les options génèrent des listes/boutons cliquables).
 # 1.5: Mise à jour de la docstring de wait_timer (précision boucle agentique).
 # 1.4: Refonte du Lazy-Loading JS des modales ECHO (get_custom_modals_js) pour ask_user_input (Anti-Spaghetti).
@@ -158,6 +159,15 @@ class Tools:
         """
         if not __user__:
             return wrap_tool_output(text="Erreur : Contexte manquant.", status={"status": "error"})
+
+        if not __event_call__:
+            return wrap_tool_output(
+                text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de poser une question interactive à l'Utilisateur.",
+                status={"status": "error"},
+                user_id=__user__.get("id", "system") if __user__ else "system",
+                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+                metadata=__metadata__
+            )
 
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"En attente d'une saisie de l'utilisateur ({timeout_seconds}s)...")

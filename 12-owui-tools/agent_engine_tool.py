@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.20
+version: 1.21
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.21: Coupure stricte de l'interface utilisateur (__event_call__: None) pour forcer le mode Headless des sous-agents.
 # 1.20: Remplacement de l'injection subagent_metadata par la propagation asynchrone ECHO_SUBAGENT_CONTEXT.
 # 1.19: Injection de sub_sid dans subagent_metadata pour le RAG sécurisé des sous-agents.
 # 1.18: Injection du paramètre is_subagent dans les métadonnées pour bypasser les modales UI.
@@ -724,7 +725,7 @@ async def _run_agent_loop(
                         "__user__": __user__,
                         "__chat_id__": __chat_id__,
                         "__event_emitter__": __event_emitter__,
-                        "__event_call__": __event_call__,
+                        "__event_call__": None,
                     }
                     # Filtrage des params infra acceptés par le callable.
                     # Les callables OWUI (depuis _echo_tools_dict) sont des functools.partial
