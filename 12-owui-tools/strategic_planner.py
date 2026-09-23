@@ -542,7 +542,8 @@ class Tools:
             return wrap_tool_output(text=f"Erreur : Le plan doit être au statut 'proposed' pour être exécuté. Statut actuel: {current_status}", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
         # 2. Modale de confirmation (Si non validé précédemment)
-        is_subagent = (__metadata__ or {}).get("is_subagent", False)
+        from echo_constants import ECHO_SUBAGENT_CONTEXT
+        is_subagent = ECHO_SUBAGENT_CONTEXT.get().get("is_subagent", False)
         if not user_already_validated and not is_subagent:
             msg_html = f'''
             <div style="margin-bottom:15px; font-size:15px; font-weight:600;">

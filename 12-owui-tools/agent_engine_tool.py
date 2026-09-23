@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.19
+version: 1.20
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.20: Remplacement de l'injection subagent_metadata par la propagation asynchrone ECHO_SUBAGENT_CONTEXT.
 # 1.19: Injection de sub_sid dans subagent_metadata pour le RAG sécurisé des sous-agents.
 # 1.18: Injection du paramètre is_subagent dans les métadonnées pour bypasser les modales UI.
 # 1.17: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
@@ -719,15 +720,9 @@ async def _run_agent_loop(
                 }
             else:
                 try:
-                    # Paramètres infrastructure — passage explicite (binding OWUI non garanti)
-                    subagent_metadata = dict(__metadata__ or {})
-                    subagent_metadata["is_subagent"] = True
-                    subagent_metadata["sub_sid"] = sid
-                    
                     infra_kwargs = {
                         "__user__": __user__,
                         "__chat_id__": __chat_id__,
-                        "__metadata__": subagent_metadata,
                         "__event_emitter__": __event_emitter__,
                         "__event_call__": __event_call__,
                     }
@@ -745,7 +740,14 @@ async def _run_agent_loop(
                     except (ValueError, TypeError):
                         accepted_infra = {}  # Partial OWUI — ne pas passer d'infra
 
-                    result = await callable_fn(**fn_args, **accepted_infra)
+                    # Injection asynchrone de l'identité du sous-agent (contournement du proxy OWUI)
+                    from echo_constants import ECHO_SUBAGENT_CONTEXT
+                    token = ECHO_SUBAGENT_CONTEXT.set({"is_subagent": True, "sub_sid": sid})
+                    try:
+                        result = await callable_fn(**fn_args, **accepted_infra)
+                    finally:
+                        # Réinitialisation stricte du contexte asynchrone
+                        ECHO_SUBAGENT_CONTEXT.reset(token)
                 except Exception as e:
                     result = {"status": "error", "message": str(e)}
 

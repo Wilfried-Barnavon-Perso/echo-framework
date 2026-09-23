@@ -1,11 +1,12 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.65
+version: 5.66
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.66: Introduction de ECHO_SUBAGENT_CONTEXT (ContextVars) pour propager l'identité asynchrone à travers Open WebUI.
 # 5.65: Retrait de save_session_context et delete_session_context_source de la blacklist.
 # 5.64: Ajout de l'extension .pdf au CODEX_LANG_MAP pour activer l'identification visuelle dans l'UI du Codex.
 # 5.63: Plan Gamma - Remplacement par le dictionnaire ECHO_CODEX_WORKSPACES et ajout de ECHO_SYNC_EXCLUDE_LIST.
@@ -22,6 +23,15 @@ description: Composant système interne : ECHO Constants.
 #       - Documentation dual-client (Desktop=perso, LS=Enterprise GCP TOS)
 
 import os
+import contextvars
+
+# Information à ne pas effacer : Ce ContextVar permet de transmettre l'identité du sous-agent
+# à travers les frontières asynchrones (asyncio) de manière "télépathique", sans avoir à modifier
+# les signatures des fonctions. Cela permet de contourner le blocage silencieux (falsification 
+# de signature) effectué par Open WebUI lors de l'encapsulation des outils.
+# Par défaut, le dictionnaire est vide (contexte Orchestrateur).
+ECHO_SUBAGENT_CONTEXT: contextvars.ContextVar = contextvars.ContextVar("ECHO_SUBAGENT_CONTEXT", default={})
+
 try:
     import pybase64 as base64
 except ImportError:

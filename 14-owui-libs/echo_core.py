@@ -199,7 +199,8 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                 )
 
         last_check = metadata.get("_echo_last_event_check_at")
-        is_subagent = metadata.get("is_subagent", False)
+        from echo_constants import ECHO_SUBAGENT_CONTEXT
+        is_subagent = ECHO_SUBAGENT_CONTEXT.get().get("is_subagent", False)
         if last_check and not is_subagent:
             try:
                 state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)

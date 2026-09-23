@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.6
+version: 1.7
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.7: Migration vers ECHO_SUBAGENT_CONTEXT pour l'isolation du RAG des sous-agents.
 # 1.6: Injection de sub_sid dans le payload Qdrant pour isoler le RAG des sous-agents.
 # 1.5: Normalisation camelCase de inline_data en inlineData pour compatibilité stricte AI Studio.
 # 1.4: Ajout du code HTTP 420 aux conditions de failover (surcharge/rate limit).
@@ -487,8 +488,10 @@ class EchoGeminiClient:
                             "text": chunk,
                             "timestamp": int(time.time())
                         }
-                        if __metadata__.get("is_subagent") and __metadata__.get("sub_sid"):
-                            payload_data["sub_sid"] = __metadata__["sub_sid"]
+                        from echo_constants import ECHO_SUBAGENT_CONTEXT
+                        sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
+                        if sub_ctx.get("is_subagent") and sub_ctx.get("sub_sid"):
+                            payload_data["sub_sid"] = sub_ctx["sub_sid"]
 
                         points.append({
                             "id": point_id,

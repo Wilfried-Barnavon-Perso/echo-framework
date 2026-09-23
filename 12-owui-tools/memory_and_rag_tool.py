@@ -1,11 +1,12 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.27
+version: 2.28
 description: Composant système interne : ECHO Memory & RAG Tool.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.28: Utilisation de ECHO_SUBAGENT_CONTEXT pour l'isolation asynchrone du RAG.
 # 2.27: Isolation du RAG pour les sous-agents (filtrage strict par sub_sid).
 # 2.26: Fix RAG (Purge idempotente pré-indexation, bridage de l'overlap max_chunk).
 # 2.25: Correctif (Recall) : Injection du paramètre score_threshold vers Qdrant.
@@ -432,8 +433,10 @@ class Tools:
                 ]
                 
                 # Isolation RAG : Si le caller est un sous-agent, il ne peut manipuler que ses propres créations.
-                if __metadata__.get("is_subagent") and __metadata__.get("sub_sid"):
-                    must_filters.append({"key": "sub_sid", "match": {"value": __metadata__["sub_sid"]}})
+                from echo_constants import ECHO_SUBAGENT_CONTEXT
+                sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
+                if sub_ctx.get("is_subagent") and sub_ctx.get("sub_sid"):
+                    must_filters.append({"key": "sub_sid", "match": {"value": sub_ctx["sub_sid"]}})
                 count_payload = {
                     "filter": {"must": must_filters}
                 }
