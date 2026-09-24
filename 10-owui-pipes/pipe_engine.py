@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.69
+version: 192.70
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.70: Injection de logs de diagnostic (print flush=True) dans le Coupe-Circuit (Fast-Track) pour tracker les tâches silencieuses (Follow-ups).
 # 192.69: Retrait du Monkey Patch (inefficace suite au namespace binding d'Open WebUI) et correction des valeurs strings ("tags_generation", "follow_up_generation") pour le forçage JSON du Coupe-Circuit.
 # 192.68: Fix de sécurité Open WebUI (KeyError 'model') via injection dynamique (Monkey Patch) du scope 'ctx' sur background_tasks_handler et outlet_filter_handler. Enforcement de application/json sur les tâches 1 (Tags) et 3 (Follow-ups).
 # 192.67: Hotfix Variable Shadowing : Suppression des imports locaux (MODEL_LITE) dans le Fast-Track causant UnboundLocalError.
 # 192.66: Fix du Fast-Track (Title/Follow-ups) : fusion dynamique des rôles consécutifs pour éviter l'erreur 400 Gemini.
-# 192.65: Coupe-circuit O(1) sur __metadata__["task"] pour le bypass natif des tâches système OWUI.
 
 
 # ==============================================================================
@@ -581,6 +581,8 @@ class Pipe:
                 "generationConfig": generation_config
             }
 
+            print(f"[ECHO-FAST-TRACK] Démarrage tâche système (task={task_id})", flush=True)
+
             try:
                 # Streaming direct au modèle LITE, by-pass total de l'agent ECHO
                 async for chunk in EchoGeminiClient.stream(
@@ -593,8 +595,11 @@ class Pipe:
                     enable_paid_credits=False
                 ):
                     if isinstance(chunk, str):
+                        print(f"[ECHO-FAST-TRACK] Chunk reçu : {repr(chunk[:50])}...", flush=True)
                         yield chunk
+                print(f"[ECHO-FAST-TRACK] Tâche terminée avec succès (task={task_id})", flush=True)
             except Exception as e:
+                print(f"[ECHO-FAST-TRACK] Erreur fatale capturée : {str(e)}", flush=True)
                 yield f"ECHO Fast-Track Error: {str(e)}"
             return
 
