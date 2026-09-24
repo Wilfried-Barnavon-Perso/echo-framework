@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.67
+version: 192.68
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.68: Fix de sécurité Open WebUI (KeyError 'model') via injection dynamique (Monkey Patch) du scope 'ctx' sur background_tasks_handler et outlet_filter_handler. Enforcement de application/json sur les tâches 1 (Tags) et 3 (Follow-ups).
 # 192.67: Hotfix Variable Shadowing : Suppression des imports locaux (MODEL_LITE) dans le Fast-Track causant UnboundLocalError.
 # 192.66: Fix du Fast-Track (Title/Follow-ups) : fusion dynamique des rôles consécutifs pour éviter l'erreur 400 Gemini.
 # 192.65: Coupe-circuit O(1) sur __metadata__["task"] pour le bypass natif des tâches système OWUI.
 # 192.64: Fix thoughtSignature API Gemini : injection exclusive sur le premier functionCall (résolution erreur 400 et support des appels parallèles).
-# 192.63: Correction SUTURE algorithme thoughtSignature (indexing) et fix de scope asst_msg_id.
 
 
 # ==============================================================================
@@ -26,6 +26,34 @@ import codecs
 import orjson as std_json
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Any, Union
+
+# ==============================================================================
+# [TEMPORAIRE - A SUPPRIMER] ECHO MONKEY PATCH
+# BUG NATIF D'OPEN WEBUI (KeyError 'model' in background tasks)
+# A SUPPRIMER LORSQUE LA VERSION D'OPEN WEBUI AURA RESOLU CE PROBLEME.
+# ==============================================================================
+try:
+    import open_webui.utils.middleware as owui_middleware
+    if not hasattr(owui_middleware, "_echo_patched_model_key"):
+        original_bg_handler = owui_middleware.background_tasks_handler
+        async def patched_bg_handler(ctx):
+            if 'model' not in ctx:
+                ctx['model'] = ctx.get('form_data', {}).get('model', 'pipe_engine')
+            return await original_bg_handler(ctx)
+        owui_middleware.background_tasks_handler = patched_bg_handler
+
+        original_outlet_handler = getattr(owui_middleware, "outlet_filter_handler", None)
+        if original_outlet_handler:
+            async def patched_outlet_handler(ctx):
+                if 'model' not in ctx:
+                    ctx['model'] = ctx.get('form_data', {}).get('model', 'pipe_engine')
+                return await original_outlet_handler(ctx)
+            owui_middleware.outlet_filter_handler = patched_outlet_handler
+            
+        owui_middleware._echo_patched_model_key = True
+except Exception:
+    pass
+# ==============================================================================
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
@@ -567,9 +595,18 @@ class Pipe:
                         "parts": parts
                     })
 
+            generation_config = {"temperature": 0.2, "maxOutputTokens": 200}
+            task_id = str(safe_metadata.get("task"))
+            
+            # Force la sortie JSON pour les Tags (1) et les Follow-ups (3)
+            # Indispensable car Open WebUI crashe (sans erreur via try/except silencieux)
+            # s'il n'arrive pas à parser un JSON natif avec JSONCodec.loads()
+            if task_id in ["1", "3"]:
+                generation_config["responseMimeType"] = "application/json"
+
             payload = {
                 "contents": gemini_contents,
-                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 200}
+                "generationConfig": generation_config
             }
 
             try:
