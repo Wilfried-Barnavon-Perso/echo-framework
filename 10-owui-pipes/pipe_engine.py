@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.65
+version: 192.66
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.66: Fix du Fast-Track (Title/Follow-ups) : fusion dynamique des rôles consécutifs pour éviter l'erreur 400 Gemini.
 # 192.65: Coupe-circuit O(1) sur __metadata__["task"] pour le bypass natif des tâches système OWUI.
 # 192.64: Fix thoughtSignature API Gemini : injection exclusive sur le premier functionCall (résolution erreur 400 et support des appels parallèles).
 # 192.63: Correction SUTURE algorithme thoughtSignature (indexing) et fix de scope asst_msg_id.
 # 192.62: Intégration de resource_type='aec_directive' pour les rappels cognitifs et l'auto-continue MAX_TOKENS.
-# 192.61: Correction GC asynchrone sur la tâche PKCE (Connection refused) et alignement strict PEP8 (E722/E701).
 
 
 # ==============================================================================
@@ -560,10 +560,16 @@ class Pipe:
             gemini_contents = []
             for msg in body.get("messages", []):
                 role = "user" if msg.get("role") in ["user", "system"] else "model"
-                gemini_contents.append({
-                    "role": role,
-                    "parts": ensure_gemini_parts(msg.get("content", ""))
-                })
+                parts = ensure_gemini_parts(msg.get("content", ""))
+                
+                if gemini_contents and gemini_contents[-1]["role"] == role:
+                    # Fusion des rôles consécutifs (Gemini API l'exige)
+                    gemini_contents[-1]["parts"].extend([{"text": "\n\n"}] + parts)
+                else:
+                    gemini_contents.append({
+                        "role": role,
+                        "parts": parts
+                    })
 
             payload = {
                 "contents": gemini_contents,
