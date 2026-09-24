@@ -5,8 +5,4 @@ psutil
 paramiko
 APScheduler
 schedule
-httpx
-mgzip
-orjson
-pybase64
 passlib[argon2]

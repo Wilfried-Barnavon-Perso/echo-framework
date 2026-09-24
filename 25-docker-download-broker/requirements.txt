@@ -1,6 +1,2 @@
-orjson
-httpx
-pybase64
-pydantic
 requests
 filetype

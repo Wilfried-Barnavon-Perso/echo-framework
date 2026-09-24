@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.14-slim
+FROM echo-python-base:latest
 
 LABEL maintainer="Wilfried BARNAVON"
 LABEL version="1.0"
@@ -7,11 +7,8 @@ LABEL description="ECHO Admin Manager (System & Orchestration)"
 
 WORKDIR /app
 
-# Installation des dépendances système nécessaires
+# Installation des dépendances système (rclone uniquement, les autres sont dans la base)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    python3-dev \
-    xz-utils \
     rclone \
     && rm -rf /var/lib/apt/lists/*
 

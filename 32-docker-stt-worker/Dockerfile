@@ -1,25 +1,17 @@
 # syntax=docker/dockerfile:1
 # ECHO STT WORKER (Faster-Whisper CPU)
-FROM python:3.14-slim
+FROM echo-python-base:latest
 
 LABEL maintainer="Wilfried BARNAVON"
 LABEL version="1.0"
 LABEL description="ECHO STT Worker (Faster-Whisper CPU)"
-
-# Installation des dépendances systèmes minimales (ffmpeg requis pour l'audio)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Installation optimisée pour CPU
 RUN --mount=type=cache,target=/root/.cache/pip \
     PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=2 pip install \
-    faster-whisper \
-    fastapi \
-    uvicorn \
-    python-multipart
+    faster-whisper
 
 COPY stt_api.py /app/
 

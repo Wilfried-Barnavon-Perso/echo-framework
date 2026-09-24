@@ -90,14 +90,34 @@ ensure_network() {
     local net_name=$1
     net_name=$(echo "$net_name" | tr -d ': ')
     if [ -z "$net_name" ]; then return; fi
+    
+    local expected_subnet=""
+    if [ "$net_name" = "echo-network" ]; then
+        expected_subnet="${ECHO_NET_MAIN_PREFIX}.0/24"
+    elif [ "$net_name" = "echo-sandbox" ]; then
+        expected_subnet="${ECHO_NET_SANDBOX_PREFIX}.0/24"
+    fi
+
     if docker network inspect "$net_name" >/dev/null 2>&1; then
+        if [ -n "$expected_subnet" ]; then
+            local current_subnet
+            current_subnet=$(docker network inspect "$net_name" -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null)
+            if [ "$current_subnet" != "$expected_subnet" ]; then
+                echo "   ⚠️  Sous-réseau de '$net_name' incorrect ($current_subnet). Recréation forcée..."
+                # Déconnexion des conteneurs pour permettre la suppression
+                for container in $(docker network inspect "$net_name" -f '{{range $k, $v := .Containers}}{{$k}} {{end}}' 2>/dev/null); do
+                    docker network disconnect -f "$net_name" "$container" 2>/dev/null || true
+                done
+                docker network rm "$net_name" >/dev/null 2>&1 || true
+                docker network create --subnet="$expected_subnet" "$net_name"
+                return
+            fi
+        fi
         echo "   ✅ Réseau '$net_name' détecté."
     else
         echo "   🆕 Création réseau '$net_name'..."
-        if [ "$net_name" = "echo-network" ]; then
-            docker network create --subnet="${ECHO_NET_MAIN_PREFIX}.0/24" "$net_name"
-        elif [ "$net_name" = "echo-sandbox" ]; then
-            docker network create --subnet="${ECHO_NET_SANDBOX_PREFIX}.0/24" "$net_name"
+        if [ -n "$expected_subnet" ]; then
+            docker network create --subnet="$expected_subnet" "$net_name"
         else
             docker network create "$net_name"
         fi
@@ -263,6 +283,10 @@ echo "   ✅ Origines IP  : $ECHO_DETECTED_ORIGINS"
 
 # --- 2.4 Point de montage modèle Gemma (provisionné automatiquement par le conteneur) ---
 mkdir -p "$ECHO_ROOT/models"
+
+# --- 2.5 Pré-construction de l'Image de Base ---
+echo "🏗️ Construction de l'image de base partagée (echo-python-base)..."
+docker build -t echo-python-base:latest "$ECHO_ROOT/19-docker-python-base"
 
 # --- 3. LANCEMENT DOCKER COMPOSE ---
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."
