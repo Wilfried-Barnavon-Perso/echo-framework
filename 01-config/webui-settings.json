@@ -60,7 +60,7 @@
   "code_interpreter.jupyter.auth_token": "",
   "code_interpreter.jupyter.auth_password": "",
   "code_interpreter.jupyter.timeout": 60,
-  "task.model.default": "",
+  "task.model.default": "pipe_engine",
   "task.model.external": "",
   "task.title.enable": false,
   "task.title.prompt_template": "",
