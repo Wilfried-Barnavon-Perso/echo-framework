@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.33
+version: 5.34
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.34: Ajout d'une mécanique simplifiée d'extension dynamique du budget d'outils via injection in-situ.
 # 5.33: Remplacement de la vérification __event_call__ par ECHO_SUBAGENT_CONTEXT pour la protection Headless de delete_user_skill.
 # 5.32: Protection de delete_user_skill contre l'invocation headless (vérification de __event_call__).
 # 5.31: Ajout du paramètre timeout_seconds (5 min par défaut) à delete_user_skill et modale auto-annulable.
@@ -552,17 +553,25 @@ class Tools:
                 __event_call__=__event_call__,
             )
 
+            budget_exhausted = False
             # Extraction du texte
             if isinstance(result, str):
                 try:
                     parsed = json.loads(result)
                     deliverables[w_id] = parsed.get("text", result)
+                    if parsed.get("status", {}).get("warning") == "budget_exhausted":
+                        budget_exhausted = True
                 except Exception:
                     deliverables[w_id] = result
             elif isinstance(result, dict):
                 deliverables[w_id] = result.get("text", str(result))
+                if result.get("status", {}).get("warning") == "budget_exhausted":
+                    budget_exhausted = True
             else:
                 deliverables[w_id] = str(result)
+                
+            if budget_exhausted:
+                deliverables[w_id] += "\n\n[⚠️ AVERTISSEMENT SYSTÈME : Ce worker a épuisé son budget d'appels d'outils et a été interrompu. Si la direction de son travail est bonne et que la tâche justifie d'être poursuivie, le Superviseur DOIT retourner un statut `needs_correction` avec des directives pour la suite. La relance lui octroiera automatiquement un nouveau budget.]"
 
         # ── Phase 2+3 : Boucle critique / correction ──
         correction_round = 0
@@ -693,16 +702,24 @@ class Tools:
                     __event_call__=__event_call__,
                 )
 
+                budget_exhausted = False
                 if isinstance(result, str):
                     try:
                         parsed = json.loads(result)
                         deliverables[w_id] = parsed.get("text", result)
+                        if parsed.get("status", {}).get("warning") == "budget_exhausted":
+                            budget_exhausted = True
                     except Exception:
                         deliverables[w_id] = result
                 elif isinstance(result, dict):
                     deliverables[w_id] = result.get("text", str(result))
+                    if result.get("status", {}).get("warning") == "budget_exhausted":
+                        budget_exhausted = True
                 else:
                     deliverables[w_id] = str(result)
+                    
+                if budget_exhausted:
+                    deliverables[w_id] += "\n\n[⚠️ AVERTISSEMENT SYSTÈME : Ce worker a épuisé son budget d'appels d'outils et a été interrompu. Si la direction de son travail est bonne et que la tâche justifie d'être poursuivie, le Superviseur DOIT retourner un statut `needs_correction` avec des directives pour la suite. La relance lui octroiera automatiquement un nouveau budget.]"
 
         # ── Phase 4 : Consolidation ──
         await events.status(f"📋 [{task_id}] Phase 4 — Consolidation...")
