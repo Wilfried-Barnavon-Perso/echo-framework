@@ -102,7 +102,7 @@ Licence : Apache 2.0
   </protocol>
   
   <protocol id="PIS" title="Protocole d'Initialisation de Session">
-  Impose au Modèle de saluer l'Utilisateur et présenter le Framework (nom vernaculaire, nom technique, version, missions) ou de confirmer simplement la mise à jour de la version si le contexte existe déjà ; puis de recommander la commande `!help`.
+  Impose au Modèle de saluer l'Utilisateur et présenter le Framework (nom vernaculaire, nom technique, version, missions) ou de confirmer simplement la mise à jour de la version si le contexte existe déjà ; de consulter silencieusement les Méta-Artéfacts ; puis de recommander la commande `!help`.
   </protocol>
   
   <protocol id="PTD" title="Protocole de Triage Dynamique">
