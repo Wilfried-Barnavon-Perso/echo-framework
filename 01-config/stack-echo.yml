@@ -1,6 +1,11 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.72
+# REGLE: Ne garder que les 5 dernières versions du changelog.
+# Version : 9.74
+# --- CHANGELOG 9.74 ---
+# - Docker Compose : Variables d'environnement pour l'IPAM (ECHO_NET_MAIN_PREFIX, ECHO_NET_SANDBOX_PREFIX).
+# --- CHANGELOG 9.73 ---
+# - Docker Compose : Assignation d'IP statiques pour tous les conteneurs (echo-network: 10.20.40.x, echo-sandbox: 10.20.50.x).
 # --- CHANGELOG 9.72 ---
 # - Docker Compose : Retrait des dépendances inutiles (llama-cpp-python, etc.) dans l'image Open WebUI Slim causant l'erreur gcc. Conservation uniquement de h2 et pybase64.
 # --- CHANGELOG 9.71 ---
@@ -59,8 +64,10 @@ services:
     container_name: echo-open-webui
     restart: always
     networks:
-      - echo-network
-      - echo-sandbox
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.2
+      echo-sandbox:
+        ipv4_address: ${ECHO_NET_SANDBOX_PREFIX}.2
     ports:
       - "3000:8080"
       - "8020-8024:8020-8024"  # SSH tunnel ephemere PKCE - ports SSH uniquement (5 sessions max)
@@ -243,7 +250,8 @@ services:
     container_name: echo-admin-manager
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.3
     environment:
       - TZ=Europe/Paris
       - ECHO_SSO_SECRET=${ECHO_SSO_SECRET}
@@ -334,7 +342,8 @@ services:
     container_name: echo-mcp-broker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.4
     environment:
       - TZ=Europe/Paris
     volumes:
@@ -367,7 +376,8 @@ services:
     cap_add:
       - SYS_ADMIN
     networks:
-      - echo-sandbox
+      echo-sandbox:
+        ipv4_address: ${ECHO_NET_SANDBOX_PREFIX}.3
     environment:
       - TZ=Europe/Paris
     volumes:
@@ -389,7 +399,8 @@ services:
     container_name: echo-browser-worker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.5
     ipc: host
     environment:
       - PIP_ROOT_USER_ACTION=ignore
@@ -417,7 +428,8 @@ services:
     container_name: echo-n8n-worker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.6
     environment:
       - TZ=Europe/Paris
       - N8N_ENCRYPTION_KEY
@@ -458,7 +470,8 @@ services:
     container_name: echo-stt-worker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.7
     environment:
       - TZ=Europe/Paris
     labels:
@@ -481,7 +494,8 @@ services:
     container_name: echo-tts-worker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.8
     environment:
       - TZ=Europe/Paris
     labels:
@@ -504,7 +518,8 @@ services:
     container_name: echo-searxng
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.9
     volumes:
       - /opt/ECHO/config/searxng-settings.yml:/etc/searxng/settings.yml:ro
     environment:
@@ -537,7 +552,8 @@ services:
     container_name: echo-watchtower
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.10
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -555,7 +571,8 @@ services:
     container_name: echo-qdrant
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.11
     volumes:
       - echo-qdrant-data:/qdrant/storage
     environment:
@@ -577,7 +594,8 @@ services:
     container_name: echo-embedding
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.12
     environment:
       - TZ=Europe/Paris
       - MODEL_ID=microsoft/Harrier-OSS-v1-0.6B
@@ -612,7 +630,8 @@ services:
     container_name: echo-download-broker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.13
     environment:
       - TZ=Europe/Paris
     volumes:

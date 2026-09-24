@@ -1,7 +1,9 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.26
+# VERSION : 1.28
 # ==============================================================================
+#                  1.28: IPAM dynamique (ECHO_NET_BW_UNIVERSE_PREFIX).
+#                  1.27: Mise à jour de BunkerWeb 1.6.14 -> 1.6.15
 #                  1.26: GUNICORN_TIMEOUT 60 → 120s : évite le SIGKILL des workers
 #                        uvicorn en cours de retry backoff SSE (asyncio.sleep).
 #                        60s déclenchait un crash silencieux lors de surcharges API.
@@ -32,7 +34,7 @@ services:
   
   # 1. BunkerWeb (Frontal HTTP/HTTPS)
   bunkerweb:
-    image: bunkerity/bunkerweb:1.6.14
+    image: bunkerity/bunkerweb:1.6.15
     container_name: bunkerweb
     restart: unless-stopped
     ports:
@@ -55,14 +57,16 @@ services:
     labels:
       - "bunkerweb.INSTANCE=yes"
     networks:
-      - bw-universe
-      - echo-network
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.2
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.200
     volumes:
       - bw-data:/data
 
   # 2. Autoconf (Contrôleur Dynamique)
   bw-autoconf:
-    image: bunkerity/bunkerweb-autoconf:1.6.14
+    image: bunkerity/bunkerweb-autoconf:1.6.15
     container_name: bw-autoconf
     restart: unless-stopped
     depends_on:
@@ -76,14 +80,15 @@ services:
       <<: *bw-config
       DOCKER_HOST: "tcp://bw-docker:2375"
     networks:
-      - bw-universe
-      - bw-docker
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.3
+      bw-docker:
     volumes:
       - bw-data:/data
 
   # 3. Scheduler (Tâches de fond)
   bw-scheduler:
-    image: bunkerity/bunkerweb-scheduler:1.6.14
+    image: bunkerity/bunkerweb-scheduler:1.6.15
     container_name: bw-scheduler
     restart: unless-stopped
     depends_on:
@@ -99,8 +104,9 @@ services:
       # Indique explicitement l'instance à contacter (évite les erreurs sur 127.0.0.1)
       BUNKERWEB_INSTANCES: "bunkerweb"
     networks:
-      - bw-universe
-      - bw-docker
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.4
+      bw-docker:
     volumes:
       - bw-data:/data
 
@@ -133,7 +139,8 @@ services:
     volumes:
       - bw-db-data:/var/lib/mysql
     networks:
-      - bw-universe
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.6
     # Healthcheck TCP : garantit que MySQL accepte les connexions avant Autoconf/Scheduler
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
@@ -150,8 +157,10 @@ services:
     container_name: echo-redirector
     restart: unless-stopped
     networks:
-      - bw-universe
-      - echo-network
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.7
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.201
     command: tail -f /dev/null
     labels:
       - "bunkerweb.SERVER_NAME=${ECHO_DOMAIN:-localhost} www.${ECHO_DOMAIN:-localhost}"
@@ -171,8 +180,10 @@ services:
     container_name: echo-auth-manager
     restart: always
     networks:
-      - bw-universe
-      - echo-network
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.8
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.10
     environment:
       - TZ=Europe/Paris
       - ECHO_DOMAIN=${ECHO_DOMAIN:-localhost}
@@ -213,7 +224,7 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 10.20.30.0/24
+        - subnet: ${ECHO_NET_BW_UNIVERSE_PREFIX}.0/24
   bw-docker:
     name: bw-docker
   echo-network:

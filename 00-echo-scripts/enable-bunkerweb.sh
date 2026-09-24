@@ -1,10 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : enable-bunkerweb.sh
-# VERSION : 4.1
+# VERSION : 4.2
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Activation de la couche de sécurité BunkerWeb (Secure Edge).
+# CHANGELOG 4.2 : Sécurisation de la création IPAM dynamique pour echo-network et echo-sandbox.
 # CHANGELOG 4.1 : Correction du grep pour le parsing de echo-open-webui.
 # CHANGELOG 4.0 : set -euo pipefail, idempotence (détection BW déjà actif),
 #                 validation format domaine, meilleur feedback post-déploiement.
@@ -155,8 +156,9 @@ export ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS"
 # --- 5. LANCEMENT UNIFIÉ ---
 echo "🐳 Redémarrage de l'infrastructure..."
 
-# Création préventive du réseau et du répertoire BunkerWeb (bind mount bw-data)
-docker network create echo-network 2>/dev/null || true
+# Création préventive des réseaux IPAM et du répertoire BunkerWeb (bind mount bw-data)
+docker network create --subnet="${ECHO_NET_MAIN_PREFIX}.0/24" echo-network 2>/dev/null || true
+docker network create --subnet="${ECHO_NET_SANDBOX_PREFIX}.0/24" echo-sandbox 2>/dev/null || true
 mkdir -p "$ECHO_ROOT/bunkerweb"
 
 # Arrêt propre (ciblé sur le projet echo)

@@ -1,9 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.30
+# VERSION : 6.32
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 6.32 : Utilisation des variables d'environnement ECHO_NET_MAIN_PREFIX pour la création dynamique des sous-réseaux IPAM.
+# CHANGELOG 6.31 : Assignation de sous-réseaux statiques pour echo-network (10.20.40.0/24) et echo-sandbox (10.20.50.0/24).
 # CHANGELOG 6.30 : Correction du parsing yq/grep pour cibler le service echo-open-webui.
 # CHANGELOG 6.29 : Implémentation du verrou mensuel (throttle) sur le pull des images de base (:latest).
 # CHANGELOG 6.28 : Limitation du parallélisme Docker Compose et Hot Reload (OOM Killer).
@@ -92,7 +94,13 @@ ensure_network() {
         echo "   ✅ Réseau '$net_name' détecté."
     else
         echo "   🆕 Création réseau '$net_name'..."
-        docker network create "$net_name"
+        if [ "$net_name" = "echo-network" ]; then
+            docker network create --subnet="${ECHO_NET_MAIN_PREFIX}.0/24" "$net_name"
+        elif [ "$net_name" = "echo-sandbox" ]; then
+            docker network create --subnet="${ECHO_NET_SANDBOX_PREFIX}.0/24" "$net_name"
+        else
+            docker network create "$net_name"
+        fi
     fi
 }
 
