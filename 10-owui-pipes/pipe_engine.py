@@ -568,7 +568,9 @@ class Pipe:
                     })
 
             generation_config = {"temperature": 0.2, "maxOutputTokens": 200}
-            task_id = str(safe_metadata.get("task"))
+            task_id = str(safe_metadata.get("task", ""))
+            if "." in task_id:
+                task_id = task_id.split(".")[-1].lower()
             
             # Force la sortie JSON pour les Tags et les Follow-ups
             # Indispensable car Open WebUI crashe (sans erreur via try/except silencieux)
