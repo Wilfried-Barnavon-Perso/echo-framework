@@ -1,12 +1,13 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.71
+version: 192.72
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.72: Ajout d'un statut par défaut 'Traitement en cours' pour rassurer l'utilisateur.
 # 192.71: Désactivation des logs de diagnostic (print) du Fast-Track.
 # 192.70: Injection de logs de diagnostic (print flush=True) dans le Coupe-Circuit (Fast-Track) pour tracker les tâches silencieuses (Follow-ups).
 # 192.69: Retrait du Monkey Patch (inefficace suite au namespace binding d'Open WebUI) et correction des valeurs strings ("tags_generation", "follow_up_generation") pour le forçage JSON du Coupe-Circuit.
@@ -613,6 +614,7 @@ class Pipe:
         # SUITE NORMALE DU PIPE ECHO (Agentivité, RAG, Outils...)
         # ==============================================================================
         events = EchoEvents(__event_emitter__)
+        if events: await events.status("⚙️ Traitement en cours...", done=False)
         if not __user__:
             yield "❌ Identité manquante."; return
         user_valves = __user__.get("valves") or self.UserValves()

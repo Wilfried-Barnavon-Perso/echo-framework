@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.7
+version: 1.8
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.8: Silence Failover UI (429/401) et routage exclusif vers logs Docker pour une UX fluide.
 # 1.7: Migration vers ECHO_SUBAGENT_CONTEXT pour l'isolation du RAG des sous-agents.
 # 1.6: Injection de sub_sid dans le payload Qdrant pour isoler le RAG des sous-agents.
 # 1.5: Normalisation camelCase de inline_data en inlineData pour compatibilité stricte AI Studio.
@@ -610,7 +611,7 @@ class EchoGeminiClient:
                 # --- BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
                 if resp.status_code in [401, 403, 404]:
                     if active_idx < len(auth_providers) - 1:
-                        if events: await events.status(f"⚠️ Modèle non autorisé ou indisponible sur {provider['type']}. Bascule immédiate...", done=False)      
+                        print(f"[ECHO-RETRY] (Non-Stream) Modèle indisponible/401 sur {provider['type']}. Bascule provider...", flush=True)      
                         active_idx += 1
                         attempt = 0
                         current_delay = ECHO_RETRY_BASE_DELAY
@@ -631,7 +632,7 @@ class EchoGeminiClient:
                         
                         # Si on obtient une nouvelle URL, on bascule immédiatement
                         if new_idx != current_url_idx:
-                            if events: await events.status(f"⚠️ Surcharge ({resp.status_code}). Bascule immédiate sur l'environnement de secours...", done=False)
+                            print(f"[ECHO-RETRY] (Non-Stream) Surcharge ({resp.status_code}). Verrouillage endpoint et bascule immédiate...", flush=True)
                             current_url_idx = new_idx
                             base_url = new_url
                             attempt = 0
@@ -648,7 +649,7 @@ class EchoGeminiClient:
                             wait_msg = f"⏳ Limite de débit API ({resp.status_code})."
 
                         wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
-                        if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s....", done=False)
+                        print(f"[ECHO-RETRY] (Non-Stream) {wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", flush=True)
                         await asyncio.sleep(wait_time)
                         current_delay *= ECHO_RETRY_MULTIPLIER
                         attempt += 1
@@ -835,7 +836,7 @@ class EchoGeminiClient:
                     # --- BASCULEMENT IMMÉDIAT (DROITS/DISPO) ---
                     if r.status_code in [401, 403, 404]:
                         if active_idx < len(auth_providers) - 1:
-                            if events: await events.status(f"⚠️ Modèle non autorisé ou indisponible sur {provider['type']}. Bascule immédiate...", done=False)  
+                            print(f"[ECHO-RETRY] (Stream) Modèle indisponible/401 sur {provider['type']}. Bascule provider...", flush=True)  
                             active_idx += 1
                             attempt = 0
                             current_delay = ECHO_RETRY_BASE_DELAY
@@ -856,7 +857,7 @@ class EchoGeminiClient:
                             
                             # Si on obtient une nouvelle URL, on bascule immédiatement
                             if new_idx != current_url_idx:
-                                if events: await events.status(f"⚠️ Surcharge ({r.status_code}). Bascule immédiate sur l'environnement de secours...", done=False)
+                                print(f"[ECHO-RETRY] (Stream) Surcharge ({r.status_code}). Verrouillage endpoint et bascule immédiate...", flush=True)
                                 current_url_idx = new_idx
                                 base_url = new_url
                                 attempt = 0
@@ -873,7 +874,7 @@ class EchoGeminiClient:
                                 wait_msg = f"⏳ Limite de débit API ({r.status_code})."
 
                             wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
-                            if events: await events.status(f"{wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s....", done=False)
+                            print(f"[ECHO-RETRY] (Stream) {wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", flush=True)
                             await asyncio.sleep(wait_time)
                             current_delay *= ECHO_RETRY_MULTIPLIER
                             attempt += 1
