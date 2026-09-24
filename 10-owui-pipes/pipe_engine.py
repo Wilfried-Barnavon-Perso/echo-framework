@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.66
+version: 192.67
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.67: Hotfix Variable Shadowing : Suppression des imports locaux (MODEL_LITE) dans le Fast-Track causant UnboundLocalError.
 # 192.66: Fix du Fast-Track (Title/Follow-ups) : fusion dynamique des rôles consécutifs pour éviter l'erreur 400 Gemini.
 # 192.65: Coupe-circuit O(1) sur __metadata__["task"] pour le bypass natif des tâches système OWUI.
 # 192.64: Fix thoughtSignature API Gemini : injection exclusive sur le premier functionCall (résolution erreur 400 et support des appels parallèles).
 # 192.63: Correction SUTURE algorithme thoughtSignature (indexing) et fix de scope asst_msg_id.
-# 192.62: Intégration de resource_type='aec_directive' pour les rappels cognitifs et l'auto-continue MAX_TOKENS.
 
 
 # ==============================================================================
@@ -553,10 +553,6 @@ class Pipe:
         # ==============================================================================
         safe_metadata = __metadata__ or {}
         if safe_metadata.get("task") is not None:
-            from echo_gemini_client import EchoGeminiClient
-            from echo_constants import MODEL_LITE
-            from echo_core import ensure_gemini_parts
-
             gemini_contents = []
             for msg in body.get("messages", []):
                 role = "user" if msg.get("role") in ["user", "system"] else "model"
