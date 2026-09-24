@@ -1,7 +1,9 @@
 # ==============================================================================
 # ECHO FRAMEWORK
 # REGLE: Ne garder que les 5 dernières versions du changelog.
-# Version : 9.74
+# Version : 9.75
+# --- CHANGELOG 9.75 ---
+# - Docker Compose : Refactorisation structurelle IPAM (Domain-Driven) et résolution du conflit IP (.10) avec le WAF.
 # --- CHANGELOG 9.74 ---
 # - Docker Compose : Variables d'environnement pour l'IPAM (ECHO_NET_MAIN_PREFIX, ECHO_NET_SANDBOX_PREFIX).
 # --- CHANGELOG 9.73 ---
@@ -55,6 +57,27 @@
 #                 open-webui pour le module ECHO Codex.
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
+# ==============================================================================
+# 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)
+# ==============================================================================
+# 1. Briques Core & Externes (Plage .100 - .199) :
+#    - open-webui       : .100
+#    - searxng          : .101
+#    - watchtower       : .102
+#    - qdrant           : .103
+#
+# 2. Workers ECHO (Reflet strict du numéro de dossier source) :
+#    - admin-manager    : .20  (Dossier 20-)
+#    - coding-worker    : .21  (Dossier 21-)
+#    - browser-worker   : .22  (Dossier 22-)
+#    - mcp-broker       : .23  (Dossier 23-)
+#    - auth-manager     : .24  (Dossier 24- -> voir bunkerweb-stack.yml)
+#    - download-broker  : .25  (Dossier 25-)
+#    - n8n-worker       : .26  (Dossier 26-)
+#    - embedding        : .30  (Dossier 30-)
+#    - tts-worker       : .31  (Dossier 31-)
+#    - stt-worker       : .32  (Dossier 32-)
+# ==============================================================================
 
 services:
 
@@ -65,9 +88,9 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.2
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.100
       echo-sandbox:
-        ipv4_address: ${ECHO_NET_SANDBOX_PREFIX}.2
+        ipv4_address: ${ECHO_NET_SANDBOX_PREFIX}.100
     ports:
       - "3000:8080"
       - "8020-8024:8020-8024"  # SSH tunnel ephemere PKCE - ports SSH uniquement (5 sessions max)
@@ -251,7 +274,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.3
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.20
     environment:
       - TZ=Europe/Paris
       - ECHO_SSO_SECRET=${ECHO_SSO_SECRET}
@@ -343,7 +366,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.4
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.23
     environment:
       - TZ=Europe/Paris
     volumes:
@@ -377,7 +400,7 @@ services:
       - SYS_ADMIN
     networks:
       echo-sandbox:
-        ipv4_address: ${ECHO_NET_SANDBOX_PREFIX}.3
+        ipv4_address: ${ECHO_NET_SANDBOX_PREFIX}.21
     environment:
       - TZ=Europe/Paris
     volumes:
@@ -402,7 +425,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.5
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.22
     ipc: host
     environment:
       - PIP_ROOT_USER_ACTION=ignore
@@ -429,7 +452,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.6
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.26
     environment:
       - TZ=Europe/Paris
       - N8N_ENCRYPTION_KEY
@@ -471,7 +494,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.7
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.32
     environment:
       - TZ=Europe/Paris
     labels:
@@ -495,7 +518,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.8
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.31
     environment:
       - TZ=Europe/Paris
     labels:
@@ -519,7 +542,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.9
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.101
     volumes:
       - /opt/ECHO/config/searxng-settings.yml:/etc/searxng/settings.yml:ro
     environment:
@@ -553,7 +576,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.10
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.102
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -572,7 +595,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.11
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.103
     volumes:
       - echo-qdrant-data:/qdrant/storage
     environment:
@@ -595,7 +618,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.12
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.30
     environment:
       - TZ=Europe/Paris
       - MODEL_ID=microsoft/Harrier-OSS-v1-0.6B
@@ -631,7 +654,7 @@ services:
     restart: always
     networks:
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.13
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.25
     environment:
       - TZ=Europe/Paris
     volumes:

@@ -1,7 +1,8 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.28
+# VERSION : 1.29
 # ==============================================================================
+#                  1.29: Résolution du conflit IP (.10) avec watchtower, alignement IPAM Domain-Driven.
 #                  1.28: IPAM dynamique (ECHO_NET_BW_UNIVERSE_PREFIX).
 #                  1.27: Mise à jour de BunkerWeb 1.6.14 -> 1.6.15
 #                  1.26: GUNICORN_TIMEOUT 60 → 120s : évite le SIGKILL des workers
@@ -12,6 +13,28 @@
 #                  1.23: Ajout healthcheck bw-db + depends_on ordonné
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
+# ==============================================================================
+
+# ==============================================================================
+# 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)
+# ==============================================================================
+# 1. Briques Core & Externes (Plage .100 - .199) :
+#    - open-webui       : .100
+#    - searxng          : .101
+#    - watchtower       : .102
+#    - qdrant           : .103
+#
+# 2. Workers ECHO (Reflet strict du numéro de dossier source) :
+#    - admin-manager    : .20  (Dossier 20-)
+#    - coding-worker    : .21  (Dossier 21-)
+#    - browser-worker   : .22  (Dossier 22-)
+#    - mcp-broker       : .23  (Dossier 23-)
+#    - auth-manager     : .24  (Dossier 24- -> voir bunkerweb-stack.yml)
+#    - download-broker  : .25  (Dossier 25-)
+#    - n8n-worker       : .26  (Dossier 26-)
+#    - embedding        : .30  (Dossier 30-)
+#    - tts-worker       : .31  (Dossier 31-)
+#    - stt-worker       : .32  (Dossier 32-)
 # ==============================================================================
 
 # --- BLOC DE CONFIGURATION PARTAGÉ (YAML ANCHOR) ---
@@ -181,9 +204,9 @@ services:
     restart: always
     networks:
       bw-universe:
-        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.8
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.24
       echo-network:
-        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.10
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.24
     environment:
       - TZ=Europe/Paris
       - ECHO_DOMAIN=${ECHO_DOMAIN:-localhost}
