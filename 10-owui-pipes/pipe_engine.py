@@ -586,19 +586,22 @@ class Pipe:
             print(f"[ECHO-FAST-TRACK] Démarrage tâche système (task={task_id})", flush=True)
 
             try:
-                # Streaming direct au modèle LITE, by-pass total de l'agent ECHO
-                async for chunk in EchoGeminiClient.stream(
+                # Appel direct au modèle LITE, by-pass total de l'agent ECHO (sans streaming)
+                res = await EchoGeminiClient.call(
                     target_model=MODEL_LITE,
                     payload=payload,
                     user_id=__user__["id"] if __user__ else "system",
                     events=None,
-                    process_callback=None,
                     chat_id="stateless_bypass",
                     enable_paid_credits=False
-                ):
-                    if isinstance(chunk, str):
-                        print(f"[ECHO-FAST-TRACK] Chunk reçu : {repr(chunk[:50])}...", flush=True)
-                        yield chunk
+                )
+                try:
+                    text = res.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                    if text:
+                        print(f"[ECHO-FAST-TRACK] Texte généré ({len(text)} chars)", flush=True)
+                        yield text
+                except (KeyError, IndexError):
+                    pass
                 print(f"[ECHO-FAST-TRACK] Tâche terminée avec succès (task={task_id})", flush=True)
             except Exception as e:
                 print(f"[ECHO-FAST-TRACK] Erreur fatale capturée : {str(e)}", flush=True)
