@@ -65,7 +65,7 @@
   "task.title.enable": true,
   "task.title.prompt_template": "",
   "task.follow_up.enable": true,
-  "task.follow_up.prompt_template": "### Tâche\nLe Modèle doit générer 2 à 5 questions courtes et pertinentes que l'Utilisateur pourrait naturellement poser pour approfondir l'échange, en te basant sur l'historique fourni.\n### Règles\n1. Utiliser la langue majoritairement employée dans la conversation.\n2. Rédiger les questions du point de vue de l'utilisateur.\n3. Le retour DOIT être un objet JSON strict contenant l'unique clé \"follow_ups\" associée à un tableau de chaînes de caractères.\n### Historique\n<chat_history>\n{{MESSAGES:END:10}}\n</chat_history>",
+  "task.follow_up.prompt_template": "### Tâche\nLe Modèle doit générer 2 à 5 questions au plus, courtes et des plus pertinentes que l'Utilisateur pourrait naturellement poser pour approfondir l'échange, en te basant sur l'historique fourni.\n### Règles\n1. Utiliser la langue majoritairement employée dans la conversation.\n2. Rédiger les questions du point de vue de l'utilisateur.\n3. Le retour DOIT être un objet JSON strict contenant l'unique clé \"follow_ups\" associée à un tableau de chaînes de caractères.\n### Historique\n<chat_history>\n{{MESSAGES:END:10}}\n</chat_history>",
   "task.image.prompt_template": "",
   "task.autocomplete.enable": false,
   "task.autocomplete.input_max_length": -1,
