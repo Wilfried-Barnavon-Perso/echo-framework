@@ -1,11 +1,12 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : disable-bunkerweb.sh
-# VERSION : 2.1
+# VERSION : 2.2
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Désactivation de la couche de sécurité BunkerWeb (Secure Edge)
 #        et retour au mode d'accès local direct (HTTP).
+# CHANGELOG 2.2 : Ajout de la purge systématique du volume de base de données bw-db.
 # CHANGELOG 2.1 : Correction du grep pour le parsing de echo-open-webui.
 # CHANGELOG 2.0 : set -euo pipefail.
 #                 CORRECTION CRITIQUE : suppression du "docker rm -f $(docker ps -a)"
@@ -110,6 +111,10 @@ mkdir -p "$ECHO_ROOT/bunkerweb"
 $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" \
     -f "$BW_STACK_FILE" -f "$ECHO_STACK_FILE" \
     down --remove-orphans || true
+
+# Suppression ciblée du volume MariaDB pour garantir un état vierge
+echo "🧹 Purge du volume de la base de données WAF (echo_bw-db-data)..."
+docker volume rm echo_bw-db-data 2>/dev/null || true
 
 # Nettoyage préventif ciblé : uniquement les conteneurs ECHO restants
 # (Filtre strict par label du projet Compose)

@@ -1,7 +1,8 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.31
+# VERSION : 1.32
 # ==============================================================================
+#                  1.32: Surcharge de max_allowed_packet à 128M pour bw-db.
 #                  1.31: Élargissement de l'API_WHITELIST_IP à 10.0.0.0/8.
 #                  1.30: IPAM dynamique répercuté sur API_WHITELIST_IP (évite blocage bw-scheduler).
 #                  1.29: Résolution du conflit IP (.10) avec watchtower, alignement IPAM Domain-Driven.
@@ -156,6 +157,7 @@ services:
     image: mariadb:11.4
     container_name: bw-db
     restart: unless-stopped
+    command: --max-allowed-packet=128M
     environment:
       MYSQL_RANDOM_ROOT_PASSWORD: "yes"
       MYSQL_DATABASE: "db"
