@@ -1,11 +1,12 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : disable-bunkerweb.sh
-# VERSION : 2.3
+# VERSION : 2.5
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Désactivation de la couche de sécurité BunkerWeb (Secure Edge)
 #        et retour au mode d'accès local direct (HTTP).
+# CHANGELOG 2.5 : Prévention du crash getwd() via un `cd $ECHO_ROOT` forcé.
 # CHANGELOG 2.4 : Ajout de l'option opt-in --purge pour détruire la BDD et le dossier complet. Le comportement par défaut devient conservateur.
 # CHANGELOG 2.3 : Ajout de la purge du cache physique Let's Encrypt (évite le Split-Brain).
 # CHANGELOG 2.2 : Ajout de la purge systématique du volume de base de données bw-db.
@@ -30,6 +31,10 @@ else
 fi
 # ------------------------------------------
 
+# Sécurisation du CWD pour éviter les erreurs "getwd: no such file or directory" 
+# si le script supprime le répertoire depuis lequel il a été lancé (ex: --purge)
+cd "$ECHO_ROOT" || { echo "❌ Impossible d'accéder à $ECHO_ROOT"; exit 1; }
+
 export COMPOSE_PROJECT_NAME="echo"
 
 CONFIG_DIR="$ECHO_CONFIG"
@@ -51,7 +56,7 @@ if [[ "${1:-}" == "--purge" ]]; then
 fi
 
 echo "=================================================="
-echo "🔓 ECHO SECURITY DISABLE (v2.4)"
+echo "🔓 ECHO SECURITY DISABLE (v2.5)"
 echo "=================================================="
 echo "Ce script va désactiver le WAF et le HTTPS."
 if [ "$PURGE_MODE" = true ]; then
