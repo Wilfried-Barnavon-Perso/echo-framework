@@ -1,11 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : disable-bunkerweb.sh
-# VERSION : 2.2
+# VERSION : 2.3
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Désactivation de la couche de sécurité BunkerWeb (Secure Edge)
 #        et retour au mode d'accès local direct (HTTP).
+# CHANGELOG 2.4 : Ajout de l'option opt-in --purge pour détruire la BDD et le dossier complet. Le comportement par défaut devient conservateur.
+# CHANGELOG 2.3 : Ajout de la purge du cache physique Let's Encrypt (évite le Split-Brain).
 # CHANGELOG 2.2 : Ajout de la purge systématique du volume de base de données bw-db.
 # CHANGELOG 2.1 : Correction du grep pour le parsing de echo-open-webui.
 # CHANGELOG 2.0 : set -euo pipefail.
@@ -43,10 +45,18 @@ fi
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
+PURGE_MODE=false
+if [[ "${1:-}" == "--purge" ]]; then
+    PURGE_MODE=true
+fi
+
 echo "=================================================="
-echo "🔓 ECHO SECURITY DISABLE (v2.0)"
+echo "🔓 ECHO SECURITY DISABLE (v2.4)"
 echo "=================================================="
 echo "Ce script va désactiver le WAF et le HTTPS."
+if [ "$PURGE_MODE" = true ]; then
+    echo "⚠️  MODE PURGE ACTIVÉ : La base de données WAF et le cache (Let's Encrypt) seront détruits."
+fi
 echo "ℹ️  Mode Local : Le portail ECHO Auth (MFA/SSO) ne sera pas actif (pas d'exposition internet)."
 echo "Vos applications seront accessibles uniquement en LOCAL (HTTP)."
 echo ""
@@ -112,9 +122,15 @@ $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" \
     -f "$BW_STACK_FILE" -f "$ECHO_STACK_FILE" \
     down --remove-orphans || true
 
-# Suppression ciblée du volume MariaDB pour garantir un état vierge
-echo "🧹 Purge du volume de la base de données WAF (echo_bw-db-data)..."
-docker volume rm echo_bw-db-data 2>/dev/null || true
+if [ "$PURGE_MODE" = true ]; then
+    echo "🧹 [PURGE] Suppression du volume de la base de données WAF (echo_bw-db-data)..."
+    docker volume rm echo_bw-db-data 2>/dev/null || true
+
+    echo "🧹 [PURGE] Suppression de l'intégralité du cache physique BunkerWeb..."
+    rm -rf "$ECHO_ROOT/bunkerweb/"* 2>/dev/null || true
+else
+    echo "ℹ️  Conservation de la base de données WAF et du cache Let's Encrypt (Mode normal)."
+fi
 
 # Nettoyage préventif ciblé : uniquement les conteneurs ECHO restants
 # (Filtre strict par label du projet Compose)
