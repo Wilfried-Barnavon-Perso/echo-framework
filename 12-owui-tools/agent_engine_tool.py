@@ -1,22 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.21
+version: 1.22
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.22: Transformation de calls_used en calls_remaining pour l'orchestrateur parent.
 # 1.21: Coupure stricte de l'interface utilisateur (__event_call__: None) pour forcer le mode Headless des sous-agents.
 # 1.20: Remplacement de l'injection subagent_metadata par la propagation asynchrone ECHO_SUBAGENT_CONTEXT.
 # 1.19: Injection de sub_sid dans subagent_metadata pour le RAG sécurisé des sous-agents.
 # 1.18: Injection du paramètre is_subagent dans les métadonnées pour bypasser les modales UI.
-# 1.17: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
-# 1.12: Précision docstring sur l'héritage du système prompt de l'orchestrateur.
-# 1.11: Correction injection PRAF (évite doublon si héritage du Kernel). Suppression acronyme PRAF.
-# 1.10: Consolidation de l'injection universelle (date + PRAF ajusté) via <directives_globales>.
-# 1.9: Injection universelle du contexte temporel (date iso) à la fin du base_system des agents délégués.
-# 1.14: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
-# 1.15: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import sys
 import uuid
@@ -606,7 +600,7 @@ async def _run_agent_loop(
                         "sid": sid,
                         "question": question,
                         "progress": progress or "(en cours)",
-                        "calls_used": calls_used,
+                        "calls_remaining": max_calls - calls_used,
                     }
                 , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -628,7 +622,7 @@ async def _run_agent_loop(
                 status={
                     "status": "success",
                     "sid": sid,
-                    "calls_used": calls_used,
+                    "calls_remaining": max_calls - calls_used,
                     "model_used": model_used,
                 }
             , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -684,7 +678,7 @@ async def _run_agent_loop(
                     "status": "success",
                     "sid": sid,
                     "warning": "budget_exhausted",
-                    "calls_used": calls_used,
+                    "calls_remaining": max_calls - calls_used,
                     "model_used": model_used,
                 }
             , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
