@@ -100,7 +100,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement au format XML nat
 
 L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N pilotés par l'LLM :
 - **Coding Worker :** API Flask pour exécution isolée de code multi-langages (Python, JavaScript/Node).
-- **Browser Worker :** Instance Playwright pilotée par FastAPI asynchrone (bridée à 9 FPS).
+- **Browser Worker :** Instance Playwright pilotée par FastAPI asynchrone (bridée à 9 FPS). Intègre une ingénierie de furtivité avancée (WAF Bypass) pour contourner les protections Anti-Bot (Cloudflare, DataDome) via la neutralisation du flag `webdriver` au niveau C++ et l'injection de Proxys JS de haute fidélité (usurpation WebGL, Plugins, Permissions, et architecture matérielle).
 - **Embedding Worker :** Offload WebGPU/WASM prioritaire, fallback sur llama.cpp (GGUF CPU) sous Docker.
 - **Download Broker :** Service de collecte asynchrone des téléchargements.
 - **MCP Broker :** Serveur natif Model Context Protocol agissant désormais comme un **Proxy HTTP complet** (`m5_proxy_mcp.py`). Il implémente un système de **Forwarding d'erreurs** (remontée transparente vers le LLM) et un middleware pur ASGI interceptant silencieusement le `x-openwebui-user-id` pour l'authentification.

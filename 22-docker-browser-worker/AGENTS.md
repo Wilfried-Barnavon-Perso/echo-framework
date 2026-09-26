@@ -20,6 +20,10 @@ Fichier monolithique (environ 57Ko) exposant l'API de contrôle du navigateur as
 - **Optimisation FPS** : L'API asynchrone est bridée à **9 FPS** (Frames Per Second) pour réduire drastiquement la charge CPU et la bande passante du serveur lors du traitement et du renvoi du flux vidéo, sans perdre l'intelligibilité de la session pour l'utilisateur.
 - Ce flux est ensuite exploitable par le *Cockpit de Rejeu* (HUD `web_navigation_replay_action.py`).
 
+#### C. Furtivité & Contournement Anti-Bot (WAF Bypass)
+- **Sémantique** : Intègre un mécanisme de défense proactif contre les pare-feux applicatifs modernes (Cloudflare Turnstile, DataDome).
+- **Techniques** : Purge du flag `navigator.webdriver` via l'argument Blink `--disable-blink-features=AutomationControlled`, et injection de Proxys JS de haute fidélité pour maquiller les empreintes Headless/Docker (spoofing du WebGL vers NVIDIA RTX 3060, chaînage natif des `navigator.plugins`, injection de l'objet `window.chrome`, résolution du conflit de `Notification.permission`, et simulation des dimensions/matériels desktop).
+
 ## 3. Dépendances Logiques
 - Ce Worker est invoqué exclusivement par la bibliothèque `echo_browser_lib.py` et l'outil `navigation_engine_tool.py`.
 - Il fonctionne de manière asynchrone pour ne pas saturer l'Event Loop globale d'Open WebUI. Il s'appuie sur une image Docker massive contenant les dépendances Chromium/Webkit.
