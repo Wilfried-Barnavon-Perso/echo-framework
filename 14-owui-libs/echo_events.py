@@ -10,6 +10,7 @@ import uuid
 import orjson as json
 from echo_constants import ECHO_UCTP_CHUNK_SIZE
 
+
 class EchoEvents:
     def __init__(self, emitter: Any = None, caller: Any = None):
         self.emitter = emitter
@@ -17,8 +18,10 @@ class EchoEvents:
 
     async def emit(self, event_type: str, data: dict):
         if self.emitter:
-            try: await self.emitter({"type": event_type, "data": data})
-            except Exception as e: print(f"[EchoEvents] Emit Error: {e}")
+            try:
+                await self.emitter({"type": event_type, "data": data})
+            except Exception as e:
+                print(f"[EchoEvents] Emit Error: {e}")
 
     async def status(self, description: str, done: bool = False, hidden: bool = False):
         await self.emit("status", {"description": description, "done": done, "hidden": hidden})
@@ -28,8 +31,10 @@ class EchoEvents:
 
     async def call(self, event_type: str, data: dict) -> Any:
         if self.caller:
-            try: return await self.caller({"type": event_type, "data": data})
-            except Exception as e: print(f"[EchoEvents] Call Error: {e}")
+            try:
+                return await self.caller({"type": event_type, "data": data})
+            except Exception as e:
+                print(f"[EchoEvents] Call Error: {e}")
         return None
 
     async def input(self, title: str, message: str, placeholder: str = "", type: str = "text") -> Optional[str]:
@@ -41,13 +46,14 @@ class EchoEvents:
 
     async def emit_execute(self, code_str: str):
         """ Émet et exécute du JS avec fragmentation automatique Python -> JS (UCTP) """
-        if not self.emitter: return
+        if not self.emitter:
+            return
         try:
             if len(code_str) > ECHO_UCTP_CHUNK_SIZE:
                 var_id = uuid.uuid4().hex
                 var_name = "window._uctp_" + var_id
                 loader_id = "uctp-loader-" + var_id
-                
+
                 setup_js = f"""
                 window.{var_name} = '';
                 if (!document.getElementById('{loader_id}')) {{
@@ -72,26 +78,27 @@ class EchoEvents:
                 return true;
                 """
                 await self.emitter({"type": "execute", "data": {"code": setup_js}})
-                
+
                 total_chunks = (len(code_str) + ECHO_UCTP_CHUNK_SIZE - 1) // ECHO_UCTP_CHUNK_SIZE
                 for i in range(total_chunks):
                     start_idx = i * ECHO_UCTP_CHUNK_SIZE
-                    chunk = code_str[start_idx : start_idx + ECHO_UCTP_CHUNK_SIZE]
+                    chunk = code_str[start_idx: start_idx + ECHO_UCTP_CHUNK_SIZE]
                     escaped = json.dumps(chunk).decode("utf-8")
                     percent = int(((i + 1) / total_chunks) * 100)
-                    
+
                     chunk_js = f"""
                     window.{var_name} += {escaped};
                     const bar = document.getElementById('{loader_id}-bar');
                     if (bar) bar.style.width = '{percent}%';
+                    await new Promise(r => setTimeout(r, 5)); // Force un rafraîchissement DOM (Yield Event Loop)
                     return true;
                     """
                     await self.emitter({"type": "execute", "data": {"code": chunk_js}})
-                    
+
                 final_exec = f"""
                 const loader = document.getElementById('{loader_id}');
                 if (loader) loader.remove();
-                
+
                 const code = window.{var_name};
                 delete window.{var_name};
                 const AsyncFunction = Object.getPrototypeOf(async function(){{}}).constructor;
@@ -105,16 +112,17 @@ class EchoEvents:
 
     async def call_execute(self, code_str: str) -> Any:
         """ Émet du JS, attend un retour, gère la fragmentation Bidi UCTP (Python <-> JS) """
-        if not self.caller: return None
+        if not self.caller:
+            return None
         try:
             if "return " not in code_str:
                 code_str += "\nreturn true;"
-                
+
             if len(code_str) > ECHO_UCTP_CHUNK_SIZE:
                 var_id = uuid.uuid4().hex
                 var_name = "window._uctp_" + var_id
                 loader_id = "uctp-loader-" + var_id
-                
+
                 setup_js = f"""
                 window.{var_name} = '';
                 if (!document.getElementById('{loader_id}')) {{
@@ -139,26 +147,27 @@ class EchoEvents:
                 return true;
                 """
                 await self.caller({"type": "execute", "data": {"code": setup_js}})
-                
+
                 total_chunks = (len(code_str) + ECHO_UCTP_CHUNK_SIZE - 1) // ECHO_UCTP_CHUNK_SIZE
                 for i in range(total_chunks):
                     start_idx = i * ECHO_UCTP_CHUNK_SIZE
-                    chunk = code_str[start_idx : start_idx + ECHO_UCTP_CHUNK_SIZE]
+                    chunk = code_str[start_idx: start_idx + ECHO_UCTP_CHUNK_SIZE]
                     escaped = json.dumps(chunk).decode("utf-8")
                     percent = int(((i + 1) / total_chunks) * 100)
-                    
+
                     chunk_js = f"""
                     window.{var_name} += {escaped};
                     const bar = document.getElementById('{loader_id}-bar');
                     if (bar) bar.style.width = '{percent}%';
+                    await new Promise(r => setTimeout(r, 5)); // Force un rafraîchissement DOM (Yield Event Loop)
                     return true;
                     """
                     await self.caller({"type": "execute", "data": {"code": chunk_js}})
-                    
+
                 final_exec = f"""
                 const loader = document.getElementById('{loader_id}');
                 if (loader) loader.remove();
-                
+
                 const code = window.{var_name};
                 delete window.{var_name};
                 const AsyncFunction = Object.getPrototypeOf(async function(){{}}).constructor;
@@ -167,19 +176,19 @@ class EchoEvents:
                 res = await self.caller({"type": "execute", "data": {"code": final_exec}})
             else:
                 res = await self.caller({"type": "execute", "data": {"code": code_str}})
-                
+
             # UCTP Bidi Réception (JS -> Python)
             if isinstance(res, dict) and res.get("action") == "__chunked_payload__":
                 buffer = [res.get("data", "")]
                 total = res.get("total_chunks", 1)
-                
+
                 for _ in range(1, total):
                     next_res = await self.caller({"type": "execute", "data": {"code": res.get("wait_code")}})
                     if isinstance(next_res, dict) and next_res.get("action") == "__chunked_payload__":
                         buffer.append(next_res.get("data", ""))
                     else:
-                        break # Rupture de protocole
-                        
+                        break  # Rupture de protocole
+
                 full_str = "".join(buffer)
                 buffer.clear()
                 try:
@@ -187,7 +196,7 @@ class EchoEvents:
                 except Exception as e:
                     print(f"[EchoEvents UCTP] Decode error: {e}")
                     return None
-                    
+
             return res
         except Exception as e:
             print(f"[EchoEvents] Call Execute Error: {e}")
