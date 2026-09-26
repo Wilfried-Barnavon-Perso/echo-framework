@@ -68,7 +68,7 @@ services:
       - "443:8443"
     environment:
       <<: *bw-config
-      SERVER_NAME: ""
+      SERVER_NAME: "bw-default.echo-ai.eu"
       MULTISITE: "yes"
       AUTO_LETS_ENCRYPT: "yes"
       REDIRECT_HTTP_TO_HTTPS: "yes"
