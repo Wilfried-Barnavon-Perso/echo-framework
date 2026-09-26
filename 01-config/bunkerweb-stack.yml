@@ -197,7 +197,6 @@ services:
     command: tail -f /dev/null
     labels:
       - "bunkerweb.SERVER_NAME=${ECHO_DOMAIN:-localhost} www.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=no"
       # Redirection 301 Permanente vers le sous-domaine UI (Plugin Natif)
       - "bunkerweb.REDIRECT_TO=https://ui.${ECHO_DOMAIN:-localhost}"
@@ -239,7 +238,6 @@ services:
       - "echo.hot-reload=true"
       # Exposition via BunkerWeb sous un sous-domaine dédié auth.DOMAINE
       - "bunkerweb.SERVER_NAME=auth.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-auth-manager:8000"

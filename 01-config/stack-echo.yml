@@ -135,7 +135,6 @@ services:
       - "echo.hot-reload=true"
       # 🛡️ TUNING SECURE EDGE (BunkerWeb)
       - "bunkerweb.SERVER_NAME=ui.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_main=set $$upstream_main http://echo-open-webui:8080;"
@@ -285,7 +284,6 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
       - "bunkerweb.SERVER_NAME=am.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"

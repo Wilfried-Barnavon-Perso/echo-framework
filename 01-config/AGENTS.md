@@ -21,7 +21,7 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 
 ### `bunkerweb-stack.yml`
 **Rôle** : L'enveloppe de sécurité périmétrique (WAF).
-- **Sémantique** : Ce manifeste secondaire est activé par `enable-bunkerweb.sh` pour proxyfier les requêtes vers l'Open WebUI (port 80/443), gérant le TLS et filtrant les attaques malveillantes via l'Auth Manager.
+- **Sémantique** : Ce manifeste secondaire est activé par `enable-bunkerweb.sh` pour proxyfier les requêtes vers l'Open WebUI (port 80/443), gérant le TLS et filtrant les attaques malveillantes via l'Auth Manager. Intègre les variables globales (`x-bw-config`) dont `AUTO_LETS_ENCRYPT` qui ne doivent **jamais** être répétées sous forme de labels sur des conteneurs dynamiques pour éviter l'effacement par Autoconf.
 
 ### `webui-settings.json` & `model-config.json`
 **Rôle** : Fichiers d'amorçage (Seed) pour l'interface de chat.
