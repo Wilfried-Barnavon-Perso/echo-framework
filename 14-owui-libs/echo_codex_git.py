@@ -520,6 +520,24 @@ class CodexRepo:
             "last_commit_message": log[0]["message"] if log else None,
         }
 
+    def get_latest_state(self) -> str:
+        """Retourne un identifiant d'état rapide (hash Git ou mtime) pour le ping."""
+        is_sandbox = os.path.basename(self.repo_path.rstrip("/\\")) == "sandbox"
+        if is_sandbox:
+            try:
+                max_mtime = os.path.getmtime(self.repo_path)
+                for root, dirs, files in os.walk(self.repo_path):
+                    for name in dirs + files:
+                        mtime = os.path.getmtime(os.path.join(root, name))
+                        if mtime > max_mtime:
+                            max_mtime = mtime
+                return str(max_mtime)
+            except Exception:
+                return "0"
+        else:
+            log = self.get_log(limit=1)
+            return log[0]["hash"] if log else "empty"
+
     # =========================================================================
     # UTILITAIRES
     # =========================================================================

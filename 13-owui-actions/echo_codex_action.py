@@ -1,12 +1,14 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.10
+version: 3.11
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle d'Historique : Ne garder que les 5 dernieres versions.
 # Historique des versions :
+# 3.11: Optimisation absolue du ping heartbeat : suppression de get_repo_stats, ajout asyncio.to_thread pour purger la congestion de l'Event Loop.
+# 3.10: Support des workspaces main/sandbox.
 # 3.9: Fiabilisation de la boucle asynchrone (injection return true; pour l'API action JS).
 # 3.8: Sélection visuelle automatique du fichier (Focus) après sa création, et ajustement sémantique du reset.
 # 3.7: Précision du nom du workspace cible lors de la réinitialisation (message toast).
@@ -41,6 +43,7 @@ import orjson as json
 import logging
 from typing import Optional
 from pydantic import BaseModel, Field
+import asyncio
 
 # Ajout dynamique du chemin pour les libs ECHO avant l'import
 sys.path.append("/app/backend/echo_libs")
@@ -151,8 +154,7 @@ class Action:
                     )
 
             try:
-                stats = repo.get_repo_stats()
-                current_commit = stats.get("last_commit_hash")
+                current_state = await asyncio.to_thread(repo.get_latest_state)
                 while True:
                     wait_code = "return new Promise(r => window.echoCodexResolve = r);"
                     response = await safe_event_call({"type": "execute", "data": {"code": wait_code}})
@@ -170,9 +172,8 @@ class Action:
                     elif action_type == "switch_workspace":
                         current_workspace = response.get("workspace", "main")
                         repo = CodexRepo(uid, cid, workspace=current_workspace)
-                        stats = repo.get_repo_stats()
-                        current_commit = stats.get("last_commit_hash")
-                        updated_files = repo.list_files()
+                        current_state = await asyncio.to_thread(repo.get_latest_state)
+                        updated_files = await asyncio.to_thread(repo.list_files)
                         files_json = json.dumps(updated_files).decode("utf-8")
                         await _refresh_tree()
                         
@@ -197,11 +198,10 @@ class Action:
 
                     # ---- PING HEARTBEAT (Auto-refresh) ----
                     elif action_type == "ping":
-                        stats = repo.get_repo_stats()
-                        new_commit = stats.get("last_commit_hash")
-                        if new_commit != current_commit:
-                            current_commit = new_commit
-                            updated_files = repo.list_files()
+                        new_state = await asyncio.to_thread(repo.get_latest_state)
+                        if new_state != current_state:
+                            current_state = new_state
+                            updated_files = await asyncio.to_thread(repo.list_files)
                             files_json = json.dumps(
                                 updated_files).decode("utf-8")
                             current_file = response.get("current_file", "")

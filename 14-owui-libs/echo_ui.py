@@ -1,11 +1,12 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.82
+version: 5.83
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.83: Codex - Réduction du ping à 5s pour économiser les ressources réseau.
 # 5.82: Fix - Modification du type MIME fallback de la vue Navigation (monitor_ECHO) en image/jpeg.
 # 5.81: Intégration du lecteur PDF WYSIWYG natif (reconstruction par Blob) dans le HUD Codex.
 # 5.80: Fiabilisation de la sauvegarde Codex (verrou JS et hook clavier Monaco natif).
@@ -2421,7 +2422,7 @@ return new Promise(function(resolve) {{
           window.echoCodexResolve({{action: 'ping', current_file: currentFile}});
           window.echoCodexResolve = null;
         }}
-      }}, 3000);
+      }}, 5000);
 
       loadMonaco();
     }})();

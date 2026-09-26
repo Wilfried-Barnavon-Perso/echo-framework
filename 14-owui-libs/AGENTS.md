@@ -32,7 +32,7 @@ Ce dossier constitue le **Cœur Applicatif (Core Libraries)** du framework. Il c
 
 ### Pipelines Spécialisés
 - **`echo_ingestion.py`** : Pipeline d'Ingestion Zéro-RAM asynchrone modulaire pour la base RAG. Gère de façon dynamique les fichiers entrants ("dynamic file handling"), les convertit via MarkItDown et les indexe via traitement hybride.
-- **`echo_codex_git.py`** : Surcouche bas niveau des commandes `git` et du registre SQLite utilisé par ECHO Codex.
+- **`echo_codex_git.py`** : Surcouche bas niveau des commandes `git` et du registre SQLite utilisé par ECHO Codex. Intègre désormais une méthode d'accès O(1) (`get_latest_state`) pour optimiser la vérification d'état (hash pour le main, mtime pour la sandbox) via le ping asynchrone.
 - **`echo_browser_lib.py`** : Bibliothèque bas niveau de pilotage asynchrone pour le worker Playwright (utilisé par `navigation_engine_tool`).
 - **`echo_skills.py`** : Extracteur sémantique de métadonnées pour les Skills Antigravity.
 
