@@ -586,7 +586,7 @@ class EchoUI(EchoRichUI):
         else:
             js_code = EchoUI._generate_webplayer_js(
                 b64, "image/jpeg", metadata or [], current_url, hud_id, state_key, icon="🌐")
-        await events.emit("execute", {"code": js_code})
+        await events.emit_execute(js_code)
 
     @staticmethod
     async def deploy_context_gauge(
@@ -668,7 +668,7 @@ class EchoUI(EchoRichUI):
       document.body.appendChild(hudWrapper);
     }})();
     """
-        await events.emit("execute", {"code": js_code})
+        await events.emit_execute(js_code)
 
     @staticmethod
     def show_image_js(b64: str, mime: str = "image/png",

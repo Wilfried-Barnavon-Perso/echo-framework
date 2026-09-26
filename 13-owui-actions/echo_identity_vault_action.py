@@ -111,13 +111,13 @@ class Action:
         accounts_json = json.dumps(accounts).decode("utf-8")
         
         hud_js = EchoUI._generate_identity_vault_js(accounts_json, schemas_json)
-        await __event_call__({"type": "execute", "data": {"code": hud_js}})
+        await events.call_execute(hud_js)
         await events.status("🔐 ECHO Identity Vault actif.", True)
 
         # 2. Boucle d'événements asynchrones
         while True:
             wait_code = "return new Promise(r => window.echoVaultResolve = r);"
-            response = await __event_call__({"type": "execute", "data": {"code": wait_code}})
+            response = await events.call_execute(wait_code)
 
             if not response or not isinstance(response, dict):
                 break
@@ -172,7 +172,7 @@ class Action:
                 accounts = self._get_accounts(state)
                 accounts_json = json.dumps(accounts).decode("utf-8")
                 update_js = f"if(window.echoVaultUpdate) window.echoVaultUpdate('{accounts_json}');"
-                await __event_call__({"type": "execute", "data": {"code": update_js}})
+                await events.call_execute(update_js)
 
             elif action_type == "delete_account":
                 service = response.get("service")
@@ -186,7 +186,7 @@ class Action:
                 accounts = self._get_accounts(state)
                 accounts_json = json.dumps(accounts).decode("utf-8")
                 update_js = f"if(window.echoVaultUpdate) window.echoVaultUpdate('{accounts_json}');"
-                await __event_call__({"type": "execute", "data": {"code": update_js}})
+                await events.call_execute(update_js)
 
             else:
                 break

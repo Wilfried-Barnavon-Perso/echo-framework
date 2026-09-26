@@ -69,7 +69,7 @@ class Action:
                 await events.toast("❌ Migration impossible : Identifiants manquants.", "error")
             except AttributeError:
                 if __event_emitter__:
-                    await __event_emitter__({"type": "toast", "data": {"title": "ECHO", "message": "❌ Migration impossible : Identifiants manquants.", "type": "error"}})
+                    await events.toast("❌ Migration impossible : Identifiants manquants.", level="error", title="ECHO")
             return None
 
         if not Chats or not ChatForm:
@@ -77,7 +77,7 @@ class Action:
                 await events.toast("❌ Migration impossible : API Open WebUI non disponible.", "error")
             except AttributeError:
                 if __event_emitter__:
-                    await __event_emitter__({"type": "toast", "data": {"title": "ECHO", "message": "❌ Migration impossible : API Open WebUI non disponible.", "type": "error"}})
+                    await events.toast("❌ Migration impossible : API Open WebUI non disponible.", level="error", title="ECHO")
             return None
 
         if not await events.confirm(
@@ -111,12 +111,12 @@ class Action:
         })();
         """
         if __event_call__:
-            await __event_call__({"type": "execute", "data": {"code": hud_js}})
+            await events.call_execute(hud_js)
         
         async def update_hud(pct, step):
             if __event_call__:
                 safe_step = step.replace("'", "\\'")
-                await __event_call__({"type": "execute", "data": {"code": f"window.updateMigration({pct}, '{safe_step}');"}})
+                await events.call_execute(f"window.updateMigration({pct}, '{safe_step}');")
 
         # 2. Distillation du contexte
         await update_hud(10, "🧠 Distillation cognitive en cours...")
@@ -279,6 +279,6 @@ class Action:
         await asyncio.sleep(1) # Laisser l'UI s'afficher
         if __event_call__:
             cleanup_js = f"const h = document.getElementById('echo-migration-hud'); if(h) h.remove(); window.location.href = '/c/{new_chat_id}';"
-            await __event_call__({"type": "execute", "data": {"code": cleanup_js}})
+            await events.call_execute(cleanup_js)
 
         return None

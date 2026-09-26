@@ -407,7 +407,7 @@ class Action:
 
         # 1. Installation de la Console
         shell_code = _generate_replay_shell(files, cid)
-        await __event_call__({"type": "execute", "data": {"code": shell_code}})
+        await events.call_execute(shell_code)
 
         # 2. Boucle de Streaming Atomique
         current_idx = 0
@@ -419,12 +419,12 @@ class Action:
                     b64 = base64.b64encode(f.read()).decode()
 
                 update_code = f"if(window.echoReplayUpdate) window.echoReplayUpdate('{b64}', {files[current_idx]['ts']}, {current_idx+1}, {len(files)});"       
-                await __event_call__({"type": "execute", "data": {"code": update_code}})
+                await events.call_execute(update_code)
             except: break
 
             # b. WAIT: Attente de la prochaine commande (Atomic Listen)
             wait_code = "return new Promise(r => window.echoReplayResolve = r);"
-            response = await __event_call__({"type": "execute", "data": {"code": wait_code}})
+            response = await events.call_execute(wait_code)
 
             if not response or not isinstance(response, dict): break
             action = response.get("action")

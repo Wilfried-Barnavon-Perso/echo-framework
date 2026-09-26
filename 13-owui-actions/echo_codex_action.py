@@ -102,12 +102,7 @@ class Action:
         # [commit_list], idx}
         history_nav = {}
 
-        async def safe_event_call(payload: dict):
-            if payload and payload.get("type") == "execute" and "code" in payload.get("data", {}):
-                code_str = payload["data"]["code"]
-                if "return " not in code_str:
-                    payload["data"]["code"] = code_str + "\nreturn true;"
-            return await __event_call__(payload)
+
 
         # 1. Injection du HUD Monaco
         files_json = json.dumps(files).decode("utf-8")
@@ -119,7 +114,7 @@ class Action:
             workspaces_json,
             current_workspace,
             cid)
-        await safe_event_call({"type": "execute", "data": {"code": hud_js}})
+        await events.call_execute(hud_js)
         await events.status("HUD Codex injecté.", done=True, hidden=True)
 
         # 2. Définition de la boucle événementielle bidirectionnelle (Détachée)
@@ -130,12 +125,12 @@ class Action:
                 updated_files = repo.list_files()
                 f_json = json.dumps(updated_files).decode("utf-8")
                 r_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({f_json}, '{current_workspace}');"
-                await safe_event_call({"type": "execute", "data": {"code": r_code}})
+                await events.call_execute(r_code)
 
             async def _notify_error(e: Exception):
                 err_msg = json.dumps(str(e)).decode("utf-8")
                 err_code = f"if(window.echoCodexNotify) window.echoCodexNotify('error', {err_msg});"
-                await safe_event_call({"type": "execute", "data": {"code": err_code}})
+                await events.call_execute(err_code)
 
             def _sync_registry(filename, commit_hash, msg, line_count=0, lang=None):
                 if current_workspace != "sandbox":
@@ -157,7 +152,7 @@ class Action:
                 current_state = await asyncio.to_thread(repo.get_latest_state)
                 while True:
                     wait_code = "return new Promise(r => window.echoCodexResolve = r);"
-                    response = await safe_event_call({"type": "execute", "data": {"code": wait_code}})
+                    response = await events.call_execute(wait_code)
 
                     if not response or not isinstance(response, dict):
                         break
@@ -189,11 +184,11 @@ class Action:
                                     f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
                                     f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
                                 )
-                                await safe_event_call({"type": "execute", "data": {"code": load_code}})
+                                await events.call_execute(load_code)
                                 continue
                         
                         clear_code = "if(window.echoCodexSetContent) window.echoCodexSetContent('', ''); if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
-                        await safe_event_call({"type": "execute", "data": {"code": clear_code}})
+                        await events.call_execute(clear_code)
                         continue
 
                     # ---- PING HEARTBEAT (Auto-refresh) ----
@@ -216,7 +211,7 @@ class Action:
                                         f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
                                     )
                                     await _refresh_tree()
-                                    await safe_event_call({"type": "execute", "data": {"code": sync_code}})
+                                    await events.call_execute(sync_code)
                                     continue
                             await _refresh_tree()
 
@@ -242,7 +237,7 @@ class Action:
 
                         # Notification dans le HUD
                         notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('saved', '{commit_hash[:7]}');"
-                        await safe_event_call({"type": "execute", "data": {"code": notify_code}})
+                        await events.call_execute(notify_code)
 
                     # ---- ÉDITION AI (sub-chat) ----
                     elif action_type == "ai_edit":
@@ -272,11 +267,11 @@ class Action:
                                 f"if(window.echoCodexSetModel) window.echoCodexSetModel('{actual_model}');"
                                 f"if(window.echoCodexShowDiff) window.echoCodexShowDiff({escaped});"
                             )
-                            await safe_event_call({"type": "execute", "data": {"code": combined}})
+                            await events.call_execute(combined)
                             await events.status(f"✅ Proposition prête ({actual_model.split('_')[-1]}) — Accepter ou Rejeter.", done=True)
                         else:
                             hide_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Aucun r\u00e9sultat');"
-                            await safe_event_call({"type": "execute", "data": {"code": hide_code}})
+                            await events.call_execute(hide_code)
                             await events.status("❌ L'éÉditeur AI n'a pas produit de résultat.", done=True)
 
                     # ---- ACCEPTER DIFF ----
@@ -296,7 +291,7 @@ class Action:
                         _sync_registry(filename, commit_hash, msg, line_count, lang)
 
                         notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('committed', '{commit_hash[:7]}');"
-                        await safe_event_call({"type": "execute", "data": {"code": notify_code}})
+                        await events.call_execute(notify_code)
 
                         # Recharger le fichier dans l'éÉditeur
                         result = repo.read_file(filename)
@@ -304,12 +299,12 @@ class Action:
                         escaped = json.dumps(file_content).decode("utf-8")
                         escaped_name = json.dumps(filename).decode("utf-8")
                         load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
-                        await safe_event_call({"type": "execute", "data": {"code": load_code}})
+                        await events.call_execute(load_code)
 
                     # ---- REJETER DIFF ----
                     elif action_type == "reject_diff":
                         revert_code = "if(window.echoCodexRevertDiff) window.echoCodexRevertDiff();"
-                        await safe_event_call({"type": "execute", "data": {"code": revert_code}})
+                        await events.call_execute(revert_code)
 
                         # Recharger le fichier original dans l'éÉditeur
                         filename = response.get("filename", "")
@@ -319,7 +314,7 @@ class Action:
                             escaped = json.dumps(file_content).decode("utf-8")
                             escaped_name = json.dumps(filename).decode("utf-8")
                             load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
-                            await safe_event_call({"type": "execute", "data": {"code": load_code}})
+                            await events.call_execute(load_code)
 
                     # ---- REFRESH (🔄 dans le header) ----
                     elif action_type == "refresh":
@@ -334,7 +329,7 @@ class Action:
                                 escaped_name = json.dumps(
                                     filename).decode("utf-8")
                                 load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
-                                await safe_event_call({"type": "execute", "data": {"code": load_code}})
+                                await events.call_execute(load_code)
                         await events.status("🔄 Actualisé.", done=True)
 
                     # ---- UPLOAD (PC → Codex) ----
@@ -380,7 +375,7 @@ class Action:
                             escaped = json.dumps(
                                 result["content"]).decode("utf-8")
                             dl_code = f"if(window.echoCodexDownload) window.echoCodexDownload('{filename}', {escaped});"
-                            await safe_event_call({"type": "execute", "data": {"code": dl_code}})
+                            await events.call_execute(dl_code)
 
                     # ---- NAVIGATION HISTORIQUE ◀ ----
                     elif action_type == "history_prev":
@@ -414,7 +409,7 @@ class Action:
                                 f"if(window.echoCodexLoadVersion) "
                                 f"window.echoCodexLoadVersion({escaped}, {info_json}, {nav['idx']}, {len(nav['commits'])});"
                             )
-                            await safe_event_call({"type": "execute", "data": {"code": load_code}})
+                            await events.call_execute(load_code)
 
                     # ---- NAVIGATION HISTORIQUE ▶ ----
                     elif action_type == "history_next":
@@ -440,7 +435,7 @@ class Action:
                                 f"if(window.echoCodexLoadVersion) "
                                 f"window.echoCodexLoadVersion({escaped}, {info_json}, {nav['idx']}, {len(nav['commits'])});"
                             )
-                            await safe_event_call({"type": "execute", "data": {"code": load_code}})
+                            await events.call_execute(load_code)
 
                     # ---- RESTAURER VERSION HISTORIQUE ----
                     elif action_type == "history_restore":
@@ -461,7 +456,7 @@ class Action:
                         history_nav.pop(filename, None)
 
                         notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('restored', '{commit_hash[:7]}');"
-                        await safe_event_call({"type": "execute", "data": {"code": notify_code}})
+                        await events.call_execute(notify_code)
 
                     # ---- SORTIR DE L'HISTORIQUE ----
                     elif action_type == "history_exit":
@@ -469,7 +464,7 @@ class Action:
                         history_nav.pop(filename, None)
 
                         exit_code = "if(window.echoCodexExitHistory) window.echoCodexExitHistory();"
-                        await safe_event_call({"type": "execute", "data": {"code": exit_code}})
+                        await events.call_execute(exit_code)
 
                     # ---- RESET ALL ----
                     elif action_type == "reset":
@@ -481,7 +476,7 @@ class Action:
                         history_nav.clear()
 
                         reset_code = "if(window.echoCodexReset) window.echoCodexReset();"
-                        await safe_event_call({"type": "execute", "data": {"code": reset_code}})
+                        await events.call_execute(reset_code)
                         await events.toast(f"🗑️ Workspace '{current_workspace}' réinitialisé ({file_count} éléments supprimés).", "success")
                         break
 
@@ -521,7 +516,7 @@ class Action:
                             if not is_dir:
                                 refresh_code += f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
 
-                            await safe_event_call({"type": "execute", "data": {"code": refresh_code}})
+                            await events.call_execute(refresh_code)
 
                         except Exception as e:
                             await _notify_error(e)
@@ -536,7 +531,7 @@ class Action:
                         
                         # Demande au frontend de greffer ces nœuds sur le parent
                         append_code = f"if(window.echoCodexAppendNodes) window.echoCodexAppendNodes('{target_dir}', {dir_json});"
-                        await safe_event_call({"type": "execute", "data": {"code": append_code}})
+                        await events.call_execute(append_code)
 
                     # ---- CHARGEMENT CONTENU FICHIER ----
                     elif action_type == "load_file":
@@ -551,7 +546,7 @@ class Action:
                         escaped_name = json.dumps(filename).decode("utf-8")
                         load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
                         
-                        await safe_event_call({"type": "execute", "data": {"code": load_code}})
+                        await events.call_execute(load_code)
 
                     # ---- SUPPRESSION FICHIER ----
                     elif action_type == "delete_file":
@@ -575,7 +570,7 @@ class Action:
                         updated_files = repo.list_files()
                         files_json = json.dumps(updated_files).decode("utf-8")
                         refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
-                        await safe_event_call({"type": "execute", "data": {"code": refresh_code}})
+                        await events.call_execute(refresh_code)
 
                         # Si le fichier supprimé était ouvert, charger le
                         # premier fichier restant
@@ -589,15 +584,15 @@ class Action:
                                     content = result["content"] if result else ""
                                     escaped_content = json.dumps(content).decode("utf-8")
                                     switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({first_escaped}); if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {first_escaped});"
-                                    await safe_event_call({"type": "execute", "data": {"code": switch_code}})
+                                    await events.call_execute(switch_code)
                                 else:
                                     empty_escaped = json.dumps("").decode("utf-8")
                                     switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile(null); if(window.echoCodexSetContent) window.echoCodexSetContent({empty_escaped}, null);"
-                                    await safe_event_call({"type": "execute", "data": {"code": switch_code}})
+                                    await events.call_execute(switch_code)
                             else:
                                 empty_escaped = json.dumps("").decode("utf-8")
                                 switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile(null); if(window.echoCodexSetContent) window.echoCodexSetContent({empty_escaped}, null);"
-                                await safe_event_call({"type": "execute", "data": {"code": switch_code}})
+                                await events.call_execute(switch_code)
 
                         await events.status(f"🗑️ {filename} supprimé.", done=True)
 
@@ -656,11 +651,11 @@ class Action:
                                     f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                                     f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
                                 )
-                            await safe_event_call({"type": "execute", "data": {"code": combined}})
+                            await events.call_execute(combined)
                             await events.status(f"✏️ Renommé : {old_name} → {new_name} ({commit_hash[:7]})", done=True)
                         else:
                             notify_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Renommage \u00e9échoué\u00e9');"
-                            await safe_event_call({"type": "execute", "data": {"code": notify_code}})
+                            await events.call_execute(notify_code)
 
             except Exception as e:
                 logger.error(f"[ECHO Codex] Erreur background_loop: {e}")

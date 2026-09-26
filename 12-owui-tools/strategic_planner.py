@@ -253,7 +253,7 @@ class Tools:
         )
 
         if __event_emitter__:
-            await __event_emitter__({"type": "status", "data": {"description": f"Plan {plan_id} créé.", "done": True}})
+            await events.status(f"Plan {plan_id} créé.", done=True)
         
         user_decision = "Le plan a été créé au statut 'proposed'. L'Utilisateur a été informé implicitement. Le Modèle DOIT lui indiquer qu'il peut proposer des ajustements via le chat, modifier manuellement le plan dans le Codex, ou demander formellement son exécution via process_plan."
         final_status = "proposed"
@@ -400,7 +400,7 @@ class Tools:
         
         user_decision = "Mise à jour effectuée silencieusement au statut 'proposed'. L'Utilisateur a été informé implicitement. Le Modèle DOIT lui indiquer qu'il peut proposer des ajustements via le chat, modifier manuellement le plan dans le Codex, ou demander formellement son exécution via process_plan."
         if __event_emitter__:
-            await __event_emitter__({"type": "status", "data": {"description": f"Plan {plan_id} mis à jour.", "done": True}})
+            await events.status(f"Plan {plan_id} mis à jour.", done=True)
 
         return wrap_cascade_output(
             text=f"### Tentative de mise à jour du plan `{plan_id}`\n\n"
@@ -559,9 +559,9 @@ class Tools:
             }});
             """
             if __event_emitter__:
-                await __event_emitter__({"type": "status", "data": {"description": f"Attente de confirmation pour lancer le plan {plan_id}...", "done": False}})
+                await events.status(f"Attente de confirmation pour lancer le plan {plan_id}...", done=False)
                 
-            user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
+            user_confirmed = await events.call_execute(js_code)
             if not user_confirmed:
                 await events.status(f"Lancement du plan {plan_id} refusé par l'utilisateur.", done=True)
                 return wrap_tool_output(text="Refus : L'Utilisateur a refusé de lancer l'exécution du plan. Attendez ses consignes.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)

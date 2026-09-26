@@ -129,7 +129,7 @@ class Tools:
             }}, 1000);
         }})();
         """
-        await events.emit("execute", {"code": js_code})
+        await events.emit_execute(js_code)
 
         # 3. Blocage Backend (Attente réelle)
         # On divise l'attente pour que si OWUI coupe le contexte, ça ne plante pas brutalement
@@ -197,7 +197,7 @@ class Tools:
             """
 
         # __event_call__ lance le JS et attend la résolution de la promesse
-        user_input = await __event_call__({"type": "execute", "data": {"code": js_code}})
+        user_input = await events.call_execute(js_code)
 
         if user_input is None or user_input is False:
             await events.status("Opération refusée, annulée ou délai expiré.", done=True)

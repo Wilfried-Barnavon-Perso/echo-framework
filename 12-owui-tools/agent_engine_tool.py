@@ -508,7 +508,7 @@ async def _run_agent_loop(
             try:
                 await events.toast(f"⚠️ Agent [{sid}] : saturation contextuelle ({int(current_size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
             except AttributeError:
-                if __event_emitter__: await __event_emitter__({"type": "toast", "data": {"title": "ECHO Agent", "message": f"⚠️ Agent [{sid}] : saturation contextuelle. Troncature silencieuse active.", "type": "warning"}})
+                if __event_emitter__: await events.toast(f"⚠️ Agent [{sid}] : saturation contextuelle. Troncature silencieuse active.", level="warning", title="ECHO Agent")
             while current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
                 removed = smart_truncate_history(history, 0)
                 if not removed:

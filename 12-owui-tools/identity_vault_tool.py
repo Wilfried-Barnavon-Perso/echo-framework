@@ -127,7 +127,7 @@ class Tools:
                 window.echoCustomConfirm({js_msg_escaped}, (agreed) => resolve(agreed));
             }});
             """
-            user_consent = await __event_call__({"type": "execute", "data": {"code": confirm_js}})
+            user_consent = await events.call_execute(confirm_js)
             
             if not user_consent:
                 return "Opération annulée : L'utilisateur a refusé la modification."
@@ -163,7 +163,7 @@ class Tools:
                 window.echoCustomConfirm({js_msg_escaped}, (agreed) => resolve(agreed));
             }});
             """
-            user_consent = await __event_call__({"type": "execute", "data": {"code": confirm_js}})
+            user_consent = await events.call_execute(confirm_js)
             
             if not user_consent:
                 return "Opération annulée : L'utilisateur a refusé la suppression."

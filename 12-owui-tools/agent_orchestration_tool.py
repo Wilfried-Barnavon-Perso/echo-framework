@@ -165,27 +165,27 @@ class Tools:
         """
 
         if __event_emitter__:
-            await __event_emitter__({"type": "status", "data": {"description": f"Validation requise pour supprimer le skill {skill_id}...", "done": False}})
+            await events.status(f"Validation requise pour supprimer le skill {skill_id}...", done=False)
 
         from echo_constants import ECHO_SUBAGENT_CONTEXT
         if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
             return wrap_tool_output(text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de requérir une confirmation de suppression.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
+        user_confirmed = await events.call_execute(js_code)
 
         if user_confirmed:
             success = delete_skill(user_id, skill_id)
             if success:
                 if __event_emitter__:
-                    await __event_emitter__({"type": "status", "data": {"description": f"Skill {skill_id} supprimé avec succès.", "done": True}})
+                    await events.status(f"Skill {skill_id} supprimé avec succès.", done=True)
                 return wrap_tool_output(text=f"Le skill '{skill_id}' a été supprimé.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             else:
                 if __event_emitter__:
-                    await __event_emitter__({"type": "status", "data": {"description": f"Erreur système lors de la suppression de {skill_id}.", "done": True}})
+                    await events.status(f"Erreur système lors de la suppression de {skill_id}.", done=True)
                 return wrap_tool_output(text=f"Impossible de supprimer le skill '{skill_id}'.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         else:
             if __event_emitter__:
-                await __event_emitter__({"type": "status", "data": {"description": "Suppression non confirmée par l'utilisateur.", "done": True}})
+                await events.status("Suppression non confirmée par l'utilisateur.", done=True)
             return wrap_tool_output(text="L'utilisateur a refusé ou délai expiré.", status={"status": "cancelled"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     # ==========================================================================

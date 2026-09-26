@@ -1,11 +1,12 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.67
+version: 5.68
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.68: Ajout des constantes ECHO_CODEX_EDIT_TIMEOUT et ECHO_CODEX_MAX_AI_PASSES (UCTP).
 # 5.67: Fix - Documentation de ECHO_SYNC_EXCLUDE_LIST comme bouclier anti-freeze UI pour le Codex.
 # 5.66: Introduction de ECHO_SUBAGENT_CONTEXT (ContextVars) pour propager l'identité asynchrone à travers Open WebUI.
 # 5.65: Retrait de save_session_context et delete_session_context_source de la blacklist.
@@ -420,6 +421,10 @@ RESOURCE_STATUS_MAP = {
 # 1.4 ECHO CODEX — CONSTANTES
 # ==============================================================================
 
+# --- CONSTANTES DE L'ÉDITEUR CODEX ---
+ECHO_CODEX_EDIT_TIMEOUT = 300       # Timeout sub-chat édition (secondes)
+ECHO_CODEX_MAX_AI_PASSES = 5        # Nombre max de passes auto-continue IA (0 à 5)
+
 # Nom du sous-dossier Codex dans le vault utilisateur
 CODEX_DIR_NAME = "codex"
 
@@ -595,6 +600,7 @@ ECHO_HTTP_CLIENT_TIMEOUT = 600       # Délai d'abandon (600s) si Google API ne 
 ECHO_HTTP_MAX_CONNECTIONS = 100      # Nombre max de connexions simultanées.
 ECHO_HTTP_MAX_KEEPALIVE = 20         # Nombre max de connexions Keep-Alive maintenues.
 ECHO_HTTP_KEEPALIVE_EXPIRY = 300     # Expiration des connexions Keep-Alive (en secondes).
+ECHO_UCTP_CHUNK_SIZE = 256000        # Taille des fragments UCTP Python <-> JS (256 Ko)
 
 # Timeout d'attente pour le chargement du modèle d'embedding WebGPU (Edge Embedding)
 DEFAULT_EDGE_EMBEDDING_TIMEOUT = 180
