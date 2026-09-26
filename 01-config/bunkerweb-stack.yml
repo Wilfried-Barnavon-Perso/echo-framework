@@ -1,7 +1,8 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.32
+# VERSION : 1.33
 # ==============================================================================
+#                  1.33: Fix conflit Nginx: migration des variables globales vers x-bw-config.
 #                  1.32: Surcharge de max_allowed_packet à 128M pour bw-db.
 #                  1.31: Élargissement de l'API_WHITELIST_IP à 10.0.0.0/8.
 #                  1.30: IPAM dynamique répercuté sur API_WHITELIST_IP (évite blocage bw-scheduler).
@@ -55,6 +56,21 @@ x-bw-config: &bw-config
   GUNICORN_WORKERS: "2"
   USE_BUNKERNET: "no"
   SEND_ANONYMOUS_REPORT: "no"
+  
+  # ==========================================
+  # CONFIGURATIONS GLOBALES AUTOCONF
+  # Doivent être ici pour être poussées en base
+  # ==========================================
+  AUTO_LETS_ENCRYPT: "yes"
+  REDIRECT_HTTP_TO_HTTPS: "yes"
+  USE_GZIP: "yes"
+  USE_BROTLI: "yes"
+  USE_CLIENT_CACHE: "yes"
+  USE_CLAMAV: "no"
+  USE_ANTIBOT: "basic"
+  DISABLE_DEFAULT_SERVER: "yes"
+  USE_MODSECURITY: "yes"
+  MODSEC_CRS_PARANOIA_LEVEL: "1"
 
 services:
   
@@ -68,18 +84,8 @@ services:
       - "443:8443"
     environment:
       <<: *bw-config
-      SERVER_NAME: "bw-default.echo-ai.eu"
+      SERVER_NAME: ""
       MULTISITE: "yes"
-      AUTO_LETS_ENCRYPT: "yes"
-      REDIRECT_HTTP_TO_HTTPS: "yes"
-      USE_GZIP: "yes"
-      USE_BROTLI: "yes"
-      USE_CLIENT_CACHE: "yes"
-      USE_CLAMAV: "no"
-      USE_ANTIBOT: "basic"
-      DISABLE_DEFAULT_SERVER: "yes"
-      USE_MODSECURITY: "yes"
-      MODSEC_CRS_PARANOIA_LEVEL: "1"
     labels:
       - "bunkerweb.INSTANCE=yes"
     networks:
