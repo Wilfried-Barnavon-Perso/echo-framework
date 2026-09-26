@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.83
+version: 5.84
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.84: Fix - (Codex) Préservation du collapse des dossiers au re-rendu, et implémentation du proxy asynchrone (sendCodexAction) pour éradiquer la perte de clics.
 # 5.83: Codex - Réduction du ping à 5s pour économiser les ressources réseau.
 # 5.82: Fix - Modification du type MIME fallback de la vue Navigation (monitor_ECHO) en image/jpeg.
 # 5.81: Intégration du lecteur PDF WYSIWYG natif (reconstruction par Blob) dans le HUD Codex.
 # 5.80: Fiabilisation de la sauvegarde Codex (verrou JS et hook clavier Monaco natif).
-# 5.79: Précision du nom du workspace cible dans la modale JS de confirmation de Reset du Codex.
 # 5.78: Déverrouillage complet de la Timeline Git (Historique) dans l'espace Sandbox.
 # 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
 # 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
@@ -1135,6 +1135,20 @@ return new Promise(function(resolve) {{
       let markedLoaded = false;
       let previewDebounceTimer = null;
 
+      // --- COMMUNICATION PROXY (Race Condition Guard) ---
+      window.sendCodexAction = function(payload) {{
+        if (typeof window.echoCodexResolve === 'function') {{
+          const resolveFn = window.echoCodexResolve;
+          window.echoCodexResolve = null; // Verrouille immédiatement
+          resolveFn(payload);
+        }} else {{
+          // Retry dans 50ms pour les actions vitales, ignore les pings
+          if (payload && payload.action !== 'ping') {{
+             setTimeout(() => window.sendCodexAction(payload), 50);
+          }}
+        }}
+      }};
+
       // --- Restore position ---
       let savedState = {{}};
       try {{ savedState = JSON.parse(localStorage.getItem(STATE_KEY) || '{{}}'); }} catch(e) {{}}
@@ -1357,7 +1371,7 @@ return new Promise(function(resolve) {{
           wsSelect.appendChild(opt);
         }});
         wsSelect.onchange = () => {{
-          window.echoCodexResolve({{action:'switch_workspace', workspace:wsSelect.value}});
+          window.sendCodexAction({{action:'switch_workspace', workspace:wsSelect.value}});
         }};
         sb.appendChild(wsSelect);
 
@@ -1411,7 +1425,8 @@ return new Promise(function(resolve) {{
           }}).forEach(child => {{
               if (child.isDir) {{
                 const details = document.createElement('details');
-                details.open = true; // Par défaut ouvert
+                // N'ouvre le dossier que si le fichier actif s'y trouve
+                details.open = currentFile && currentFile.startsWith(child.path + '/');
                 const summary = document.createElement('summary');
                 summary.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; user-select:none; font-weight:600; color:${{isDark ? '#cba6f7' : '#8839ef'}};`;
                 summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
@@ -1437,7 +1452,7 @@ return new Promise(function(resolve) {{
                       if (newName && newName !== child.name) {{
                         input.disabled = true;
                         const parentPath = child.path.substring(0, child.path.lastIndexOf('/') + 1);
-                        window.echoCodexResolve({{action:'rename_file', old_name:child.path, new_name: parentPath + newName, current_file:currentFile}});
+                        window.sendCodexAction({{action:'rename_file', old_name:child.path, new_name: parentPath + newName, current_file:currentFile}});
                         summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{newName}}</span>`;
                         summary.appendChild(actionGroup);
                       }} else {{
@@ -1467,7 +1482,7 @@ return new Promise(function(resolve) {{
                 delBtn.onclick = (e) => {{
                   e.preventDefault();
                   window.echoCustomConfirm('Supprimer le dossier ' + child.path + ' ?', (agreed) => {{
-                    if (agreed) window.echoCodexResolve({{action:'delete_file', filename:child.path, current_file:currentFile}});
+                    if (agreed) window.sendCodexAction({{action:'delete_file', filename:child.path, current_file:currentFile}});
                   }});
                 }};
 
@@ -1516,7 +1531,7 @@ return new Promise(function(resolve) {{
                       if (newName && newName !== child.name) {{
                         input.disabled = true;
                         const parentPath = f.filename.substring(0, f.filename.lastIndexOf('/') + 1);
-                        window.echoCodexResolve({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName, current_file:currentFile}});
+                        window.sendCodexAction({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName, current_file:currentFile}});
                         nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + newName}}`;
                       }} else {{
                         nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
@@ -1543,7 +1558,7 @@ return new Promise(function(resolve) {{
                 delBtn.onclick = (e) => {{
                   e.stopPropagation();
                   window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
-                    if (agreed) window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
+                    if (agreed) window.sendCodexAction({{action:'delete_file', filename:f.filename, current_file:currentFile}});
                   }});
                 }};
                 
@@ -1573,7 +1588,7 @@ return new Promise(function(resolve) {{
 
           const submitFile = () => {{
             const name = input.value.trim();
-            if (name) window.echoCodexResolve({{action:'new_file', filename:name}});
+            if (name) window.sendCodexAction({{action:'new_file', filename:name}});
             else renderFileTree();
           }};
 
@@ -1596,7 +1611,7 @@ return new Promise(function(resolve) {{
         resetBtn.onclick = () => {{
           window.echoCustomConfirm(`⚠️ Vider intégralement le workspace "{current_workspace}" ? Irréversible.`, (agreed) => {{
             if (agreed) {{
-              window.echoCodexResolve({{action:'reset'}});
+              window.sendCodexAction({{action:'reset'}});
             }}
           }});
         }};
@@ -1618,7 +1633,7 @@ return new Promise(function(resolve) {{
         renderFileTree();
         updateStatus(filename + ' \u2022 chargement...');
         // Demander le contenu au backend Python
-        window.echoCodexResolve({{action:'load_file', filename:filename}});
+        window.sendCodexAction({{action:'load_file', filename:filename}});
       }}
 
       // ===== QUICK ACTIONS =====
@@ -1641,7 +1656,7 @@ return new Promise(function(resolve) {{
         lastInstruction = instruction;
         showButtonSpinner(triggerBtn || document.getElementById(CODEX_ID + '-ai-send'));
         const modelSelect = document.getElementById(CODEX_ID + '-model');
-        window.echoCodexResolve({{
+        window.sendCodexAction({{
           action: 'ai_edit',
           instruction: instruction,
           content: editor.getValue(),
@@ -1694,7 +1709,7 @@ return new Promise(function(resolve) {{
       document.getElementById(CODEX_ID + '-close').onclick = () => {{
         saveState();
         hud.remove();
-        window.echoCodexResolve({{action:'close'}});
+        window.sendCodexAction({{action:'close'}});
       }};
       let isMinimized = false;
       document.getElementById(CODEX_ID + '-minimize').onclick = () => {{
@@ -1739,7 +1754,7 @@ return new Promise(function(resolve) {{
             filesData.push({{filename: file.name, content: text}});
           }}
           if (filesData.length > 0) {{
-            window.echoCodexResolve({{action:'upload', files: filesData}});
+            window.sendCodexAction({{action:'upload', files: filesData}});
           }}
         }};
         inp.click();
@@ -1747,7 +1762,7 @@ return new Promise(function(resolve) {{
 
       // Export (Codex → PC)
       document.getElementById(CODEX_ID + '-export').onclick = () => {{
-        if (currentFile) window.echoCodexResolve({{action:'download', filename:currentFile}});
+        if (currentFile) window.sendCodexAction({{action:'download', filename:currentFile}});
       }};
 
       // ===== CLIPBOARD UTILS =====
@@ -1826,22 +1841,22 @@ return new Promise(function(resolve) {{
 
       // History ◀ ▶
       document.getElementById(CODEX_ID + '-hist-prev').onclick = () => {{
-        if (currentFile) window.echoCodexResolve({{action:'history_prev', filename:currentFile}});
+        if (currentFile) window.sendCodexAction({{action:'history_prev', filename:currentFile}});
       }};
       document.getElementById(CODEX_ID + '-hist-next').onclick = () => {{
-        if (currentFile) window.echoCodexResolve({{action:'history_next', filename:currentFile}});
+        if (currentFile) window.sendCodexAction({{action:'history_next', filename:currentFile}});
       }};
 
       // Refresh 🔄
       document.getElementById(CODEX_ID + '-refresh').onclick = () => {{
-        window.echoCodexResolve({{action:'refresh', filename:currentFile || ''}});
+        window.sendCodexAction({{action:'refresh', filename:currentFile || ''}});
       }};
       document.getElementById(CODEX_ID + '-hist-pin').onclick = () => {{
-        if (currentFile) window.echoCodexResolve({{action:'history_exit', filename:currentFile}});
+        if (currentFile) window.sendCodexAction({{action:'history_exit', filename:currentFile}});
       }};
       document.getElementById(CODEX_ID + '-hist-restore').onclick = () => {{
         if (currentFile && historyContent !== null) {{
-          window.echoCodexResolve({{action:'history_restore', filename:currentFile, content:historyContent, source_hash:document.getElementById(CODEX_ID+'-status-text').dataset.hash||''}});
+          window.sendCodexAction({{action:'history_restore', filename:currentFile, content:historyContent, source_hash:document.getElementById(CODEX_ID+'-status-text').dataset.hash||''}});
         }}
       }};
 
@@ -1849,11 +1864,11 @@ return new Promise(function(resolve) {{
       document.getElementById(CODEX_ID + '-diff-accept').onclick = () => {{
         if (diffEditor) {{
           const content = diffEditor.getModifiedEditor().getValue();
-          window.echoCodexResolve({{action:'accept_diff', filename:currentFile, content:content, instruction:lastInstruction}});
+          window.sendCodexAction({{action:'accept_diff', filename:currentFile, content:content, instruction:lastInstruction}});
         }}
       }};
       document.getElementById(CODEX_ID + '-diff-reject').onclick = () => {{
-        window.echoCodexResolve({{action:'reject_diff'}});
+        window.sendCodexAction({{action:'reject_diff'}});
       }};
 
       // ===== SAVE STATE =====
@@ -1872,11 +1887,8 @@ return new Promise(function(resolve) {{
 
       // Ctrl+S
       function doSave() {{
-        if (currentFile && editor && window.echoCodexResolve) {{
-          const resolveFn = window.echoCodexResolve;
-          window.echoCodexResolve = null; // Verrou (Race Condition prevention)
-          
-          resolveFn({{
+        if (currentFile && editor) {{
+          window.sendCodexAction({{
             action: 'save',
             filename: currentFile,
             content: editor.getValue(),
@@ -2380,7 +2392,7 @@ return new Promise(function(resolve) {{
             if (newFilename !== currentFile) {{
               window.echoCustomConfirm('Renommer ' + currentFile + ' \u2192 ' + newFilename + ' ?', (agreed) => {{
                 if (agreed) {{
-                  window.echoCodexResolve({{action:'rename_file', old_name:currentFile, new_name:newFilename, current_file:currentFile}});
+                  window.sendCodexAction({{action:'rename_file', old_name:currentFile, new_name:newFilename, current_file:currentFile}});
                 }}
               }});
             }}
@@ -2396,7 +2408,7 @@ return new Promise(function(resolve) {{
             clearInterval(checkReady);
             if (currentFile) {{
               updateStatus(currentFile + ' \u2022 chargement...');
-              window.echoCodexResolve({{action:'load_file', filename: currentFile}});
+              window.sendCodexAction({{action:'load_file', filename: currentFile}});
             }}
           }}
         }}, 50);
@@ -2418,10 +2430,9 @@ return new Promise(function(resolve) {{
 
       // ===== PING HEARTBEAT =====
       setInterval(() => {{
-        if (typeof window.echoCodexResolve === 'function' && !document.hidden) {{
-          window.echoCodexResolve({{action: 'ping', current_file: currentFile}});
-          window.echoCodexResolve = null;
-        }}
+        if (!document.hidden) {{
+            window.sendCodexAction({{action: 'ping', current_file: currentFile}});
+          }}
       }}, 5000);
 
       loadMonaco();
