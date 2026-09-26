@@ -1,7 +1,9 @@
 # ==============================================================================
 # ECHO FRAMEWORK
 # REGLE: Ne garder que les 5 dernières versions du changelog.
-# Version : 9.75
+# Version : 9.76
+# --- CHANGELOG 9.76 ---
+# - Docker Compose : Mise à niveau de Qdrant (Base Vectorielle) vers la version 1.19.1.
 # --- CHANGELOG 9.75 ---
 # - Docker Compose : Refactorisation structurelle IPAM (Domain-Driven) et résolution du conflit IP (.10) avec le WAF.
 # --- CHANGELOG 9.74 ---
@@ -10,10 +12,6 @@
 # - Docker Compose : Assignation d'IP statiques pour tous les conteneurs (echo-network: 10.20.40.x, echo-sandbox: 10.20.50.x).
 # --- CHANGELOG 9.72 ---
 # - Docker Compose : Retrait des dépendances inutiles (llama-cpp-python, etc.) dans l'image Open WebUI Slim causant l'erreur gcc. Conservation uniquement de h2 et pybase64.
-# --- CHANGELOG 9.71 ---
-# - Docker Compose (BunkerWeb) : Rollback de la syntaxe limit_req off invalide et augmentation du Rate Limiting global (Burst 1000, Rate 300r/s) pour encaisser les reconnexions WebSocket.
-# --- CHANGELOG 9.69 ---
-# - Docker Compose (BunkerWeb) : Bypass du rate limiting (limit_req off) sur les fichiers statiques de l'Open WebUI pour empêcher l'erreur 500 SvelteKit (429) causée par l'épuisement du quota lors des reconnexions WebSocket.
 # --- CHANGELOG 9.68 ---
 # - Docker Compose (BunkerWeb) : Uniformisation des filtres d'erreurs (405, 444) sur l'Admin Manager et assouplissement des seuils globaux de Bad Behavior (50 erreurs, ban 5 min) pour tolérer les reconnexions de la SPA.
 # --- CHANGELOG 9.67 ---
@@ -590,7 +588,7 @@ services:
 
   # 4. Qdrant (Base Vectorielle)
   echo-qdrant:
-    image: qdrant/qdrant:v1.17.1
+    image: qdrant/qdrant:v1.19.1
     container_name: echo-qdrant
     restart: always
     networks:

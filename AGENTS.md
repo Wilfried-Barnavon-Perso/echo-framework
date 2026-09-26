@@ -42,7 +42,7 @@ Le système nerveux central d'ECHO repose sur le **composant core `pipe_engine.p
 
 ## 3. 👁️ La Conscience (`/opt/ECHO/owui-filters/`)
 
-- **Base Vectorielle des Souvenirs :** Système RAG vectoriel (Qdrant).
+- **Base Vectorielle des Souvenirs :** Système RAG vectoriel (Qdrant 1.19+).
 - **Gestion de l'Importance :** Algorithme de fusion sémantique préservant le score `memory_importance` maximal des souvenirs lors de l'ingestion.
 - **Smart Context :** Injection de faits via balises XML (`<AEC_smart_context>`) et `source_id` natifs. Le filtre intercepte exhaustivement les fichiers du Workspace.
 - **Conversation RAG Filter :** Filtre Outlet asynchrone pour l'injection sans latence de l'historique conversationnel dans le Session RAG (par fenêtre de tour dynamique). Extraction textuelle stricte pour bloquer les payloads Base64 (images). Le filtre applique un mécanisme d'**Upsert Idempotent Zéro-Latence** par tour de parole. Pour empêcher la réindexation redondante, il exploite désormais une **Validation O(1) en amont** en interrogeant directement le flag booléen `is_embedded` de la table SQLite `message_shadows`, garantissant une sollicitation asynchrone ultra-légère.
@@ -111,7 +111,7 @@ L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N
 ## 9. 🚦 Orchestration Séquentielle (Docker Compose)
 
 L'infrastructure est désormais pilotée via la configuration standardisée `stack-echo.yml`. Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depends_on: condition: service_healthy`. Elle intègre une limitation stricte du parallélisme de compilation (`CMAKE_BUILD_PARALLEL_LEVEL=2`) pour prévenir les OOM Killers lors des déploiements massifs :
-- **Tier 1 (Fondations)** : Qdrant, SearXNG, Watchtower.
+- **Tier 1 (Fondations)** : Qdrant (1.19+), SearXNG, Watchtower.
 - **Tier 2 (Workers)** : Embedding, Coding Worker, Browser Worker, MCP Broker, N8N Worker (Volumes Hot-Reload), **STT Worker** (Volume Hot-Reload), **TTS Worker**.
 - **Tier 3** : Open WebUI.
 - **Tier 4** : Admin Manager, ECHO Auth Manager (bindé strictement sur `127.0.0.1` pour obliger le passage par BunkerWeb).
@@ -144,4 +144,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.210.30*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.210.32*

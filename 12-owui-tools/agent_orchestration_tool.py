@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.34
+version: 5.35
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.35: Restitution explicite de rounds_remaining pour les agents supervisés.
 # 5.34: Ajout d'une mécanique simplifiée d'extension dynamique du budget d'outils via injection in-situ.
 # 5.33: Remplacement de la vérification __event_call__ par ECHO_SUBAGENT_CONTEXT pour la protection Headless de delete_user_skill.
 # 5.32: Protection de delete_user_skill contre l'invocation headless (vérification de __event_call__).
 # 5.31: Ajout du paramètre timeout_seconds (5 min par défaut) à delete_user_skill et modale auto-annulable.
-# 5.29: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 5.28: Ajout du paramètre require_web_grounding dans forge_skill pour actualisation experte conditionnelle.
 # 5.27: Ajout de delete_user_skill avec modale de confirmation.
 # 5.25: Nettoyage du code : suppression des imports inutilisés (PEP8).
@@ -779,8 +779,17 @@ class Tools:
             text=(
                 f"### RÉSULTAT SUPERVISÉ [{task_id}] ({len(workers_dict)} workers, "
                 f"{correction_round} round(s) de critique)\n\n{final_text}"
-            )
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            ),
+            status={
+                "status": "success",
+                "task_id": task_id,
+                "rounds_remaining": max_rounds - correction_round,
+                "workers_count": len(workers_dict)
+            },
+            user_id=__user__.get("id", "system") if __user__ else "system",
+            chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+            metadata=__metadata__
+        )
 
     # ==========================================================================
     # 4. OUTILS D'ADMINISTRATION (Conseils & Superviseurs)
