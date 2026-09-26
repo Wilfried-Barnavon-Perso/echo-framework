@@ -61,14 +61,14 @@ class EchoEvents:
                     loader.id = '{loader_id}';
                     loader.style.cssText = 'position:fixed;bottom:20px;right:20px;background:rgba(15,23,42,0.9);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;z-index:999999;box-shadow:0 10px 15px -3px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:system-ui;';
                     loader.innerHTML = `
-                        <div style="display:flex;align-items:center;gap:10px;">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;">
-                                <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
-                                <path d="M12 2a10 10 0 0 1 10 10"></path>
+                        <div style="display:flex;align-items:center;justify-content:center;margin-bottom:6px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <polyline points="1 20 1 14 7 14"></polyline>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
                             </svg>
-                            <span style="color:#e2e8f0;font-size:12px;font-weight:500;">ECHO UCTP</span>
                         </div>
-                        <div style="width:100%;height:2px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;margin-top:2px;">
+                        <div style="width:30px;height:2px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
                             <div id="{loader_id}-bar" style="width:0%;height:100%;background:#38bdf8;transition:width 0.1s linear;"></div>
                         </div>
                         <style>@keyframes spin {{ 100% {{ transform: rotate(360deg); }} }}</style>
@@ -130,14 +130,14 @@ class EchoEvents:
                     loader.id = '{loader_id}';
                     loader.style.cssText = 'position:fixed;bottom:20px;right:20px;background:rgba(15,23,42,0.9);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;z-index:999999;box-shadow:0 10px 15px -3px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:system-ui;';
                     loader.innerHTML = `
-                        <div style="display:flex;align-items:center;gap:10px;">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;">
-                                <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
-                                <path d="M12 2a10 10 0 0 1 10 10"></path>
+                        <div style="display:flex;align-items:center;justify-content:center;margin-bottom:6px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <polyline points="1 20 1 14 7 14"></polyline>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
                             </svg>
-                            <span style="color:#e2e8f0;font-size:12px;font-weight:500;">ECHO UCTP</span>
                         </div>
-                        <div style="width:100%;height:2px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;margin-top:2px;">
+                        <div style="width:30px;height:2px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
                             <div id="{loader_id}-bar" style="width:0%;height:100%;background:#38bdf8;transition:width 0.1s linear;"></div>
                         </div>
                         <style>@keyframes spin {{ 100% {{ transform: rotate(360deg); }} }}</style>
