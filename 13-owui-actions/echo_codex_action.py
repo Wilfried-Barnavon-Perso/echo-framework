@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.11
+version: 3.12
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle d'Historique : Ne garder que les 5 dernieres versions.
 # Historique des versions :
+# 3.12: Ajout du proxy load_directory pour orchestrer le Lazy Loading avec le moteur Git.
 # 3.11: Optimisation absolue du ping heartbeat : suppression de get_repo_stats, ajout asyncio.to_thread pour purger la congestion de l'Event Loop.
 # 3.10: Support des workspaces main/sandbox.
 # 3.9: Fiabilisation de la boucle asynchrone (injection return true; pour l'API action JS).
 # 3.8: Sélection visuelle automatique du fichier (Focus) après sa création, et ajustement sémantique du reset.
-# 3.7: Précision du nom du workspace cible lors de la réinitialisation (message toast).
 # 3.6: Gestion UI du nouveau paramètre booléen de trace (Trace Delta) pour le LLM.
 # 3.5: Support du passage de Workspace en argument optionnel pour toutes les actions.(évite PermissionError au save) et nettoyage des logs debug perturbants.
 # 3.4: Support de la création de dossiers vides dans l'espace 'main' sans notification/pollution du Registre (SQLite).
@@ -526,6 +526,17 @@ class Action:
                         except Exception as e:
                             await _notify_error(e)
                             continue
+                    # ---- CHARGEMENT DYNAMIQUE DOSSIER (Lazy Loading) ----
+                    elif action_type == "load_directory":
+                        target_dir = response.get("path", "")
+                        
+                        # Récupère uniquement la profondeur 1 via le moteur Git
+                        dir_content = await asyncio.to_thread(repo.list_directory, target_dir)
+                        dir_json = json.dumps(dir_content).decode("utf-8") if isinstance(json.dumps(dir_content), bytes) else json.dumps(dir_content)
+                        
+                        # Demande au frontend de greffer ces nœuds sur le parent
+                        append_code = f"if(window.echoCodexAppendNodes) window.echoCodexAppendNodes('{target_dir}', {dir_json});"
+                        await safe_event_call({"type": "execute", "data": {"code": append_code}})
 
                     # ---- CHARGEMENT CONTENU FICHIER ----
                     elif action_type == "load_file":

@@ -1,17 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.66
+version: 5.67
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.67: Fix - Documentation de ECHO_SYNC_EXCLUDE_LIST comme bouclier anti-freeze UI pour le Codex.
 # 5.66: Introduction de ECHO_SUBAGENT_CONTEXT (ContextVars) pour propager l'identité asynchrone à travers Open WebUI.
 # 5.65: Retrait de save_session_context et delete_session_context_source de la blacklist.
 # 5.64: Ajout de l'extension .pdf au CODEX_LANG_MAP pour activer l'identification visuelle dans l'UI du Codex.
 # 5.63: Plan Gamma - Remplacement par le dictionnaire ECHO_CODEX_WORKSPACES et ajout de ECHO_SYNC_EXCLUDE_LIST.
-# 5.62: Migration du Défibrillateur Attentionnel vers un système de Rappels Cognitifs Multi-Axes.
-# 5.61: Migration de AEC_REMINDER_MSG en texte pur pour utilisation par EchoAEC (SSOT).
 # 5.60: Injection des seuils de Rappel Cognitif (Défibrillateur Attentionnel).
 # 5.58: Augmentation de ECHO_API_MAX_RETRIES à 5 tentatives.
 # 5.57: Ajout de ECHO_GLOBAL_TENANT_PROJECT_ID ("aicode-consumers") pour forcer le routage Code Assist et contourner les 429 persos.
@@ -568,7 +567,10 @@ ECHO_CODEX_WORKSPACES = {
     "sandbox": "Sandbox"  # Espace d'exécution et de génération du worker
 }
 
-# Liste stricte des dossiers et fichiers à ignorer lors de la synchronisation ou de l'exploration UI
+# Liste stricte des dossiers et fichiers à ignorer lors de la synchronisation ou de l'exploration UI.
+# Cette constante agit comme un bouclier critique pour le Codex (Plan A) : elle empêche le `os.walk` 
+# de parcourir des dossiers de dépendances massifs, évitant ainsi le gel (Layout Thrashing) du moteur 
+# de rendu JavaScript lors de la génération de la treeMap.
 ECHO_SYNC_EXCLUDE_LIST = [".venv", "node_modules", "__pycache__", ".git", ".pytest_cache", "venv"]
 
 # ECHO_CODING_WORKER_URL : Utilisée pour isoler l'exécution de code (Python, JS, etc.).

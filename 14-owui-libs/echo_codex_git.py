@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.9
+version: 1.10
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.10: Application stricte de ECHO_SYNC_EXCLUDE_LIST pour prévenir le gel UI sur les gros dossiers sandbox.
 # 1.9: Modification de delete_file pour retourner le tuple (commit_hash, paths_to_rm) afin d'assurer la purge SQLite côté action.
 # 1.8: Correction de list_files dans main pour inclure correctement les fichiers dans les sous-dossiers.
 # 1.6: Asymétrie de parcours de fichiers (os.listdir vs os.walk) entre main et sandbox.
 # 1.5: Prise en charge des dossiers de workspaces isolés (main/sandbox).
-# 1.4: Wrapper dulwich pour la gestion de dépôts Git par user/chat.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
@@ -23,7 +23,7 @@ from dulwich.repo import Repo
 from dulwich.objects import Tree
 from dulwich import porcelain
 
-from echo_constants import CODEX_LANG_MAP, CODEX_DEFAULT_LANG
+from echo_constants import CODEX_LANG_MAP, CODEX_DEFAULT_LANG, ECHO_SYNC_EXCLUDE_LIST
 from echo_paths import get_echo_session_path
 
 # Mapping inversé langage Monaco → extension (première extension trouvée)
@@ -208,49 +208,79 @@ class CodexRepo:
         return commit_sha.decode("ascii") if isinstance(
             commit_sha, bytes) else str(commit_sha)
 
-    def list_files(self) -> List[dict]:
-        """Liste tous les fichiers et sous-dossiers trackés ou non (si sandbox).
-        Retourne une liste plate (pour compatibilité) avec chemins relatifs complets et type (file/directory)."""
+    def list_directory(self, target_rel_path: str = "") -> List[dict]:
+        """Retourne uniquement le contenu immédiat (profondeur 1) d'un dossier.
+        Pour le workspace 'main' (tracké), analyse l'index Git.
+        Pour la 'sandbox', utilise os.scandir."""
         files = []
-        if not os.path.exists(self.repo_path):
+        target_abs_path = os.path.join(self.repo_path, target_rel_path)
+        
+        if not os.path.exists(target_abs_path) or not os.path.isdir(target_abs_path):
             return files
-
-        try:
-            index = self.repo.open_index()
-            tracked_files = {f.decode("utf-8") for f in index}
-        except Exception:
-            tracked_files = set()
 
         is_sandbox = os.path.basename(self.repo_path.rstrip("/\\")) == "sandbox"
 
         if is_sandbox:
-            for root, dirs, filenames in os.walk(self.repo_path):
-                # Ignorer le dossier .git et autres dossiers cachés
-                dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for entry in os.scandir(target_abs_path):
+                if entry.name.startswith(".") or entry.name in ECHO_SYNC_EXCLUDE_LIST:
+                    continue
+                
+                rel_path = os.path.relpath(entry.path, self.repo_path).replace("\\", "/")
+                is_dir = entry.is_dir()
+                try:
+                    stat = entry.stat()
+                    size = stat.st_size if not is_dir else 0
+                    mtime = stat.st_mtime
+                except Exception:
+                    size = 0
+                    mtime = 0
 
-                for d in dirs:
-                    rel_dir = os.path.relpath(
-                        os.path.join(
-                            root, d), self.repo_path).replace(
-                        "\\", "/")
-                    files.append({
-                        "filename": rel_dir,
-                        "type": "directory",
-                        "lang": "folder",
-                        "lines": 0,
-                        "size_bytes": 0,
-                        "mtime": os.path.getmtime(os.path.join(root, d))
-                    })
+                line_count = 0
+                if not is_dir:
+                    try:
+                        with open(entry.path, "r", encoding="utf-8", errors="replace") as fh:
+                            line_count = sum(1 for _ in fh)
+                    except Exception:
+                        pass
 
-                for f in filenames:
-                    if f.startswith("."):
+                files.append({
+                    "filename": rel_path,
+                    "type": "directory" if is_dir else "file",
+                    "lang": "folder" if is_dir else self.detect_language(entry.name),
+                    "lines": line_count,
+                    "size_bytes": size,
+                    "mtime": mtime,
+                })
+        else:
+            # Workspace MAIN (tracké Git)
+            try:
+                index = self.repo.open_index()
+                tracked_files = {f.decode("utf-8") for f in index}
+            except Exception:
+                tracked_files = set()
+
+            # Normaliser target_rel_path
+            prefix = "" if not target_rel_path or target_rel_path == "." else target_rel_path.rstrip("/") + "/"
+            
+            # Pour extraire les dossiers de profondeur 1, on utilise un set pour dédupliquer
+            dirs_found = set()
+            
+            for tracked_file in tracked_files:
+                if not tracked_file.startswith(prefix):
+                    continue
+                    
+                # Reste du chemin après le prefix
+                remainder = tracked_file[len(prefix):]
+                if not remainder:
+                    continue
+                    
+                parts = remainder.split("/")
+                
+                # Fichier immédiat
+                if len(parts) == 1:
+                    filepath = os.path.join(self.repo_path, tracked_file)
+                    if not os.path.isfile(filepath):
                         continue
-                    rel_file = os.path.relpath(
-                        os.path.join(
-                            root, f), self.repo_path).replace(
-                        "\\", "/")
-
-                    filepath = os.path.join(root, f)
                     try:
                         with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
                             line_count = sum(1 for _ in fh)
@@ -262,39 +292,38 @@ class CodexRepo:
                         mtime = 0
 
                     files.append({
-                        "filename": rel_file,
+                        "filename": tracked_file,
                         "type": "file",
-                        "lang": self.detect_language(f),
+                        "lang": self.detect_language(tracked_file),
                         "lines": line_count,
                         "size_bytes": size,
                         "mtime": mtime,
                     })
-        else:
-            # MAIN Workspace: Itération sur les fichiers trackés
-            for entry in tracked_files:
-                filepath = os.path.join(self.repo_path, entry)
-                if not os.path.isfile(filepath):
-                    continue
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
-                        line_count = sum(1 for _ in fh)
-                    size = os.path.getsize(filepath)
-                    mtime = os.path.getmtime(filepath)
-                except BaseException:
-                    line_count = 0
-                    size = 0
-                    mtime = 0
-
-                files.append({
-                    "filename": entry,
-                    "type": "file",
-                    "lang": self.detect_language(entry),
-                    "lines": line_count,
-                    "size_bytes": size,
-                    "mtime": mtime,
-                })
+                else:
+                    # Dossier immédiat
+                    immediate_dir = prefix + parts[0]
+                    if immediate_dir not in dirs_found:
+                        dirs_found.add(immediate_dir)
+                        dir_abs_path = os.path.join(self.repo_path, immediate_dir)
+                        try:
+                            mtime = os.path.getmtime(dir_abs_path)
+                        except Exception:
+                            mtime = 0
+                        
+                        files.append({
+                            "filename": immediate_dir,
+                            "type": "directory",
+                            "lang": "folder",
+                            "lines": 0,
+                            "size_bytes": 0,
+                            "mtime": mtime,
+                        })
 
         return sorted(files, key=lambda x: x["mtime"], reverse=True)
+
+    def list_files(self) -> List[dict]:
+        """Amorce le chargement Lazy Loading en ne retournant que la racine (profondeur 1)."""
+        return self.list_directory("")
 
     def _get_text_content(self, filename: str, commit_hash: str = None) -> str:
         """Helper interne : retourne le contenu d'un fichier (HEAD ou commit), ou une chaîne vide."""

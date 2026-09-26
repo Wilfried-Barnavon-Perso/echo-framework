@@ -1,17 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.84
+version: 5.85
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.85: Refonte majeure (Codex) : Implémentation du Lazy Loading avec requêtage asynchrone (load_directory) et purge mémoire dynamique.
 # 5.84: Fix - (Codex) Préservation du collapse des dossiers au re-rendu, et implémentation du proxy asynchrone (sendCodexAction) pour éradiquer la perte de clics.
 # 5.83: Codex - Réduction du ping à 5s pour économiser les ressources réseau.
 # 5.82: Fix - Modification du type MIME fallback de la vue Navigation (monitor_ECHO) en image/jpeg.
 # 5.81: Intégration du lecteur PDF WYSIWYG natif (reconstruction par Blob) dans le HUD Codex.
-# 5.80: Fiabilisation de la sauvegarde Codex (verrou JS et hook clavier Monaco natif).
-# 5.78: Déverrouillage complet de la Timeline Git (Historique) dans l'espace Sandbox.
 # 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
 # 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
 # 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
@@ -1382,40 +1381,74 @@ return new Promise(function(resolve) {{
         // --- 2 & 3. Render Files ---
         const treeContainer = document.createElement('div');
         treeContainer.style.cssText = 'overflow-y:auto; flex:1; padding-bottom:6px;';
-        // Mode Universel : Arborescence avec treeMap et tri temporel (mtime)
-        const treeMap = {{ '': {{ isDir: true, children: {{}}, mtime: 0 }} }};
-        files.forEach(f => {{
-          const parts = f.filename.split('/');
-          let currentPath = '';
-          let parentNode = treeMap[''];
-          
-          if (f.mtime && f.mtime > parentNode.mtime) parentNode.mtime = f.mtime;
-
-          for (let i = 0; i < parts.length; i++) {{
-            const part = parts[i];
-            currentPath = currentPath ? currentPath + '/' + part : part;
-            const isLast = (i === parts.length - 1);
+        // Mode Universel : Arborescence dynamique (Lazy Loading)
+        const treeMap = { '': { isDir: true, children: {}, mtime: 0, isLoaded: true } };
+        
+        function injectFilesToTree(fileList) {
+          fileList.forEach(f => {
+            const parts = f.filename.split('/');
+            let currentPath = '';
+            let parentNode = treeMap[''];
             
-            if (!parentNode.children[part]) {{
-              parentNode.children[part] = {{
-                name: part,
-                path: currentPath,
-                isDir: isLast ? (f.type === 'directory') : true,
-                file: isLast && f.type === 'file' ? f : null,
-                children: {{}},
-                mtime: f.mtime || 0
-              }};
-            }} else {{
-              if (f.mtime && f.mtime > parentNode.children[part].mtime) {{
-                parentNode.children[part].mtime = f.mtime;
-              }}
-              if (!isLast) {{
-                parentNode.children[part].isDir = true;
-              }}
-            }}
-            parentNode = parentNode.children[part];
-          }}
-        }});
+            if (f.mtime && f.mtime > parentNode.mtime) parentNode.mtime = f.mtime;
+
+            for (let i = 0; i < parts.length; i++) {
+              const part = parts[i];
+              currentPath = currentPath ? currentPath + '/' + part : part;
+              const isLast = (i === parts.length - 1);
+              
+              if (!parentNode.children[part]) {
+                parentNode.children[part] = {
+                  name: part,
+                  path: currentPath,
+                  isDir: isLast ? (f.type === 'directory') : true,
+                  file: isLast && f.type === 'file' ? f : null,
+                  children: {},
+                  mtime: f.mtime || 0,
+                  isLoaded: false
+                };
+              } else {
+                if (f.mtime && f.mtime > parentNode.children[part].mtime) {
+                  parentNode.children[part].mtime = f.mtime;
+                }
+                if (!isLast) {
+                  parentNode.children[part].isDir = true;
+                }
+              }
+              parentNode = parentNode.children[part];
+            }
+          });
+        }
+
+        injectFilesToTree(files);
+
+        window.echoCodexAppendNodes = function(targetDir, newFiles) {
+           injectFilesToTree(newFiles);
+           
+           const parts = targetDir.split('/');
+           let node = treeMap[''];
+           if (targetDir !== "") {
+               for (const part of parts) {
+                   if (node.children[part]) node = node.children[part];
+                   else return;
+               }
+           }
+           
+           const containerId = 'codex-dir-' + encodeURIComponent(targetDir);
+           const childrenContainer = document.getElementById(containerId);
+           if (childrenContainer) {
+               childrenContainer.innerHTML = '';
+               node.isLoaded = true;
+               
+               const summary = childrenContainer.previousElementSibling;
+               if (summary) {
+                   const span = summary.querySelector('.lazy-loading-span');
+                   if (span) span.remove();
+               }
+               
+               renderNode(node, childrenContainer, targetDir === "" ? 0 : parts.length);
+           }
+        };
 
         function renderNode(node, container, level) {{
           Object.values(node.children).sort((a,b) => {{
@@ -1494,7 +1527,42 @@ return new Promise(function(resolve) {{
 
                 details.appendChild(summary);
                 const childrenContainer = document.createElement('div');
-                renderNode(child, childrenContainer, level + 1);
+                childrenContainer.id = 'codex-dir-' + encodeURIComponent(child.path);
+
+                details.ontoggle = (e) => {
+                    if (details.open) {
+                        if (!child.isLoaded) {
+                            child.isLoaded = true;
+                            const loadSpan = document.createElement('span');
+                            loadSpan.className = 'lazy-loading-span';
+                            loadSpan.style.cssText = 'color:#f9e2af; font-size:11px; margin-left:8px;';
+                            loadSpan.innerText = '(chargement...)';
+                            summary.appendChild(loadSpan);
+                            window.sendCodexAction({action: 'load_directory', path: child.path});
+                        }
+                    } else {
+                        // Purge DOM et JS pour libérer la RAM
+                        child.isLoaded = false;
+                        child.children = {}; 
+                        childrenContainer.innerHTML = '';
+                    }
+                };
+
+                // Si le dossier doit être ouvert par défaut (focus fichier)
+                if (details.open && !child.isLoaded) {
+                    child.isLoaded = true;
+                    const loadSpan = document.createElement('span');
+                    loadSpan.className = 'lazy-loading-span';
+                    loadSpan.style.cssText = 'color:#f9e2af; font-size:11px; margin-left:8px;';
+                    loadSpan.innerText = '(chargement...)';
+                    summary.appendChild(loadSpan);
+                    window.sendCodexAction({action: 'load_directory', path: child.path});
+                }
+
+                if (child.isLoaded) {
+                    renderNode(child, childrenContainer, level + 1);
+                }
+                
                 details.appendChild(childrenContainer);
                 container.appendChild(details);
               }} else {{
