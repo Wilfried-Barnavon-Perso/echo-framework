@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.86
+version: 5.87
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.87: Remplacement des indicateurs de chargement (switch_workspace et load_directory) par un spinner CSS universel.
 # 5.86: Fix - Correction d'une erreur de syntaxe f-string dans le JS injecté du Lazy Loading.
 # 5.85: Refonte majeure (Codex) : Implémentation du Lazy Loading avec requêtage asynchrone (load_directory) et purge mémoire dynamique.
 # 5.84: Fix - (Codex) Préservation du collapse des dossiers au re-rendu, et implémentation du proxy asynchrone (sendCodexAction) pour éradiquer la perte de clics.
 # 5.83: Codex - Réduction du ping à 5s pour économiser les ressources réseau.
-# 5.82: Fix - Modification du type MIME fallback de la vue Navigation (monitor_ECHO) en image/jpeg.
 # 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
 # 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
 # 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
@@ -1358,10 +1358,21 @@ return new Promise(function(resolve) {{
         const sb = document.getElementById(CODEX_ID + '-sidebar');
         sb.innerHTML = '';
 
+        if (!document.getElementById('codex-spin-style')) {{
+            const style = document.createElement('style');
+            style.id = 'codex-spin-style';
+            style.textContent = '@keyframes codex-spin {{ 100% {{ transform: rotate(360deg); }} }}';
+            document.head.appendChild(style);
+        }}
+
         // --- 1. Workspace Switcher ---
+        const wsContainer = document.createElement('div');
+        wsContainer.style.cssText = `display:flex; align-items:center; background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; flex-shrink:0;`;
+
         const wsSelect = document.createElement('select');
         wsSelect.id = CODEX_ID + '-workspace';
-        wsSelect.style.cssText = `width:100%; padding:6px; background:${{headerBg}}; border:none; border-bottom:1px solid ${{borderColor}}; color:${{textColor}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer; flex-shrink:0;`;
+        wsSelect.style.cssText = `flex:1; padding:6px; background:transparent; border:none; color:${{textColor}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer;`;
+        
         Object.entries(workspaces).forEach(([key, label]) => {{
           const opt = document.createElement('option');
           opt.value = key;
@@ -1369,10 +1380,20 @@ return new Promise(function(resolve) {{
           if (key === currentWorkspace) opt.selected = true;
           wsSelect.appendChild(opt);
         }});
+        
+        const wsSpinner = document.createElement('div');
+        wsSpinner.id = CODEX_ID + '-ws-spinner';
+        wsSpinner.style.cssText = `display:none; width:14px; height:14px; margin-right:8px; border:2px solid ${{textColor}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 1s linear infinite;`;
+
         wsSelect.onchange = () => {{
+          wsSelect.disabled = true;
+          wsSpinner.style.display = 'block';
           window.sendCodexAction({{action:'switch_workspace', workspace:wsSelect.value}});
         }};
-        sb.appendChild(wsSelect);
+        
+        wsContainer.appendChild(wsSelect);
+        wsContainer.appendChild(wsSpinner);
+        sb.appendChild(wsContainer);
 
         // Afficher la Timeline Git (historique) pour TOUS les espaces (main et sandbox)
         const statusBar = document.getElementById(CODEX_ID + '-status');
@@ -1535,8 +1556,7 @@ return new Promise(function(resolve) {{
                             child.isLoaded = true;
                             const loadSpan = document.createElement('span');
                             loadSpan.className = 'lazy-loading-span';
-                            loadSpan.style.cssText = 'color:#f9e2af; font-size:11px; margin-left:8px;';
-                            loadSpan.innerText = '(chargement...)';
+                            loadSpan.style.cssText = `display:inline-block; width:10px; height:10px; margin-left:8px; border:2px solid ${{isDark ? '#cba6f7' : '#8839ef'}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 0.8s linear infinite;`;
                             summary.appendChild(loadSpan);
                             window.sendCodexAction({{action: 'load_directory', path: child.path}});
                         }}
@@ -1551,11 +1571,10 @@ return new Promise(function(resolve) {{
                 // Si le dossier doit être ouvert par défaut (focus fichier)
                 if (details.open && !child.isLoaded) {{
                     child.isLoaded = true;
-                    const loadSpan = document.createElement('span');
-                    loadSpan.className = 'lazy-loading-span';
-                    loadSpan.style.cssText = 'color:#f9e2af; font-size:11px; margin-left:8px;';
-                    loadSpan.innerText = '(chargement...)';
-                    summary.appendChild(loadSpan);
+                            const loadSpan = document.createElement('span');
+                            loadSpan.className = 'lazy-loading-span';
+                            loadSpan.style.cssText = `display:inline-block; width:10px; height:10px; margin-left:8px; border:2px solid ${{isDark ? '#cba6f7' : '#8839ef'}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 0.8s linear infinite;`;
+                            summary.appendChild(loadSpan);
                     window.sendCodexAction({{action: 'load_directory', path: child.path}});
                 }}
 
