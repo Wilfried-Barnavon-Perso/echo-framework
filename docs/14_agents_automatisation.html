@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO v5 : Orchestration Multi-Agents, N8N, MCP et gestion sécurisée des secrets.">
+  <title>ECHO v5 - 14. Agents & Automatisation</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>14. Agents & Automatisation</h1>
+
+    <p>
+      La véritable force d'ECHO réside dans sa capacité à déléguer le travail et à s'interfacer avec le reste de votre écosystème logiciel. Il ne se contente pas de vous répondre : il peut recruter des assistants virtuels ou orchestrer des automatisations complexes en arrière-plan.
+    </p>
+
+    <h2>1. L'Équipe d'Agents (Table Ronde)</h2>
+    <p>
+      Face à un problème extrêmement ardu, ECHO peut décider qu'il ne peut pas le résoudre seul. Il va alors instancier une équipe de "Sous-Agents" virtuels (chacun ayant une spécialité). 
+    </p>
+    <p>
+      Ces agents vont mener une Table Ronde (méthode Delphi) : l'un peut être chargé de chercher des informations sur le Web, un autre de consolider les données dans un tableur, pendant que l'agent principal rédige la synthèse finale. Vous pouvez d'ailleurs suivre leurs discussions en direct via l'Action HUD <em>Agent Monitor</em>.
+    </p>
+
+    <h2>2. L'Automatisation en Arrière-plan (N8N & MCP)</h2>
+    <p>
+      Vous pouvez demander à ECHO de configurer des tâches automatisées qui tourneront sans que vous soyez connecté. Par exemple : "Vérifie les nouveaux emails de mon client tous les matins, génère un résumé et envoie-le sur Slack". 
+    </p>
+    <p>
+      Pour cela, ECHO écrit lui-même des scénarios d'automatisation (via le moteur N8N intégré) et peut communiquer avec des centaines de services externes (via le standard MCP). Si une automatisation rencontre un problème (un serveur externe ne répond pas), ECHO recevra une notification d'erreur détaillée et corrigera le script de lui-même de manière autonome.
+    </p>
+
+    <h2>3. Le Coffre-Fort Sécurisé (Identity Vault)</h2>
+    <p>
+      Pour interagir avec vos applications (votre boîte mail, Slack, vos bases de données), le système a besoin d'identifiants ou de mots de passe. 
+    </p>
+    <p>
+      L'<strong>Identity Vault</strong> est un coffre-fort crypté. Vous y enregistrez vos clés, et l'IA ne les voit <em>jamais</em> en texte clair. Lorsqu'elle configure une automatisation, elle utilise de faux jetons (des macros) que le coffre-fort va échanger à la dernière milliseconde avant de contacter le service externe. C'est une garantie de sécurité absolue en cas de compromission d'un prompt.
+    </p>
+
+    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
+      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
+      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
+        
+        <h3 style="color:#93c5fd;">1. Orchestration Multi-Agents (<code>agent_orchestration_tool.py</code>)</h3>
+        <p>Le système implémente l'outil <code>consult_council</code> (Table Ronde Delphi à N experts) et <code>delegate_to_agent</code>. La propagation d'identité (le fait que le sous-agent sache qu'il est un sous-agent et partage le contexte) contourne l'encapsulation stricte d'Open WebUI grâce à l'utilisation native de <code>contextvars</code> via la variable asynchrone <code>ECHO_SUBAGENT_CONTEXT</code>.</p>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">2. N8N Worker (Headless)</h3>
+        <p>Sous-système (<code>26-docker-n8n-worker</code>) encapsulant le moteur N8N via API Python (Port 5003). L'infrastructure impose une ségrégation stricte :</p>
+        <ul>
+          <li><strong>Sandbox Éphémère :</strong> Testée dynamiquement par le LLM, elle doit OBLIGATOIREMENT démarrer par le nœud <code>Execute Workflow Trigger</code>.</li>
+          <li><strong>Daemon Permanent :</strong> Déploiements (crons/webhooks) tournant en arrière-plan. Ces workflows peuvent agir comme des clients MCP et déclencher asynchronement des "Child Chats" dans ECHO via l'API pour confier une tâche complexe au LLM avec traçabilité complète.</li>
+        </ul>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">3. MCP Broker & Identity Vault</h3>
+        <p>Le serveur <strong>MCP Broker</strong> (<code>m5_proxy_mcp.py</code>) agit comme un Proxy ASGI complet. Ses caractéristiques clés :</p>
+        <ul>
+          <li><strong>Authentification Middleware :</strong> Interception silencieuse de <code>x-openwebui-user-id</code> garantissant l'isolation des tenants.</li>
+          <li><strong>Forwarding d'Erreurs Transparent :</strong> Les erreurs applicatives ou WAF externes (403, 502) ne sont pas masquées, elles sont formatées en JSON et remontées <em>directement</em> au LLM pour déclencher son auto-heal (cascade cognitive).</li>
+          <li><strong>Identity Vault :</strong> L'outil <code>identity_vault_tool.py</code> gère les secrets. Le modèle a interdiction d'utiliser des secrets en dur et doit utiliser la macro <code>__ECHO_SECRET_...</code>. Il DOIT invoquer <code>list_available_services</code> avant <code>list_identities</code>. L'interface (<code>echo_identity_vault_action.py</code>) synchronise dynamiquement ces secrets vers SQLite pour N8N et MCP de façon étanche.</li>
+        </ul>
+
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">Agent Engine (agent_engine_tool.py)</h3>
+        <ul>
+          <li><strong>delegate_to_agent :</strong> Délégation experte par agent autonome.</li>
+          <li><strong>list_agent_sessions / close_agent_session :</strong> Gestion du cycle de vie des sessions d'agents.</li>
+        </ul>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">N8N Orchestrator (n8n_orchestrator_tool.py)</h3>
+        <ul>
+          <li><strong>Templates :</strong> create_n8n_template, modify_n8n_template, delete_n8n_template.</li>
+          <li><strong>Workflows :</strong> prepare_n8n_workflow, modify_n8n_workflow, run_n8n_oneshot_workflow, deploy_n8n_daemon.</li>
+          <li><strong>Hub & Documentation :</strong> search_n8n_hub, download_n8n_hub_template, query_n8n_documentation.</li>
+        </ul>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">MCP & API (internal_mcp_tool.py, remote_mcp_tool.py, api_client.py)</h3>
+        <ul>
+          <li><strong>list / call_internal_mcp_tool :</strong> Interaction avec le serveur MCP interne d'ECHO.</li>
+          <li><strong>list / call_remote_mcp_tool :</strong> Exécution sur un serveur MCP distant enregistré dans le Vault.</li>
+          <li><strong>call_api :</strong> Requête HTTP universelle.</li>
+        </ul>
+      </div>
+    </details>
+
+    <div class="transition-text">
+      <a href="13_memoire_actions.html">&larr; 13. Mémoire & Actions</a>
+      &nbsp;&nbsp;
+      <a href="15_deploiement.html">15. Déploiement & Infra &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.212.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

@@ -1,11 +1,13 @@
 """
-title: Resume in New Chat
+title: Résume et Transfert vers un nouveau chat
 author: ECHO Framework
-version: 1.10
+version: 1.11
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMSAxNnYuNWExLjUgMS41IDAgMCAxLTEuNSAxLjVoLTZMMTIgMjBsLTIuNS0yLjVoLTZBMS41IDEuNSAwIDAgMSAyIDE2LjVWNGExLjUgMS41IDAgMCAxIDEuNS0xLjVoMTVBMS41IDEuNSAwIDAgMSAyMCA0djciLz48cGF0aCBkPSJtMTggMjIgMy0zLTMtMyIvPjxwb2x5bGluZSBwb2ludHM9IjIxIDE5IDEzIDE5Ii8+PC9zdmc+
 """
 # Historique des versions :
+# 1.11: Renommage de l'action et augmentation de l'historique de distillation à 80 messages.
+# 1.10: Version précédente.
 # 1.9: Correction extraction des messages (compatibilité OWUI v0.3+), nettoyage de la clé redondante, cohérence ID HUD.
 # 1.8: Remplacement des regex de purge par une regex globale sur <artifact> pour le nettoyage OWUI.
 # 1.5: Ajout d'une demande de confirmation explicite avant le déclenchement de la migration.
@@ -67,7 +69,7 @@ class Action:
                 await events.toast("❌ Migration impossible : Identifiants manquants.", "error")
             except AttributeError:
                 if __event_emitter__:
-                    await __event_emitter__({"type": "toast", "data": {"title": "ECHO", "message": "❌ Migration impossible : Identifiants manquants.", "type": "error"}})
+                    await events.toast("❌ Migration impossible : Identifiants manquants.", level="error", title="ECHO")
             return None
 
         if not Chats or not ChatForm:
@@ -75,7 +77,7 @@ class Action:
                 await events.toast("❌ Migration impossible : API Open WebUI non disponible.", "error")
             except AttributeError:
                 if __event_emitter__:
-                    await __event_emitter__({"type": "toast", "data": {"title": "ECHO", "message": "❌ Migration impossible : API Open WebUI non disponible.", "type": "error"}})
+                    await events.toast("❌ Migration impossible : API Open WebUI non disponible.", level="error", title="ECHO")
             return None
 
         if not await events.confirm(
@@ -109,12 +111,12 @@ class Action:
         })();
         """
         if __event_call__:
-            await __event_call__({"type": "execute", "data": {"code": hud_js}})
+            await events.call_execute(hud_js)
         
         async def update_hud(pct, step):
             if __event_call__:
                 safe_step = step.replace("'", "\\'")
-                await __event_call__({"type": "execute", "data": {"code": f"window.updateMigration({pct}, '{safe_step}');"}})
+                await events.call_execute(f"window.updateMigration({pct}, '{safe_step}');")
 
         # 2. Distillation du contexte
         await update_hud(10, "🧠 Distillation cognitive en cours...")
@@ -131,7 +133,7 @@ class Action:
         
         # Conversion du format messages (OpenAI) en texte lisible pour la distillation
         messages_text = ""
-        for m in messages[-20:]: # On limite aux 20 derniers messages pour ne pas surcharger la distillation
+        for m in messages[-80:]: # Augmentation à 80 derniers messages pour une distillation exhaustive
             role = m.get("role", "user")
             content = m.get("content", "")
             
@@ -277,6 +279,6 @@ class Action:
         await asyncio.sleep(1) # Laisser l'UI s'afficher
         if __event_call__:
             cleanup_js = f"const h = document.getElementById('echo-migration-hud'); if(h) h.remove(); window.location.href = '/c/{new_chat_id}';"
-            await __event_call__({"type": "execute", "data": {"code": cleanup_js}})
+            await events.call_execute(cleanup_js)
 
         return None

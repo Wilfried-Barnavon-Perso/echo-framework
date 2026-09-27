@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Inférence Distante (Edge Computing) : Utilisation des ressources locales de l'utilisateur pour accélérer ECHO.">
+  <title>ECHO v5 - 17. Inférence Distante</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>17. Inférence Distante</h1>
+
+    <p>
+      ECHO est conçu pour être aussi rapide et efficace que possible, sans pour autant saturer l'ordinateur qui l'héberge (le serveur). Pour y parvenir, il utilise une technologie appelée <strong>Edge Computing</strong> (ou inférence distante).
+    </p>
+
+    <h2>L'Alliance du Serveur et de Votre Ordinateur</h2>
+    <p>
+      Lorsque vous envoyez de grands documents à lire (comme des PDF ou des historiques longs), ECHO doit "comprendre" et mémoriser chaque phrase. Ce processus (appelé vectorisation) demande beaucoup de puissance de calcul. 
+    </p>
+    <p>
+      Au lieu de faire tout ce travail sur le serveur central, ECHO va <strong>utiliser intelligemment la carte graphique (GPU) de l'ordinateur depuis lequel vous naviguez</strong> (votre PC personnel, votre téléphone ou votre tablette). 
+    </p>
+
+    <h2>Avantages pour l'Utilisateur</h2>
+    <ul>
+      <li><strong>Vitesse décuplée :</strong> Votre machine traite les données localement et ne renvoie que le résultat compressé au serveur, évitant ainsi les temps de transfert réseau pour les gros fichiers.</li>
+      <li><strong>Soulagement du réseau :</strong> Plusieurs utilisateurs peuvent utiliser ECHO en même temps sans ralentir le serveur central.</li>
+      <li><strong>Transparence totale :</strong> Tout se passe de manière invisible dans votre navigateur. Vous n'avez aucun logiciel ou application supplémentaire à installer. Si votre appareil n'est pas assez puissant, le serveur prend automatiquement le relais sans interrompre votre session.</li>
+    </ul>
+
+    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
+      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
+      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
+        
+        <h3 style="color:#93c5fd;">Architecture de l'Edge Embedding Bridge</h3>
+        <p>Le pont d'inférence déporte l'exécution du modèle de vectorisation <code>microsoft/Harrier-OSS-v1-0.6B (GGUF)</code> directement sur le matériel du client via WebGPU / WebAssembly (WASM).</p>
+        
+        <h3 style="color:#93c5fd; margin-top: 1rem;">1. Injection du Payload (<code>edge_embed_bridge_filter.py</code>)</h3>
+        <p>Le filtre intercepte la construction de l'interface graphique d'Open WebUI. Il injecte un module JavaScript (<code>&lt;script type="module"&gt;</code>) qui charge de manière asynchrone la librairie <em>Transformers.js</em> et les poids du modèle depuis le navigateur.</p>
+
+        <h3 style="color:#93c5fd; margin-top: 1rem;">2. WebSocket et Proxy (<code>/ws/edge-embed</code>)</h3>
+        <p>Le client initie une connexion WebSocket vers le Worker d'Embedding via l'endpoint <code>/ws/edge-embed</code>, protégée par le jeton JWT. L'orchestrateur Docker utilise BunkerWeb et le Proxy ASGI pour diriger ce flux directement vers le Worker dédié (Port 7997).</p>
+
+        <h3 style="color:#93c5fd; margin-top: 1rem;">3. Fallback CPU Automatique</h3>
+        <p>Si la connexion WebSocket est rompue ou si le matériel client n'est pas compatible (pas de WebGPU ou timeout sur la valve <code>EDGE_EMBEDDING_TIMEOUT</code>), le pont annule instantanément les promesses asynchrones de la requête (<code>asyncio.Future</code>) et bascule silencieusement sur le processeur (CPU) du Worker Docker (qui utilise <code>llama.cpp</code>). Cette résilience garantit zéro interruption de service.</p>
+
+      </div>
+    </details>
+
+    <div class="transition-text">
+      <a href="16_infrastructure_globale.html">&larr; 16. Périphériques & Infra</a>
+      &nbsp;&nbsp;
+      <a href="18_annexes.html">18. Annexes Techniques &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.212.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

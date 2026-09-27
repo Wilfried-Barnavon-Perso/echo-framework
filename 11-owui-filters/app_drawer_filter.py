@@ -459,10 +459,12 @@ class Filter:
 """
 
         # Injection silencieuse via exécution native (sans polluer le chat)
-        await __event_emitter__({
-            "type": "execute",
-            "data": {"code": js_code}
-        })
+        import sys
+        if "/app/backend/echo_libs" not in sys.path:
+            sys.path.append("/app/backend/echo_libs")
+        from echo_events import EchoEvents
+        events = EchoEvents(__event_emitter__)
+        await events.emit_execute(js_code)
 
         return body
 

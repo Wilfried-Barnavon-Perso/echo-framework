@@ -1,10 +1,17 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# Version : 9.70
-# --- CHANGELOG 9.70 ---
-# - Docker Compose (BunkerWeb) : Rollback de la syntaxe limit_req off invalide et augmentation du Rate Limiting global (Burst 1000, Rate 300r/s) pour encaisser les reconnexions WebSocket.
-# --- CHANGELOG 9.69 ---
-# - Docker Compose (BunkerWeb) : Bypass du rate limiting (limit_req off) sur les fichiers statiques de l'Open WebUI pour empêcher l'erreur 500 SvelteKit (429) causée par l'épuisement du quota lors des reconnexions WebSocket.
+# REGLE: Ne garder que les 5 dernières versions du changelog.
+# Version : 9.76
+# --- CHANGELOG 9.76 ---
+# - Docker Compose : Mise à niveau de Qdrant (Base Vectorielle) vers la version 1.19.1.
+# --- CHANGELOG 9.75 ---
+# - Docker Compose : Refactorisation structurelle IPAM (Domain-Driven) et résolution du conflit IP (.10) avec le WAF.
+# --- CHANGELOG 9.74 ---
+# - Docker Compose : Variables d'environnement pour l'IPAM (ECHO_NET_MAIN_PREFIX, ECHO_NET_SANDBOX_PREFIX).
+# --- CHANGELOG 9.73 ---
+# - Docker Compose : Assignation d'IP statiques pour tous les conteneurs (echo-network: 10.20.40.x, echo-sandbox: 10.20.50.x).
+# --- CHANGELOG 9.72 ---
+# - Docker Compose : Retrait des dépendances inutiles (llama-cpp-python, etc.) dans l'image Open WebUI Slim causant l'erreur gcc. Conservation uniquement de h2 et pybase64.
 # --- CHANGELOG 9.68 ---
 # - Docker Compose (BunkerWeb) : Uniformisation des filtres d'erreurs (405, 444) sur l'Admin Manager et assouplissement des seuils globaux de Bad Behavior (50 erreurs, ban 5 min) pour tolérer les reconnexions de la SPA.
 # --- CHANGELOG 9.67 ---
@@ -48,6 +55,27 @@
 #                 open-webui pour le module ECHO Codex.
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
+# ==============================================================================
+# 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)
+# ==============================================================================
+# 1. Briques Core & Externes (Plage .100 - .199) :
+#    - open-webui       : .100
+#    - searxng          : .101
+#    - watchtower       : .102
+#    - qdrant           : .103
+#
+# 2. Workers ECHO (Reflet strict du numéro de dossier source) :
+#    - admin-manager    : .20  (Dossier 20-)
+#    - coding-worker    : .21  (Dossier 21-)
+#    - browser-worker   : .22  (Dossier 22-)
+#    - mcp-broker       : .23  (Dossier 23-)
+#    - auth-manager     : .24  (Dossier 24- -> voir bunkerweb-stack.yml)
+#    - download-broker  : .25  (Dossier 25-)
+#    - n8n-worker       : .26  (Dossier 26-)
+#    - embedding        : .30  (Dossier 30-)
+#    - tts-worker       : .31  (Dossier 31-)
+#    - stt-worker       : .32  (Dossier 32-)
+# ==============================================================================
 
 services:
 
@@ -57,8 +85,10 @@ services:
     container_name: echo-open-webui
     restart: always
     networks:
-      - echo-network
-      - echo-sandbox
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.100
+      echo-sandbox:
+        ipv4_address: ${ECHO_NET_SANDBOX_PREFIX}.100
     ports:
       - "3000:8080"
       - "8020-8024:8020-8024"  # SSH tunnel ephemere PKCE - ports SSH uniquement (5 sessions max)
@@ -105,7 +135,6 @@ services:
       - "echo.hot-reload=true"
       # 🛡️ TUNING SECURE EDGE (BunkerWeb)
       - "bunkerweb.SERVER_NAME=ui.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_main=set $$upstream_main http://echo-open-webui:8080;"
@@ -216,7 +245,7 @@ services:
       # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
     command: >
-      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=2 pip install mgzip dulwich 'markitdown[all]' && ./start.sh"
+      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=2 pip install mgzip dulwich 'markitdown[all]' h2 pybase64 && ./start.sh"
     healthcheck:
       test: ["CMD-SHELL", "curl --silent --fail http://localhost:8080/health || exit 1"]
       interval: 15s
@@ -241,7 +270,8 @@ services:
     container_name: echo-admin-manager
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.20
     environment:
       - TZ=Europe/Paris
       - ECHO_SSO_SECRET=${ECHO_SSO_SECRET}
@@ -254,7 +284,6 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
       - "bunkerweb.SERVER_NAME=am.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
@@ -332,7 +361,8 @@ services:
     container_name: echo-mcp-broker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.23
     environment:
       - TZ=Europe/Paris
     volumes:
@@ -365,7 +395,8 @@ services:
     cap_add:
       - SYS_ADMIN
     networks:
-      - echo-sandbox
+      echo-sandbox:
+        ipv4_address: ${ECHO_NET_SANDBOX_PREFIX}.21
     environment:
       - TZ=Europe/Paris
     volumes:
@@ -383,11 +414,14 @@ services:
       start_period: 30s
 
   echo-browser-worker:
-    image: python:3.14-slim
+    build:
+      context: /opt/ECHO/docker-browser-worker
+      dockerfile: Dockerfile
     container_name: echo-browser-worker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.22
     ipc: host
     environment:
       - PIP_ROOT_USER_ACTION=ignore
@@ -399,8 +433,6 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
-    command: >
-      /bin/bash -c "CMAKE_BUILD_PARALLEL_LEVEL=2 pip install --no-cache-dir fastapi uvicorn playwright html2text mgzip orjson pybase64 httpx Pillow && playwright install --with-deps chromium && cd /app && uvicorn browser_api:app --host 0.0.0.0 --port 5002 --log-config /app/logging.json"
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5002/health\")' 2>/dev/null || exit 1"]
       interval: 15s
@@ -415,7 +447,8 @@ services:
     container_name: echo-n8n-worker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.26
     environment:
       - TZ=Europe/Paris
       - N8N_ENCRYPTION_KEY
@@ -456,7 +489,8 @@ services:
     container_name: echo-stt-worker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.32
     environment:
       - TZ=Europe/Paris
     labels:
@@ -479,7 +513,8 @@ services:
     container_name: echo-tts-worker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.31
     environment:
       - TZ=Europe/Paris
     labels:
@@ -502,7 +537,8 @@ services:
     container_name: echo-searxng
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.101
     volumes:
       - /opt/ECHO/config/searxng-settings.yml:/etc/searxng/settings.yml:ro
     environment:
@@ -535,7 +571,8 @@ services:
     container_name: echo-watchtower
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.102
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -549,11 +586,12 @@ services:
 
   # 4. Qdrant (Base Vectorielle)
   echo-qdrant:
-    image: qdrant/qdrant:v1.17.1
+    image: qdrant/qdrant:v1.19.1
     container_name: echo-qdrant
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.103
     volumes:
       - echo-qdrant-data:/qdrant/storage
     environment:
@@ -575,7 +613,8 @@ services:
     container_name: echo-embedding
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.30
     environment:
       - TZ=Europe/Paris
       - MODEL_ID=microsoft/Harrier-OSS-v1-0.6B
@@ -610,7 +649,8 @@ services:
     container_name: echo-download-broker
     restart: always
     networks:
-      - echo-network
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.25
     environment:
       - TZ=Europe/Paris
     volumes:

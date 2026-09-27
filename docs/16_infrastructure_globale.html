@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Périphériques et Infrastructure d'ECHO v5 : sécurité, administration, et gestion de données hors-ligne.">
+  <title>ECHO v5 - 16. Périphériques & Infra</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>16. Périphériques & Infra</h1>
+
+    <p>
+      ECHO n'est pas un simple script, c'est un serveur complet, autonome et hautement sécurisé, pensé pour garantir la souveraineté absolue de vos données. L'infrastructure qui entoure le cœur cognitif assure trois missions fondamentales pour l'utilisateur final : la sécurité infranchissable, la gestion autonome des tâches de fond, et les capacités sensorielles de l'IA (voix et ouïe).
+    </p>
+
+    <h2>1. La Sécurité Intégrale (Identité et Pare-feu)</h2>
+    <p>
+      L'accès à votre intelligence artificielle est protégé par des standards de sécurité de niveau militaire. Le système intègre son propre gestionnaire d'identité. Avant même de pouvoir accéder à l'interface, chaque connexion nécessite une authentification forte avec validation en deux étapes (MFA/TOTP). De plus, l'ensemble du système est placé derrière un bouclier de sécurité (Pare-feu / WAF) qui filtre et analyse en temps réel toutes les requêtes réseau, bloquant instantanément toute tentative d'intrusion ou de comportement malveillant.
+    </p>
+
+    <h2>2. Maintenance Autonome et Téléchargements (Brokers)</h2>
+    <p>
+      Pour que l'expérience reste fluide au fil du temps sans intervention de votre part, ECHO intègre un gestionnaire interne (l'Admin Manager) fonctionnant en tâche de fond. Son rôle est de nettoyer automatiquement la mémoire morte, d'optimiser les bases de données et d'assurer que l'application ne sature jamais l'espace de votre ordinateur. 
+    </p>
+    <p>
+      En parallèle, un service dédié (le Download Broker) s'occupe de rapatrier, d'indexer et de classer silencieusement les très gros fichiers que l'IA serait amenée à télécharger lors de ses navigations web, sans bloquer ou ralentir la conversation en cours.
+    </p>
+
+    <h2>3. L'Ouïe et la Parole (Workers Audio)</h2>
+    <p>
+      Afin que l'IA puisse interagir naturellement avec vous par la voix, l'infrastructure embarque des moteurs de synthèse vocale et de transcription. Contrairement aux assistants classiques du commerce, **votre voix et vos requêtes vocales ne sont jamais envoyées sur internet**. Elles sont traitées instantanément et localement par ces moteurs intégrés, préservant ainsi l'intimité totale de vos échanges audios.
+    </p>
+
+    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
+      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
+      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
+        
+        <h3 style="color:#93c5fd;">1. Admin Manager (server.py)</h3>
+        <p>Orchestrateur asynchrone pilotant via le socket Docker. Il gère : le polling des états conteneurs, le <code>run_semantic_pruning()</code> (nettoyage TTL asynchrone des index Qdrant pour éviter le blocage UI), la défragmentation (Vacuum) SQLite, et expose un dashboard interne <code>/api/task_status</code>.</p>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">2. ECHO Auth SSO & MFA</h3>
+        <p>Fournisseur d'identité natif (IdP). Il force un flux OAuth2 PKCE (via tunnel SSH sur les ports 8020-8024) et interdit l'authentification native d'Open WebUI. Gère le TOTP et le Fallback API Keys AI Studio si l'OAuth2 primaire échoue. L'invalidation de la session SSO purge proactivement les tokens OWUI.</p>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Bouclier BunkerWeb WAF</h3>
+        <p>Reverse Proxy ModSecurity protégeant le WebSocket WebGPU et l'API IdP. La configuration globale (<code>DISABLE_DEFAULT_SERVER</code>, <code>AUTO_LETS_ENCRYPT</code>) DOIT utiliser l'ancre YAML <code>x-bw-config</code>. <strong>Règle absolue :</strong> l'injection par labels sur le conteneur <code>open-webui</code> entraîne la perte de la conf WAF au redémarrage (Autoconf) et le crash Let's Encrypt. Rate limit configuré massivement assoupli (Burst 1000, Rate 300r/s) pour les websockets SvelteKit.</p>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">4. Audio Workers (STT & TTS)</h3>
+        <p><strong>Kokoro TTS :</strong> Pipeline Hybride G2P (sémantique par phrase + langue par mots) encodé via pydub en MP3 128 kbps (StreamingResponse / Chunked Transfer).<br/><strong>Whisper STT :</strong> Architecture Faster-Whisper, mappage multilingue direct.</p>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">5. Scripts d'Infrastructure</h3>
+        <ul>
+          <li><code>sync-echo.sh</code> : Distribution des sources, suppression BOM/CRLF, préservation de l'horodatage pour le cache BuildKit.</li>
+          <li><code>install-stack.sh</code> : Throttle Lock (30 jours sur images alpine/n8n), calcul CORS IP dynamiques, orchestration Tier 1/2/3/4 par hostname (healthcheck).</li>
+          <li><code>config-owui.sh</code> : Script REST asynchrone (attente 20 min) injectant <code>webui-settings.json</code> (modèle par défaut, permissions, purge des fournisseurs externes) sans action manuelle.</li>
+        </ul>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">6. Download Broker</h3>
+        <p>Worker Daemon asynchrone bouclant sur <code>/app/browser-data/downloads</code>. Gère le Garbage Collection des sessions mortes, le déplacement atomique vers le Vault utilisateur, et la création de leurres symboliques (symlinks). <strong>Pont de permissions :</strong> il accorde explicitement les droits au user systéme <code>node</code> pour que N8N puisse exploiter ces téléchargements en toute fluidité via l'agent navigateur.</p>
+
+      </div>
+    </details>
+
+    <div class="transition-text">
+      <a href="15_deploiement.html">&larr; 15. Déploiement & Infra</a>
+      &nbsp;&nbsp;
+      <a href="17_edge_inference.html">17. Inférence Distante &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.212.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

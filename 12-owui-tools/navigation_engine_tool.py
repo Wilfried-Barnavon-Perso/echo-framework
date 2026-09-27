@@ -252,7 +252,7 @@ class Tools:
                             import json
                             safe_url = json.dumps(url)
                             update_code = f"if(window.echoWebPlayerUpdate_{clean_hud_id}) window.echoWebPlayerUpdate_{clean_hud_id}('{b64}', {new_id}, {safe_url});"
-                            await events.emit("execute", {"code": update_code})
+                            await events.emit_execute(update_code)
                 except asyncio.CancelledError:
                     break
                 except Exception:
@@ -277,7 +277,7 @@ class Tools:
                     try:
                         await events.toast(f"⚠️ Navigateur [{sid}] : saturation contextuelle ({int(current_size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
                     except AttributeError:
-                        if __event_emitter__: await __event_emitter__({"type": "toast", "data": {"title": "ECHO Browser", "message": f"⚠️ Navigateur [{sid}] : saturation contextuelle. Troncature silencieuse active.", "type": "warning"}})
+                        if __event_emitter__: await events.toast(f"⚠️ Navigateur [{sid}] : saturation contextuelle. Troncature silencieuse active.", level="warning", title="ECHO Browser")
                     while current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
                         removed_size = smart_truncate_history(history, 1)
                         if not removed_size:

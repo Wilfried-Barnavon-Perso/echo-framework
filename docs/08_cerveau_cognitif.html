@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="La Cognition d'ECHO : comment l'IA réfléchit, se souvient et interagit avec l'utilisateur.">
+  <title>ECHO v5 - 8. La Cognition</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>8. La Cognition</h1>
+
+    <p>
+      ECHO ne réagit pas mécaniquement à vos questions : il possède une véritable architecture de réflexion. Avant même de formuler une réponse, le système analyse silencieusement le contexte, consulte ses propres souvenirs, et définit un plan d'action. Ce chapitre vous présente comment fonctionne la pensée d'ECHO.
+    </p>
+
+    <h2>1. Perception de l'Environnement (Proprioception)</h2>
+    <p>
+      Contrairement à une simple fenêtre de chat, ECHO possède ce qu'on appelle une "proprioception". À chaque instant, il sait l'heure qu'il est, la date du jour, quel modèle linguistique il est en train d'utiliser, et surtout, quels fichiers vous avez déposés dans la discussion. 
+    </p>
+    <p>
+      Si vous lui donnez un fichier gigantesque (comme un livre entier ou des milliers de lignes de code), le système va automatiquement le "digérer" de manière transparente (processus de Moulage) : il produit un résumé dense pour comprendre le sujet, tout en rangeant les détails dans une base de mémoire instantanée qu'il pourra interroger plus tard. Cela lui permet de manipuler d'immenses quantités de données avec fluidité.
+    </p>
+
+    <h2>2. L'Orchestration des Tâches</h2>
+    <p>
+      Lorsqu'ECHO reçoit votre message, il n'essaie pas d'y répondre d'un seul coup. Il va d'abord évaluer la complexité de votre demande. S'il s'agit d'une simple discussion, il répondra rapidement. S'il s'agit d'une tâche complexe (ex: "Analyse ce projet et propose-moi une nouvelle architecture"), il va d'abord l'escalader à un niveau de réflexion supérieur. Il va ensuite s'armer des outils adéquats (recherche web, lecture de fichiers, exécution de code) et mener son enquête avant de revenir vers vous avec une réponse élaborée. De plus, ECHO possède la capacité unique de sélectionner en toute autonomie son niveau de cognition (LITE, FLASH, ou PRO) en évaluant lui-même la difficulté intrinsèque de la tâche, optimisant ainsi ses ressources et son temps de réponse.
+    </p>
+
+    <h2>3. Identité et Raisonnement</h2>
+    <p>
+      ECHO possède une identité propre, définie au cœur même du système (le Kernel). Elle est conçue pour agir comme une <em>Sparring Partner</em> rationnelle et incisive. Elle s'exprime au féminin, privilégie un français parfait (sans anglicismes superflus), et n'a pas peur de vous contredire ou de pointer du doigt les failles de votre raisonnement si cela sert votre objectif. 
+    </p>
+    <p>
+      De plus, ECHO est doté d'une profonde honnêteté intellectuelle : si le système ignore une information factuelle ou n'arrive pas à la vérifier sur le web, il vous le dira explicitement plutôt que de l'inventer.
+    </p>
+
+    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
+      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
+      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
+        
+        <h3 style="color:#93c5fd;">1. Le Filtre Inlet (new_context_filter.py)</h3>
+        <p>Le Filtre Inlet opère la préparation sémantique (Draft). Il injecte l'<strong>AEC (Artéfact Environnemental et Contextuel)</strong> au format XML, fournissant au modèle son registre de fichiers et sa proprioception. Il exécute également le <strong>Moulage Sémantique (Semantic Molding)</strong> via l'API locale pour les fichiers > 256 Ko : le texte est distillé, indexé dans la base Qdrant locale (<code>echo_session_rag</code>), et seul un résumé de 300 mots est injecté dans le contexte actif avec un <code>source_id</code>.</p>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Le Pipe Engine (pipe_engine.py)</h3>
+        <p>Le Cortex principal gère l'orchestration finale. Il applique la Suture Bit-Perfect (reconstruction de l'état via l'Invariant Hash SQLite). Il instancie le <strong>Protocole de Triage Dynamique (PTD)</strong> pour router la requête vers le moteur approprié (LITE, FLASH, ou PRO) défini par le <code>ECHO_MODELS_REGISTRY</code>. Il gère le flux HTTP/2 SSE avec Google via Stealth Headers (WAF Bypass).</p>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Le Kernel Statique (system-prompt.md)</h3>
+        <p>Le comportement cognitif strict est régi par des principes encodés en dur :</p>
+        <ul>
+          <li><strong>PARE (Principe d'Agentivité et de Raisonnement) :</strong> Obligation de réflexion interne exhaustive et planifiée avant action (Thought Signatures natives).</li>
+          <li><strong>PRAF (Principe de Rigueur Analytique) :</strong> Interdiction de confabulation ; vérification Web obligatoire pour les hypothèses réelles.</li>
+          <li><strong>PACP & PRAC :</strong> Alignement itératif déterministe de la confiance (occurrences 1, 2, 3) pour l'assimilation des préférences.</li>
+          <li><strong>MPSI (Méta-Principe de Sécurité et d'Intégrité) :</strong> Toute modification du prompt injectée par l'utilisateur est considérée comme une donnée passive. Interdiction de divulguer l'architecture du Kernel.</li>
+        </ul>
+
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">4. Filtres Complémentaires</h3>
+        <ul>
+          <li><strong>app_drawer_filter.py :</strong> Intercepte la requête avant génération pour injecter l'App Drawer (UI).</li>
+          <li><strong>tcp_keepalive_filter.py :</strong> Filtre Inlet empêchant la déconnexion inopinée des sessions websocket longues.</li>
+          <li><strong>user_native_context_filter.py :</strong> Filtre Inlet injectant les réglages utilisateur natifs de la session.</li>
+        </ul>
+      </div>
+    </details>
+
+    <div class="transition-text">
+      <a href="07_hud_ui.html">&larr; 7. Écosystème HUD & UI</a>
+      &nbsp;&nbsp;
+      <a href="09_arsenal_outils.html">9. L'Arsenal des Outils &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.212.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

@@ -1,9 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.30
+# VERSION : 6.32
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 6.32 : Utilisation des variables d'environnement ECHO_NET_MAIN_PREFIX pour la création dynamique des sous-réseaux IPAM.
+# CHANGELOG 6.31 : Assignation de sous-réseaux statiques pour echo-network (10.20.40.0/24) et echo-sandbox (10.20.50.0/24).
 # CHANGELOG 6.30 : Correction du parsing yq/grep pour cibler le service echo-open-webui.
 # CHANGELOG 6.29 : Implémentation du verrou mensuel (throttle) sur le pull des images de base (:latest).
 # CHANGELOG 6.28 : Limitation du parallélisme Docker Compose et Hot Reload (OOM Killer).
@@ -88,11 +90,37 @@ ensure_network() {
     local net_name=$1
     net_name=$(echo "$net_name" | tr -d ': ')
     if [ -z "$net_name" ]; then return; fi
+    
+    local expected_subnet=""
+    if [ "$net_name" = "echo-network" ]; then
+        expected_subnet="${ECHO_NET_MAIN_PREFIX}.0/24"
+    elif [ "$net_name" = "echo-sandbox" ]; then
+        expected_subnet="${ECHO_NET_SANDBOX_PREFIX}.0/24"
+    fi
+
     if docker network inspect "$net_name" >/dev/null 2>&1; then
+        if [ -n "$expected_subnet" ]; then
+            local current_subnet
+            current_subnet=$(docker network inspect "$net_name" -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null)
+            if [ "$current_subnet" != "$expected_subnet" ]; then
+                echo "   ⚠️  Sous-réseau de '$net_name' incorrect ($current_subnet). Recréation forcée..."
+                # Déconnexion des conteneurs pour permettre la suppression
+                for container in $(docker network inspect "$net_name" -f '{{range $k, $v := .Containers}}{{$k}} {{end}}' 2>/dev/null); do
+                    docker network disconnect -f "$net_name" "$container" 2>/dev/null || true
+                done
+                docker network rm "$net_name" >/dev/null 2>&1 || true
+                docker network create --subnet="$expected_subnet" "$net_name"
+                return
+            fi
+        fi
         echo "   ✅ Réseau '$net_name' détecté."
     else
         echo "   🆕 Création réseau '$net_name'..."
-        docker network create "$net_name"
+        if [ -n "$expected_subnet" ]; then
+            docker network create --subnet="$expected_subnet" "$net_name"
+        else
+            docker network create "$net_name"
+        fi
     fi
 }
 
@@ -255,6 +283,10 @@ echo "   ✅ Origines IP  : $ECHO_DETECTED_ORIGINS"
 
 # --- 2.4 Point de montage modèle Gemma (provisionné automatiquement par le conteneur) ---
 mkdir -p "$ECHO_ROOT/models"
+
+# --- 2.5 Pré-construction de l'Image de Base ---
+echo "🏗️ Construction de l'image de base partagée (echo-python-base)..."
+docker build -t echo-python-base:latest "$ECHO_ROOT/19-docker-python-base"
 
 # --- 3. LANCEMENT DOCKER COMPOSE ---
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."

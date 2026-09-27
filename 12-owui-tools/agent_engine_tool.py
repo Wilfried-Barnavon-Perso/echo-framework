@@ -1,19 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.18
+version: 1.22
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.22: Transformation de calls_used en calls_remaining pour l'orchestrateur parent.
+# 1.21: Coupure stricte de l'interface utilisateur (__event_call__: None) pour forcer le mode Headless des sous-agents.
+# 1.20: Remplacement de l'injection subagent_metadata par la propagation asynchrone ECHO_SUBAGENT_CONTEXT.
+# 1.19: Injection de sub_sid dans subagent_metadata pour le RAG sécurisé des sous-agents.
 # 1.18: Injection du paramètre is_subagent dans les métadonnées pour bypasser les modales UI.
-# 1.17: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
-# 1.12: Précision docstring sur l'héritage du système prompt de l'orchestrateur.
-# 1.11: Correction injection PRAF (évite doublon si héritage du Kernel). Suppression acronyme PRAF.
-# 1.10: Consolidation de l'injection universelle (date + PRAF ajusté) via <directives_globales>.
-# 1.9: Injection universelle du contexte temporel (date iso) à la fin du base_system des agents délégués.
-# 1.14: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
-# 1.15: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import sys
 import uuid
@@ -511,7 +508,7 @@ async def _run_agent_loop(
             try:
                 await events.toast(f"⚠️ Agent [{sid}] : saturation contextuelle ({int(current_size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
             except AttributeError:
-                if __event_emitter__: await __event_emitter__({"type": "toast", "data": {"title": "ECHO Agent", "message": f"⚠️ Agent [{sid}] : saturation contextuelle. Troncature silencieuse active.", "type": "warning"}})
+                if __event_emitter__: await events.toast(f"⚠️ Agent [{sid}] : saturation contextuelle. Troncature silencieuse active.", level="warning", title="ECHO Agent")
             while current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
                 removed = smart_truncate_history(history, 0)
                 if not removed:
@@ -603,7 +600,7 @@ async def _run_agent_loop(
                         "sid": sid,
                         "question": question,
                         "progress": progress or "(en cours)",
-                        "calls_used": calls_used,
+                        "calls_remaining": max_calls - calls_used,
                     }
                 , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -625,7 +622,7 @@ async def _run_agent_loop(
                 status={
                     "status": "success",
                     "sid": sid,
-                    "calls_used": calls_used,
+                    "calls_remaining": max_calls - calls_used,
                     "model_used": model_used,
                 }
             , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -681,7 +678,7 @@ async def _run_agent_loop(
                     "status": "success",
                     "sid": sid,
                     "warning": "budget_exhausted",
-                    "calls_used": calls_used,
+                    "calls_remaining": max_calls - calls_used,
                     "model_used": model_used,
                 }
             , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -718,16 +715,11 @@ async def _run_agent_loop(
                 }
             else:
                 try:
-                    # Paramètres infrastructure — passage explicite (binding OWUI non garanti)
-                    subagent_metadata = dict(__metadata__ or {})
-                    subagent_metadata["is_subagent"] = True
-                    
                     infra_kwargs = {
                         "__user__": __user__,
                         "__chat_id__": __chat_id__,
-                        "__metadata__": subagent_metadata,
                         "__event_emitter__": __event_emitter__,
-                        "__event_call__": __event_call__,
+                        "__event_call__": None,
                     }
                     # Filtrage des params infra acceptés par le callable.
                     # Les callables OWUI (depuis _echo_tools_dict) sont des functools.partial
@@ -743,7 +735,14 @@ async def _run_agent_loop(
                     except (ValueError, TypeError):
                         accepted_infra = {}  # Partial OWUI — ne pas passer d'infra
 
-                    result = await callable_fn(**fn_args, **accepted_infra)
+                    # Injection asynchrone de l'identité du sous-agent (contournement du proxy OWUI)
+                    from echo_constants import ECHO_SUBAGENT_CONTEXT
+                    token = ECHO_SUBAGENT_CONTEXT.set({"is_subagent": True, "sub_sid": sid})
+                    try:
+                        result = await callable_fn(**fn_args, **accepted_infra)
+                    finally:
+                        # Réinitialisation stricte du contexte asynchrone
+                        ECHO_SUBAGENT_CONTEXT.reset(token)
                 except Exception as e:
                     result = {"status": "error", "message": str(e)}
 

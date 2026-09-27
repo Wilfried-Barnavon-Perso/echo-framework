@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # ECHO Auth Server Dockerfile
-FROM python:3.14-slim
+FROM echo-python-base:latest
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -11,16 +11,11 @@ WORKDIR /app
 # Installation des dépendances de sécurité et web
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install \
-    fastapi \
-    uvicorn \
     pyotp \
     passlib[argon2] \
     qrcode[pil] \
     jinja2 \
-    python-multipart \
-    user-agents \
-    orjson \
-    httpx
+    user-agents
 
 # Création du point de montage pour la base de données
 RUN mkdir -p /data

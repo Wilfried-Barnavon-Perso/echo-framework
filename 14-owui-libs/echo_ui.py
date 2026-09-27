@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.82
+version: 5.87
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.82: Fix - Modification du type MIME fallback de la vue Navigation (monitor_ECHO) en image/jpeg.
-# 5.81: Intégration du lecteur PDF WYSIWYG natif (reconstruction par Blob) dans le HUD Codex.
-# 5.80: Fiabilisation de la sauvegarde Codex (verrou JS et hook clavier Monaco natif).
-# 5.79: Précision du nom du workspace cible dans la modale JS de confirmation de Reset du Codex.
-# 5.78: Déverrouillage complet de la Timeline Git (Historique) dans l'espace Sandbox.
+# 5.87: Remplacement des indicateurs de chargement (switch_workspace et load_directory) par un spinner CSS universel.
+# 5.86: Fix - Correction d'une erreur de syntaxe f-string dans le JS injecté du Lazy Loading.
+# 5.85: Refonte majeure (Codex) : Implémentation du Lazy Loading avec requêtage asynchrone (load_directory) et purge mémoire dynamique.
+# 5.84: Fix - (Codex) Préservation du collapse des dossiers au re-rendu, et implémentation du proxy asynchrone (sendCodexAction) pour éradiquer la perte de clics.
+# 5.83: Codex - Réduction du ping à 5s pour économiser les ressources réseau.
 # 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
 # 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
 # 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
@@ -586,7 +586,7 @@ class EchoUI(EchoRichUI):
         else:
             js_code = EchoUI._generate_webplayer_js(
                 b64, "image/jpeg", metadata or [], current_url, hud_id, state_key, icon="🌐")
-        await events.emit("execute", {"code": js_code})
+        await events.emit_execute(js_code)
 
     @staticmethod
     async def deploy_context_gauge(
@@ -668,7 +668,7 @@ class EchoUI(EchoRichUI):
       document.body.appendChild(hudWrapper);
     }})();
     """
-        await events.emit("execute", {"code": js_code})
+        await events.emit_execute(js_code)
 
     @staticmethod
     def show_image_js(b64: str, mime: str = "image/png",
@@ -1134,6 +1134,20 @@ return new Promise(function(resolve) {{
       let markedLoaded = false;
       let previewDebounceTimer = null;
 
+      // --- COMMUNICATION PROXY (Race Condition Guard) ---
+      window.sendCodexAction = function(payload) {{
+        if (typeof window.echoCodexResolve === 'function') {{
+          const resolveFn = window.echoCodexResolve;
+          window.echoCodexResolve = null; // Verrouille immédiatement
+          resolveFn(payload);
+        }} else {{
+          // Retry dans 50ms pour les actions vitales, ignore les pings
+          if (payload && payload.action !== 'ping') {{
+             setTimeout(() => window.sendCodexAction(payload), 50);
+          }}
+        }}
+      }};
+
       // --- Restore position ---
       let savedState = {{}};
       try {{ savedState = JSON.parse(localStorage.getItem(STATE_KEY) || '{{}}'); }} catch(e) {{}}
@@ -1344,10 +1358,21 @@ return new Promise(function(resolve) {{
         const sb = document.getElementById(CODEX_ID + '-sidebar');
         sb.innerHTML = '';
 
+        if (!document.getElementById('codex-spin-style')) {{
+            const style = document.createElement('style');
+            style.id = 'codex-spin-style';
+            style.textContent = '@keyframes codex-spin {{ 100% {{ transform: rotate(360deg); }} }}';
+            document.head.appendChild(style);
+        }}
+
         // --- 1. Workspace Switcher ---
+        const wsContainer = document.createElement('div');
+        wsContainer.style.cssText = `display:flex; align-items:center; background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; flex-shrink:0;`;
+
         const wsSelect = document.createElement('select');
         wsSelect.id = CODEX_ID + '-workspace';
-        wsSelect.style.cssText = `width:100%; padding:6px; background:${{headerBg}}; border:none; border-bottom:1px solid ${{borderColor}}; color:${{textColor}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer; flex-shrink:0;`;
+        wsSelect.style.cssText = `flex:1; padding:6px; background:transparent; border:none; color:${{textColor}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer;`;
+        
         Object.entries(workspaces).forEach(([key, label]) => {{
           const opt = document.createElement('option');
           opt.value = key;
@@ -1355,10 +1380,20 @@ return new Promise(function(resolve) {{
           if (key === currentWorkspace) opt.selected = true;
           wsSelect.appendChild(opt);
         }});
+        
+        const wsSpinner = document.createElement('div');
+        wsSpinner.id = CODEX_ID + '-ws-spinner';
+        wsSpinner.style.cssText = `display:none; width:14px; height:14px; margin-right:8px; border:2px solid ${{textColor}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 1s linear infinite;`;
+
         wsSelect.onchange = () => {{
-          window.echoCodexResolve({{action:'switch_workspace', workspace:wsSelect.value}});
+          wsSelect.disabled = true;
+          wsSpinner.style.display = 'block';
+          window.sendCodexAction({{action:'switch_workspace', workspace:wsSelect.value}});
         }};
-        sb.appendChild(wsSelect);
+        
+        wsContainer.appendChild(wsSelect);
+        wsContainer.appendChild(wsSpinner);
+        sb.appendChild(wsContainer);
 
         // Afficher la Timeline Git (historique) pour TOUS les espaces (main et sandbox)
         const statusBar = document.getElementById(CODEX_ID + '-status');
@@ -1367,40 +1402,74 @@ return new Promise(function(resolve) {{
         // --- 2 & 3. Render Files ---
         const treeContainer = document.createElement('div');
         treeContainer.style.cssText = 'overflow-y:auto; flex:1; padding-bottom:6px;';
-        // Mode Universel : Arborescence avec treeMap et tri temporel (mtime)
-        const treeMap = {{ '': {{ isDir: true, children: {{}}, mtime: 0 }} }};
-        files.forEach(f => {{
-          const parts = f.filename.split('/');
-          let currentPath = '';
-          let parentNode = treeMap[''];
-          
-          if (f.mtime && f.mtime > parentNode.mtime) parentNode.mtime = f.mtime;
-
-          for (let i = 0; i < parts.length; i++) {{
-            const part = parts[i];
-            currentPath = currentPath ? currentPath + '/' + part : part;
-            const isLast = (i === parts.length - 1);
+        // Mode Universel : Arborescence dynamique (Lazy Loading)
+        const treeMap = {{ '': {{ isDir: true, children: {{}}, mtime: 0, isLoaded: true }} }};
+        
+        function injectFilesToTree(fileList) {{
+          fileList.forEach(f => {{
+            const parts = f.filename.split('/');
+            let currentPath = '';
+            let parentNode = treeMap[''];
             
-            if (!parentNode.children[part]) {{
-              parentNode.children[part] = {{
-                name: part,
-                path: currentPath,
-                isDir: isLast ? (f.type === 'directory') : true,
-                file: isLast && f.type === 'file' ? f : null,
-                children: {{}},
-                mtime: f.mtime || 0
-              }};
-            }} else {{
-              if (f.mtime && f.mtime > parentNode.children[part].mtime) {{
-                parentNode.children[part].mtime = f.mtime;
+            if (f.mtime && f.mtime > parentNode.mtime) parentNode.mtime = f.mtime;
+
+            for (let i = 0; i < parts.length; i++) {{
+              const part = parts[i];
+              currentPath = currentPath ? currentPath + '/' + part : part;
+              const isLast = (i === parts.length - 1);
+              
+              if (!parentNode.children[part]) {{
+                parentNode.children[part] = {{
+                  name: part,
+                  path: currentPath,
+                  isDir: isLast ? (f.type === 'directory') : true,
+                  file: isLast && f.type === 'file' ? f : null,
+                  children: {{}},
+                  mtime: f.mtime || 0,
+                  isLoaded: false
+                }};
+              }} else {{
+                if (f.mtime && f.mtime > parentNode.children[part].mtime) {{
+                  parentNode.children[part].mtime = f.mtime;
+                }}
+                if (!isLast) {{
+                  parentNode.children[part].isDir = true;
+                }}
               }}
-              if (!isLast) {{
-                parentNode.children[part].isDir = true;
-              }}
+              parentNode = parentNode.children[part];
             }}
-            parentNode = parentNode.children[part];
-          }}
-        }});
+          }});
+        }}
+
+        injectFilesToTree(files);
+
+        window.echoCodexAppendNodes = function(targetDir, newFiles) {{
+           injectFilesToTree(newFiles);
+           
+           const parts = targetDir.split('/');
+           let node = treeMap[''];
+           if (targetDir !== "") {{
+               for (const part of parts) {{
+                   if (node.children[part]) node = node.children[part];
+                   else return;
+               }}
+           }}
+           
+           const containerId = 'codex-dir-' + encodeURIComponent(targetDir);
+           const childrenContainer = document.getElementById(containerId);
+           if (childrenContainer) {{
+               childrenContainer.innerHTML = '';
+               node.isLoaded = true;
+               
+               const summary = childrenContainer.previousElementSibling;
+               if (summary) {{
+                   const span = summary.querySelector('.lazy-loading-span');
+                   if (span) span.remove();
+               }}
+               
+               renderNode(node, childrenContainer, targetDir === "" ? 0 : parts.length);
+           }}
+        }};
 
         function renderNode(node, container, level) {{
           Object.values(node.children).sort((a,b) => {{
@@ -1410,7 +1479,8 @@ return new Promise(function(resolve) {{
           }}).forEach(child => {{
               if (child.isDir) {{
                 const details = document.createElement('details');
-                details.open = true; // Par défaut ouvert
+                // N'ouvre le dossier que si le fichier actif s'y trouve
+                details.open = currentFile && currentFile.startsWith(child.path + '/');
                 const summary = document.createElement('summary');
                 summary.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; user-select:none; font-weight:600; color:${{isDark ? '#cba6f7' : '#8839ef'}};`;
                 summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
@@ -1436,7 +1506,7 @@ return new Promise(function(resolve) {{
                       if (newName && newName !== child.name) {{
                         input.disabled = true;
                         const parentPath = child.path.substring(0, child.path.lastIndexOf('/') + 1);
-                        window.echoCodexResolve({{action:'rename_file', old_name:child.path, new_name: parentPath + newName, current_file:currentFile}});
+                        window.sendCodexAction({{action:'rename_file', old_name:child.path, new_name: parentPath + newName, current_file:currentFile}});
                         summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{newName}}</span>`;
                         summary.appendChild(actionGroup);
                       }} else {{
@@ -1466,7 +1536,7 @@ return new Promise(function(resolve) {{
                 delBtn.onclick = (e) => {{
                   e.preventDefault();
                   window.echoCustomConfirm('Supprimer le dossier ' + child.path + ' ?', (agreed) => {{
-                    if (agreed) window.echoCodexResolve({{action:'delete_file', filename:child.path, current_file:currentFile}});
+                    if (agreed) window.sendCodexAction({{action:'delete_file', filename:child.path, current_file:currentFile}});
                   }});
                 }};
 
@@ -1478,7 +1548,40 @@ return new Promise(function(resolve) {{
 
                 details.appendChild(summary);
                 const childrenContainer = document.createElement('div');
-                renderNode(child, childrenContainer, level + 1);
+                childrenContainer.id = 'codex-dir-' + encodeURIComponent(child.path);
+
+                details.ontoggle = (e) => {{
+                    if (details.open) {{
+                        if (!child.isLoaded) {{
+                            child.isLoaded = true;
+                            const loadSpan = document.createElement('span');
+                            loadSpan.className = 'lazy-loading-span';
+                            loadSpan.style.cssText = `display:inline-block; width:10px; height:10px; margin-left:8px; border:2px solid ${{isDark ? '#cba6f7' : '#8839ef'}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 0.8s linear infinite;`;
+                            summary.appendChild(loadSpan);
+                            window.sendCodexAction({{action: 'load_directory', path: child.path}});
+                        }}
+                    }} else {{
+                        // Purge DOM et JS pour libérer la RAM
+                        child.isLoaded = false;
+                        child.children = {{}}; 
+                        childrenContainer.innerHTML = '';
+                    }}
+                }};
+
+                // Si le dossier doit être ouvert par défaut (focus fichier)
+                if (details.open && !child.isLoaded) {{
+                    child.isLoaded = true;
+                            const loadSpan = document.createElement('span');
+                            loadSpan.className = 'lazy-loading-span';
+                            loadSpan.style.cssText = `display:inline-block; width:10px; height:10px; margin-left:8px; border:2px solid ${{isDark ? '#cba6f7' : '#8839ef'}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 0.8s linear infinite;`;
+                            summary.appendChild(loadSpan);
+                    window.sendCodexAction({{action: 'load_directory', path: child.path}});
+                }}
+
+                if (child.isLoaded) {{
+                    renderNode(child, childrenContainer, level + 1);
+                }}
+                
                 details.appendChild(childrenContainer);
                 container.appendChild(details);
               }} else {{
@@ -1515,7 +1618,7 @@ return new Promise(function(resolve) {{
                       if (newName && newName !== child.name) {{
                         input.disabled = true;
                         const parentPath = f.filename.substring(0, f.filename.lastIndexOf('/') + 1);
-                        window.echoCodexResolve({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName, current_file:currentFile}});
+                        window.sendCodexAction({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName, current_file:currentFile}});
                         nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + newName}}`;
                       }} else {{
                         nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
@@ -1542,7 +1645,7 @@ return new Promise(function(resolve) {{
                 delBtn.onclick = (e) => {{
                   e.stopPropagation();
                   window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
-                    if (agreed) window.echoCodexResolve({{action:'delete_file', filename:f.filename, current_file:currentFile}});
+                    if (agreed) window.sendCodexAction({{action:'delete_file', filename:f.filename, current_file:currentFile}});
                   }});
                 }};
                 
@@ -1572,7 +1675,7 @@ return new Promise(function(resolve) {{
 
           const submitFile = () => {{
             const name = input.value.trim();
-            if (name) window.echoCodexResolve({{action:'new_file', filename:name}});
+            if (name) window.sendCodexAction({{action:'new_file', filename:name}});
             else renderFileTree();
           }};
 
@@ -1595,7 +1698,7 @@ return new Promise(function(resolve) {{
         resetBtn.onclick = () => {{
           window.echoCustomConfirm(`⚠️ Vider intégralement le workspace "{current_workspace}" ? Irréversible.`, (agreed) => {{
             if (agreed) {{
-              window.echoCodexResolve({{action:'reset'}});
+              window.sendCodexAction({{action:'reset'}});
             }}
           }});
         }};
@@ -1617,7 +1720,7 @@ return new Promise(function(resolve) {{
         renderFileTree();
         updateStatus(filename + ' \u2022 chargement...');
         // Demander le contenu au backend Python
-        window.echoCodexResolve({{action:'load_file', filename:filename}});
+        window.sendCodexAction({{action:'load_file', filename:filename}});
       }}
 
       // ===== QUICK ACTIONS =====
@@ -1640,7 +1743,7 @@ return new Promise(function(resolve) {{
         lastInstruction = instruction;
         showButtonSpinner(triggerBtn || document.getElementById(CODEX_ID + '-ai-send'));
         const modelSelect = document.getElementById(CODEX_ID + '-model');
-        window.echoCodexResolve({{
+        window.sendCodexAction({{
           action: 'ai_edit',
           instruction: instruction,
           content: editor.getValue(),
@@ -1693,7 +1796,7 @@ return new Promise(function(resolve) {{
       document.getElementById(CODEX_ID + '-close').onclick = () => {{
         saveState();
         hud.remove();
-        window.echoCodexResolve({{action:'close'}});
+        window.sendCodexAction({{action:'close'}});
       }};
       let isMinimized = false;
       document.getElementById(CODEX_ID + '-minimize').onclick = () => {{
@@ -1738,7 +1841,7 @@ return new Promise(function(resolve) {{
             filesData.push({{filename: file.name, content: text}});
           }}
           if (filesData.length > 0) {{
-            window.echoCodexResolve({{action:'upload', files: filesData}});
+            window.sendCodexAction({{action:'upload', files: filesData}});
           }}
         }};
         inp.click();
@@ -1746,7 +1849,7 @@ return new Promise(function(resolve) {{
 
       // Export (Codex → PC)
       document.getElementById(CODEX_ID + '-export').onclick = () => {{
-        if (currentFile) window.echoCodexResolve({{action:'download', filename:currentFile}});
+        if (currentFile) window.sendCodexAction({{action:'download', filename:currentFile}});
       }};
 
       // ===== CLIPBOARD UTILS =====
@@ -1825,22 +1928,22 @@ return new Promise(function(resolve) {{
 
       // History ◀ ▶
       document.getElementById(CODEX_ID + '-hist-prev').onclick = () => {{
-        if (currentFile) window.echoCodexResolve({{action:'history_prev', filename:currentFile}});
+        if (currentFile) window.sendCodexAction({{action:'history_prev', filename:currentFile}});
       }};
       document.getElementById(CODEX_ID + '-hist-next').onclick = () => {{
-        if (currentFile) window.echoCodexResolve({{action:'history_next', filename:currentFile}});
+        if (currentFile) window.sendCodexAction({{action:'history_next', filename:currentFile}});
       }};
 
       // Refresh 🔄
       document.getElementById(CODEX_ID + '-refresh').onclick = () => {{
-        window.echoCodexResolve({{action:'refresh', filename:currentFile || ''}});
+        window.sendCodexAction({{action:'refresh', filename:currentFile || ''}});
       }};
       document.getElementById(CODEX_ID + '-hist-pin').onclick = () => {{
-        if (currentFile) window.echoCodexResolve({{action:'history_exit', filename:currentFile}});
+        if (currentFile) window.sendCodexAction({{action:'history_exit', filename:currentFile}});
       }};
       document.getElementById(CODEX_ID + '-hist-restore').onclick = () => {{
         if (currentFile && historyContent !== null) {{
-          window.echoCodexResolve({{action:'history_restore', filename:currentFile, content:historyContent, source_hash:document.getElementById(CODEX_ID+'-status-text').dataset.hash||''}});
+          window.sendCodexAction({{action:'history_restore', filename:currentFile, content:historyContent, source_hash:document.getElementById(CODEX_ID+'-status-text').dataset.hash||''}});
         }}
       }};
 
@@ -1848,11 +1951,11 @@ return new Promise(function(resolve) {{
       document.getElementById(CODEX_ID + '-diff-accept').onclick = () => {{
         if (diffEditor) {{
           const content = diffEditor.getModifiedEditor().getValue();
-          window.echoCodexResolve({{action:'accept_diff', filename:currentFile, content:content, instruction:lastInstruction}});
+          window.sendCodexAction({{action:'accept_diff', filename:currentFile, content:content, instruction:lastInstruction}});
         }}
       }};
       document.getElementById(CODEX_ID + '-diff-reject').onclick = () => {{
-        window.echoCodexResolve({{action:'reject_diff'}});
+        window.sendCodexAction({{action:'reject_diff'}});
       }};
 
       // ===== SAVE STATE =====
@@ -1871,11 +1974,8 @@ return new Promise(function(resolve) {{
 
       // Ctrl+S
       function doSave() {{
-        if (currentFile && editor && window.echoCodexResolve) {{
-          const resolveFn = window.echoCodexResolve;
-          window.echoCodexResolve = null; // Verrou (Race Condition prevention)
-          
-          resolveFn({{
+        if (currentFile && editor) {{
+          window.sendCodexAction({{
             action: 'save',
             filename: currentFile,
             content: editor.getValue(),
@@ -2379,7 +2479,7 @@ return new Promise(function(resolve) {{
             if (newFilename !== currentFile) {{
               window.echoCustomConfirm('Renommer ' + currentFile + ' \u2192 ' + newFilename + ' ?', (agreed) => {{
                 if (agreed) {{
-                  window.echoCodexResolve({{action:'rename_file', old_name:currentFile, new_name:newFilename, current_file:currentFile}});
+                  window.sendCodexAction({{action:'rename_file', old_name:currentFile, new_name:newFilename, current_file:currentFile}});
                 }}
               }});
             }}
@@ -2395,7 +2495,7 @@ return new Promise(function(resolve) {{
             clearInterval(checkReady);
             if (currentFile) {{
               updateStatus(currentFile + ' \u2022 chargement...');
-              window.echoCodexResolve({{action:'load_file', filename: currentFile}});
+              window.sendCodexAction({{action:'load_file', filename: currentFile}});
             }}
           }}
         }}, 50);
@@ -2417,11 +2517,10 @@ return new Promise(function(resolve) {{
 
       // ===== PING HEARTBEAT =====
       setInterval(() => {{
-        if (typeof window.echoCodexResolve === 'function' && !document.hidden) {{
-          window.echoCodexResolve({{action: 'ping', current_file: currentFile}});
-          window.echoCodexResolve = null;
-        }}
-      }}, 3000);
+        if (!document.hidden) {{
+            window.sendCodexAction({{action: 'ping', current_file: currentFile}});
+          }}
+      }}, 5000);
 
       loadMonaco();
     }})();

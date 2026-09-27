@@ -1,7 +1,14 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.26
+# VERSION : 1.33
 # ==============================================================================
+#                  1.33: Fix conflit Nginx: migration des variables globales vers x-bw-config.
+#                  1.32: Surcharge de max_allowed_packet à 128M pour bw-db.
+#                  1.31: Élargissement de l'API_WHITELIST_IP à 10.0.0.0/8.
+#                  1.30: IPAM dynamique répercuté sur API_WHITELIST_IP (évite blocage bw-scheduler).
+#                  1.29: Résolution du conflit IP (.10) avec watchtower, alignement IPAM Domain-Driven.
+#                  1.28: IPAM dynamique (ECHO_NET_BW_UNIVERSE_PREFIX).
+#                  1.27: Mise à jour de BunkerWeb 1.6.14 -> 1.6.15
 #                  1.26: GUNICORN_TIMEOUT 60 → 120s : évite le SIGKILL des workers
 #                        uvicorn en cours de retry backoff SSE (asyncio.sleep).
 #                        60s déclenchait un crash silencieux lors de surcharges API.
@@ -12,13 +19,42 @@
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
 # ==============================================================================
 
+# ==============================================================================
+# 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)
+# ==============================================================================
+# 1. Briques Core & Externes (Plage .100 - .199) :
+#    - open-webui       : .100
+#    - searxng          : .101
+#    - watchtower       : .102
+#    - qdrant           : .103
+#
+# 2. Workers ECHO (Reflet strict du numéro de dossier source) :
+#    - admin-manager    : .20  (Dossier 20-)
+#    - coding-worker    : .21  (Dossier 21-)
+#    - browser-worker   : .22  (Dossier 22-)
+#    - mcp-broker       : .23  (Dossier 23-)
+#    - auth-manager     : .24  (Dossier 24- -> voir bunkerweb-stack.yml)
+#    - download-broker  : .25  (Dossier 25-)
+#    - n8n-worker       : .26  (Dossier 26-)
+#    - embedding        : .30  (Dossier 30-)
+#    - tts-worker       : .31  (Dossier 31-)
+#    - stt-worker       : .32  (Dossier 32-)
+# ==============================================================================
+
 # --- BLOC DE CONFIGURATION PARTAGÉ (YAML ANCHOR) ---
 x-bw-config: &bw-config
   # Backend de base de données (MariaDB)
   DATABASE_URI: "mysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/db"
   
   # Whitelist API critique
-  API_WHITELIST_IP: "127.0.0.0/8 10.20.30.0/24 172.16.0.0/12 192.168.0.0/16"
+  API_WHITELIST_IP: "127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+  
+  # Whitelist Globale (Désactivation WAF sur ces IPs)
+  USE_WHITELIST_IP: "yes"
+  WHITELIST_IP: "192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 127.0.0.0/8"
+
+  # Exclusion Let's Encrypt (Crash bw-scheduler)
+  www.example.com_AUTO_LETS_ENCRYPT: "no"
   
   # Optimisations
   GUNICORN_TIMEOUT: "120"   # Augmenté de 60 → 120s (v1.26) : couvre le backoff SSE
@@ -27,12 +63,27 @@ x-bw-config: &bw-config
   GUNICORN_WORKERS: "2"
   USE_BUNKERNET: "no"
   SEND_ANONYMOUS_REPORT: "no"
+  
+  # ==========================================
+  # CONFIGURATIONS GLOBALES AUTOCONF
+  # Doivent être ici pour être poussées en base
+  # ==========================================
+  AUTO_LETS_ENCRYPT: "yes"
+  REDIRECT_HTTP_TO_HTTPS: "yes"
+  USE_GZIP: "yes"
+  USE_BROTLI: "yes"
+  USE_CLIENT_CACHE: "yes"
+  USE_CLAMAV: "no"
+  USE_ANTIBOT: "basic"
+  DISABLE_DEFAULT_SERVER: "yes"
+  USE_MODSECURITY: "yes"
+  MODSEC_CRS_PARANOIA_LEVEL: "1"
 
 services:
   
   # 1. BunkerWeb (Frontal HTTP/HTTPS)
   bunkerweb:
-    image: bunkerity/bunkerweb:1.6.14
+    image: bunkerity/bunkerweb:1.6.15
     container_name: bunkerweb
     restart: unless-stopped
     ports:
@@ -42,27 +93,19 @@ services:
       <<: *bw-config
       SERVER_NAME: ""
       MULTISITE: "yes"
-      AUTO_LETS_ENCRYPT: "yes"
-      REDIRECT_HTTP_TO_HTTPS: "yes"
-      USE_GZIP: "yes"
-      USE_BROTLI: "yes"
-      USE_CLIENT_CACHE: "yes"
-      USE_CLAMAV: "no"
-      USE_ANTIBOT: "basic"
-      DISABLE_DEFAULT_SERVER: "yes"
-      USE_MODSECURITY: "yes"
-      MODSEC_CRS_PARANOIA_LEVEL: "1"
     labels:
       - "bunkerweb.INSTANCE=yes"
     networks:
-      - bw-universe
-      - echo-network
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.2
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.200
     volumes:
       - bw-data:/data
 
   # 2. Autoconf (Contrôleur Dynamique)
   bw-autoconf:
-    image: bunkerity/bunkerweb-autoconf:1.6.14
+    image: bunkerity/bunkerweb-autoconf:1.6.15
     container_name: bw-autoconf
     restart: unless-stopped
     depends_on:
@@ -76,14 +119,15 @@ services:
       <<: *bw-config
       DOCKER_HOST: "tcp://bw-docker:2375"
     networks:
-      - bw-universe
-      - bw-docker
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.3
+      bw-docker:
     volumes:
       - bw-data:/data
 
   # 3. Scheduler (Tâches de fond)
   bw-scheduler:
-    image: bunkerity/bunkerweb-scheduler:1.6.14
+    image: bunkerity/bunkerweb-scheduler:1.6.15
     container_name: bw-scheduler
     restart: unless-stopped
     depends_on:
@@ -99,8 +143,9 @@ services:
       # Indique explicitement l'instance à contacter (évite les erreurs sur 127.0.0.1)
       BUNKERWEB_INSTANCES: "bunkerweb"
     networks:
-      - bw-universe
-      - bw-docker
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.4
+      bw-docker:
     volumes:
       - bw-data:/data
 
@@ -125,6 +170,7 @@ services:
     image: mariadb:11.4
     container_name: bw-db
     restart: unless-stopped
+    command: --max-allowed-packet=128M
     environment:
       MYSQL_RANDOM_ROOT_PASSWORD: "yes"
       MYSQL_DATABASE: "db"
@@ -133,7 +179,8 @@ services:
     volumes:
       - bw-db-data:/var/lib/mysql
     networks:
-      - bw-universe
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.6
     # Healthcheck TCP : garantit que MySQL accepte les connexions avant Autoconf/Scheduler
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
@@ -150,12 +197,13 @@ services:
     container_name: echo-redirector
     restart: unless-stopped
     networks:
-      - bw-universe
-      - echo-network
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.7
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.201
     command: tail -f /dev/null
     labels:
       - "bunkerweb.SERVER_NAME=${ECHO_DOMAIN:-localhost} www.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=no"
       # Redirection 301 Permanente vers le sous-domaine UI (Plugin Natif)
       - "bunkerweb.REDIRECT_TO=https://ui.${ECHO_DOMAIN:-localhost}"
@@ -171,8 +219,10 @@ services:
     container_name: echo-auth-manager
     restart: always
     networks:
-      - bw-universe
-      - echo-network
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.24
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.24
     environment:
       - TZ=Europe/Paris
       - ECHO_DOMAIN=${ECHO_DOMAIN:-localhost}
@@ -195,7 +245,6 @@ services:
       - "echo.hot-reload=true"
       # Exposition via BunkerWeb sous un sous-domaine dédié auth.DOMAINE
       - "bunkerweb.SERVER_NAME=auth.${ECHO_DOMAIN:-localhost}"
-      - "bunkerweb.AUTO_LETS_ENCRYPT=yes"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
       - "bunkerweb.REVERSE_PROXY_HOST=http://echo-auth-manager:8000"
@@ -213,7 +262,7 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 10.20.30.0/24
+        - subnet: ${ECHO_NET_BW_UNIVERSE_PREFIX}.0/24
   bw-docker:
     name: bw-docker
   echo-network:

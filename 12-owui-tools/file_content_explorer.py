@@ -403,7 +403,7 @@ class Tools:
             # Injection JS pure dans le DOM Open WebUI — aucun retour HTMLResponse
             js_code = EchoUI.show_image_js(b64, mime, title)
             if events and (events.caller or events.emitter):
-                await events.call("execute", {"code": js_code})
+                await events.call_execute(js_code)
             
             await events.status("✅ Image affichée.", done=True)
             return wrap_tool_output(text=f"✅ Image affichée dans le viewer ECHO.\n\n**Titre :** {title}", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

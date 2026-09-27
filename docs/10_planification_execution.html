@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO v5 : Planification stratégique et exécution isolée de code.">
+  <title>ECHO v5 - 10. Planification & Exécution</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>10. Planification & Exécution</h1>
+<p>
+      Face à un problème complexe, ECHO ne se précipite pas. Il dispose d'outils dédiés pour structurer sa démarche et pour tester des solutions en toute sécurité. 
+    </p>
+
+    <h2>1. Planification Stratégique (Le Cerveau Lent)</h2>
+<img src="images/plan_modal.png" alt="Planification Stratégique" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
+    <p>
+      Lorsque vous confiez à l'IA une mission d'envergure (comme construire une application entière ou rechercher des informations sur plusieurs jours), le système va d'abord générer un <strong>Plan d'Action</strong>. 
+    </p>
+    <p>
+      Ce plan prend la forme d'une feuille de route (check-list). Au fil de sa réflexion et de ses actions, ECHO met automatiquement à jour ce plan en cochant les étapes terminées ou en révisant sa stratégie en cas d'imprévu. Ce document survit à vos sessions : même si vous vous déconnectez, l'IA reprendra exactement là où elle s'était arrêtée à votre retour.
+    </p>
+
+    <h2>2. La Sandbox (Exécution Sécurisée de Code)</h2>
+<img src="images/codex.png" alt="Codex Sandbox" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
+    <p>
+      ECHO possède la capacité d'écrire, mais surtout d'<strong>exécuter</strong> du code informatique (Python ou JavaScript) en temps réel.
+    </p>
+    <p>
+      Si vous lui demandez de trier un fichier Excel de 100 000 lignes ou de résoudre un algorithme complexe, l'IA va générer un script et l'exécuter dans un environnement "bac à sable" ultra-sécurisé. Cela lui permet d'analyser d'immenses quantités de données avec la puissance de l'ordinateur, sans aucun risque pour votre système principal : tout ce qui est exécuté dans la Sandbox est détruit dès que le calcul est terminé.
+    </p>
+
+    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
+      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
+      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
+        
+        <h3 style="color:#93c5fd;">1. Strategic Planner (<code>strategic_planner.py</code>)</h3>
+        <p>L'outil gère la création et le suivi tactique des plans de l'IA.</p>
+        <ul>
+          <li><strong>Création :</strong> <code>create_plan</code> rédige un fichier Markdown dans le Codex (Git) et l'indexe dans SQLite (table <code>PLAN_RECORDS</code>).</li>
+          <li><strong>Mise à jour :</strong> <code>update_plan</code> utilise un prompt de réécriture (<code>SYSTEM_PROMPT_UPDATE</code>) pour modifier l'état d'un plan (en attente <code>[ ]</code>, en cours <code>[/]</code>, terminée <code>[x]</code>, échouée <code>[!]</code>).</li>
+          <li><strong>Proprioception :</strong> Le modèle n'est pas notifié passivement du plan. Il doit interroger la base via <code>query_registry</code> pour lire l'état global, épargnant ainsi le contexte.</li>
+        </ul>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Coding Worker (Sandbox d'Exécution)</h3>
+        <p>Micro-service Docker isolé (<code>echo-coding-worker</code>) hébergeant <code>worker_api.py</code> (Flask, Port 5000).</p>
+        <ul>
+          <li><strong>Architecture :</strong> Basé sur <code>python:3.14-slim</code>. Flask est configuré en mode <code>threaded=True</code>. <strong>Important :</strong> <code>matplotlib</code> et <code>requests</code> ne sont délibérément pas inclus (les graphiques sont gérés par Visual Intelligence). Libs dispos : pandas, numpy, scikit-learn, regex, sympy.</li>
+          <li><strong>Isolation OS :</strong> Pour chaque requête (<code>POST /execute</code>), le Worker crée un <code>multiprocessing.Process</code> (Python) ou un <code>child_process</code> (JS) avec son propre <code>tempfile.TemporaryDirectory()</code>. Cela garantit un <em>address space</em> hermétique et détruit les séquelles mémoire après expiration du timeout (30s par défaut).</li>
+          <li><strong>Sorties :</strong> Les flux <code>stdout</code> et <code>stderr</code> sont capturés via <code>contextlib.redirect_stdout/stderr</code>. Tout retour <code>stderr</code> non vide déclenche le statut <code>error</code>.</li>
+        </ul>
+
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">Code Executor (code_executor_tool.py)</h3>
+        <ul>
+          <li><strong>code_executor :</strong> Permet au modèle d'exécuter du code (Python ou Node.js) dans une Sandbox isolée.</li>
+        </ul>
+      </div>
+    </details>
+
+    <div class="transition-text">
+      <a href="09_arsenal_outils.html">&larr; 9. L'Arsenal des Outils</a>
+      &nbsp;&nbsp;
+      <a href="11_recherche_navigation.html">11. Recherche & Navigation &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.212.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

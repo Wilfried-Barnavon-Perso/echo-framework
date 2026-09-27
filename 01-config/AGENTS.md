@@ -17,11 +17,11 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 **Rôle** : Le manifeste d'orchestration Docker Compose principal.
 - **Sémantique** : Définit la topologie du cluster sur 4 Tiers séquentiels (Fondations > Workers > OWUI > Admin).
 - **Réseau & Persistance** : Monte les volumes nommés (`echo-qdrant-data`, `echo-n8n-data`, etc.) et orchestre la communication inter-conteneurs sur le réseau bridgé `echo-network`.
-- **Règles d'Exécution** : Gère les `healthcheck` stricts pour s'assurer que les fondations (Qdrant, SearXNG) soient actives avant de lancer les Workers IA et l'ECHO N8N Orchestrator.
+- **Règles d'Exécution** : Gère les `healthcheck` stricts pour s'assurer que les fondations (Qdrant 1.19+, SearXNG) soient actives avant de lancer les Workers IA et l'ECHO N8N Orchestrator.
 
 ### `bunkerweb-stack.yml`
 **Rôle** : L'enveloppe de sécurité périmétrique (WAF).
-- **Sémantique** : Ce manifeste secondaire est activé par `enable-bunkerweb.sh` pour proxyfier les requêtes vers l'Open WebUI (port 80/443), gérant le TLS et filtrant les attaques malveillantes via l'Auth Manager.
+- **Sémantique** : Ce manifeste secondaire est activé par `enable-bunkerweb.sh` pour proxyfier les requêtes vers l'Open WebUI (port 80/443), gérant le TLS et filtrant les attaques malveillantes via l'Auth Manager. Intègre les variables globales (`x-bw-config`) dont `AUTO_LETS_ENCRYPT` qui ne doivent **jamais** être répétées sous forme de labels sur des conteneurs dynamiques pour éviter l'effacement par Autoconf. Cette ancre héberge également l'exclusion critique `www.example.com_AUTO_LETS_ENCRYPT: "no"` empêchant le crash du planificateur de certificats.
 
 ### `webui-settings.json` & `model-config.json`
 **Rôle** : Fichiers d'amorçage (Seed) pour l'interface de chat.

@@ -1,11 +1,14 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.26
-description: Composant système interne : ECHO Memory & RAG Tool.
+version: 2.29
+description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.29: Suppression des emojis dans les retours de l'outil delete_session_context_source pour maximiser le signal/bruit.
+# 2.28: Utilisation de ECHO_SUBAGENT_CONTEXT pour l'isolation asynchrone du RAG.
+# 2.27: Isolation du RAG pour les sous-agents (filtrage strict par sub_sid).
 # 2.26: Fix RAG (Purge idempotente pré-indexation, bridage de l'overlap max_chunk).
 # 2.25: Correctif (Recall) : Injection du paramètre score_threshold vers Qdrant.
 # 2.24: Améliorations de formatage PEP8 (espacements, indentations, ifs sur ligne unique).
@@ -429,6 +432,12 @@ class Tools:
                     {"key": "chat_id", "match": {"value": chat_id}},
                     {"key": "source_id", "match": {"value": source_id}}
                 ]
+                
+                # Isolation RAG : Si le caller est un sous-agent, il ne peut manipuler que ses propres créations.
+                from echo_constants import ECHO_SUBAGENT_CONTEXT
+                sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
+                if sub_ctx.get("is_subagent") and sub_ctx.get("sub_sid"):
+                    must_filters.append({"key": "sub_sid", "match": {"value": sub_ctx["sub_sid"]}})
                 count_payload = {
                     "filter": {"must": must_filters}
                 }
@@ -437,12 +446,12 @@ class Tools:
                     json=count_payload
                 )
                 if count_resp.status_code != 200:
-                    return wrap_tool_output(text=f"❌ Erreur de vérification Qdrant : {count_resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return wrap_tool_output(text=f"Erreur de vérification Qdrant : {count_resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
                 count = count_resp.json().get("result", {}).get("count", 0)
                 if count == 0:
                     return wrap_tool_output(
-                        text="❌ Échec : Source introuvable ou isolée dans une autre session. Suppression inter-session bloquée par sécurité.",
+                        text="Échec : Source introuvable ou isolée dans une autre session. Suppression inter-session bloquée par sécurité.",
                         status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
                 delete_payload = {
@@ -453,13 +462,13 @@ class Tools:
                     json=delete_payload
                 )
                 if del_resp.status_code != 200:
-                    return wrap_tool_output(text=f"❌ Erreur Qdrant : {del_resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return wrap_tool_output(text=f"Erreur Qdrant : {del_resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
                 await events.status(f"🧠 Source {source_id} supprimée.", done=True)
-                return wrap_tool_output(text=f"✅ Source purgée avec succès ({count} vecteurs supprimés).", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text=f"Source purgée avec succès ({count} vecteurs supprimés).", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur lors de la suppression : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=f"Erreur lors de la suppression : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def search_sessions_context(
         self,

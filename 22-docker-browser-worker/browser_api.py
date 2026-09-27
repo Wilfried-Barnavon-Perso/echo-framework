@@ -1,10 +1,14 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.21 (JSON orjson fix)
+VERSION : 9.23 (Spoofing strict Webdriver/PluginArray)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-09-19
+DATE MAJ : 2026-09-27
 
+CHANGELOG 9.23 :
+- FIX: Suppression atomique du prototype webdriver et instanciation stricte de PluginArray natif (Sannysoft Fp-collect passe intégralement).
+CHANGELOG 9.22 :
+- FEAT: Masquage profond des signatures Headless (webdriver Blink, WebGL SwiftShader, window.chrome, hardwareConcurrency, outerWidth) pour évasion avancée des WAFs (Cloudflare/DataDome).
 CHANGELOG 9.21 :
 - FIX: Restauration de l'usage d'orjson (écrasé par json standard) et suppression de l'erreur AttributeError sur le decode('utf-8').
 CHANGELOG 9.20 :
@@ -368,7 +372,8 @@ async def lifespan(app: FastAPI):
             "--disable-background-timer-throttling",
             "--disable-extensions",
             "--disable-sync",
-            f"--limit-fps={RENDERING_FPS}"
+            f"--limit-fps={RENDERING_FPS}",
+            "--disable-blink-features=AutomationControlled"
         ]
     )
     cleanup_task = asyncio.create_task(session_cleanup_loop())
@@ -444,16 +449,103 @@ async def start_session(request: Request):
         
         # Injection Stealth (Anti-Bot)
         stealth_script = """
-            // Masquer la propriété webdriver
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            
-            // Masquer Playwright des plugins
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3],
-            });
+            // Purge atomique du webdriver (Contournement strict de la détection Prototype)
+            try {
+                delete Navigator.prototype.webdriver;
+            } catch(e) {}
+
+            // Instanciation native de navigator.plugins (Spoofing absolu PluginArray)
+            try {
+                const mockPlugins = Object.create(PluginArray.prototype);
+                
+                const p1 = Object.create(Plugin.prototype);
+                Object.defineProperties(p1, { name: { value: 'Chrome PDF Plugin' }, filename: { value: 'internal-pdf-viewer' }, description: { value: 'Portable Document Format' } });
+                
+                const p2 = Object.create(Plugin.prototype);
+                Object.defineProperties(p2, { name: { value: 'Chrome PDF Viewer' }, filename: { value: 'mhjimiapiapergbkpnjafkikajddhbdk' }, description: { value: '' } });
+                
+                const p3 = Object.create(Plugin.prototype);
+                Object.defineProperties(p3, { name: { value: 'Native Client' }, filename: { value: 'internal-nacl-plugin' }, description: { value: '' } });
+
+                Object.defineProperties(mockPlugins, {
+                    0: { value: p1 },
+                    1: { value: p2 },
+                    2: { value: p3 },
+                    length: { value: 3 }
+                });
+
+                Object.defineProperty(mockPlugins, 'item', { value: function(index) { return this[index]; } });
+                Object.defineProperty(mockPlugins, 'namedItem', { value: function(name) { return [p1, p2, p3].find(p => p.name === name); } });
+                Object.defineProperty(mockPlugins, 'refresh', { value: function() {} });
+
+                Object.defineProperty(navigator, 'plugins', { get: () => mockPlugins });
+            } catch (e) {}
+
             Object.defineProperty(navigator, 'languages', {
                 get: () => ['fr-FR', 'fr', 'en-US', 'en'],
             });
+
+            // Falsification de window.chrome (Indicateur Headless)
+            if (!window.chrome) {
+                window.chrome = {
+                    app: {
+                        isInstalled: false,
+                        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+                    },
+                    runtime: {}
+                };
+            }
+
+            // Falsification des permissions (Résolution du conflit Notification)
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = new Proxy(originalQuery, {
+                apply: (target, thisArg, args) => {
+                    if (args && args[0] && args[0].name === 'notifications') {
+                        return Promise.resolve({ state: Notification.permission });
+                    }
+                    return Reflect.apply(target, thisArg, args);
+                }
+            });
+
+            // Falsification du rendu WebGL (Masquage de SwiftShader / VM)
+            try {
+                const getParameterProxyHandler = {
+                    apply: function (target, thisArg, args) {
+                        const param = args[0];
+                        // 37445 = UNMASKED_VENDOR_WEBGL
+                        if (param === 37445) {
+                            return 'Google Inc. (NVIDIA)';
+                        }
+                        // 37446 = UNMASKED_RENDERER_WEBGL
+                        if (param === 37446) {
+                            return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                        }
+                        return Reflect.apply(target, thisArg, args);
+                    }
+                };
+
+                ['WebGLRenderingContext', 'WebGL2RenderingContext'].forEach((ctx) => {
+                    if (window[ctx] && window[ctx].prototype && window[ctx].prototype.getParameter) {
+                        const original = window[ctx].prototype.getParameter;
+                        window[ctx].prototype.getParameter = new Proxy(original, getParameterProxyHandler);
+                    }
+                });
+            } catch (e) {}
+
+            // Masquage des dimensions Headless (outerWidth/outerHeight = 0 par défaut)
+            if (window.outerWidth === 0 || window.outerHeight === 0) {
+                Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+                Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+            }
+
+            // Falsification du Hardware (Masquer les limites d'un conteneur Docker)
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+
+            // Cohérence OS/Plateforme (Alignement sur l'User-Agent)
+            const isIpad = navigator.userAgent.includes('iPad');
+            Object.defineProperty(navigator, 'platform', { get: () => isIpad ? 'MacIntel' : 'Win32' });
         """
         await context.add_init_script(stealth_script)
         

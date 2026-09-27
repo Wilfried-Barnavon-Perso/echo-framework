@@ -1,12 +1,14 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.8
+version: 1.10
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.7: Précision sur la saisie libre pour l'argument options de ask_user_input.
+# 1.10: Migration du blocage Headless de ask_user_input vers ECHO_SUBAGENT_CONTEXT pour contourner le partial d'OWUI.
+# 1.9: Protection Headless de ask_user_input (bloque gracieusement si __event_call__ est indisponible).
+# 1.8: Précision sur la saisie libre pour l'argument options de ask_user_input.
 # 1.6: Précision dans la docstring de ask_user_input (les options génèrent des listes/boutons cliquables).
 # 1.5: Mise à jour de la docstring de wait_timer (précision boucle agentique).
 # 1.4: Refonte du Lazy-Loading JS des modales ECHO (get_custom_modals_js) pour ask_user_input (Anti-Spaghetti).
@@ -127,7 +129,7 @@ class Tools:
             }}, 1000);
         }})();
         """
-        await events.emit("execute", {"code": js_code})
+        await events.emit_execute(js_code)
 
         # 3. Blocage Backend (Attente réelle)
         # On divise l'attente pour que si OWUI coupe le contexte, ça ne plante pas brutalement
@@ -159,6 +161,16 @@ class Tools:
         if not __user__:
             return wrap_tool_output(text="Erreur : Contexte manquant.", status={"status": "error"})
 
+        from echo_constants import ECHO_SUBAGENT_CONTEXT
+        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
+            return wrap_tool_output(
+                text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de poser une question interactive à l'Utilisateur.",
+                status={"status": "error"},
+                user_id=__user__.get("id", "system") if __user__ else "system",
+                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+                metadata=__metadata__
+            )
+
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"En attente d'une saisie de l'utilisateur ({timeout_seconds}s)...")
 
@@ -185,7 +197,7 @@ class Tools:
             """
 
         # __event_call__ lance le JS et attend la résolution de la promesse
-        user_input = await __event_call__({"type": "execute", "data": {"code": js_code}})
+        user_input = await events.call_execute(js_code)
 
         if user_input is None or user_input is False:
             await events.status("Opération refusée, annulée ou délai expiré.", done=True)

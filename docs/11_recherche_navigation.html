@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO v5 : Capacités de recherche web autonome, navigation et analyse de fichiers personnels.">
+  <title>ECHO v5 - 11. Recherche & Navigation</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>11. Recherche & Navigation</h1>
+<p>
+      L'IA n'est pas enfermée dans une bulle. ECHO dispose de capacités d'exploration qui lui permettent d'interagir avec le monde extérieur (le Web) et avec votre monde intérieur (votre Espace Personnel de fichiers), toujours sous votre contrôle et dans le respect strict de votre vie privée.
+    </p>
+
+    <h2>1. Recherche Web et Navigation Autonome</h2>
+<img src="images/maps_new.png" alt="Recherche Web" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
+    <p>
+      ECHO possède un moteur de recherche souverain intégré qui ne traque pas vos requêtes. S'il a besoin de confirmer une information ou de trouver une actualité récente, il va d'abord chercher sur le web.
+    </p>
+    <p>
+      Si la simple recherche ne suffit pas (par exemple pour extraire des données d'un site complexe), l'IA prend littéralement le contrôle d'un <strong>Navigateur Web fantôme</strong>. Elle est capable d'ouvrir des pages, de cliquer sur des boutons, de faire défiler l'écran, et d'analyser visuellement le contenu, exactement comme le ferait un humain. Cela lui permet d'accomplir des missions de recherche complexes en totale autonomie.
+    </p>
+
+    <h2>2. Explorateur de l'Espace Personnel (Le Vault)</h2>
+<img src="images/franceinfo.png" alt="Vault de Fichiers" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
+    <p>
+      Votre Espace Personnel est votre coffre-fort de fichiers. Lorsque vous téléversez un PDF de 500 pages, une archive de code source ou une image haute résolution, ECHO peut les analyser en profondeur. Il peut lire le texte ligne par ligne, "regarder" les images, et croiser les informations de plusieurs fichiers.
+    </p>
+    <p>
+      Le système vous garantit un cloisonnement absolu : vos fichiers vous appartiennent et sont inaccessibles aux autres utilisateurs du système.
+    </p>
+
+    <h2>3. Intelligence Spatiale (Cartographie)</h2>
+<img src="images/vault_new.png" alt="Intelligence Spatiale" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
+    <p>
+      ECHO est capable de générer des coordonnées géographiques et de créer des cartes interactives. Si vous lui demandez un itinéraire ou l'analyse d'une zone géographique, il génèrera une véritable carte dynamique que vous pourrez manipuler directement depuis l'interface.
+    </p>
+
+    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
+      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
+      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
+        
+        <h3 style="color:#93c5fd;">1. Web Intelligence (Browser Worker)</h3>
+        <p>Le <strong>Browser Worker</strong> (FastAPI, Port 5002) pilote une instance Chromium Headless (Playwright). Il permet la <strong>Navigation Autonome</strong> en exécutant des actions distantes (14 actions disponibles : clic, scroll, extraction DOM). Il intègre des mécanismes d'évasion WAF avancés (usurpation WebGL, masquage de <code>webdriver</code>) pour contourner Cloudflare/DataDome. La recherche souveraine s'appuie quant à elle sur un proxy local <strong>SearXNG</strong>.</p>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Vault Explorer (<code>file_content_explorer.py</code>)</h3>
+        <ul>
+          <li><strong>Isolement :</strong> La résolution des chemins (<code>resolve_upload_file_path</code>) vérifie systématiquement le <code>user_id</code>. Un utilisateur ne peut pas accéder aux fichiers d'un autre.</li>
+          <li><strong>Espaces de travail :</strong> Les fichiers sont répartis en trois espaces : <code>files</code> (uploads classiques via OWUI), <code>main</code> (Code source validé), et <code>sandbox</code> (Données temporaires du Codex).</li>
+          <li><strong>Méthodes :</strong> Lecture paginée via <code>read_raw_file_content</code> (text, base64, hex limités à 16 Ko/chunk). Sondage direct du modèle par injection <code>inlineData</code> via <code>semantic_probe</code>.</li>
+        </ul>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Maps Grounding (<code>gemini_maps_grounding.py</code>)</h3>
+        <p>Permet l'ancrage spatial. Génère des données topologiques structurées injectées dynamiquement dans l'UI via le pattern <strong>Data Island</strong>, instanciant une carte Leaflet côté client (HUD).</p>
+
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">Navigation Engine (navigation_engine_tool.py)</h3>
+        <ul>
+          <li><strong>delegate_web_browsing :</strong> Interactions web complexes (formulaires, clics, lecture intégrale d'URL).</li>
+          <li><strong>analyze_web_page :</strong> Analyse sémantique immédiate pour trouver une info précise.</li>
+          <li><strong>archive_web_page :</strong> Archivage RAG asynchrone de pages Web volumineuses dans la Mémoire Vectorisée.</li>
+          <li><strong>prune_heavy_context :</strong> Élagage proactif (purge les cartes DOM, A11y et images obsolètes pour éviter le Token Bloat).</li>
+        </ul>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">Sovereign Web Search (sovereign_web_search.py)</h3>
+        <ul>
+          <li><strong>search_instant_answer :</strong> Définitions de concepts via DuckDuckGo.</li>
+          <li><strong>search_web :</strong> Recherche web simple pour extraire des faits rapides.</li>
+          <li><strong>delegate_deep_research :</strong> Délégation de la recherche complexe à un Agent Autonome multi-tours.</li>
+        </ul>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">Data Broker (delegate_to_data_broker.py)</h3>
+        <ul>
+          <li><strong>ask_data_broker :</strong> Délégation d'une recherche d'informations ou d'une extraction.</li>
+        </ul>
+      </div>
+    </details>
+
+    <div class="transition-text">
+      <a href="10_planification_execution.html">&larr; 10. Planification & Exécution</a>
+      &nbsp;&nbsp;
+      <a href="12_edition_visuelle.html">12. Édition & Visuel &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.212.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

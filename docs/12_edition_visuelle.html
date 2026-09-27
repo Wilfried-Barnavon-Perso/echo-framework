@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO v5 : Création de diagrammes interactifs et édition de code avec l'outil Codex.">
+  <title>ECHO v5 - 12. Édition & Visuel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>12. Édition & Visuel</h1>
+
+    <p>
+      Les mots ne suffisent pas toujours pour expliquer un concept ou retravailler un document de grande envergure. ECHO est capable de modifier l'interface visuelle (HUD) de votre écran pour y afficher des diagrammes ou de véritables éditeurs interactifs.
+    </p>
+
+    <h2>1. Intelligence Visuelle (Schémas et Graphiques)</h2>
+<img src="images/visuel_adn.png" alt="Intelligence Visuelle ADN" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
+    <p>
+      Si vous travaillez sur une architecture complexe, un arbre généalogique ou des statistiques, demander à l'IA de l'expliquer sous forme de texte brut est souvent limitant. ECHO peut à la place générer <strong>des cartes mentales ou des diagrammes interactifs</strong>. 
+    </p>
+    <p>
+      Ces schémas apparaissent directement au centre de votre écran. Vous pouvez zoomer, faire glisser l'interface ou interagir avec les éléments générés par l'IA pour mieux appréhender la structure des données.
+    </p>
+
+    <h2>2. L'Éditeur ECHO Codex (Texte et Code)</h2>
+<img src="images/codex.png" alt="Codex MP4 to MP3" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
+    <p>
+      Le <strong>Codex</strong> est l'éditeur avancé d'ECHO, pensé pour la manipulation de très gros fichiers (code source, longs articles, scripts). Il vous permet d'éditer et de travailler sur des fichiers de très grosse taille.
+    </p>
+    <p>
+      Lorsqu'il est activé, il se déploie à l'écran comme un véritable logiciel de traitement de texte. Il vous offre de multiples avantages :
+    </p>
+    <ul>
+      <li><strong>Travail à quatre mains :</strong> L'IA peut modifier une partie spécifique du texte, et vous pouvez aussitôt cliquer dedans pour corriger une phrase à la main, tout cela dans la même fenêtre.</li>
+      <li><strong>Machine à remonter le temps :</strong> Le Codex sauvegarde automatiquement l'historique complet de vos versions. Si une modification proposée par l'IA ne vous convient pas, vous pouvez naviguer dans le passé et restaurer la version précédente en un clic.</li>
+      <li><strong>Actions rapides :</strong> Vous disposez de boutons magiques (Raccourcir, Allonger, Optimiser, Commenter) qui commandent directement l'IA pour agir sur le texte que vous avez sélectionné, sans même avoir à lui parler.</li>
+    </ul>
+
+    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
+      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
+      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
+        
+        <h3 style="color:#93c5fd;">1. Visual Intelligence (<code>universal_visual_generator.py</code>)</h3>
+        <p>Le générateur s'appuie sur le pattern <strong>Data Island</strong>. Il produit la source sous-jacente (ex: Mermaid, ECharts, Markmap) et force son injection directe dans le DOM via l'Action HUD (<code>window.echoRenderVisual</code>), au lieu de produire un bloc Markdown statique. Le rendu JavaScript natif assure le support de l'interactivité (drag, zoom, pan).</p>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Architecture ECHO Codex</h3>
+        <p>L'éditeur Codex repose sur trois piliers distincts :</p>
+        <ul>
+          <li><strong>Le Moteur Git (<code>echo_codex_git.py</code>) :</strong> Wrapper autour de <code>dulwich</code>. Chaque fichier modifié déclenche un <em>commit</em> silencieux, assurant l'historique (Time Machine) et permettant les diffs. L'indexation principale des métadonnées se fait dans la table <code>CODEX_DOCS</code> (SQLite).</li>
+          <li><strong>L'Interface HUD (<code>echo_codex_action.py</code>) :</strong> Injection native de <strong>Monaco Editor</strong>. Elle expose l'API <code>window.echoCodex*</code> pour autoriser le pilotage de l'éditeur depuis les réponses asynchrones du modèle.</li>
+          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code>) :</strong> 9 primitives offertes au LLM (<code>read_codex</code>, <code>edit_codex</code>, <code>commit</code>...). <strong>Règle proprioceptive stricte :</strong> Le modèle n'est plus notifié passivement du registre Codex (pour économiser les tokens) et DOIT utiliser l'outil <code>query_registry</code> avant manipulation.</li>
+        </ul>
+
+      </div>
+    </details>
+
+    <div class="transition-text">
+      <a href="11_recherche_navigation.html">&larr; 11. Recherche & Navigation</a>
+      &nbsp;&nbsp;
+      <a href="13_memoire_actions.html">13. Mémoire & Actions &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.212.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

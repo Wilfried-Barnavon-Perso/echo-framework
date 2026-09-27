@@ -35,68 +35,37 @@ document.addEventListener('DOMContentLoaded', () => {
   if (sidebar) {
     const currentPage = window.location.pathname.split('/').pop() || 'index.html';
     const navItems = [
-        { href: 'index.html',              text: 'Introduction' },
-        { href: '00_fondations.html',      text: '0. Fondations & Philosophie' },
-        { href: '01_manuel_utilisateur.html', text: '1. Manuel Utilisateur' },
-        { href: '01a_exemples_prompts.html',  text: '↳ 1a. Exemples & Autonomie' },
-        { href: '01b_tutoriel_pratique.html', text: '↳ 1b. Tutoriel Pratique' },
-        { href: '02_hld_architecture.html',text: '2. High-Level Design (HLD)' },
-        { href: '03_communication_gemini.html', text: '3. Communication Gemini' },
-        { href: '04_deploiement.html',     text: '4. Déploiement & Infra' },
-        { href: '05_echo_libs.html',       text: '5. Librairies Partagées' },
-        { href: '06_hud_ui.html',          text: '6. Écosystème HUD & UI' },
-        { href: '07_filtre.html',          text: '7. Les Filtres (Conscience)' },
-        { href: '08_pipe.html',            text: '8. Le Pipe (Cortex)' },
-        {
-          href: '09_arsenal_outils.html',
-          text: "9. L'Arsenal des Outils",
-          sub: [
-            { href: '09a_strategic_planner.html', text: '9a. Planification Stratégique' },
-            { href: '09b_web_intelligence.html',  text: '9b. Web Intelligence' },
-            { href: '09c_vault_explorer.html',    text: "9c. Explorateur de l'Espace Personnel" },
-            { href: '09d_memory_cognition.html',  text: '9d. Mémoire & Cognition' },
-            { href: '09e_execution_monitoring.html', text: '9e. Exécution & Pilotage' },
-            { href: '09f_actions_ui.html',        text: '9f. Actions UI (HUD)' },
-            { href: '09g_visual_intelligence.html', text: '9g. Visual Intelligence' },
-            { href: '09h_codex_editor.html',      text: '9h. ECHO Codex (Éditeur)' },
-            { href: '09i_delegate_agent.html', text: '9i. Delegate Agent' },
-            { href: '09j_agent_orchestration.html', text: '9j. Orchestration Multi-Agents' },
-            { href: '09k_n8n_orchestrator.html', text: '9k. ECHO N8N Orchestrator' },
-            { href: '09l_mcp_broker.html', text: '9l. Serveur MCP Broker' },
-            { href: '09m_identity_vault.html',   text: '9m. ECHO Identity Vault' },
-            { href: '09n_maps_grounding.html',   text: '9n. Maps Grounding' }
-          ]
-        },
-        { href: '10_system_prompt.html',   text: '10. Le Kernel (System Prompt)' },
-        {
-          href: '11_infrastructure.html',
-          text: '11. Périphériques & Infra',
-          sub: [
-            { href: '11a_admin_manager.html', text: '11a. Admin Manager' },
-            { href: '11b_echo_auth_sso.html', text: '11b. ECHO Auth SSO & MFA' },
-            { href: '11c_bunkerweb_waf.html', text: '11c. Bouclier BunkerWeb WAF' },
-            { href: '11d_audio_workers.html', text: '11d. Audio Workers' },
-            { href: '11e_scripts_infrastructure.html', text: '11e. Scripts d\'Infrastructure' },
-            { href: '11f_download_broker.html', text: '11f. Download Broker' }
-          ]
-        },
-        {
-          href: '12_edge_inference.html',
-          text: '12. Inférence Distante (Edge Computing)'
-        },
-        {
-          href: '13_annexes.html',
-          text: '13. Annexes Techniques'
-        },
-        {
-          href: '14_credits.html',
-          text: '14. Crédits Open Source'
-        },
-        {
-          href: '15_registre_audit.html',
-          text: "15. Registre d'Audit et Confidentialité"
-        }
-      ];
+  {
+    title: "Pôle I - Cortex Cognitif",
+    items: [
+      { text: "Accueil", href: "index.html" },
+      { text: "1. Fondations & Philosophie", href: "01_fondations.html" },
+      { text: "2. Manuel Utilisateur", href: "02_manuel_utilisateur.html" },
+      { text: "3. Exemples de Prompts", href: "03_exemples_prompts.html" },
+      { text: "4. Tutoriel Pratique", href: "04_tutoriel_pratique.html" },
+      { text: "5. High-Level Design (HLD)", href: "05_hld_architecture.html" },
+      { text: "6. Communication Gemini", href: "06_communication_gemini.html" },
+      { text: "7. Écosystème HUD & UI", href: "07_hud_ui.html" },
+      { text: "8. La Cognition", href: "08_cerveau_cognitif.html" },
+      { text: "9. L'Arsenal des Outils", href: "09_arsenal_outils.html" },
+      { text: "10. Planification & Exécution", href: "10_planification_execution.html" },
+      { text: "11. Recherche & Navigation", href: "11_recherche_navigation.html" },
+      { text: "12. Édition & Visuel", href: "12_edition_visuelle.html" },
+      { text: "13. Mémoire & Actions", href: "13_memoire_actions.html" },
+      { text: "14. Agents & Automatisation", href: "14_agents_automatisation.html" }
+    ]
+  },
+  {
+    title: "Pôle II - Topologie d'Infrastructure",
+    items: [
+      { text: "15. Déploiement & Infra", href: "15_deploiement.html" },
+      { text: "16. Périphériques & Infra", href: "16_infrastructure_globale.html" },
+      { text: "17. Inférence Distante", href: "17_edge_inference.html" },
+      { text: "18. Annexes Techniques", href: "18_annexes.html" },
+      { text: "19. Crédits", href: "19_credits.html" }
+    ]
+  }
+];
 
     let html = `
       <div class="logo-container">
@@ -111,27 +80,30 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       </div>
       <div id="google_translate_element" style="display:none;"></div>
-      <nav><ul>`;
+      <nav>`;
 
-    navItems.forEach(item => {
-      const isActive    = currentPage === item.href;
-      const isSubActive = item.sub && item.sub.some(s => s.href === currentPage);
-      const showSub     = isActive || isSubActive;
+    navItems.forEach(pole => {
+      html += `<div class="nav-pole-title">${pole.title}</div><ul>`;
+      pole.items.forEach(item => {
+        const isActive    = currentPage === item.href;
+        const isSubActive = item.sub && item.sub.some(s => s.href === currentPage);
+        const showSub     = isActive || isSubActive;
 
-      html += `<li><a href="${item.href}" class="${isActive ? 'active' : ''}">${item.text}</a>`;
-      if (item.sub) {
-        // Classe CSS 'hidden' au lieu de style="display:none"
-        html += `<ul class="sub-nav${showSub ? '' : ' hidden'}">`;
-        item.sub.forEach(subItem => {
-          const isSubItemActive = currentPage === subItem.href;
-          html += `<li><a href="${subItem.href}" class="${isSubItemActive ? 'active' : ''}">${subItem.text}</a></li>`;
-        });
-        html += `</ul>`;
-      }
-      html += `</li>`;
+        html += `<li><a href="${item.href}" class="${isActive ? 'active' : ''}">${item.text}</a>`;
+        if (item.sub) {
+          html += `<ul class="sub-nav${showSub ? '' : ' hidden'}">`;
+          item.sub.forEach(subItem => {
+            const isSubItemActive = currentPage === subItem.href;
+            html += `<li><a href="${subItem.href}" class="${isSubItemActive ? 'active' : ''}">${subItem.text}</a></li>`;
+          });
+          html += `</ul>`;
+        }
+        html += `</li>`;
+      });
+      html += `</ul>`;
     });
 
-    sidebar.innerHTML = html + `</ul></nav>`;
+    sidebar.innerHTML = html + `</nav>`;
   }
 
   /* ============================================================
@@ -142,7 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Collecte tous les h2 et h3 du contenu principal
   const headings = Array.from(main.querySelectorAll('h2, h3'));
-  if (headings.length < 2) return; // Pas de TOC si moins de 2 titres
+  if (headings.length >= 2) { // Bloc TOC si au moins 2 titres
 
   // Injection de la div TOC dans le DOM
   const tocEl = document.createElement('nav');
@@ -205,6 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { rootMargin: '-10% 0px -80% 0px', threshold: 0 }
   );
   headingEls.forEach(h => observer.observe(h));
+  } // Fin du bloc TOC
 
   /* ============================================================
      3. MOTEUR ZOOM UNIVERSEL (Mermaid + SVG + Images)

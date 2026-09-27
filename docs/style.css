@@ -94,6 +94,17 @@ body::after {
   padding-bottom: 0.75rem;
 }
 
+.sidebar .nav-pole-title {
+  color: var(--text-muted);
+  font-size: 0.70rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 1.5rem 0 0.5rem 0.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  padding-bottom: 0.3rem;
+}
+
 .sidebar nav ul { list-style: none; }
 .sidebar nav ul li { margin-bottom: 0.25rem; }
 .sidebar nav ul li a {
@@ -147,7 +158,7 @@ main > p, main > ul, main > ol, main > .didactic-box,
 main > .note-box, main > .warning-box, main > .tech-spec,
 main > .audit-note, main > .transition-text, main > pre,
 main > .code-header {
-  max-width: min(100%, 900px);
+  max-width: min(100%, 1400px);
 }
 /* Tables et diagrammes peuvent s'étirer pleine largeur */
 main > table, main > .mermaid-wrapper, main > .grid-container,

@@ -260,18 +260,18 @@ Le Modèle doit transformer une intention textuelle et un jeu de données en un 
 2. 'mermaid' : Syntaxe stricte compatible Mermaid v11.16.0. Identifiants de nœuds STRICTEMENT ASCII alphanumériques ou underscore (aucun espace/tiret). Texte lisible encapsulé entre guillemets (ex: ID["Texte"]).
 3. 'echarts' : JSON ECharts 5+ valide (inclure tooltip, legend, xAxis, yAxis, series). Thème clair.
 4. 'vega' : JSON Vega-Lite strict (spécifier $schema, data, mark, encoding).
-5. 'timeline' : JSON TimelineJS. Structure imposée: {"events": [{"start_date":..., "text":{"headline":..., "text":...}}]}.
+5. 'timeline' : JSON TimelineJS. Structure imposée: {{"events": [{{"start_date":..., "text":{{"headline":..., "text":...}}}}]}}.
 6. 'bpmn' : XML BPMN 2.0 valide.
 7. 'gantt' : Syntaxe Mermaid Gantt pure (débute par 'gantt').
 8. 'aframe' : HTML A-Frame (<a-scene>, <a-box>, etc.).
-9. 'cytoscape' : JSON Cytoscape.js (elements: {"nodes": [], "edges": []}).
+9. 'cytoscape' : JSON Cytoscape.js (elements: {{"nodes": [], "edges": []}}).
 10. 'wavedrom' : JSON WaveDrom (signal: []).
 11. 'astro' : JSON Celestial (projection: 'orthographic', transform: 'equatorial').
 12. 'bio' : Renvoie UNIQUEMENT l'ID PDB (ex: 1A8M) ou le contenu complet d'un fichier PDB.
 13. 'svg' : XML SVG complet et valide.
 14. 'chem' : Chaîne SMILES (ex: 'CC(=O)OC1=CC=CC=C1C(=O)O').
-15. 'science' : JSON Plotly.js (data: [], layout: {}).
-16. 'leaflet' : JSON strict pour carte géographique. Structure imposée: {"center": [lat, lng], "zoom": int, "markers": [{"lat": float, "lng": float, "popup": "texte html"}]}.
+15. 'science' : JSON Plotly.js (data: [], layout: {{}}).
+16. 'leaflet' : JSON strict pour carte géographique. Structure imposée: {{"center": [lat, lng], "zoom": int, "markers": [{{"lat": float, "lng": float, "popup": "texte html"}}]}}.
 </technical_manual>
 
 <rules>

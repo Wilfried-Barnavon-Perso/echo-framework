@@ -1,9 +1,8 @@
 # ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.209.47
-# DATE    : 2026-09-19
-
+# VERSION : 5.210.0
+# DATE    : 2026-09-24
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -36,7 +35,7 @@
 $SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
 $ISOPath = "D:\ISO\ubuntu-26.04-live-server-amd64-autoinstall.iso"
 $VMPath = "D:\Virtual Machines"
-$VHDSize = 70GB
+$VHDSize = 100GB
 
 # RAM de démarrage fixée à 8 Go
 $RAMStartup = 8192MB
@@ -59,7 +58,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.209.47"
+$SCRIPT_VERSION = "5.210.0"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"

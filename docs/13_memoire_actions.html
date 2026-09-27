@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ECHO v5 : Mémoire à long terme (RAG) et Cockpit d'actions interactives (PDF, Purge).">
+  <title>ECHO v5 - 13. Mémoire & Actions</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>13. Mémoire & Actions</h1>
+
+    <p>
+      Pour offrir une expérience fluide, une intelligence artificielle doit pouvoir se souvenir de vos échanges passés et vous offrir des commandes rapides pour gérer votre environnement.
+    </p>
+
+    <h2>1. La Mémoire à Long Terme</h2>
+    <p>
+      ECHO possède une mémoire permanente, qui survit à vos différentes sessions de discussion. 
+    </p>
+    <ul>
+      <li><strong>Préférences :</strong> Il se souvient de votre nom, de vos contraintes techniques ou de votre façon de travailler.</li>
+      <li><strong>Apprentissage :</strong> Lorsqu'il résout un problème complexe, il peut décider de l'enregistrer dans sa mémoire (sous forme d'<em>Axiome</em>) pour ne plus jamais faire la même erreur à l'avenir.</li>
+      <li><strong>Génération automatique :</strong> L'IA gère cette mémoire de manière autonome. Elle met à jour ou supprime les souvenirs obsolètes d'elle-même.</li>
+    </ul>
+
+    <h2>2. Le Cockpit et les Actions</h2>
+<img src="images/toolbar_actions.png" alt="Actions Toolbar" style="float: right; max-width: 80px; margin: 0 0 1rem 1rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+    <p>
+      En plus de discuter avec ECHO, vous disposez d'un panneau d'actions rapides (souvent situé au-dessus ou en dessous de la conversation). Ces actions vous permettent d'interagir directement avec le système sans avoir à écrire de texte :
+    </p>
+    <ul>
+      <li><strong>Export PDF :</strong> Vous pouvez transformer l'intégralité d'une longue conversation (avec ses diagrammes et tableaux) en un document PDF propre et professionnel, en un seul clic.</li>
+      <li><strong>Purge Vectorielle :</strong> Si vous souhaitez réinitialiser l'esprit de l'IA sur un sujet précis, vous pouvez ouvrir un panneau visuel qui vous permet d'effacer chirurgicalement certains souvenirs.</li>
+      <li><strong>Agent Monitor :</strong> Permet d'observer en direct le travail des sous-agents de l'IA (comme le navigateur fantôme) pour voir exactement ce qu'ils sont en train de faire sur le web.</li>
+    </ul>
+
+    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
+      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
+      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
+        
+        <h3 style="color:#93c5fd;">1. Memory & RAG Tool (<code>memory_and_rag_tool.py</code>)</h3>
+        <p>L'outil offre au LLM une API complète de manipulation des deux collections Qdrant (<code>echo_meta_artifacts</code> et <code>echo_session_rag</code>).</p>
+        <ul>
+          <li><strong>Outils RAG Organique :</strong> <code>update_meta_artifact</code> (création/mise à jour), <code>search_meta_artifacts</code> (recherche avec Reranking <code>MEMORY_IMPORTANCE_WEIGHTS</code>), <code>delete_meta_artifact_item</code>.</li>
+          <li><strong>Outils Session RAG :</strong> <code>save_session_context</code> (Déchargement cognitif proactif), <code>search_sessions_context</code>, <code>delete_session_context_source</code>.</li>
+        </ul>
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Actions UI & Cockpit</h3>
+        <p>L'interface Open WebUI est étendue par des "Actions" (boutons UI déclenchant du code) :</p>
+        <ul>
+          <li><strong>Export PDF (<code>print_pdf_action.py</code>) :</strong> Opération 100% <em>Client-Side</em>. Résout les limites de l'export PDF natif d'Open WebUI (qui ignore les <code>&lt;iframe&gt;</code>) via <code>html2canvas</code> en capturant directement <code>iframe.contentDocument.body</code> (nécessite <em>Iframe Same-Origin Access</em>).</li>
+          <li><strong>Purge Vectorielle :</strong> Action injectant un HUD interactif scrollable listant le contenu de <code>echo_meta_artifacts</code>, permettant la suppression ciblée via appels API.</li>
+          <li><strong>Agent Monitor :</strong> HUD temps réel (Data Island) écoutant l'état des Workers distants (via SSE interne) pour afficher la progression des sous-agents.</li>
+        </ul>
+
+
+        <h3 style="color:#93c5fd; margin-top: 2rem;">Context Gauge (context_gauge.py)</h3>
+        <ul>
+          <li><strong>get_context_load :</strong> Surveillance de la saturation du contexte (Tokens) et déclencheur d'escalade cognitive.</li>
+        </ul>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">Generalist Tools (generalist_tools.py)</h3>
+        <ul>
+          <li><strong>wait_timer :</strong> Met en pause l'exécution. Strictement limité à 1 seule tentative par boucle.</li>
+          <li><strong>ask_user_input :</strong> Interrompt brièvement l'exécution pour afficher une boîte de dialogue à l'utilisateur.</li>
+        </ul>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">Query Registry (query_registry_tool.py)</h3>
+        <ul>
+          <li><strong>query_registry :</strong> Consultation centralisée de l'état des ressources du Registre (validation obligatoire).</li>
+        </ul>
+      </div>
+    </details>
+
+    <div class="transition-text">
+      <a href="12_edition_visuelle.html">&larr; 12. Édition & Visuel</a>
+      &nbsp;&nbsp;
+      <a href="14_agents_automatisation.html">14. Agents & Automatisation &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.212.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.14-slim
+FROM echo-python-base:latest
 
 # Eviter l'écriture de bytecode et forcer le flush stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -7,14 +7,8 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Installation des dépendances systèmes nécessaires
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libxml2-dev \
-    libxslt-dev \
-    zlib1g-dev \
-    curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+# Installation de NodeJS (le reste est dans la base partagée)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 

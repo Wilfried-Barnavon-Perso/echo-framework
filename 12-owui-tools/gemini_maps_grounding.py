@@ -59,7 +59,7 @@ class Tools:
         __event_call__: Any = None
     ) -> Union[dict, Tuple[HTMLResponse, dict]]:
         """
-        Recherche géo-spatiale (lieux, itinéraires) via Google Maps. Affiche l'UI locale. Le Modèle analyse ensuite les données textuelles retournées.
+        Affiche des cartes de données géo-spatiales (lieux, itinéraires) via une recherche sur Google Maps. Le Modèle doit afficher l'UI locale puis traiter les données textuelles retournées.
         """
         user_id = __user__.get("id", "system")
         chat_id = (__metadata__ or {}).get("chat_id")

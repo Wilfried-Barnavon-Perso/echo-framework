@@ -1,14 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.32
+version: 5.35
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.35: Restitution explicite de rounds_remaining pour les agents supervisés.
+# 5.34: Ajout d'une mécanique simplifiée d'extension dynamique du budget d'outils via injection in-situ.
+# 5.33: Remplacement de la vérification __event_call__ par ECHO_SUBAGENT_CONTEXT pour la protection Headless de delete_user_skill.
 # 5.32: Protection de delete_user_skill contre l'invocation headless (vérification de __event_call__).
 # 5.31: Ajout du paramètre timeout_seconds (5 min par défaut) à delete_user_skill et modale auto-annulable.
-# 5.29: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 5.28: Ajout du paramètre require_web_grounding dans forge_skill pour actualisation experte conditionnelle.
 # 5.27: Ajout de delete_user_skill avec modale de confirmation.
 # 5.25: Nettoyage du code : suppression des imports inutilisés (PEP8).
@@ -163,26 +165,27 @@ class Tools:
         """
 
         if __event_emitter__:
-            await __event_emitter__({"type": "status", "data": {"description": f"Validation requise pour supprimer le skill {skill_id}...", "done": False}})
+            await events.status(f"Validation requise pour supprimer le skill {skill_id}...", done=False)
 
-        if not __event_call__:
-            return wrap_tool_output(text="Erreur : L'interface utilisateur (__event_call__) est requise pour confirmer cette action.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        from echo_constants import ECHO_SUBAGENT_CONTEXT
+        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
+            return wrap_tool_output(text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de requérir une confirmation de suppression.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        user_confirmed = await __event_call__({"type": "execute", "data": {"code": js_code}})
+        user_confirmed = await events.call_execute(js_code)
 
         if user_confirmed:
             success = delete_skill(user_id, skill_id)
             if success:
                 if __event_emitter__:
-                    await __event_emitter__({"type": "status", "data": {"description": f"Skill {skill_id} supprimé avec succès.", "done": True}})
+                    await events.status(f"Skill {skill_id} supprimé avec succès.", done=True)
                 return wrap_tool_output(text=f"Le skill '{skill_id}' a été supprimé.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             else:
                 if __event_emitter__:
-                    await __event_emitter__({"type": "status", "data": {"description": f"Erreur système lors de la suppression de {skill_id}.", "done": True}})
+                    await events.status(f"Erreur système lors de la suppression de {skill_id}.", done=True)
                 return wrap_tool_output(text=f"Impossible de supprimer le skill '{skill_id}'.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         else:
             if __event_emitter__:
-                await __event_emitter__({"type": "status", "data": {"description": "Suppression non confirmée par l'utilisateur.", "done": True}})
+                await events.status("Suppression non confirmée par l'utilisateur.", done=True)
             return wrap_tool_output(text="L'utilisateur a refusé ou délai expiré.", status={"status": "cancelled"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     # ==========================================================================
@@ -550,17 +553,25 @@ class Tools:
                 __event_call__=__event_call__,
             )
 
+            budget_exhausted = False
             # Extraction du texte
             if isinstance(result, str):
                 try:
                     parsed = json.loads(result)
                     deliverables[w_id] = parsed.get("text", result)
+                    if parsed.get("status", {}).get("warning") == "budget_exhausted":
+                        budget_exhausted = True
                 except Exception:
                     deliverables[w_id] = result
             elif isinstance(result, dict):
                 deliverables[w_id] = result.get("text", str(result))
+                if result.get("status", {}).get("warning") == "budget_exhausted":
+                    budget_exhausted = True
             else:
                 deliverables[w_id] = str(result)
+                
+            if budget_exhausted:
+                deliverables[w_id] += "\n\n[⚠️ AVERTISSEMENT SYSTÈME : Ce worker a épuisé son budget d'appels d'outils et a été interrompu. Si la direction de son travail est bonne et que la tâche justifie d'être poursuivie, le Superviseur DOIT retourner un statut `needs_correction` avec des directives pour la suite. La relance lui octroiera automatiquement un nouveau budget.]"
 
         # ── Phase 2+3 : Boucle critique / correction ──
         correction_round = 0
@@ -691,16 +702,24 @@ class Tools:
                     __event_call__=__event_call__,
                 )
 
+                budget_exhausted = False
                 if isinstance(result, str):
                     try:
                         parsed = json.loads(result)
                         deliverables[w_id] = parsed.get("text", result)
+                        if parsed.get("status", {}).get("warning") == "budget_exhausted":
+                            budget_exhausted = True
                     except Exception:
                         deliverables[w_id] = result
                 elif isinstance(result, dict):
                     deliverables[w_id] = result.get("text", str(result))
+                    if result.get("status", {}).get("warning") == "budget_exhausted":
+                        budget_exhausted = True
                 else:
                     deliverables[w_id] = str(result)
+                    
+                if budget_exhausted:
+                    deliverables[w_id] += "\n\n[⚠️ AVERTISSEMENT SYSTÈME : Ce worker a épuisé son budget d'appels d'outils et a été interrompu. Si la direction de son travail est bonne et que la tâche justifie d'être poursuivie, le Superviseur DOIT retourner un statut `needs_correction` avec des directives pour la suite. La relance lui octroiera automatiquement un nouveau budget.]"
 
         # ── Phase 4 : Consolidation ──
         await events.status(f"📋 [{task_id}] Phase 4 — Consolidation...")
@@ -760,8 +779,17 @@ class Tools:
             text=(
                 f"### RÉSULTAT SUPERVISÉ [{task_id}] ({len(workers_dict)} workers, "
                 f"{correction_round} round(s) de critique)\n\n{final_text}"
-            )
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            ),
+            status={
+                "status": "success",
+                "task_id": task_id,
+                "rounds_remaining": max_rounds - correction_round,
+                "workers_count": len(workers_dict)
+            },
+            user_id=__user__.get("id", "system") if __user__ else "system",
+            chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+            metadata=__metadata__
+        )
 
     # ==========================================================================
     # 4. OUTILS D'ADMINISTRATION (Conseils & Superviseurs)

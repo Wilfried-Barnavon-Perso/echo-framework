@@ -40,3 +40,7 @@ export ECHO_DEPLOY_VER_FILE="$ECHO_ROOT/echo_deploy_script_version"
 # Comptes Systèmes
 export ECHO_SERVICE_ACCOUNT="install-stack@echo.local"
 
+# --- NETWORKING (SOUS-RÉSEAUX IP) ---
+export ECHO_NET_BW_UNIVERSE_PREFIX="10.20.30"
+export ECHO_NET_MAIN_PREFIX="10.20.40"
+export ECHO_NET_SANDBOX_PREFIX="10.20.50"

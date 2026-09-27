@@ -1,20 +1,19 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.61
+version: 192.72
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 192.61: Correction GC asynchrone sur la tâche PKCE (Connection refused) et alignement strict PEP8 (E722/E701).
-# 192.60: Restauration de l'usage d'AuthService pour le support PKCE et API keys.
-# 192.59: Application de `_mutate_context_identity` et protection du parsing JSON des tool_calls (fallback dict vide).
-# 192.58: Modification du préfixe de notification UI (toast) pour les rappels cognitifs (⚡ Alignement du Modèle).
-# 192.57: Remplacement des blocs XML de troncature MAX_TOKENS par le format natif <artifact id="AEC_evenement_systeme">.systeme">.
-# 192.56: Déploiement des Rappels Cognitifs Multi-Axes (Anti-Division par 0 + UI Toast Emission).
-# 192.55: Suture stricte (SSOT) : Injection native du Défibrillateur Attentionnel avant la boucle bit-perfect via EchoAEC.
-# 192.54: UX SSE: Libération asynchrone anticipée de l'UI via `yield ""` dès réception du finish_reason 'STOP', masquant la latence post-génération de l'API Google (usageMetadata).
+# 192.72: Ajout d'un statut par défaut 'Traitement en cours' pour rassurer l'utilisateur.
+# 192.71: Désactivation des logs de diagnostic (print) du Fast-Track.
+# 192.70: Injection de logs de diagnostic (print flush=True) dans le Coupe-Circuit (Fast-Track) pour tracker les tâches silencieuses (Follow-ups).
+# 192.69: Retrait du Monkey Patch (inefficace suite au namespace binding d'Open WebUI) et correction des valeurs strings ("tags_generation", "follow_up_generation") pour le forçage JSON du Coupe-Circuit.
+# 192.68: Fix de sécurité Open WebUI (KeyError 'model') via injection dynamique (Monkey Patch) du scope 'ctx' sur background_tasks_handler et outlet_filter_handler. Enforcement de application/json sur les tâches 1 (Tags) et 3 (Follow-ups).
+# 192.67: Hotfix Variable Shadowing : Suppression des imports locaux (MODEL_LITE) dans le Fast-Track causant UnboundLocalError.
+# 192.66: Fix du Fast-Track (Title/Follow-ups) : fusion dynamique des rôles consécutifs pour éviter l'erreur 400 Gemini.
 
 
 # ==============================================================================
@@ -26,7 +25,7 @@ import secrets
 import re
 import time
 import codecs
-import orjson as std_json 
+import orjson as std_json
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Any, Union
 
@@ -135,7 +134,7 @@ class UserDataManager:
 
     def save_auth_data(self, key: str, value: str):
         self.state_manager.save_auth_data(key, value)
-        
+
     def get_auth_data(self, key: str) -> Optional[str]:
         return self.state_manager.get_auth_data(key)
 
@@ -187,14 +186,14 @@ class Orchestrator:
         messages = body.get("messages", [])
         meta = {**(__metadata__ or {}), **body.get("metadata", {})}
         model_id = target_model
-        
+
         # --- [NOUVEAU] Rappels Cognitifs Multi-Axes par Charge (Tokens Exacts) ---
         # Évaluation avant la boucle pour intégration native dans la Suture Bit-Perfect.
         last_stats = self.user_data_manager.get_last_context_stats()
         if last_stats and messages and messages[-1].get("role") == "user":
             current_tokens = last_stats.get("promptTokenCount", 0)
             sys_events_to_inject = []
-            
+
             from echo_aec import EchoAEC
             for reminder in AEC_REMINDERS:
                 threshold = reminder.get("token_threshold", 0)
@@ -204,14 +203,14 @@ class Orchestrator:
                         setting_key = f"aec_tier_{reminder['id']}"
                         last_tier_str = self.user_data_manager.get_session_setting(setting_key)
                         last_tier = int(last_tier_str) if last_tier_str else 0
-                        
+
                         if current_tier > last_tier:
                             event_id = EchoAEC.record_event(
                                 state_manager=self.user_data_manager.state_manager,
                                 event_name=reminder["id"],
                                 status="active",
                                 summary=reminder["message"],
-                                resource_type="aec_event"
+                                resource_type="aec_directive"
                             )
                             sys_events_to_inject.append({
                                 "id": event_id,
@@ -220,7 +219,7 @@ class Orchestrator:
                                 "tier": current_tier
                             })
                             self.user_data_manager.save_session_setting(setting_key, str(current_tier))
-                            
+
                             if events:
                                 await events.status(f"🛤️ Alignement du Modèle : {reminder['id']}", done=True)
 
@@ -255,7 +254,7 @@ class Orchestrator:
                         final_contents.append({"role": role_gemini, "parts": shadow_data})
                         inv_hash = self.user_data_manager.calculate_invariant(role, shadow_data)
                         last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
-                        
+
                         i += 1; continue
 
             # --- PRIORITÉ 2 : RECONSTRUCTION NORMALE (Fallback ou Cache Miss Temporel) ---
@@ -273,14 +272,14 @@ class Orchestrator:
                     i += 1
                 restored_parts = aggregated_tool_parts
                 role_gemini = "user" # Les réponses d'outils sont toujours 'user' pour Gemini
-            
+
             else:
                 # USER / ASSISTANT
                 if role in ["assistant", "model"]:
                     content, _ = split_thought_process(content if isinstance(content, str) else str(content))
 
                 draft_parts = meta.get("_echo_user_parts_draft") if (role == "user" and i == len(messages)-1) else None
-                
+
                 if role == "user":
                     if draft_parts is not None:
                         restored_parts = []
@@ -293,14 +292,20 @@ class Orchestrator:
                                 p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
                 else:
                     # Assistant
+                    tool_calls = m.get("tool_calls", [])
                     sig = self.user_data_manager.get_signature_by_id(msg_id) if msg_id else None
+                    if not sig and tool_calls:
+                        for tc in tool_calls:
+                            cb = self.user_data_manager.get_call_bridge(tc.get("id"))
+                            if cb and cb.get("signature"):
+                                sig = cb["signature"]
+                                break
                     if not sig:
                         inv_hash = self.user_data_manager.calculate_invariant(role, content)
                         current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
                         sig = self.user_data_manager.get_signature(current_cumul)
-                    
+
                     restored_parts = ensure_gemini_parts(content, model_id, self.model_origin)
-                    tool_calls = m.get("tool_calls", [])
                     if tool_calls:
                         parsed_tc = []
                         for tc in tool_calls:
@@ -354,10 +359,10 @@ class Orchestrator:
         if events:
             size = estimate_token_size(final_contents)
             max_tokens = getattr(self.valves, "MAX_CONTEXT_SIZE", ECHO_MAX_CONTEXT_SIZE)
-            
+
             if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
-                await events.toast("⚠️ Approche de la limite contextuelle. Migration recommandée (Action 'Resume in New Chat').", "warning", "ECHO V5")
-            
+                await events.toast("⚠️ Approche de la limite contextuelle. Migration recommandée (Action 'Résume et Transfert vers un nouveau chat').", "warning", "ECHO V5")
+
             if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                 system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
                 while size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(final_contents) > 3:
@@ -412,10 +417,10 @@ class StreamProcessor:
                 if "MAX_TOKENS" not in part_text:
                     is_complex = True
                     break
-        
+
         if is_complex:
             return cascade_history
-            
+
         fused_parts = []
         for msg in cascade_history:
             if msg["role"] in ["model", "assistant"]:
@@ -443,7 +448,7 @@ class StreamProcessor:
                                 self.usage_stats = {}
                             self.usage_stats.update(target["usageMetadata"])
                             self.user_data_manager.save_context_stats(self.usage_stats)
-                        
+
                         cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
                         if cand:
                             finish_reason = cand[0].get("finishReason")
@@ -544,7 +549,72 @@ class Pipe:
     def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
+
+        # ==============================================================================
+        # COUPE-CIRCUIT (FAST-TRACK) : Tâches d'arrière-plan Open WebUI
+        # ==============================================================================
+        safe_metadata = __metadata__ or {}
+        if safe_metadata.get("task") is not None:
+            gemini_contents = []
+            for msg in body.get("messages", []):
+                role = "user" if msg.get("role") in ["user", "system"] else "model"
+                parts = ensure_gemini_parts(msg.get("content", ""))
+                
+                if gemini_contents and gemini_contents[-1]["role"] == role:
+                    # Fusion des rôles consécutifs (Gemini API l'exige)
+                    gemini_contents[-1]["parts"].extend([{"text": "\n\n"}] + parts)
+                else:
+                    gemini_contents.append({
+                        "role": role,
+                        "parts": parts
+                    })
+
+            generation_config = {"temperature": 0.2, "maxOutputTokens": 200}
+            task_id = str(safe_metadata.get("task", ""))
+            if "." in task_id:
+                task_id = task_id.split(".")[-1].lower()
+            
+            # Force la sortie JSON pour les Tags et les Follow-ups
+            # Indispensable car Open WebUI crashe (sans erreur via try/except silencieux)
+            # s'il n'arrive pas à parser un JSON natif avec JSONCodec.loads()
+            if task_id in ["tags_generation", "follow_up_generation"]:
+                generation_config["responseMimeType"] = "application/json"
+
+            payload = {
+                "contents": gemini_contents,
+                "generationConfig": generation_config
+            }
+
+            # print(f"[ECHO-FAST-TRACK] Démarrage tâche système (task={task_id})", flush=True)
+
+            try:
+                # Appel direct au modèle LITE, by-pass total de l'agent ECHO (sans streaming)
+                res = await EchoGeminiClient.call(
+                    target_model=MODEL_LITE,
+                    payload=payload,
+                    user_id=__user__["id"] if __user__ else "system",
+                    events=None,
+                    chat_id="stateless_bypass",
+                    enable_paid_credits=False
+                )
+                try:
+                    text = res.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                    if text:
+                        # print(f"[ECHO-FAST-TRACK] Texte généré ({len(text)} chars)", flush=True)
+                        yield text
+                except (KeyError, IndexError):
+                    pass
+                # print(f"[ECHO-FAST-TRACK] Tâche terminée avec succès (task={task_id})", flush=True)
+            except Exception as e:
+                # print(f"[ECHO-FAST-TRACK] Erreur fatale capturée : {str(e)}", flush=True)
+                yield f"ECHO Fast-Track Error: {str(e)}"
+            return
+
+        # ==============================================================================
+        # SUITE NORMALE DU PIPE ECHO (Agentivité, RAG, Outils...)
+        # ==============================================================================
         events = EchoEvents(__event_emitter__)
+        if events: await events.status("⚙️ Traitement en cours...", done=False)
         if not __user__:
             yield "❌ Identité manquante."; return
         user_valves = __user__.get("valves") or self.UserValves()
@@ -687,7 +757,7 @@ class Pipe:
                 global _BACKGROUND_TASKS
                 if '_BACKGROUND_TASKS' not in globals():
                     _BACKGROUND_TASKS = set()
-                
+
                 pkce_task = asyncio.create_task(auth.await_pkce_callback())
                 _BACKGROUND_TASKS.add(pkce_task)
                 pkce_task.add_done_callback(_BACKGROUND_TASKS.discard)
@@ -707,7 +777,7 @@ class Pipe:
         # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
         model_selection = user_valves.MODEL_SELECTION
         last_model = orch.user_data_manager.get_last_active_model()
-        
+
         # Reverse-lookup (Auto-heal SQLite)
         if last_model and last_model != "aucun" and last_model not in ECHO_MODELS_REGISTRY:
             _found_model = False
@@ -718,7 +788,7 @@ class Pipe:
                     break
             if not _found_model:
                 last_model = MODEL_LITE  # Fallback sécurisé pour les orphelins
-                
+
         def _get_ui_display(model_key: str) -> str:
             config = ECHO_MODELS_REGISTRY.get(model_key, {})
             ai_id = config.get("ai_studio_id")
@@ -755,10 +825,10 @@ class Pipe:
 
         # L'origine est passée à l'Orchestrateur pour la résolution des placeholders
         orch.model_origin = origine_model
-        
+
         # Reconstruction contexte (Bit-Perfect)
         context = await orch.prepare_context(body, chat_id, target_model, __metadata__, events)
-        
+
         if target_model and origine_model and target_model != origine_model and origine_model != "aucun":
             orch._mutate_context_identity(context, target_model, origine_model)
 
@@ -768,22 +838,23 @@ class Pipe:
         niveaux_autorises = ["MODEL_FLASH"]
         if user_valves.MODEL_SELECTION == "AUTO_PRO":
             niveaux_autorises.append("MODEL_PRO")
-        
+
         max_cascade_attempts = user_valves.MAX_CASCADE_ATTEMPTS
         cascade_attempt = 0
         # [AUTO-CONTINUE] Initialisation des compteurs de relance pour sécuriser la boucle de génération
         max_auto_continue = user_valves.ECHO_AUTO_CONTINUE_MAX
         auto_continue_attempts = 0
         cumulative_usage_stats = {"promptTokenCount": 0, "cachedContentTokenCount": 0, "candidatesTokenCount": 0, "totalTokenCount": 0}
-        
+
         # [NOUVEAU] HISTORIQUE DE CASCADE POUR SUTURE & SHADOW
-        cascade_history = [] 
+        cascade_history = []
         current_cumul = body.get("_echo_last_cumul")
         user_msg_id = (__metadata__ or {}).get("_echo_user_msg_id")
+        asst_msg_id = kwargs.get("__message_id__")
 
         while cascade_attempt < max_cascade_attempts:
             cascade_attempt += 1
-            
+
             # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
             sys_instr_raw = "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."
             resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
@@ -800,7 +871,7 @@ class Pipe:
             }
 
             tools = convert_owui_tools(body.get("tools"), user_valves.MODEL_SELECTION)
-            
+
             # --- [NOUVEAU] INJECTION OUTIL CHANGEMENT COGNITIF (BIDIRECTIONNEL) ---
             if is_auto:
                 # Construction simplifiée : tous les modèles dispos, moins le modèle actif
@@ -810,7 +881,7 @@ class Pipe:
                 target_identity = get_model_identity(target_model)
                 if target_identity in menu_escalade:
                     menu_escalade.remove(target_identity)
-                
+
                 if menu_escalade:
                     escalation_tool = {
                         "name": "new_cognitive_level",
@@ -914,10 +985,10 @@ class Pipe:
             if is_auto and proc.escalation_requested:
                 req = proc.escalation_requested
                 target_req = req.get("niveau_requis")
-                
+
                 # Mapping explicite pour gérer la montée ET la redescente
                 new_target = get_model_identity(target_req)
-                
+
                 if not new_target:
                     sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
                     # Signalement d'erreur de paramètre au modèle actuel
@@ -930,7 +1001,7 @@ class Pipe:
                         "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi MODEL_LITE, MODEL_FLASH ou MODEL_PRO."}, "id": sys_tc_id}}]
                     })
                     continue
-                
+
                 # Vérification des droits (Valve)
                 if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PRO:
                     await events.status(f"⚠️ï¸  Transfert vers MODEL_PRO refusé (Valve AUTO).")
@@ -945,7 +1016,7 @@ class Pipe:
                         "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": f"{target_req} unavailable (policy)", "message": f"Transfert vers {target_req} refusé. Traitez avec {target_model}."}, "id": sys_tc_id}}]
                     })
                     continue # On reboucle avec le MÊME target_model
-                
+
                 if new_target == target_model:
                     sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
                     await events.status(f"⚠️ï¸  Auto-transfert annulé ({target_req}).")
@@ -960,24 +1031,24 @@ class Pipe:
                     continue
 
                 await events.status(f"🚀 Transfert cognitif vers {new_target}...")
-                
+
                 if proc.captured_sig:
                     orch.user_data_manager.save_call_bridge(f"esc-{secrets.token_hex(4)}", proc.captured_sig, "new_cognitive_level", req)
-                
+
                 plan_md = req.get("plan_de_transfert", "Exécution du relais.")
-                
+
                 # 1. Mutation Chirurgicale de l'identité dans le contexte
                 orch._mutate_context_identity(context, new_target, target_model)
-                
+
                 # 2. Suture Sémantique (Relais Protocolé avec réinjection signée du texte précédent)
                 sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
                 tool_io = {"calls": [{"id": c.get("id"), "name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
                 model_parts = []
                 if proc.accumulated_text:
-                    model_parts.append({"text": proc.accumulated_text, "thoughtSignature": sig_to_apply})
+                    model_parts.append({"text": proc.accumulated_text})
 
                 sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
-                model_parts.append({"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}, "thoughtSignature": sig_to_apply})
+                model_parts.append({"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}})
 
                 # Récupération des appels parallèles orphelins
                 if proc.accumulated_calls:
@@ -985,14 +1056,22 @@ class Pipe:
                         call_part = {"name": c["name"], "args": c["args"]}
                         if "id" in c:
                             call_part["id"] = c["id"]
-                        model_parts.append({"functionCall": call_part, "thoughtSignature": sig_to_apply})
+                        model_parts.append({"functionCall": call_part})
+
+                # Injection de la thoughtSignature requise par l'API Gemini 3+
+                # Selon la spec, pour des appels parallèles, seul le PREMIER functionCall doit recevoir la signature.
+                # (https://ai.google.dev/gemini-api/docs/thinking#signatures)
+                for part in model_parts:
+                    if "functionCall" in part:
+                        part["thoughtSignature"] = sig_to_apply
+                        break
 
                 # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
                 model_msg = {"role": "model", "parts": model_parts}
                 inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
                 new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
                 orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, user_msg_id)
-                orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, user_msg_id, target_model)
+                orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, asst_msg_id, target_model)
                 cascade_history.append(model_msg)
                 current_cumul = new_cumul
 
@@ -1004,7 +1083,7 @@ class Pipe:
                 }
                 msg = f"Transfert effectué vers {target_req}."
                 user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {**escalation_status, "message": msg, "plan": plan_md}, "id": sys_tc_id}}]
-                
+
                 # Annulation formelle des appels parallèles orphelins pour préserver le schéma strict
                 if proc.accumulated_calls:
                     for c in proc.accumulated_calls:
@@ -1024,7 +1103,7 @@ class Pipe:
 
                 context.append(model_msg)
                 context.append(user_msg)
-                
+
                 target_model = new_target
                 continue
             else:
@@ -1033,20 +1112,21 @@ class Pipe:
                 tool_io = {"calls": [{"id": c.get("id"), "name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
                 model_parts = []
                 if proc.accumulated_text:
-                    model_parts.append({"text": proc.accumulated_text, "thoughtSignature": sig_to_apply})
+                    model_parts.append({"text": proc.accumulated_text})
                 if proc.accumulated_calls:
                     for c in proc.accumulated_calls:
                         call_part = {"name": c["name"], "args": c["args"]}
                         if "id" in c:
                             call_part["id"] = c["id"]
-                        model_parts.append({"functionCall": call_part, "thoughtSignature": sig_to_apply})
-                
+                        model_parts.append({"functionCall": call_part})
+
                 if model_parts:
+                    model_parts[0]["thoughtSignature"] = sig_to_apply
                     model_msg = {"role": "model", "parts": model_parts}
                     inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
                     new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
                     orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, user_msg_id)
-                    orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, user_msg_id, target_model)
+                    orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, asst_msg_id, target_model)
                     cascade_history.append(model_msg)
                     current_cumul = new_cumul
 
@@ -1060,7 +1140,7 @@ class Pipe:
                         await events.status("⚠️ Appel d'outil tronqué (MAX_TOKENS). Reprise et correction...")
                         await events.toast("Appel d'outil trop volumineux : Reprise automatique de la génération.", "warning")
                         texte_outil = "Erreur : L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte). Le modèle doit relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation."
-                        xml_outil = f'<artifact id="AEC_evenement_systeme" source="Système">\\n{texte_outil}\\n</artifact>'
+                        xml_outil = f'<artifact id="AEC_directive" source="Système">\\n{texte_outil}\\n</artifact>'
                         user_resp_parts = [{"text": xml_outil}]
                     else:
                         # Cas 2 : L'interruption a eu lieu sur du texte brut.
@@ -1068,9 +1148,9 @@ class Pipe:
                         await events.status("🔄 Reprise automatique de la génération (MAX_TOKENS)...")
                         await events.toast("Limite de contexte (MAX_TOKENS) atteinte : Reprise automatique.", "info")
                         texte_gene = "Erreur : La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte. Le modèle doit poursuivre la génération du texte à partir du point de troncature exact, sans introduction."
-                        xml_gene = f'<artifact id="AEC_evenement_systeme" source="Système">\\n{texte_gene}\\n</artifact>'
+                        xml_gene = f'<artifact id="AEC_directive" source="Système">\\n{texte_gene}\\n</artifact>'
                         user_resp_parts = [{"text": xml_gene}]
-                        
+
                     # Suture sémantique de l'événement système pour maintenir l'invariant cognitif bit-perfect
                     user_msg = {"role": "user", "parts": user_resp_parts}
                     inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
@@ -1078,7 +1158,7 @@ class Pipe:
                     orch.user_data_manager.index_suture(new_cumul_u, chat_id, inv_u, current_cumul, user_msg_id)
                     cascade_history.append(user_msg)
                     current_cumul = new_cumul_u
-                    
+
                     # Mise à jour du contexte pour la boucle suivante
                     context.append(model_msg)
                     context.append(user_msg)
@@ -1091,7 +1171,7 @@ class Pipe:
 
         if chat_id:
             meta = {**(__metadata__ or {}), **body.get("metadata", {})}
-            
+
             # 1. Scellement message Utilisateur (Le Draft complet)
             user_updated_at = meta.get("_echo_user_msg_updated_at")
             user_draft = meta.get("_echo_user_parts_draft")
@@ -1139,8 +1219,6 @@ class Pipe:
             # ACTION : Sauvegarder l'historique complet dans le Shadow du message assistant si on a un ID.
             # En l'absence d'ID (courant pour la réponse en cours), la suture indexée via current_cumul suffit.
             # Si on a un ID dans kwargs (ex: retry), on scelle.
-            asst_msg_id = kwargs.get("__message_id__")
-            
             if asst_msg_id and cascade_history:
                 final_shadow_content = proc._filter_cascade_for_shadow(cascade_history)
                 if final_shadow_content:
@@ -1151,11 +1229,10 @@ class Pipe:
                     orch.user_data_manager.state_manager.save_auth_data(f"cascade_{user_msg_id}", std_json.dumps(cascade_history).decode('utf-8'))
                 except Exception as e:
                     log.error(f"[PipeEngine] Erreur sauvegarde cascade KV: {e}")
-            
-            # Sauvegarde des ponts d'outils pour la navigation future
-            for c in proc.accumulated_calls: 
-                orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION, c["name"], c["args"])
 
+            # Sauvegarde des ponts d'outils pour la navigation future
+            for c in proc.accumulated_calls:
+                orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION, c["name"], c["args"])
 
         # --- HUD METRICS ---
         if user_valves.SHOW_CONTEXT_METRICS:
@@ -1165,20 +1242,20 @@ class Pipe:
             p_t = cumulative_usage_stats.get("promptTokenCount", 0)
             c_t = cumulative_usage_stats.get("cachedContentTokenCount", 0)
             g_t = cumulative_usage_stats.get("candidatesTokenCount", 0)
-            
+
             max_t = self.valves.MAX_CONTEXT_SIZE
-            
+
             # Nom de la source active (via le registre des fournisseurs d'accès)
             source_label = auth_providers[0]['type'].replace('_', ' ').title() if auth_providers else "ECHO"
             plan_name = f"Accès {source_label}"
             credits_val = "∞"
             quota_str = ""
-            
+
             # Métadonnées d'identité pour l'infobulle (INFO GEMINI CODE ASSIST)
             email = echo_auth.get_auth_data(AUTH_DATA_USER_EMAIL)
             tier = echo_auth.get_auth_data(AUTH_DATA_USER_TIER)
             proj = echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
-            
+
             # Quota spécifique au modèle CA courant
             ca_model_id = get_ca_model_id(target_model)
             model_quota = echo_auth.get_model_quota(ca_model_id)
@@ -1187,7 +1264,7 @@ class Pipe:
                                float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)))
             q_reset_raw = str(model_quota.get("resetTime",
                               echo_auth.get_auth_data("google_quota_reset") or "N/A"))
-            q_type    = echo_auth.get_auth_data("google_quota_type") or "CODE_ASSIST"
+            q_type = echo_auth.get_auth_data("google_quota_type") or "CODE_ASSIST"
 
             # Crédits AI (source : loadCodeAssist HEALTH_CHECK)
             credits_raw = echo_auth.get_auth_data("google_credits_total") or echo_auth.get_auth_data("google_g1_credits")
@@ -1231,7 +1308,7 @@ class Pipe:
                 quota_rpd_rem=q_rpd_rem, quota_rpd_lim=q_rpd_lim,
                 quota_rpm_rem=q_rpm_rem, quota_rpm_lim=q_rpm_lim,
             )
-        
+
         if cumulative_usage_stats.get("totalTokenCount", 0) > 0:
             yield {"usage": {"prompt_tokens": cumulative_usage_stats.get("promptTokenCount", 0), "completion_tokens": cumulative_usage_stats.get("candidatesTokenCount", 0), "total_tokens": cumulative_usage_stats.get("totalTokenCount", 0)}}
         yield ""

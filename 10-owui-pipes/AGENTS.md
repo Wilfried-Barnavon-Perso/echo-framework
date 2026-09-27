@@ -14,7 +14,7 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 **Rôle** : Gestionnaire de l'état asynchrone SQLite. Il reconstruit l'historique exact de la conversation.
 - **Invariant & Hash Cumulatif** (`calculate_invariant`, `calculate_cumulative`) : Crée une empreinte unique (hash) pour chaque tour de parole, assurant le verrouillage de version (Version Lock) de la conversation.
 - **Shadow Suture** (`save_shadow`, `get_shadow`) : Persiste les requêtes et réponses structurées (incluant les tool_calls et payloads Base64 complexes) en base SQLite locale pour pallier les limitations de persistance d'Open WebUI.
-- **Signature & Bridge** (`save_signature_by_id`, `get_call_bridge`) : Fait le pont entre un appel d'outil déclenché (call_id) et son résultat renvoyé par OWUI au tour suivant.
+- **Signature & Bridge** (`save_signature_by_id`, `get_call_bridge`) : Fait le pont entre un appel d'outil déclenché (call_id) et son résultat renvoyé par OWUI au tour suivant. L'injection de la `thoughtSignature` (obligatoire pour Gemini 3+) est traitée dynamiquement et associée exclusivement au premier appel `functionCall` en cas d'appels parallèles, conformément à la spécification de l'API ([API Docs](https://ai.google.dev/gemini-api/docs/thinking#signatures)).
 
 #### B. Classe `Orchestrator` (Le Cerveau Exécutif)
 **Rôle** : Traduction des schémas OWUI vers l'API cible, gestion du *Clamping Dynamique*.
@@ -27,11 +27,12 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 #### C. Classe `StreamProcessor`
 **Rôle** : Moteur de flux temps-réel asynchrone.
 - **Sémantique** : Parse la réponse SSE (Server-Sent Events) du LLM. Capte et compile les appels d'outils, met à jour le HUD d'interface et formate la réponse Markdown.
-- **Gestion de l'Auto-Continue (MAX_TOKENS)** : Le pipeline gère nativement la troncature. Si le modèle s'arrête prématurément (MAX_TOKENS) au milieu d'un texte ou d'un appel d'outil massif, le système injecte dynamiquement un événement système (directif punitif ou de continuation) via une balise `<artifact id="AEC_evenement_systeme">` stricte et relance automatiquement la génération de façon transparente. Le préfixe UI Toast pour ces rappels d'alignement est `🛤️ Alignement du Modèle`.
+- **Gestion de l'Auto-Continue (MAX_TOKENS)** : Le pipeline gère nativement la troncature. Si le modèle s'arrête prématurément (MAX_TOKENS) au milieu d'un texte ou d'un appel d'outil massif, le système injecte dynamiquement une instruction de continuation via une balise sémantique `<artifact id="AEC_directive">` stricte et relance automatiquement la génération de façon transparente. Le préfixe UI Toast pour ces rappels d'alignement est `🛤️ Alignement du Modèle`.
 
 #### D. Classe `Pipe` (Point d'Entrée OWUI)
 **Rôle** : Interface de connexion conforme à la signature Open WebUI. Initialise les Valves (paramètres réglables par l'Admin) et lance le pipeline via `pipe()`.
 
-## 3. Dépendances Logiques
+## 3. Dépendances Logiques & Infrastructure
 - Ce composant dépend intimement des nouvelles librairies modulaires de `14-owui-libs` (`echo_constants.py` pour le Registre Cognitif et `echo_state_manager.py` pour le requêtage de base de données).
 - Il s'exécute de manière asynchrone dans le Tier 3 (Open WebUI).
+- **Mise en cache PIP** : L'environnement d'exécution (Open WebUI) dispose désormais d'un cache local persistant (`PIP_CACHE_DIR=/app/backend/data/.cache/pip`) via le volume de données. Cela accélère considérablement l'installation à froid des dépendances Python requises par les modules Pipes.

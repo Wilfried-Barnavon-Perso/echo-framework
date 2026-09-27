@@ -1,15 +1,17 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.64
+version: 5.68
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.68: Ajout des constantes ECHO_CODEX_EDIT_TIMEOUT et ECHO_CODEX_MAX_AI_PASSES (UCTP).
+# 5.67: Fix - Documentation de ECHO_SYNC_EXCLUDE_LIST comme bouclier anti-freeze UI pour le Codex.
+# 5.66: Introduction de ECHO_SUBAGENT_CONTEXT (ContextVars) pour propager l'identité asynchrone à travers Open WebUI.
+# 5.65: Retrait de save_session_context et delete_session_context_source de la blacklist.
 # 5.64: Ajout de l'extension .pdf au CODEX_LANG_MAP pour activer l'identification visuelle dans l'UI du Codex.
 # 5.63: Plan Gamma - Remplacement par le dictionnaire ECHO_CODEX_WORKSPACES et ajout de ECHO_SYNC_EXCLUDE_LIST.
-# 5.62: Migration du Défibrillateur Attentionnel vers un système de Rappels Cognitifs Multi-Axes.
-# 5.61: Migration de AEC_REMINDER_MSG en texte pur pour utilisation par EchoAEC (SSOT).
 # 5.60: Injection des seuils de Rappel Cognitif (Défibrillateur Attentionnel).
 # 5.58: Augmentation de ECHO_API_MAX_RETRIES à 5 tentatives.
 # 5.57: Ajout de ECHO_GLOBAL_TENANT_PROJECT_ID ("aicode-consumers") pour forcer le routage Code Assist et contourner les 429 persos.
@@ -21,6 +23,15 @@ description: Composant système interne : ECHO Constants.
 #       - Documentation dual-client (Desktop=perso, LS=Enterprise GCP TOS)
 
 import os
+import contextvars
+
+# Information à ne pas effacer : Ce ContextVar permet de transmettre l'identité du sous-agent
+# à travers les frontières asynchrones (asyncio) de manière "télépathique", sans avoir à modifier
+# les signatures des fonctions. Cela permet de contourner le blocage silencieux (falsification 
+# de signature) effectué par Open WebUI lors de l'encapsulation des outils.
+# Par défaut, le dictionnaire est vide (contexte Orchestrateur).
+ECHO_SUBAGENT_CONTEXT: contextvars.ContextVar = contextvars.ContextVar("ECHO_SUBAGENT_CONTEXT", default={})
+
 try:
     import pybase64 as base64
 except ImportError:
@@ -410,6 +421,10 @@ RESOURCE_STATUS_MAP = {
 # 1.4 ECHO CODEX — CONSTANTES
 # ==============================================================================
 
+# --- CONSTANTES DE L'ÉDITEUR CODEX ---
+ECHO_CODEX_EDIT_TIMEOUT = 300       # Timeout sub-chat édition (secondes)
+ECHO_CODEX_MAX_AI_PASSES = 5        # Nombre max de passes auto-continue IA (0 à 5)
+
 # Nom du sous-dossier Codex dans le vault utilisateur
 CODEX_DIR_NAME = "codex"
 
@@ -483,8 +498,7 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     # 2. Écriture RAG
     "update_meta_artifact",   # Écrit en mémoire long terme (Qdrant)
     "delete_meta_artifact_item", # Supprime de la mémoire long terme
-    "save_session_context",   # Écrit dans la Mémoire Vectorisée de Session
-    "delete_session_context_source", # Supprime un fichier du RAG éphémère
+    # Note: save_session_context et delete_session_context_source sont autorisés pour l'agent
     # 3. Rendu UI
     "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
     # 4. Méta-session (gestion des sessions du tool delegate)
@@ -558,7 +572,10 @@ ECHO_CODEX_WORKSPACES = {
     "sandbox": "Sandbox"  # Espace d'exécution et de génération du worker
 }
 
-# Liste stricte des dossiers et fichiers à ignorer lors de la synchronisation ou de l'exploration UI
+# Liste stricte des dossiers et fichiers à ignorer lors de la synchronisation ou de l'exploration UI.
+# Cette constante agit comme un bouclier critique pour le Codex (Plan A) : elle empêche le `os.walk` 
+# de parcourir des dossiers de dépendances massifs, évitant ainsi le gel (Layout Thrashing) du moteur 
+# de rendu JavaScript lors de la génération de la treeMap.
 ECHO_SYNC_EXCLUDE_LIST = [".venv", "node_modules", "__pycache__", ".git", ".pytest_cache", "venv"]
 
 # ECHO_CODING_WORKER_URL : Utilisée pour isoler l'exécution de code (Python, JS, etc.).
@@ -583,6 +600,7 @@ ECHO_HTTP_CLIENT_TIMEOUT = 600       # Délai d'abandon (600s) si Google API ne 
 ECHO_HTTP_MAX_CONNECTIONS = 100      # Nombre max de connexions simultanées.
 ECHO_HTTP_MAX_KEEPALIVE = 20         # Nombre max de connexions Keep-Alive maintenues.
 ECHO_HTTP_KEEPALIVE_EXPIRY = 300     # Expiration des connexions Keep-Alive (en secondes).
+ECHO_UCTP_CHUNK_SIZE = 256000        # Taille des fragments UCTP Python <-> JS (256 Ko)
 
 # Timeout d'attente pour le chargement du modèle d'embedding WebGPU (Edge Embedding)
 DEFAULT_EDGE_EMBEDDING_TIMEOUT = 180
@@ -653,7 +671,7 @@ MIME_MAPPING_BIN = {
 # ==============================================================================
 CHARS_PER_TOKEN = 4
 ECHO_MAX_CONTEXT_SIZE = 1000000  # Limite technique 1M (on peut cibler plus bas si Gemini Flash/Pro a des limites strictes pour ECHO)
-CONTEXT_WARNING_THRESHOLD = 0.80  # 80% : Toast d'alerte jaune (Resume in New Chat conseillé)
+CONTEXT_WARNING_THRESHOLD = 0.80  # 80% : Toast d'alerte jaune (Résume et Transfert vers un nouveau chat conseillé)
 CONTEXT_TRUNCATE_THRESHOLD = 0.90 # 90% : Troncature silencieuse
 
 # Seuils de saturation pour l'outil context_gauge (déclencheurs d'escalade)

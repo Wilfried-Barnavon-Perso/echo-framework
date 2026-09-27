@@ -538,12 +538,12 @@ class Filter:
         js_code = js_code.replace('__USER_ID__', user_id)
 
         # Émission du code JS vers le DOM du navigateur
-        await __event_emitter__({
-            "type": "execute",
-            "data": {
-                "code": js_code
-            }
-        })
+        import sys
+        if "/app/backend/echo_libs" not in sys.path:
+            sys.path.append("/app/backend/echo_libs")
+        from echo_events import EchoEvents
+        events = EchoEvents(__event_emitter__)
+        await events.emit_execute(js_code)
 
         if wait_edge:
             import httpx

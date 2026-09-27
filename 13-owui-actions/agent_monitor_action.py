@@ -293,13 +293,13 @@ class Action:
         # 1. Injection initiale du HUD
         threads_json = json.dumps(threads_data).decode("utf-8")
         hud_js = EchoUI._generate_agent_monitor_js(threads_json, chat_id)
-        await __event_call__({"type": "execute", "data": {"code": hud_js}})
+        await events.call_execute(hud_js)
         await events.status("🧠 Cognitive Monitor actif.", True)
 
         # 2. Boucle événementielle bidirectionnelle (pattern Codex)
         while True:
             wait_code = "return new Promise(r => window.echoAgentResolve = r);"
-            response = await __event_call__({"type": "execute", "data": {"code": wait_code}})
+            response = await events.call_execute(wait_code)
 
             if not response or not isinstance(response, dict):
                 break
@@ -314,7 +314,7 @@ class Action:
                 threads_data = self._build_threads_data(state, chat_id)
                 threads_json = json.dumps(threads_data).decode("utf-8")
                 update_js = f"if(window.echoMonitorUpdate) window.echoMonitorUpdate({threads_json});"
-                await __event_call__({"type": "execute", "data": {"code": update_js}})
+                await events.call_execute(update_js)
 
             else:
                 break
