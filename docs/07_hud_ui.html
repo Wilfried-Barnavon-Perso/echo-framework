@@ -6,6 +6,13 @@
   <meta name="description" content="Écosystème HUD et UI du Framework ECHO v5 : Context Gauge, Monitor visuel, signature deploy_context_gauge, persistance LocalStorage, architecture Backend/Frontend.">
   <title>ECHO v5 - 7. Écosystème HUD & UI</title>
   <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+    });
+  </script>
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
@@ -97,9 +104,7 @@ sequenceDiagram
     </div>
 
     <h2>La Context Gauge (Cortex Monitoring)</h2>
-<img src="images/context_gauge_1.png" alt="Context Gauge 1" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
-<img src="images/context_gauge_2.png" alt="Context Gauge 2" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
-
+<img src="images/context_gauge_bar.png" alt="Context Gauge Bar" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
     <p>
       La Context Gauge est l'outil central de pilotage de l'état cognitif. Elle est injectée dans la
       barre de navigation d'Open WebUI via <code>EchoUI.deploy_context_gauge()</code> et mise à jour
@@ -145,7 +150,7 @@ sequenceDiagram
       Au survol de la barre, un tooltip affiche les valeurs absolues : cache, prompt actif,
       génération, total et maximum de la fenêtre contextuelle.
     </p>
-
+    <img src="images/context_tooltip.png" alt="Tooltip de Contexte" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
     <h3>B. Icône Quota (jauge circulaire SVG)</h3>
     <p>
       Une icône cadenas à gauche de la barre représente le quota restant du modèle API native
@@ -161,6 +166,7 @@ sequenceDiagram
 
     <h3>C. Tooltip Authentification / Quotas</h3>
     <p>Au survol de l'icône cadenas, un tooltip affiche deux sections :</p>
+    <img src="images/auth_quota_tooltip.png" alt="Tooltip Authentification et Quotas" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
 
     <div class="code-header">Section AUTHENTIFICATION</div>
     <pre><code>🔐 Source  : méthode d'auth (OAUTH2, API_KEY, etc.)
@@ -172,7 +178,7 @@ sequenceDiagram
 🤖 Modèle CA    : ca_model_id actif (ex: gemini-3.5-flash)
 📊 Quota        : quota_fraction × 100% - coloré selon seuils
 📅 Req/jour     : requestsPerDayRemaining / requestsPerDayLimit (N/A si non fourni)
-âš¡ Req/min      : requestsPerMinuteRemaining / requestsPerMinuteLimit (N/A si non fourni)
+⚡ Req/min      : requestsPerMinuteRemaining / requestsPerMinuteLimit (N/A si non fourni)
 🔄 Reset        : heure de reset du quota - formatée HH:MM (Xmin restantes)
 🏷️ Type         : google_quota_type (ex: CODE_ASSIST)</code></pre>
 
@@ -310,7 +316,7 @@ sequenceDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.212.9 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.212.12 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

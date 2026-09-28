@@ -107,241 +107,172 @@ flowchart TD
     <h2>Écorché Structurel - Modules Python</h2>
 
     <p>
-      Ce schéma vectoriel représente l'imbrication réelle des modules Python d'ECHO et leurs dépendances.
-      Les connexions reproduisent fidèlement les imports déclarés dans le code source
-      (<code>pipe_engine.py</code>, <code>echo_state_manager.py</code>, <code>echo_core.py</code>).
-      Cliquer sur le diagramme pour le zoomer.
+      Cette cartographie exhaustive représente les différents modules d'ECHO organisés par grands domaines de responsabilités.
+      Chaque bloc regroupe les fonctions clés permettant au système d'opérer de manière autonome.
     </p>
 
-    <div class="svg-diagram">
-      <svg viewBox="0 0 900 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Écorché structurel des modules Python ECHO v5">
-        <title>ECHO v5 - 5. High-Level Design</title>
-        <defs>
-          <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-            <path d="M0,0 L0,6 L8,3 z" fill="#4ade80"/>
-          </marker>
-          <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-            <path d="M0,0 L0,6 L8,3 z" fill="#60a5fa"/>
-          </marker>
-          <marker id="arrow-gray" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-            <path d="M0,0 L0,6 L6,3 z" fill="#475569"/>
-          </marker>
-        </defs>
-
-        <!-- Fond zones -->
-        <rect x="10" y="10" width="870" height="620" rx="12" fill="#0b0e14" stroke="#2d3748" stroke-width="1"/>
-
-        <!-- Zone OWUI (fond bleu nuit) -->
-        <rect x="24" y="24" width="260" height="256" rx="8" fill="#0f172a" stroke="#334155" stroke-width="" stroke-dasharray="6,3"/>
-        <text x="154" y="44" text-anchor="middle" fill="#64748b" font-size="9" font-family="monospace" letter-spacing="1">11-owui-filters</text>
-
-        <!-- Filtre: new_context_filter.py -->
-        <rect x="36" y="52" width="230" height="64" rx="6" fill="#1e293b" stroke="#64748b" stroke-width="1"/>
-        <text x="51" y="74" fill="#94a3b8" font-size="10" font-family="monospace" font-weight="bold">new_context_filter.py</text>
-        <text x="51" y="89" fill="#64748b" font-size="9" font-family="monospace">inlet() → Smart Context</text>
-        <text x="51" y="102" fill="#64748b" font-size="9" font-family="monospace">_process_file_task() → Moulage</text>
-        <text x="236" y="74" fill="#4ade80" font-size="8">v</text>
-
-        <!-- Filtre: conversation_rag_filter.py -->
-        <rect x="36" y="128" width="230" height="64" rx="6" fill="#1e293b" stroke="#64748b" stroke-width="1"/>
-        <text x="51" y="150" fill="#94a3b8" font-size="10" font-family="monospace" font-weight="bold">conversation_rag_filter.py</text>
-        <text x="51" y="165" fill="#64748b" font-size="9" font-family="monospace">Filtre Outlet asynchrone (Fenêtre glissante)</text>
-        <text x="51" y="178" fill="#64748b" font-size="9" font-family="monospace">Vectorisation → Session RAG</text>
-
-                <!-- Filtre: edge_embed_bridge_filter.py -->
-        <rect x="36" y="204" width="230" height="64" rx="6" fill="#1e293b" stroke="#64748b" stroke-width="1"/>
-        <text x="51" y="226" fill="#94a3b8" font-size="10" font-family="monospace" font-weight="bold">edge_embed_bridge_filter.py</text>
-        <text x="51" y="317" fill="#64748b" font-size="9" font-family="monospace">WebGPU/WASM Offload</text>
-        <text x="51" y="330" fill="#64748b" font-size="9" font-family="monospace">Harrier-OSS Acceleration</text>
-
-<!-- Zone PIPE -->
-        <rect x="320" y="24" width="250" height="180" rx="8" fill="#1e1b4b" stroke="#4338ca" stroke-width="" stroke-dasharray="6,3"/>
-        <text x="445" y="44" text-anchor="middle" fill="#6366f1" font-size="9" font-family="monospace" letter-spacing="1">10-owui-pipes</text>
-
-        <!-- pipe_engine.py -->
-        <rect x="334" y="52" width="222" height="140" rx="6" fill="#172554" stroke="#4338ca" stroke-width=""/>
-        <text x="350" y="74" fill="#818cf8" font-size="10" font-family="monospace" font-weight="bold">pipe_engine.py</text>
-        <text x="520" y="74" fill="#4ade80" font-size="8">v</text>
-        <text x="350" y="92" fill="#64748b" font-size="9" font-family="monospace">pipe() → Orchestrateur principal</text>
-        <text x="350" y="106" fill="#64748b" font-size="9" font-family="monospace">prepare_context() → Suture BP</text>
-        <text x="350" y="120" fill="#64748b" font-size="9" font-family="monospace">StreamProcessor.process() → SSE</text>
-        <text x="350" y="134" fill="#64748b" font-size="9" font-family="monospace">new_cognitive_level → Routage</text>
-        <text x="350" y="148" fill="#64748b" font-size="9" font-family="monospace">_resolve_placeholders() → AEC</text>
-        <text x="350" y="162" fill="#64748b" font-size="9" font-family="monospace">EchoGeminiClient.stream() → H/2</text>
-        <text x="350" y="176" fill="#64748b" font-size="9" font-family="monospace">DebugLogger → debug_logs/</text>
-
-        <!-- Zone LIBS -->
-        <rect x="24" y="306" width="560" height="180" rx="8" fill="#0d1117" stroke="#1e40af" stroke-width="" stroke-dasharray="6,3"/>
-        <text x="304" y="326" text-anchor="middle" fill="#1d4ed8" font-size="9" font-family="monospace" letter-spacing="1">14-owui-libs</text>
-
-        <!-- echo_state_manager.py -->
-        <rect x="36" y="334" width="160" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width=""/>
-        <text x="52" y="354" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_state_manager.py</text>
-        <text x="186" y="354" fill="#4ade80" font-size="8">v</text>
-        <text x="52" y="371" fill="#64748b" font-size="9" font-family="monospace">EchoStateManager</text>
-        <text x="52" y="385" fill="#64748b" font-size="9" font-family="monospace">EchoGeminiClient</text>
-        <text x="52" y="399" fill="#64748b" font-size="9" font-family="monospace">EchoAuth</text>
-        <text x="52" y="413" fill="#64748b" font-size="9" font-family="monospace">EchoEvents</text>
-        <text x="52" y="427" fill="#64748b" font-size="9" font-family="monospace">split_thought_process()</text>
-        <text x="52" y="441" fill="#64748b" font-size="9" font-family="monospace">wrap_tool_output()</text>
-        <text x="52" y="455" fill="#64748b" font-size="9" font-family="monospace">index_text_in_ephemeral_rag()</text>
-
-        <!-- echo_auth.py (auth-manager) -->
-        <rect x="208" y="334" width="140" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width=""/>
-        <text x="224" y="354" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_auth.py (auth-manager)</text>
-        <text x="334" y="354" fill="#4ade80" font-size="8">v</text>
-        <text x="224" y="371" fill="#64748b" font-size="9" font-family="monospace">AuthService</text>
-        <text x="224" y="385" fill="#64748b" font-size="9" font-family="monospace">initiate_pkce_flow()</text>
-        <text x="224" y="399" fill="#64748b" font-size="9" font-family="monospace">await_pkce_callback()</text>
-        <text x="224" y="413" fill="#64748b" font-size="9" font-family="monospace">validate_and_save_api_key()</text>
-        <text x="224" y="427" fill="#64748b" font-size="9" font-family="monospace">fetch_available_models()</text>
-        <text x="224" y="441" fill="#64748b" font-size="9" font-family="monospace">fetch_user_quota()</text>
-        <text x="224" y="455" fill="#64748b" font-size="9" font-family="monospace">get_model_quota(ca_id)</text>
-
-        <!-- echo_protocol.py -->
-        <rect x="360" y="334" width="140" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width=""/>
-        <text x="376" y="354" fill="#60a5fa" font-size="10" font-family="monospace" font-weight="bold">echo_protocol.py</text>
-        <text x="486" y="354" fill="#4ade80" font-size="8">v</text>
-        <text x="376" y="371" fill="#64748b" font-size="9" font-family="monospace">get_ca_model_id()</text>
-        <text x="376" y="385" fill="#64748b" font-size="9" font-family="monospace">build_ca_generation_config()</text>
-        <text x="376" y="399" fill="#64748b" font-size="9" font-family="monospace">CA_EXCLUDED_GEN_CONF_FIELDS</text>
-        <text x="376" y="416" fill="#475569" font-size="" font-family="monospace">Fonctions pures - aucun</text>
-        <text x="376" y="429" fill="#475569" font-size="" font-family="monospace">appel réseau, aucun état.</text>
-        <text x="376" y="443" fill="#475569" font-size="" font-family="monospace">Point unique de traduction</text>
-        <text x="376" y="456" fill="#475569" font-size="" font-family="monospace">ECHO → API native.</text>
-
-        <!-- echo_constants.py -->
-        <rect x="512" y="334" width="60" height="138" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width=""/>
-        <text x="542" y="354" text-anchor="middle" fill="#60a5fa" font-size="9" font-family="monospace" font-weight="bold">constants</text>
-        <text x="542" y="370" text-anchor="middle" fill="#4ade80" font-size="7">v</text>
-        <text x="522" y="388" fill="#64748b" font-size="8" font-family="monospace">MODEL_*</text>
-        <text x="522" y="402" fill="#64748b" font-size="8" font-family="monospace">ECHO_MODELS_REGISTRY</text>
-        <text x="522" y="416" fill="#64748b" font-size="8" font-family="monospace">THINKING_*</text>
-        <text x="522" y="430" fill="#64748b" font-size="8" font-family="monospace">MAX_TOKENS</text>
-        <text x="522" y="444" fill="#64748b" font-size="8" font-family="monospace">get_gemini_mime</text>
-
-        <!-- Zone UI/VISUALS -->
-        <rect x="600" y="24" width="274" height="180" rx="8" fill="#0d1117" stroke="#0d9488" stroke-width="" stroke-dasharray="6,3"/>
-        <text x="737" y="44" text-anchor="middle" fill="#0d9488" font-size="9" font-family="monospace" letter-spacing="1">echo_ui.py / echo_visuals.py</text>
-
-        <rect x="614" y="52" width="246" height="64" rx="6" fill="#0f172a" stroke="#0d9488" stroke-width=""/>
-        <text x="630" y="72" fill="#2dd4bf" font-size="10" font-family="monospace" font-weight="bold">echo_ui.py</text>
-        <text x="840" y="72" fill="#4ade80" font-size="8">v</text>
-        <text x="630" y="88" fill="#64748b" font-size="9" font-family="monospace">EchoUI.deploy_context_gauge()</text>
-        <text x="630" y="102" fill="#64748b" font-size="9" font-family="monospace">EchoUI.monitor_ECHO()</text>
-
-        <rect x="614" y="128" width="246" height="64" rx="6" fill="#0f172a" stroke="#0d9488" stroke-width=""/>
-        <text x="630" y="148" fill="#2dd4bf" font-size="10" font-family="monospace" font-weight="bold">echo_visuals.py</text>
-        <text x="630" y="164" fill="#64748b" font-size="9" font-family="monospace">VisualEngine (Markmap, Mermaid)</text>
-        <text x="630" y="178" fill="#64748b" font-size="9" font-family="monospace">EchoRichUI - Pattern Data Island</text>
-
-        <!-- Zone ADMIN -->
-        <rect x="600" y="306" width="274" height="100" rx="8" fill="#1a0505" stroke="#7f1d1d" stroke-width="" stroke-dasharray="6,3"/>
-        <text x="737" y="326" text-anchor="middle" fill="#7f1d1d" font-size="9" font-family="monospace" letter-spacing="1">20-docker-echo-admin-manager</text>
-        <rect x="614" y="334" width="246" height="60" rx="6" fill="#0f172a" stroke="#dc2626" stroke-width=""/>
-        <text x="630" y="354" fill="#f87171" font-size="10" font-family="monospace" font-weight="bold">server.py</text>
-        <text x="630" y="370" fill="#64748b" font-size="9" font-family="monospace">Monitoring psutil+docker-py</text>
-        <text x="630" y="384" fill="#64748b" font-size="9" font-family="monospace">run_semantic_pruning() TTL Qdrant</text>
-
-        <!-- Zone STOCKAGE -->
-        <rect x="24" y="512" width="850" height="96" rx="8" fill="#0a0a0a" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,4"/>
-        <text x="449" y="532" text-anchor="middle" fill="#78350f" font-size="9" font-family="monospace" letter-spacing="1">Couche de persistance (Volumes Docker)</text>
-
-        <rect x="36" y="540" width="196" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="134" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">SQLite Shadows</text>
-        <text x="134" y="576" text-anchor="middle" fill="#64748b" font-size="" font-family="monospace">/users/{uid}/chats/{cid}.db</text>
-        <text x="134" y="589" text-anchor="middle" fill="#64748b" font-size="" font-family="monospace">message_shadows + identity.db</text>
-
-        <rect x="248" y="540" width="160" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="328" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Qdrant :6333</text>
-        <text x="328" y="576" text-anchor="middle" fill="#64748b" font-size="" font-family="monospace">echo_meta_artifacts (permanent)</text>
-        <text x="328" y="589" text-anchor="middle" fill="#64748b" font-size="" font-family="monospace">echo_session_rag (session)</text>
-
-        <rect x="424" y="540" width="160" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="504" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Vault Fichiers</text>
-        <text x="504" y="576" text-anchor="middle" fill="#64748b" font-size="" font-family="monospace">/users/{uid}/files/</text>
-        <text x="504" y="589" text-anchor="middle" fill="#64748b" font-size="" font-family="monospace">Fichiers utilisateurs (pérennes)</text>
-
-        <rect x="600" y="540" width="120" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="660" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Worker :7997</text>
-        <text x="660" y="576" text-anchor="middle" fill="#64748b" font-size="" font-family="monospace">Harrier-OSS-v1-</text>
-        <text x="660" y="589" text-anchor="middle" fill="#64748b" font-size="" font-family="monospace">Vector local</text>
-
-        <rect x="730" y="540" width="130" height="56" rx="6" fill="#0f172a" stroke="#f59e0b" stroke-width="1"/>
-        <text x="795" y="560" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="monospace" font-weight="bold">Audio Workers</text>
-        <text x="795" y="576" text-anchor="middle" fill="#64748b" font-size="" font-family="monospace">Kokoro TTS :7996</text>
-        <text x="795" y="589" text-anchor="middle" fill="#64748b" font-size="" font-family="monospace">Whisper STT :7995</text>
-
-        <!-- ====== FLÈCHES ====== -->
-        <!-- Filtre → Pipe -->
-        <line x1="266" y1="84" x2="334" y2="130" stroke="#4ade80" stroke-width="" marker-end="url(#arrow)"/>
-        <text x="286" y="106" fill="#4ade80" font-size="8" font-family="monospace">Draft YAML</text>
-
-        <!-- Pipe → echo_state_manager -->
-        <line x1="445" y1="192" x2="116" y2="334" stroke="#60a5fa" stroke-width="" marker-end="url(#arrow-blue)"/>
-
-        <!-- Pipe → echo_auth -->
-        <line x1="445" y1="192" x2="278" y2="334" stroke="#60a5fa" stroke-width="" marker-end="url(#arrow-blue)"/>
-
-        <!-- Pipe → echo_protocol -->
-        <line x1="445" y1="192" x2="430" y2="334" stroke="#60a5fa" stroke-width="" marker-end="url(#arrow-blue)"/>
-
-        <!-- Pipe → echo_constants -->
-        <line x1="500" y1="160" x2="542" y2="334" stroke="#60a5fa" stroke-width="" stroke-dasharray="4,2" marker-end="url(#arrow-blue)"/>
-
-        <!-- Pipe → echo_ui -->
-        <line x1="556" y1="100" x2="614" y2="84" stroke="#2dd4bf" stroke-width="" marker-end="url(#arrow-gray)"/>
-
-        <!-- echo_state_manager → SQLite -->
-        <line x1="116" y1="472" x2="134" y2="540" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
-
-        <!-- echo_state_manager → Qdrant -->
-        <line x1="196" y1="456" x2="328" y2="540" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
-
-        <!-- Admin → Qdrant -->
-        <line x1="737" y1="406" x2="408" y2="540" stroke="#dc2626" stroke-width="" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
-        <text x="560" y="476" fill="#7f1d1d" font-size="8" font-family="monospace">TTL Purge</text>
-
-        <!-- Admin → SQLite -->
-        <line x1="737" y1="406" x2="134" y2="540" stroke="#dc2626" stroke-width="" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
-        <text x="370" y="496" fill="#7f1d1d" font-size="8" font-family="monospace">Vacuum</text>
-
-        <!-- Embedding Worker -->
-        <line x1="196" y1="456" x2="660" y2="540" stroke="#f59e0b" stroke-width="" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
-        
-        <!-- Audio Workers -->
-        <line x1="196" y1="456" x2="795" y2="540" stroke="#f59e0b" stroke-width="" stroke-dasharray="3,3" marker-end="url(#arrow-gray)"/>
-      </svg>
-
-      <div class="svg-legend">
-        <span class="svg-legend-item">
-          <span class="svg-legend-dot" style="background:#4338ca;"></span>
-          Pipe Engine (Orchestrateur)
-        </span>
-        <span class="svg-legend-item">
-          <span class="svg-legend-dot" style="background:#3b82f6;"></span>
-          ECHO Libs (14-owui-libs)
-        </span>
-        <span class="svg-legend-item">
-          <span class="svg-legend-dot" style="background:#0d9488;"></span>
-          Interface HUD (echo_ui / echo_visuals)
-        </span>
-        <span class="svg-legend-item">
-          <span class="svg-legend-dot" style="background:#dc2626;"></span>
-          Admin Manager
-        </span>
-        <span class="svg-legend-item">
-          <span class="svg-legend-dot" style="background:#f59e0b;"></span>
-          Couche de persistance (Volumes)
-        </span>
-      </div>
+    <div class="hld-diagram" style="background: #0b0e14; border: 1px solid #2d3748; border-radius: 12px; padding: 20px; font-family: monospace; overflow-x: auto;">
+    <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: stretch;">
+        <div style="flex: 1; min-width: 200px; background: #0f172a; border: 1px dashed #64748b; border-radius: 8px; padding: 15px;">
+    <div style="color: #94a3b8; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">11-owui-filters</div>
+    <div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">user_native_context_filter.py</div>
+    <div style="color: #64748b; font-size: 11px;">Protection des réglages utilisateur</div>
+</div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">tcp_keepalive_filter.py</div>
+    <div style="color: #64748b; font-size: 11px;">Maintien des connexions longues</div>
+</div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">new_context_filter.py</div>
+    <div style="color: #64748b; font-size: 11px;">Ajout automatique du contexte</div>
+</div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">conversation_rag_filter.py</div>
+    <div style="color: #64748b; font-size: 11px;">Mise à jour de la mémoire</div>
+</div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">edge_embed_bridge_filter.py</div>
+    <div style="color: #64748b; font-size: 11px;">Calcul local dans le navigateur</div>
+</div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">app_drawer_filter.py</div>
+    <div style="color: #64748b; font-size: 11px;">Interface d'actions rapides</div>
+</div>
+</div>
+        <div style="flex: 1; min-width: 200px; background: #0f172a; border: 1px dashed #3b82f6; border-radius: 8px; padding: 15px;">
+    <div style="color: #60a5fa; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">14-owui-libs</div>
+    <div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_auth.py</div>
+    <div style="color: #64748b; font-size: 11px;">Authentification & Sécurité</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_protocol.py</div>
+    <div style="color: #64748b; font-size: 11px;">Traducteur universel API</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_state_manager.py</div>
+    <div style="color: #64748b; font-size: 11px;">Gestion mémoire SQLite</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_constants.py</div>
+    <div style="color: #64748b; font-size: 11px;">Constantes système</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_aec.py</div>
+    <div style="color: #64748b; font-size: 11px;">Construction du contexte AEC</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_browser_lib.py</div>
+    <div style="color: #64748b; font-size: 11px;">Pilotage navigateur fantôme</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_codex_git.py</div>
+    <div style="color: #64748b; font-size: 11px;">Gestionnaire de code source</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_core.py</div>
+    <div style="color: #64748b; font-size: 11px;">Fonctions utilitaires centrales</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_events.py</div>
+    <div style="color: #64748b; font-size: 11px;">Moteur d'événements UI</div>
+</div>
+</div>
+        <div style="flex: 1; min-width: 200px; background: #0f172a; border: 1px dashed #3b82f6; border-radius: 8px; padding: 15px;">
+    <div style="color: #60a5fa; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">14-owui-libs (Suite)</div>
+    <div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_gemini_client.py</div>
+    <div style="color: #64748b; font-size: 11px;">Client HTTP/2 Gemini</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_http.py</div>
+    <div style="color: #64748b; font-size: 11px;">Requêtes HTTP asynchrones</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_ingestion.py</div>
+    <div style="color: #64748b; font-size: 11px;">Moteur d'ingestion de fichiers</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_logger.py</div>
+    <div style="color: #64748b; font-size: 11px;">Traçabilité et logs</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_paths.py</div>
+    <div style="color: #64748b; font-size: 11px;">Gestion des chemins système</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_pkce_server.py</div>
+    <div style="color: #64748b; font-size: 11px;">Serveur d'autorisation local</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_prompts.py</div>
+    <div style="color: #64748b; font-size: 11px;">Gabarits de prompts système</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_skills.py</div>
+    <div style="color: #64748b; font-size: 11px;">Gestionnaire de compétences</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_ssh_tunnel.py</div>
+    <div style="color: #64748b; font-size: 11px;">Tunnel sécurisé OAuth2</div>
+</div>
+</div>
+        <div style="flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 20px;">
+            <div style="background: #1e1b4b; border: 1px dashed #4338ca; border-radius: 8px; padding: 15px; flex: 1;">
+                <div style="color: #6366f1; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">10-owui-pipes</div>
+                <div style="background: #172554; border: 1px solid #4338ca; border-radius: 6px; padding: 10px;">
+                    <div style="color: #818cf8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">pipe_engine.py</div>
+                    <div style="color: #64748b; font-size: 11px;">Cerveau principal du système</div>
+                    <div style="color: #64748b; font-size: 11px;">Reconstruction de l'historique</div>
+                    <div style="color: #64748b; font-size: 11px;">Lecture des réponses en direct</div>
+                    <div style="color: #64748b; font-size: 11px;">Choix automatique de l'IA</div>
+                    <div style="color: #64748b; font-size: 11px;">Fourniture du contexte</div>
+                </div>
+            </div>
+            
+            <div style="background: #0d1117; border: 1px dashed #0d9488; border-radius: 8px; padding: 15px;">
+                <div style="color: #0f766e; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">Interface HUD</div>
+                <div style="background: #0f172a; border: 1px solid #0d9488; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+                    <div style="color: #2dd4bf; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_ui.py</div>
+                    <div style="color: #64748b; font-size: 11px;">Jauge de Tokens</div>
+                </div>
+                <div style="background: #0f172a; border: 1px solid #0d9488; border-radius: 6px; padding: 10px;">
+                    <div style="color: #2dd4bf; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_visuals.py</div>
+                    <div style="color: #64748b; font-size: 11px;">Graphiques & Composants</div>
+                </div>
+            </div>
+            
+            <div style="background: #1a0505; border: 1px dashed #7f1d1d; border-radius: 8px; padding: 15px;">
+                <div style="color: #7f1d1d; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">Admin Manager</div>
+                <div style="background: #0f172a; border: 1px solid #dc2626; border-radius: 6px; padding: 10px;">
+                    <div style="color: #f87171; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">server.py</div>
+                    <div style="color: #64748b; font-size: 11px;">Surveillance système</div>
+                    <div style="color: #64748b; font-size: 11px;">Élagage automatisé</div>
+                </div>
+            </div>
+        </div>
     </div>
+    <div style="background: #0a0a0a; border: 1px dashed #f59e0b; border-radius: 8px; padding: 15px; margin-top: 20px;">
+    <div style="color: #fbbf24; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">Workers & Couche de persistance (Docker)</div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
+        <div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">SQLite Shadows</div>
+    <div style="color: #64748b; font-size: 10px;">/users/{uid}/chats/{cid}.db</div><div style="color: #64748b; font-size: 10px;">message_shadows + identity.db</div>
+</div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Qdrant :6333</div>
+    <div style="color: #64748b; font-size: 10px;">echo_meta_artifacts (permanent)</div><div style="color: #64748b; font-size: 10px;">echo_session_rag (session)</div>
+</div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Vault Fichiers</div>
+    <div style="color: #64748b; font-size: 10px;">/users/{uid}/files/</div><div style="color: #64748b; font-size: 10px;">Fichiers utilisateurs (pérennes)</div>
+</div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Worker :7997</div>
+    <div style="color: #64748b; font-size: 10px;">Harrier-OSS-v1-</div><div style="color: #64748b; font-size: 10px;">Vector local</div>
+</div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Audio Workers</div>
+    <div style="color: #64748b; font-size: 10px;">Kokoro TTS :7996</div><div style="color: #64748b; font-size: 10px;">Whisper STT :7995</div>
+</div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Browser Worker</div>
+    <div style="color: #64748b; font-size: 10px;">Playwright Headless</div><div style="color: #64748b; font-size: 10px;">Port 3000</div>
+</div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Coding Worker</div>
+    <div style="color: #64748b; font-size: 10px;">Sandbox Python/Node</div><div style="color: #64748b; font-size: 10px;">Port 5000</div>
+</div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">N8N Worker</div>
+    <div style="color: #64748b; font-size: 10px;">Orchestration Headless</div><div style="color: #64748b; font-size: 10px;">Port 5003</div>
+</div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">MCP Broker</div>
+    <div style="color: #64748b; font-size: 10px;">Proxy HTTP Complet</div><div style="color: #64748b; font-size: 10px;">Port 8000</div>
+</div>
+    </div>
+</div>
+</div>
+
 
     <details class="tech-spec" style="margin-top:1rem;">
     <summary style="font-weight:bold; color:#60a5fa; font-size:; cursor:pointer;">⚙️ Dossier d'Ingénierie & Spécifications - La Suture</summary>
     <div style="margin-top: 1rem;">
     <div class="card">
-        <h3>âš" La Suture (Cognitive Suture)</h3>
+        <h3>⚔️ La Suture (Cognitive Suture)</h3>
         <p><strong>Nature :</strong> Algorithme de reconstruction (<code>prepare_context()</code>).</p>
         <p><strong>Source :</strong> <code>Orchestrator.prepare_context()</code> dans <code>pipe_engine.py</code></p>
         <p>
@@ -457,7 +388,7 @@ flowchart TD
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
         <span>Diagramme de Séquence : Pipeline de Bout en Bout</span>
-        <span>[INLET âž" SUTURE âž" OUTLET]</span>
+        <span>[INLET ➔ SUTURE ➔ OUTLET]</span>
       </div>
       <div class="mermaid">
 sequenceDiagram
@@ -632,18 +563,18 @@ flowchart TB
       <summary style="font-weight:bold; color:#60a5fa; font-size:;">⚙️ Dossier d'Ingénierie & Spécifications (Librairies Partagées)</summary>
       <div style="margin-top:; padding-left: 1rem; border-left: 2px solid #3b82f6;">
         
-        <h3 style="color:#93c5fd;">1. Authentification & Quotas (<code>echo_auth.py</code>)</h3>
-        <p>Le module gère le cycle OAuth2 headless via <strong>Authorization Code + PKCE (RFC 7636)</strong> (tunnel SSH éphémère). Il implémente un rafraîchissement proactif silencieux des tokens (au-delà de 55 minutes). Il extrait également de façon non bloquante les métriques de quota via l'appel <code>fetch_available_models()</code> (API native) pour le composant UI Context Gauge.</p>
+        <h3 style="color:#93c5fd;">1. Authentification & Quotas (Service Central)</h3>
+        <p>Le module gère le cycle OAuth2 headless via <strong>Authorization Code + PKCE (RFC 7636)</strong> (tunnel SSH éphémère). Il implémente un rafraîchissement proactif silencieux des tokens (au-delà de 55 minutes). Il extrait également de façon non bloquante les métriques de quota via l'API native pour alimenter la jauge de tokens de l'interface.</p>
         
-        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Moteur de Protocole (<code>echo_protocol.py</code>)</h3>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Moteur de Protocole (Traducteur Interne)</h3>
         <p>Module de fonctions pures (sans état, sans appel réseau). Il traduit les requêtes ECHO au format API native :</p>
         <ul>
-          <li><strong><code>get_ca_model_id(echo_model)</code> :</strong> Traduit le nom canonique ECHO vers l'ID interne API native (ex: gemini-).</li>
-          <li><strong><code>build_ca_generation_config()</code> :</strong> Normalise la configuration. Plafonne <code>maxOutputTokens</code> à 65535 et garantit l'inclusion de <code>thinkingConfig: {includeThoughts: true}</code> pour activer le streaming des balises XML de réflexion.</li>
+          <li><strong>Traduction de Modèles :</strong> Convertit le nom canonique ECHO vers l'identifiant interne du fournisseur d'IA.</li>
+          <li><strong>Génération de Configuration :</strong> Normalise les paramètres de génération. Plafonne le nombre maximum de tokens et garantit l'activation du flux de pensée pour permettre le streaming des balises XML de réflexion.</li>
         </ul>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Gestionnaire de Compétences (<code>echo_skills.py</code>)</h3>
-        <p>Gère la lecture et l'écriture des fichiers <code>SKILL.md</code> dans le Vault utilisateur (<code>skills/</code>). Il extrait le frontmatter YAML et est utilisé par la fonction <code>forge_skill</code> de l'arsenal agentique.</p>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Gestionnaire de Compétences (Skill Manager)</h3>
+        <p>Gère la lecture et l'écriture des fichiers de compétences dans l'espace sécurisé de l'utilisateur. Il en extrait les métadonnées et alimente dynamiquement les capacités de l'arsenal agentique.</p>
 
         <h3 style="color:#93c5fd; margin-top: 2rem;">4. Registre Central (<code>echo_constants.py</code>)</h3>
         <p>Définit la source de vérité absolue <code>ECHO_MODELS_REGISTRY</code>, unifiant la hiérarchie cognitive, les seuils de tokens (<code>MAX_TOKENS</code>), et la topologie réseau Docker de la grappe (adresses internes).</p>
