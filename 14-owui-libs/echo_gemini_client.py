@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.8
+version: 1.9
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.9: Tolérance de lecture snake_case/camelCase (functionDeclarations) pour la sécurisation des schémas d'outils.
 # 1.8: Silence Failover UI (429/401) et routage exclusif vers logs Docker pour une UX fluide.
 # 1.7: Migration vers ECHO_SUBAGENT_CONTEXT pour l'isolation du RAG des sous-agents.
 # 1.6: Injection de sub_sid dans le payload Qdrant pour isoler le RAG des sous-agents.
@@ -156,7 +157,7 @@ class EchoGeminiClient:
 
         if "tools" in payload and isinstance(payload["tools"], list):
             for t in payload["tools"]:
-                for fn in t.get("function_declarations", []):
+                for fn in (t.get("functionDeclarations") or t.get("function_declarations") or []):
                     if "parameters" in fn:
                         clean_gemini_schema(fn["parameters"])
 

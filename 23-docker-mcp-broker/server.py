@@ -68,7 +68,8 @@ SERVICE_SCHEMAS = {
     "remote_mcp": {
         "name": "Serveurs MCP Distants (HTTP/SSE)",
         "fields": [
-            {"id": "url", "label": "URL du Serveur", "type": "text", "help": "ex: https://locataire-averti.com/mcp"},
+            {"id": "url", "label": "URL du Serveur", "type": "text", "help": "ex: https://locataire-averti.com/mcp/sse"},
+            {"id": "transport", "label": "Type de Transport", "type": "text", "help": "Saisir obligatoirement 'sse' ou 'streamable_http'."},
             {"id": "headers", "label": "En-têtes (JSON)", "type": "text", "help": "ex: {\"Authorization\": \"Bearer XXX\"}"},
             {"id": "description", "label": "Rôle", "type": "text", "help": "Sert au LLM pour savoir quand l'utiliser."}
         ]
@@ -128,7 +129,7 @@ async def proxy_mcp_route(request: Request):
         traceback.print_exc()
         
         status_code = 500
-        message = str(e)
+        message = repr(e) if not str(e).strip() else str(e)
         payload = {"status": "error", "source": "broker_internal", "message": message}
         
         # Interception dynamique de l'erreur httpx/httpx2 (HTTPStatusError)

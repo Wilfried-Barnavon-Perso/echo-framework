@@ -1,13 +1,17 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.23 (Spoofing strict Webdriver/PluginArray)
+VERSION : 9.26 (Spoofing strict Webdriver/PluginArray)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-09-27
+DATE MAJ : 2026-10-01
 
+CHANGELOG 9.26 :
+- FIX: Ajout d'un viseur sniper (croix rouge) au centre absolu de la zoom_box pour faciliter le ciblage sans calcul d'interpolation au LLM.
+CHANGELOG 9.25 :
+- FIX: Injection dynamique des étiquettes de grille vision (labels X/Y) à l'intérieur de la zoom_box pour garantir leur visibilité au LLM après le crop.
+CHANGELOG 9.24 :
+- FEATURE: Application native du crop (zoom_box) sur page.screenshot() et récupération du viewport.
 CHANGELOG 9.23 :
-- FIX: Suppression atomique du prototype webdriver et instanciation stricte de PluginArray natif (Sannysoft Fp-collect passe intégralement).
-CHANGELOG 9.22 :
 - FEAT: Masquage profond des signatures Headless (webdriver Blink, WebGL SwiftShader, window.chrome, hardwareConcurrency, outerWidth) pour évasion avancée des WAFs (Cloudflare/DataDome).
 CHANGELOG 9.21 :
 - FIX: Restauration de l'usage d'orjson (écrasé par json standard) et suppression de l'erreur AttributeError sur le decode('utf-8').
@@ -161,6 +165,8 @@ HIGHLIGHT_JS = r"""
             document.body.appendChild(cursor);
             document.addEventListener('mousemove', e => {
                 cursor.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+                window.__echo_mouse_x = Math.round(e.clientX);
+                window.__echo_mouse_y = Math.round(e.clientY);
             });
         }
         document.querySelectorAll('.echo-marker').forEach(e => e.remove());
@@ -817,6 +823,14 @@ async def browser_action(request: Request):
 
             elif action == "interact_dom":
                 a_type = params.get("action_type")
+                
+                if a_type == "click_current":
+                    logger.info(f"[{sid}] 🖱️ Interact DOM (click_current) on spot")
+                    await page.mouse.down()
+                    await asyncio.sleep(random.uniform(0.05, 0.12))
+                    await page.mouse.up()
+                    return {"status": "success", "action": a_type, "url": page.url, "message": "Pression sur place effectuée."}
+
                 idx = params.get("index")
                 x, y = params.get("x"), params.get("y")
                 text_to_type = params.get("text_to_type", "")
@@ -825,20 +839,25 @@ async def browser_action(request: Request):
                     return {"status": "error", "message": "ERREUR_PARAMETRE : Cible manquante (index ou x/y requis)."}
                 
                 if x is not None and y is not None:
-                    dsf = await page.evaluate("window.devicePixelRatio")
-                    css_x, css_y = float(x) / dsf, float(y) / dsf
-                    logger.info(f"[{sid}] 🖱️ Interact DOM ({a_type}) Coordinates: Img({x}, {y}) -> CSS({css_x}, {css_y})")
+                    css_x, css_y = float(x), float(y)
+                    logger.info(f"[{sid}] 🖱️ Interact DOM ({a_type}) Coordinates: Target CSS({css_x}, {css_y})")
                     await session.bezier_mouse_move(page, css_x, css_y)
                 
                     # Délai humain avant interaction (visée oculaire)
                     await asyncio.sleep(random.uniform(0.15, 0.4))
                 
                     if a_type == "click":
-                        await page.mouse.click(css_x, css_y)
+                        await page.mouse.down()
+                        await asyncio.sleep(random.uniform(0.05, 0.12))
+                        await page.mouse.up()
                         await asyncio.sleep(random.uniform(0.05, 0.15))
-                        await session.bezier_mouse_move(page, max(0, css_x + random.uniform(30, 100) * random.choice([1, -1])), max(0, css_y + random.uniform(30, 100) * random.choice([1, -1])))
+                        await session.bezier_mouse_move(page, max(0, css_x + random.uniform(2, 5) * random.choice([1, -1])), max(0, css_y + random.uniform(2, 5) * random.choice([1, -1])))
+                    elif a_type == "hover":
+                        pass
                     elif a_type == "type":
-                        await page.mouse.click(css_x, css_y)
+                        await page.mouse.down()
+                        await asyncio.sleep(random.uniform(0.05, 0.12))
+                        await page.mouse.up()
                         for char in text_to_type:
                             await page.keyboard.press(char)
                             delay_ms = max(50, min(300, int(random.gauss(150, 60))))
@@ -859,15 +878,17 @@ async def browser_action(request: Request):
                 
                     if a_type == "click":
                         try:
-                            await loc.click(timeout=10000)
+                            await page.mouse.down()
+                            await asyncio.sleep(random.uniform(0.05, 0.12))
+                            await page.mouse.up()
                         except Exception as e:
-                            logger.warning(f"[{sid}] Native DOM click failed, trying force: {e}")
+                            logger.warning(f"[{sid}] Manual click failed, trying force: {e}")
                             await loc.click(force=True, timeout=5000)
                         try:
                             box = await loc.bounding_box()
                             if box:
                                 await asyncio.sleep(random.uniform(0.05, 0.15))
-                                await session.bezier_mouse_move(page, max(0, box['x'] + box['width']/2 + random.uniform(30, 100) * random.choice([1, -1])), max(0, box['y'] + box['height']/2 + random.uniform(30, 100) * random.choice([1, -1])))
+                                await session.bezier_mouse_move(page, max(0, box['x'] + box['width']/2 + random.uniform(2, 5) * random.choice([1, -1])), max(0, box['y'] + box['height']/2 + random.uniform(2, 5) * random.choice([1, -1])))
                         except Exception:
                             pass
                     elif a_type == "hover":
@@ -1022,7 +1043,7 @@ async def browser_action(request: Request):
 
                 elif target in ["vision", "dom_map"]:
                     vision_grid = params.get("vision_grid", False)
-                    vision_grid_step = params.get("vision_grid_step", 100)
+                    vision_grid_step = params.get("vision_grid_step", 48)
                     await page.bring_to_front()
                     await asyncio.sleep(0.5)
                 
@@ -1061,7 +1082,16 @@ async def browser_action(request: Request):
                         except Exception as e:
                             logger.warning(f"[{sid}] Failed to extract frame: {e}")
 
+                    try:
+                        mx = int(getattr(session, 'mouse_x', 0))
+                        my = int(getattr(session, 'mouse_y', 0))
+                    except Exception:
+                        mx, my = 0, 0
+
+                    vp = page.viewport_size
                     result.update({
+                        "viewport": vp,
+                        "mouse_position": [mx, my],
                         "metadata": all_elements, 
                         "count": global_index, 
                         "url": page.url, 
@@ -1070,6 +1100,9 @@ async def browser_action(request: Request):
                     })
                 
                     ghost_page = await session.context.new_page()
+                    zoom_box = params.get("zoom_box")
+                    zb_js = f"const zb = {{x1: {int(zoom_box['x1'])}, y1: {int(zoom_box['y1'])}, x2: {int(zoom_box['x2'])}, y2: {int(zoom_box['y2'])}}};" if zoom_box else "const zb = null;"
+                    
                     if vision_grid:
                         draw_script = f"""
                         () => {{
@@ -1094,17 +1127,84 @@ async def browser_action(request: Request):
                                 document.body.appendChild(img);
                                 document.body.appendChild(canvas);
                                 const ctx = canvas.getContext('2d');
-                                ctx.font = '12px sans-serif';
+                                ctx.font = 'bold 14px monospace';
                                 ctx.textBaseline = 'top';
-                                ctx.strokeStyle = 'rgba(255, 0, 68, 0.5)';
-                                ctx.fillStyle = 'rgba(255, 0, 68, 0.8)';
+                                ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+                                ctx.fillStyle = 'white';
+                                ctx.lineWidth = 1;
+                                
+                                const drawText = (text, tx, ty) => {{
+                                    ctx.lineWidth = 4;
+                                    ctx.strokeStyle = 'black';
+                                    ctx.strokeText(text, tx, ty);
+                                    ctx.fillText(text, tx, ty);
+                                    ctx.lineWidth = 1;
+                                    ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+                                }};
+                                }};
+                                {zb_js}
+
+                                if (zb) {{
+                                    const cx = Math.floor((zb.x1 + zb.x2) / 2);
+                                    const cy = Math.floor((zb.y1 + zb.y2) / 2);
+                                    
+                                    // Viseur (Croix)
+                                    ctx.beginPath();
+                                    ctx.moveTo(cx - 20, cy);
+                                    ctx.lineTo(cx + 20, cy);
+                                    ctx.moveTo(cx, cy - 20);
+                                    ctx.lineTo(cx, cy + 20);
+                                    ctx.lineWidth = 3;
+                                    ctx.strokeStyle = 'red';
+                                    ctx.stroke();
+                                    
+                                    // Point d'impact central
+                                    ctx.beginPath();
+                                    ctx.arc(cx, cy, 4, 0, 2 * Math.PI);
+                                    ctx.fillStyle = 'red';
+                                    ctx.fill();
+                                }}
+
                                 for (let x = 0; x < canvas.width; x += {vision_grid_step}) {{
                                     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-                                    ctx.fillText(x, x + 2, 2);
+                                    if (zb && x >= zb.x1 && x <= zb.x2) {{
+                                        drawText(`x:${{x}}`, x + 4, zb.y1 + 4);
+                                    }} else {{
+                                        let start_y = (x % 300);
+                                        for (let y = start_y; y < canvas.height; y += 300) {{
+                                            if (x > 0) drawText(`x:${{x}}`, x + 4, y + 4);
+                                        }}
+                                    }}
                                 }}
                                 for (let y = 0; y < canvas.height; y += {vision_grid_step}) {{
                                     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-                                    ctx.fillText(y, 2, y + 2);
+                                    if (zb && y >= zb.y1 && y <= zb.y2) {{
+                                        drawText(`y:${{y}}`, zb.x1 + 4, y - 14);
+                                    }} else {{
+                                        let start_x = ((y + 150) % 300);
+                                        for (let x = start_x; x < canvas.width; x += 300) {{
+                                            if (y > 0) drawText(`y:${{y}}`, x + 4, y - 14);
+                                        }}
+                                    }}
+                                }}
+                                
+                                const mx = {mx};
+                                const my = {my};
+                                if (mx > 0 || my > 0) {{
+                                    const text = `[X:${{mx}}, Y:${{my}}]`;
+                                    ctx.font = 'bold 16px monospace';
+                                    const tw = ctx.measureText(text).width;
+                                    
+                                    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+                                    ctx.fillRect(mx + 12, my - 24, tw + 16, 28);
+                                    
+                                    ctx.strokeStyle = '#00ffff';
+                                    ctx.lineWidth = 2;
+                                    ctx.strokeRect(mx + 12, my - 24, tw + 16, 28);
+                                    
+                                    ctx.fillStyle = '#00ffff';
+                                    ctx.textBaseline = 'top';
+                                    ctx.fillText(text, mx + 20, my - 18);
                                 }}
                                 window.__echo_draw_done = true;
                             }};
@@ -1165,12 +1265,20 @@ async def browser_action(request: Request):
                         if done: break
                         await asyncio.sleep(0.1)
                     
+                    # Application du Crop (Zoom)
+                    zoom_box = params.get("zoom_box")
+                    clip_param = None
+                    if zoom_box:
+                        w = max(10, int(zoom_box["x2"] - zoom_box["x1"]))
+                        h = max(10, int(zoom_box["y2"] - zoom_box["y1"]))
+                        clip_param = {"x": int(zoom_box["x1"]), "y": int(zoom_box["y1"]), "width": w, "height": h}
+
                     # Compression adaptative de l'image finale annotée
                     quality_step = 95
-                    annotated_bytes = await ghost_page.screenshot(type="jpeg", quality=quality_step)
+                    annotated_bytes = await ghost_page.screenshot(type="jpeg", quality=quality_step, clip=clip_param)
                     while len(annotated_bytes) > 720000 and quality_step > 40:
                         quality_step -= 5
-                        annotated_bytes = await ghost_page.screenshot(type="jpeg", quality=quality_step)
+                        annotated_bytes = await ghost_page.screenshot(type="jpeg", quality=quality_step, clip=clip_param)
                     await ghost_page.close()
                     result["screenshot_b64"] = base64.b64encode(annotated_bytes).decode('utf-8')
                     result["url"] = page.url

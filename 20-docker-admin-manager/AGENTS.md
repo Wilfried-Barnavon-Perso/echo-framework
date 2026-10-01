@@ -13,7 +13,7 @@ Fichier monolithique (plus de 160Ko) contenant l'ensemble de la logique serveur 
 
 #### A. Gouvernance & Sécurité
 - **Révocations Granulaires & Kill-Switch** : Permet à l'administrateur de forcer l'arrêt de conteneurs (Workers ou OWUI) et de révoquer l'accès aux utilisateurs via la purge ciblée des bases de données d'authentification.
-- **Autosafety & Maintenance** : Lance de manière programmatique des commandes de nettoyage (`docker system prune`) ou l'optimisation des bases de données SQLite (requêtes `VACUUM`, `PRAGMA wal_checkpoint`).
+- **Autosafety & Maintenance** : Lance de manière programmatique des commandes de nettoyage (`docker system prune`) ou l'optimisation des bases de données SQLite (requêtes `VACUUM`, `PRAGMA wal_checkpoint`). Intègre un **Garbage Collector FS (RefCounting)** purgeant de manière asynchrone les fichiers du Vault global et les uploads résiduels via l'inspection des liens symboliques.
 
 #### B. Purge Vectorielle Asynchrone
 - **`run_semantic_pruning`** : Algorithme critique d'élagage temporel (TTL) qui purge automatiquement les vecteurs orphelins dans Qdrant et les vieilles sessions SQLite. Gère la découverte dynamique et la vérification d'existence des collections Qdrant pour éviter les crashs.

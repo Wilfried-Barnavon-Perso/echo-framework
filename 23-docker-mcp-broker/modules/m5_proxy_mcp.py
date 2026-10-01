@@ -1,9 +1,11 @@
 import asyncio
 import json
 import hashlib
+import httpx
 from contextlib import AsyncExitStack
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.client.session import ClientSession
 
 # Cache des sessions actives : cache_key -> (stack, session)
@@ -49,6 +51,8 @@ async def _get_or_create_session(service_config: dict) -> ClientSession:
                 if not url:
                     raise ValueError("URL manquante pour remote_mcp.")
 
+                transport_type = service_config.get("transport", "sse").lower().strip()
+
                 headers_raw = service_config.get("headers", "{}")
                 if isinstance(headers_raw, str):
                     try:
@@ -58,8 +62,23 @@ async def _get_or_create_session(service_config: dict) -> ClientSession:
                 else:
                     headers = headers_raw
 
-                sse_transport = await stack.enter_async_context(sse_client(url, headers=headers))
-                read_stream, write_stream = sse_transport
+                headers_lower = {k.lower(): v for k, v in headers.items()}
+                if "user-agent" not in headers_lower:
+                    headers["User-Agent"] = "antigravity/2.5.5 linux/amd64"
+
+                if transport_type == "streamable_http":
+                    http_client = httpx.AsyncClient(
+                        headers=headers, 
+                        timeout=httpx.Timeout(15.0, read=300.0)
+                    )
+                    await stack.enter_async_context(http_client)
+                    mcp_transport = await stack.enter_async_context(streamable_http_client(url, http_client=http_client))
+                    read_stream = mcp_transport[0]
+                    write_stream = mcp_transport[1]
+                else:
+                    mcp_transport = await stack.enter_async_context(sse_client(url, headers=headers, timeout=15.0))
+                    read_stream = mcp_transport[0]
+                    write_stream = mcp_transport[1]
 
             else:
                 raise ValueError(f"Type MCP non supporté : {mcp_type}")

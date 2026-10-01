@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 1.6
+version: 1.7
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.7: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations).
 # 1.6: Assignation de resource_type='aec_directive' pour les avertissements outils et purge FIFO étendue.
 # 1.5: Implémentation du FIFO destructif pour purger les aec_event de la base SQLite sans altérer les autres ressources.
 # 1.4: Protection de la QFIFO dans wrap_tool_output contre les sous-agents (is_subagent).
@@ -387,5 +388,5 @@ def convert_owui_tools(tools: Optional[List[Dict]], model_policy: str = "AUTO") 
                 "description": f.get("description", ""),
                 "parameters": params
             })
-    return [{"function_declarations": funcs}] if funcs else None
+    return [{"functionDeclarations": funcs}] if funcs else None
 

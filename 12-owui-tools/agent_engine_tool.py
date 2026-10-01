@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.22
+version: 1.23
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.23: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
 # 1.22: Transformation de calls_used en calls_remaining pour l'orchestrateur parent.
 # 1.21: Coupure stricte de l'interface utilisateur (__event_call__: None) pour forcer le mode Headless des sous-agents.
 # 1.20: Remplacement de l'injection subagent_metadata par la propagation asynchrone ECHO_SUBAGENT_CONTEXT.
@@ -522,8 +523,8 @@ async def _run_agent_loop(
             "generationConfig": get_generation_config(current_model_key)
         }
         if fn_decls:
-            payload["tools"] = [{"function_declarations": fn_decls}]
-            payload["tool_config"] = {"function_calling_config": {"mode": "AUTO"}}
+            payload["tools"] = [{"functionDeclarations": fn_decls}]
+            payload["tool_config"] = {"functionCallingConfig": {"mode": "AUTO"}}
 
         # 3. Appel API via call_cascade (clamping + thinkingConfig + cascade descendante)
         try:

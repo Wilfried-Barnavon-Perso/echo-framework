@@ -2,13 +2,13 @@
 """
 title: ECHO Echo Http
 author: Wilfried BARNAVON
-version: 1.0
-description: Client HTTP bas niveau (H2).
+version: 1.1
+description: Client HTTP bas niveau (H2). Utilisation de l'UA furtif global.
 """
 import httpx
 import time
 from typing import Dict, Optional
-from echo_constants import ECHO_HTTP_CLIENT_TIMEOUT, ECHO_HTTP_KEEPALIVE_EXPIRY, ECHO_HTTP_MAX_CONNECTIONS, ECHO_HTTP_MAX_KEEPALIVE
+from echo_constants import ECHO_HTTP_CLIENT_TIMEOUT, ECHO_HTTP_KEEPALIVE_EXPIRY, ECHO_HTTP_MAX_CONNECTIONS, ECHO_HTTP_MAX_KEEPALIVE, ECHO_STEALTH_USER_AGENT
 
 class FatalAPIError(Exception):
     """Erreur API fatale (ex: 400 Bad Request) ne nécessitant aucun backoff réseau."""
@@ -53,7 +53,7 @@ async def _get_global_client(
 def get_stealth_headers(url: Optional[str] = None) -> Dict[str, str]:
     """Génère des en-têtes HTTP de haute fidélité pour simuler un navigateur réel (Stealth)."""
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "User-Agent": ECHO_STEALTH_USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",    
         "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
         "Cache-Control": "max-age=0",

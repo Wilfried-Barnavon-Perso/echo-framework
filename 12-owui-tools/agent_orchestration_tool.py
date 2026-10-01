@@ -1,17 +1,18 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.35
+version: 5.38
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.38: Mise à jour de la docstring de forge_skill pour recommander l'usage de search_skill en amont.
+# 5.37: Ajout des outils read_skill et search_skill pour la consultation et la découverte sémantique.
+# 5.36: Fix: Initialisation manquante de EchoEvents dans delete_user_skill.
 # 5.35: Restitution explicite de rounds_remaining pour les agents supervisés.
 # 5.34: Ajout d'une mécanique simplifiée d'extension dynamique du budget d'outils via injection in-situ.
-# 5.33: Remplacement de la vérification __event_call__ par ECHO_SUBAGENT_CONTEXT pour la protection Headless de delete_user_skill.
 # 5.32: Protection de delete_user_skill contre l'invocation headless (vérification de __event_call__).
 # 5.31: Ajout du paramètre timeout_seconds (5 min par défaut) à delete_user_skill et modale auto-annulable.
-# 5.28: Ajout du paramètre require_web_grounding dans forge_skill pour actualisation experte conditionnelle.
 # 5.27: Ajout de delete_user_skill avec modale de confirmation.
 # 5.25: Nettoyage du code : suppression des imports inutilisés (PEP8).
 # 5.24: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
@@ -70,8 +71,8 @@ class Tools:
         __user__: Optional[dict] = None,
         __metadata__: dict = {}
     ) -> str:
-        """Permet au Modèle de créer ou mettre à jour une expertise (Skill). Requis avant appel d'un agent inexistant.
-        
+        """Permet au Modèle de créer ou mettre à jour une expertise (Skill). Il est fortement recommandé d'utiliser l'outil 'search_skill' au préalable pour vérifier qu'aucune expertise similaire ne couvre déjà le besoin. Requis avant appel d'un agent inexistant.
+
         :param skill_id: Identifiant technique (snake_case).
         :param name: Titre lisible.
         :param description: Description courte de l'expertise.
@@ -90,7 +91,7 @@ class Tools:
 
         user_id = __user__.get("id", "system") if __user__ else "system"
         success = save_skill(user_id, skill_id, name, description, instructions)
-        
+
         if success:
             return wrap_tool_output(text=f"✅ Skill '{name}' ({skill_id}) forgé avec succès.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         return wrap_tool_output(text=f"❌ Échec de la forge du skill '{skill_id}'.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -103,16 +104,148 @@ class Tools:
         """Permet au Modèle de lister les expertises (Skills) forgées pour obtenir les skill_id valides avant délégation."""
         user_id = __user__.get("id", "system") if __user__ else "system"
         skills = get_all_skills(user_id)
-        
+
         if not skills:
             return wrap_tool_output(text="ℹ️ Aucune expertise (Skill) n'est actuellement forgée.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-            
+
         res = "### EXPERTISES DISPONIBLES\n"
         for s in skills:
             res += f"- **ID:** `{s['id']}` | **Nom:** {s['name']}\n"
             res += f"  > *Description:* {s['description']}\n"
-            
+
         return wrap_tool_output(text=res, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def read_skill(
+        self,
+        skill_id: str,
+        __user__: Optional[dict] = None,
+        __metadata__: dict = {}
+    ) -> str:
+        """Permet au Modèle de consulter le contenu brut et détaillé d'une expertise (Skill) existante, afin d'en auditer les directives sans en déclencher l'application ni instancier de sous-agent.
+
+        :param skill_id: Identifiant technique du skill à lire.
+        """
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        chat_id = (__metadata__ or {}).get("chat_id")
+
+        content = get_skill_content(user_id, skill_id)
+
+        if not content:
+            return wrap_tool_output(
+                text=f"❌ Le skill '{skill_id}' n'existe pas.",
+                status={"status": "error"},
+                user_id=user_id,
+                chat_id=chat_id,
+                metadata=__metadata__
+            )
+
+        return wrap_tool_output(
+            text=f"### CONTENU DU SKILL `{skill_id}`\n\n```markdown\n{content}\n```",
+            status={"status": "success"},
+            user_id=user_id,
+            chat_id=chat_id,
+            metadata=__metadata__
+        )
+
+    async def search_skill(
+        self,
+        need_description: str,
+        __user__: Optional[dict] = None,
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None
+    ) -> str:
+        """Permet au Modèle d'identifier les expertises (Skills) existantes répondant à un besoin spécifique. Retourne un maximum de 3 identifiants (skill_id) classés par ordre de pertinence sémantique.
+
+        :param need_description: Description textuelle du besoin ou de la spécialité recherchée.
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        chat_id = (__metadata__ or {}).get("chat_id")
+
+        skills = get_all_skills(user_id)
+        if not skills:
+            return wrap_tool_output(
+                text="ℹ️ Aucune expertise (Skill) n'est actuellement forgée.",
+                user_id=user_id,
+                chat_id=chat_id,
+                metadata=__metadata__
+            )
+
+        catalog = [{"id": s["id"], "name": s.get("name", ""), "description": s.get("description", "")} for s in skills]
+        catalog_json = json.dumps(catalog).decode('utf-8') if isinstance(json.dumps(catalog), bytes) else json.dumps(catalog)
+
+        system_prompt = (
+            "<persona>\n"
+            "Le Modèle est un routeur sémantique expert. Ton neutre et direct.\n"
+            "</persona>\n\n"
+            "<mission>\n"
+            "Identifier parmi le catalogue de compétences (skills) fourni, les 3 (au maximum) qui correspondent le mieux au besoin utilisateur.\n"
+            "</mission>\n\n"
+            "<rules>\n"
+            "1. Si aucun skill du catalogue ne correspond de manière pertinente au besoin, le Modèle DOIT impérativement retourner un tableau vide : {\"best_matches\": []}.\n"
+            "2. Le Modèle DOIT retourner UNIQUEMENT un objet JSON valide, sans bloc Markdown, respectant strictement ce format :\n"
+            '{"best_matches": ["skill_id_1", "skill_id_2"]}\n'
+            "</rules>\n\n"
+            f"<catalogue>\n{catalog_json}\n</catalogue>"
+        )
+
+        await events.status("🔍 Recherche sémantique de l'expertise requise...")
+
+        res, _, _ = await EchoGeminiClient.call_cascade(
+            target_model_key="MODEL_FLASH",
+            payload={
+                "contents": [{"role": "user", "parts": [{"text": f"Besoin : {need_description}"}]}],
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "generationConfig": {**get_generation_config("MODEL_DISTILLATION"), "responseMimeType": "application/json"}
+            },
+            user_id=user_id,
+            metadata=(__metadata__ or {}),
+            events=events,
+            timeout=30,
+            include_thoughts=False,
+        )
+
+        if not res:
+            return wrap_tool_output(
+                text="❌ Échec de la délégation de recherche sémantique.",
+                status={"status": "error"},
+                user_id=user_id,
+                chat_id=chat_id,
+                metadata=__metadata__
+            )
+
+        candidates = res.get("candidates", [])
+        raw_response = "".join(p.get("text", "") for p in candidates[0].get("content", {}).get("parts", []) if "text" in p) if candidates else "{}"
+
+        try:
+            parsed = json.loads(raw_response)
+            best_matches = parsed.get("best_matches", [])
+        except Exception:
+            best_matches = []
+
+        if not best_matches:
+            return wrap_tool_output(
+                text="ℹ️ Aucun skill correspondant trouvé pour ce besoin.",
+                status={"status": "warning"},
+                user_id=user_id,
+                chat_id=chat_id,
+                metadata=__metadata__
+            )
+
+        matched_catalog = [s for s in catalog if s["id"] in best_matches]
+
+        md_res = "### SKILLS CORRESPONDANTS\n"
+        for s in matched_catalog:
+            md_res += f"- **ID:** `{s['id']}` | **Nom:** {s['name']}\n  > *Description:* {s['description']}\n"
+
+        return wrap_tool_output(
+            text=md_res,
+            status={"status": "success"},
+            user_id=user_id,
+            chat_id=chat_id,
+            metadata=__metadata__
+        )
 
     async def delete_user_skill(
         self,
@@ -125,12 +258,13 @@ class Tools:
     ) -> str:
         """Permet de supprimer une expertise (Skill) de l'utilisateur.
         Demande obligatoirement l'accord de l'utilisateur via une modale avant de procéder.
-        
+
         :param skill_id: L'identifiant technique (nom du dossier) du skill à supprimer.
         :param timeout_seconds: Délai maximum en secondes avant annulation automatique de la suppression (par défaut 300s).
         """
+        events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
-        
+
         content = get_skill_content(user_id, skill_id)
         if not content:
             return wrap_tool_output(text=f"Le skill '{skill_id}' n'existe pas.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -140,10 +274,10 @@ class Tools:
             ⚠️ Confirmez-vous la suppression définitive de l'expertise <b>{skill_id}</b> ?
         </div>
         <pre style="
-            background: rgba(0,0,0,0.1); 
-            padding: 10px; 
-            border-radius: 5px; 
-            white-space: pre-wrap; 
+            background: rgba(0,0,0,0.1);
+            padding: 10px;
+            border-radius: 5px;
+            white-space: pre-wrap;
             word-break: break-word;
             max-height: 40vh; /* Ascenseur interne */
             overflow-y: auto;
@@ -152,7 +286,7 @@ class Tools:
             border: 1px solid rgba(128,128,128,0.2);
         ">{content}</pre>
         '''
-        
+
         # orjson.dumps retourne des bytes, il faut décoder en utf-8 pour l'injection JS
         msg_escaped = json.dumps(msg_html).decode('utf-8')
         modals_injection = EchoUI.get_custom_modals_js()
@@ -212,7 +346,7 @@ class Tools:
         Rapport exhaustif multi-perspectives. Minimum 2 experts requis. IMPLIQUE appel à `forge_skill` si experts manquants.
         Le conseil reste ouvert (close_on_finish=False) pour permettre de le relancer avec le même council_id. Le Modèle DOIT utiliser close_council une fois la délibération définitivement terminée.
         DIRECTIVE ORCHESTRATEUR: Le résultat n'est pas automatiquement affiché. Le Modèle appelant DOIT restituer l'intégralité du rapport dans sa réponse finale.
-        
+
         :param question: Sujet de délibération.
         :param participants: Chaîne CSV de `skill_id` (ex: expert_1, dev_py) (min 2, [ p * r ] <= COUNCIL_MAX_PR_COMPLEXITY).
         :param council_id: Identifiant obligatoire pour conserver et reprendre le conseil plus tard.
@@ -492,7 +626,7 @@ class Tools:
         IMPLIQUE appel à `forge_skill` si les experts assignés sont manquants.
         FORTEMENT RECOMMANDÉ : Inscrire cet objectif dans un plan formel via le `strategic_planner` (`build_plan` / `update_plan`) avant de lancer la délégation.
         La tâche reste ouverte par défaut (close_on_finish=False). Le Modèle DOIT utiliser close_supervised_task une fois définitivement terminée.
-        
+
         :param objective: Mission globale.
         :param workers: Mapping JSON {worker_id_libre: {"task": "...", "skill_id": "..."}}.
         :param close_on_finish: False par défaut pour reprise de contexte. Mettre à True pour détruire immédiatement.
@@ -569,7 +703,7 @@ class Tools:
                     budget_exhausted = True
             else:
                 deliverables[w_id] = str(result)
-                
+
             if budget_exhausted:
                 deliverables[w_id] += "\n\n[⚠️ AVERTISSEMENT SYSTÈME : Ce worker a épuisé son budget d'appels d'outils et a été interrompu. Si la direction de son travail est bonne et que la tâche justifie d'être poursuivie, le Superviseur DOIT retourner un statut `needs_correction` avec des directives pour la suite. La relance lui octroiera automatiquement un nouveau budget.]"
 
@@ -587,7 +721,7 @@ class Tools:
             )
 
             current_time = datetime.datetime.now().isoformat()
-            
+
             critic_prompt = (
                 "<persona>\n"
                 "Le Modèle est un évaluateur critique. Ton : Professionnel, analytique, sec. Proscrire toute formule de politesse.\n"
@@ -717,7 +851,7 @@ class Tools:
                         budget_exhausted = True
                 else:
                     deliverables[w_id] = str(result)
-                    
+
                 if budget_exhausted:
                     deliverables[w_id] += "\n\n[⚠️ AVERTISSEMENT SYSTÈME : Ce worker a épuisé son budget d'appels d'outils et a été interrompu. Si la direction de son travail est bonne et que la tâche justifie d'être poursuivie, le Superviseur DOIT retourner un statut `needs_correction` avec des directives pour la suite. La relance lui octroiera automatiquement un nouveau budget.]"
 
@@ -729,7 +863,7 @@ class Tools:
         )
 
         current_time = datetime.datetime.now().isoformat()
-        
+
         consolidation_prompt = (
             "<persona>\n"
             "Le Modèle est un architecte intégrateur expert. Ton : Professionnel, technique, sec. Proscrire toute formule de politesse.\n"

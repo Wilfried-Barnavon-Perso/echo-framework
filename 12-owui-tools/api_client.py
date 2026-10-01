@@ -10,7 +10,7 @@ description: Composant système interne : ECHO Universal API Client.
 # 1.6: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
 # 1.7: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
-import requests
+import httpx
 import orjson as json
 import sys
 import socket
@@ -51,7 +51,7 @@ class Tools:
         except Exception:
             return False
 
-    def call_api(
+    async def call_api(
         self,
         url: str,
         method: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] = "GET",
@@ -62,6 +62,10 @@ class Tools:
     ) -> str:
         """
         Requête HTTP universelle. Optionnel : headers, body.
+        
+        DIRECTIVE STRICTE : Cet outil NE DOIT JAMAIS être utilisé pour initier ou forcer des 
+        appels vers un serveur MCP (sauf pour un test technique réseau préalable de type ping).
+        
         :param url: URL cible sécurisée.
         :param method: (Optionnel) GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS (Défaut: GET).
         :param headers: (Optionnel) Dictionnaire Headers.
@@ -74,13 +78,13 @@ class Tools:
         actual_body = body if body else None
 
         try:
-            response = requests.request(
-                method=method.upper(),
-                url=url,
-                headers=actual_headers,
-                json=actual_body,
-                timeout=15
-            )
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.request(
+                    method=method.upper(),
+                    url=url,
+                    headers=actual_headers,
+                    json=actual_body
+                )
             
             status_meta = {"status": response.status_code, "url": url, "method": method}
             

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 sys.path.append("/app/backend/echo_libs")
 from echo_state_manager import EchoStateManager
 from echo_ui import EchoUI
+from echo_events import EchoEvents
 
 class Tools:
     class Valves(BaseModel):
@@ -43,7 +44,7 @@ class Tools:
     async def list_available_services(self, __user__: dict = None) -> str:
         """
         Permet au modèle de lister de manière exhaustive les noms de services actuellement configurés dans le coffre-fort.
-        Le Modèle DOIT obligatoirement utiliser cette fonction pour identifier le service cible (ex: 'n8n_workflows') avant toute invocation de 'list_identities'.
+        DIRECTIVE : Le Modèle doit utiliser cet outil puis 'list_identities' pour vérifier si un serveur MCP local ou distant approprié est déjà à sa disposition et relatif à la tâche en cours.
         """
         if not __user__: return "Erreur: Auth requise."
         state = self._init_vault(__user__["id"])
@@ -83,14 +84,21 @@ class Tools:
             return f"Aucun compte trouvé pour '{service}'."
         return f"[{service}] " + ", ".join(result)
 
-    async def manage_identity(self, action: str, service: str, account_id: str, credentials_json: str = "", __user__: dict = None, __event_call__: Any = None) -> str:
+    async def manage_identity(self, action: str, service: str, account_id: str, credentials_json: str = "", __user__: dict = None, __event_emitter__: Any = None, __event_call__: Any = None) -> str:
         """
-        Ajoute, modifie ou supprime un serveur public distant (MCP) dans le registre sécurisé du système. Permet au modèle d'étendre dynamiquement ses propres capacités cognitives. Si la résolution d'une tâche exige un outil inexistant localement, permet au modèle d'effectuer une recherche web pour identifier un serveur MCP pertinent, puis d'invoquer cette fonction pour l'installer à la volée. Action = 'add', 'update' ou 'delete'. Une demande d'autorisation explicite est envoyée à l'utilisateur avant toute modification.
+        Ajoute, modifie ou supprime une identité/serveur distant dans le Vault. Action = 'add', 'update' ou 'delete'.
+        
+        RÈGLES POUR 'credentials_json' :
+        - Pour tous les services : Le JSON DOIT impérativement inclure une clé "description" expliquant clairement la finalité du compte ou serveur (ex: "Serveur MCP donnant accès à l'Open Data français").
+        - Spécifique à 'remote_mcp' : Le JSON DOIT contenir la clé "url". Il DOIT également contenir la clé "transport" valant soit "sse" soit "streamable_http" (à déduire via recherche documentaire). La clé "headers" est optionnelle.
+        Exemple : {"description": "...", "url": "https://api.com/mcp", "transport": "streamable_http", "headers": {"Authorization": "Bearer XXX"}}
         """
         if not __user__: return "Erreur: Contexte OWUI manquant."
         from echo_constants import ECHO_SUBAGENT_CONTEXT
         if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
             return "Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de gérer les identités."
+        
+        events = EchoEvents(__event_emitter__, __event_call__)
         
         if action in ["add", "update"]:
             try:

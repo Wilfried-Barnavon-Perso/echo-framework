@@ -1,11 +1,12 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.68
+version: 5.69
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.69: Factorisation du Stealth User-Agent.
 # 5.68: Ajout des constantes ECHO_CODEX_EDIT_TIMEOUT et ECHO_CODEX_MAX_AI_PASSES (UCTP).
 # 5.67: Fix - Documentation de ECHO_SYNC_EXCLUDE_LIST comme bouclier anti-freeze UI pour le Codex.
 # 5.66: Introduction de ECHO_SUBAGENT_CONTEXT (ContextVars) pour propager l'identité asynchrone à travers Open WebUI.
@@ -71,6 +72,7 @@ ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 _AGY_IDE_VERSION = "2.5.5"  # Miroir de product.json:ideVersion — à synchroniser lors des mises à jour
 ECHO_USER_AGENT             = f"antigravity/{_AGY_IDE_VERSION}"
 ECHO_AGY_USER_AGENT         = f"antigravity/{_AGY_IDE_VERSION} linux/amd64"
+ECHO_STEALTH_USER_AGENT     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 
 # Points d'accès Locaux (Souveraineté)
 ECHO_EMBEDDING_URL = "http://echo-embedding:7997/v1"
@@ -610,6 +612,8 @@ DEFAULT_EDGE_EMBEDDING_TIMEOUT = 180
 ECHO_MAX_CONTEXT_SIZE = 1048576
 CONTEXT_WARNING_THRESHOLD = 0.80  # Alerte jaune
 CONTEXT_TRUNCATE_THRESHOLD = 0.90 # Alerte rouge et Troncature
+PRUNE_CONTENT_THRESHOLD = 60000   # Seuil de tolérance (caractères) pour la troncature des UI brutes (env. 15k tokens)
+DEFAULT_VISION_GRID_STEP = 48     # Pas du maillage (pixels) pour la grille de vision spatiale (Anti-bot/Captcha)
 CHARS_PER_TOKEN = 4               # Heuristique standard
 
 # Limite maximale (en secondes) pour le Wait Timer Généraliste

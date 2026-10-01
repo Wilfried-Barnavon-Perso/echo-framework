@@ -2,9 +2,14 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.121 (Fix Sonde Qdrant)
---- CHANGELOG 5.120 ---
+VERSION : 5.123 (Garbage Collector BDD)
+--- CHANGELOG 5.123 ---
+- Feature : Ajout de la Phase 4 (Synchronisation DB). Expurgation atomique de la table `file` d'Open-WebUI pour éliminer les fichiers fantômes supprimés par le GC FS.
+--- CHANGELOG 5.122 ---
+- Feature : Remplacement de l'élagage des fichiers orphelins (supprimé en 5.105) par un Garbage Collector FS (RefCounting). Purge asynchrone des fichiers du Vault Global et des uploads résiduels via inspection des liens symboliques.
+--- CHANGELOG 5.121 ---
 - Fix (Critique) : Assouplissement de la sonde Qdrant dans run_semantic_pruning pour interroger `/collections` de manière globale. Cela empêche l'inhibition silencieuse de la purge vectorielle si la collection META_ARTIFACTS n'est pas encore créée (ex: lors de l'usage exclusif du RAG conversationnel).
+--- CHANGELOG 5.120 ---
 --- CHANGELOG 5.119 ---
 - Fix : Réactivation du N8N Safeguard (Whitelist GC) désactivé en v5.118 suite
   au changement N8N 2.34.6. L'API Worker /prune est opérationnelle depuis
@@ -726,9 +731,65 @@ def _run_semantic_pruning():
                                 if chat_id not in db_valid_chats:
                                     shutil.rmtree(os.path.join(user_chats_dir, cdir))
                                     orphans += 1
-            
 
-            
+                # --- A.bis Purge Granulaire des Fichiers (RefCounting FS) ---
+                MAINTENANCE_STATE["status"] = "Garbage Collection des fichiers (FS)..."
+                grace_period = time.time() - 900  # Carence de 15 minutes (900s)
+                
+                # Étape 1 : Cartographier tous les symlinks valides dans les chats existants
+                active_symlink_targets = set()
+                for folder in valid_ids:
+                    user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
+                    if os.path.exists(user_chats_dir):
+                        for cdir in os.listdir(user_chats_dir):
+                            if cdir in db_valid_chats:
+                                chat_files_dir = os.path.join(user_chats_dir, cdir, "files")
+                                if os.path.exists(chat_files_dir):
+                                    for f_name in os.listdir(chat_files_dir):
+                                        f_path = os.path.join(chat_files_dir, f_name)
+                                        if os.path.islink(f_path):
+                                            try:
+                                                active_symlink_targets.add(os.path.realpath(f_path))
+                                            except Exception:
+                                                pass
+                
+                # Étape 2 : Purger les fichiers du Vault Global (fichiers originaux/dérivés orphelins)
+                for folder in valid_ids:
+                    user_files_dir = os.path.join(ECHO_USERS_ROOT, folder, "files")
+                    if os.path.exists(user_files_dir):
+                        for f_name in os.listdir(user_files_dir):
+                            f_path = os.path.join(user_files_dir, f_name)
+                            if os.path.isfile(f_path) and not os.path.islink(f_path):
+                                if f_path not in active_symlink_targets:
+                                    # Vérification de l'âge pour éviter la suppression d'un upload en cours
+                                    if os.path.getmtime(f_path) < grace_period:
+                                        try:
+                                            os.remove(f_path)
+                                            orphans += 1
+                                        except Exception:
+                                            pass
+
+                # Étape 3 : Nettoyer le dossier UPLOADS_DIR (Fichiers en dur et Liens morts)
+                if os.path.exists(UPLOADS_DIR):
+                    for f_name in os.listdir(UPLOADS_DIR):
+                        f_path = os.path.join(UPLOADS_DIR, f_name)
+                        if os.path.islink(f_path):
+                            # os.path.exists() retourne False sur un Dead Symlink
+                            if not os.path.exists(f_path):
+                                try:
+                                    os.unlink(f_path)
+                                    orphans += 1
+                                except Exception:
+                                    pass
+                        elif os.path.isfile(f_path):
+                            # Fichier physique orphelin (non converti en symlink par echo_ingestion)
+                            if os.path.getmtime(f_path) < grace_period:
+                                try:
+                                    os.remove(f_path)
+                                    orphans += 1
+                                except Exception:
+                                    pass
+
             # --- B. Purge Temporelle des Souvenirs & Garbage Collection (Qdrant) ---
             MAINTENANCE_STATE["status"] = "Purge Vectorielle (Qdrant)..."
             if HAS_HTTPX and valid_ids:
@@ -786,6 +847,33 @@ def _run_semantic_pruning():
                         qdrant_synced = True
                 except Exception as e:
                     print(f"[ECHO-LIFECYCLE] ❌ Erreur Qdrant : {e}")
+
+            # --- C. Synchronisation Base de Données (Purge des Fichiers Fantômes) ---
+            MAINTENANCE_STATE["status"] = "Synchronisation BDD (Fichiers)..."
+            try:
+                with sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True, timeout=10.0) as conn:
+                    db_files = conn.execute("SELECT id, user_id FROM file").fetchall()
+                    orphans_db = 0
+                    
+                    for file_id, file_user_id in db_files:
+                        user_files_dir = os.path.join(ECHO_USERS_ROOT, str(file_user_id), "files")
+                        file_exists_on_disk = False
+                        
+                        if os.path.exists(user_files_dir):
+                            for f_name in os.listdir(user_files_dir):
+                                if f_name.startswith(str(file_id)):
+                                    file_exists_on_disk = True
+                                    break
+                        
+                        if not file_exists_on_disk:
+                            conn.execute("DELETE FROM file WHERE id = ?", (file_id,))
+                            orphans_db += 1
+                            
+                    if orphans_db > 0:
+                        conn.commit()
+                        print(f"🧹 [ECHO-GC] {orphans_db} fichiers fantômes purgés de webui.db")
+            except Exception as e:
+                print(f"⚠️ [ECHO-GC] Erreur lors de la synchronisation BDD (Fichiers) : {e}")
         except Exception as e:
             print(f"[ECHO-LIFECYCLE] ❌ Erreur DB/Espace Personnel : {e}")
         

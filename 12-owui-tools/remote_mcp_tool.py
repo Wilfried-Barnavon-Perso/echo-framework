@@ -53,7 +53,11 @@ class Tools:
 
     async def list_remote_mcp_tools(self, server_alias: str, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None, __event_call__: Any = None) -> dict:
         """
-        Interroge un serveur MCP (enregistré dans le Vault) pour obtenir la liste de ses capacités et schémas d'outils.
+        Le Model Context Protocol (MCP) est l'interface principale du Modèle pour interagir avec le monde réel (Bases de données, APIs, Outils externes). Utilisez cet outil pour découvrir dynamiquement les capacités offertes par un serveur distant.
+        
+        DIRECTIVE ABSOLUE : Avant de tenter de configurer ou d'appeler un nouveau serveur MCP distant, 
+        le Modèle DOIT obligatoirement chercher la documentation officielle du fournisseur afin de 
+        trouver le format exact de l'URL (ex: endpoint /sse) et les modalités d'authentification.
         """
         if not __user__:
             return wrap_tool_output(text="Erreur : Contexte manquant.", status={"status": "error"})

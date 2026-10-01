@@ -1,11 +1,17 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.26
+version: 11.36
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 11.36: Modification de la consigne d'action_zoom_in pour exiger la vérification stricte du viseur rouge.
+# 11.35: Intégration du système de ciblage par zoom itératif et gestion de la rétention mémoire (is_zooming).
+# 11.34: Injection Télémétrique Absolue (mouse_position) dans le payload JSON pour fiabiliser le calcul balistique.
+# 11.29: Affinement du maillage spatial (vision_grid_step=48) pour optimiser l'interpolation des LLMs sur les Anti-Bots.
+# 11.28: Refonte du Garbage Collector d'interface (Filtre Universel + Troncature Intelligente 60k).
+# 11.27: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
 # 11.26: Fix - Ajout du log explicite de l'exception dans _deploy_navigation_monitor pour faciliter le debug de l'écriture SQLite/Disque.
 # 11.25: Fix - Migration intégrale des captures complètes en JPEG pour réduire l'empreinte mémoire et résoudre la saturation WebSocket 1Mo.
 # 11.14: Descente Cognitive - Injection dynamique de action_analyze_page et action_archive_page dans BROWSER_TOOLS_SCHEMA pour rendre le Sous-Agent autonome, et correction d'un bug de payload sur inspect_page.
@@ -46,7 +52,7 @@ from echo_paths import generate_echo_file_id, get_echo_session_path
 from echo_gemini_client import EchoGeminiClient
 from echo_ui import EchoUI
 from echo_browser_lib import EchoBrowserLib, BROWSER_TOOLS_SCHEMA, req_to_browser
-from echo_constants import FILE_INGESTION_STATUS, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE
+from echo_constants import FILE_INGESTION_STATUS, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE, PRUNE_CONTENT_THRESHOLD, DEFAULT_VISION_GRID_STEP
 
 async def _verify_engine_status(timeout: int, chat_id: str, user_id: str, u_valves: Any, events: EchoEvents) -> bool:
     res = await req_to_browser(timeout, "/action", {"session_id": chat_id, "action": "ping"}, user_id)
@@ -138,7 +144,7 @@ class Tools:
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
             return wrap_tool_output(text="❌ Navigateur indisponible.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid, vision_grid_step=getattr(u_valves, 'VISION_GRID_STEP', 100))
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid, vision_grid_step=getattr(u_valves, 'VISION_GRID_STEP', DEFAULT_VISION_GRID_STEP))
         registry = browser.get_registry()
         
         sid = f"thread_web_{uuid.uuid4().hex[:8]}"
@@ -163,7 +169,12 @@ class Tools:
             f"<objective>\n{task_objective}\n</objective>\n\n"
             "<rules>\n"
             "1. PERCEPTION GLOBALE : Le Modèle PEUT demander simultanément plusieurs extractions de l'état de la page en un seul tour via `action_inspect_page` pour accélérer sa compréhension.\n"
-            "2. HIÉRARCHIE D'INTERACTION : 1) Tenter d'abord `action_interact_a11y` sur l'arbre A11y (utiliser `method='role'` ET `name` pour cibler précisément un bouton/lien, ou `method='text'` pour du texte). 2) Si l'élément est complexe, utiliser l'index de la `dom_map` avec `action_interact_dom`. 3) En dernier recours ou pour des vérifications humaines (captchas, anti-bots), utiliser les coordonnées (x, y) d'une inspection vision avec grille.\n"
+            "2. HIÉRARCHIE D'INTERACTION : 1) Privilégier `action_interact_a11y` (utiliser `method='role'` ET `name` pour cibler précisément un bouton/lien, ou `method='text'` pour du texte). 2) Repli sur `action_interact_dom` (Index `dom_map`). 3) Face aux Anti-Bots (ex: Cloudflare), application stricte du PROTOCOLE SNIPER :\n"
+            "   - A) HOVER : Approche spatiale via `action_interact_dom(action_type='hover', x=..., y=...)`.\n"
+            "   - B) GRID : Requête d'inspection via `vision_grid=True`.\n"
+            "   - C) ANALYSE (OBLIGATOIRE) : Dès la réception de la grille, une évaluation verbale exhaustive DOIT être formulée dans la réflexion : lecture du champ JSON `mouse_position` (tes coordonnées actuelles) ET calcul explicite du décalage (Delta X/Y) vers le centre géométrique de la cible visible sur l'image.\n"
+            "   - D) ZOOM (OPTIONNEL) : Si la cible est trop dense/petite pour estimer précisément X/Y, appelle `action_zoom_in(x1, y1, x2, y2)`. Le système rognera l'image sur cette zone et calculera le centre exact. Si la cible y est centrée, utilise ces coordonnées avec `action_interact_dom`.\n"
+            "   - E) TIR : Si le curseur est strictement DANS la cible, exécution de `action_interact_dom(action_type='click_current')` (SANS coordonnée). Sinon, itération de l'étape A avec les coordonnées corrigées.\n"
             "3. ACTIONS GROUPÉES : Le Modèle PEUT grouper plusieurs actions non-mutantes (ex: remplir plusieurs champs). Cependant, il NE DOIT PAS enchaîner une action si la précédente risque de modifier drastiquement la page (soumission, navigation). Une action mutante DOIT être la dernière du lot.\n"
             "4. OVERLAYS & POP-UPS : Si une bannière bloque la navigation (cookies, popup), la priorité absolue du Modèle est d'utiliser `action_interact_dom(action_type='click')` ou `action_interact_a11y` pour s'en débarrasser.\n"
             "5. FORMULAIRES : Remplir les champs avec `action_interact_dom(action_type='type')`. Exécuter `action_browser_control(command='pause')` pour attendre une liste d'autocomplétion. Si la liste apparaît, cliquer dessus. Sinon, valider avec `action_browser_control(command='press_key', value='Enter')`.\n"
@@ -172,6 +183,7 @@ class Tools:
             "8. RESTRICTION DE RECHERCHE : Il est STRICTEMENT INTERDIT d'utiliser le navigateur pour effectuer une recherche sur un moteur de recherche généraliste (Google, Bing, etc.). Le navigateur est réservé à l'interaction sur une URL précise.\n"
             "9. SYNTHÈSE : La synthèse finale DOIT être une phrase complète. Il est STRICTEMENT INTERDIT de renvoyer uniquement un nombre ou un mot isolé.\n"
             "10. SATURATION : Si une balise <system_alert> de saturation apparaît, le Modèle DOIT clore ce tour en écrivant un texte libre commençant par [SATURATION_CONTEXTE] suivi d'une synthèse détaillée des textes lus et de ses avancées. Il NE DOIT PAS appeler d'outils ce tour-ci.\n"
+            "11. MÉMOIRE ET PRISE DE NOTES : Le système détruit ou tronque les données brutes massives des pages précédentes pour économiser la mémoire. Avant de changer de page ou d'action, le Modèle DOIT rédiger dans sa réponse texte les informations clés et un court résumé, car son propre texte servira de guide exclusif pour ses prochains tours.\n"
             "</rules>"
         )
 
@@ -195,7 +207,9 @@ class Tools:
             else:
                 import orjson as json
                 dom_text = json.dumps(dom_data).decode('utf-8')[:60000]
-                parts.append({"text": f"Voici les éléments interactifs actuels (Carte DOM) :\n{dom_text}"})
+                viewport = res_view_dict.get("viewport")
+                vp_text = f"\nDimensions de l'écran (Viewport) : {viewport['width']}x{viewport['height']} pixels." if viewport else ""
+                parts.append({"text": f"Voici les éléments interactifs actuels (Carte DOM) :{vp_text}\n{dom_text}"})
                 
             nonlocal vision_requested
             if use_vision and vision_requested and res_view_dict.get("screenshot_b64"):
@@ -205,34 +219,40 @@ class Tools:
                 
             history.append({"role": "user", "parts": parts})
             state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", parts)
-        def prune_heavy_context(history_list, threshold: int):
-            """Élagage proactif : purge les cartes DOM, A11y et images obsolètes pour éviter le Token Bloat et accélérer l'inférence."""
+        def prune_heavy_context(history_list, threshold: int, is_zooming: bool = False):
+            """Élagage proactif : Filtre universel avec seuil de tolérance élevé et troncature intelligente pour éviter le Token Bloat."""
+            heavy_keys = ["dom_map", "a11y_tree", "content", "html", "search_dom"]
+            
             for msg in history_list:
-                # Purge de la vision (inlineData est au niveau racine de msg["parts"], pas dans functionResponse)
-                if "parts" in msg:
+                # Purge de la vision (inlineData) sauf si on est en plein cycle de zoom
+                if "parts" in msg and not is_zooming:
                     msg["parts"] = [p for p in msg["parts"] if "inlineData" not in p]
                     
                 for part in msg.get("parts", []):
-                    # Purge dans les retours d'outils (functionResponse)
+                    # Purge ou Troncature dans les retours d'outils
                     if "functionResponse" in part:
                         fr = part["functionResponse"]
                         resp = fr.get("response", {})
                         if isinstance(resp, dict):
-                            if "dom_map" in resp and resp["dom_map"] != "[PURGED]":
-                                if len(str(resp["dom_map"])) > threshold:
-                                    resp["dom_map"] = "[PURGED]"
-                            # Préservation intégrale des gros blocs de texte (content) pour éviter l'amnésie sémantique.
+                            for key in heavy_keys:
+                                if key in resp and "[PURGED" not in str(resp[key]) and "[TRUNCATED" not in str(resp[key]):
+                                    if isinstance(resp[key], str) and len(resp[key]) > threshold:
+                                        resp[key] = resp[key][:threshold] + "\n... [TRUNCATED_TO_PREVENT_BLOAT]"
+                                    elif len(str(resp[key])) > threshold:
+                                        resp[key] = "[PURGED_OBSOLETE_UI_STATE]"
                                 
-                    # Purge du DOM initial en texte brut (push_state)
+                    # Troncature du DOM initial en texte brut (push_state)
                     if "text" in part:
                         text = part["text"]
-                        if text.startswith("Voici les éléments interactifs actuels") and "[PURGED" not in text:
+                        if text.startswith("Voici les éléments interactifs actuels") and "[TRUNCATED" not in text:
                             if len(text) > threshold:
-                                part["text"] = "Voici les éléments interactifs actuels (Carte DOM) :\n[PURGED]"
+                                part["text"] = text[:threshold] + "\n... [TRUNCATED_TO_PREVENT_BLOAT]"
 
         push_state(res_view)
 
         iterations = 0
+        zoom_attempts = 0
+        is_zooming = False
         
         # Injection du Proxy Live Asynchrone
         stop_streaming = asyncio.Event()
@@ -305,8 +325,8 @@ class Tools:
 
                 payload = {
                     "contents": history,
-                    "tools": [{"function_declarations": BROWSER_TOOLS_SCHEMA + schema_extensions}],
-                    "tool_config": {"function_calling_config": {"mode": "AUTO"}}
+                    "tools": [{"functionDeclarations": BROWSER_TOOLS_SCHEMA + schema_extensions}],
+                    "tool_config": {"functionCallingConfig": {"mode": "AUTO"}}
                 }
 
                 model = clamp_model(target_model_key, __metadata__, user_id=uid)
@@ -362,10 +382,25 @@ class Tools:
                                 if action_res.get("_trigger_vision"):
                                     vision_requested = True
                                     grid = action_res.get("grid", False)
+                                    zb = action_res.get("zoom_box")
+                                    
+                                    if action_res.get("is_zoom"):
+                                        is_zooming = True
+                                        zoom_attempts += 1
+                                        cx, cy = action_res.get('cx'), action_res.get('cy')
+                                        _resp = {"status": "success", "message": f"Zoom appliqué (Essai {zoom_attempts}/3). L'image jointe est rognée sur ta zone. Un VISEUR ROUGE a été dessiné au centre absolu (X={cx}, Y={cy}). Si le point central de ce viseur est STRICTEMENT sur ta cible, utilise action_interact_dom(x={cx}, y={cy}, action_type='click'). S'il est à côté, NE CLIQUE PAS : effectue un nouveau action_zoom_in plus serré centré sur ta cible."}
+                                    elif action_res.get("is_zoom_out"):
+                                        is_zooming = False
+                                        zoom_attempts = 0
+                                        _resp = {"status": "success", "message": "Zoom annulé. Retour à la vue globale."}
+                                    else:
+                                        _resp = {"status": "success", "message": "Capture d'écran demandée. Elle est jointe à ce message."}
+                                        
                                     if grid:
-                                        last_view = await browser.vision_grid()
+                                        last_view = await browser._action("inspect_page", {"target": "vision", "vision_grid": True, "vision_grid_step": browser.vision_grid_step, "zoom_box": zb})
                                     else:
                                         last_view = await browser.highlight()
+                                        
                                     # On déploie avec highlight() spécifiquement pour le moniteur visuel, car la grille ne possède pas les hitboxes sémantiques.
                                     hud_view = await browser.highlight() if grid else last_view
                                     if is_last_tool:
@@ -376,10 +411,12 @@ class Tools:
                                         except: pass
                                     
                                     await _deploy_navigation_monitor(hud_view, chat_id, uid, u_valves, events)
-                                    _resp = {"status": "success", "message": "Capture d'écran demandée. Elle est jointe à ce message."}
                                     last_fn_name = fn_name
-                                
+                                    
                                 elif action_res.get("status") != "error":
+                                    if fn_name in ["action_interact_dom", "action_interact_a11y", "action_browser_control"]:
+                                        is_zooming = False
+                                        zoom_attempts = 0
                                     if is_last_tool:
                                         if "metadata" in action_res and "screenshot_b64" in action_res:
                                             last_view = action_res
@@ -464,8 +501,8 @@ class Tools:
                     if estimate_token_size(history) > ECHO_MAX_CONTEXT_SIZE * 0.40:
                         response_parts.append({"text": "<system_alert>SATURATION DU CONTEXTE ATTEINTE. Appliquez la Règle 10.</system_alert>"})
                     
-                    # Élagage des vieux contextes lourds (DOM, A11y, Images) avant d'injecter la nouvelle réponse
-                    prune_heavy_context(history, getattr(u_valves, 'PRUNE_CONTENT_THRESHOLD', 1000))
+                    # Élagage des vieux contextes lourds (Seuil de tolérance généreux via constante centrale)
+                    prune_heavy_context(history, getattr(u_valves, 'PRUNE_CONTENT_THRESHOLD', PRUNE_CONTENT_THRESHOLD), is_zooming)
                 
                     history.append({"role": "user", "parts": response_parts})
                     state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", response_parts)

@@ -1,12 +1,13 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.72
+version: 192.73
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.73: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
 # 192.72: Ajout d'un statut par défaut 'Traitement en cours' pour rassurer l'utilisateur.
 # 192.71: Désactivation des logs de diagnostic (print) du Fast-Track.
 # 192.70: Injection de logs de diagnostic (print flush=True) dans le Coupe-Circuit (Fast-Track) pour tracker les tâches silencieuses (Follow-ups).
@@ -919,12 +920,13 @@ class Pipe:
                         }
                     }
                     if not tools:
-                        tools = [{"function_declarations": []}]
-                    tools[0]["function_declarations"].append(escalation_tool)
+                        tools = [{"functionDeclarations": []}]
+                    decl_key = "functionDeclarations" if "functionDeclarations" in tools[0] else "function_declarations"
+                    tools[0][decl_key].append(escalation_tool)
 
             if tools:
                 payload["tools"] = tools
-                payload["tool_config"] = {"function_calling_config": {"mode": "AUTO"}}
+                payload["tool_config"] = {"functionCallingConfig": {"mode": "AUTO"}}
 
             if orch.logger:
                 orch.logger.log("google_request", payload, metadata={"cascade_attempt": cascade_attempt, "model": target_model})

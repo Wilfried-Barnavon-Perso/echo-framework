@@ -1,23 +1,24 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 1.12
+version: 1.14
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.14: Mise à jour description action_zoom_in pour mentionner le VISEUR ROUGE.
+# 1.13: Ajout de action_zoom_in et action_zoom_out pour le ciblage géométrique de précision (Multimodal).
 # 1.11: Précision sur les vérifications humaines pour l'usage des coordonnées X/Y et grille vision.
 # 1.10: Optim - Refonte des descriptions d'outils pour autoriser les appels parallèles (suppression de la notion de niveaux stricts).
 # 1.9: Ajout de l'action_type `download` pour supporter le téléchargement de fichiers via Playwright.
 # 1.7: Ajout du paramètre optionnel `name` dans `action_interact_a11y` pour le ciblage précis des rôles.
-# 1.6: Refonte de l'API avec intégration de l'arbre a11y_tree et hiérarchie stricte.
 
 import httpx
 import logging
 from typing import Dict, Callable
 
 # On suppose que echo_constants est disponible dans le chemin PYTHONPATH (/app/backend/echo_libs)
-from echo_constants import NAVIGATION_ENGINE_URL
+from echo_constants import NAVIGATION_ENGINE_URL, DEFAULT_VISION_GRID_STEP
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,25 @@ BROWSER_TOOLS_SCHEMA = [
             },
             "required": ["command"]
         }
+    },
+    {
+        "name": "action_zoom_in",
+        "description": "Rogne (zoom) sur une zone de l'écran. L'image renvoyée contiendra un VISEUR ROUGE en son centre. S'il ne pointe pas sur la cible, rezoomer plus serré.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "x1": {"type": "integer", "description": "Coordonnée X du coin supérieur gauche."},
+                "y1": {"type": "integer", "description": "Coordonnée Y du coin supérieur gauche."},
+                "x2": {"type": "integer", "description": "Coordonnée X du coin inférieur droit."},
+                "y2": {"type": "integer", "description": "Coordonnée Y du coin inférieur droit."}
+            },
+            "required": ["x1", "y1", "x2", "y2"]
+        }
+    },
+    {
+        "name": "action_zoom_out",
+        "description": "Annule le zoom actuel et revient à la vue globale de l'écran.",
+        "parameters": {"type": "object", "properties": {}}
     }
 ]
 
@@ -105,7 +125,7 @@ async def req_to_browser(timeout: int, endpoint: str, data: dict = None, user_id
 
 class EchoBrowserLib:
     """Encapsule les actions réseau pour le sous-agent navigateur."""
-    def __init__(self, timeout: int, session_id: str, user_id: str, vision_grid_step: int = 100):
+    def __init__(self, timeout: int, session_id: str, user_id: str, vision_grid_step: int = DEFAULT_VISION_GRID_STEP):
         self.timeout = timeout
         self.session_id = session_id
         self.user_id = user_id
@@ -156,6 +176,27 @@ class EchoBrowserLib:
 
     async def action_browser_control(self, command: str, value: str = "") -> dict:
         return await self._action("browser_control", {"command": command, "value": str(value) if value is not None else ""})
+
+    async def action_zoom_in(self, x1: int, y1: int, x2: int, y2: int) -> dict:
+        cx = int((x1 + x2) / 2)
+        cy = int((y1 + y2) / 2)
+        return {
+            "status": "success", 
+            "_trigger_vision": True, 
+            "grid": True, 
+            "is_zoom": True, 
+            "zoom_box": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+            "cx": cx,
+            "cy": cy
+        }
+
+    async def action_zoom_out(self) -> dict:
+        return {
+            "status": "success", 
+            "_trigger_vision": True, 
+            "grid": True,
+            "is_zoom_out": True
+        }
         
     def get_registry(self) -> Dict[str, Callable]:
         """Retourne le mapping name -> callable pour l'interception de Gemini."""
@@ -163,5 +204,7 @@ class EchoBrowserLib:
             "action_interact_a11y": self.action_interact_a11y,
             "action_interact_dom": self.action_interact_dom,
             "action_inspect_page": self.action_inspect_page,
-            "action_browser_control": self.action_browser_control
+            "action_browser_control": self.action_browser_control,
+            "action_zoom_in": self.action_zoom_in,
+            "action_zoom_out": self.action_zoom_out
         }
