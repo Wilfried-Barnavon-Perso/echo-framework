@@ -1,5 +1,6 @@
 {
   "version": 0,
+  "models.base_models_cache": true,
   "tool_server.connections": [],
   "ui.enable_signup": false,
   "ui.default_user_role": "user",
