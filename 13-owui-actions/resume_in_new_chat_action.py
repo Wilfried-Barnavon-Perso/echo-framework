@@ -1,11 +1,12 @@
 """
 title: Résume et Transfert vers un nouveau chat
 author: ECHO Framework
-version: 1.11
+version: 1.12
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMSAxNnYuNWExLjUgMS41IDAgMCAxLTEuNSAxLjVoLTZMMTIgMjBsLTIuNS0yLjVoLTZBMS41IDEuNSAwIDAgMSAyIDE2LjVWNGExLjUgMS41IDAgMCAxIDEuNS0xLjVoMTVBMS41IDEuNSAwIDAgMSAyMCA0djciLz48cGF0aCBkPSJtMTggMjIgMy0zLTMtMyIvPjxwb2x5bGluZSBwb2ludHM9IjIxIDE5IDEzIDE5Ii8+PC9zdmc+
 """
 # Historique des versions :
+# 1.12: Injection de la requête racine (RAG macro-objectif) et ajout de la routine de reprise obligatoire (Onboarding cognitif).
 # 1.11: Renommage de l'action et augmentation de l'historique de distillation à 80 messages.
 # 1.10: Version précédente.
 # 1.9: Correction extraction des messages (compatibilité OWUI v0.3+), nettoyage de la clé redondante, cohérence ID HUD.
@@ -31,7 +32,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_constants import ECHO_USERS_ROOT, ECHO_QDRANT_URL, COLLECTION_META_ARTIFACTS, COLLECTION_SESSION_RAG
-from echo_prompts import USR_ACTION_RESUME
+from echo_prompts import USR_ACTION_RESUME_GLOBAL, USR_ACTION_RESUME_RECENT
 
 try:
     from open_webui.models.chats import Chats, ChatForm
@@ -131,8 +132,21 @@ class Action:
             # Fallback sur l'ancien format si le body est vide (sécurité)
             messages = old_chat.chat.get("messages", []) if old_chat else []
         
-        # Conversion du format messages (OpenAI) en texte lisible pour la distillation
-        messages_text = ""
+        # Construction de l'historique complet pour le macro-objectif
+        full_history_text = ""
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if isinstance(content, str):
+                content = re.sub(r'<artifact id="AEC_.*?">.*?</artifact>', '', content, flags=re.DOTALL).strip()
+            files = m.get("files", [])
+            file_meta = f" [Fichiers : {', '.join([f.get('name', 'inconnu') for f in files])}]" if files else ""
+            if isinstance(content, str):
+                # Troncature plus forte pour la vision globale afin d'économiser des tokens
+                full_history_text += f"{role.upper()}: {content[:3000]}{file_meta}\n\n"
+
+        # Conversion du format messages (OpenAI) en texte lisible pour la distillation (Historique Récent)
+        recent_history_text = ""
         for m in messages[-80:]: # Augmentation à 80 derniers messages pour une distillation exhaustive
             role = m.get("role", "user")
             content = m.get("content", "")
@@ -150,22 +164,40 @@ class Action:
                 file_meta = f" [Fichiers : {', '.join(file_names)}]"
                 
             if isinstance(content, str):
-                messages_text += f"{role.upper()}: {content[:10000]}{file_meta}\n\n"
+                recent_history_text += f"{role.upper()}: {content[:10000]}{file_meta}\n\n"
         
-        prompt = USR_ACTION_RESUME.format(messages_text=messages_text)
+        prompt_global = USR_ACTION_RESUME_GLOBAL.format(full_history=full_history_text)
+        prompt_recent = USR_ACTION_RESUME_RECENT.format(recent_history=recent_history_text)
         
+        await update_hud(15, "🧠 Extraction du macro-objectif (Passe 1/2)...")
         try:
-            distilled_res = await EchoGeminiClient.call_distillation(
-                prompt=prompt,
+            res_global = await EchoGeminiClient.call_distillation(
+                prompt=prompt_global,
                 __user__=__user__ or {"id": user_id},
                 __metadata__=__metadata__ or {"chat_id": old_chat_id},
                 is_json=False,
-                max_tokens=8192
+                max_tokens=2048
             )
-            distilled_summary = distilled_res if isinstance(distilled_res, str) else str(distilled_res)
+            distilled_global = res_global if isinstance(res_global, str) else str(res_global)
         except Exception as e:
-            logger.error(f"[MIGRATION] Erreur distillation: {e}")
-            distilled_summary = "Impossible de distiller le contexte complet."
+            logger.error(f"[MIGRATION] Erreur distillation globale: {e}")
+            distilled_global = "Impossible de distiller l'objectif global."
+
+        await update_hud(25, "🧠 Analyse de l'état actuel (Passe 2/2)...")
+        try:
+            res_recent = await EchoGeminiClient.call_distillation(
+                prompt=prompt_recent,
+                __user__=__user__ or {"id": user_id},
+                __metadata__=__metadata__ or {"chat_id": old_chat_id},
+                is_json=False,
+                max_tokens=4096
+            )
+            distilled_recent = res_recent if isinstance(res_recent, str) else str(res_recent)
+        except Exception as e:
+            logger.error(f"[MIGRATION] Erreur distillation récente: {e}")
+            distilled_recent = "Impossible de distiller l'état actuel."
+
+        distilled_summary = f"{distilled_global}\n\n{distilled_recent}"
 
         new_chat_id = str(uuid.uuid4())
         old_title = old_chat.title if old_chat else "Ancienne Session"
@@ -175,6 +207,18 @@ class Action:
         message_id = str(uuid.uuid4())
         old_models = old_chat.chat.get("models", ["pipe_engine"]) if old_chat and hasattr(old_chat, "chat") else ["pipe_engine"]
         
+        routine_reprise = (
+            "\n\n---\n"
+            "**ROUTINE DE REPRISE OBLIGATOIRE**\n"
+            "En tant qu'ECHO, je m'engage fermement à exécuter les actions suivantes dès le premier tour de parole.\n"
+            "Je DOIS ABSOLUMENT via mes outils et agents :\n"
+            "1. Prendre connaissance du profil de l'Utilisateur et de l'environnement (AEC).\n"
+            "2. Explorer les ressources de mon registre (`query_registry`).\n"
+            "3. Interroger la mémoire inter-session (`search_sessions_context`) pour affiner ma compréhension.\n"
+            "4. Reprendre la conversation en continuité stricte avec le résumé cognitif ci-dessus."
+        )
+        new_content = f"**Session migrée et distillée.**\n\n*Résumé cognitif :*\n{distilled_summary}{routine_reprise}"
+
         new_chat_payload = {
             "title": new_title,
             "models": old_models,
@@ -186,7 +230,7 @@ class Action:
                         "parentId": None,
                         "childrenIds": [],
                         "role": "assistant",
-                        "content": f"**Session migrée et distillée.**\n\n*Résumé cognitif :*\n{distilled_summary}"
+                        "content": new_content
                     }
                 }
             }

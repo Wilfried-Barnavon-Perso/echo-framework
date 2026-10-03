@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.87
+version: 5.92
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.88: Codex - Remplacement des icônes d'import/export par des SVG (Upload/Download).
 # 5.87: Remplacement des indicateurs de chargement (switch_workspace et load_directory) par un spinner CSS universel.
 # 5.86: Fix - Correction d'une erreur de syntaxe f-string dans le JS injecté du Lazy Loading.
 # 5.85: Refonte majeure (Codex) : Implémentation du Lazy Loading avec requêtage asynchrone (load_directory) et purge mémoire dynamique.
 # 5.84: Fix - (Codex) Préservation du collapse des dossiers au re-rendu, et implémentation du proxy asynchrone (sendCodexAction) pour éradiquer la perte de clics.
-# 5.83: Codex - Réduction du ping à 5s pour économiser les ressources réseau.
 # 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
 # 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
 # 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
@@ -31,6 +31,134 @@ from echo_constants import ECHO_GLOBAL_TENANT_PROJECT_ID
 
 class EchoRichUI:
     """Usine de rendu de composants visuels riches pour ECHO."""
+
+    ECHO_ICONS = {
+        "X": "<line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/>",
+        "Minus": "<line x1='5' y1='12' x2='19' y2='12'/>",
+        "Maximize": "<path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/>",
+        "Eye": "<path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/><circle cx='12' cy='12' r='3'/>",
+        "Edit": "<path d='M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z'/>",
+        "Trash": "<polyline points='3 6 5 6 21 6'/><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'/>",
+        "ChevronLeft": "<polyline points='15 18 9 12 15 6'/>",
+        "ChevronRight": "<polyline points='9 18 15 12 9 6'/>",
+        "Download": "<path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/>",
+        "Copy": "<rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/>",
+        "Present": "<path d='M6 8l4 4-4 4M18 8l-4 4 4 4M12 4v16'/>",
+        "CornerUpLeft": "<polyline points='9 14 4 9 9 4'/><path d='M20 20v-7a4 4 0 0 0-4-4H4'/>",
+        "RotateCcw": "<polyline points='1 4 1 10 7 10'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/>",
+        "SkipBack": "<polygon points='19 20 9 12 19 4 19 20'/><line x1='5' y1='19' x2='5' y2='5'/>",
+        "SkipForward": "<polygon points='5 4 15 12 5 20 5 4'/><line x1='19' y1='5' x2='19' y2='19'/>",
+        "Play": "<polygon points='5 3 19 12 5 21 5 3'/>",
+        "Rewind": "<polygon points='11 19 2 12 11 5 11 19'/><polygon points='22 19 13 12 22 5 22 19'/>",
+        "Pause": "<rect x='6' y='4' width='4' height='16'/><rect x='14' y='4' width='4' height='16'/>",
+        "Crop": "<path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/>"
+    }
+
+    @staticmethod
+    def get_icon(name: str, size: int = 16, color: str = "currentColor", stroke_width: int = 2, css_class: str = "") -> str:
+        """Générateur SVG universel."""
+        path = EchoRichUI.ECHO_ICONS.get(name, "")
+        cls = f" class='{css_class}'" if css_class else ""
+        return f"<svg width='{size}' height='{size}' viewBox='0 0 24 24' fill='none' stroke='{color}' stroke-width='{stroke_width}' stroke-linecap='round' stroke-linejoin='round'{cls}>{path}</svg>"
+
+    @staticmethod
+    def get_hud_wrapper(hud_id: str, title: str, body_html: str, tools: list = ['minimize', 'maximize', 'close'], custom_tools_html: str = "") -> str:
+        """Génère la structure standardisée d'une fenêtre ECHO HUD."""
+        tools_html = custom_tools_html
+        if 'minimize' in tools:
+            tools_html += f"<button id='{hud_id}-minimize' class='echo-hud-tool'>{EchoRichUI.get_icon('Minus')}</button>"
+        if 'maximize' in tools:
+            tools_html += f"<button id='{hud_id}-maximize' class='echo-hud-tool'>{EchoRichUI.get_icon('Maximize')}</button>"
+        if 'close' in tools:
+            tools_html += f"<button id='{hud_id}-close' class='echo-hud-tool echo-danger'>{EchoRichUI.get_icon('X')}</button>"
+
+        return f"""
+        <style>
+            .echo-hud-container {{ position:fixed; inset:0; z-index:10001; background:rgba(0,0,0,0.92); backdrop-filter:blur(20px); display:flex; flex-direction:column; align-items:center; color:white; font-family:sans-serif; overflow:hidden; }}
+            .echo-hud-header {{ position:absolute; top:20px; left:20px; right:20px; z-index:100; display:flex; justify-content:space-between; align-items:center; }}
+            .echo-hud-title {{ font-size:12px; font-weight:bold; letter-spacing:1px; color:#a3a3a3; background:rgba(255,255,255,0.05); padding:4px 12px; border-radius:20px; }}
+            .echo-hud-tools {{ display:flex; gap:15px; }}
+            .echo-hud-tool {{ background:none; border:none; color:white; font-size:18px; cursor:pointer; width:30px; height:30px; display:flex; align-items:center; justify-content:center; opacity:0.7; transition:opacity 0.2s; }}
+            .echo-hud-tool:hover {{ opacity:1; }}
+            .echo-danger:hover {{ color:#ef4444; }}
+            .echo-hud-body {{ flex:1; width:100%; display:flex; flex-direction:column; justify-content:center; align-items:center; overflow:auto; }}
+        </style>
+        <div id="{hud_id}" class="echo-hud-container">
+            <div id="{hud_id}-header" class="echo-hud-header draggable">
+                <span class="echo-hud-title">{title}</span>
+                <div class="echo-hud-tools">{tools_html}</div>
+            </div>
+            <div id="{hud_id}-body" class="echo-hud-body">
+                {body_html}
+            </div>
+        </div>
+        """
+
+    @staticmethod
+    def get_event_dispatcher_js() -> str:
+        """Injecte le moteur asynchrone UCTP d'ECHO sur le frontend."""
+        return """
+        if (!window.echoDispatcher) {
+            window.echoDispatcher = {
+                _resolvers: {},
+                listen: function(channel) {
+                    return new Promise(resolve => { 
+                        this._resolvers[channel] = resolve; 
+                        setTimeout(() => {
+                            if (this._resolvers[channel] === resolve) {
+                                this.dispatch(channel, { action: "ping" });
+                            }
+                        }, 45000);
+                    });
+                },
+                dispatch: function(channel, payload) {
+                    if (this._resolvers[channel]) {
+                        this._resolvers[channel](payload);
+                        this._resolvers[channel] = null;
+                    }
+                }
+            };
+        }
+        """
+
+    @staticmethod
+    def get_media_viewport_js(container_id: str, image_id: str, crop_box_id: str = "") -> str:
+        """Encapsule le zoom wheel via ctrlKey."""
+        crop_logic = ""
+        if crop_box_id:
+            crop_logic = f"""
+                        var cropBox = document.getElementById('{crop_box_id}');
+                        if (cropBox && cropBox.style.display !== 'none') {{
+                            cropBox.style.width = canvas.offsetWidth + "px";
+                            cropBox.style.height = canvas.offsetHeight + "px";
+                            cropBox.style.transform = 'translate3d(0, 0, 0)';
+                        }}
+            """
+        return f"""
+        var _echo_vp = document.getElementById('{container_id}');
+        var _echo_img = document.getElementById('{image_id}');
+        var currentZoom = (typeof currentZoom !== 'undefined') ? currentZoom : 1.0;
+        
+        if (_echo_vp && _echo_img) {{
+            _echo_vp.addEventListener('wheel', (e) => {{
+                if (e.ctrlKey) {{
+                    e.preventDefault();
+                    var delta = e.deltaY > 0 ? 0.9 : 1.1;
+                    currentZoom = Math.min(Math.max(0.1, currentZoom * delta), 15);
+                    var canvas = _echo_vp.querySelector('div'); 
+                    if (_echo_img.naturalHeight && canvas) {{
+                        var r = _echo_img.naturalHeight / _echo_img.naturalWidth;
+                        var targetH = Math.min(window.innerHeight * 0.75, _echo_img.naturalHeight);
+                        var targetW = targetH / r;
+                        var scaleW = targetW > (window.innerWidth * 0.95) ? (window.innerWidth * 0.95) / targetW : 1;
+                        canvas.style.height = (targetH * currentZoom * scaleW) + "px";
+                        canvas.style.width = (targetW * currentZoom * scaleW) + "px";
+                        {crop_logic}
+                    }}
+                }}
+            }}, {{ passive: false }});
+        }}
+        """
 
     @staticmethod
     def _get_boilerplate(content: str, title: str = "ECHO Visual") -> str:
@@ -482,10 +610,10 @@ class EchoUI(EchoRichUI):
               <span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">{icon}</span>
               <input id="${{HUD_ID}}-url" type="text" placeholder="URL du navigateur..." style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:6px; color:#00d4ff; font-size:11px; padding:6px 12px; outline:none; font-family:monospace;" readonly />
               <div style="display:flex; gap:8px;">
-                <button id="${{HUD_ID}}-btn-zoom" title="Maximiser (Ajuster)" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;">⛶</button>
+                <button id="${{HUD_ID}}-btn-zoom" title="Maximiser (Ajuster)" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
                 <button id="${{HUD_ID}}-btn-reset" title="Taille réelle (1:1)" style="background:none; border:none; color:#777; cursor:pointer; font-size:11px; font-weight:bold;">1:1</button>
-                <button id="${{HUD_ID}}-btn-min" title="Minimiser" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;">—</button>
-                <button id="${{HUD_ID}}-btn-close" title="Fermer" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:18px;">×</button>
+                <button id="${{HUD_ID}}-btn-min" title="Minimiser" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
+                <button id="${{HUD_ID}}-btn-close" title="Fermer" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:18px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg></button>
               </div>
             </div>
             <div id="${{HUD_ID}}-area" style="flex:1; position:relative; background:#000; overflow:hidden; cursor:crosshair;">
@@ -1209,15 +1337,15 @@ return new Promise(function(resolve) {{
         <span style="flex:1;"></span>
         <select id="${{CODEX_ID}}-lang" style="background:transparent; border:1px solid ${{borderColor}};
           color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:12px;"></select>
-        <button id="${{CODEX_ID}}-import" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;">📂</button>
-        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;">💾</button>
-        <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-        <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
-        <button id="${{CODEX_ID}}-save" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button>
-        <button id="${{CODEX_ID}}-preview-toggle" title="Prévisualisation" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px; opacity:0.4;">👁️</button>
-        <button id="${{CODEX_ID}}-fullscreen" title="Plein écran" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;">⛶</button>
-        <button id="${{CODEX_ID}}-minimize" title="Minimiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;">—</button>
-        <button id="${{CODEX_ID}}-close" title="Fermer" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:18px;">×</button>`;
+        <button id="${{CODEX_ID}}-import" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='17 8 12 3 7 8'/><line x1='12' y1='3' x2='12' y2='15'/></svg></button>
+        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg></button>
+        <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>
+        <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/></svg></button>
+        <button id="${{CODEX_ID}}-save" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
+        <button id="${{CODEX_ID}}-preview-toggle" title="Prévisualisation" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px; opacity:0.4;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/><circle cx='12' cy='12' r='3'/></svg></button>
+        <button id="${{CODEX_ID}}-fullscreen" title="Plein écran" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
+        <button id="${{CODEX_ID}}-minimize" title="Minimiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
+        <button id="${{CODEX_ID}}-close" title="Fermer" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:18px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg></button>`;
       hud.appendChild(header);
 
       // --- BODY (sidebar + editor) ---
@@ -1330,12 +1458,12 @@ return new Promise(function(resolve) {{
         background:${{statusBg}}; border-top:1px solid ${{borderColor}}; font-size:11px;
         font-family:monospace; flex-shrink:0; min-height:28px;`;
       statusBar.innerHTML = `
-        <button id="${{CODEX_ID}}-hist-prev" title="Version pr\u00e9c\u00e9dente" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;">◀</button>
+        <button id="${{CODEX_ID}}-hist-prev" title="Version pr\u00e9c\u00e9dente" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='15 18 9 12 15 6'/></svg></button>
         <span id="${{CODEX_ID}}-status-text" style="flex:1; color:${{isDark ? '#a6adc8' : '#666'}};">Pr\u00eat</span>
-        <button id="${{CODEX_ID}}-hist-next" title="Version suivante" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;">▶</button>
+        <button id="${{CODEX_ID}}-hist-next" title="Version suivante" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 18 15 12 9 6'/></svg></button>
         <div id="${{CODEX_ID}}-hist-actions" style="display:none; gap:6px;">
-          <button id="${{CODEX_ID}}-hist-pin" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;">📌 Revenir au pr\u00e9sent</button>
-          <button id="${{CODEX_ID}}-hist-restore" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;">⤴️ Restaurer</button>
+          <button id="${{CODEX_ID}}-hist-pin" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 8l4 4-4 4M18 8l-4 4 4 4M12 4v16'/></svg> Revenir au pr\u00e9sent</button>
+          <button id="${{CODEX_ID}}-hist-restore" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 14 4 9 9 4'/><path d='M20 20v-7a4 4 0 0 0-4-4H4'/></svg> Restaurer</button>
         </div>`;
       hud.appendChild(statusBar);
 
@@ -3118,8 +3246,8 @@ return new Promise(function(resolve) {{
             "        <td>${acc.service}</td>\n"
             "        <td><strong>${acc.account_id || ''}</strong></td>\n"
             "        <td style=\"text-align:right;\">\n"
-            "          <button class=\"vault-btn-del\" style=\"color:#3b82f6; margin-right:8px;\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || ''}\" onclick=\"window.echoVaultEdit(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Écraser (Modifier)\">✏️</button>\n"
-            "          <button class=\"vault-btn-del\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || 'default'}\" onclick=\"window.echoVaultDelete(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Supprimer\">🗑️</button>\n"
+            "          <button class=\"vault-btn-del\" style=\"color:#3b82f6; margin-right:8px;\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || ''}\" onclick=\"window.echoVaultEdit(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Écraser (Modifier)\"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z'/></svg></button>\n"
+            "          <button class=\"vault-btn-del\" data-service=\"${acc.service}\" data-account=\"${acc.account_id || 'default'}\" onclick=\"window.echoVaultDelete(this.getAttribute('data-service'), this.getAttribute('data-account'))\" title=\"Supprimer\"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 6 5 6 21 6'/><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'/></svg></button>\n"
             "        </td>\n"
             "      </tr>`;\n"
             "    });\n"

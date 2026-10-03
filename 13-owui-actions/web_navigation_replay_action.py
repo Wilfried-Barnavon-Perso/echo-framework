@@ -1,11 +1,13 @@
 """
 title: Revue Navigation Web
 author: Wilfried BARNAVON
-version: 4.16
+version: 4.27
 description: Cockpit vidéo interactif permettant de visionner et d'extraire des captures de la navigation autonome.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiIC8+PHBhdGggZD0iTTcgM3YxOCIgLz48cGF0aCBkPSJNMyA3LjVoNCIgLz48cGF0aCBkPSJNMyAxMmgxOCIgLz48cGF0aCBkPSJNMyAxNi41aDQiIC8+PHBhdGggZD0iTTE3IDN2MTgiIC8+PHBhdGggZD0iTTE3IDcuNWg0IiAvPjxwYXRoIGQ9Ik0xNyAxNi41aDQiIC8+PC9zdmc+
 """
 # Historique des versions :
+# 4.27: Amélioration UX - Ajout d'un label informatif pour la fonctionnalité de zoom (Ctrl+Molette).
+# 4.26: Refonte iconographique complète via SVGs natifs (EchoUI) et alignements épurés sans background/border-radius.
 # 4.16: Fix - Levée d'une Exception explicite en cas d'absence d'archives pour forcer l'affichage d'un toast d'erreur côté OWUI frontend.
 # 4.15: Optimisation UX - Suppression du statut persistant lors de l'absence d'archives visuelles au profit d'un simple toast transitoire.
 # 4.14: Fix - Adaptation du moteur de rendu asynchrone (updateUI) pour supporter le header data:image/jpeg natif issu de l'optimisation des captures Browser Worker.
@@ -55,10 +57,10 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
 
                 replay.innerHTML = `
                     <div style="position:absolute; top:20px; right:20px; z-index:100; display:flex; gap:15px;">
-                        <button id="${{REPLAY_ID}}-btn-crop" title="Sélection" style="background:rgba(255,255,255,0.1); border:none; color:white; font-size:18px; cursor:pointer; width:40px; height:40px; border-radius:50%;">⛶</button>
-                        <button id="${{REPLAY_ID}}-btn-copy" title="Copier" style="background:rgba(255,255,255,0.1); border:none; color:white; font-size:18px; cursor:pointer; width:40px; height:40px; border-radius:50%;">❐</button>
-                        <button id="${{REPLAY_ID}}-btn-save" title="Télécharger" style="background:rgba(255,255,255,0.1); border:none; color:white; font-size:18px; cursor:pointer; width:40px; height:40px; border-radius:50%;">📥</button>
-                        <button id="${{REPLAY_ID}}-close" style="background:rgba(255,255,255,0.1); border:none; color:white; font-size:24px; cursor:pointer; width:40px; height:40px; border-radius:50%;">×</button>
+                        <button id="${{REPLAY_ID}}-btn-crop" title="Sélection" style="background:none; border:none; color:white; cursor:pointer; width:40px; height:40px; display:flex; align-items:center; justify-content:center; opacity:0.8;">{EchoUI.get_icon('Crop', size=20)}</button>
+                        <button id="${{REPLAY_ID}}-btn-copy" title="Copier" style="background:none; border:none; color:white; cursor:pointer; width:40px; height:40px; display:flex; align-items:center; justify-content:center; opacity:0.8;">{EchoUI.get_icon('Copy', size=20)}</button>
+                        <button id="${{REPLAY_ID}}-btn-save" title="Télécharger" style="background:none; border:none; color:white; cursor:pointer; width:40px; height:40px; display:flex; align-items:center; justify-content:center; opacity:0.8;">{EchoUI.get_icon('Download', size=20)}</button>
+                        <button id="${{REPLAY_ID}}-close" title="Fermer" style="background:none; border:none; color:white; cursor:pointer; width:40px; height:40px; display:flex; align-items:center; justify-content:center; opacity:0.8;">{EchoUI.get_icon('X', size=24)}</button>
                     </div>
 
                     <div id="${{REPLAY_ID}}-viewport" style="flex:1; width:100%; display:flex; justify-content:center; overflow:auto; padding:40px 0; scrollbar-width: thin; scrollbar-color: #4ade80 transparent;">
@@ -81,22 +83,24 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                         <div id="${{REPLAY_ID}}-meta" style="font-size:11px; color:#4ade80; font-family:monospace; letter-spacing:1px; background:rgba(0,0,0,0.3); padding:4px 12px; border-radius:10px;">INITIALISATION...</div>
 
                         <div style="display:flex; gap:15px; align-items:center;">
-                            <button id="${{REPLAY_ID}}-first" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">|◀</button>    
-                            <button id="${{REPLAY_ID}}-prev" style="background:none; border:none; color:white; cursor:pointer; font-size:18px; margin-right:40px;">◀</button>
+                            <button id="${{REPLAY_ID}}-first" style="background:none; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('SkipBack', size=20)}</button>    
+                            <button id="${{REPLAY_ID}}-prev" style="background:none; border:none; color:white; cursor:pointer; margin-right:40px; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('ChevronLeft', size=24)}</button>
 
                             <div style="display:flex; gap:10px; align-items:center;">
-                                <button id="${{REPLAY_ID}}-play-rev" style="background:#f97316; border:none; color:white; padding:10px 25px; border-radius:20px 5px 5px 20px; font-weight:bold; cursor:pointer; min-width:110px;">◀ PLAY</button>
-                                <button id="${{REPLAY_ID}}-play" style="background:#4ade80; border:none; color:black; padding:10px 25px; border-radius:5px 20px 20px 5px; font-weight:bold; cursor:pointer; min-width:110px;">PLAY ▶</button>
+                                <button id="${{REPLAY_ID}}-play-rev" style="background:#f97316; border:none; color:white; padding:10px 25px; border-radius:20px 5px 5px 20px; font-weight:bold; cursor:pointer; min-width:110px; display:flex; align-items:center; justify-content:center; gap:8px;">{EchoUI.get_icon('Rewind', size=20)} PLAY</button>
+                                <button id="${{REPLAY_ID}}-play" style="background:#4ade80; border:none; color:black; padding:10px 25px; border-radius:5px 20px 20px 5px; font-weight:bold; cursor:pointer; min-width:110px; display:flex; align-items:center; justify-content:center; gap:8px;">PLAY {EchoUI.get_icon('Play', size=20)}</button>
                             </div>
 
-                            <button id="${{REPLAY_ID}}-next" style="background:none; border:none; color:white; cursor:pointer; font-size:18px; margin-left:40px;">▶</button>
-                            <button id="${{REPLAY_ID}}-last" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">▶|</button>     
+                            <button id="${{REPLAY_ID}}-next" style="background:none; border:none; color:white; cursor:pointer; margin-left:40px; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('ChevronRight', size=24)}</button>
+                            <button id="${{REPLAY_ID}}-last" style="background:none; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('SkipForward', size=20)}</button>     
                         </div>
 
-                        <div style="display:flex; gap:15px; align-items:center; width:400px; opacity:0.8;">
+                        <div style="display:flex; gap:10px; align-items:center; width:480px; opacity:0.8;">
                             <input type="range" id="${{REPLAY_ID}}-speed" min="1" max="30" value="5" style="flex:1; height:4px; cursor:pointer; accent-color:#4ade80;">
                             <span id="${{REPLAY_ID}}-speed-val" style="font-size:10px; color:#888; width:30px;">5s</span>
-                            <button id="${{REPLAY_ID}}-btn-zoom" title="Reset Zoom" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:18px; margin-left:20px;">↺</button>
+                            <div style="width:1px; height:12px; background:rgba(255,255,255,0.2); margin:0 10px;"></div>
+                            <button id="${{REPLAY_ID}}-btn-zoom" title="Reset Zoom" style="background:none; border:none; color:#aaa; cursor:pointer; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('RotateCcw', size=18)}</button>
+                            <span style="font-size:10px; color:#737373; white-space:nowrap; letter-spacing:0.5px;">Zoom : CTRL+Molette / 2 doigts</span>
                         </div>
                     </div>
                 `;
@@ -117,9 +121,9 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                     isPlayingRev = false;
                     const btnPlay = document.getElementById(`${{REPLAY_ID}}-play`);
                     const btnRev = document.getElementById(`${{REPLAY_ID}}-play-rev`);
-                    btnPlay.innerText = "PLAY ▶";
+                    btnPlay.innerHTML = `PLAY {EchoUI.get_icon('Play', size=20)}`;
                     btnPlay.style.background = "#4ade80";
-                    btnRev.innerText = "◀ PLAY";
+                    btnRev.innerHTML = `{EchoUI.get_icon('Rewind', size=20)} PLAY`;
                     btnRev.style.background = "#f97316";
                 }};
 
@@ -211,8 +215,8 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                                 await navigator.clipboard.write([new ClipboardItem({{ 'image/png': blob }})]);
                                 const btn = document.getElementById(`${{REPLAY_ID}}-btn-copy`);
                                 if(btn) {{
-                                    const oldText = btn.innerText; btn.innerText = '✓'; btn.style.color = '#4ade80';
-                                    setTimeout(() => {{ btn.innerText = oldText; btn.style.color = 'white'; }}, 1000);
+                                    const oldText = btn.innerHTML; btn.innerHTML = '✓'; btn.style.color = '#4ade80';
+                                    setTimeout(() => {{ btn.innerHTML = oldText; btn.style.color = 'white'; }}, 1000);
                                 }}
                             }} catch (err) {{
                                 showFallback(dataUrl);
@@ -339,7 +343,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                     if (isPlaying) stopPlayback();
                     else {{
                         stopPlayback(); isPlaying = true;
-                        document.getElementById(`${{REPLAY_ID}}-play`).innerText = "⏸ STOP";
+                        document.getElementById(`${{REPLAY_ID}}-play`).innerHTML = `{EchoUI.get_icon('Pause', size=20)} STOP`;
                         document.getElementById(`${{REPLAY_ID}}-play`).style.background = "#ff4444";
                         playInterval = setInterval(() => requestFrame(currentIndex + 1), document.getElementById(`${{REPLAY_ID}}-speed`).value * 1000);
                     }}
@@ -349,7 +353,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                     if (isPlayingRev) stopPlayback();
                     else {{
                         stopPlayback(); isPlayingRev = true;
-                        document.getElementById(`${{REPLAY_ID}}-play-rev`).innerText = "⏸ STOP";
+                        document.getElementById(`${{REPLAY_ID}}-play-rev`).innerHTML = `{EchoUI.get_icon('Pause', size=20)} STOP`;
                         document.getElementById(`${{REPLAY_ID}}-play-rev`).style.background = "#ff4444";
                         playInterval = setInterval(() => requestFrame(currentIndex - 1), document.getElementById(`${{REPLAY_ID}}-speed`).value * 1000);
                     }}
@@ -403,7 +407,8 @@ class Action:
             return None
 
         if not files:
-            raise Exception("🤷‍♂️ Aucune archive de navigation web trouvée pour ce chat.")
+            await events.toast("🤷‍♂️ Aucune archive de navigation web trouvée pour ce chat.", "error")
+            return None
 
         # 1. Installation de la Console
         shell_code = _generate_replay_shell(files, cid)

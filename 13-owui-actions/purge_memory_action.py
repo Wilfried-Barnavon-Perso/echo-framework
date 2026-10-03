@@ -1,14 +1,15 @@
 """
 title: Purge Mémoire Long Terme /!\
 author: Wilfried BARNAVON
-version: 3.7
+version: 3.8
 description: Console d'administration pour la suppression sélective des souvenirs vectorisés (Qdrant).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5Z29uIHBvaW50cz0iMjIgMyAyIDMgMTAgMTIuNDYgMTAgMTkgMTQgMjEgMTQgMTIuNDYgMjIgMyIvPjwvc3ZnPg==
 """
 # Historique des versions :
+# 3.8: Fix - Interception correcte de l'annulation (False) sur la première modale d'input.
 # 3.4: Mise à jour de la priorité d'affichage à 30.
-# 3.2: Confirmation finale scrollable + tri alpha slugs. Dialog périmètre avec explication mémoire long terme (voix ECHO). 3.1: HUD déroulant, sélection vide = TOUT.
 # 3.3: Refonte identifiants, remplacement des slugs par memory_id.
+# 3.2: Confirmation finale scrollable + tri alpha slugs. Dialog périmètre avec explication mémoire long terme (voix ECHO). 3.1: HUD déroulant, sélection vide = TOUT.
 
 import sys
 import httpx
@@ -20,6 +21,7 @@ from datetime import datetime, timezone
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
 from echo_constants import COLLECTION_META_ARTIFACTS, ECHO_QDRANT_URL
+
 
 class Action:
     class Valves(BaseModel):
@@ -99,7 +101,8 @@ class Action:
                             date_str = f" ({datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d')})" if ts else ""
                             memory_ids.add(f"{memory_id}{date_str}")
                 return list(memory_ids)
-        except: return []
+        except Exception:
+            return []
 
     async def action(self, body: dict, __user__: Optional[dict] = None, __event_emitter__: Any = None, __event_call__: Any = None, __metadata__: Optional[dict] = None, **kwargs):
         events = EchoEvents(__event_emitter__, __event_call__)
@@ -151,19 +154,17 @@ class Action:
             "placeholder": "Ex: 1-4, 7, 10-12 (vide = tout)"
         })
 
-        # OWUI retourne None (annulation) ou False (input vide confirmé)
-        if selection_raw is None:
+        # OWUI retourne None ou False lors d'une annulation
+        if selection_raw is None or selection_raw is False:
             return None
 
         # Conversion intelligente des numéros (Gestion des plages)
-        select_all = False
         selected_tags = []
-        # False (bool) = input vide confirmé, str vide = idem
+        # input vide = chaîne vide ("")
         selection_stripped = selection_raw.strip() if isinstance(selection_raw, str) else ""
 
         if not selection_stripped:
             # Sélection vide = TOUT — confirmation supplémentaire obligatoire
-            select_all = True
             if not await events.confirm(
                 "🔴 Sélection TOTALE",
                 f"Vous n'avez rien saisi. <b>Les {len(available_tag_names)} catégories</b> seront sélectionnées pour la purge.<br><br>Confirmer la sélection totale ?"
@@ -177,7 +178,8 @@ class Action:
                 for p in parts:
                     if "-" in p:
                         start, end = map(int, p.split("-"))
-                        for i in range(start, end + 1): indices.add(i - 1)
+                        for i in range(start, end + 1):
+                            indices.add(i - 1)
                     elif p.isdigit():
                         indices.add(int(p) - 1)
                 
@@ -254,7 +256,7 @@ class Action:
         if not final_conf:
             return None
 
-        await events.status(f"🧹 Purge en cours...", False)
+        await events.status("🧹 Purge en cours...", False)
 
         try:
             # 6. Suppression réelle

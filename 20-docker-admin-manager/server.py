@@ -2,7 +2,9 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.123 (Garbage Collector BDD)
+VERSION : 5.124 (Statistiques Docker)
+--- CHANGELOG 5.124 ---
+- Feature : Ajout des statistiques détaillées (CPU, RAM, Taille, Démarrage) et du tri dynamique des conteneurs Docker dans le Dashboard.
 --- CHANGELOG 5.123 ---
 - Feature : Ajout de la Phase 4 (Synchronisation DB). Expurgation atomique de la table `file` d'Open-WebUI pour éliminer les fichiers fantômes supprimés par le GC FS.
 --- CHANGELOG 5.122 ---
@@ -1336,8 +1338,92 @@ def containers():
     if not session.get('logged_in'): return jsonify([]), 403
     if not DOCKER_AVAILABLE: return jsonify([])
     try:
-        return jsonify([{"id": c.short_id, "name": c.name, "status": c.status.capitalize()} for c in docker.from_env().containers.list(all=True)])
-    except Exception: return jsonify([])
+        client = docker.from_env()
+        conts = client.containers.list(all=True)
+        stats_map = {}
+        
+        # Pre-fetch sizes using low-level API since inspect_container lacks 'size' param
+        sizes = {}
+        try:
+            for c_raw in client.api.containers(all=True, size=True):
+                sizes[c_raw.get('Id')] = c_raw.get('SizeRw', 0)
+        except Exception:
+            pass
+        
+        import concurrent.futures
+        def get_stats(c):
+            try:
+                size_rw = sizes.get(c.id, 0)
+                if c.status != 'running': return c.name, '0.00%', '0.00%', size_rw
+                st = c.stats(stream=False)
+                m = st.get('memory_stats', {})
+                mem_perc = f"{(m.get('usage',0)/m.get('limit',1)*100):.2f}%" if m.get('limit') else '0.00%'
+                cs = st.get('cpu_stats', {})
+                pcs = st.get('precpu_stats', {})
+                cd = cs.get('cpu_usage',{}).get('total_usage',0) - pcs.get('cpu_usage',{}).get('total_usage',0)
+                sd = cs.get('system_cpu_usage',0) - pcs.get('system_cpu_usage',0)
+                cpu_perc = f"{(cd/sd)*cs.get('online_cpus',1)*100:.2f}%" if sd>0 and cd>0 else '0.00%'
+                return c.name, cpu_perc, mem_perc, size_rw
+            except Exception: return c.name, '0.00%', '0.00%', sizes.get(c.id, 0)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(get_stats, c) for c in conts]
+            for f in concurrent.futures.as_completed(futures):
+                name, cpu, ram, size_rw = f.result()
+                stats_map[name] = {'cpu': cpu, 'ram': ram, 'size_rw': size_rw}
+
+        volume_sizes = {}
+        try:
+            if hasattr(client.api, 'df'):
+                df_data = client.api.df()
+                for v in df_data.get('Volumes', []):
+                    vol_name = v.get('Name')
+                    vol_size = v.get('UsageData', {}).get('Size', 0)
+                    if vol_name and vol_size >= 0:
+                        volume_sizes[vol_name] = vol_size
+        except Exception:
+            pass
+
+        data = []
+        disk_total = psutil.disk_usage('/').total if HAS_PSUTIL else 50_000_000_000
+        for c in conts:
+            c_stats = stats_map.get(c.name, {'cpu': '0.00%', 'ram': '0.00%', 'size_rw': 0})
+            size_rw = c_stats['size_rw']
+            size_perc = (size_rw / disk_total * 100) if disk_total > 0 else 0
+            started_at = c.attrs.get('State', {}).get('StartedAt', '')
+            
+            volumes_info = []
+            total_volumes_bytes = 0
+            for m in c.attrs.get('Mounts', []):
+                m_type = m.get('Type')
+                m_dest = m.get('Destination', '')
+                if m_type == 'volume':
+                    m_name = m.get('Name', '')
+                    m_size = volume_sizes.get(m_name, 0)
+                    total_volumes_bytes += m_size
+                    m_size_str = human_size(m_size) if m_size > 0 else "< 1 KB"
+                    m_size_perc = (m_size / disk_total * 100) if disk_total > 0 else 0
+                    volumes_info.append({"dest": m_dest, "size_str": m_size_str, "size_perc": m_size_perc, "type": "volume"})
+                elif m_type == 'bind':
+                    volumes_info.append({"dest": m_dest, "size_str": "Bind Local", "size_perc": 0, "type": "bind"})
+
+            data.append({
+                "id": c.short_id,
+                "name": c.name,
+                "status": c.status.capitalize(),
+                "cpu": c_stats['cpu'],
+                "ram": c_stats['ram'],
+                "size_bytes": size_rw,
+                "size": human_size(size_rw) if size_rw else "N/A",
+                "size_perc": size_perc,
+                "started_at": started_at,
+                "total_volumes_bytes": total_volumes_bytes,
+                "volumes": volumes_info
+            })
+        return jsonify(data)
+    except Exception as e:
+        print(f"Containers error: {e}")
+        return jsonify([])
 
 @app.route('/action/<action>', methods=['POST'])
 def handle_action(action):
@@ -2162,7 +2248,7 @@ HTML_DASHBOARD = """
                     </div>
 
                     <div class="tab-pane fade" id="v-pills-docker" role="tabpanel">
-                        <div class="card border-secondary mb-3"><div class="card-header d-flex justify-content-between align-items-center"><span><i class="bi bi-box"></i> Conteneurs Docker</span><button class="btn btn-sm btn-link text-secondary p-0" onclick="refreshContainers()"><i class="bi bi-arrow-repeat"></i></button></div><div class="card-body p-0"><ul class="list-group list-group-flush mb-0" id="container-list"></ul></div></div>
+                        <div class="card border-secondary mb-3"><div class="card-header d-flex flex-column gap-2"><div class="d-flex justify-content-between align-items-center"><span><i class="bi bi-box"></i> Conteneurs Docker</span><button class="btn btn-sm btn-link text-secondary p-0" onclick="refreshContainers()"><i class="bi bi-arrow-repeat"></i></button></div><div class="d-flex gap-2"><select id="docker-sort-by" class="form-select form-select-sm bg-dark text-white border-secondary" onchange="renderContainers()"><option value="name">Nom</option><option value="cpu">CPU</option><option value="ram">RAM</option><option value="size">Taille</option><option value="volumes">Taille Volumes</option><option value="started_at">Démarrage</option></select><select id="docker-sort-order" class="form-select form-select-sm bg-dark text-white border-secondary" style="width: 80px;" onchange="renderContainers()"><option value="asc">Asc</option><option value="desc">Desc</option></select></div></div><div class="card-body p-0" style="height: 75vh; overflow-y: auto;"><ul class="list-group list-group-flush mb-0" id="container-list"></ul></div></div>
                     </div>
 
                 </div>
@@ -2424,7 +2510,9 @@ HTML_DASHBOARD = """
 
         async function refreshUsers(){const r=await fetch('/api/user_stats');const d=await r.json();document.getElementById('user-list').innerHTML=d.map(u=>{const isSys=u.email.endsWith('@echo.local');const roleBtn=isSys?(u.role==='admin'?'<span class="badge bg-danger me-2">Admin Sys</span>':'<span class="badge bg-secondary me-2">System</span>'):`<form action="/action/user_role/${u.id}" method="post" class="d-inline me-2" onsubmit="return confirm('Confirmer la bascule du rôle Administrateur pour ${u.name} ?')"><input type="hidden" name="new_role" value="${u.role==='admin'?'user':'admin'}"><button type="submit" class="btn btn-sm py-0 ${u.role==='admin'?'btn-danger':'btn-outline-secondary'}" style="font-size:0.7rem;" data-bs-toggle="tooltip" title="Basculer le rôle">${u.role==='admin'?'Admin':'User'}</button></form>`;const purgeBtn=isSys?'':`<form action="/action/auth_reset/${u.id}" method="post" class="d-inline" onsubmit="return confirm('Purger les accès distants (Google/API) de ${u.name} ?')"><button type="submit" class="btn btn-sm btn-link text-danger p-0" data-bs-toggle="tooltip" title="Purger Tokens/Clés"><i class="bi bi-shield-lock"></i></button></form>`;return `<tr><td class="ps-3">${u.name}</td><td>${u.email}</td><td class="text-center"><span class="badge bg-primary">${u.chat_count}</span></td><td class="text-end pe-3">${roleBtn}${purgeBtn}</td></tr>`}).join('');var t=[].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));t.map(function(e){return new bootstrap.Tooltip(e)})}
         async function refreshBackups(){const r=await fetch('/api/backups');const d=await r.json();document.getElementById('backup-rows').innerHTML=d.map(b=>`<tr><td class="ps-3 text-truncate" style="max-width:200px;">${b.name}</td><td>${b.date}</td><td><span class="badge bg-secondary">${b.size}</span></td><td class="text-end pe-3"><div class="btn-group"><a href="/download/${b.name}" class="btn btn-sm text-primary"><i class="bi bi-download"></i></a><form action="/action/restore" method="post" onsubmit="return confirm('RESTAURER ?')" class="d-inline"><input type="hidden" name="filename" value="${b.name}"><button class="btn btn-sm text-warning">↺</button></form><form action="/action/delete_backup" method="post" class="d-inline"><input type="hidden" name="filename" value="${b.name}"><button class="btn btn-sm btn-danger">×</button></form></div></td></tr>`).join('')}
-        async function refreshContainers(){const r=await fetch('/api/containers');const d=await r.json();document.getElementById('container-list').innerHTML=d.map(c=>`<li class="list-group-item bg-transparent small d-flex justify-content-between align-items-center"><span>${c.name}</span><div class="d-flex align-items-center gap-2"><span class="badge ${c.status.startsWith('Up')?'bg-success':'bg-danger'}">${c.status}</span><form action="/action/restart" method="post"><input type="hidden" name="container" value="${c.id}"><button class="btn btn-sm btn-link text-secondary p-0"><i class="bi bi-power"></i></button></form></div></li>`).join('')}
+        let containersData = [];
+        async function refreshContainers() { try { const r = await fetch('/api/containers'); containersData = await r.json(); renderContainers(); } catch(e) {} }
+        function renderContainers() { const sortBy = document.getElementById('docker-sort-by')?.value || 'name'; const order = document.getElementById('docker-sort-order')?.value === 'asc' ? 1 : -1; let d = [...containersData]; d.sort((a, b) => { let valA, valB; if (sortBy === 'cpu') { valA = parseFloat(a.cpu) || 0; valB = parseFloat(b.cpu) || 0; } else if (sortBy === 'ram') { valA = parseFloat(a.ram) || 0; valB = parseFloat(b.ram) || 0; } else if (sortBy === 'size') { valA = a.size_bytes || 0; valB = b.size_bytes || 0; } else if (sortBy === 'volumes') { valA = a.total_volumes_bytes || 0; valB = b.total_volumes_bytes || 0; } else if (sortBy === 'started_at') { valA = new Date(a.started_at).getTime() || 0; valB = new Date(b.started_at).getTime() || 0; } else { valA = a.name.toLowerCase(); valB = b.name.toLowerCase(); } if (valA < valB) return -1 * order; if (valA > valB) return 1 * order; return 0; }); document.getElementById('container-list').innerHTML = d.map(c => { const cpuVal = parseFloat(c.cpu) || 0; const ramVal = parseFloat(c.ram) || 0; const diskVal = c.size_perc || 0; const cpuColor = cpuVal > 80 ? 'bg-danger' : (cpuVal > 50 ? 'bg-warning' : 'bg-info'); const ramColor = ramVal > 85 ? 'bg-danger' : (ramVal > 60 ? 'bg-warning' : 'bg-primary'); const diskColor = diskVal > 10 ? 'bg-danger' : (diskVal > 5 ? 'bg-warning' : 'bg-success'); let volsHtml = ''; if (c.volumes && c.volumes.length > 0) { volsHtml = `<div class="mt-2 p-2 rounded bg-dark border border-secondary" style="font-size: 0.70rem;"><div class="mb-2 text-light fw-bold"><i class="bi bi-hdd-network text-info"></i> Volumes attachés</div><ul class="list-unstyled mb-0 ms-1">${c.volumes.map(v => { if (v.type === 'bind') return `<li class="mb-1 d-flex justify-content-between"><span class="text-truncate" style="max-width:250px;" title="${v.dest}"><i class="bi bi-folder2 text-secondary ms-2"></i> ${v.dest}</span><span>${v.size_str}</span></li>`; const vColor = v.size_perc > 10 ? 'bg-danger' : (v.size_perc > 5 ? 'bg-warning' : 'bg-success'); return `<li class="mb-2"><div class="d-flex justify-content-between mb-1 text-muted"><span class="text-truncate" style="max-width:200px;" title="${v.dest}"><i class="bi bi-folder2 text-secondary ms-2"></i> ${v.dest}</span><span>${v.size_str}</span></div><div class="progress" style="height: 3px; background-color: #2b3035;"><div class="progress-bar ${vColor}" style="width: ${Math.min(v.size_perc, 100)}%"></div></div></li>`; }).join('')}</ul></div>`; } return `<li class="list-group-item bg-transparent small d-flex flex-column justify-content-center border-secondary py-2"><div class="d-flex justify-content-between align-items-center mb-2"><span class="fw-bold text-truncate text-light" style="max-width:180px;"><i class="bi bi-box"></i> ${c.name}</span><div class="d-flex align-items-center gap-2"><span class="badge ${c.status.startsWith('Up')?'bg-success':'bg-danger'}">${c.status}</span><form action="/action/restart" method="post" class="m-0"><input type="hidden" name="container" value="${c.id}"><button class="btn btn-sm btn-link text-secondary p-0" title="Redémarrer"><i class="bi bi-arrow-clockwise"></i></button></form></div></div><div class="row gx-3 align-items-center text-muted" style="font-size: 0.75rem;"><div class="col-4"><div class="d-flex justify-content-between mb-1"><span>CPU</span><span>${c.cpu}</span></div><div class="progress" style="height: 4px;"><div class="progress-bar ${cpuColor}" style="width: ${Math.min(cpuVal, 100)}%"></div></div></div><div class="col-4"><div class="d-flex justify-content-between mb-1"><span>RAM</span><span>${c.ram}</span></div><div class="progress" style="height: 4px;"><div class="progress-bar ${ramColor}" style="width: ${Math.min(ramVal, 100)}%"></div></div></div><div class="col-4"><div class="d-flex justify-content-between mb-1"><span>Taille</span><span>${c.size}</span></div><div class="progress" style="height: 4px;"><div class="progress-bar ${diskColor}" style="width: ${Math.min(diskVal, 100)}%"></div></div></div></div>${volsHtml}</li>`; }).join(''); }
         async function copyPwd(){
             try {
                 const r = await fetch('/api/admin/password');

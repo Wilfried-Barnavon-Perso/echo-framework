@@ -11,7 +11,8 @@ Ce dossier contient l'application **ECHO Admin Manager**. Il s'agit d'un contene
 ### `server.py`
 Fichier monolithique (plus de 160Ko) contenant l'ensemble de la logique serveur (Flask) et le rendu HTML inline du Dashboard.
 
-#### A. Gouvernance & Sécurité
+#### A. Gouvernance & Dashboard
+- **Dashboard Actif & Monitoring** : Interface web affichant un suivi en temps réel des conteneurs via l'API de bas niveau Docker. Il expose des **Statistiques Détaillées** (CPU, RAM, Size, Temps de démarrage) récoltées via des pools de threads asynchrones (`concurrent.futures`), et permet un tri dynamique.
 - **Révocations Granulaires & Kill-Switch** : Permet à l'administrateur de forcer l'arrêt de conteneurs (Workers ou OWUI) et de révoquer l'accès aux utilisateurs via la purge ciblée des bases de données d'authentification.
 - **Autosafety & Maintenance** : Lance de manière programmatique des commandes de nettoyage (`docker system prune`) ou l'optimisation des bases de données SQLite (requêtes `VACUUM`, `PRAGMA wal_checkpoint`). Intègre un **Garbage Collector FS (RefCounting)** purgeant de manière asynchrone les fichiers du Vault global et les uploads résiduels via l'inspection des liens symboliques.
 

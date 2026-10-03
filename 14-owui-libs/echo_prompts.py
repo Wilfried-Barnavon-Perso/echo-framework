@@ -130,13 +130,31 @@ Règle de Communication : Toute interaction directe avec l'utilisateur humain es
 # DOMAINE : ACTION (Resume Chat)
 # ==============================================================================
 
-# Variables attendues : {messages_text}
-USR_ACTION_RESUME = """Tu es l'architecte mémoire d'ECHO.
-Analyse l'historique de session ci-dessous. Résume très précisément l'état actuel de la session, les objectifs en cours, les plans d'action et le contexte technique acquis.
-Ce résumé sera le point de départ strict de la NOUVELLE session. Sois exhaustif.
+# Variables attendues : {full_history}
+USR_ACTION_RESUME_GLOBAL = """Tu es l'architecte mémoire d'ECHO.
+Analyse l'HISTORIQUE COMPLET de la session ci-dessous.
+Ta mission est d'en extraire exclusivement :
+- Le but principal (Macro-objectif racine)
+- Un résumé général de la conversation en quelques lignes.
 
---- HISTORIQUE ---
-{messages_text}"""
+Structure ta réponse clairement (ex: ## Macro-Objectif, ## Résumé Général). Ne détaille pas l'état actuel des tâches.
+
+--- HISTORIQUE COMPLET ---
+{full_history}"""
+
+# Variables attendues : {recent_history}
+USR_ACTION_RESUME_RECENT = """Tu es l'architecte mémoire d'ECHO.
+Analyse l'HISTORIQUE RÉCENT de la session ci-dessous (les derniers échanges).
+Ta mission est de détailler très précisément :
+- L'état actuel d'avancement
+- Les objectifs immédiats en cours
+- Les plans d'action
+- Le contexte technique récemment acquis
+
+Sois exhaustif et structure ta réponse clairement (ex: ## État Actuel, ## Contexte Technique).
+
+--- HISTORIQUE RÉCENT ---
+{recent_history}"""
 
 
 # ==============================================================================
