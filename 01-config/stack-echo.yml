@@ -470,7 +470,7 @@ services:
     volumes:
       - /opt/ECHO/docker-n8n-worker/n8n_api.py:/app/n8n_api.py:ro
       - /opt/ECHO/docker-n8n-worker/start.sh:/app/start.sh:ro
-      - echo-download-broker-data:/app/downloads:rw
+      - echo-download-broker-data:/home/node/.n8n-files:rw
       - echo-n8n-data:/home/node/.n8n:rw
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
     labels:

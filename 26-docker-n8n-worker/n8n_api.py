@@ -359,7 +359,7 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
 @app.post("/execute")
 async def execute_workflow(req: ExecuteRequest, background_tasks: BackgroundTasks):
     # Sécurisation des chemins
-    base_downloads = Path("/app/downloads")
+    base_downloads = Path("/home/node/.n8n-files")
     user_dir = base_downloads / req.user_id
     chat_dir = user_dir / req.chat_id
     # Identifiant unique d'exécution pour isoler les requêtes concurrentes sur un même workflow
@@ -414,7 +414,7 @@ def health_check():
 
 @app.post("/deploy")
 async def deploy_workflow(req: ExecuteRequest):
-    base_downloads = Path("/app/downloads")
+    base_downloads = Path("/home/node/.n8n-files")
     target_dir = base_downloads / req.user_id / req.chat_id / "n8n" / req.n8n_workflow_id
     target_dir.mkdir(parents=True, exist_ok=True)
 
