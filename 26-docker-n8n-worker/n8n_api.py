@@ -415,7 +415,8 @@ def health_check():
 @app.post("/deploy")
 async def deploy_workflow(req: ExecuteRequest):
     base_downloads = Path("/home/node/.n8n-files")
-    target_dir = base_downloads / req.user_id / req.chat_id / "n8n" / req.n8n_workflow_id
+    chat_dir = base_downloads / req.user_id / req.chat_id
+    target_dir = chat_dir / "n8n" / req.n8n_workflow_id
     target_dir.mkdir(parents=True, exist_ok=True)
 
     try:
