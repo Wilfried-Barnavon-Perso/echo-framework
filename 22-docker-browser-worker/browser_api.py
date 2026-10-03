@@ -776,7 +776,7 @@ async def browser_action(request: Request):
                                 await loc.click()
                             download = await download_info.value
                         
-                            dl_dir = os.path.join("/app/data/downloads", session.user_id, sid)
+                            dl_dir = os.path.join("/app/downloads", session.user_id, sid, "browser")
                             os.makedirs(dl_dir, exist_ok=True)
                         
                             filename = download.suggested_filename
@@ -802,7 +802,7 @@ async def browser_action(request: Request):
                             from urllib.parse import urljoin
                             target_url = urljoin(page.url, target_url)
                             file_id = params.get("download_file_id", f"DL_{int(time.time())}")
-                            dl_dir = os.path.join("/app/data/downloads", session.user_id, sid)
+                            dl_dir = os.path.join("/app/downloads", session.user_id, sid, "browser")
                             os.makedirs(dl_dir, exist_ok=True)
                             filename = target_url.split("/")[-1].split("?")[0]
                             if not filename: filename = "downloaded_file"
@@ -901,7 +901,7 @@ async def browser_action(request: Request):
                                     await loc.click()
                                 download = await download_info.value
                             
-                                dl_dir = os.path.join("/app/data/downloads", session.user_id, sid)
+                                dl_dir = os.path.join("/app/downloads", session.user_id, sid, "browser")
                                 os.makedirs(dl_dir, exist_ok=True)
                             
                                 filename = download.suggested_filename
@@ -926,7 +926,7 @@ async def browser_action(request: Request):
                                 from urllib.parse import urljoin
                                 target_url = urljoin(page.url, target_url)
                                 file_id = params.get("download_file_id", f"DL_{int(time.time())}")
-                                dl_dir = os.path.join("/app/data/downloads", session.user_id, sid)
+                                dl_dir = os.path.join("/app/downloads", session.user_id, sid, "browser")
                                 os.makedirs(dl_dir, exist_ok=True)
                                 filename = target_url.split("/")[-1].split("?")[0]
                                 if not filename: filename = "downloaded_file"

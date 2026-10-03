@@ -714,6 +714,26 @@ def _run_semantic_pruning():
                     # Non-bloquant : un N8N down ne doit pas paralyser le pruning global
                     print(f"⚠️ [ECHO-LIFECYCLE] N8N Safeguard: {e}. Purge N8N ignorée (non bloquant).")
 
+            MAINTENANCE_STATE["status"] = "Garbage Collection des Drop Zones N8N..."
+            from pathlib import Path
+            downloads_root = Path("/app/downloads")
+            if downloads_root.exists() and downloads_root.is_dir():
+                active_wf_set = set(n8n_active_ids)
+                for uid_dir in downloads_root.iterdir():
+                    if not uid_dir.is_dir(): continue
+                    for cid_dir in uid_dir.iterdir():
+                        if not cid_dir.is_dir(): continue
+                        n8n_dir = cid_dir / "n8n"
+                        if n8n_dir.exists() and n8n_dir.is_dir():
+                            for wf_dir in n8n_dir.iterdir():
+                                if wf_dir.is_dir() and wf_dir.name not in active_wf_set:
+                                    try:
+                                        import shutil
+                                        shutil.rmtree(str(wf_dir), ignore_errors=True)
+                                        orphans += 1
+                                    except Exception:
+                                        pass
+
             MAINTENANCE_STATE["status"] = "Purge des dossiers de l'Espace Personnel (FS)..."
 
             # --- A. Purge des dossiers de l'Espace Personnel ---
