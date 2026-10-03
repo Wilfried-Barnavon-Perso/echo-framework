@@ -714,15 +714,38 @@ def _run_semantic_pruning():
                     # Non-bloquant : un N8N down ne doit pas paralyser le pruning global
                     print(f"⚠️ [ECHO-LIFECYCLE] N8N Safeguard: {e}. Purge N8N ignorée (non bloquant).")
 
-            MAINTENANCE_STATE["status"] = "Garbage Collection des Drop Zones N8N..."
+            MAINTENANCE_STATE["status"] = "Garbage Collection des Drop Zones..."
             from pathlib import Path
             downloads_root = Path("/app/downloads")
             if downloads_root.exists() and downloads_root.is_dir():
                 active_wf_set = set(n8n_active_ids)
                 for uid_dir in downloads_root.iterdir():
                     if not uid_dir.is_dir(): continue
+                    
+                    # 1. Purge Utilisateur Orphelin
+                    if uid_dir.name not in valid_ids and len(uid_dir.name) > 30:
+                        try:
+                            import shutil
+                            shutil.rmtree(str(uid_dir), ignore_errors=True)
+                            orphans += 1
+                        except Exception:
+                            pass
+                        continue
+
                     for cid_dir in uid_dir.iterdir():
                         if not cid_dir.is_dir(): continue
+                        
+                        # 2. Purge Chat Orphelin
+                        if cid_dir.name not in db_valid_chats and len(cid_dir.name) > 30:
+                            try:
+                                import shutil
+                                shutil.rmtree(str(cid_dir), ignore_errors=True)
+                                orphans += 1
+                            except Exception:
+                                pass
+                            continue
+                            
+                        # 3. Purge Workflows N8N (Les dossiers "browser" sont purgés avec cid_dir)
                         n8n_dir = cid_dir / "n8n"
                         if n8n_dir.exists() and n8n_dir.is_dir():
                             for wf_dir in n8n_dir.iterdir():
