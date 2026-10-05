@@ -53,6 +53,7 @@
         <ul>
           <li><strong>Sandbox Éphémère :</strong> Testée dynamiquement par le LLM, elle doit OBLIGATOIREMENT démarrer par le nœud <code>Execute Workflow Trigger</code>.</li>
           <li><strong>Daemon Permanent :</strong> Déploiements (crons/webhooks) tournant en arrière-plan. Ces workflows peuvent agir comme des clients MCP et déclencher asynchronement des "Child Chats" dans ECHO via l'API pour confier une tâche complexe au LLM avec traçabilité complète.</li>
+          <li><strong>Génération de Fichiers :</strong> Tout workflow devant générer un fichier sur le disque DOIT STRICTEMENT configurer son noeud d'écriture vers le chemin <code>__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext</code>. Le renommage hashé anti-collision et l'ingestion dans la mémoire de la session sont ensuite gérés nativement par ECHO.</li>
         </ul>
 
         <h3 style="color:#93c5fd; margin-top: 2rem;">3. MCP Broker & Identity Vault</h3>
@@ -91,7 +92,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.212.12 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.216.7 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -46,7 +46,7 @@
         <p>Le Filtre Inlet opère la préparation sémantique (Draft). Il injecte l'<strong>AEC (Artéfact Environnemental et Contextuel)</strong> au format XML, fournissant au modèle son registre de fichiers et sa proprioception. Il exécute également le <strong>Moulage Sémantique (Semantic Molding)</strong> via l'API locale pour les fichiers > 256 Ko : le texte est distillé, indexé dans la base Qdrant locale (<code>echo_session_rag</code>), et seul un résumé de 300 mots est injecté dans le contexte actif avec un <code>source_id</code>.</p>
 
         <h3 style="color:#93c5fd; margin-top: 2rem;">2. Le Pipe Engine (pipe_engine.py)</h3>
-        <p>Le Cortex principal gère l'orchestration finale. Il applique la Suture Bit-Perfect (reconstruction de l'état via l'Invariant Hash SQLite). Il instancie le <strong>Protocole de Triage Dynamique (PTD)</strong> pour router la requête vers le moteur approprié (LITE, FLASH, ou PRO) défini par le <code>ECHO_MODELS_REGISTRY</code>. Il gère le flux HTTP/2 SSE avec Google via Stealth Headers (WAF Bypass).</p>
+        <p>Le Cortex principal gère l'orchestration finale. Il applique la Suture Bit-Perfect (reconstruction de l'état via l'Invariant Hash SQLite). Il instancie le <strong>Protocole de Triage Dynamique (PTD)</strong> pour router la requête vers le moteur approprié (LITE, FLASH, ou PRO) défini par le <code>ECHO_MODELS_REGISTRY</code>. Il gère l'<strong>Élasticité Cognitive</strong> : l'inertie en LITE et FLASH est proscrite, imposant au modèle une évaluation asynchrone constante de la difficulté pour s'adapter à la volée (Fast-Track pour le simple réflexe, escalade pour les tâches complexes). Il gère également le flux HTTP/2 SSE avec Google via Stealth Headers (WAF Bypass).</p>
 
         <h3 style="color:#93c5fd; margin-top: 2rem;">3. Le Kernel Statique (system-prompt.md)</h3>
         <p>Le comportement cognitif strict est régi par des principes encodés en dur :</p>
@@ -74,7 +74,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.212.12 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.216.7 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

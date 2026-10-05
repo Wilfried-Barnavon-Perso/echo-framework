@@ -49,15 +49,16 @@
         <h3 style="color:#93c5fd; margin-top: 2rem;">2. Coding Worker (Sandbox d'Exécution)</h3>
         <p>Micro-service Docker isolé (<code>echo-coding-worker</code>) hébergeant <code>worker_api.py</code> (Flask, Port 5000).</p>
         <ul>
-          <li><strong>Architecture :</strong> Basé sur <code>python:3.14-slim</code>. Flask est configuré en mode <code>threaded=True</code>. <strong>Important :</strong> <code>matplotlib</code> et <code>requests</code> ne sont délibérément pas inclus (les graphiques sont gérés par Visual Intelligence). Libs dispos : pandas, numpy, scikit-learn, regex, sympy.</li>
-          <li><strong>Isolation OS :</strong> Pour chaque requête (<code>POST /execute</code>), le Worker crée un <code>multiprocessing.Process</code> (Python) ou un <code>child_process</code> (JS) avec son propre <code>tempfile.TemporaryDirectory()</code>. Cela garantit un <em>address space</em> hermétique et détruit les séquelles mémoire après expiration du timeout (30s par défaut).</li>
+          <li><strong>Architecture :</strong> Basé sur <code>python:3.14-slim</code> et <strong>Node 22</strong>. Utilise <code>bwrap</code> pour isoler les exécutions (montage en lecture seule de <code>/echo_libs_sandbox</code>).</li>
+          <li><strong>Isolation OS :</strong> Chaque requête est exécutée dans un <em>address space</em> hermétique. L'exécution se fait strictement depuis un fichier du Codex (Workspace).</li>
+          <li><strong>Dépendances Dynamiques :</strong> Le Worker autorise l'installation à la volée de librairies (via le paramètre <code>dependencies</code>) qui sont stockées dans un volume persistant, évitant de re-télécharger à chaque appel.</li>
+          <li><strong>ECHO Monitor :</strong> Une librairie maison (<code>echo_monitor</code>, disponible en Python et Node.js) est pré-installée. Elle permet au code de générer et d'afficher des interfaces web complètes (HTML/JS) directement dans la fenêtre "Sandbox Monitor" de l'utilisateur via `echo_monitor.display()`.</li>
           <li><strong>Sorties :</strong> Les flux <code>stdout</code> et <code>stderr</code> sont capturés via <code>contextlib.redirect_stdout/stderr</code>. Tout retour <code>stderr</code> non vide déclenche le statut <code>error</code>.</li>
         </ul>
 
-
         <h3 style="color:#93c5fd; margin-top: 2rem;">Code Executor (code_executor_tool.py)</h3>
         <ul>
-          <li><strong>code_executor :</strong> Permet au modèle d'exécuter du code (Python ou Node.js) dans une Sandbox isolée.</li>
+          <li><strong>code_executor :</strong> Permet au modèle d'exécuter du code (Python ou Node.js) dans une Sandbox isolée. Le modèle délègue désormais la gestion du timeout et gère lui-même les dépendances requises.</li>
         </ul>
       </div>
     </details>
@@ -69,7 +70,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.212.12 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.216.7 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

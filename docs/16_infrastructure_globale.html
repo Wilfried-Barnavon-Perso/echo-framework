@@ -40,7 +40,7 @@
       <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
         
         <h3 style="color:#93c5fd;">1. Admin Manager (server.py)</h3>
-        <p>Orchestrateur asynchrone pilotant via le socket Docker. Il gère : le polling des états conteneurs, le <code>run_semantic_pruning()</code> (nettoyage TTL asynchrone des index Qdrant pour éviter le blocage UI), la défragmentation (Vacuum) SQLite, et expose un dashboard interne <code>/api/task_status</code>.</p>
+        <p>Orchestrateur asynchrone pilotant via le socket Docker. Il gère : le polling des états conteneurs (avec <strong>métriques et tri dynamique</strong>), le <code>run_semantic_pruning()</code> (nettoyage TTL asynchrone des index Qdrant pour éviter le blocage UI), la défragmentation (Vacuum) SQLite, et expose un dashboard interne <code>/api/task_status</code>. Son séquenceur nocturne génère désormais des <strong>rapports HTML esthétiques (grille Bootstrap)</strong> directement affichés dans l'UI d'administration pour l'audit de purge et de consolidation.</p>
 
         <h3 style="color:#93c5fd; margin-top: 2rem;">2. ECHO Auth SSO & MFA</h3>
         <p>Fournisseur d'identité natif (IdP). Il force un flux OAuth2 PKCE (via tunnel SSH sur les ports 8020-8024) et interdit l'authentification native d'Open WebUI. Gère le TOTP et le Fallback API Keys AI Studio si l'OAuth2 primaire échoue. L'invalidation de la session SSO purge proactivement les tokens OWUI.</p>
@@ -71,7 +71,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.212.12 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.216.7 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

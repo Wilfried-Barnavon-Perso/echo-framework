@@ -1,16 +1,20 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.92
+version: 5.98
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.98: Support du Trigger Asynchrone JS via _echoCodexTarget pour forcer l'ouverture du Codex sur un fichier spécifique.
+# 5.97: Architecture - Factorisation du HUD ECHO Identity Vault via la classe unifiée EchoFloatingWindow. Maintien de l'architecture spécifique pour le Cognitive Monitor et le WebPlayer.
+# 5.96: Architecture - Factorisation des fenêtres flottantes via la classe unifiée EchoFloatingWindow. L'ECHO Monitor devient le Sandbox Monitor natif.
+# 5.95: Fix Monitor - Extraction de echoCreateFloatingMonitor dans get_floating_monitor_js() (non injecté auparavant), iframe construite via DOM (srcdoc natif), retrait de allow-same-origin.
+# 5.94: Abandon du Pattern Data Island pour le Monitor. Implémentation du mode Multiplexé via UCTP natif (events.emit_execute) et suppression du MutationObserver.
+# 5.93: Implémentation du Pattern Data Island pour le rendu des composants ECHO Sandbox Monitor via iframe sécurisée.
 # 5.88: Codex - Remplacement des icônes d'import/export par des SVG (Upload/Download).
-# 5.87: Remplacement des indicateurs de chargement (switch_workspace et load_directory) par un spinner CSS universel.
 # 5.86: Fix - Correction d'une erreur de syntaxe f-string dans le JS injecté du Lazy Loading.
 # 5.85: Refonte majeure (Codex) : Implémentation du Lazy Loading avec requêtage asynchrone (load_directory) et purge mémoire dynamique.
-# 5.84: Fix - (Codex) Préservation du collapse des dossiers au re-rendu, et implémentation du proxy asynchrone (sendCodexAction) pour éradiquer la perte de clics.
 # 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
 # 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
 # 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
@@ -62,36 +66,183 @@ class EchoRichUI:
         return f"<svg width='{size}' height='{size}' viewBox='0 0 24 24' fill='none' stroke='{color}' stroke-width='{stroke_width}' stroke-linecap='round' stroke-linejoin='round'{cls}>{path}</svg>"
 
     @staticmethod
-    def get_hud_wrapper(hud_id: str, title: str, body_html: str, tools: list = ['minimize', 'maximize', 'close'], custom_tools_html: str = "") -> str:
-        """Génère la structure standardisée d'une fenêtre ECHO HUD."""
-        tools_html = custom_tools_html
-        if 'minimize' in tools:
-            tools_html += f"<button id='{hud_id}-minimize' class='echo-hud-tool'>{EchoRichUI.get_icon('Minus')}</button>"
-        if 'maximize' in tools:
-            tools_html += f"<button id='{hud_id}-maximize' class='echo-hud-tool'>{EchoRichUI.get_icon('Maximize')}</button>"
-        if 'close' in tools:
-            tools_html += f"<button id='{hud_id}-close' class='echo-hud-tool echo-danger'>{EchoRichUI.get_icon('X')}</button>"
-
-        return f"""
-        <style>
-            .echo-hud-container {{ position:fixed; inset:0; z-index:10001; background:rgba(0,0,0,0.92); backdrop-filter:blur(20px); display:flex; flex-direction:column; align-items:center; color:white; font-family:sans-serif; overflow:hidden; }}
-            .echo-hud-header {{ position:absolute; top:20px; left:20px; right:20px; z-index:100; display:flex; justify-content:space-between; align-items:center; }}
-            .echo-hud-title {{ font-size:12px; font-weight:bold; letter-spacing:1px; color:#a3a3a3; background:rgba(255,255,255,0.05); padding:4px 12px; border-radius:20px; }}
-            .echo-hud-tools {{ display:flex; gap:15px; }}
-            .echo-hud-tool {{ background:none; border:none; color:white; font-size:18px; cursor:pointer; width:30px; height:30px; display:flex; align-items:center; justify-content:center; opacity:0.7; transition:opacity 0.2s; }}
-            .echo-hud-tool:hover {{ opacity:1; }}
-            .echo-danger:hover {{ color:#ef4444; }}
-            .echo-hud-body {{ flex:1; width:100%; display:flex; flex-direction:column; justify-content:center; align-items:center; overflow:auto; }}
-        </style>
-        <div id="{hud_id}" class="echo-hud-container">
-            <div id="{hud_id}-header" class="echo-hud-header draggable">
-                <span class="echo-hud-title">{title}</span>
-                <div class="echo-hud-tools">{tools_html}</div>
-            </div>
-            <div id="{hud_id}-body" class="echo-hud-body">
-                {body_html}
-            </div>
-        </div>
+    def get_floating_window_class_js() -> str:
+        """
+        # ==============================================================================
+        # TEMPLATE STANDARD : ECHO FLOATING WINDOW (Moteur JS)
+        # Génère la classe ES6 `EchoFloatingWindow` utilisée par tous les HUDs flottants
+        # pour gérer nativement le rendu Glassmorphism, le Drag, Resize et les contrôles.
+        # ==============================================================================
+        """
+        return """
+        if (!window.EchoFloatingWindow) {
+            window.EchoFloatingWindow = class {
+                constructor(config) {
+                    this.id = config.id;
+                    this.title = config.title || '';
+                    this.icon = config.icon || '';
+                    this.bodyHtml = config.bodyHtml || '';
+                    this.customHeader = config.customHeader || '';
+                    this.width = config.width || '500px';
+                    this.height = config.height || '400px';
+                    this.minWidth = config.minWidth || '200px';
+                    this.minHeight = config.minHeight || '100px';
+                    this.allowResize = config.allowResize !== false;
+                    this.onClose = config.onClose || null;
+                    this.onMinimize = config.onMinimize || null;
+                    
+                    // Centrage basique
+                    this.posX = Math.max(20, (window.innerWidth / 2) - (parseInt(this.width)/2 || 250));
+                    this.posY = 100;
+                    
+                    this.isMinimized = false;
+                    this.isFullscreen = false;
+                    this.oldState = {};
+                }
+                
+                render() {
+                    let hud = document.getElementById(this.id);
+                    if (hud) hud.remove();
+                    
+                    hud = document.createElement('div');
+                    hud.id = this.id;
+                    hud.style.cssText = `position:fixed; left:${this.posX}px; top:${this.posY}px; width:${this.width}; height:${this.height}; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:system-ui,sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:${this.minWidth}; min-height:${this.minHeight};`;
+                    
+                    const iconHtml = this.icon ? `<span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">${this.icon}</span>` : '';
+                    
+                    hud.innerHTML = `
+                      <div id="${this.id}-header" style="height:44px; padding:0 15px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:12px; border-bottom:1px solid #222; cursor:move; user-select:none; box-sizing:border-box; flex-shrink:0;">
+                        ${iconHtml}
+                        <div style="font-weight:600; font-size:13px; color:#a3a3a3; display:flex; align-items:center; gap:8px;">${this.title}</div>
+                        ${this.customHeader}
+                        <div style="display:flex; gap:12px; align-items:center; margin-left:auto;">
+                          <button id="${this.id}-btn-zoom" title="Maximiser" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px; padding:0; display:flex; align-items:center;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
+                          <button id="${this.id}-btn-reset" title="Taille réelle (1:1)" style="background:none; border:none; color:#777; cursor:pointer; font-size:11px; font-weight:bold; padding:0;">1:1</button>
+                          <button id="${this.id}-btn-min" title="Réduire" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px; padding:0; display:flex; align-items:center;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
+                          <button id="${this.id}-btn-close" title="Fermer" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:18px; padding:0; display:flex; align-items:center;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg></button>
+                        </div>
+                      </div>
+                      <div id="${this.id}-body" style="flex:1; position:relative; overflow:hidden; display:flex; flex-direction:column; background:white;">
+                        ${this.bodyHtml}
+                        ${this.allowResize ? `<div id="${this.id}-resizer" style="position:absolute; bottom:0; right:0; width:16px; height:16px; cursor:nwse-resize; z-index:101; background:linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.4) 50%); border-bottom-right-radius: 12px;"></div>` : ''}
+                      </div>
+                    `;
+                    document.body.appendChild(hud);
+                }
+                
+                attachBaseEvents() {
+                    const hud = document.getElementById(this.id);
+                    if (!hud) return;
+                    
+                    hud.addEventListener('mousedown', () => {
+                        document.querySelectorAll('[id^="echo-"]').forEach(el => {
+                            if (el.style.zIndex && parseInt(el.style.zIndex) >= 10000) {
+                                el.style.zIndex = '10000';
+                            }
+                        });
+                        hud.style.zIndex = '10001';
+                    });
+                    
+                    const header = document.getElementById(this.id + '-header');
+                    let isDragging = false, startX, startY, initialLeft, initialTop;
+                    
+                    header.onmousedown = (e) => {
+                        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('button')) return;
+                        e.preventDefault();
+                        isDragging = true;
+                        startX = e.clientX;
+                        startY = e.clientY;
+                        initialLeft = hud.offsetLeft;
+                        initialTop = hud.offsetTop;
+                        hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
+                    };
+                    
+                    document.addEventListener('mousemove', (e) => {
+                        if (isDragging) {
+                            e.preventDefault();
+                            hud.style.left = (initialLeft + (e.clientX - startX)) + 'px';
+                            hud.style.top = (initialTop + (e.clientY - startY)) + 'px';
+                        }
+                    });
+                    
+                    document.addEventListener('mouseup', () => {
+                        if (isDragging) {
+                            isDragging = false;
+                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                        }
+                    });
+                    
+                    if (this.allowResize) {
+                        const resizer = document.getElementById(this.id + '-resizer');
+                        let isResizing = false, rStartX, rStartY, startW, startH;
+                        
+                        resizer.onmousedown = (e) => {
+                            e.preventDefault(); e.stopPropagation();
+                            isResizing = true;
+                            rStartX = e.clientX;
+                            rStartY = e.clientY;
+                            startW = hud.offsetWidth;
+                            startH = hud.offsetHeight;
+                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
+                        };
+                        
+                        document.addEventListener('mousemove', (e) => {
+                            if (isResizing) {
+                                e.preventDefault();
+                                hud.style.width = (startW + (e.clientX - rStartX)) + 'px';
+                                hud.style.height = (startH + (e.clientY - rStartY)) + 'px';
+                            }
+                        });
+                        
+                        document.addEventListener('mouseup', () => {
+                            if (isResizing) {
+                                isResizing = false;
+                                hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                            }
+                        });
+                    }
+                    
+                    document.getElementById(this.id + '-btn-close').onclick = () => {
+                        hud.remove();
+                        if (this.onClose) this.onClose();
+                    };
+                    
+                    const body = document.getElementById(this.id + '-body');
+                    document.getElementById(this.id + '-btn-min').onclick = (e) => {
+                        e.stopPropagation();
+                        this.isMinimized = !this.isMinimized;
+                        body.style.display = this.isMinimized ? 'none' : 'flex';
+                        if (this.isMinimized) {
+                            hud.style.height = 'auto';
+                            hud.style.minHeight = '0';
+                        } else {
+                            hud.style.height = this.height;
+                            hud.style.minHeight = this.minHeight;
+                        }
+                        if (this.onMinimize) this.onMinimize(this.isMinimized);
+                    };
+                    
+                    document.getElementById(this.id + '-btn-zoom').onclick = () => {
+                        if (!this.isFullscreen) {
+                            this.oldState = { w: hud.style.width, h: hud.style.height, l: hud.style.left, t: hud.style.top };
+                            hud.style.width = '100vw'; hud.style.height = '100vh';
+                            hud.style.left = '0'; hud.style.top = '0';
+                            this.isFullscreen = true;
+                        } else {
+                            hud.style.width = this.oldState.w; hud.style.height = this.oldState.h;
+                            hud.style.left = this.oldState.l; hud.style.top = this.oldState.t;
+                            this.isFullscreen = false;
+                        }
+                    };
+                    
+                    document.getElementById(this.id + '-btn-reset').onclick = () => {
+                        hud.style.width = this.width;
+                        hud.style.height = this.height;
+                        this.isFullscreen = false;
+                    };
+                }
+            };
+        }
         """
 
     @staticmethod
@@ -744,7 +895,6 @@ class EchoUI(EchoRichUI):
         """Déploie le HUD ECHO flottant avec tooltips en dessous."""
         auth_list = ", ".join(auth_sources) if auth_sources else "N/A"
         total_t = c_t + active_p_t + g_t
-        total_pct = (total_t / max_t) * 100 if max_t > 0 else 0
         q_color = "#10b981"
         if quota_fraction < 0.2:
             q_color = "#ef4444"
@@ -828,7 +978,7 @@ class EchoUI(EchoRichUI):
 
     @classmethod
     def player_ui(cls, session_id: str, total_steps: int) -> HTMLResponse:
-        content = f"<div style='padding:20px;'>Interface Replay v5.136 active via Action.</div>"
+        content = "<div style='padding:20px;'>Interface Replay v5.136 active via Action.</div>"
         html = cls._get_boilerplate(content, "ECHO Navigation Replay")
         return HTMLResponse(
             content=html, headers={
@@ -1212,6 +1362,53 @@ return new Promise(function(resolve) {{
       """
 
     @staticmethod
+    def get_floating_monitor_js() -> str:
+        """Fournit le code JS autonome de la fenêtre flottante ECHO Monitor (multiplexée par window_id).
+        Hérite désormais nativement de EchoFloatingWindow pour bénéficier des fenêtres interactives.
+        L'iframe est construite via le DOM (propriété srcdoc) : aucun échappement HTML manuel requis.
+        allow-same-origin est volontairement exclu : une iframe srcdoc hériterait sinon de l'origine
+        d'Open WebUI (accès localStorage/token de session depuis le code de la Sandbox)."""
+        return EchoUI.get_floating_window_class_js() + """
+      window.echoCreateFloatingMonitor = (window_id, title, htmlContent, width, height) => {
+          const hudId = 'echo-sandbox-monitor-hud-' + window_id;
+          
+          let monitor = window['echo_monitor_obj_' + window_id];
+          if (!document.getElementById(hudId) || !monitor) {
+              monitor = new window.EchoFloatingWindow({
+                  id: hudId,
+                  title: title,
+                  icon: '🚀',
+                  width: width || '500px',
+                  height: height || '400px'
+              });
+              window['echo_monitor_obj_' + window_id] = monitor;
+              
+              monitor.onClose = () => {
+                  delete window['echo_monitor_obj_' + window_id];
+              };
+              
+              monitor.render();
+              monitor.attachBaseEvents();
+          } else {
+              const titleEl = document.querySelector(`#${hudId}-header div`);
+              if (titleEl) titleEl.textContent = title;
+          }
+          
+          const body = document.getElementById(hudId + '-body');
+          if (body) {
+              const existingResizer = document.getElementById(hudId + '-resizer');
+              body.innerHTML = '';
+              const iframe = document.createElement('iframe');
+              iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
+              iframe.style.cssText = 'width:100%; height:100%; border:none; display:block; flex:1;';
+              iframe.srcdoc = htmlContent;
+              body.appendChild(iframe);
+              if (existingResizer) body.appendChild(existingResizer);
+          }
+          return true;
+      };
+      """
+
     @staticmethod
     def _generate_codex_js(
             files_json: str,
@@ -1246,7 +1443,22 @@ return new Promise(function(resolve) {{
         yaml:'.yaml', toml:'.toml', ini:'.ini', markdown:'.md', plaintext:'.txt',
         sql:'.sql', r:'.r', lua:'.lua', perl:'.pl', dockerfile:'.dockerfile',
       }};
-      let currentFile = files.length > 0 ? files[0].filename : null;
+      let targetFileOverride = null;
+      if (window._echoCodexTarget) {{
+          currentWorkspace = window._echoCodexTarget.workspace || currentWorkspace;
+          targetFileOverride = window._echoCodexTarget.file;
+          setTimeout(() => {{
+              if (window.sendCodexAction) {{
+                  window.sendCodexAction({{
+                      action: "switch_workspace", 
+                      workspace: currentWorkspace, 
+                      current_file: targetFileOverride
+                  }});
+              }}
+          }}, 100);
+          window._echoCodexTarget = null;
+      }}
+      let currentFile = targetFileOverride || (files.length > 0 ? files[0].filename : null);
       let editor = null;
       let diffEditor = null;
       let isDiffMode = false;
@@ -3092,10 +3304,6 @@ return new Promise(function(resolve) {{
             "  };\n"
             "  \n"
             "  const css = `\n"
-            "    #${HUD_ID} { position: fixed; top: 15vh; left: calc(50vw - 250px); width: 500px; max-height: 80vh; background: ${isDark ? '#262626' : '#f9f9f9'}; color: ${isDark ? '#ececec' : '#171717'}; border: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; border-radius: 8px; z-index: 10000; display: flex; flex-direction: column; font-family: system-ui, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.5); overflow: hidden; }\n"
-            "    #${HUD_ID}-header { padding: 12px 16px; background: ${isDark ? '#171717' : '#e5e5e5'}; border-bottom: 1px solid ${isDark ? '#404040' : '#d1d5db'}; display: flex; justify-content: space-between; align-items: center; cursor: move; user-select: none; font-weight: bold; font-size: 14px; }\n"
-            "    #${HUD_ID}-close { cursor: pointer; color: #ef4444; font-size: 18px; line-height: 1; }\n"
-            "    #${HUD_ID}-content { flex: 1; min-height: 0; padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }\n"
             "    .vault-table { width: 100%; border-collapse: collapse; font-size: 13px; }\n"
             "    .vault-table th, .vault-table td { text-align: left; padding: 8px; border-bottom: 1px solid ${isDark ? '#404040' : '#e5e5e5'}; }\n"
             "    .vault-table th { color: ${isDark ? '#a3a3a3' : '#6b7280'}; font-weight: 500; }\n"
@@ -3115,15 +3323,8 @@ return new Promise(function(resolve) {{
             "  style.textContent = css;\n"
             "  document.head.appendChild(style);\n"
             "  \n"
-            "  const container = document.createElement('div');\n"
-            "  container.id = HUD_ID;\n"
-            "  \n"
-            "  container.innerHTML = `\n"
-            "    <div id=\"${HUD_ID}-header\">\n"
-            "      <span>🔐 ECHO Identity Vault</span>\n"
-            "      <span id=\"${HUD_ID}-close\">&times;</span>\n"
-            "    </div>\n"
-            "    <div id=\"${HUD_ID}-content\">\n"
+            "  const bodyHtml = `\n"
+            "    <div id=\"${HUD_ID}-content\" style=\"flex: 1; min-height: 0; padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; background: ${isDark ? '#262626' : '#f9f9f9'}; color: ${isDark ? '#ececec' : '#171717'};\">\n"
             "      <div id=\"${HUD_ID}-list\"></div>\n"
             "      <div class=\"vault-form\">\n"
             "        <div id=\"vault-form-title\" style=\"font-weight:bold; margin-bottom:4px;\">➕ Configurer un service</div>\n"
@@ -3140,7 +3341,17 @@ return new Promise(function(resolve) {{
             "    </div>\n"
             "  `;\n"
             "  \n"
-            "  document.body.appendChild(container);\n"
+            "  const monitor = new window.EchoFloatingWindow({\n"
+            "      id: HUD_ID,\n"
+            "      title: 'ECHO Identity Vault',\n"
+            "      icon: '🔐',\n"
+            "      width: '500px',\n"
+            "      height: '80vh',\n"
+            "      bodyHtml: bodyHtml,\n"
+            "      onClose: () => { if(window.echoVaultResolve) window.echoVaultResolve({action: 'close'}); }\n"
+            "  });\n"
+            "  monitor.render();\n"
+            "  monitor.attachBaseEvents();\n"
             "  \n"
             "  // Populate Select Service & Dynamic Fields\n"
             "  const serviceSelect = document.getElementById('vault-input-service');\n"
@@ -3206,33 +3417,6 @@ return new Promise(function(resolve) {{
             "  serviceSelect.addEventListener('change', function() { renderDynamicFields(); resetForm(); });\n"
             "  if(Object.keys(schemas).length > 0) renderDynamicFields();\n"
             "  \n"
-            "  // Drag logic\n"
-            "  let isDragging = false, startX, startY, initialX, initialY;\n"
-            "  const header = document.getElementById(HUD_ID + '-header');\n"
-            "  header.addEventListener('mousedown', function(e) {\n"
-            "    if(e.target.id === HUD_ID + '-close') return;\n"
-            "    isDragging = true;\n"
-            "    startX = e.clientX; startY = e.clientY;\n"
-            "    const rect = container.getBoundingClientRect();\n"
-            "    initialX = rect.left; initialY = rect.top;\n"
-            "    document.addEventListener('mousemove', onMouseMove);\n"
-            "    document.addEventListener('mouseup', onMouseUp);\n"
-            "  });\n"
-            "  function onMouseMove(e) {\n"
-            "    if(!isDragging) return;\n"
-            "    const dx = e.clientX - startX;\n"
-            "    const dy = e.clientY - startY;\n"
-            "    container.style.left = (initialX + dx) + 'px';\n"
-            "    container.style.top = (initialY + dy) + 'px';\n"
-            "    container.style.bottom = 'auto';\n"
-            "    container.style.right = 'auto';\n"
-            "  }\n"
-            "  function onMouseUp() {\n"
-            "    isDragging = false;\n"
-            "    document.removeEventListener('mousemove', onMouseMove);\n"
-            "    document.removeEventListener('mouseup', onMouseUp);\n"
-            "  }\n"
-            "  \n"
             "  // Render List\n"
             "  function renderList() {\n"
             "    const listDiv = document.getElementById(HUD_ID + '-list');\n"
@@ -3257,10 +3441,6 @@ return new Promise(function(resolve) {{
             "  renderList();\n"
             "  \n"
             "  // Events\n"
-            "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
-            "    container.remove();\n"
-            "    if(window.echoVaultResolve) window.echoVaultResolve({action: 'close'});\n"
-            "  };\n"
             "  \n"
             "  document.getElementById('vault-btn-cancel').onclick = function() {\n"
             "    resetForm();\n"

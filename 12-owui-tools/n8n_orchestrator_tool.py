@@ -363,8 +363,8 @@ class Tools:
         """
         Permet au Modèle de déclencher l'exécution ÉPHÉMÈRE CLI d'un workflow préparé via prepare_n8n_workflow.
         Procède à l'injection algorithmique des secrets via Vault. Les noeuds Triggers/Cron sont forcés et exécutés une seule fois.
-        Si le workflow doit générer des fichiers (rapports, médias), le Modèle DOIT configurer le nœud N8N d'écriture
-        disque en utilisant la constante dynamique `__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext` pour le chemin.
+        Si le workflow produit un fichier, le Modèle DOIT configurer le nœud d'écriture STRICTEMENT avec le chemin 
+        `__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext`. Le système gère automatiquement le renommage, la sécurisation et l'ingestion asynchrone.
         
         :param n8n_workflow_id: L'UUID retourné par prepare_n8n_workflow.
         :param sync: Si True, l'agent attend (bloquant) la fin du processus et reçoit stdout/stderr. Si False (par défaut), lance en tâche de fond (Fire&Forget). Utilisez sync=False pour le scraping, les tâches longues, ou quand il y a de la récursivité.
@@ -447,8 +447,8 @@ class Tools:
         Le Modèle DOIT tester le cas nominal de son workflow via `run_n8n_oneshot_workflow` (avec Mocking)
         AVANT de le déployer en mode Démon, pour garantir la validité du graphe.
         ATTENTION : En mode Démon, le flux stdout/stderr est perdu. Si le démon doit transmettre des données ou 
-        des rapports, le workflow DOIT se terminer par une écriture disque utilisant la constante de chemin 
-        `__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext` pour ingestion asynchrone dans le chat par le Download Broker.
+        des rapports, le workflow DOIT se terminer par une écriture disque utilisant STRICTEMENT le chemin 
+        `__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext`. Le système gère automatiquement le renommage, la sécurisation et l'ingestion asynchrone.
         
         :param n8n_workflow_id: L'UUID du workflow préparé via prepare_n8n_workflow.
         """

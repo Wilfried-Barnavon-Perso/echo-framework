@@ -2,9 +2,12 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 2.0
+version: 2.5
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
+# Historique des versions :
+# 2.5: Fix critique - Injection explicite du `session_id` dans `trigger_action` pour empêcher le crash en boucle de l'Event Caller côté serveur.
+# 2.4: Purge des heuristiques JS et passage à l'injection stricte (`chat_id`, `message_id`, `model_id`) depuis le contexte métier.
 from typing import Any, Optional
 import uuid
 import orjson as json
@@ -55,27 +58,28 @@ class EchoEvents:
                 loader_id = "uctp-loader-" + var_id
 
                 setup_js = f"""
-                window.{var_name} = '';
-                if (!document.getElementById('{loader_id}')) {{
-                    const loader = document.createElement('div');
-                    loader.id = '{loader_id}';
-                    loader.style.cssText = 'position:fixed;bottom:20px;right:20px;background:rgba(15,23,42,0.9);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;z-index:999999;box-shadow:0 10px 15px -3px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:system-ui;';
-                    loader.innerHTML = `
-                        <div style="display:flex;align-items:center;justify-content:center;margin-bottom:6px;">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;">
-                                <polyline points="23 4 23 10 17 10"></polyline>
-                                <polyline points="1 20 1 14 7 14"></polyline>
-                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                            </svg>
-                        </div>
-                        <div style="width:30px;height:2px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
-                            <div id="{loader_id}-bar" style="width:0%;height:100%;background:#38bdf8;transition:width 0.1s linear;"></div>
-                        </div>
-                        <style>@keyframes spin {{ 100% {{ transform: rotate(360deg); }} }}</style>
-                    `;
-                    document.body.appendChild(loader);
-                }}
-                return true;
+                (async () => {{
+                    window.{var_name} = '';
+                    if (!document.getElementById('{loader_id}')) {{
+                        const loader = document.createElement('div');
+                        loader.id = '{loader_id}';
+                        loader.style.cssText = 'position:fixed;bottom:20px;right:20px;background:rgba(15,23,42,0.9);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;z-index:999999;box-shadow:0 10px 15px -3px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:system-ui;';
+                        loader.innerHTML = `
+                            <div style="display:flex;align-items:center;justify-content:center;margin-bottom:6px;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                            </div>
+                            <div style="width:30px;height:2px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
+                                <div id="{loader_id}-bar" style="width:0%;height:100%;background:#38bdf8;transition:width 0.1s linear;"></div>
+                            </div>
+                            <style>@keyframes spin {{ 100% {{ transform: rotate(360deg); }} }}</style>
+                        `;
+                        document.body.appendChild(loader);
+                    }}
+                }})();
                 """
                 await self.emitter({"type": "execute", "data": {"code": setup_js}})
 
@@ -87,22 +91,25 @@ class EchoEvents:
                     percent = int(((i + 1) / total_chunks) * 100)
 
                     chunk_js = f"""
-                    window.{var_name} += {escaped};
-                    const bar = document.getElementById('{loader_id}-bar');
-                    if (bar) bar.style.width = '{percent}%';
-                    await new Promise(r => setTimeout(r, 5)); // Force un rafraîchissement DOM (Yield Event Loop)
-                    return true;
+                    (async () => {{
+                        window.{var_name} += {escaped};
+                        const bar = document.getElementById('{loader_id}-bar');
+                        if (bar) bar.style.width = '{percent}%';
+                        await new Promise(r => setTimeout(r, 5)); // Force un rafraîchissement DOM (Yield Event Loop)
+                    }})();
                     """
                     await self.emitter({"type": "execute", "data": {"code": chunk_js}})
 
                 final_exec = f"""
-                const loader = document.getElementById('{loader_id}');
-                if (loader) loader.remove();
+                (async () => {{
+                    const loader = document.getElementById('{loader_id}');
+                    if (loader) loader.remove();
 
-                const code = window.{var_name};
-                delete window.{var_name};
-                const AsyncFunction = Object.getPrototypeOf(async function(){{}}).constructor;
-                return await (new AsyncFunction(code))();
+                    const code = window.{var_name};
+                    delete window.{var_name};
+                    const AsyncFunction = Object.getPrototypeOf(async function(){{}}).constructor;
+                    await (new AsyncFunction(code))();
+                }})();
                 """
                 await self.emitter({"type": "execute", "data": {"code": final_exec}})
             else:
@@ -201,3 +208,45 @@ class EchoEvents:
         except Exception as e:
             print(f"[EchoEvents] Call Execute Error: {e}")
             return None
+
+    async def trigger_action(self, action_id: str, chat_id: str, message_id: str, model_id: str, session_id: str, payload: dict = None) -> Any:
+        """ 
+        Déclenche une action native Open WebUI de manière asynchrone via l'API.
+        Bypass Svelte. Variables de contexte injectées de manière absolue.
+        """
+        payload_js = json.dumps(payload or {}).decode("utf-8")
+        js_payload = f"""
+        (async () => {{
+            try {{
+                const token = localStorage.token ? localStorage.token.replace(/^"|"$/g, '') : '';
+                const extraPayload = {payload_js};
+                
+                const response = await fetch(`/api/chat/actions/{action_id}`, {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${{token}}`
+                    }},
+                    body: JSON.stringify({{
+                        chat_id: '{chat_id}',
+                        model: '{model_id}',
+                        id: '{message_id}',
+                        session_id: '{session_id}',
+                        messages: [],
+                        ...extraPayload
+                    }})
+                }});
+                
+                if (!response.ok) {{
+                    const errText = await response.text();
+                    console.error(`ECHO Action Error [{action_id}]:`, errText);
+                    return false;
+                }}
+                return true;
+            }} catch (e) {{
+                console.error(`ECHO Action Exception [{action_id}]:`, e);
+                return false;
+            }}
+        }})();
+        """
+        return await self.call_execute(js_payload)

@@ -1,7 +1,9 @@
 # ==============================================================================
 # ECHO FRAMEWORK
 # REGLE: Ne garder que les 5 dernières versions du changelog.
-# Version : 9.76
+# Version : 9.77
+# --- CHANGELOG 9.77 ---
+# - Docker Compose : Ajout des volumes echo_libs_sandbox et sandbox-agent-readme.txt pour le Coding Worker.
 # --- CHANGELOG 9.76 ---
 # - Docker Compose : Mise à niveau de Qdrant (Base Vectorielle) vers la version 1.19.1.
 # --- CHANGELOG 9.75 ---
@@ -336,6 +338,7 @@ services:
       - echo-auth-data:/app/auth-data
       - /opt/ECHO/.secrets:/app/secrets:ro
       - /opt/ECHO/ECHO_VERSION:/app/ECHO_VERSION:ro
+      - echo-download-broker-data:/app/downloads:rw
     
     # EXPOSITION : Port 3001 ouvert pour le Reverse Proxy distant
     ports:
@@ -401,6 +404,8 @@ services:
       - TZ=Europe/Paris
     volumes:
       - /opt/ECHO/docker-coding-worker/worker_api.py:/app/app.py:ro
+      - /opt/ECHO/docker-coding-worker/echo_libs_sandbox:/app/echo_libs_sandbox:ro
+      - /opt/ECHO/docker-coding-worker/sandbox-agent-readme.txt:/app/sandbox-agent-readme.txt:ro
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - echo-webui-data:/app/backend/data:rw
     labels:
@@ -429,7 +434,7 @@ services:
     volumes:
       - /opt/ECHO/docker-browser-worker/browser_api.py:/app/browser_api.py:ro
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
-      - echo-browser-data:/app/data
+      - echo-download-broker-data:/app/downloads:rw
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
@@ -469,7 +474,7 @@ services:
     volumes:
       - /opt/ECHO/docker-n8n-worker/n8n_api.py:/app/n8n_api.py:ro
       - /opt/ECHO/docker-n8n-worker/start.sh:/app/start.sh:ro
-      - echo-browser-data:/app/browser-data:rw
+      - echo-download-broker-data:/home/node/.n8n-files:rw
       - echo-n8n-data:/home/node/.n8n:rw
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
     labels:
@@ -655,7 +660,7 @@ services:
       - TZ=Europe/Paris
     volumes:
       - echo-webui-data:/app/backend/data:rw
-      - echo-browser-data:/app/browser-data:rw
+      - echo-download-broker-data:/app/downloads:rw
       - /opt/ECHO/owui-libs:/app/backend/echo_libs:ro
       - /opt/ECHO/docker-download-broker/download_broker.py:/app/download_broker.py:ro
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
@@ -680,7 +685,7 @@ networks:
 volumes:
   echo-webui-data:
     external: true
-  echo-browser-data:
+  echo-download-broker-data:
     external: true
   echo-backups:
     external: true

@@ -197,27 +197,28 @@ sequenceDiagram
 
 
 
-    <h2>Le Monitor ECHO / Image Viewer (Visualiseur Intelligent)</h2>
-<img src="images/monitor_wikipedia.png" alt="Monitor ECHO Wikipedia" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
+    <h2>Le Sandbox Monitor / Image Viewer (Visualiseur Intelligent)</h2>
+<img src="images/monitor_wikipedia.png" alt="Sandbox Monitor Wikipedia" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
 
     <p>
-      Invoqué via <code>EchoUI.monitor_ECHO()</code> (navigation web) ou
+      Invoqué via <code>EchoUI.get_floating_monitor_js()</code> (navigation web, sandbox de code) ou
       <code>EchoUI.show_image_js()</code> (affichage d'images), ce composant est une fenêtre flottante
       surdimensionnable, déplaçable et zoomable injectée dans le DOM.
     </p>
+    
+    <div class="note-box" style="margin-bottom: 20px;">
+      <h4>Factorisation : Classe EchoFloatingWindow</h4>
+      <p>
+        Toutes les fenêtres (Identity Vault, Sandbox Monitor, WebPlayer, etc.) héritent désormais de la classe unifiée <strong><code>EchoFloatingWindow</code></strong> pour garantir une standardisation absolue des interactions et des rendus.
+      </p>
+    </div>
 
     <div class="note-box">
-      <h4>Unification du moteur visuel</h4>
+      <h4>Protocole UCTP & Iframe Sandbox</h4>
       <p>
-        La méthode <code>show_image_js()</code> réutilise le même moteur
-        <code>_generate_webplayer_js()</code> que le navigateur web. Deux paramètres pilotent la personnalisation :
+        Le composant n'utilise plus le pattern <em>Data Island</em>. Il repose sur un multiplexage asynchrone natif <strong>JSONL via le protocole UCTP</strong>.
+        Le rendu est généré dynamiquement dans une balise <code>iframe srcdoc</code> sécurisée, sans recours au MutationObserver.
       </p>
-      <ul>
-        <li><strong><code>direct_url</code></strong> : si fourni, l'image est chargée directement
-        depuis l'URL au lieu d'un <code>data:…;base64,…</code>. Utilisé par <code>show_image_to_user</code>.</li>
-        <li><strong><code>icon</code></strong> : emoji affiché dans l'en-tête du HUD. Par défaut
-        <code>👁️</code> (image viewer), <code>🌐</code> pour le navigateur web.</li>
-      </ul>
     </div>
 
     <details class="tech-spec">
@@ -315,7 +316,7 @@ sequenceDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.212.12 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.216.7 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

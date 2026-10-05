@@ -1,20 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.73
+version: 192.74
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.74: Refonte du prompt new_cognitive_level pour optimiser l'élasticité (symétrie d'inertie LITE/FLASH).
 # 192.73: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
 # 192.72: Ajout d'un statut par défaut 'Traitement en cours' pour rassurer l'utilisateur.
 # 192.71: Désactivation des logs de diagnostic (print) du Fast-Track.
 # 192.70: Injection de logs de diagnostic (print flush=True) dans le Coupe-Circuit (Fast-Track) pour tracker les tâches silencieuses (Follow-ups).
-# 192.69: Retrait du Monkey Patch (inefficace suite au namespace binding d'Open WebUI) et correction des valeurs strings ("tags_generation", "follow_up_generation") pour le forçage JSON du Coupe-Circuit.
-# 192.68: Fix de sécurité Open WebUI (KeyError 'model') via injection dynamique (Monkey Patch) du scope 'ctx' sur background_tasks_handler et outlet_filter_handler. Enforcement de application/json sur les tâches 1 (Tags) et 3 (Follow-ups).
-# 192.67: Hotfix Variable Shadowing : Suppression des imports locaux (MODEL_LITE) dans le Fast-Track causant UnboundLocalError.
-# 192.66: Fix du Fast-Track (Title/Follow-ups) : fusion dynamique des rôles consécutifs pour éviter l'erreur 400 Gemini.
 
 
 # ==============================================================================
@@ -888,26 +885,26 @@ class Pipe:
                         "name": "new_cognitive_level",
                         "description": (
                             "Outil d'ajustement cognitif. Le Modèle est tenu d'appeler cet outil AVANT "
-                            "toute tâche non-triviale pour garantir la qualité de la réponse.\n\n"
+                            "toute tâche nécessitant d'adapter le niveau cognitif pour garantir la "
+                            "qualité de la réponse ou optimiser les ressources.\n\n"
                             "## Règles de sélection\n"
                             "- **MODEL_LITE** (Réflexe — défaut) : Salutations, remerciements, extractions simples, "
-                            "traduction courte, questions factuelles basiques.\n"
+                            "traduction courte, le simple réflexe ou la simple conversation. L'inertie "
+                            "en LITE est proscrite et demande une évaluation silencieuse.\n"
                             "- **MODEL_FLASH** (Exécution — moteur agentique) : Escalade requise pour toute "
-                            "tâche non-triviale. Recherche web, écriture de code, analyse sémantique, "
-                            "synthèse de documents, orchestration d'outils, planification, réponses "
-                            "structurées, raisonnement multi-étapes.\n"
-                            "  \u2192 Le Modèle escalade vers FLASH systématiquement dès que la tâche "
-                            "dépasse le simple réflexe. L'inertie en LITE est proscrite.\n"
+                            "tâche non-triviale (Recherche web, code, analyse, orchestration d'outils, "
+                            "planification, raisonnement multi-étapes).\n"
+                            "  \u2192 Le Modèle escalade vers FLASH systématiquement dès que la tâche dépasse "
+                            "le simple réflexe. L'inertie en FLASH est proscrite et demande une évaluation silencieuse.\n"
                             "- **MODEL_PRO** (Expertise) : Pour les tâches de haute complexité où "
                             "FLASH a échoué ou serait insuffisant. Architectures systèmes complexes, "
-                            "refactoring multi-fichiers avec contraintes imbriquées, logique formelle.\n"
+                            "refactoring multi-fichiers, logique formelle.\n"
                             "  → Le Modèle justifie le besoin de PRO et redescend vers FLASH ou LITE "
-                            "une fois la tâche complexe accomplie. (Note : Ne sont présentés dans l'enum que les modèles "
-                            "vers lesquels une transition est possible, le modèle en cours d'utilisation en est exclu).\n\n"
+                            "une fois la tâche complexe accomplie.\n"
+                            "(Note : Le modèle actuel est exclu de l'enum).\n\n"
                             "## Corrélation contextuelle\n"
-                            "La saturation contextuelle est atténuée par la Mémoire Vectorisée de Session (save_memory "
-                            "et save_session_context stockent les éléments critiques). Vigilance "
-                            "accrue à haute charge (> 50%) — préférer alors FLASH ou PRO."
+                            "La saturation contextuelle est atténuée par la Mémoire Vectorisée de Session. "
+                            "Vigilance accrue à haute charge (> 50%) — préférer alors FLASH ou PRO."
                         ),
                         "parameters": {
                             "type": "object",

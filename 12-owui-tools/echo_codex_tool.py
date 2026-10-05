@@ -1,10 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.4
+version: 2.10
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Historique des versions :
+# 2.10: Fix critique - Extraction du `session_id` pour le passer à `trigger_action` afin d'éviter le crash en boucle de l'Event Caller.
+# 2.9: Injection absolue des variables de contexte (`chat_id`, `message_id`, `model_id`) vers le déclencheur d'action, garantissant un déterminisme total.
+# 2.8: Simplification extrême de `open_codex_ui` en utilisant la nouvelle méthode factorisée `events.trigger_action()` du framework.
+# 2.7: Refonte absolue du déclencheur `open_codex_ui` via un appel API Direct (fetch sur `/api/chat/actions`) sans dépendre du DOM (Factorisable).
+# 2.6: Fix - Implémentation d'un polling robuste (setInterval) et ciblage par aria-label pour l'outil `open_codex_ui` afin de garantir l'ouverture même pendant la génération LLM.
+# 2.5: Ajout de l'outil `open_codex_ui` pour permettre au LLM d'ouvrir le HUD sur un fichier cible (Découplage JS).
 # 2.4: Refonte de `search_codex` (recherche multi-fichiers par dossiers) et fusion du voyage temporel (Delta/Pickaxe) via `trace_history`.
 # 2.3: Ajout de l'outil `restore_codex` et support de lecture historique (`commit_hash`) dans `read_codex`.
 # 2.2: Purge récursive des sous-ressources orphelines dans `delete_codex` (unpack tuple).
@@ -510,3 +516,42 @@ class Tools:
         scope = f"de `{filename}`" if filename else "global"
         return wrap_tool_output(
             text=f"## Historique {scope} ({len(log)} commits)\n\n" + "\n".join(lines), user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+    async def open_codex_ui(
+        self,
+        filename: str,
+        workspace: Literal["main", "sandbox"] = "main",
+        __user__: dict = None,
+        __metadata__: dict = None,
+        __model__: dict = None,
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> str:
+        """
+        Permet au Modèle de déclencher l'ouverture asynchrone du HUD Codex dans l'interface de l'Utilisateur pour y afficher un fichier ciblé.
+        Le Modèle DOIT utiliser cet outil pour présenter visuellement le résultat d'une création ou d'une modification complexe nécessitant la relecture de l'Utilisateur.
+        :param filename: Nom du fichier, chemin relatif, ou identifiant unique (ID) de la cible au sein de l'espace de travail.
+        :param workspace: (Optionnel) Espace de travail cible ("main" ou "sandbox"). Défaut: "main".
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        
+        chat_id = (__metadata__ or {}).get("chat_id", "")
+        message_id = (__metadata__ or {}).get("message_id", "")
+        model_id = (__model__ or {}).get("id", "echo-agent")
+        session_id = (__metadata__ or {}).get("session_id", "")
+        
+        # 1. Injection de la cible
+        target_payload = f"window._echoCodexTarget = {{ file: '{filename}', workspace: '{workspace}' }};\nreturn true;"
+        await events.call_execute(target_payload)
+        
+        # 2. Déclenchement de l'action native via la méthode factorisée
+        await events.trigger_action("echo_codex_action", chat_id, message_id, model_id, session_id)
+        await events.status(f"Ouverture du Codex demandée pour {filename}...", done=True)
+        
+        return wrap_tool_output(
+            text=f"✅ Requête d'ouverture visuelle transmise pour `{filename}` dans l'espace `{workspace}`.",
+            user_id=__user__.get("id", "system") if __user__ else "system",
+            chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+            metadata=__metadata__
+        )
+

@@ -1,17 +1,23 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 3.1 (Multi-langage & Isolation)
+VERSION : 3.4 (Fix orjson ECHO Monitor)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-09-14
+DATE MAJ : 2026-10-05
 
+CHANGELOG 3.4 :
+- Fix NameError critique : remplacement de json.loads par orjson.loads pour le Monitor Payload.
+CHANGELOG 3.3 :
+- Implémentation du Multiplexage (Multi-fenêtrage JSONL) pour ECHO Monitor.
+- Ajout d'une double purge de sécurité (Pre-Run / Post-Run) du fichier .echo_monitor.jsonl pour isoler les sandbox entre deux exécutions.
+CHANGELOG 3.2 :
+- Ajout du montage de /echo_libs_sandbox et /sandbox-agent-readme.txt pour l'utilisation d'ECHO Monitor.
 CHANGELOG 3.1 :
 - Alignement sémantique des montages Bwrap sur /sandbox, /main et /files.
 CHANGELOG 3.0 :
 - Refonte majeure : Transformation du Python Worker en Code Worker multi-langage (Python 3.14 + NodeJS 22).
 - Le script n'est plus transmis à la volée, mais exécuté depuis un fichier physique préalablement enregistré dans la Sandbox du Codex.
 - Intégration d'un Pre-execution Linting (py_compile, node -c) pour rejeter immédiatement les erreurs de syntaxe.
-- Ajout du montage d'un dossier `dependencies` frère au codex pour l'installation isolée et persistante des dépendances à la volée (via pip et npm).
 CHANGELOG 2.8 :
 - Renommage de /inputs vers /ro_user_files (plus sémantique).
 - Ajout du montage du dépôt Codex en lecture seule vers /ro_user_edits pour permettre au script d'exécuter le code généré.
@@ -162,6 +168,8 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
             "--unshare-cgroup",
             "--unshare-user", "--uid", "65534", "--gid", "65534", # Exécute en tant qu'utilisateur "nobody"
             "--bind", sandbox_dir, "/sandbox", # <- Dossier Sandbox (RW)
+            "--ro-bind-try", "/app/echo_libs_sandbox", "/echo_libs_sandbox",
+            "--ro-bind-try", "/app/sandbox-agent-readme.txt", "/sandbox-agent-readme.txt",
             "--chdir", "/sandbox"
         ]
 
@@ -184,16 +192,26 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
 
         # Injecter le runtime approprié
         if is_python:
+            python_paths = ["/echo_libs_sandbox"]
             if deps_dir:
-                bwrap_cmd.extend(["--setenv", "PYTHONPATH", "/.deps/python"])
+                python_paths.append("/.deps/python")
+            bwrap_cmd.extend(["--setenv", "PYTHONPATH", ":".join(python_paths)])
             bwrap_cmd.extend(["python", f"/sandbox/{file_path}"])
         else: # is_node
+            node_paths = ["/echo_libs_sandbox", "/usr/lib/node_modules"]
             if deps_dir:
-                # Concaténer les libs système et les libs locales du chat
-                bwrap_cmd.extend(["--setenv", "NODE_PATH", "/.deps/node/node_modules:/usr/lib/node_modules"])
-            else:
-                bwrap_cmd.extend(["--setenv", "NODE_PATH", "/usr/lib/node_modules"])
+                node_paths.insert(0, "/.deps/node/node_modules")
+            bwrap_cmd.extend(["--setenv", "NODE_PATH", ":".join(node_paths)])
             bwrap_cmd.extend(["node", f"/sandbox/{file_path}"])
+        # 1. PURGE PRE-RUN ECHO Monitor
+        monitor_file = None
+        if sandbox_dir:
+            monitor_file = os.path.join(sandbox_dir, ".echo_monitor.jsonl")
+            if os.path.exists(monitor_file):
+                try:
+                    os.remove(monitor_file)
+                except Exception:
+                    pass
 
         try:
             proc = subprocess.run(
@@ -220,6 +238,20 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
             result['error'] = f"Timeout ({e.timeout}s) dépassé."
             if e.stdout: result['output'] = e.stdout.decode()[:1024 * 1024]
             
+        # 2. LECTURE & PURGE POST-RUN ECHO Monitor
+        if monitor_file and os.path.exists(monitor_file):
+            try:
+                monitor_payloads = []
+                with open(monitor_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            monitor_payloads.append(orjson.loads(line))
+                if monitor_payloads:
+                    result['monitor_payloads'] = monitor_payloads
+                os.remove(monitor_file)
+            except Exception as e:
+                logger.error(f"Erreur lecture monitor payload: {e}")
+                
         result_queue.put(result)
     except Exception as e:
         result_queue.put({'status': 'critical_error', 'error': f"Worker System Error: {str(e)}"})

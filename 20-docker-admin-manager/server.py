@@ -2,7 +2,13 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.124 (Statistiques Docker)
+VERSION : 5.127 (Rapport Esthétique)
+--- CHANGELOG 5.127 ---
+- Refactor : Le séquenceur nocturne génère désormais un rapport HTML esthétique formaté en grille Bootstrap, affiché nativement dans l'UI des logs, remplaçant l'arborescence texte. La fonction de purge renvoie un dictionnaire structuré au lieu d'une chaîne, annulant tout recours aux regex et limitant la redondance d'écriture.
+--- CHANGELOG 5.126 ---
+- Feature : Refonte du séquenceur de maintenance. Fusion des modules (apscheduler) en une chaîne maître fiable gérant la sauvegarde, le redémarrage de Qdrant, et la purge avec consolidation.
+--- CHANGELOG 5.125 ---
+- Feature : Refonte détaillée des logs de purge temporelle (stats catégorisées, espace disque libéré) et ajout de l'audit de consolidation Lvl1->Lvl2 dans l'historique UI.
 --- CHANGELOG 5.124 ---
 - Feature : Ajout des statistiques détaillées (CPU, RAM, Taille, Démarrage) et du tri dynamique des conteneurs Docker dans le Dashboard.
 --- CHANGELOG 5.123 ---
@@ -242,11 +248,7 @@ try:
 except ImportError:
     HAS_SCHEDULER = False
 
-try:
-    import schedule
-    HAS_MAINT_SCHEDULER = True
-except ImportError:
-    HAS_MAINT_SCHEDULER = False
+
 
 # ==============================================================================
 # SECTION 2 : CONFIGURATION & CHEMINS
@@ -507,22 +509,52 @@ def save_maint_report(report_str):
         with open(MAINT_HISTORY_FILE, 'w') as f: json.dump(history[:500], f, indent=4)
     except Exception: pass
 
-def run_semantic_pruning():
+def _format_bytes(size_in_bytes: int) -> str:
+    """Formate une taille en octets vers une unité lisible (Ko, Mo, Go)."""
+    if size_in_bytes < 1024:
+        return f"{size_in_bytes} o"
+    elif size_in_bytes < 1024 * 1024:
+        return f"{size_in_bytes / 1024:.1f} Ko"
+    elif size_in_bytes < 1024 * 1024 * 1024:
+        return f"{size_in_bytes / (1024 * 1024):.1f} Mo"
+    else:
+        return f"{size_in_bytes / (1024 * 1024 * 1024):.1f} Go"
+
+def _get_tree_size(path: str) -> int:
+    """Retourne la taille totale d'un dossier ou fichier en octets."""
+    total_size = 0
+    if os.path.isfile(path) or os.path.islink(path):
+        try:
+            total_size = os.path.getsize(path)
+        except Exception:
+            pass
+    elif os.path.isdir(path):
+        for dirpath, _, filenames in os.walk(path):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                if not os.path.islink(fp):
+                    try:
+                        total_size += os.path.getsize(fp)
+                    except Exception:
+                        pass
+    return total_size
+
+def run_semantic_pruning(silent=False):
     """Wrapper pour la Purge Temporelle gérant l'état global asynchrone."""
     if MAINTENANCE_STATE["is_running"]:
         print("⚠️ [ECHO-LIFECYCLE] Purge déjà en cours, annulation.")
-        return "Déjà en cours"
+        return "Déjà en cours", {}
     
     MAINTENANCE_STATE["is_running"] = True
     MAINTENANCE_STATE["start_time"] = time.time()
     MAINTENANCE_STATE["status"] = "Démarrage (Attente des services)..."
     try:
-        return _run_semantic_pruning()
+        return _run_semantic_pruning(silent=silent)
     finally:
         MAINTENANCE_STATE["is_running"] = False
         MAINTENANCE_STATE["status"] = ""
 
-def _run_semantic_pruning():
+def _run_semantic_pruning(silent=False):
     print("🧬 [ECHO-LIFECYCLE] Démarrage...")
     
     # 0. Wait-for-it (Asynchrone 1h max) : Attente de dispo post-backup
@@ -577,8 +609,9 @@ def _run_semantic_pruning():
     if not services_ready:
         err_msg = f"Pruning annulé : Délai d'attente dépassé (1h). Diag: db_ok={db_ok}, qdrant_ok={qdrant_ok}, owui_ok={owui_ok}"
         print(f"❌ [ECHO-LIFECYCLE] {err_msg}")
-        save_maint_report(err_msg)
-        return err_msg
+        if not silent:
+            save_maint_report(err_msg)
+        return err_msg, {}
 
     report = []
     config = load_maint_config()
@@ -609,15 +642,17 @@ def _run_semantic_pruning():
             if r_signin.status_code != 200:
                 err_msg = f"API Safeguard: Connexion OWUI échouée (HTTP {r_signin.status_code}). Pruning annulé."
                 print(f"❌ {err_msg}")
-                save_maint_report(err_msg)
-                return err_msg
+                if not silent:
+                    save_maint_report(err_msg)
+                return err_msg, {}
                 
             admin_token = r_signin.json().get("token")
             if not admin_token:
                 err_msg = "API Safeguard: Aucun jeton JWT reçu. Pruning annulé."
                 print(f"❌ {err_msg}")
-                save_maint_report(err_msg)
-                return err_msg
+                if not silent:
+                    save_maint_report(err_msg)
+                return err_msg, {}
 
             auth_headers = {"Authorization": f"Bearer {admin_token}"}
             auth_headers.update(extra_headers)
@@ -626,26 +661,39 @@ def _run_semantic_pruning():
             if r_auth.status_code != 200:
                 err_msg = f"API Safeguard: Auth OWUI échouée (HTTP {r_auth.status_code}). Pruning annulé."
                 print(f"❌ {err_msg}")
-                save_maint_report(err_msg)
-                return err_msg
+                if not silent:
+                    save_maint_report(err_msg)
+                return err_msg, {}
         except Exception as e:
             err_msg = f"API Safeguard: OWUI injoignable ({str(e)}). Pruning annulé."
             print(f"❌ {err_msg}")
-            save_maint_report(err_msg)
-            return err_msg
+            if not silent:
+                save_maint_report(err_msg)
+            return err_msg, {}
 
     MAINTENANCE_STATE["status"] = "SQLite Safeguard & Inspection (Dossiers/Qdrant)..."
 
     # 2. Garde-fous BDD SQLite & Orphelins (Dossiers Utilisateurs et Mémoire Qdrant)
-    orphans = 0
+    stats = {
+        "users": {"c": 0, "b": 0},
+        "chats": {"c": 0, "b": 0},
+        "files": {"c": 0, "b": 0},
+        "drop_users": {"c": 0, "b": 0},
+        "drop_chats": {"c": 0, "b": 0},
+        "drop_n8n": {"c": 0, "b": 0},
+        "sqlite_ghosts": 0,
+        "sqlite_vacuumed": 0,
+        "promoted_clusters": 0
+    }
     qdrant_synced = False
     
     # Vérification d'existence du fichier de base de données
     if not os.path.exists(WEBUI_DB_PATH):
         err_msg = f"BDD Safeguard: Fichier de base de données introuvable ({WEBUI_DB_PATH}). Pruning annulé."
         print(f"❌ {err_msg}")
-        save_maint_report(err_msg)
-        return err_msg
+        if not silent:
+            save_maint_report(err_msg)
+        return err_msg, {}
 
     if os.path.exists(ECHO_USERS_ROOT):
         try:
@@ -661,8 +709,9 @@ def _run_semantic_pruning():
             if not valid_ids:
                 err_msg = "BDD Safeguard: Aucun utilisateur valide trouvé dans OWUI. Pruning annulé par sécurité."
                 print(f"❌ {err_msg}")
-                save_maint_report(err_msg)
-                return err_msg
+                if not silent:
+                    save_maint_report(err_msg)
+                return err_msg, {}
             
             MAINTENANCE_STATE["status"] = "Génération liste blanche N8N..."
             
@@ -714,25 +763,80 @@ def _run_semantic_pruning():
                     # Non-bloquant : un N8N down ne doit pas paralyser le pruning global
                     print(f"⚠️ [ECHO-LIFECYCLE] N8N Safeguard: {e}. Purge N8N ignorée (non bloquant).")
 
+            MAINTENANCE_STATE["status"] = "Garbage Collection des Drop Zones..."
+            from pathlib import Path
+            downloads_root = Path("/app/downloads")
+            if downloads_root.exists() and downloads_root.is_dir():
+                active_wf_set = set(n8n_active_ids)
+                for uid_dir in downloads_root.iterdir():
+                    if not uid_dir.is_dir(): continue
+                    
+                    # 1. Purge Utilisateur Orphelin
+                    if uid_dir.name not in valid_ids and len(uid_dir.name) > 30:
+                        try:
+                            import shutil
+                            sz = _get_tree_size(str(uid_dir))
+                            shutil.rmtree(str(uid_dir), ignore_errors=True)
+                            stats["drop_users"]["c"] += 1
+                            stats["drop_users"]["b"] += sz
+                        except Exception:
+                            pass
+                        continue
+
+                    for cid_dir in uid_dir.iterdir():
+                        if not cid_dir.is_dir(): continue
+                        
+                        # 2. Purge Chat Orphelin
+                        if cid_dir.name not in db_valid_chats and len(cid_dir.name) > 30:
+                            try:
+                                import shutil
+                                sz = _get_tree_size(str(cid_dir))
+                                shutil.rmtree(str(cid_dir), ignore_errors=True)
+                                stats["drop_chats"]["c"] += 1
+                                stats["drop_chats"]["b"] += sz
+                            except Exception:
+                                pass
+                            continue
+                            
+                        # 3. Purge Workflows N8N (Les dossiers "browser" sont purgés avec cid_dir)
+                        n8n_dir = cid_dir / "n8n"
+                        if n8n_dir.exists() and n8n_dir.is_dir():
+                            for wf_dir in n8n_dir.iterdir():
+                                if wf_dir.is_dir() and wf_dir.name not in active_wf_set:
+                                    try:
+                                        import shutil
+                                        sz = _get_tree_size(str(wf_dir))
+                                        shutil.rmtree(str(wf_dir), ignore_errors=True)
+                                        stats["drop_n8n"]["c"] += 1
+                                        stats["drop_n8n"]["b"] += sz
+                                    except Exception:
+                                        pass
+
             MAINTENANCE_STATE["status"] = "Purge des dossiers de l'Espace Personnel (FS)..."
 
             # --- A. Purge des dossiers de l'Espace Personnel ---
             if config.get("purge_orphaned_users", False):
                 for folder in os.listdir(ECHO_USERS_ROOT):
                     if folder not in valid_ids and len(folder) > 30:
-                        shutil.rmtree(os.path.join(ECHO_USERS_ROOT, folder))
-                        orphans += 1
+                        folder_path = os.path.join(ECHO_USERS_ROOT, folder)
+                        sz = _get_tree_size(folder_path)
+                        shutil.rmtree(folder_path)
+                        stats["users"]["c"] += 1
+                        stats["users"]["b"] += sz
             
             if config.get("purge_orphaned_chats", False):
                 for folder in valid_ids:
                     user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
                     if os.path.exists(user_chats_dir):
                         for cdir in os.listdir(user_chats_dir):
-                            if os.path.isdir(os.path.join(user_chats_dir, cdir)):
+                            cdir_path = os.path.join(user_chats_dir, cdir)
+                            if os.path.isdir(cdir_path):
                                 chat_id = cdir
                                 if chat_id not in db_valid_chats:
-                                    shutil.rmtree(os.path.join(user_chats_dir, cdir))
-                                    orphans += 1
+                                    sz = _get_tree_size(cdir_path)
+                                    shutil.rmtree(cdir_path)
+                                    stats["chats"]["c"] += 1
+                                    stats["chats"]["b"] += sz
 
                 # --- A.bis Purge Granulaire des Fichiers (RefCounting FS) ---
                 MAINTENANCE_STATE["status"] = "Garbage Collection des fichiers (FS)..."
@@ -766,8 +870,10 @@ def _run_semantic_pruning():
                                     # Vérification de l'âge pour éviter la suppression d'un upload en cours
                                     if os.path.getmtime(f_path) < grace_period:
                                         try:
+                                            sz = os.path.getsize(f_path) if os.path.exists(f_path) else 0
                                             os.remove(f_path)
-                                            orphans += 1
+                                            stats["files"]["c"] += 1
+                                            stats["files"]["b"] += sz
                                         except Exception:
                                             pass
 
@@ -780,15 +886,17 @@ def _run_semantic_pruning():
                             if not os.path.exists(f_path):
                                 try:
                                     os.unlink(f_path)
-                                    orphans += 1
+                                    stats["files"]["c"] += 1
                                 except Exception:
                                     pass
                         elif os.path.isfile(f_path):
                             # Fichier physique orphelin (non converti en symlink par echo_ingestion)
                             if os.path.getmtime(f_path) < grace_period:
                                 try:
+                                    sz = os.path.getsize(f_path)
                                     os.remove(f_path)
-                                    orphans += 1
+                                    stats["files"]["c"] += 1
+                                    stats["files"]["b"] += sz
                                 except Exception:
                                     pass
 
@@ -847,6 +955,14 @@ def _run_semantic_pruning():
                                 httpx.post(f"{QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/delete", json=decay_payload, timeout=30)
                         
                         qdrant_synced = True
+                        
+                        # --- B.1 Consolidation Lvl1 -> Lvl2 ---
+                        MAINTENANCE_STATE["status"] = "Consolidation Vectorielle Lvl1..."
+                        total_promoted = 0
+                        for uid in valid_ids:
+                            result = consolidate_memories_for_user(uid, config)
+                            total_promoted += result.get("points_promoted", 0)
+                        stats["promoted_clusters"] = total_promoted
                 except Exception as e:
                     print(f"[ECHO-LIFECYCLE] ❌ Erreur Qdrant : {e}")
 
@@ -879,30 +995,36 @@ def _run_semantic_pruning():
         except Exception as e:
             print(f"[ECHO-LIFECYCLE] ❌ Erreur DB/Espace Personnel : {e}")
         
-    report_str = f"Orphelins: {orphans}"
-    if qdrant_synced:
-        report_str += " | Qdrant: Synchro (Chats/Users/Purge Temporelle) | Mémoire Vectorisée de Session Purgée"
-    report.append(report_str)
-
-
-
     # 3. Vacuum
-    vax = 0
     for root, _, files in os.walk(ECHO_USERS_ROOT):
         for f in files:
             if f.endswith('.db'):
                 try:
                     with sqlite3.connect(os.path.join(root, f), timeout=10.0) as db:
                         db.execute("VACUUM;")
-                        vax += 1
+                        stats["sqlite_vacuumed"] += 1
                 except Exception: pass
-    report.append(f"Optimisés: {vax}")
+                
+    sqlite_ghosts = locals().get('orphans_db', 0)
+    stats['sqlite_ghosts'] = sqlite_ghosts
 
-    final_report = " | ".join(report)
+    final_report = f"""
+    <div style='line-height: 1.4;'>
+        <b><i class='bi bi-trash text-danger'></i> Rapport d'Élagage</b><br>
+        👤 <b>Utilisateurs</b> : {stats['users']['c']} <i>({_format_bytes(stats['users']['b'])})</i><br>
+        💬 <b>Chats</b> : {stats['chats']['c']} <i>({_format_bytes(stats['chats']['b'])})</i><br>
+        🗂️ <b>Fichiers FS</b> : {stats['files']['c']} <i>({_format_bytes(stats['files']['b'])})</i><br>
+        📥 <b>Drop Zones</b> : {stats['drop_users']['c']} Users, {stats['drop_chats']['c']} Chats, {stats['drop_n8n']['c']} N8N <i>(Libéré: {_format_bytes(stats['drop_users']['b'] + stats['drop_chats']['b'] + stats['drop_n8n']['b'])})</i><br>
+        🧠 <b>Qdrant</b> : {'Synchronisé (Orphelins & TTL)' if qdrant_synced else 'Ignoré'}<br>
+        🧬 <b>Consolidation</b> : {stats['promoted_clusters']} clusters promus (Lvl1->Lvl2)<br>
+        🗃️ <b>SQLite</b> : {stats['sqlite_ghosts']} fantômes, {stats['sqlite_vacuumed']} bases optimisées
+    </div>
+    """
     config["last_run"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     save_maint_config(config)
-    save_maint_report(final_report)
-    return final_report
+    if not silent:
+        save_maint_report(final_report)
+    return final_report, stats
 
 # ==============================================================================
 # SECTION 4b : CONSOLIDATION DES SOUVENIRS LVL1 → LVL2 (Centroïde Vectoriel)
@@ -1061,18 +1183,6 @@ def consolidate_memories_for_user(user_id: str, config: dict) -> dict:
 
     return report
 
-def setup_lifecycle_scheduler():
-    if not HAS_MAINT_SCHEDULER: return
-    try:
-        config = load_maint_config()
-        schedule.clear()
-        
-        def _async_prune():
-            threading.Thread(target=run_semantic_pruning, daemon=True).start()
-            
-        schedule.every().day.at(config.get("cleanup_hour", "03:00")).do(_async_prune)
-    except Exception: pass
-
 def change_system_password(username, current_pwd, new_pwd):
     if not DOCKER_AVAILABLE: return False, "Module SSH absent"
     try:
@@ -1103,7 +1213,7 @@ def load_settings():
 def save_settings(new_s):
     c = load_settings(); c.update(new_s)
     with open(SETTINGS_FILE, 'w') as f: json.dump(c, f, indent=4)
-    update_backup_schedule()
+    update_system_schedules()
 
 def get_rclone_remotes():
     """Retrieve list of available remotes directly from rclone config file or command."""
@@ -1189,18 +1299,95 @@ def perform_backup_task():
         try: docker.from_env().containers.get('echo-qdrant').start()
         except Exception: pass
 
-def update_backup_schedule():
-    if not HAS_SCHEDULER: return
-    if 'backup_scheduler' not in globals(): return
+def run_nightly_maintenance_cycle():
+    """Séquenceur Maître : Sauvegarde -> Redémarrage -> Purge -> Consolidation -> Vacuum."""
+    bck_cfg = load_settings()
+    log_lines = ["🟢 CYCLE MAINTENANCE NOCTURNE"]
+    
+    # 1. Sauvegarde (Coupe potentiellement Qdrant)
+    if bck_cfg.get("auto_backup"):
+        try:
+            perform_backup_task()
+            log_lines.append("├─ Sauvegarde : Terminée")
+        except Exception as e:
+            log_lines.append(f"├─ Sauvegarde : Erreur ({e})")
+    else:
+        log_lines.append("├─ Sauvegarde : Ignorée (Désactivée)")
+    
+    # 2. Assurance Haute Disponibilité (Redémarrage garanti de Qdrant)
+    if DOCKER_AVAILABLE:
+        try:
+            client = docker.from_env()
+            qdrant = client.containers.get('echo-qdrant')
+            if qdrant.status != 'running':
+                qdrant.start()
+            time.sleep(5)  # Temps de chauffe API HTTP
+        except Exception: 
+            pass
+
+    # 3. Purge, Consolidation et Vacuum
+    backup_ok_str = "Terminée" if bck_cfg.get("auto_backup") else "Désactivée"
+    if "Erreur" in log_lines[-1] or "Erreur" in log_lines[-2] if len(log_lines) > 1 else False:
+        backup_ok_str = "Erreur"
+        
+    try:
+        # On exécute la purge en mode silencieux et on récupère les datas brutes
+        report_html, stats = run_semantic_pruning(silent=True)
+        
+        pretty_report = f"""
+        <div style='line-height: 1.5; font-size: 0.85rem;' class='text-light'>
+            <div class='mb-2 pb-1 border-bottom border-secondary'>
+                <b class='text-success'><i class='bi bi-check-circle-fill'></i> CYCLE MAINTENANCE GLOBAL</b>
+            </div>
+            <div class='row gx-2 mb-2'>
+                <div class='col-6'>
+                    <span class='text-muted'>Sauvegarde :</span> 
+                    <span class='badge bg-{'success' if backup_ok_str == 'Terminée' else 'secondary'}'>{backup_ok_str}</span>
+                </div>
+                <div class='col-6'>
+                    <span class='text-muted'>Haute Dispo. :</span> 
+                    <span class='badge bg-info'>Vérifiée</span>
+                </div>
+            </div>
+            <div class='mt-2 pt-1 border-top border-secondary'>
+                <b class='text-info'><i class='bi bi-trash'></i> Bilan Élagage & SQLite</b><br>
+                <i class='bi bi-people'></i> Utilisateurs : <b>{stats.get('users', {{}}).get('c', 0)}</b> <i>({_format_bytes(stats.get('users', {{}}).get('b', 0))})</i><br>
+                <i class='bi bi-chat-left-dots'></i> Chats : <b>{stats.get('chats', {{}}).get('c', 0)}</b> <i>({_format_bytes(stats.get('chats', {{}}).get('b', 0))})</i><br>
+                <i class='bi bi-hdd'></i> Drop Zones : Libéré <b>{_format_bytes(stats.get('drop_users', {{}}).get('b', 0) + stats.get('drop_chats', {{}}).get('b', 0) + stats.get('drop_n8n', {{}}).get('b', 0))}</b><br>
+                <i class='bi bi-diagram-3'></i> Consolidation : <b>{stats.get('promoted_clusters', 0)}</b> vecteurs promus<br>
+            </div>
+        </div>
+        """
+    except Exception as e:
+        pretty_report = f"""
+        <div style='line-height: 1.5; font-size: 0.85rem;' class='text-light'>
+            <div class='mb-2 pb-1 border-bottom border-secondary'>
+                <b class='text-danger'><i class='bi bi-exclamation-triangle-fill'></i> CYCLE MAINTENANCE GLOBAL (ÉCHEC)</b>
+            </div>
+            <div class='text-danger'>{{str(e)}}</div>
+        </div>
+        """
+    
+    save_maint_report(pretty_report)
+
+def update_system_schedules():
+    """Remplace update_backup_schedule et setup_lifecycle_scheduler"""
+    if not HAS_SCHEDULER or 'backup_scheduler' not in globals(): return
     try:
         backup_scheduler.remove_all_jobs()
-        sets = load_settings()
-        if sets.get("auto_backup"):
-            h, m = map(int, sets.get("backup_time", "03:00").split(':'))
-            now = datetime.datetime.now()
-            start = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            if start <= now: start += datetime.timedelta(days=1)
-            backup_scheduler.add_job(perform_backup_task, 'interval', days=int(sets.get("interval_days", 1)), start_date=start)
+        bck_cfg = load_settings()
+        maint_cfg = load_maint_config()
+        
+        # Asservissement : si backup actif, on utilise son heure pour TOUT le cycle
+        target_time = bck_cfg.get("backup_time", "03:00") if bck_cfg.get("auto_backup") else maint_cfg.get("cleanup_hour", "03:00")
+        h, m = map(int, target_time.split(':'))
+        
+        now = datetime.datetime.now()
+        start = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if start <= now: start += datetime.timedelta(days=1)
+        
+        interval = int(bck_cfg.get("interval_days", 1)) if bck_cfg.get("auto_backup") else 1
+        backup_scheduler.add_job(run_nightly_maintenance_cycle, 'interval', days=interval, start_date=start)
     except Exception: pass
 
 def get_backup_list():
@@ -1434,6 +1621,8 @@ def handle_action(action):
         def _run_consolidation():
             cfg = load_maint_config()
             total_promoted = 0
+            total_deleted = 0
+            total_users = 0
             try:
                 conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True)
                 valid_ids = {str(row[0]) for row in conn.execute("SELECT id FROM user").fetchall()}
@@ -1442,8 +1631,22 @@ def handle_action(action):
                 print(f"[ECHO-CONSOLIDATION] \u274c Lecture DB: {e}"); return
             for uid in valid_ids:
                 result = consolidate_memories_for_user(uid, cfg)
-                total_promoted += result.get("points_promoted", 0)
+                promoted = result.get("points_promoted", 0)
+                if promoted > 0 or result.get("points_deleted", 0) > 0:
+                    total_promoted += promoted
+                    total_deleted += result.get("points_deleted", 0)
+                    total_users += 1
             print(f"[ECHO-CONSOLIDATION] \u2705 Terminé : {total_promoted} clusters promus en lvl2.")
+            
+            report_html = f"""
+            <div style='line-height: 1.4;'>
+                <b><i class='bi bi-diagram-3 text-warning'></i> Consolidation Lvl1 → Lvl2</b><br>
+                👤 <b>Utilisateurs traités</b> : {total_users}<br>
+                🎯 <b>Souvenirs Lvl2 (Promus)</b> : {total_promoted}<br>
+                🗑️ <b>Souvenirs Lvl1 (Purgés)</b> : {total_deleted}
+            </div>
+            """
+            save_maint_report(report_html)
         threading.Thread(target=_run_consolidation, daemon=True).start()
         flash('Consolidation des souvenirs Triviaux lancée.', 'info')
     elif action == 'docker_prune':
@@ -1882,7 +2085,7 @@ def auth_rename_user():
             if os.path.exists(WEBUI_DB_PATH):
                 with sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True) as conn2:
                     conn2.execute("UPDATE user SET name = ? WHERE email = ?", (name if name else "", email))
-        except Exception as e:
+        except Exception:
             pass
             
         flash(f"Nom de l'utilisateur {email} mis à jour dans le SSO et synchronisé.", "success")
@@ -2228,7 +2431,7 @@ HTML_DASHBOARD = """
 
                     <div class="tab-pane fade" id="v-pills-maint" role="tabpanel">
                         <div class="card border-info mb-3"><div class="card-header text-info"><i class="bi bi-scissors"></i> Élagage & Cycle de Vie (Jours)</div><div class="card-body small">
-                            <form action="/settings/maintenance" method="post" class="mb-3"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Durée de conservation de la mémoire (TTL par niveau) :</label></div><div class="col text-center"><label class="x-small text-secondary mb-1">Trivial</label><input type="number" name="ttl_lvl1" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl1}}" title="Lv1 (Trivial)"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Mineur</label><input type="number" name="ttl_lvl2" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl2}}" title="Lv2"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Utile</label><input type="number" name="ttl_lvl3" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl3}}" title="Lv3"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Majeur</label><input type="number" name="ttl_lvl4" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl4}}" title="Lv4"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Axiome</label><input type="number" name="ttl_lvl5" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl5}}" title="Lv5 (Axiome/Critique)"></div></div><label class="x-small">Heure d'élagage automatique</label><input type="time" name="cleanup_hour" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Consolidation mémoire lvl1 → lvl2 :</label></div><div class="col-6"><label class="x-small text-secondary mb-1">Seuil (nb lvl1)</label><input type="number" name="consol_threshold" class="form-control form-control-sm text-center" value="{{maint.consolidation.trigger_threshold}}" title="Nb de souvenirs Triviaux par user avant consolidation" min="3" max="50"></div><div class="col-6"><label class="x-small text-secondary mb-1">Cluster min</label><input type="number" name="consol_min_cluster" class="form-control form-control-sm text-center" value="{{maint.consolidation.min_cluster_size}}" title="Nb minimum de souvenirs similaires pour fusionner" min="2" max="10"></div><div class="col-12 mt-1"><label class="x-small text-secondary mb-1">Seuil cosinus (0.0-1.0)</label><input type="number" name="consol_similarity" class="form-control form-control-sm text-center" value="{{maint.consolidation.similarity_threshold}}" title="Score cosinus minimal pour regrouper deux souvenirs dans un même cluster (0.75 = très similaires, 0.5 = assez proches)" min="0.4" max="0.99" step="0.05"></div></div><div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" name="purge_orphaned_chats" id="sw_purge_chats" {{ 'checked' if maint.purge_orphaned_chats }}><label class="form-check-label x-small" for="sw_purge_chats" data-bs-toggle="tooltip" title="Si activé, supprime les fichiers d'un chat dans l'Espace Personnel ECHO si le chat n'existe plus dans Open WebUI.">Purger les chats orphelins</label></div><div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="purge_orphaned_users" id="sw_purge_users" {{ 'checked' if maint.purge_orphaned_users }}><label class="form-check-label x-small" for="sw_purge_users" data-bs-toggle="tooltip" title="Si activé, détruit l'Espace Personnel complet (fichiers, bases, mémoires vectorielles) d'un utilisateur supprimé d'Open WebUI.">Purger les utilisateurs orphelins</label></div><button class="btn btn-sm btn-info w-100">Programmer le Cycle</button></form><hr><p class="m-0 mb-1">Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p><div class="d-flex gap-2"><form action="/action/pruning" method="post" id="pruning-form" onsubmit="showLoader('Élagage profond...')" class="flex-grow-1"><button id="pruning-btn" class="btn btn-outline-info btn-sm w-100"><span id="pruning-status-text">Lancer l'Élagage</span></button></form><button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#historyLog"><i class="bi bi-journal-text"></i> Logs</button></div><form action="/action/consolidate" method="post" onsubmit="showLoader('Consolidation lvl1 → lvl2...')" class="mt-2"><button class="btn btn-outline-warning btn-sm w-100" title="Fusionne les souvenirs Triviaux similaires en souvenirs Mineurs (centroïde vectoriel).">🧬 Consolider Mémoires Lvl1</button></form><form action="/action/docker_prune" method="post" onsubmit="return confirm('Purger les images orphelines, le cache de build Docker et le cache APT système ?') && (showLoader('Purge en cours...'), true)"><button class="btn btn-outline-danger btn-sm w-100 mt-1" title="Libère l'espace des images orphelines (<none>:<none>), du build cache Docker et du cache APT système.">🧹 Purge Cache & Orphelines</button></form><div class="collapse mt-3" id="historyLog"><div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;"><h6 class="x-small text-uppercase text-muted border-bottom border-secondary pb-1">Historique 1 an</h6>{% for entry in history %}<div class="mb-2 pb-1 border-bottom border-secondary last-child-border-0"><span class="x-small text-info">{{ entry.timestamp }}</span><br><span style="font-size: 0.75rem;">{{ entry.report }}</span></div>{% endfor %}{% if not history %}<span class="x-small text-muted">Aucun log disponible.</span>{% endif %}</div></div>
+                            <form action="/settings/maintenance" method="post" class="mb-3"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Durée de conservation de la mémoire (TTL par niveau) :</label></div><div class="col text-center"><label class="x-small text-secondary mb-1">Trivial</label><input type="number" name="ttl_lvl1" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl1}}" title="Lv1 (Trivial)"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Mineur</label><input type="number" name="ttl_lvl2" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl2}}" title="Lv2"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Utile</label><input type="number" name="ttl_lvl3" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl3}}" title="Lv3"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Majeur</label><input type="number" name="ttl_lvl4" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl4}}" title="Lv4"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Axiome</label><input type="number" name="ttl_lvl5" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl5}}" title="Lv5 (Axiome/Critique)"></div></div><div class="d-flex justify-content-between align-items-end"><label class="x-small fw-bold text-light mt-2">Heure du Cycle de Maintenance (Purge & Consolidation)</label></div><div id="maint-sync-warning" class="alert alert-dark x-small py-1 mb-2 mt-1 border border-secondary text-muted" style="display: none;"><i class="bi bi-info-circle text-info"></i> L'heure est synchronisée avec la sauvegarde automatique.</div><input type="time" name="cleanup_hour" id="cleanup_hour_input" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Consolidation mémoire lvl1 → lvl2 :</label></div><div class="col-6"><label class="x-small text-secondary mb-1">Seuil (nb lvl1)</label><input type="number" name="consol_threshold" class="form-control form-control-sm text-center" value="{{maint.consolidation.trigger_threshold}}" title="Nb de souvenirs Triviaux par user avant consolidation" min="3" max="50"></div><div class="col-6"><label class="x-small text-secondary mb-1">Cluster min</label><input type="number" name="consol_min_cluster" class="form-control form-control-sm text-center" value="{{maint.consolidation.min_cluster_size}}" title="Nb minimum de souvenirs similaires pour fusionner" min="2" max="10"></div><div class="col-12 mt-1"><label class="x-small text-secondary mb-1">Seuil cosinus (0.0-1.0)</label><input type="number" name="consol_similarity" class="form-control form-control-sm text-center" value="{{maint.consolidation.similarity_threshold}}" title="Score cosinus minimal pour regrouper deux souvenirs dans un même cluster (0.75 = très similaires, 0.5 = assez proches)" min="0.4" max="0.99" step="0.05"></div></div><div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" name="purge_orphaned_chats" id="sw_purge_chats" {{ 'checked' if maint.purge_orphaned_chats }}><label class="form-check-label x-small" for="sw_purge_chats" data-bs-toggle="tooltip" title="Si activé, supprime les fichiers d'un chat dans l'Espace Personnel ECHO si le chat n'existe plus dans Open WebUI.">Purger les chats orphelins</label></div><div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="purge_orphaned_users" id="sw_purge_users" {{ 'checked' if maint.purge_orphaned_users }}><label class="form-check-label x-small" for="sw_purge_users" data-bs-toggle="tooltip" title="Si activé, détruit l'Espace Personnel complet (fichiers, bases, mémoires vectorielles) d'un utilisateur supprimé d'Open WebUI.">Purger les utilisateurs orphelins</label></div><button class="btn btn-sm btn-info w-100">Programmer le Cycle</button></form><hr><p class="m-0 mb-1">Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p><div class="d-flex gap-2"><form action="/action/pruning" method="post" id="pruning-form" onsubmit="showLoader('Élagage profond...')" class="flex-grow-1"><button id="pruning-btn" class="btn btn-outline-info btn-sm w-100"><span id="pruning-status-text">Lancer le Cycle</span></button></form><button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#historyLog"><i class="bi bi-journal-text"></i> Logs</button></div><form action="/action/consolidate" method="post" onsubmit="showLoader('Consolidation lvl1 → lvl2...')" class="mt-2"><button class="btn btn-outline-warning btn-sm w-100" title="Fusionne les souvenirs Triviaux similaires en souvenirs Mineurs (centroïde vectoriel).">🧬 Consolider Mémoires Lvl1</button></form><form action="/action/docker_prune" method="post" onsubmit="return confirm('Purger les images orphelines, le cache de build Docker et le cache APT système ?') && (showLoader('Purge en cours...'), true)"><button class="btn btn-outline-danger btn-sm w-100 mt-1" title="Libère l'espace des images orphelines (<none>:<none>), du build cache Docker et du cache APT système.">🧹 Purge Cache & Orphelines</button></form><div class="collapse mt-3" id="historyLog"><div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;"><h6 class="x-small text-uppercase text-muted border-bottom border-secondary pb-1">Historique 1 an</h6>{% for entry in history %}<div class="mb-2 pb-1 border-bottom border-secondary last-child-border-0"><span class="x-small text-info">{{ entry.timestamp }}</span><br><span style="font-size: 0.75rem;">{{ entry.report | safe }}</span></div>{% endfor %}{% if not history %}<span class="x-small text-muted">Aucun log disponible.</span>{% endif %}</div></div>
                         </div></div>
                     </div>
 
@@ -2383,6 +2586,27 @@ HTML_DASHBOARD = """
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const backupSwitch = document.querySelector('input[name="auto_backup"]');
+            const cleanupInput = document.getElementById('cleanup_hour_input');
+            const warningMsg = document.getElementById('maint-sync-warning');
+
+            function syncUI() {
+                if (backupSwitch && backupSwitch.checked) {
+                    cleanupInput.setAttribute('disabled', 'disabled');
+                    cleanupInput.style.opacity = '0.5';
+                    warningMsg.style.display = 'block';
+                } else {
+                    cleanupInput.removeAttribute('disabled');
+                    cleanupInput.style.opacity = '1';
+                    warningMsg.style.display = 'none';
+                }
+            }
+            if(backupSwitch) {
+                backupSwitch.addEventListener('change', syncUI);
+                syncUI();
+            }
+        });
 
         const initialTime = new Date('{{ server_time_iso }}');
         function initClock() {
@@ -2571,15 +2795,5 @@ const d=await r.json();document.getElementById('cpu').innerText=d.cpu_percent;do
 if __name__ == '__main__':
     if HAS_PSUTIL: psutil.cpu_percent(interval=None)
     if HAS_SCHEDULER:
-        backup_scheduler = BackgroundScheduler(); backup_scheduler.start(); update_backup_schedule()
-    if HAS_MAINT_SCHEDULER:
-        setup_lifecycle_scheduler()
-        def maint_loop():
-            while True:
-                try: schedule.run_pending()
-                except Exception as e:
-                    print(f"[ECHO-LIFECYCLE] Erreur critique Scheduler : {e}")
-                    setup_lifecycle_scheduler()
-                time.sleep(60)
-        threading.Thread(target=maint_loop, daemon=True).start()
+        backup_scheduler = BackgroundScheduler(); backup_scheduler.start(); update_system_schedules()
     app.run(host='0.0.0.0', port=3001, debug=False, threaded=True)

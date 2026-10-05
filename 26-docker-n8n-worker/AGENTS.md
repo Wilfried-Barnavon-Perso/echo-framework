@@ -11,7 +11,7 @@ Ce dossier contient le sous-système **Headless N8N Worker**. Il s'agit d'un con
 ### `n8n_api.py`
 Le contrôleur Python (FastAPI).
 - **Sémantique** : Il agit comme une couche d'abstraction (middleware) entre l'outil `n8n_orchestrator_tool.py` exécuté par l'agent et l'API interne de n8n.
-- **Rôle Actif** : Il permet à l'agent IA de pousser des workflows JSON (déploiement), de requêter l'état d'une exécution, de récupérer les logs d'erreurs, et de purger les exécutions. N8N peut agir comme client MCP pour les services locaux d'ECHO.
+- **Rôle Actif** : Il permet à l'agent IA de pousser des workflows JSON (déploiement), de requêter l'état d'une exécution, de récupérer les logs d'erreurs, et de purger les exécutions. N8N peut agir comme client MCP pour les services locaux d'ECHO. Il délègue désormais la gestion des fichiers et téléchargements au *Download Broker* via le point de montage `/home/node/.n8n-files` partagé avec ce dernier.
 
 ### `n8n_architecture.md`
 Le manifeste des règles de conception N8N imposées à l'agent.

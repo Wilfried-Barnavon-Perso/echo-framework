@@ -327,16 +327,6 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
         }
         (target_dir / "execution_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         
-        # Post-Processing : Renommage anti-collision SQL
-        if target_dir.exists() and target_dir.is_dir():
-            for file_path in target_dir.iterdir():
-                if file_path.is_file():
-                    new_fid = uuid.uuid4().hex[:8]
-                    # Structure : fid_workflowId_nomfichier
-                    safe_name = f"{new_fid}_{req.n8n_workflow_id}_{file_path.name}"
-                    dest_path = chat_dir / safe_name
-                    shutil.move(str(file_path), str(dest_path))
-                    
     except Exception as e:
         status = "error"
         stdout = ""
@@ -349,12 +339,6 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
                 "stderr": stderr.strip()
             }
             (target_dir / "execution_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-            for file_path in target_dir.iterdir():
-                if file_path.is_file():
-                    new_fid = uuid.uuid4().hex[:8]
-                    safe_name = f"{new_fid}_{req.n8n_workflow_id}_{file_path.name}"
-                    dest_path = chat_dir / safe_name
-                    shutil.move(str(file_path), str(dest_path))
     finally:
         # Nettoyage
         if process and process.returncode is None:
@@ -367,8 +351,6 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
                 active_executions[req.n8n_workflow_id].remove(process)
             except ValueError:
                 pass
-        if target_dir.exists():
-            shutil.rmtree(target_dir, ignore_errors=True)
         if tmp_file.exists():
             tmp_file.unlink(missing_ok=True)
             
@@ -377,12 +359,12 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
 @app.post("/execute")
 async def execute_workflow(req: ExecuteRequest, background_tasks: BackgroundTasks):
     # Sécurisation des chemins
-    base_downloads = Path("/app/browser-data/downloads")
+    base_downloads = Path("/home/node/.n8n-files")
     user_dir = base_downloads / req.user_id
     chat_dir = user_dir / req.chat_id
     # Identifiant unique d'exécution pour isoler les requêtes concurrentes sur un même workflow
     execution_id = uuid.uuid4().hex[:8]
-    target_dir = chat_dir / f"{req.n8n_workflow_id}_{execution_id}"
+    target_dir = chat_dir / "n8n" / req.n8n_workflow_id
     
     # Création du dossier éphémère
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -432,13 +414,14 @@ def health_check():
 
 @app.post("/deploy")
 async def deploy_workflow(req: ExecuteRequest):
-    base_downloads = Path("/app/browser-data/downloads")
+    base_downloads = Path("/home/node/.n8n-files")
     chat_dir = base_downloads / req.user_id / req.chat_id
-    chat_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = chat_dir / "n8n" / req.n8n_workflow_id
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         workflow_data = json.loads(req.workflow_json)
-        workflow_data = replace_download_dir(workflow_data, str(chat_dir))
+        workflow_data = replace_download_dir(workflow_data, str(target_dir))
 
         # Retirer "active" du payload (read-only dans CreateWorkflowDto N8N v2.x).
         workflow_data.pop("active", None)

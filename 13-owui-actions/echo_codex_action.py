@@ -1,12 +1,13 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.12
+version: 3.13
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle d'Historique : Ne garder que les 5 dernieres versions.
 # Historique des versions :
+# 3.13: Prise en charge du paramètre optionnel `current_file` lors de l'événement `switch_workspace` pour permettre le ciblage direct d'un fichier via le trigger LLM `open_codex_ui`.
 # 3.12: Ajout du proxy load_directory pour orchestrer le Lazy Loading avec le moteur Git.
 # 3.11: Optimisation absolue du ping heartbeat : suppression de get_repo_stats, ajout asyncio.to_thread pour purger la congestion de l'Event Loop.
 # 3.10: Support des workspaces main/sandbox.
@@ -156,6 +157,10 @@ class Action:
 
                     if not response or not isinstance(response, dict):
                         break
+                        
+                    if response.get("error"):
+                        # Si l'event_caller est déconnecté ou erreur, on sort pour éviter une boucle CPU
+                        break
 
                     action_type = response.get("action")
 
@@ -166,6 +171,7 @@ class Action:
                     # ---- SWITCH WORKSPACE ----
                     elif action_type == "switch_workspace":
                         current_workspace = response.get("workspace", "main")
+                        requested_file = response.get("current_file")
                         repo = CodexRepo(uid, cid, workspace=current_workspace)
                         current_state = await asyncio.to_thread(repo.get_latest_state)
                         updated_files = await asyncio.to_thread(repo.list_files)
@@ -173,19 +179,21 @@ class Action:
                         await _refresh_tree()
                         
                         if updated_files:
-                            latest_file_entry = next((f for f in updated_files if f.get("type") != "directory"), None)
-                            if latest_file_entry:
-                                latest_file = latest_file_entry["filename"]
+                            latest_file = requested_file
+                            if not latest_file:
+                                latest_file_entry = next((f for f in updated_files if f.get("type") != "directory"), None)
+                                latest_file = latest_file_entry["filename"] if latest_file_entry else None
+                            if latest_file:
                                 result = repo.read_file(latest_file)
                                 if result:
                                     escaped_content = json.dumps(result["content"]).decode("utf-8")
                                     escaped_name = json.dumps(latest_file).decode("utf-8")
-                                load_code = (
-                                    f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
-                                    f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
-                                )
-                                await events.call_execute(load_code)
-                                continue
+                                    load_code = (
+                                        f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                        f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
+                                    )
+                                    await events.call_execute(load_code)
+                                    continue
                         
                         clear_code = "if(window.echoCodexSetContent) window.echoCodexSetContent('', ''); if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
                         await events.call_execute(clear_code)

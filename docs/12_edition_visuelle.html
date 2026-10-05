@@ -52,7 +52,7 @@
         <ul>
           <li><strong>Le Moteur Git (<code>echo_codex_git.py</code>) :</strong> Wrapper autour de <code>dulwich</code>. Chaque fichier modifié déclenche un <em>commit</em> silencieux, assurant l'historique (Time Machine) et permettant les diffs. L'indexation principale des métadonnées se fait dans la table <code>CODEX_DOCS</code> (SQLite).</li>
           <li><strong>L'Interface HUD (<code>echo_codex_action.py</code>) :</strong> Injection native de <strong>Monaco Editor</strong>. Elle expose l'API <code>window.echoCodex*</code> pour autoriser le pilotage de l'éditeur depuis les réponses asynchrones du modèle.</li>
-          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code>) :</strong> 9 primitives offertes au LLM (<code>read_codex</code>, <code>edit_codex</code>, <code>commit</code>...). <strong>Règle proprioceptive stricte :</strong> Le modèle n'est plus notifié passivement du registre Codex (pour économiser les tokens) et DOIT utiliser l'outil <code>query_registry</code> avant manipulation.</li>
+          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code>) :</strong> 10 primitives offertes au LLM (<code>read_codex</code>, <code>edit_codex</code>, <code>commit</code>...). Il intègre l'outil <strong><code>open_codex_ui</code></strong>, un trigger asynchrone permettant à l'IA d'ouvrir ou switcher directement l'interface de l'éditeur Codex sur l'écran de l'utilisateur. <strong>Règle proprioceptive stricte :</strong> Le modèle n'est plus notifié passivement du registre Codex (pour économiser les tokens) et DOIT utiliser l'outil <code>query_registry</code> avant manipulation.</li>
         </ul>
 
       </div>
@@ -65,7 +65,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.212.12 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.216.7 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
