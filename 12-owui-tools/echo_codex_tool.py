@@ -1,10 +1,11 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.10
+version: 2.11
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Historique des versions :
+# 2.11: Fix - Blocage de l'outil `open_codex_ui` au premier tour (vérification __messages__) et ajout de la règle de parcimonie LLM.
 # 2.10: Fix critique - Extraction du `session_id` pour le passer à `trigger_action` afin d'éviter le crash en boucle de l'Event Caller.
 # 2.9: Injection absolue des variables de contexte (`chat_id`, `message_id`, `model_id`) vers le déclencheur d'action, garantissant un déterminisme total.
 # 2.8: Simplification extrême de `open_codex_ui` en utilisant la nouvelle méthode factorisée `events.trigger_action()` du framework.
@@ -523,17 +524,27 @@ class Tools:
         workspace: Literal["main", "sandbox"] = "main",
         __user__: dict = None,
         __metadata__: dict = None,
+        __messages__: list = [],
         __model__: dict = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
         """
         Permet au Modèle de déclencher l'ouverture asynchrone du HUD Codex dans l'interface de l'Utilisateur pour y afficher un fichier ciblé.
-        Le Modèle DOIT utiliser cet outil pour présenter visuellement le résultat d'une création ou d'une modification complexe nécessitant la relecture de l'Utilisateur.
+        RÈGLE DE PARCIMONIE : N'utiliser cet outil QUE si l'Utilisateur en a fait la demande expresse, ou si une relecture de l'Utilisateur est indispensable.
         :param filename: Nom du fichier, chemin relatif, ou identifiant unique (ID) de la cible au sein de l'espace de travail.
         :param workspace: (Optionnel) Espace de travail cible ("main" ou "sandbox"). Défaut: "main".
         """
         events = EchoEvents(__event_emitter__, __event_call__)
+        
+        if len(__messages__) <= 2:
+            return wrap_tool_output(
+                text="Impossible au premier tour. Codex non disponible.",
+                status={"status": "error"},
+                user_id=__user__.get("id", "system") if __user__ else "system",
+                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+                metadata=__metadata__
+            )
         
         chat_id = (__metadata__ or {}).get("chat_id", "")
         message_id = (__metadata__ or {}).get("message_id", "")
