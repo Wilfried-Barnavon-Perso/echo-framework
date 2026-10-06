@@ -1,7 +1,7 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.38
+version: 5.39
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -197,7 +197,7 @@ class Tools:
             payload={
                 "contents": [{"role": "user", "parts": [{"text": f"Besoin : {need_description}"}]}],
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
-                "generationConfig": {**get_generation_config("MODEL_DISTILLATION"), "responseMimeType": "application/json"}
+                "generationConfig": {**get_generation_config("MODEL_FLASH", override_thinking="medium"), "responseMimeType": "application/json"}
             },
             user_id=user_id,
             metadata=(__metadata__ or {}),
@@ -332,7 +332,7 @@ class Tools:
         participants: List[str],
         council_id: str,
         target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
-        synthesis_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
+        synthesis_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
         rounds: Optional[int] = None,
         close_on_finish: bool = False,
         __user__: Optional[dict] = None,
@@ -564,7 +564,7 @@ class Tools:
         synthesis_payload = {
             "contents": [{"role": "user", "parts": [{"text": transcript}]}],
             "systemInstruction": {"parts": [{"text": synthesis_system}]},
-            "generationConfig": {**get_generation_config("MODEL_DISTILLATION"), "maxOutputTokens": 16000}
+            "generationConfig": {**get_generation_config(synthesis_model), "maxOutputTokens": 16000}
         }
 
         res, _, _ = await EchoGeminiClient.call_cascade(

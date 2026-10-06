@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.69
+version: 5.70
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -262,13 +262,13 @@ ECHO_MODELS_REGISTRY = {
     },
     "MODEL_LITE": {
         "ai_studio_id": "gemini-3.5-flash-lite",
-        "ca_model_id":  "gemini-3.1-flash-lite",
+        "ca_model_id":  "gemini-3.1-flash-lite-low",
         "hierarchy": 0,
         "generationConfig": {
             "temperature": 1.0,
             "topP": 0.9,
             "maxOutputTokens": 65535,
-            "thinkingConfig": {"thinkingLevel": "high"}
+            "thinkingConfig": {"thinkingLevel": "low"}
         }
     },
     "MODEL_DISTILLATION": {

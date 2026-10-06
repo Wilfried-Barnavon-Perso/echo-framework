@@ -1,7 +1,7 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.13
+version: 3.14
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
@@ -697,7 +697,7 @@ class Action:
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": get_generation_config("MODEL_FLASH"),
+            "generationConfig": get_generation_config("MODEL_FLASH", override_thinking="medium"),
             "systemInstruction": {
                 "parts": [{"text": SYS_CODEX_EDIT.format(filename=filename, language=lang)}]
             },

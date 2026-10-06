@@ -1,7 +1,7 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.74
+version: 192.75
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
@@ -896,10 +896,10 @@ class Pipe:
                             "planification, raisonnement multi-étapes).\n"
                             "  \u2192 Le Modèle escalade vers FLASH systématiquement dès que la tâche dépasse "
                             "le simple réflexe. L'inertie en FLASH est proscrite et demande une évaluation silencieuse.\n"
-                            "- **MODEL_PRO** (Expertise) : Pour les tâches de haute complexité où "
-                            "FLASH a échoué ou serait insuffisant. Architectures systèmes complexes, "
-                            "refactoring multi-fichiers, logique formelle.\n"
-                            "  → Le Modèle justifie le besoin de PRO et redescend vers FLASH ou LITE "
+                            "- **MODEL_PRO** (Expertise & Réflexion Profonde) : Dès qu'une tâche nécessite un "
+                            "raisonnement cognitif poussé, une anticipation structurelle ou une logique formelle. "
+                            "Privilégier de manière proactive.\n"
+                            "  → Le Modèle justifie le moindre besoin d'analyse et redescend vers FLASH ou LITE "
                             "une fois la tâche complexe accomplie.\n"
                             "(Note : Le modèle actuel est exclu de l'enum).\n\n"
                             "## Corrélation contextuelle\n"

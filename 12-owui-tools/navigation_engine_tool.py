@@ -1,7 +1,7 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.36
+version: 11.37
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -584,7 +584,7 @@ class Tools:
                 {"text": f"<instruction>\nLe Modèle doit analyser ce document Web pour accomplir cette tâche : {query}\nLa réponse doit être factuelle, précise et issue du texte.\n</instruction>"},
                 {"inline_data": {"mime_type": "text/plain", "data": f"___ECHO_STREAM_FILE___{tmp_path}___"}}
             ]}],
-            "generationConfig": get_generation_config("MODEL_FLASH")
+            "generationConfig": get_generation_config("MODEL_FLASH", override_thinking="low")
         }
         
         analyse_model = clamp_model("MODEL_FLASH", __metadata__, user_id=uid)

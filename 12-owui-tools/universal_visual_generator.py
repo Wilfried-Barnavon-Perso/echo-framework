@@ -1,7 +1,7 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.13
+version: 5.14
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -94,7 +94,7 @@ class Tools:
           payload={
               "contents": [{"role": "user", "parts": [{"text": f"INTENTION : {intention}\nDONNÉES : {donnees_contextuelles}"}]}],
               "systemInstruction": {"parts": [{"text": system_prompt}]},
-              "generationConfig": get_generation_config("MODEL_FLASH")
+              "generationConfig": get_generation_config("MODEL_FLASH", override_thinking="medium")
           },
           user_id=user_id,
           metadata=__metadata__,
