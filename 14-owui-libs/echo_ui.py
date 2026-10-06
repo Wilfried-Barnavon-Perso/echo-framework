@@ -1,13 +1,12 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.103
+version: 5.104
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.103: Hotfix - Résolution du freeze de l'interface (Layout Thrashing causé par hud.offsetWidth appelé en boucle dans mousemove) et déplacement du resizer hors du body (pour éviter sa destruction par innerHTML).
-# 5.102: Factorisation du bornage (clamping) et Drag&Drop via le helper global window.echoMakeDraggable pour EchoFloatingWindow, Codex et WebPlayer (support tactile et correction de fuites d'évènements).
+# 5.104: Rollback de la factorisation globale (5.102/5.103) suite à des lenteurs massives et instabilités. Retour à la version 5.101 (état validé avant factorisation du clamping).
 # 5.101: Fix Identity Vault - Injection de EchoUI.get_floating_window_class_js() dans _generate_identity_vault_js (TypeError: window.EchoFloatingWindow is not a constructor hors chargement préalable du Monitor).
 # 5.100: Rollback de la factorisation 5.99 (Codex/WebPlayer) : NameError f-string (HUD_ID/CODEX_ID), IDs DOM orphelins, classe EchoFloatingWindow non injectée. Retour au code 5.98 validé.
 # 5.98: Support du Trigger Asynchrone JS via _echoCodexTarget pour forcer l'ouverture du Codex sur un fichier spécifique.
@@ -79,71 +78,6 @@ class EchoRichUI:
         # ==============================================================================
         """
         return """
-        if (!window.echoMakeDraggable) {
-            window.echoMakeDraggable = function(hud, header, options = {}) {
-                let isDragging = false, startX, startY, initialLeft, initialTop;
-                
-                let dragW;
-                const startDrag = (e) => {
-                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
-                    isDragging = true;
-                    const isTouch = e.type.includes('touch');
-                    const evt = isTouch ? e.touches[0] : e;
-                    startX = evt.clientX;
-                    startY = evt.clientY;
-                    initialLeft = hud.offsetLeft;
-                    initialTop = hud.offsetTop;
-                    dragW = hud.offsetWidth;
-                    hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
-                    if (isTouch) {
-                        document.addEventListener('touchmove', doDrag, { passive: false });
-                        document.addEventListener('touchend', stopDrag);
-                    } else {
-                        document.addEventListener('mousemove', doDrag);
-                        document.addEventListener('mouseup', stopDrag);
-                    }
-                };
-
-                const doDrag = (e) => {
-                    if (!isDragging) return;
-                    if (e.type.includes('touch')) e.preventDefault();
-                    const evt = e.type.includes('touch') ? e.touches[0] : e;
-                    let newX = initialLeft + (evt.clientX - startX);
-                    let newY = initialTop + (evt.clientY - startY);
-                    
-                    const maxLeft = window.innerWidth - 60;
-                    const maxTop = window.innerHeight - 60;
-                    const minLeft = -dragW + 60;
-                    
-                    newX = Math.max(minLeft, Math.min(newX, maxLeft));
-                    newY = Math.max(0, Math.min(newY, maxTop));
-                    
-                    hud.style.left = newX + 'px';
-                    hud.style.top = newY + 'px';
-                    hud.style.transform = 'none';
-                };
-
-                const stopDrag = (e) => {
-                    if (!isDragging) return;
-                    isDragging = false;
-                    hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
-                    document.removeEventListener('mousemove', doDrag);
-                    document.removeEventListener('touchmove', doDrag);
-                    document.removeEventListener('mouseup', stopDrag);
-                    document.removeEventListener('touchend', stopDrag);
-                    if (options.onDragEnd) options.onDragEnd();
-                };
-
-                header.style.cursor = 'grab';
-                header.addEventListener('mousedown', startDrag);
-                header.addEventListener('touchstart', startDrag, { passive: false });
-                
-                return () => {
-                    header.removeEventListener('mousedown', startDrag);
-                    header.removeEventListener('touchstart', startDrag);
-                };
-            };
-        }
         if (!window.EchoFloatingWindow) {
             window.EchoFloatingWindow = class {
                 constructor(config) {
@@ -193,119 +127,122 @@ class EchoRichUI:
                       </div>
                       <div id="${this.id}-body" style="flex:1; position:relative; overflow:hidden; display:flex; flex-direction:column; background:white;">
                         ${this.bodyHtml}
+                        ${this.allowResize ? `<div id="${this.id}-resizer" style="position:absolute; bottom:0; right:0; width:16px; height:16px; cursor:nwse-resize; z-index:101; background:linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.4) 50%); border-bottom-right-radius: 12px;"></div>` : ''}
                       </div>
-                      ${this.allowResize ? `<div id="${this.id}-resizer" style="position:absolute; bottom:0; right:0; width:16px; height:16px; cursor:nwse-resize; z-index:101; background:linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.4) 50%); border-bottom-right-radius: 12px;"></div>` : ''}
                     `;
                     document.body.appendChild(hud);
                 }
                 
                 attachBaseEvents() {
-                    try {
-                        const hud = document.getElementById(this.id);
-                        if (!hud) return;
+                    const hud = document.getElementById(this.id);
+                    if (!hud) return;
+                    
+                    hud.addEventListener('mousedown', () => {
+                        document.querySelectorAll('[id^="echo-"]').forEach(el => {
+                            if (el.style.zIndex && parseInt(el.style.zIndex) >= 10000) {
+                                el.style.zIndex = '10000';
+                            }
+                        });
+                        hud.style.zIndex = '10001';
+                    });
+                    
+                    const header = document.getElementById(this.id + '-header');
+                    let isDragging = false, startX, startY, initialLeft, initialTop;
+                    
+                    header.onmousedown = (e) => {
+                        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('button')) return;
+                        e.preventDefault();
+                        isDragging = true;
+                        startX = e.clientX;
+                        startY = e.clientY;
+                        initialLeft = hud.offsetLeft;
+                        initialTop = hud.offsetTop;
+                        hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
+                    };
+                    
+                    document.addEventListener('mousemove', (e) => {
+                        if (isDragging) {
+                            e.preventDefault();
+                            hud.style.left = (initialLeft + (e.clientX - startX)) + 'px';
+                            hud.style.top = (initialTop + (e.clientY - startY)) + 'px';
+                        }
+                    });
+                    
+                    document.addEventListener('mouseup', () => {
+                        if (isDragging) {
+                            isDragging = false;
+                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                        }
+                    });
+                    
+                    if (this.allowResize) {
+                        const resizer = document.getElementById(this.id + '-resizer');
+                        let isResizing = false, rStartX, rStartY, startW, startH;
                         
-                        hud.addEventListener('mousedown', () => {
-                            document.querySelectorAll('[id^="echo-"]').forEach(el => {
-                                if (el.style.zIndex && parseInt(el.style.zIndex) >= 10000) {
-                                    el.style.zIndex = '10000';
-                                }
-                            });
-                            hud.style.zIndex = '10001';
+                        resizer.onmousedown = (e) => {
+                            e.preventDefault(); e.stopPropagation();
+                            isResizing = true;
+                            rStartX = e.clientX;
+                            rStartY = e.clientY;
+                            startW = hud.offsetWidth;
+                            startH = hud.offsetHeight;
+                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
+                        };
+                        
+                        document.addEventListener('mousemove', (e) => {
+                            if (isResizing) {
+                                e.preventDefault();
+                                hud.style.width = (startW + (e.clientX - rStartX)) + 'px';
+                                hud.style.height = (startH + (e.clientY - rStartY)) + 'px';
+                            }
                         });
                         
-                        const header = document.getElementById(this.id + '-header');
-                        if (header) {
-                            this._dragCleanup = window.echoMakeDraggable(hud, header);
-                        }
-                        
-                        if (this.allowResize) {
-                            const resizer = document.getElementById(this.id + '-resizer');
-                            if (resizer) {
-                                let isResizing = false, rStartX, rStartY, startW, startH;
-                                
-                                const doResize = (e) => {
-                                    if (!isResizing) return;
-                                    e.preventDefault();
-                                    hud.style.width = (startW + (e.clientX - rStartX)) + 'px';
-                                    hud.style.height = (startH + (e.clientY - rStartY)) + 'px';
-                                };
-                                
-                                const stopResize = () => {
-                                    if (!isResizing) return;
-                                    isResizing = false;
-                                    hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
-                                    document.removeEventListener('mousemove', doResize);
-                                    document.removeEventListener('mouseup', stopResize);
-                                };
-                                
-                                resizer.onmousedown = (e) => {
-                                    e.preventDefault(); e.stopPropagation();
-                                    isResizing = true;
-                                    rStartX = e.clientX;
-                                    rStartY = e.clientY;
-                                    startW = hud.offsetWidth;
-                                    startH = hud.offsetHeight;
-                                    hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
-                                    document.addEventListener('mousemove', doResize);
-                                    document.addEventListener('mouseup', stopResize);
-                                };
+                        document.addEventListener('mouseup', () => {
+                            if (isResizing) {
+                                isResizing = false;
+                                hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
                             }
-                        }
-                        
-                        const btnClose = document.getElementById(this.id + '-btn-close');
-                        if (btnClose) {
-                            btnClose.onclick = () => {
-                                if (this._dragCleanup) this._dragCleanup();
-                                hud.remove();
-                                if (this.onClose) this.onClose();
-                            };
-                        }
-                        
-                        const body = document.getElementById(this.id + '-body');
-                        const btnMin = document.getElementById(this.id + '-btn-min');
-                        if (btnMin) {
-                            btnMin.onclick = (e) => {
-                                e.stopPropagation();
-                                this.isMinimized = !this.isMinimized;
-                                if (body) body.style.display = this.isMinimized ? 'none' : 'flex';
-                                if (this.isMinimized) {
-                                    hud.style.height = 'auto';
-                                    hud.style.minHeight = '0';
-                                } else {
-                                    hud.style.height = this.height;
-                                    hud.style.minHeight = this.minHeight;
-                                }
-                                if (this.onMinimize) this.onMinimize(this.isMinimized);
-                            };
-                        }
-                        
-                        const btnZoom = document.getElementById(this.id + '-btn-zoom');
-                        if (btnZoom) {
-                            btnZoom.onclick = () => {
-                                if (!this.isFullscreen) {
-                                    this.oldState = { w: hud.style.width, h: hud.style.height, l: hud.style.left, t: hud.style.top };
-                                    hud.style.width = '100vw'; hud.style.height = '100vh';
-                                    hud.style.left = '0'; hud.style.top = '0';
-                                    this.isFullscreen = true;
-                                } else {
-                                    hud.style.width = this.oldState.w; hud.style.height = this.oldState.h;
-                                    hud.style.left = this.oldState.l; hud.style.top = this.oldState.t;
-                                    this.isFullscreen = false;
-                                }
-                            };
-                        }
-                        
-                        const btnReset = document.getElementById(this.id + '-btn-reset');
-                        if (btnReset) {
-                            btnReset.onclick = () => {
-                                hud.style.width = this.width;
-                                hud.style.height = this.height;
-                                this.isFullscreen = false;
-                            };
-                        }
-                    } catch (err) {
-                        console.error("EchoFloatingWindow attachBaseEvents error:", err);
+                        });
                     }
+                    
+                    document.getElementById(this.id + '-btn-close').onclick = () => {
+                        hud.remove();
+                        if (this.onClose) this.onClose();
+                    };
+                    
+                    const body = document.getElementById(this.id + '-body');
+                    document.getElementById(this.id + '-btn-min').onclick = (e) => {
+                        e.stopPropagation();
+                        this.isMinimized = !this.isMinimized;
+                        body.style.display = this.isMinimized ? 'none' : 'flex';
+                        if (this.isMinimized) {
+                            hud.style.height = 'auto';
+                            hud.style.minHeight = '0';
+                        } else {
+                            hud.style.height = this.height;
+                            hud.style.minHeight = this.minHeight;
+                        }
+                        if (this.onMinimize) this.onMinimize(this.isMinimized);
+                    };
+                    
+                    document.getElementById(this.id + '-btn-zoom').onclick = () => {
+                        if (!this.isFullscreen) {
+                            this.oldState = { w: hud.style.width, h: hud.style.height, l: hud.style.left, t: hud.style.top };
+                            hud.style.width = '100vw'; hud.style.height = '100vh';
+                            hud.style.left = '0'; hud.style.top = '0';
+                            this.isFullscreen = true;
+                        } else {
+                            hud.style.width = this.oldState.w; hud.style.height = this.oldState.h;
+                            hud.style.left = this.oldState.l; hud.style.top = this.oldState.t;
+                            this.isFullscreen = false;
+                        }
+                    };
+                    
+                    document.getElementById(this.id + '-btn-reset').onclick = () => {
+                        hud.style.width = this.width;
+                        hud.style.height = this.height;
+                        this.isFullscreen = false;
+                    };
                 }
             };
         }
@@ -627,12 +564,11 @@ class EchoUI(EchoRichUI):
         clampHud: function() {{
           if (!this.hud) return;
           const vw = window.innerWidth, vh = window.innerHeight;
-          const w = this.hud.offsetWidth;
-          const maxLeft = vw - 60;
-          const maxTop = vh - 60;
-          const minLeft = -w + 60;
-          this.posX = Math.max(minLeft, Math.min(this.posX, maxLeft));
-          this.posY = Math.max(0, Math.min(this.posY, maxTop));
+          const w = this.hud.offsetWidth, h = this.hud.offsetHeight;
+          if (this.posX < 0) this.posX = 0;
+          if (this.posY < 0) this.posY = 0;
+          if (this.posX + w > vw) this.posX = Math.max(0, vw - w);
+          if (this.posY + h > vh) this.posY = Math.max(0, vh - h);
           this.hud.style.left = this.posX + "px";
           this.hud.style.top = this.posY + "px";
         }},
@@ -748,13 +684,23 @@ class EchoUI(EchoRichUI):
             }}
           }});
 
-          window.echoMakeDraggable(this.hud, header, {{
-            onDragEnd: () => {{
-              this.posX = parseFloat(this.hud.style.left) || 0;
-              this.posY = parseFloat(this.hud.style.top) || 0;
+          header.onmousedown = (e) => {{
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+            e.preventDefault();
+            let ox = e.clientX, oy = e.clientY;
+            const move = (me) => {{
+              this.posX += (me.clientX - ox); this.posY += (me.clientY - oy);
+              ox = me.clientX; oy = me.clientY;
+              this.clampHud();
+            }};
+            const up = () => {{
+              document.removeEventListener('mousemove', move);
+              document.removeEventListener('mouseup', up);
               this.saveState();
-            }}
-          }});
+            }};
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+          }};
 
           document.getElementById(HUD_ID + "-btn-zoom").onclick = () => {{
             const img = document.getElementById(HUD_ID + "-img");
@@ -1453,12 +1399,14 @@ return new Promise(function(resolve) {{
           
           const body = document.getElementById(hudId + '-body');
           if (body) {
+              const existingResizer = document.getElementById(hudId + '-resizer');
               body.innerHTML = '';
               const iframe = document.createElement('iframe');
               iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
               iframe.style.cssText = 'width:100%; height:100%; border:none; display:block; flex:1;';
               iframe.srcdoc = htmlContent;
               body.appendChild(iframe);
+              if (existingResizer) body.appendChild(existingResizer);
           }
           return true;
       };
@@ -2164,10 +2112,28 @@ return new Promise(function(resolve) {{
         if (el) el.textContent = text;
       }}
 
-      // ===== DRAG FACTORISÉ =====
-      window.echoMakeDraggable(hud, header, {{
-          onDragEnd: () => saveState()
-      }});
+      // ===== DRAG (clampé aux limites du viewport) =====
+      let isDragging = false, dragX, dragY;
+      header.onmousedown = (e) => {{
+        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
+        isDragging = true;
+        dragX = e.clientX - hud.offsetLeft;
+        dragY = e.clientY - hud.offsetTop;
+        hud.style.transform = 'none';
+      }};
+      document.onmousemove = (e) => {{
+        if (!isDragging) return;
+        const maxX = window.innerWidth - hud.offsetWidth;
+        const maxY = window.innerHeight - 44; // Header height (~44px) toujours visible
+        let newX = Math.max(0, Math.min(e.clientX - dragX, maxX));
+        let newY = Math.max(0, Math.min(e.clientY - dragY, maxY));
+        hud.style.left = newX + 'px';
+        hud.style.top = newY + 'px';
+      }};
+      document.onmouseup = () => {{
+        isDragging = false;
+        saveState();
+      }};
 
       // ===== HEADER BUTTONS =====
       document.getElementById(CODEX_ID + '-close').onclick = () => {{
