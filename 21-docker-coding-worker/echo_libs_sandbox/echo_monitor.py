@@ -35,3 +35,14 @@ def get_ui_payload(window_id: str = "default") -> dict:
         except Exception:
             pass
     return None
+
+def is_window_closed(window_id: str = "default") -> bool:
+    """
+    Indique si l'interface (ECHO Monitor) a été fermée par l'utilisateur.
+    Utile pour interrompre proprement un script synchrone ou asynchrone.
+    """
+    payload = get_ui_payload(window_id)
+    if payload and isinstance(payload, dict):
+        return payload.get("_is_closed", False)
+    # Par défaut, on ne considère pas la fenêtre comme fermée si le payload est juste absent
+    return False

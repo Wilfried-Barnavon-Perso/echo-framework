@@ -26,4 +26,12 @@ const get_ui_payload = (window_id = "default") => {
     return null;
 };
 
-module.exports = { display, get_ui_payload };
+const is_window_closed = (window_id = "default") => {
+    const payload = get_ui_payload(window_id);
+    if (payload && typeof payload === 'object') {
+        return payload._is_closed === true;
+    }
+    return false;
+};
+
+module.exports = { display, get_ui_payload, is_window_closed };

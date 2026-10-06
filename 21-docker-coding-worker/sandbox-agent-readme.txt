@@ -35,8 +35,14 @@ Si l'utilisateur vous demande de traiter un fichier (ex: un enregistrement audio
      data = echo_monitor.get_ui_payload(window_id="votre_id_fenetre") # "default" par défaut
      if data and 'audio_b64' in data: ...
 
+     # Arrêt propre (Graceful Shutdown)
+     if echo_monitor.is_window_closed("votre_id_fenetre"):
+         print("Interface fermée, arrêt du traitement.")
+         exit(0)
+
    - Node.js :
      const echo_monitor = require('echo_monitor');
      const data = echo_monitor.get_ui_payload("votre_id_fenetre");
+     if (echo_monitor.is_window_closed("votre_id_fenetre")) { process.exit(0); }
 
 Le décodage Base64 DOIT se faire dans votre script. En effet, l'IA ne reçoit JAMAIS directement ces données pour préserver sa RAM.
