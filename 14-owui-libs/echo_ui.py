@@ -1,17 +1,17 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.98
+version: 5.99
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.99: Factorisation UI : Codex et WebPlayer héritent désormais de la classe unifiée EchoFloatingWindow. Implémentation du clamping strict (sécurisation viewport) et désactivation du drag sur mobile (CSS fixe).
 # 5.98: Support du Trigger Asynchrone JS via _echoCodexTarget pour forcer l'ouverture du Codex sur un fichier spécifique.
 # 5.97: Architecture - Factorisation du HUD ECHO Identity Vault via la classe unifiée EchoFloatingWindow. Maintien de l'architecture spécifique pour le Cognitive Monitor et le WebPlayer.
 # 5.96: Architecture - Factorisation des fenêtres flottantes via la classe unifiée EchoFloatingWindow. L'ECHO Monitor devient le Sandbox Monitor natif.
 # 5.95: Fix Monitor - Extraction de echoCreateFloatingMonitor dans get_floating_monitor_js() (non injecté auparavant), iframe construite via DOM (srcdoc natif), retrait de allow-same-origin.
 # 5.94: Abandon du Pattern Data Island pour le Monitor. Implémentation du mode Multiplexé via UCTP natif (events.emit_execute) et suppression du MutationObserver.
-# 5.93: Implémentation du Pattern Data Island pour le rendu des composants ECHO Sandbox Monitor via iframe sécurisée.
 # 5.88: Codex - Remplacement des icônes d'import/export par des SVG (Upload/Download).
 # 5.86: Fix - Correction d'une erreur de syntaxe f-string dans le JS injecté du Lazy Loading.
 # 5.85: Refonte majeure (Codex) : Implémentation du Lazy Loading avec requêtage asynchrone (load_directory) et purge mémoire dynamique.
@@ -751,42 +751,76 @@ class EchoUI(EchoRichUI):
         }},
 
         create: function(data) {{
-          const old = document.getElementById(HUD_ID); if(old) old.remove();
-          this.hud = document.createElement('div');
-          this.hud.id = HUD_ID;
-          this.hud.style.cssText = 'position:fixed; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:200px; min-height:100px;';
-
-          this.hud.innerHTML = `
-            <div id="${{HUD_ID}}-header" style="height:${{this.headerH}}px; padding:0 15px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:12px; border-bottom:1px solid #222; cursor:move; user-select:none; box-sizing:border-box;">
-              <span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">{icon}</span>
-              <input id="${{HUD_ID}}-url" type="text" placeholder="URL du navigateur..." style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:6px; color:#00d4ff; font-size:11px; padding:6px 12px; outline:none; font-family:monospace;" readonly />
-              <div style="display:flex; gap:8px;">
-                <button id="${{HUD_ID}}-btn-zoom" title="Maximiser (Ajuster)" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
-                <button id="${{HUD_ID}}-btn-reset" title="Taille réelle (1:1)" style="background:none; border:none; color:#777; cursor:pointer; font-size:11px; font-weight:bold;">1:1</button>
-                <button id="${{HUD_ID}}-btn-min" title="Minimiser" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
-                <button id="${{HUD_ID}}-btn-close" title="Fermer" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:18px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg></button>
+          const old = document.getElementById({HUD_ID}); if(old) old.remove();
+          
+          const headerActions = `
+              <input id="${{{HUD_ID}}}-url" type="text" placeholder="URL du navigateur..." style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:6px; color:#00d4ff; font-size:11px; padding:6px 12px; outline:none; font-family:monospace;" readonly />
+          `;
+          const bodyHtml = `
+            <div id="${{{HUD_ID}}}-area" style="flex:1; position:relative; background:#000; overflow:hidden; cursor:crosshair;">
+              <div id="${{{HUD_ID}}}-matrix" style="position:absolute; top:0; left:0; transform-origin: 0 0; will-change: transform;">
+                <img id="${{{HUD_ID}}}-img" style="display:block; user-select:none; pointer-events:none; width:100%; height:100%; max-width:none !important;" draggable="false" />
+                <div id="${{{HUD_ID}}}-hitboxes" style="position:absolute; inset:0; pointer-events:none;"></div>
               </div>
-            </div>
-            <div id="${{HUD_ID}}-area" style="flex:1; position:relative; background:#000; overflow:hidden; cursor:crosshair;">
-              <div id="${{HUD_ID}}-matrix" style="position:absolute; top:0; left:0; transform-origin: 0 0; will-change: transform;">
-                <img id="${{HUD_ID}}-img" style="display:block; user-select:none; pointer-events:none; width:100%; height:100%; max-width:none !important;" draggable="false" />
-                <div id="${{HUD_ID}}-hitboxes" style="position:absolute; inset:0; pointer-events:none;"></div>
-              </div>
-              <div id="${{HUD_ID}}-resizer" style="position:absolute; bottom:0; right:0; width:16px; height:16px; cursor:nwse-resize; z-index:101; background:linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.4) 50%); border-bottom-right-radius: 12px;"></div>
             </div>
           `;
-          document.body.appendChild(this.hud);
-          this.attachEvents();
+          
+          const webWindow = new window.EchoFloatingWindow({{
+              id: {HUD_ID},
+              title: '',
+              icon: '{icon}',
+              customHeader: headerActions,
+              bodyHtml: bodyHtml,
+              width: '800px',
+              height: '600px',
+              minWidth: '300px',
+              minHeight: '200px',
+              allowResize: true,
+              onClose: () => {{
+                 this.hud = null;
+                 if (this.saveState) this.saveState();
+              }},
+              onMinimize: (isMin) => {{
+                 const a = document.getElementById({HUD_ID} + "-area");
+                 if (a) a.style.display = isMin ? 'none' : 'block';
+                 if (this.syncLayout) this.syncLayout();
+              }}
+          }});
+          webWindow.posX = this.posX || 30;
+          webWindow.posY = this.posY || 30;
+          webWindow.render();
+          webWindow.attachBaseEvents();
 
-          const saved = localStorage.getItem(STATE_KEY);
+          this.hud = document.getElementById({HUD_ID});
+          this.attachEvents();
+          
+          const btnZoom = document.getElementById({HUD_ID} + "-btn-zoom");
+          if (btnZoom) {{
+             btnZoom.onclick = () => {{
+                const img = document.getElementById({HUD_ID} + "-img");
+                const vw = window.innerWidth, vh = window.innerHeight;
+                const sW = (vw - 40) / img.naturalWidth;
+                const sH = (vh - this.headerH - 40) / img.naturalHeight;
+                this.imgScale = Math.min(sW, sH);
+                this.syncLayout();
+             }};
+          }}
+          
+          const btnReset = document.getElementById({HUD_ID} + "-btn-reset");
+          if (btnReset) {{
+             btnReset.onclick = () => {{
+                this.imgScale = 1.0; this.syncLayout();
+             }};
+          }}
+
+          const saved = localStorage.getItem({STATE_KEY});
           if (saved) {{
             const s = JSON.parse(saved);
             this.posX = s.x; this.posY = s.y; this.imgScale = s.s;
             this.imgX = s.ix; this.imgY = s.iy;
-            if (s.m) document.getElementById(HUD_ID + "-area").style.display = 'none';
+            if (s.m) document.getElementById({HUD_ID} + "-area").style.display = 'none';
           }}
         }},
-
         update: function(data) {{
           if (!document.getElementById(HUD_ID)) this.create(data);
           this.hud = document.getElementById(HUD_ID);
@@ -1528,170 +1562,149 @@ return new Promise(function(resolve) {{
       {EchoUI.get_custom_modals_js()}
 
       // --- HUD Container ---
-      const hud = document.createElement('div');
-      hud.id = CODEX_ID;
-      hud.style.cssText = `position:fixed; z-index:10001; display:flex; flex-direction:column;
-        background:${{bgColor}}; border:1px solid ${{borderColor}}; border-radius:12px;
-        box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:'Segoe UI',system-ui,sans-serif;
-        color:${{textColor}}; overflow:hidden; resize:both; min-width:600px; min-height:400px;
-        width:${{savedState.w || '900px'}}; height:${{savedState.h || '600px'}};
-        top:${{savedState.y || '60px'}}; left:${{savedState.x || '50%'}};
-        ${{savedState.x ? '' : 'transform:translateX(-50%);'}}`;
+      const codexWindow = new window.EchoFloatingWindow({{
+          id: {CODEX_ID},
+          title: '📝 ECHO Codex',
+          width: savedState.w || '900px',
+          height: savedState.h || '600px',
+          minWidth: '600px',
+          minHeight: '400px',
+          onClose: () => {{
+              if (typeof saveState === 'function') saveState();
+              window.sendCodexAction({{action:'close'}});
+          }},
+          customHeader: `
+            <select id="${{{CODEX_ID}}}-lang" style="background:transparent; border:1px solid {{{borderColor}}}; color:{{{textColor}}}; padding:2px 6px; border-radius:4px; font-size:12px; margin-right:auto;"></select>
+            <button id="${{{CODEX_ID}}}-import" title="Importer" style="background:none; border:none; color:{{{textColor}}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3'/></svg></button>
+            <button id="${{{CODEX_ID}}}-export" title="Exporter" style="background:none; border:none; color:{{{textColor}}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12'/></svg></button>
+            <button id="${{{CODEX_ID}}}-copy" title="Copier" style="background:none; border:none; color:{{{textColor}}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>
+            <button id="${{{CODEX_ID}}}-refresh" title="Actualiser" style="background:none; border:none; color:{{{textColor}}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/></svg></button>
+            <button id="${{{CODEX_ID}}}-save" title="Enregistrer le fichier" style="background:none; border:none; color:{{{textColor}}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
+            <button id="${{{CODEX_ID}}}-preview" title="Preview Live (HTML/SVG/Markdown)" style="background:none; border:none; color:{{{textColor}}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/><circle cx='12' cy='12' r='3'/></svg></button>
+          `
+      }});
+      codexWindow.render();
+      codexWindow.attachBaseEvents();
+      
+      const hud = document.getElementById({CODEX_ID});
+      const hudBody = document.getElementById({CODEX_ID} + '-body');
+      
+      if (savedState.x) hud.style.left = savedState.x;
+      if (savedState.y) hud.style.top = savedState.y;
 
-      // --- HEADER (draggable) ---
-      const header = document.createElement('div');
-      header.id = CODEX_ID + '-header';
-      header.style.cssText = `display:flex; align-items:center; padding:8px 12px; gap:8px;
-        background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; cursor:move;
-        user-select:none; flex-shrink:0;`;
-      header.innerHTML = `
-        <span style="font-weight:600; font-size:14px;">📝 ECHO Codex</span>
-        <span style="flex:1;"></span>
-        <select id="${{CODEX_ID}}-lang" style="background:transparent; border:1px solid ${{borderColor}};
-          color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:12px;"></select>
-        <button id="${{CODEX_ID}}-import" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='17 8 12 3 7 8'/><line x1='12' y1='3' x2='12' y2='15'/></svg></button>
-        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg></button>
-        <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>
-        <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/></svg></button>
-        <button id="${{CODEX_ID}}-save" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
-        <button id="${{CODEX_ID}}-preview-toggle" title="Prévisualisation" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px; opacity:0.4;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/><circle cx='12' cy='12' r='3'/></svg></button>
-        <button id="${{CODEX_ID}}-fullscreen" title="Plein écran" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
-        <button id="${{CODEX_ID}}-minimize" title="Minimiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
-        <button id="${{CODEX_ID}}-close" title="Fermer" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:18px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg></button>`;
-      hud.appendChild(header);
-
-      // --- BODY (sidebar + editor) ---
+      // --- MAIN AREA (Sidebar + Editor) ---
       const body = document.createElement('div');
-      body.id = CODEX_ID + '-body';
-      body.style.cssText = 'display:flex; flex:1; overflow:hidden;';
-
-      // Sidebar (file tree)
+      body.style.cssText = `flex:1; display:flex; flex-direction:row; overflow:hidden; min-height:0; position:relative;`;
+      
+      // Sidebar
       const sidebar = document.createElement('div');
-      sidebar.id = CODEX_ID + '-sidebar';
-      sidebar.style.cssText = `width:${{sidebarWidth}}px; background:${{sidebarBg}}; border-right:1px solid ${{borderColor}};
-        overflow-y:auto; flex-shrink:0; display:flex; flex-direction:column; padding:6px 0;`;
-
-      // Sidebar Splitter
-      const sidebarSplitter = document.createElement('div');
-      sidebarSplitter.id = CODEX_ID + '-sidebar-splitter';
-      sidebarSplitter.style.cssText = `width:5px; cursor:col-resize; background:${{borderColor}}; flex-shrink:0; transition:background 0.15s;`;
-      sidebarSplitter.onmouseenter = () => sidebarSplitter.style.background = accentColor;
-      sidebarSplitter.onmouseleave = () => sidebarSplitter.style.background = borderColor;
-
-      // Editor container
+      sidebar.id = `${{{CODEX_ID}}}-sidebar`;
+      sidebar.style.cssText = `width:200px; background:rgba(0,0,0,0.2); border-right:1px solid {{{borderColor}}}; display:flex; flex-direction:column;`;
+      
+      const sidebarHeader = document.createElement('div');
+      sidebarHeader.style.cssText = `padding:8px; border-bottom:1px solid {{{borderColor}}}; font-size:12px; font-weight:bold; color:{{{accentColor}}}; display:flex; justify-content:space-between; align-items:center;`;
+      sidebarHeader.innerHTML = `<span><svg width='14' height='14' style="vertical-align:text-bottom; margin-right:4px;" viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'/></svg> Explorateur</span>`;
+      
+      const btnNewFile = document.createElement('button');
+      btnNewFile.innerHTML = "+";
+      btnNewFile.title = "Nouveau fichier";
+      btnNewFile.style.cssText = `background:transparent; border:none; color:{{{textColor}}}; cursor:pointer; font-size:16px; font-weight:bold;`;
+      btnNewFile.onclick = () => window.sendCodexAction({{action:'new_file'}});
+      sidebarHeader.appendChild(btnNewFile);
+      
+      const fileTree = document.createElement('div');
+      fileTree.id = `${{{CODEX_ID}}}-filetree`;
+      fileTree.style.cssText = `flex:1; overflow-y:auto; padding:4px; font-size:12px;`;
+      
+      sidebar.appendChild(sidebarHeader);
+      sidebar.appendChild(fileTree);
+      
+      const treePanel = document.createElement('div');
+      treePanel.id = `${{{CODEX_ID}}}-treepanel`;
+      treePanel.style.cssText = `flex:1; display:none; flex-direction:column; background:#111; overflow:hidden; border-right:1px solid {{{borderColor}}};`;
+      
+      // Wrapper de l'éditeur
       const editorWrap = document.createElement('div');
-      editorWrap.id = CODEX_ID + '-editor';
-      editorWrap.style.cssText = `flex:${{previewOpen ? editorRatio : 100}} 1 0%; overflow:hidden; position:relative; min-width:0;`;
+      editorWrap.style.cssText = `flex:1; position:relative; min-width:0;`;
+      const editorDiv = document.createElement('div');
+      editorDiv.id = `${{{CODEX_ID}}}-editor`;
+      editorDiv.style.cssText = `position:absolute; inset:0;`;
+      editorWrap.appendChild(editorDiv);
 
-      // Splitter (entre éditeur et preview)
+      // Séparateur redimensionnable (Preview)
       const splitter = document.createElement('div');
-      splitter.id = CODEX_ID + '-splitter';
-      splitter.style.cssText = `width:5px; cursor:col-resize; background:${{borderColor}}; flex-shrink:0; display:none; transition:background 0.15s;`;
-      splitter.onmouseenter = () => splitter.style.background = accentColor;
-      splitter.onmouseleave = () => splitter.style.background = borderColor;
+      splitter.id = `${{{CODEX_ID}}}-preview-splitter`;
+      splitter.style.cssText = `width:4px; background:{{{borderColor}}}; cursor:col-resize; display:none; z-index:10;`;
 
-      // Preview panel (panneau latéral droit)
+      // Panneau de preview
       const previewPanel = document.createElement('div');
-      previewPanel.id = CODEX_ID + '-preview';
-      previewPanel.style.cssText = `flex:${{previewRatio}} 1 0%; min-width:0; display:none; flex-direction:column; overflow:hidden; background:${{bgColor}};`;
-      previewPanel.innerHTML = `
-        <div style="padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0; display:flex; align-items:center; gap:8px;">
-          <button id="${{CODEX_ID}}-preview-copy" title="Copier le rendu" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
-          <button id="${{CODEX_ID}}-preview-print" title="Print / PDF" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><polyline points="9 15 12 18 15 15"/></svg>
-          </button>
-          <span id="${{CODEX_ID}}-preview-label" style="flex:1;">Preview</span>
-        </div>
-        <div id="${{CODEX_ID}}-preview-content" style="flex:1; padding:12px; overflow:auto; font-size:14px; line-height:1.6; min-width:0;"></div>
-      `;
+      previewPanel.id = `${{{CODEX_ID}}}-preview-panel`;
+      previewPanel.style.cssText = `flex:1; position:relative; background:#fff; display:none; min-width:0;`;
+      const previewIframe = document.createElement('iframe');
+      previewIframe.id = `${{{CODEX_ID}}}-preview-iframe`;
+      previewIframe.sandbox = 'allow-scripts allow-modals allow-popups';
+      previewIframe.style.cssText = `width:100%; height:100%; border:none; display:block; background:#fff;`;
+      previewPanel.appendChild(previewIframe);
 
       body.appendChild(sidebar);
-      body.appendChild(sidebarSplitter);
+      body.appendChild(treePanel);
       body.appendChild(editorWrap);
       body.appendChild(splitter);
       body.appendChild(previewPanel);
-      hud.appendChild(body);
+      hudBody.appendChild(body);
 
       // --- AI PANEL (mini-chat + quick actions + model selector) ---
       const aiPanel = document.createElement('div');
-      aiPanel.style.cssText = `display:flex; flex-direction:column; gap:6px; padding:8px 12px;
-        border-top:1px solid ${{borderColor}}; flex-shrink:0;`;
+      aiPanel.id = `${{{CODEX_ID}}}-aipanel`;
+      aiPanel.style.cssText = `padding:8px; border-top:1px solid {{{borderColor}}}; background:rgba(0,0,0,0.3); display:flex; flex-direction:column; gap:8px;`;
+      
       aiPanel.innerHTML = `
-        <div style="display:flex; gap:6px;">
-          <input id="${{CODEX_ID}}-ai-input" type="text" placeholder="Instruction instantan\u00e9e pour l'IA..."
-            style="flex:1; background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}};
-            padding:6px 10px; border-radius:6px; font-size:13px; outline:none;"
-          />
-          <select id="${{CODEX_ID}}-model" title="Mod\u00e8le AI" style="background:transparent; border:1px solid ${{borderColor}};
-            color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:11px; max-width:90px;">
-            <option value="MODEL_FLASH" selected>Flash</option>
-            <option value="MODEL_PRO">Pro</option>
-            <option value="MODEL_LITE">Lite</option>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <select id="${{{CODEX_ID}}}-model" style="background:{{{bgColor}}}; border:1px solid {{{borderColor}}}; color:{{{textColor}}}; padding:6px; border-radius:4px; font-size:12px; min-width:120px;">
+            <option value="auto">🤖 Mode Automatique</option>
+            <option value="architect">🧠 Architecte (Complexe)</option>
+            <option value="coder">💻 Codeur (Standard)</option>
+            <option value="fast">⚡ Rapide (Correction)</option>
           </select>
-          <button id="${{CODEX_ID}}-ai-send" style="background:${{accentColor}}; border:none; color:#1e1e2e;
-            padding:6px 14px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">Envoyer</button>
+          <input type="text" id="${{{CODEX_ID}}}-prompt" placeholder="Ex: Ajoute une fonction de tri..." style="flex:1; background:{{{bgColor}}}; border:1px solid {{{borderColor}}}; color:{{{textColor}}}; padding:6px 10px; border-radius:4px; font-size:13px; outline:none;"/>
+          <button id="${{{CODEX_ID}}}-send" style="background:{{{accentColor}}}; border:none; color:#1e1e2e; padding:6px 14px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">Envoyer</button>
         </div>
-        <div id="${{CODEX_ID}}-quick" style="display:flex; gap:4px; flex-wrap:wrap;"></div>`;
-      hud.appendChild(aiPanel);
+        <div id="${{{CODEX_ID}}}-quick" style="display:flex; gap:4px; flex-wrap:wrap;"></div>`;
+      hudBody.appendChild(aiPanel);
 
       // Tracker le choix utilisateur sur le dropdown modèle
-      const modelSelect = document.getElementById(CODEX_ID + '-model');
-      if (modelSelect) modelSelect.onchange = () => {{ lastModel = modelSelect.value; }};
-
-      // --- MICRO-SPINNER (sur le bouton cliqué) ---
-      let spinnerTarget = null;
-      let spinnerOriginal = '';
-      const spinStyle = document.createElement('style');
-      spinStyle.textContent = '@keyframes echoCodexSpin {{ from {{ transform:rotate(0deg); }} to {{ transform:rotate(360deg); }} }}';
-      document.head.appendChild(spinStyle);
-      function showButtonSpinner(btn) {{
-        if (!btn) return;
-        spinnerTarget = btn;
-        spinnerOriginal = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = `<span style="display:inline-block; width:14px; height:14px; border:2px solid ${{borderColor}};
-          border-top-color:${{accentColor}}; border-radius:50%; animation:echoCodexSpin 0.7s linear infinite;"></span>`;
-      }}
-      function hideButtonSpinner() {{
-        if (spinnerTarget) {{
-          spinnerTarget.innerHTML = spinnerOriginal;
-          spinnerTarget.disabled = false;
-          spinnerTarget = null;
-          spinnerOriginal = '';
-        }}
+      const modelSelect = document.getElementById({CODEX_ID} + '-model');
+      if (modelSelect) {{
+         if (savedState.model) modelSelect.value = savedState.model;
+         modelSelect.addEventListener('change', () => {{
+             saveState();
+         }});
       }}
 
-      // --- STATUS BAR (historique ◀ ▶) ---
+      // --- STATUS BAR ---
       const statusBar = document.createElement('div');
-      statusBar.id = CODEX_ID + '-status';
-      statusBar.style.cssText = `display:flex; align-items:center; padding:4px 12px; gap:8px;
-        background:${{statusBg}}; border-top:1px solid ${{borderColor}}; font-size:11px;
-        font-family:monospace; flex-shrink:0; min-height:28px;`;
+      statusBar.style.cssText = `height:24px; padding:0 10px; font-size:11px; background:rgba(255,255,255,0.05); color:{{{textColor}}}; display:flex; align-items:center; gap:12px; border-top:1px solid {{{borderColor}}}; flex-shrink:0;`;
       statusBar.innerHTML = `
-        <button id="${{CODEX_ID}}-hist-prev" title="Version pr\u00e9c\u00e9dente" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='15 18 9 12 15 6'/></svg></button>
-        <span id="${{CODEX_ID}}-status-text" style="flex:1; color:${{isDark ? '#a6adc8' : '#666'}};">Pr\u00eat</span>
-        <button id="${{CODEX_ID}}-hist-next" title="Version suivante" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 18 15 12 9 6'/></svg></button>
-        <div id="${{CODEX_ID}}-hist-actions" style="display:none; gap:6px;">
-          <button id="${{CODEX_ID}}-hist-pin" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 8l4 4-4 4M18 8l-4 4 4 4M12 4v16'/></svg> Revenir au pr\u00e9sent</button>
-          <button id="${{CODEX_ID}}-hist-restore" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 14 4 9 9 4'/><path d='M20 20v-7a4 4 0 0 0-4-4H4'/></svg> Restaurer</button>
+        <div id="${{{CODEX_ID}}}-status-icon" style="color:{{{accentColor}}};"><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 11.08V12a10 10 0 1 1-5.93-9.14'/><polyline points='22 4 12 14.01 9 11.01'/></svg></div>
+        <div id="${{{CODEX_ID}}}-status-text">Prêt</div>
+        <div style="flex:1;"></div>
+        <div id="${{{CODEX_ID}}}-cursor" style="opacity:0.7;">Ln 1, Col 1</div>
+        <div id="${{{CODEX_ID}}}-hist-panel" style="display:none; align-items:center; gap:8px; margin-right:15px; background:rgba(0,0,0,0.3); padding:2px 8px; border-radius:12px;">
+          <span style="color:#f9e2af; font-weight:bold;">🕒 Mode Historique</span>
+          <button id="${{{CODEX_ID}}}-hist-pin" style="background:none; border:1px solid {{{borderColor}}}; color:{{{textColor}}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 8l4 4-4 4M18 8l-4 4 4 4M12 4v16'/></svg> Revenir au présent</button>
+          <button id="${{{CODEX_ID}}}-hist-restore" style="background:none; border:1px solid {{{borderColor}}}; color:{{{textColor}}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 14 4 9 9 4'/><path d='M20 20v-7a4 4 0 0 0-4-4H4'/></svg> Restaurer</button>
         </div>`;
-      hud.appendChild(statusBar);
+      hudBody.appendChild(statusBar);
 
       // --- DIFF ACTIONS (hidden by default) ---
       const diffBar = document.createElement('div');
-      diffBar.id = CODEX_ID + '-diff-bar';
-      diffBar.style.cssText = `display:none; justify-content:center; gap:12px; padding:8px;
-        border-top:1px solid ${{borderColor}}; flex-shrink:0;`;
+      diffBar.id = `${{{CODEX_ID}}}-diff-bar`;
+      diffBar.style.cssText = `display:none; padding:8px 12px; background:rgba(0,0,0,0.5); border-top:1px solid {{{borderColor}}}; align-items:center; justify-content:center; gap:15px;`;
       diffBar.innerHTML = `
-        <button id="${{CODEX_ID}}-diff-accept" style="background:#a6e3a1; border:none; color:#1e1e2e;
-          padding:6px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">✅ Accepter</button>
-        <button id="${{CODEX_ID}}-diff-reject" style="background:#f38ba8; border:none; color:#1e1e2e;
-          padding:6px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">❌ Rejeter</button>`;
-      hud.appendChild(diffBar);
-
-      document.body.appendChild(hud);
+        <span style="color:#f9e2af; font-weight:bold; font-size:13px;">⚠️ Différence détectée</span>
+        <button id="${{{CODEX_ID}}}-diff-accept" style="background:#a6e3a1; border:none; color:#1e1e2e; padding:6px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">✅ Accepter</button>
+        <button id="${{{CODEX_ID}}}-diff-reject" style="background:#f38ba8; border:none; color:#1e1e2e; padding:6px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">❌ Rejeter</button>`;
+      hudBody.appendChild(diffBar);
 
       // ===== FILE TREE =====
       function renderFileTree() {{
