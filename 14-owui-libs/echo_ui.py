@@ -1,11 +1,12 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.100
+version: 5.101
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.101: Fix Identity Vault - Injection de EchoUI.get_floating_window_class_js() dans _generate_identity_vault_js (TypeError: window.EchoFloatingWindow is not a constructor hors chargement préalable du Monitor).
 # 5.100: Rollback de la factorisation 5.99 (Codex/WebPlayer) : NameError f-string (HUD_ID/CODEX_ID), IDs DOM orphelins, classe EchoFloatingWindow non injectée. Retour au code 5.98 validé.
 # 5.98: Support du Trigger Asynchrone JS via _echoCodexTarget pour forcer l'ouverture du Codex sur un fichier spécifique.
 # 5.97: Architecture - Factorisation du HUD ECHO Identity Vault via la classe unifiée EchoFloatingWindow. Maintien de l'architecture spécifique pour le Cognitive Monitor et le WebPlayer.
@@ -3270,6 +3271,7 @@ return new Promise(function(resolve) {{
             "(function() {\n"
             "  const HUD_ID = 'echo-vault-identity';\n"
             + EchoUI.get_mobile_guard_js('echo-vault-identity') + "\n"
+            + EchoUI.get_floating_window_class_js() + "\n"
             + EchoUI.get_sanitize_html_js() + "\n"
             "  if (document.getElementById(HUD_ID)) document.getElementById(HUD_ID).remove();\n"
             "  let accounts = JSON.parse('" + accounts_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
