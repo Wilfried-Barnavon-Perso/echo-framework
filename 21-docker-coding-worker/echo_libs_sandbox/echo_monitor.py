@@ -19,3 +19,19 @@ def display(html_content: str, title: str = "ECHO Sandbox Monitor", width: str =
     # Ecriture dans le canal dédié en mode Append (Multiplexage)
     with open('/sandbox/.echo_monitor.jsonl', 'a', encoding='utf-8') as f:
         f.write(json.dumps(meta) + "\n")
+
+def get_ui_payload(window_id: str = "default") -> dict:
+    """
+    Récupère le payload massif (json/base64) injecté par le Frontend.
+    Multiplexé : Retourne uniquement les données associées à 'window_id'.
+    """
+    filename = os.environ.get("ECHO_UI_PAYLOAD_FILE", ".echo_ui_payload.json")
+    path = f'/sandbox/{filename}'
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.loads(f.read())
+                return data.get(window_id) if isinstance(data, dict) else None
+        except Exception:
+            pass
+    return None

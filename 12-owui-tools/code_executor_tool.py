@@ -1,16 +1,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 7.6
+version: 7.7
 description: Composant système interne : ECHO Code Executor (Python & Node.js).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.7: Implémentation du canal passe-plat descendant asynchrone via `fetch_ui_payload` (UI -> Sandbox) sans impact LLM.
 # 7.6: Encapsulation du code JS (ECHO Monitor) en IIFE asynchrone pour isolation (correction return global via eval).
 # 7.5: Fix Monitor - Injection de EchoUI.get_floating_monitor_js() (fonction absente côté navigateur), sérialisation JSON des paramètres JS.
 # 7.4: Intégration du Multiplexage ECHO Monitor (JSONL via UCTP emit_execute) avec fenêtrage dynamique.
 # 7.3: Allègement de la docstring via intégration de la documentation /sandbox-agent-readme.txt.
-# 7.2: Alignement sémantique des montages Bwrap dans la docstring (/sandbox, /main, /files).
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -35,6 +35,7 @@ class Tools:
         file_path: str,
         dependencies: Optional[List[str]] = None,
         timeout_sec: int = ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT,
+        fetch_ui_payload: bool = False,
         __user__: Optional[dict] = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None,
@@ -59,6 +60,7 @@ class Tools:
             file_path (str): Le chemin relatif du fichier à exécuter dans la sandbox (ex: "script.py" ou "dossier/app.js").
             dependencies (list[str]): Liste des paquets pip/npm additionnels à installer avant l'exécution.
             timeout_sec (int): Délai maximum accordé au script.
+            fetch_ui_payload (bool): Si True, rapatrie de manière invisible les données du navigateur (images, audio) et les met à disposition du script. Lisez `/sandbox-agent-readme.txt` pour savoir comment les lire.
         """
         __user__ = __user__ or {}
         __metadata__ = __metadata__ or {}
@@ -79,6 +81,15 @@ class Tools:
 
         try:
             import httpx
+            
+            ui_payload_data = None
+            if fetch_ui_payload:
+                try:
+                    raw = await events.call_execute("return typeof window.getUIPayload === 'function' ? window.getUIPayload() : null;")
+                    ui_payload_data = raw if isinstance(raw, dict) else json.loads(raw)
+                except Exception:
+                    pass
+                    
             # Ajout d'une marge substantielle (ex: 30s) pour couvrir le temps d'installation des dépendances dynamiques
             async with httpx.AsyncClient(timeout=actual_timeout + 30.0) as client:
                 response = await client.post(
@@ -86,6 +97,7 @@ class Tools:
                     json={
                         "file_path": file_path,
                         "dependencies": dependencies,
+                        "ui_payload": ui_payload_data,
                         "user_id": __user__.get("id", "system"),
                         "chat_id": __metadata__.get("chat_id"),
                         "timeout": actual_timeout

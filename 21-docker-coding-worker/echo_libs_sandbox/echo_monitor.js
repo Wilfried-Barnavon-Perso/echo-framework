@@ -12,4 +12,18 @@ const display = (html_content, title = "ECHO Sandbox Monitor", width = "100%", h
     fs.appendFileSync('/sandbox/.echo_monitor.jsonl', JSON.stringify(meta) + '\n', 'utf8');
 };
 
-module.exports = { display };
+const get_ui_payload = (window_id = "default") => {
+    const filename = process.env.ECHO_UI_PAYLOAD_FILE || '.echo_ui_payload.json';
+    const payloadFile = `/sandbox/${filename}`;
+    if (fs.existsSync(payloadFile)) {
+        try {
+            const data = JSON.parse(fs.readFileSync(payloadFile, 'utf8'));
+            return data[window_id] || null;
+        } catch (e) {
+            return null;
+        }
+    }
+    return null;
+};
+
+module.exports = { display, get_ui_payload };

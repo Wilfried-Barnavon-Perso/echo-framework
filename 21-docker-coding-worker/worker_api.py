@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 3.4 (Fix orjson ECHO Monitor)
+VERSION : 3.5 (Passe-Plat Descendant)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-10-05
+DATE MAJ : 2026-10-06
 
+CHANGELOG 3.5 :
+- Implémentation du Passe-Plat multiplexé (Frontend vers Sandbox) avec double purge de sécurité du fichier .echo_ui_payload.json
 CHANGELOG 3.4 :
 - Fix NameError critique : remplacement de json.loads par orjson.loads pour le Monitor Payload.
 CHANGELOG 3.3 :
@@ -69,7 +71,7 @@ logging.getLogger("werkzeug").addFilter(RateLimitHealthCheckFilter())
 
 app = Flask(__name__)
 
-def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout_sec):
+def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout_sec, ui_payload):
     try:
         if not sandbox_dir:
             result_queue.put({'status': 'critical_error', 'error': 'Espace d\'exécution non défini.'})
@@ -191,6 +193,9 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
             bwrap_cmd.extend(["--bind-try", deps_dir, "/.deps"])
 
         # Injecter le runtime approprié
+        if ui_payload_filename:
+            bwrap_cmd.extend(["--setenv", "ECHO_UI_PAYLOAD_FILE", ui_payload_filename])
+            
         if is_python:
             python_paths = ["/echo_libs_sandbox"]
             if deps_dir:
@@ -204,12 +209,25 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
             bwrap_cmd.extend(["--setenv", "NODE_PATH", ":".join(node_paths)])
             bwrap_cmd.extend(["node", f"/sandbox/{file_path}"])
         # 1. PURGE PRE-RUN ECHO Monitor
+        import uuid
         monitor_file = None
+        ui_payload_file = None
+        ui_payload_filename = None
         if sandbox_dir:
             monitor_file = os.path.join(sandbox_dir, ".echo_monitor.jsonl")
             if os.path.exists(monitor_file):
                 try:
                     os.remove(monitor_file)
+                except Exception:
+                    pass
+
+            # Pre-Run UI Payload Injection sécurisée
+            if ui_payload:
+                ui_payload_filename = f".echo_ui_{uuid.uuid4().hex}.json"
+                ui_payload_file = os.path.join(sandbox_dir, ui_payload_filename)
+                try:
+                    with open(ui_payload_file, 'w', encoding='utf-8') as f:
+                        f.write(orjson.dumps(ui_payload).decode('utf-8'))
                 except Exception:
                     pass
 
@@ -252,6 +270,13 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
             except Exception as e:
                 logger.error(f"Erreur lecture monitor payload: {e}")
                 
+        # Purge POST-RUN UI Payload
+        if ui_payload_file and os.path.exists(ui_payload_file):
+            try:
+                os.remove(ui_payload_file)
+            except Exception:
+                pass
+                
         result_queue.put(result)
     except Exception as e:
         result_queue.put({'status': 'critical_error', 'error': f"Worker System Error: {str(e)}"})
@@ -261,6 +286,7 @@ def execute_code():
     data = request.json
     file_path = data.get('file_path', '')
     dependencies = data.get('dependencies', [])
+    ui_payload = data.get('ui_payload', None)
     timeout = data.get('timeout', 30)
     
     user_id = data.get('user_id', 'system')
@@ -282,7 +308,7 @@ def execute_code():
 
     # Création d'un processus OS distinct
     q_result = multiprocessing.Queue()
-    p = multiprocessing.Process(target=run_isolated_process, args=(file_path, dependencies, q_result, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout))
+    p = multiprocessing.Process(target=run_isolated_process, args=(file_path, dependencies, q_result, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout, ui_payload))
     p.start()
     
     try:
