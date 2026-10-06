@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.99
+version: 5.98
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.99: Factorisation complète du Codex et du WebPlayer via la classe unifiée EchoFloatingWindow. Intégration du Clamping et du Mobile Guard natifs.
 # 5.98: Support du Trigger Asynchrone JS via _echoCodexTarget pour forcer l'ouverture du Codex sur un fichier spécifique.
 # 5.97: Architecture - Factorisation du HUD ECHO Identity Vault via la classe unifiée EchoFloatingWindow. Maintien de l'architecture spécifique pour le Cognitive Monitor et le WebPlayer.
 # 5.96: Architecture - Factorisation des fenêtres flottantes via la classe unifiée EchoFloatingWindow. L'ECHO Monitor devient le Sandbox Monitor natif.
 # 5.95: Fix Monitor - Extraction de echoCreateFloatingMonitor dans get_floating_monitor_js() (non injecté auparavant), iframe construite via DOM (srcdoc natif), retrait de allow-same-origin.
+# 5.94: Abandon du Pattern Data Island pour le Monitor. Implémentation du mode Multiplexé via UCTP natif (events.emit_execute) et suppression du MutationObserver.
 # 5.93: Implémentation du Pattern Data Island pour le rendu des composants ECHO Sandbox Monitor via iframe sécurisée.
 # 5.88: Codex - Remplacement des icônes d'import/export par des SVG (Upload/Download).
 # 5.86: Fix - Correction d'une erreur de syntaxe f-string dans le JS injecté du Lazy Loading.
@@ -128,20 +128,6 @@ class EchoRichUI:
                       </div>
                     `;
                     document.body.appendChild(hud);
-
-                    const styleId = this.id + '-mobile-style';
-                    if (!document.getElementById(styleId)) {
-                        const styleEl = document.createElement('style');
-                        styleEl.id = styleId;
-                        styleEl.innerHTML = `
-                            @media (max-width: 768px) {
-                                #${this.id} { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100dvh !important; max-width: 100vw !important; max-height: 100dvh !important; min-width: 0 !important; min-height: 0 !important; border-radius: 0 !important; z-index: 10005 !important; transform: none !important; }
-                                #${this.id}-resizer { display: none !important; }
-                                #${this.id}-header { cursor: default !important; }
-                            }
-                        `;
-                        document.head.appendChild(styleEl);
-                    }
                 }
                 
                 attachBaseEvents() {
@@ -160,7 +146,580 @@ class EchoRichUI:
                     const header = document.getElementById(this.id + '-header');
                     let isDragging = false, startX, startY, initialLeft, initialTop;
                     
-          
+                    header.onmousedown = (e) => {
+                        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('button')) return;
+                        e.preventDefault();
+                        isDragging = true;
+                        startX = e.clientX;
+                        startY = e.clientY;
+                        initialLeft = hud.offsetLeft;
+                        initialTop = hud.offsetTop;
+                        hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
+                    };
+                    
+                    document.addEventListener('mousemove', (e) => {
+                        if (isDragging) {
+                            e.preventDefault();
+                            hud.style.left = (initialLeft + (e.clientX - startX)) + 'px';
+                            hud.style.top = (initialTop + (e.clientY - startY)) + 'px';
+                        }
+                    });
+                    
+                    document.addEventListener('mouseup', () => {
+                        if (isDragging) {
+                            isDragging = false;
+                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                        }
+                    });
+                    
+                    if (this.allowResize) {
+                        const resizer = document.getElementById(this.id + '-resizer');
+                        let isResizing = false, rStartX, rStartY, startW, startH;
+                        
+                        resizer.onmousedown = (e) => {
+                            e.preventDefault(); e.stopPropagation();
+                            isResizing = true;
+                            rStartX = e.clientX;
+                            rStartY = e.clientY;
+                            startW = hud.offsetWidth;
+                            startH = hud.offsetHeight;
+                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
+                        };
+                        
+                        document.addEventListener('mousemove', (e) => {
+                            if (isResizing) {
+                                e.preventDefault();
+                                hud.style.width = (startW + (e.clientX - rStartX)) + 'px';
+                                hud.style.height = (startH + (e.clientY - rStartY)) + 'px';
+                            }
+                        });
+                        
+                        document.addEventListener('mouseup', () => {
+                            if (isResizing) {
+                                isResizing = false;
+                                hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                            }
+                        });
+                    }
+                    
+                    document.getElementById(this.id + '-btn-close').onclick = () => {
+                        hud.remove();
+                        if (this.onClose) this.onClose();
+                    };
+                    
+                    const body = document.getElementById(this.id + '-body');
+                    document.getElementById(this.id + '-btn-min').onclick = (e) => {
+                        e.stopPropagation();
+                        this.isMinimized = !this.isMinimized;
+                        body.style.display = this.isMinimized ? 'none' : 'flex';
+                        if (this.isMinimized) {
+                            hud.style.height = 'auto';
+                            hud.style.minHeight = '0';
+                        } else {
+                            hud.style.height = this.height;
+                            hud.style.minHeight = this.minHeight;
+                        }
+                        if (this.onMinimize) this.onMinimize(this.isMinimized);
+                    };
+                    
+                    document.getElementById(this.id + '-btn-zoom').onclick = () => {
+                        if (!this.isFullscreen) {
+                            this.oldState = { w: hud.style.width, h: hud.style.height, l: hud.style.left, t: hud.style.top };
+                            hud.style.width = '100vw'; hud.style.height = '100vh';
+                            hud.style.left = '0'; hud.style.top = '0';
+                            this.isFullscreen = true;
+                        } else {
+                            hud.style.width = this.oldState.w; hud.style.height = this.oldState.h;
+                            hud.style.left = this.oldState.l; hud.style.top = this.oldState.t;
+                            this.isFullscreen = false;
+                        }
+                    };
+                    
+                    document.getElementById(this.id + '-btn-reset').onclick = () => {
+                        hud.style.width = this.width;
+                        hud.style.height = this.height;
+                        this.isFullscreen = false;
+                    };
+                }
+            };
+        }
+        """
+
+    @staticmethod
+    def get_event_dispatcher_js() -> str:
+        """Injecte le moteur asynchrone UCTP d'ECHO sur le frontend."""
+        return """
+        if (!window.echoDispatcher) {
+            window.echoDispatcher = {
+                _resolvers: {},
+                listen: function(channel) {
+                    return new Promise(resolve => { 
+                        this._resolvers[channel] = resolve; 
+                        setTimeout(() => {
+                            if (this._resolvers[channel] === resolve) {
+                                this.dispatch(channel, { action: "ping" });
+                            }
+                        }, 45000);
+                    });
+                },
+                dispatch: function(channel, payload) {
+                    if (this._resolvers[channel]) {
+                        this._resolvers[channel](payload);
+                        this._resolvers[channel] = null;
+                    }
+                }
+            };
+        }
+        """
+
+    @staticmethod
+    def get_media_viewport_js(container_id: str, image_id: str, crop_box_id: str = "") -> str:
+        """Encapsule le zoom wheel via ctrlKey."""
+        crop_logic = ""
+        if crop_box_id:
+            crop_logic = f"""
+                        var cropBox = document.getElementById('{crop_box_id}');
+                        if (cropBox && cropBox.style.display !== 'none') {{
+                            cropBox.style.width = canvas.offsetWidth + "px";
+                            cropBox.style.height = canvas.offsetHeight + "px";
+                            cropBox.style.transform = 'translate3d(0, 0, 0)';
+                        }}
+            """
+        return f"""
+        var _echo_vp = document.getElementById('{container_id}');
+        var _echo_img = document.getElementById('{image_id}');
+        var currentZoom = (typeof currentZoom !== 'undefined') ? currentZoom : 1.0;
+        
+        if (_echo_vp && _echo_img) {{
+            _echo_vp.addEventListener('wheel', (e) => {{
+                if (e.ctrlKey) {{
+                    e.preventDefault();
+                    var delta = e.deltaY > 0 ? 0.9 : 1.1;
+                    currentZoom = Math.min(Math.max(0.1, currentZoom * delta), 15);
+                    var canvas = _echo_vp.querySelector('div'); 
+                    if (_echo_img.naturalHeight && canvas) {{
+                        var r = _echo_img.naturalHeight / _echo_img.naturalWidth;
+                        var targetH = Math.min(window.innerHeight * 0.75, _echo_img.naturalHeight);
+                        var targetW = targetH / r;
+                        var scaleW = targetW > (window.innerWidth * 0.95) ? (window.innerWidth * 0.95) / targetW : 1;
+                        canvas.style.height = (targetH * currentZoom * scaleW) + "px";
+                        canvas.style.width = (targetW * currentZoom * scaleW) + "px";
+                        {crop_logic}
+                    }}
+                }}
+            }}, {{ passive: false }});
+        }}
+        """
+
+    @staticmethod
+    def _get_boilerplate(content: str, title: str = "ECHO Visual") -> str:
+        """Encapsulation HTML standard avec détection de thème hybride (Open WebUI Native)."""
+        return f"""
+    <!DOCTYPE html>
+    <html lang="fr" class="light">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>{title}</title>
+      <style>
+        :root {{
+          --echo-bg: #ffffff;
+          --echo-text: #171717;
+          --echo-hud-bg: #f9f9f9;
+          --echo-hud-border: #e5e5e5;
+          --echo-hud-text: #666666;
+          --echo-btn-bg: #f3f4f6;
+          --echo-btn-border: #d1d5db;
+          --echo-btn-text: #374151;
+          --echo-accent: #3b82f6;
+        }}
+        html.dark {{
+          --echo-bg: #171717;
+          --echo-text: #ececec;
+          --echo-hud-bg: #262626;
+          --echo-hud-border: #404040;
+          --echo-hud-text: #a3a3a3;
+          --echo-btn-bg: #262626;
+          --echo-btn-border: #404040;
+          --echo-btn-text: #ececec;
+        }}
+        html.oled-dark {{
+          --echo-bg: #000000;
+          --echo-text: #ffffff;
+          --echo-hud-bg: #101010;
+          --echo-hud-border: #262626;
+          --echo-hud-text: #a3a3a3;
+        }}
+        html, body {{ margin: 0; padding: 0; background: var(--echo-bg); color: var(--echo-text); font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; min-height: 100px; overflow-x: hidden; transition: background 0.2s, color 0.2s; }}
+        .echo-container {{ width: 100%; display: flex; flex-direction: column; }}
+        #hud-bar {{ background: var(--echo-hud-bg); padding: 8px 16px; border-bottom: 1px solid var(--echo-hud-border); display: flex; align-items: center; justify-content: space-between; z-index: 100; color: var(--echo-hud-text); font-size: 12px; }}
+        .btn {{ background: var(--echo-btn-bg); border: 1px solid var(--echo-btn-border); color: var(--echo-btn-text); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; transition: all 0.2s; font-weight: 500; }}
+        .btn:hover {{ filter: brightness(1.2); border-color: var(--echo-accent); }}
+
+        @media (prefers-color-scheme: dark) {{
+          html:not(.light) {{
+            --echo-bg: #171717;
+            --echo-text: #ececec;
+          }}
+        }}
+      </style>
+    </head>
+    <body>
+      <div class="echo-container">
+        {content}
+      </div>
+    <script>
+      let lastHeight = 0;
+      let reportTimeout = null;
+      let disableAutoResize = false;
+
+      function reportHeight() {{
+        if (disableAutoResize) return;
+        const h = Math.max(document.body.offsetHeight, document.documentElement.scrollHeight, 100);
+        if (Math.abs(h - lastHeight) > 5) {{
+            lastHeight = h;
+            parent.postMessage({{ type: 'iframe:height', height: h + 10 }}, '*');
+        }}
+      }}
+
+      function applyThemeClass(theme) {{
+        document.documentElement.classList.remove('light', 'dark', 'oled-dark');
+        if (theme === 'oled-dark') {{
+            document.documentElement.classList.add('dark', 'oled-dark');
+        }} else if (theme === 'dark') {{
+            document.documentElement.classList.add('dark');
+        }} else {{
+            document.documentElement.classList.add('light');
+        }}
+        if (typeof reportHeight === 'function') reportHeight();
+      }}
+
+      function syncWithParent() {{
+        try {{
+            if (parent && parent.document && parent.document.documentElement) {{
+                const isDark = parent.document.documentElement.classList.contains('dark');
+                const isOled = parent.document.documentElement.style.getPropertyValue('--color-gray-900') === '#000000';
+                applyThemeClass(isOled ? 'oled-dark' : (isDark ? 'dark' : 'light'));
+                return true;
+            }}
+        }} catch(e) {{ }}
+        return false;
+      }}
+
+      window.addEventListener('message', (event) => {{
+        if (event.data && event.data.type === 'theme-update') {{
+            applyThemeClass(event.data.theme);
+        }}
+      }});
+
+      const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
+      darkMQ.addEventListener('change', (e) => {{
+        if (!localStorage.getItem('theme-override')) {{
+            applyThemeClass(e.matches ? 'dark' : 'light');
+        }}
+      }});
+
+      function debouncedReport() {{
+        clearTimeout(reportTimeout);
+        reportTimeout = setTimeout(reportHeight, 150);
+      }}
+
+      window.addEventListener('load', () => {{
+        if (!syncWithParent()) {{
+            applyThemeClass(darkMQ.matches ? 'dark' : 'light');
+        }}
+        reportHeight();
+      }});
+
+      if (window.ResizeObserver) {{
+          const ro = new ResizeObserver(() => {{
+            if (!disableAutoResize) debouncedReport();
+          }});
+          ro.observe(document.body);
+      }}
+
+      setTimeout(reportHeight, 500);
+    </script>
+    </body>
+    </html>
+    """
+
+
+class EchoUI(EchoRichUI):
+    """Moteur de pilotage HUD pour ECHO."""
+
+    @staticmethod
+    def get_mobile_guard_js(
+            hud_id: str,
+            block_execution: bool = False,
+            error_msg: str = "Incompatible sur mobile.") -> str:
+        """Génère le garde-fou JS centralisé pour l'adaptation ou le blocage sur mobile."""
+        return f"""
+      const isMobile = window.matchMedia('(max-width: 768px)').matches || /Mobi|Android/i.test(navigator.userAgent);
+      if (isMobile) {{
+          {f"window.parent.postMessage({{ type: 'toast', message: `{error_msg}`, level: 'warning' }}, '*'); return;" if block_execution else f'''
+          const styleId = '{hud_id}-mobile-style';
+          if (!document.getElementById(styleId)) {{
+              const styleEl = document.createElement('style');
+              styleEl.id = styleId;
+              styleEl.innerHTML = `
+                  #{hud_id} {{ position: fixed !important; top: 0 !important; left: 0 !important; max-width: 100vw !important; max-height: 100dvh !important; min-width: 0 !important; min-height: 0 !important; border-radius: 0 !important; z-index: 10005 !important; transform: none !important; }}
+                  #{hud_id}-resizer, .cp {{ display: none !important; }}
+                  /* Factorisation du Responsive pour les structures classiques (Codex, Agent Monitor) */
+                  #{hud_id}-header {{ flex-wrap: wrap !important; height: auto !important; min-height: 40px !important; padding: 6px !important; gap: 4px !important; }}
+                  #{hud_id}-body {{ flex-direction: column !important; }}
+                  #{hud_id}-sidebar {{ width: 100% !important; height: auto !important; max-height: 140px !important; flex-direction: row !important; flex-wrap: wrap !important; overflow-y: auto !important; overflow-x: hidden !important; border-right: none !important; border-bottom: 1px solid var(--border-color, #444) !important; padding: 4px !important; align-content: flex-start !important; }}
+                  #{hud_id}-sidebar > div {{ flex: 0 0 auto !important; margin: 2px !important; border: 1px solid var(--border-color, #444) !important; border-radius: 6px !important; }}
+                  #{hud_id}-sidebar-splitter {{ display: none !important; }}
+              `;
+              document.head.appendChild(styleEl);
+          }}
+          // Factorisation : Force l'UI en plein écran par défaut au chargement via styles en ligne (permettant le redimensionnement JS futur) et désactive le drag&drop.
+          setTimeout(() => {{
+              const hud = document.getElementById('{hud_id}');
+              if (hud && !hud.dataset.mobileInit) {{
+                  hud.style.width = '100vw';
+                  hud.style.height = '100dvh';
+                  hud.dataset.mobileInit = 'true';
+              }}
+              const header = document.getElementById('{hud_id}-header');
+              if (header) {{
+                  header.onmousedown = null;
+                  header.ontouchstart = null;
+                  header.style.cursor = 'default';
+              }}
+          }}, 100);
+          '''}
+      }}
+      """
+
+    @staticmethod
+    async def safe_deploy(events: Any, monitor_func: Any, **kwargs):
+        """Déploiement sécurisé du HUD (Anti-Crash si events/caller absent)."""
+        if not events or (not events.emitter and not events.caller):
+            return False
+        try:
+            await monitor_func(events=events, **kwargs)
+            return True
+        except Exception as e:
+            print(f"[EchoUI] Safe Deploy Error: {e}")
+            return False
+
+    @staticmethod
+    def _generate_webplayer_js(
+            b64: str,
+            mime: str,
+            metadata: list,
+            current_url: str,
+            hud_id: str,
+            state_key: str,
+            icon: str = "👁️") -> str:
+        """Génère le moteur de pilotage ECHO WEBPLAYER (v5.20 Équilibre Souverain Pro)."""
+        meta_j = std_json.dumps(metadata).decode('utf-8')
+        b64_j = std_json.dumps(b64).decode('utf-8')
+        url_j = std_json.dumps(current_url).decode('utf-8')
+        mime_j = std_json.dumps(mime).decode('utf-8')
+
+        return f"""
+  (function() {{
+    const HUD_ID = '{hud_id}';
+    {EchoUI.get_mobile_guard_js(hud_id)}
+    const STATE_KEY = '{state_key}';
+    const ENGINE_KEY = 'echoWebPlayer_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_');
+
+    // Expose a global update function for the backend to push frames
+    window['echoWebPlayerUpdate_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_')] = function(newB64, newId, newUrl) {{
+        if (window[ENGINE_KEY]) {{
+            const img = document.getElementById(HUD_ID + "-img");
+            if (img) img.src = 'data:image/jpeg;base64,' + newB64;
+            if (newUrl !== undefined) {{
+                const urlEl = document.getElementById(HUD_ID + "-url");
+                if (urlEl) urlEl.value = newUrl;
+            }}
+        }}
+    }};
+
+    const payload = {{
+      b64: {b64_j}, mime: {mime_j}, metadata: {meta_j},
+      url: {url_j}
+    }};
+
+    if (!window[ENGINE_KEY]) {{
+      window[ENGINE_KEY] = {{
+        hud: null, ratio: 1.0, posX: 30, posY: 30,
+        imgScale: 1.0, imgX: 0, imgY: 0,
+        isDragging: false, headerH: 45,
+
+        getInitialScale: function(imgW, imgH) {{
+          const targetW = window.innerWidth * 0.5;
+          const targetH = window.innerHeight * 0.8;
+          const sW = targetW / imgW;
+          const sH = (targetH - this.headerH) / imgH;
+          return Math.min(sW, sH, 1.0);
+        }},
+
+        clampHud: function() {{
+          if (!this.hud) return;
+          const vw = window.innerWidth, vh = window.innerHeight;
+          const w = this.hud.offsetWidth, h = this.hud.offsetHeight;
+          if (this.posX < 0) this.posX = 0;
+          if (this.posY < 0) this.posY = 0;
+          if (this.posX + w > vw) this.posX = Math.max(0, vw - w);
+          if (this.posY + h > vh) this.posY = Math.max(0, vh - h);
+          this.hud.style.left = this.posX + "px";
+          this.hud.style.top = this.posY + "px";
+        }},
+
+        syncLayout: function(fromResize = false) {{
+          const img = document.getElementById(HUD_ID + "-img");
+          const matrix = document.getElementById(HUD_ID + "-matrix");
+          const area = document.getElementById(HUD_ID + "-area");
+          if (!img || !img.naturalWidth) return;
+
+          const vw = window.innerWidth, vh = window.innerHeight;
+
+          let targetW = img.naturalWidth * this.imgScale;
+          let targetH = img.naturalHeight * this.imgScale;
+
+          if (area.style.display !== 'none') {{
+            this.hud.style.minHeight = "150px";
+            const frameW = Math.min(targetW, vw - 20);
+            const frameH = Math.min(targetH, vh - this.headerH - 20);
+            this.hud.style.width = frameW + "px";
+            this.hud.style.height = (frameH + this.headerH) + "px";
+
+            const minX = frameW - targetW;
+            const minY = frameH - targetH;
+            this.imgX = Math.min(0, Math.max(this.imgX, minX));
+            this.imgY = Math.min(0, Math.max(this.imgY, minY));
+          }} else {{
+            this.hud.style.minHeight = "0px";
+            this.hud.style.height = this.headerH + "px";
+          }}
+
+          matrix.style.transform = `translate3d(${{this.imgX}}px, ${{this.imgY}}px, 0) scale(${{this.imgScale}})`;
+          const boxes = document.getElementById(HUD_ID + "-hitboxes").children;
+          const invS = 1 / this.imgScale;
+          for (let b of boxes) b.style.transform = `translate(-50%, -50%) scale(${{invS}})`;
+
+          this.clampHud();
+          this.saveState();
+        }},
+
+        saveState: function() {{
+          if (!this.hud || this.isDragging) return;
+          const area = document.getElementById(HUD_ID + "-area");
+          localStorage.setItem(STATE_KEY, JSON.stringify({{
+            x: this.posX, y: this.posY, s: this.imgScale,
+            ix: this.imgX, iy: this.imgY, m: (area.style.display === 'none')
+          }}));
+        }},
+
+        attachEvents: function() {{
+          const area = document.getElementById(HUD_ID + "-area");
+          const header = document.getElementById(HUD_ID + "-header");
+
+          area.addEventListener('wheel', (e) => {{
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? 0.92 : 1.08;
+            this.imgScale = Math.min(Math.max(0.02, this.imgScale * delta), 15);
+            this.syncLayout();
+          }}, {{ passive: false }});
+
+          // Gestion native Pinch-to-zoom
+          let initialPinchDistance = null;
+          let initialPinchScale = null;
+          const matrix = document.getElementById(HUD_ID + "-matrix");
+
+          matrix.addEventListener('touchstart', (e) => {{
+            if (e.touches.length === 2) {{
+              initialPinchDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+              initialPinchScale = this.imgScale;
+              e.preventDefault();
+            }}
+          }}, {{passive: false}});
+
+          matrix.addEventListener('touchmove', (e) => {{
+            if (e.touches.length === 2 && initialPinchDistance) {{
+              const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+              this.imgScale = Math.max(0.1, Math.min(10, initialPinchScale * (dist / initialPinchDistance)));
+              this.syncLayout();
+              e.preventDefault();
+            }}
+          }}, {{passive: false}});
+
+          matrix.addEventListener('touchend', (e) => {{
+            if (e.touches.length < 2) {{
+              initialPinchDistance = null;
+              initialPinchScale = null;
+            }}
+          }});
+
+          area.onmousedown = (e) => {{
+            if (e.button === 0 || e.button === 1) {{
+              e.preventDefault();
+              this.isDragging = true;
+              this.startMouseX = e.clientX; this.startMouseY = e.clientY;
+              area.style.cursor = 'grabbing';
+            }}
+          }};
+
+          window.addEventListener('mousemove', (e) => {{
+            if (this.isDragging) {{
+              this.imgX += (e.clientX - this.startMouseX);
+              this.imgY += (e.clientY - this.startMouseY);
+              this.startMouseX = e.clientX; this.startMouseY = e.clientY;
+              this.syncLayout();
+            }}
+          }});
+
+          window.addEventListener('mouseup', () => {{
+            if (this.isDragging) {{
+              this.isDragging = false;
+              area.style.cursor = 'crosshair';
+              this.saveState();
+            }}
+          }});
+
+          header.onmousedown = (e) => {{
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+            e.preventDefault();
+            let ox = e.clientX, oy = e.clientY;
+            const move = (me) => {{
+              this.posX += (me.clientX - ox); this.posY += (me.clientY - oy);
+              ox = me.clientX; oy = me.clientY;
+              this.clampHud();
+            }};
+            const up = () => {{
+              document.removeEventListener('mousemove', move);
+              document.removeEventListener('mouseup', up);
+              this.saveState();
+            }};
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+          }};
+
+          document.getElementById(HUD_ID + "-btn-zoom").onclick = () => {{
+            const img = document.getElementById(HUD_ID + "-img");
+            const vw = window.innerWidth, vh = window.innerHeight;
+            const sW = (vw - 40) / img.naturalWidth;
+            const sH = (vh - this.headerH - 40) / img.naturalHeight;
+            this.imgScale = Math.min(sW, sH);
+            this.syncLayout();
+          }};
+
+          document.getElementById(HUD_ID + "-btn-reset").onclick = () => {{
+            this.imgScale = 1.0; this.syncLayout();
+          }};
+
+          document.getElementById(HUD_ID + "-btn-min").onclick = (e) => {{
+            e.stopPropagation();
+            const a = document.getElementById(HUD_ID + "-area");
+            a.style.display = (a.style.display === 'none') ? 'block' : 'none';
+            this.syncLayout();
+          }};
+
+          document.getElementById(HUD_ID + "-btn-close").onclick = () => this.hud.remove();
 
           const resizer = document.getElementById(HUD_ID + "-resizer");
           if (resizer) {{
@@ -191,36 +750,32 @@ class EchoRichUI:
           }});
         }},
 
-        create: function(data) {
+        create: function(data) {{
           const old = document.getElementById(HUD_ID); if(old) old.remove();
+          this.hud = document.createElement('div');
+          this.hud.id = HUD_ID;
+          this.hud.style.cssText = 'position:fixed; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:200px; min-height:100px;';
 
-          const playerWindow = new window.EchoFloatingWindow({
-              id: HUD_ID,
-              title: '{icon} Navigateur',
-              width: '50vw',
-              height: '80vh',
-              minWidth: '200px',
-              minHeight: '100px',
-              onClose: () => { 
-                  if (typeof this.saveState === 'function') this.saveState();
-              },
-              customHeader: `
-                <input id="${HUD_ID}-url" type="text" placeholder="URL du navigateur..." style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:6px; color:#00d4ff; font-size:11px; padding:6px 12px; outline:none; font-family:monospace; margin-right:10px;" readonly />
-              `
-          });
-          playerWindow.render();
-          playerWindow.attachBaseEvents();
-
-          this.hud = document.getElementById(HUD_ID);
-          const playerContainer = document.getElementById(HUD_ID + '-body');
-          playerContainer.innerHTML = `
-            <div id="${HUD_ID}-area" style="flex:1; position:relative; background:#000; overflow:hidden; cursor:crosshair;">
-              <div id="${HUD_ID}-matrix" style="position:absolute; top:0; left:0; transform-origin: 0 0; will-change: transform;">
-                <img id="${HUD_ID}-img" style="display:block; user-select:none; pointer-events:none; width:100%; height:100%; max-width:none !important;" draggable="false" />
-                <div id="${HUD_ID}-hitboxes" style="position:absolute; inset:0; pointer-events:none;"></div>
+          this.hud.innerHTML = `
+            <div id="${{HUD_ID}}-header" style="height:${{this.headerH}}px; padding:0 15px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:12px; border-bottom:1px solid #222; cursor:move; user-select:none; box-sizing:border-box;">
+              <span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">{icon}</span>
+              <input id="${{HUD_ID}}-url" type="text" placeholder="URL du navigateur..." style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:6px; color:#00d4ff; font-size:11px; padding:6px 12px; outline:none; font-family:monospace;" readonly />
+              <div style="display:flex; gap:8px;">
+                <button id="${{HUD_ID}}-btn-zoom" title="Maximiser (Ajuster)" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
+                <button id="${{HUD_ID}}-btn-reset" title="Taille réelle (1:1)" style="background:none; border:none; color:#777; cursor:pointer; font-size:11px; font-weight:bold;">1:1</button>
+                <button id="${{HUD_ID}}-btn-min" title="Minimiser" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
+                <button id="${{HUD_ID}}-btn-close" title="Fermer" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:18px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg></button>
               </div>
             </div>
+            <div id="${{HUD_ID}}-area" style="flex:1; position:relative; background:#000; overflow:hidden; cursor:crosshair;">
+              <div id="${{HUD_ID}}-matrix" style="position:absolute; top:0; left:0; transform-origin: 0 0; will-change: transform;">
+                <img id="${{HUD_ID}}-img" style="display:block; user-select:none; pointer-events:none; width:100%; height:100%; max-width:none !important;" draggable="false" />
+                <div id="${{HUD_ID}}-hitboxes" style="position:absolute; inset:0; pointer-events:none;"></div>
+              </div>
+              <div id="${{HUD_ID}}-resizer" style="position:absolute; bottom:0; right:0; width:16px; height:16px; cursor:nwse-resize; z-index:101; background:linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.4) 50%); border-bottom-right-radius: 12px;"></div>
+            </div>
           `;
+          document.body.appendChild(this.hud);
           this.attachEvents();
 
           const saved = localStorage.getItem(STATE_KEY);
@@ -866,6 +1421,7 @@ return new Promise(function(resolve) {{
         return f"""
     (function() {{
       const CODEX_ID = 'echo-codex-hud';
+      {EchoUI.get_mobile_guard_js("echo-codex-hud")}
       const CID = '{chat_id}';
       const STATE_KEY = 'echo_codex_' + CID;
       const MONACO_CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min';
@@ -971,75 +1527,171 @@ return new Promise(function(resolve) {{
       // --- Custom Dialogs ---
       {EchoUI.get_custom_modals_js()}
 
-      // --- HUD Container (Migrated to EchoFloatingWindow) ---
-      const codexWindow = new window.EchoFloatingWindow({{
-          id: CODEX_ID,
-          title: '📝 ECHO Codex',
-          width: savedState.w || '900px',
-          height: savedState.h || '600px',
-          minWidth: '600px',
-          minHeight: '400px',
-          onClose: () => {{ 
-              if (typeof saveState === 'function') saveState();
-              window.sendCodexAction({{action:'close'}}); 
-          }},
-          customHeader: `
-            <select id="${{CODEX_ID}}-lang" style="background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:12px; margin-right:auto;"></select>
-            <button id="${{CODEX_ID}}-import" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='17 8 12 3 7 8'/><line x1='12' y1='3' x2='12' y2='15'/></svg></button>
-            <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg></button>
-            <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>
-            <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/></svg></button>
-            <button id="${{CODEX_ID}}-save" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
-            <button id="${{CODEX_ID}}-preview-toggle" title="Prévisualisation" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px; opacity:0.4; margin-right: 10px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/><circle cx='12' cy='12' r='3'/></svg></button>
-          `
-      }});
-      codexWindow.render();
-      codexWindow.attachBaseEvents();
-      
-      const hud = document.getElementById(CODEX_ID);
-      if (savedState.x) hud.style.left = savedState.x;
-      if (savedState.y) hud.style.top = savedState.y;
+      // --- HUD Container ---
+      const hud = document.createElement('div');
+      hud.id = CODEX_ID;
+      hud.style.cssText = `position:fixed; z-index:10001; display:flex; flex-direction:column;
+        background:${{bgColor}}; border:1px solid ${{borderColor}}; border-radius:12px;
+        box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:'Segoe UI',system-ui,sans-serif;
+        color:${{textColor}}; overflow:hidden; resize:both; min-width:600px; min-height:400px;
+        width:${{savedState.w || '900px'}}; height:${{savedState.h || '600px'}};
+        top:${{savedState.y || '60px'}}; left:${{savedState.x || '50%'}};
+        ${{savedState.x ? '' : 'transform:translateX(-50%);'}}`;
 
-      const codexMainArea = document.createElement('div');
-      codexMainArea.id = CODEX_ID + '-main';
-      codexMainArea.style.cssText = `flex:1; display:flex; flex-direction:row; overflow:hidden;`;
-      
+      // --- HEADER (draggable) ---
+      const header = document.createElement('div');
+      header.id = CODEX_ID + '-header';
+      header.style.cssText = `display:flex; align-items:center; padding:8px 12px; gap:8px;
+        background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; cursor:move;
+        user-select:none; flex-shrink:0;`;
+      header.innerHTML = `
+        <span style="font-weight:600; font-size:14px;">📝 ECHO Codex</span>
+        <span style="flex:1;"></span>
+        <select id="${{CODEX_ID}}-lang" style="background:transparent; border:1px solid ${{borderColor}};
+          color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:12px;"></select>
+        <button id="${{CODEX_ID}}-import" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='17 8 12 3 7 8'/><line x1='12' y1='3' x2='12' y2='15'/></svg></button>
+        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg></button>
+        <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>
+        <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/></svg></button>
+        <button id="${{CODEX_ID}}-save" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
+        <button id="${{CODEX_ID}}-preview-toggle" title="Prévisualisation" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px; opacity:0.4;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/><circle cx='12' cy='12' r='3'/></svg></button>
+        <button id="${{CODEX_ID}}-fullscreen" title="Plein écran" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
+        <button id="${{CODEX_ID}}-minimize" title="Minimiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
+        <button id="${{CODEX_ID}}-close" title="Fermer" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:18px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg></button>`;
+      hud.appendChild(header);
+
+      // --- BODY (sidebar + editor) ---
+      const body = document.createElement('div');
+      body.id = CODEX_ID + '-body';
+      body.style.cssText = 'display:flex; flex:1; overflow:hidden;';
+
+      // Sidebar (file tree)
+      const sidebar = document.createElement('div');
+      sidebar.id = CODEX_ID + '-sidebar';
+      sidebar.style.cssText = `width:${{sidebarWidth}}px; background:${{sidebarBg}}; border-right:1px solid ${{borderColor}};
+        overflow-y:auto; flex-shrink:0; display:flex; flex-direction:column; padding:6px 0;`;
+
+      // Sidebar Splitter
+      const sidebarSplitter = document.createElement('div');
+      sidebarSplitter.id = CODEX_ID + '-sidebar-splitter';
+      sidebarSplitter.style.cssText = `width:5px; cursor:col-resize; background:${{borderColor}}; flex-shrink:0; transition:background 0.15s;`;
+      sidebarSplitter.onmouseenter = () => sidebarSplitter.style.background = accentColor;
+      sidebarSplitter.onmouseleave = () => sidebarSplitter.style.background = borderColor;
+
+      // Editor container
+      const editorWrap = document.createElement('div');
+      editorWrap.id = CODEX_ID + '-editor';
+      editorWrap.style.cssText = `flex:${{previewOpen ? editorRatio : 100}} 1 0%; overflow:hidden; position:relative; min-width:0;`;
+
+      // Splitter (entre éditeur et preview)
+      const splitter = document.createElement('div');
+      splitter.id = CODEX_ID + '-splitter';
+      splitter.style.cssText = `width:5px; cursor:col-resize; background:${{borderColor}}; flex-shrink:0; display:none; transition:background 0.15s;`;
+      splitter.onmouseenter = () => splitter.style.background = accentColor;
+      splitter.onmouseleave = () => splitter.style.background = borderColor;
+
+      // Preview panel (panneau latéral droit)
+      const previewPanel = document.createElement('div');
+      previewPanel.id = CODEX_ID + '-preview';
+      previewPanel.style.cssText = `flex:${{previewRatio}} 1 0%; min-width:0; display:none; flex-direction:column; overflow:hidden; background:${{bgColor}};`;
+      previewPanel.innerHTML = `
+        <div style="padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0; display:flex; align-items:center; gap:8px;">
+          <button id="${{CODEX_ID}}-preview-copy" title="Copier le rendu" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button id="${{CODEX_ID}}-preview-print" title="Print / PDF" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><polyline points="9 15 12 18 15 15"/></svg>
+          </button>
+          <span id="${{CODEX_ID}}-preview-label" style="flex:1;">Preview</span>
+        </div>
+        <div id="${{CODEX_ID}}-preview-content" style="flex:1; padding:12px; overflow:auto; font-size:14px; line-height:1.6; min-width:0;"></div>
+      `;
+
+      body.appendChild(sidebar);
+      body.appendChild(sidebarSplitter);
+      body.appendChild(editorWrap);
+      body.appendChild(splitter);
+      body.appendChild(previewPanel);
+      hud.appendChild(body);
+
+      // --- AI PANEL (mini-chat + quick actions + model selector) ---
+      const aiPanel = document.createElement('div');
+      aiPanel.style.cssText = `display:flex; flex-direction:column; gap:6px; padding:8px 12px;
+        border-top:1px solid ${{borderColor}}; flex-shrink:0;`;
+      aiPanel.innerHTML = `
+        <div style="display:flex; gap:6px;">
+          <input id="${{CODEX_ID}}-ai-input" type="text" placeholder="Instruction instantan\u00e9e pour l'IA..."
+            style="flex:1; background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}};
+            padding:6px 10px; border-radius:6px; font-size:13px; outline:none;"
+          />
+          <select id="${{CODEX_ID}}-model" title="Mod\u00e8le AI" style="background:transparent; border:1px solid ${{borderColor}};
+            color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:11px; max-width:90px;">
+            <option value="MODEL_FLASH" selected>Flash</option>
+            <option value="MODEL_PRO">Pro</option>
+            <option value="MODEL_LITE">Lite</option>
+          </select>
+          <button id="${{CODEX_ID}}-ai-send" style="background:${{accentColor}}; border:none; color:#1e1e2e;
+            padding:6px 14px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">Envoyer</button>
+        </div>
+        <div id="${{CODEX_ID}}-quick" style="display:flex; gap:4px; flex-wrap:wrap;"></div>`;
+      hud.appendChild(aiPanel);
+
+      // Tracker le choix utilisateur sur le dropdown modèle
+      const modelSelect = document.getElementById(CODEX_ID + '-model');
+      if (modelSelect) modelSelect.onchange = () => {{ lastModel = modelSelect.value; }};
+
+      // --- MICRO-SPINNER (sur le bouton cliqué) ---
+      let spinnerTarget = null;
+      let spinnerOriginal = '';
+      const spinStyle = document.createElement('style');
+      spinStyle.textContent = '@keyframes echoCodexSpin {{ from {{ transform:rotate(0deg); }} to {{ transform:rotate(360deg); }} }}';
+      document.head.appendChild(spinStyle);
+      function showButtonSpinner(btn) {{
+        if (!btn) return;
+        spinnerTarget = btn;
+        spinnerOriginal = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<span style="display:inline-block; width:14px; height:14px; border:2px solid ${{borderColor}};
+          border-top-color:${{accentColor}}; border-radius:50%; animation:echoCodexSpin 0.7s linear infinite;"></span>`;
+      }}
+      function hideButtonSpinner() {{
+        if (spinnerTarget) {{
+          spinnerTarget.innerHTML = spinnerOriginal;
+          spinnerTarget.disabled = false;
+          spinnerTarget = null;
+          spinnerOriginal = '';
+        }}
+      }}
+
+      // --- STATUS BAR (historique ◀ ▶) ---
       const statusBar = document.createElement('div');
       statusBar.id = CODEX_ID + '-status';
-      statusBar.style.cssText = `height:24px; background:${{panelBg}}; border-top:1px solid ${{borderColor}}; display:flex; align-items:center; padding:0 10px; font-size:11px; color:${{textColor}}; justify-content:space-between;`;
-      statusBar.innerHTML = `<span id="${{CODEX_ID}}-status-text">Prêt</span><span><span id="${{CODEX_ID}}-lines">0 lignes</span> • <span id="${{CODEX_ID}}-tokens">~0 tok</span></span>`;
+      statusBar.style.cssText = `display:flex; align-items:center; padding:4px 12px; gap:8px;
+        background:${{statusBg}}; border-top:1px solid ${{borderColor}}; font-size:11px;
+        font-family:monospace; flex-shrink:0; min-height:28px;`;
+      statusBar.innerHTML = `
+        <button id="${{CODEX_ID}}-hist-prev" title="Version pr\u00e9c\u00e9dente" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='15 18 9 12 15 6'/></svg></button>
+        <span id="${{CODEX_ID}}-status-text" style="flex:1; color:${{isDark ? '#a6adc8' : '#666'}};">Pr\u00eat</span>
+        <button id="${{CODEX_ID}}-hist-next" title="Version suivante" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 18 15 12 9 6'/></svg></button>
+        <div id="${{CODEX_ID}}-hist-actions" style="display:none; gap:6px;">
+          <button id="${{CODEX_ID}}-hist-pin" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 8l4 4-4 4M18 8l-4 4 4 4M12 4v16'/></svg> Revenir au pr\u00e9sent</button>
+          <button id="${{CODEX_ID}}-hist-restore" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 14 4 9 9 4'/><path d='M20 20v-7a4 4 0 0 0-4-4H4'/></svg> Restaurer</button>
+        </div>`;
+      hud.appendChild(statusBar);
 
-      const aiPanel = document.createElement('div');
-      aiPanel.id = CODEX_ID + '-ai-panel';
-      aiPanel.style.cssText = `display:none; flex-direction:column; height:200px; border-top:1px solid ${{borderColor}}; background:${{bgColor}};`;
-      aiPanel.innerHTML = `
-        <div style="padding:4px 10px; background:${{panelBg}}; font-size:11px; color:${{accentColor}}; border-bottom:1px solid ${{borderColor}}; display:flex; align-items:center;">
-          <span>🤖 AI Assistant (ECHO Codex)</span>
-          <button id="${{CODEX_ID}}-ai-close" style="margin-left:auto; background:none; border:none; color:${{textColor}}; cursor:pointer;">X</button>
-        </div>
-        <div id="${{CODEX_ID}}-ai-chat" style="flex:1; overflow-y:auto; padding:10px; font-size:13px; color:${{textColor}}; font-family:sans-serif; display:flex; flex-direction:column; gap:8px;"></div>
-        <div style="display:flex; padding:5px; border-top:1px solid ${{borderColor}}; background:${{panelBg}};">
-          <input id="${{CODEX_ID}}-ai-input" type="text" placeholder="Demander à l'IA d'analyser/modifier ce fichier..." style="flex:1; background:${{bgColor}}; border:1px solid ${{borderColor}}; color:${{textColor}}; padding:6px 10px; border-radius:4px; outline:none; font-size:12px;">
-          <button id="${{CODEX_ID}}-ai-send" style="background:${{accentColor}}; border:none; color:${{isDark ? '#000' : '#fff'}}; padding:0 15px; margin-left:5px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:12px;">Envoyer</button>
-        </div>
-      `;
-
+      // --- DIFF ACTIONS (hidden by default) ---
       const diffBar = document.createElement('div');
       diffBar.id = CODEX_ID + '-diff-bar';
-      diffBar.style.cssText = `display:none; height:32px; background:${{isDark ? '#1a2b3c' : '#e0f7fa'}}; border-top:1px solid ${{borderColor}}; align-items:center; padding:0 15px; font-size:12px; color:${{textColor}}; justify-content:space-between;`;
+      diffBar.style.cssText = `display:none; justify-content:center; gap:12px; padding:8px;
+        border-top:1px solid ${{borderColor}}; flex-shrink:0;`;
       diffBar.innerHTML = `
-        <span>🔍 Modifications en attente (<span id="${{CODEX_ID}}-diff-count">0</span>)</span>
-        <div style="display:flex; gap:8px;">
-          <button id="${{CODEX_ID}}-diff-accept" style="background:#2ecc71; border:none; color:#000; padding:4px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">Accepter</button>
-          <button id="${{CODEX_ID}}-diff-reject" style="background:#e74c3c; border:none; color:#fff; padding:4px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">Rejeter</button>
-        </div>
-      `;
+        <button id="${{CODEX_ID}}-diff-accept" style="background:#a6e3a1; border:none; color:#1e1e2e;
+          padding:6px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">✅ Accepter</button>
+        <button id="${{CODEX_ID}}-diff-reject" style="background:#f38ba8; border:none; color:#1e1e2e;
+          padding:6px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">❌ Rejeter</button>`;
+      hud.appendChild(diffBar);
 
-      const codexContainer = document.getElementById(CODEX_ID + '-body');
-      codexContainer.appendChild(statusBar);
-      codexContainer.appendChild(aiPanel);
-      codexContainer.appendChild(diffBar);
-      codexContainer.appendChild(codexMainArea);
+      document.body.appendChild(hud);
 
       // ===== FILE TREE =====
       function renderFileTree() {{
@@ -1457,6 +2109,607 @@ return new Promise(function(resolve) {{
         if (el) el.textContent = text;
       }}
 
+      // ===== DRAG (clampé aux limites du viewport) =====
+      let isDragging = false, dragX, dragY;
+      header.onmousedown = (e) => {{
+        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
+        isDragging = true;
+        dragX = e.clientX - hud.offsetLeft;
+        dragY = e.clientY - hud.offsetTop;
+        hud.style.transform = 'none';
+      }};
+      document.onmousemove = (e) => {{
+        if (!isDragging) return;
+        const maxX = window.innerWidth - hud.offsetWidth;
+        const maxY = window.innerHeight - 44; // Header height (~44px) toujours visible
+        let newX = Math.max(0, Math.min(e.clientX - dragX, maxX));
+        let newY = Math.max(0, Math.min(e.clientY - dragY, maxY));
+        hud.style.left = newX + 'px';
+        hud.style.top = newY + 'px';
+      }};
+      document.onmouseup = () => {{
+        isDragging = false;
+        saveState();
+      }};
+
+      // ===== HEADER BUTTONS =====
+      document.getElementById(CODEX_ID + '-close').onclick = () => {{
+        saveState();
+        hud.remove();
+        window.sendCodexAction({{action:'close'}});
+      }};
+      let isMinimized = false;
+      document.getElementById(CODEX_ID + '-minimize').onclick = () => {{
+        isMinimized = !isMinimized;
+        // Collapse : on masque tout sauf le header, et on fixe la taille
+        body.style.display = isMinimized ? 'none' : 'flex';
+        aiPanel.style.display = isMinimized ? 'none' : 'flex';
+        statusBar.style.display = isMinimized ? 'none' : 'flex';
+        if (!isMinimized && isDiffMode) diffBar.style.display = 'flex';
+        else diffBar.style.display = 'none';
+        hud.style.resize = isMinimized ? 'none' : 'both';
+        hud.style.height = isMinimized ? 'auto' : (savedState.h || '600px');
+        hud.style.minHeight = isMinimized ? '0' : '400px';
+      }};
+
+      // Fullscreen Toggle
+      let isFullscreen = false;
+      let preFsState = {{}};
+      const fsBtn = document.getElementById(CODEX_ID + '-fullscreen');
+      if (fsBtn) {{
+        fsBtn.onclick = () => {{
+          if (!isFullscreen) {{
+            preFsState = {{ w: hud.style.width, h: hud.style.height, t: hud.style.top, l: hud.style.left, tx: hud.style.transform }};
+            hud.style.width = '95vw'; hud.style.height = '95vh'; hud.style.top = '2.5vh'; hud.style.left = '2.5vw'; hud.style.transform = 'none'; hud.style.resize = 'none';
+            isFullscreen = true;
+          }} else {{
+            hud.style.width = '50vw'; hud.style.height = '50vh'; hud.style.top = '25vh'; hud.style.left = '25vw'; hud.style.transform = 'none'; hud.style.resize = 'both';
+            isFullscreen = false;
+          }}
+        }};
+      }};
+
+      // Import (PC → Codex)
+      document.getElementById(CODEX_ID + '-import').onclick = () => {{
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.multiple = true;
+        inp.onchange = async () => {{
+          const filesData = [];
+          for (const file of inp.files) {{
+            const text = await file.text();
+            filesData.push({{filename: file.name, content: text}});
+          }}
+          if (filesData.length > 0) {{
+            window.sendCodexAction({{action:'upload', files: filesData}});
+          }}
+        }};
+        inp.click();
+      }};
+
+      // Export (Codex → PC)
+      document.getElementById(CODEX_ID + '-export').onclick = () => {{
+        if (currentFile) window.sendCodexAction({{action:'download', filename:currentFile}});
+      }};
+
+      // ===== CLIPBOARD UTILS =====
+      function copyPlainText(text) {{
+        if (navigator.clipboard && window.isSecureContext) {{
+          navigator.clipboard.writeText(text).then(() => updateStatus('📋 Code copi\u00e9 !')).catch(() => fallbackCopyText(text));
+        }} else {{
+          fallbackCopyText(text);
+        }}
+      }}
+      function fallbackCopyText(text) {{
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
+        document.body.appendChild(ta);
+        ta.select();
+        try {{
+          document.execCommand('copy');
+          updateStatus('📋 Code copi\u00e9 (Fallback HTTP) !');
+        }} catch (e) {{ updateStatus('❌ Erreur de copie'); }}
+        document.body.removeChild(ta);
+      }}
+      function copyRichText(html, text) {{
+        if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {{
+          try {{
+            const blobHtml = new Blob([html], {{ type: 'text/html' }});
+            const blobText = new Blob([text], {{ type: 'text/plain' }});
+            const data = [new ClipboardItem({{ 'text/html': blobHtml, 'text/plain': blobText }})];
+            navigator.clipboard.write(data).then(() => {{
+              updateStatus('📋 Rendu copi\u00e9 (Rich Text) !');
+            }}).catch(() => fallbackCopyRichText(html));
+          }} catch(e) {{ fallbackCopyRichText(html); }}
+        }} else {{
+          fallbackCopyRichText(html);
+        }}
+      }}
+      function fallbackCopyRichText(html) {{
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        div.style.cssText = 'position:fixed;left:-9999px;opacity:0;pointer-events:none;';
+        document.body.appendChild(div);
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(div);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        try {{
+          document.execCommand('copy');
+          updateStatus('📋 Rendu copi\u00e9 (Fallback HTTP) !');
+        }} catch (e) {{ updateStatus('❌ Erreur de copie'); }}
+        selection.removeAllRanges();
+        document.body.removeChild(div);
+      }}
+
+      // ===== COPY BINDINGS =====
+      document.getElementById(CODEX_ID + '-copy').onclick = () => {{
+        if (!editor) return;
+        copyPlainText(editor.getValue());
+      }};
+
+      const previewCopyBtn = document.getElementById(CODEX_ID + '-preview-copy');
+      if (previewCopyBtn) {{
+        previewCopyBtn.onclick = () => {{
+          if (!currentFile) return;
+          const lang = files.find(f => f.filename === currentFile)?.lang;
+          const content = editor ? editor.getValue() : '';
+
+          if (lang === 'markdown') {{
+            const container = document.getElementById(CODEX_ID + '-preview-content');
+            copyRichText(container.innerHTML, container.innerText);
+          }} else {{
+            copyPlainText(content);
+          }}
+        }};
+      }}
+
+      // History ◀ ▶
+      document.getElementById(CODEX_ID + '-hist-prev').onclick = () => {{
+        if (currentFile) window.sendCodexAction({{action:'history_prev', filename:currentFile}});
+      }};
+      document.getElementById(CODEX_ID + '-hist-next').onclick = () => {{
+        if (currentFile) window.sendCodexAction({{action:'history_next', filename:currentFile}});
+      }};
+
+      // Refresh 🔄
+      document.getElementById(CODEX_ID + '-refresh').onclick = () => {{
+        window.sendCodexAction({{action:'refresh', filename:currentFile || ''}});
+      }};
+      document.getElementById(CODEX_ID + '-hist-pin').onclick = () => {{
+        if (currentFile) window.sendCodexAction({{action:'history_exit', filename:currentFile}});
+      }};
+      document.getElementById(CODEX_ID + '-hist-restore').onclick = () => {{
+        if (currentFile && historyContent !== null) {{
+          window.sendCodexAction({{action:'history_restore', filename:currentFile, content:historyContent, source_hash:document.getElementById(CODEX_ID+'-status-text').dataset.hash||''}});
+        }}
+      }};
+
+      // ===== DIFF ACCEPT/REJECT =====
+      document.getElementById(CODEX_ID + '-diff-accept').onclick = () => {{
+        if (diffEditor) {{
+          const content = diffEditor.getModifiedEditor().getValue();
+          window.sendCodexAction({{action:'accept_diff', filename:currentFile, content:content, instruction:lastInstruction}});
+        }}
+      }};
+      document.getElementById(CODEX_ID + '-diff-reject').onclick = () => {{
+        window.sendCodexAction({{action:'reject_diff'}});
+      }};
+
+      // ===== SAVE STATE =====
+      function saveState() {{
+        try {{
+          localStorage.setItem(STATE_KEY, JSON.stringify({{
+            x: hud.style.left, y: hud.style.top,
+            w: hud.style.width, h: hud.style.height,
+            previewOpen: previewOpen,
+            editorRatio: editorRatio,
+            previewRatio: previewRatio,
+            sidebarWidth: sidebarWidth,
+          }}));
+        }} catch(e) {{}}
+      }}
+
+      // Ctrl+S
+      function doSave() {{
+        if (currentFile && editor) {{
+          window.sendCodexAction({{
+            action: 'save',
+            filename: currentFile,
+            content: editor.getValue(),
+            language: files.find(f => f.filename === currentFile)?.lang || 'plaintext'
+          }});
+          
+          modified = false;
+          renderFileTree();
+          updateSaveButton();
+        }}
+      }}
+      // Mise à jour visuelle du bouton save
+      function updateSaveButton() {{
+        const btn = document.getElementById(CODEX_ID + '-save');
+        if (!btn) return;
+        btn.style.opacity = modified ? '1' : '0.3';
+        btn.style.color = modified ? accentColor : textColor;
+      }}
+      document.getElementById(CODEX_ID + '-save').onclick = () => doSave();
+
+      // ===== GLOBAL API (callable from Python) =====
+
+      window.echoCodexNotify = (type, msg) => {{
+        hideButtonSpinner();
+        if (type === 'saved') {{ updateStatus('\ud83d\udcbe Sauvegard\u00e9 \u2022 ' + msg); modified = false; renderFileTree(); }}
+        else if (type === 'committed') {{
+          updateStatus('\u2705 Commit\u00e9 \u2022 ' + msg); exitDiffMode();
+          modified = false; renderFileTree();
+          // Reload géré côté Python (push echoCodexSetContent)
+        }}
+        else if (type === 'restored') {{ updateStatus('\u2934\ufe0f Restaur\u00e9 \u2022 ' + msg); exitHistoryMode(); }}
+        else {{ updateStatus(msg); }}
+      }};
+
+      // Repositionner le dropdown sur le modèle effectif (après cascade)
+      window.echoCodexSetModel = (modelKey) => {{
+        lastModel = modelKey;
+        const sel = document.getElementById(CODEX_ID + '-model');
+        if (!sel) return;
+        for (let i = 0; i < sel.options.length; i++) {{
+          if (sel.options[i].value === modelKey) {{
+            sel.selectedIndex = i;
+            return;
+          }}
+        }}
+      }};
+
+      window.echoCodexShowDiff = (modifiedContent) => {{
+        hideButtonSpinner();
+        isDiffMode = true;
+        // Masquer le preview pendant le diff
+        document.getElementById(CODEX_ID + '-preview').style.display = 'none';
+        document.getElementById(CODEX_ID + '-splitter').style.display = 'none';
+        editorWrap.innerHTML = '';
+        diffEditor = monaco.editor.createDiffEditor(editorWrap, {{
+          theme: theme, readOnly: false, renderSideBySide: true,
+          automaticLayout: true, minimap: {{enabled: false}},
+          accessibilitySupport: 'off'
+        }});
+        const originalModel = monaco.editor.createModel(editor ? editor.getValue() : '', files.find(f=>f.filename===currentFile)?.lang||'plaintext');
+        const modifiedModel = monaco.editor.createModel(modifiedContent, files.find(f=>f.filename===currentFile)?.lang||'plaintext');
+        diffEditor.setModel({{ original: originalModel, modified: modifiedModel }});
+        document.getElementById(CODEX_ID + '-diff-bar').style.display = 'flex';
+        aiPanel.style.display = 'none';
+      }};
+
+      window.echoCodexRevertDiff = () => {{
+        hideButtonSpinner();
+        exitDiffMode();
+        // Reload géré côté Python (push echoCodexSetContent)
+      }};
+
+      function exitDiffMode() {{
+        if (!isDiffMode) return;
+        isDiffMode = false;
+        diffEditor = null;
+        document.getElementById(CODEX_ID + '-diff-bar').style.display = 'none';
+        aiPanel.style.display = 'flex';
+        initEditor();
+        // Restaurer la sélection modèle après réaffichage du panel
+        window.echoCodexSetModel(lastModel);
+        // Restaurer le preview si ouvert
+        if (previewOpen && getPreviewLang()) {{
+          document.getElementById(CODEX_ID + '-preview').style.display = 'flex';
+          document.getElementById(CODEX_ID + '-splitter').style.display = 'block';
+          setTimeout(updatePreview, 100);
+        }}
+      }}
+
+      window.echoCodexRefreshTree = (newFiles, newWorkspace) => {{
+        files = newFiles;
+        if (newWorkspace) currentWorkspace = newWorkspace;
+        renderFileTree();
+      }};
+
+      window.echoCodexDownload = (name, content) => {{
+        const blob = new Blob([content], {{type: 'text/plain'}});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }};
+
+      window.echoCodexReset = () => {{ hud.remove(); }};
+
+      window.echoCodexSetCurrentFile = (filename) => {{
+        currentFile = filename;
+      }};
+
+      // Chargement de contenu depuis le backend Python
+      window.echoCodexSetContent = (content, filename) => {{
+        if (editor) {{
+          const lang = files.find(f => f.filename === filename)?.lang || 'plaintext';
+          const model = monaco.editor.createModel(content, lang);
+          editor.setModel(model);
+          editor.onDidChangeModelContent(() => {{
+            modified = true; renderFileTree(); updateSaveButton();
+            if (previewOpen) {{
+              clearTimeout(previewDebounceTimer);
+              previewDebounceTimer = setTimeout(updatePreview, 400);
+            }}
+          }});
+          modified = false;
+          // Mettre à jour le sélecteur de langage
+          const langSelect = document.getElementById(CODEX_ID + '-lang');
+          if (langSelect) langSelect.value = lang;
+          updateStatus(filename + ' \u2022 charg\u00e9');
+          // Preview : mise à jour du bouton et du rendu
+          updatePreviewButton();
+          if (previewOpen && !PREVIEW_LANGS.includes(lang)) {{
+            togglePreview(false);
+          }} else if (previewOpen) {{
+            updatePreview();
+          }}
+        }}
+      }};
+
+      window.echoCodexLoadVersion = (content, info, idx, total) => {{
+        isHistoryMode = true;
+        historyContent = content;
+        if (editor) {{
+          editor.setValue(content);
+          editor.updateOptions({{readOnly: true}});
+        }}
+        editorWrap.style.background = historyBg;
+        const statusText = document.getElementById(CODEX_ID + '-status-text');
+        statusText.textContent = `(${{idx+1}}/${{total}}) ${{info.hash}} "${{info.message}}"`;
+        statusText.dataset.hash = info.hash;
+        document.getElementById(CODEX_ID + '-hist-actions').style.display = 'flex';
+      }};
+
+      window.echoCodexExitHistory = () => {{ exitHistoryMode(); }};
+
+      function exitHistoryMode() {{
+        isHistoryMode = false;
+        historyContent = null;
+        if (editor) editor.updateOptions({{readOnly: false}});
+        editorWrap.style.background = 'transparent';
+        document.getElementById(CODEX_ID + '-hist-actions').style.display = 'none';
+        updateStatus(currentFile ? currentFile + ' \u2022 HEAD' : 'Pr\u00eat');
+      }}
+
+      // ===== PREVIEW PANEL =====
+
+      // Styles prose pour le rendu Markdown
+      if (!document.getElementById(CODEX_ID + '-prose-styles')) {{
+        const _ps = document.createElement('style');
+        _ps.id = CODEX_ID + '-prose-styles';
+        _ps.textContent = `
+          .echo-codex-prose {{ color: ${{textColor}}; line-height: 1.7; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; word-wrap: break-word; }}
+          .echo-codex-prose h1 {{ font-size: 1.8em; margin: 0.8em 0 0.4em; border-bottom: 1px solid ${{borderColor}}; padding-bottom: 0.3em; }}
+          .echo-codex-prose h2 {{ font-size: 1.5em; margin: 0.7em 0 0.3em; }}
+          .echo-codex-prose h3 {{ font-size: 1.25em; margin: 0.6em 0 0.3em; }}
+          .echo-codex-prose h4 {{ font-size: 1.1em; margin: 0.5em 0 0.2em; }}
+          .echo-codex-prose p {{ margin: 0.5em 0; }}
+          .echo-codex-prose code {{ background: rgba(127,127,127,0.15); padding: 2px 5px; border-radius: 3px; font-size: 0.9em; font-family: 'Cascadia Code', 'Fira Code', monospace; }}
+          .echo-codex-prose pre {{ background: ${{isDark ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.06)'}}; padding: 12px; border-radius: 6px; overflow-x: auto; }}
+          .echo-codex-prose pre code {{ background: none; padding: 0; }}
+          .echo-codex-prose blockquote {{ border-left: 3px solid ${{accentColor}}; padding-left: 12px; margin-left: 0; opacity: 0.85; font-style: italic; }}
+          .echo-codex-prose table {{ border-collapse: collapse; width: 100%; margin: 0.5em 0; }}
+          .echo-codex-prose th, .echo-codex-prose td {{ border: 1px solid ${{borderColor}}; padding: 6px 10px; text-align: left; }}
+          .echo-codex-prose th {{ background: ${{isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}}; font-weight: 600; }}
+          .echo-codex-prose img {{ max-width: 100%; border-radius: 4px; }}
+          .echo-codex-prose a {{ color: ${{accentColor}}; text-decoration: none; }}
+          .echo-codex-prose a:hover {{ text-decoration: underline; }}
+          .echo-codex-prose ul, .echo-codex-prose ol {{ padding-left: 1.5em; }}
+          .echo-codex-prose li {{ margin: 0.25em 0; }}
+          .echo-codex-prose hr {{ border: none; border-top: 1px solid ${{borderColor}}; margin: 1em 0; }}
+        `;
+        document.head.appendChild(_ps);
+      }}
+
+      function getPreviewLang() {{
+        if (!currentFile) return null;
+        const lang = files.find(f => f.filename === currentFile)?.lang || 'plaintext';
+        return PREVIEW_LANGS.includes(lang) ? lang : null;
+      }}
+
+      function updatePreviewButton() {{
+        const btn = document.getElementById(CODEX_ID + '-preview-toggle');
+        if (!btn) return;
+        const lang = getPreviewLang();
+        if (lang) {{
+          btn.disabled = false;
+          btn.style.opacity = previewOpen ? '1' : '0.6';
+          btn.style.color = previewOpen ? accentColor : textColor;
+          btn.title = 'Pr\u00e9visualisation ' + lang.toUpperCase();
+        }} else {{
+          btn.disabled = true;
+          btn.style.opacity = '0.25';
+          btn.style.color = textColor;
+          btn.title = 'Pr\u00e9visualisation indisponible';
+        }}
+      }}
+
+      function togglePreview(forceState) {{
+        const panel = document.getElementById(CODEX_ID + '-preview');
+        const split = document.getElementById(CODEX_ID + '-splitter');
+        if (!panel || !split) return;
+
+        previewOpen = forceState !== undefined ? forceState : !previewOpen;
+
+        if (previewOpen && !getPreviewLang()) {{
+          previewOpen = false;
+          return;
+        }}
+
+        panel.style.display = previewOpen ? 'flex' : 'none';
+        split.style.display = previewOpen ? 'block' : 'none';
+        if (previewOpen) {{
+          editorWrap.style.flex = `${{editorRatio}} 1 0%`;
+          panel.style.flex = `${{previewRatio}} 1 0%`;
+        }} else {{
+          editorWrap.style.flex = `1 1 0%`;
+        }}
+
+        updatePreviewButton();
+        saveState();
+
+        if (previewOpen) updatePreview();
+      }}
+
+      function updatePreview() {{
+        const lang = getPreviewLang();
+        if (!lang || !previewOpen) return;
+
+        const content = editor ? editor.getValue() : '';
+        const container = document.getElementById(CODEX_ID + '-preview-content');
+        const label = document.getElementById(CODEX_ID + '-preview-label');
+        const printBtn = document.getElementById(CODEX_ID + '-preview-print');
+        const copyBtn = document.getElementById(CODEX_ID + '-preview-copy');
+        if (!container) return;
+
+        if (printBtn) printBtn.style.display = (lang === 'markdown' || lang === 'html') ? 'flex' : 'none';
+        if (copyBtn) copyBtn.style.display = PREVIEW_LANGS.includes(lang) ? 'flex' : 'none';
+
+        if (lang === 'markdown') {{
+          if (label) label.textContent = 'Markdown Preview';
+          renderMarkdown(content, container);
+        }} else if (lang === 'html') {{
+          if (label) label.textContent = 'HTML Preview';
+          renderHTML(content, container);
+        }} else if (lang === 'css') {{
+          if (label) label.textContent = 'CSS Preview';
+          renderCSS(content, container);
+        }} else if (lang === 'xml') {{
+          if (label) label.textContent = 'SVG Preview';
+          renderSVG(content, container);
+        }} else if (lang === 'pdf') {{
+          if (label) label.textContent = 'PDF Preview';
+          renderPDF(content, container);
+        }}
+      }}
+
+      function renderMarkdown(content, container) {{
+        container.style.padding = '12px';
+        const oldIframe = container.querySelector('iframe');
+        if (oldIframe) oldIframe.remove();
+        if (window.marked) {{
+          container.innerHTML = '<div class="echo-codex-prose">' + window.marked.parse(content) + '</div>';
+        }} else if (!markedLoaded) {{
+          container.innerHTML = '<div style="color:' + (isDark ? '#a6adc8' : '#888') + '; padding:20px;">Chargement marked.js...</div>';
+          loadMarked(() => renderMarkdown(content, container));
+        }} else {{
+          container.innerHTML = '<div style="color:#f38ba8; padding:12px;">\u274c marked.js non disponible</div>';
+        }}
+      }}
+
+      function renderHTML(content, container) {{
+        container.style.padding = '0';
+        let iframe = container.querySelector('iframe');
+        if (!iframe) {{
+          container.innerHTML = '';
+          iframe = document.createElement('iframe');
+          iframe.sandbox = 'allow-scripts allow-modals';
+          iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';
+          container.appendChild(iframe);
+        }}
+        iframe.srcdoc = '<script>window.addEventListener("message", function(e) {{ if (e.data === "echo-print") window.print(); }});</script>' + content;
+      }}
+
+      function renderCSS(content, container) {{
+        container.style.padding = '0';
+        let iframe = container.querySelector('iframe');
+        if (!iframe) {{
+          container.innerHTML = '';
+          iframe = document.createElement('iframe');
+          iframe.sandbox = 'allow-scripts allow-modals';
+          iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';
+          container.appendChild(iframe);
+        }}
+        iframe.srcdoc = '<!DOCTYPE html><html><head><script>window.addEventListener("message", function(e) {{ if (e.data === "echo-print") window.print(); }});</script><style>' + content + '</style></head><body>' +
+          '<h1>Heading 1</h1><h2>Heading 2</h2><h3>Heading 3</h3>' +
+          '<p>Paragraph with <strong>bold</strong>, <em>italic</em>, and <a href="#">link</a>.</p>' +
+          '<ul><li>Item 1</li><li>Item 2</li><li>Item 3</li></ul>' +
+          '<blockquote>Blockquote example</blockquote>' +
+          '<pre><code>code {{ display: block; }}</code></pre>' +
+          '<table><tr><th>Header</th><th>Header</th></tr><tr><td>Cell</td><td>Cell</td></tr></table>' +
+          '<button>Button</button> <input type="text" placeholder="Input" />' +
+          '<div class="demo">Demo div</div></body></html>';
+      }}
+
+      function renderSVG(content, container) {{
+        container.style.padding = '12px';
+        const oldIframe = container.querySelector('iframe');
+        if (oldIframe) oldIframe.remove();
+        const cleaned = content.replace(/<script[\\s\\S]*?<\\/script>/gi, '');
+        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; min-height:200px;">' + cleaned + '</div>';
+        const svg = container.querySelector('svg');
+        if (svg) {{
+          svg.style.maxWidth = '100%';
+          svg.style.height = 'auto';
+        }}
+      }}
+
+      function renderPDF(content, container) {{
+        container.style.padding = '0';
+        try {{
+          const bytes = new Uint8Array(content.length);
+          for (let i = 0; i < content.length; i++) {{
+              bytes[i] = content.charCodeAt(i) & 0xff;
+          }}
+          const blob = new Blob([bytes], {{ type: 'application/pdf' }});
+          const url = URL.createObjectURL(blob);
+          
+          const oldIframe = container.querySelector('iframe');
+          if (oldIframe) {{
+              if (oldIframe.src.startsWith('blob:')) {{
+                  URL.revokeObjectURL(oldIframe.src);
+              }}
+              oldIframe.remove();
+          }}
+          
+          container.innerHTML = '';
+          const iframe = document.createElement('iframe');
+          iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';
+          iframe.src = url;
+          container.appendChild(iframe);
+        }} catch (e) {{
+          container.innerHTML = '<div style="color:#f38ba8; padding:12px;">\u274c Erreur lors du rendu du PDF (encodage invalide)</div>';
+        }}
+      }}
+
+      function loadMarked(callback) {{
+        if (markedLoaded) {{ if (window.marked) callback(); return; }}
+        // import() ESM natif : bypasse totalement l'AMD loader de Monaco
+        // qui intercepte les script tags UMD via define/require
+        import('https://cdn.jsdelivr.net/npm/marked@15/+esm')
+          .then(m => {{
+            window.marked = m;
+            markedLoaded = true;
+            callback();
+          }})
+          .catch(err => {{
+            markedLoaded = true;
+            const c = document.getElementById(CODEX_ID + '-preview-content');
+            if (c) c.innerHTML = '<div style="color:#f38ba8; padding:12px;">\u274c marked.js: ' + err.message + '</div>';
+          }});
+      }}
+
+      // Toggle preview
+      document.getElementById(CODEX_ID + '-preview-toggle').onclick = () => {{
+        togglePreview();
+      }};
+
+      // Print Preview
+      document.getElementById(CODEX_ID + '-preview-print').onclick = () => {{
+        const isolationFn = function() {{
+          {EchoUI.get_print_isolation_js('#echo-codex-hud-preview-content')}
+        }};
+        isolationFn();
+      }};
+
       // Splitter drag logic
       let isDraggingSplit = false;
       let isDraggingSidebarSplit = false;
@@ -1855,7 +3108,7 @@ return new Promise(function(resolve) {{
             "  treePanel.id = HUD_ID + '-tree';\n"
             "  treePanel.style.cssText = 'flex:1; overflow-y:auto; display:flex; flex-direction:column; scrollbar-width:thin;';\n"
             "\n"
-            "  codexMainArea.appendChild(sidebar);\n"
+            "  body.appendChild(sidebar);\n"
             "  body.appendChild(treePanel);\n"
             "  hud.appendChild(body);\n"
             "\n"
