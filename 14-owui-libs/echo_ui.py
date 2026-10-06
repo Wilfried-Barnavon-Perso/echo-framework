@@ -1,14 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.101
+version: 5.102
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.102: Factorisation du bornage (clamping) et Drag&Drop via le helper global window.echoMakeDraggable pour EchoFloatingWindow, Codex et WebPlayer (support tactile et correction de fuites d'évènements).
 # 5.101: Fix Identity Vault - Injection de EchoUI.get_floating_window_class_js() dans _generate_identity_vault_js (TypeError: window.EchoFloatingWindow is not a constructor hors chargement préalable du Monitor).
 # 5.100: Rollback de la factorisation 5.99 (Codex/WebPlayer) : NameError f-string (HUD_ID/CODEX_ID), IDs DOM orphelins, classe EchoFloatingWindow non injectée. Retour au code 5.98 validé.
 # 5.98: Support du Trigger Asynchrone JS via _echoCodexTarget pour forcer l'ouverture du Codex sur un fichier spécifique.
+# 5.97: Architecture - Factorisation du HUD ECHO Identity Vault via la classe unifiée EchoFloatingWindow. Maintien de l'architecture spécifique pour le Cognitive Monitor et le WebPlayer.
 # 5.97: Architecture - Factorisation du HUD ECHO Identity Vault via la classe unifiée EchoFloatingWindow. Maintien de l'architecture spécifique pour le Cognitive Monitor et le WebPlayer.
 # 5.96: Architecture - Factorisation des fenêtres flottantes via la classe unifiée EchoFloatingWindow. L'ECHO Monitor devient le Sandbox Monitor natif.
 # 5.95: Fix Monitor - Extraction de echoCreateFloatingMonitor dans get_floating_monitor_js() (non injecté auparavant), iframe construite via DOM (srcdoc natif), retrait de allow-same-origin.
@@ -76,6 +78,63 @@ class EchoRichUI:
         # ==============================================================================
         """
         return """
+        if (!window.echoMakeDraggable) {
+            window.echoMakeDraggable = function(hud, header, options = {}) {
+                let isDragging = false, startX, startY, initialLeft, initialTop;
+                
+                const startDrag = (e) => {
+                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+                    isDragging = true;
+                    const evt = e.type.includes('touch') ? e.touches[0] : e;
+                    startX = evt.clientX;
+                    startY = evt.clientY;
+                    initialLeft = hud.offsetLeft;
+                    initialTop = hud.offsetTop;
+                    hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
+                    document.addEventListener(e.type.includes('touch') ? 'touchmove' : 'mousemove', doDrag, { passive: false });
+                    document.addEventListener(e.type.includes('touch') ? 'touchend' : 'mouseup', stopDrag);
+                };
+
+                const doDrag = (e) => {
+                    if (!isDragging) return;
+                    e.preventDefault();
+                    const evt = e.type.includes('touch') ? e.touches[0] : e;
+                    let newX = initialLeft + (evt.clientX - startX);
+                    let newY = initialTop + (evt.clientY - startY);
+                    
+                    const maxLeft = window.innerWidth - 60;
+                    const maxTop = window.innerHeight - 60;
+                    const minLeft = -hud.offsetWidth + 60;
+                    
+                    newX = Math.max(minLeft, Math.min(newX, maxLeft));
+                    newY = Math.max(0, Math.min(newY, maxTop));
+                    
+                    hud.style.left = newX + 'px';
+                    hud.style.top = newY + 'px';
+                    hud.style.transform = 'none';
+                };
+
+                const stopDrag = (e) => {
+                    if (!isDragging) return;
+                    isDragging = false;
+                    hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                    document.removeEventListener('mousemove', doDrag);
+                    document.removeEventListener('touchmove', doDrag);
+                    document.removeEventListener('mouseup', stopDrag);
+                    document.removeEventListener('touchend', stopDrag);
+                    if (options.onDragEnd) options.onDragEnd();
+                };
+
+                header.style.cursor = 'grab';
+                header.addEventListener('mousedown', startDrag);
+                header.addEventListener('touchstart', startDrag, { passive: false });
+                
+                return () => {
+                    header.removeEventListener('mousedown', startDrag);
+                    header.removeEventListener('touchstart', startDrag);
+                };
+            };
+        }
         if (!window.EchoFloatingWindow) {
             window.EchoFloatingWindow = class {
                 constructor(config) {
@@ -145,37 +204,28 @@ class EchoRichUI:
                     });
                     
                     const header = document.getElementById(this.id + '-header');
-                    let isDragging = false, startX, startY, initialLeft, initialTop;
-                    
-                    header.onmousedown = (e) => {
-                        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('button')) return;
-                        e.preventDefault();
-                        isDragging = true;
-                        startX = e.clientX;
-                        startY = e.clientY;
-                        initialLeft = hud.offsetLeft;
-                        initialTop = hud.offsetTop;
-                        hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
-                    };
-                    
-                    document.addEventListener('mousemove', (e) => {
-                        if (isDragging) {
-                            e.preventDefault();
-                            hud.style.left = (initialLeft + (e.clientX - startX)) + 'px';
-                            hud.style.top = (initialTop + (e.clientY - startY)) + 'px';
-                        }
-                    });
-                    
-                    document.addEventListener('mouseup', () => {
-                        if (isDragging) {
-                            isDragging = false;
-                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
-                        }
-                    });
+                    if (header) {
+                        this._dragCleanup = window.echoMakeDraggable(hud, header);
+                    }
                     
                     if (this.allowResize) {
                         const resizer = document.getElementById(this.id + '-resizer');
                         let isResizing = false, rStartX, rStartY, startW, startH;
+                        
+                        const doResize = (e) => {
+                            if (!isResizing) return;
+                            e.preventDefault();
+                            hud.style.width = (startW + (e.clientX - rStartX)) + 'px';
+                            hud.style.height = (startH + (e.clientY - rStartY)) + 'px';
+                        };
+                        
+                        const stopResize = () => {
+                            if (!isResizing) return;
+                            isResizing = false;
+                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                            document.removeEventListener('mousemove', doResize);
+                            document.removeEventListener('mouseup', stopResize);
+                        };
                         
                         resizer.onmousedown = (e) => {
                             e.preventDefault(); e.stopPropagation();
@@ -185,25 +235,13 @@ class EchoRichUI:
                             startW = hud.offsetWidth;
                             startH = hud.offsetHeight;
                             hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
+                            document.addEventListener('mousemove', doResize);
+                            document.addEventListener('mouseup', stopResize);
                         };
-                        
-                        document.addEventListener('mousemove', (e) => {
-                            if (isResizing) {
-                                e.preventDefault();
-                                hud.style.width = (startW + (e.clientX - rStartX)) + 'px';
-                                hud.style.height = (startH + (e.clientY - rStartY)) + 'px';
-                            }
-                        });
-                        
-                        document.addEventListener('mouseup', () => {
-                            if (isResizing) {
-                                isResizing = false;
-                                hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
-                            }
-                        });
                     }
                     
                     document.getElementById(this.id + '-btn-close').onclick = () => {
+                        if (this._dragCleanup) this._dragCleanup();
                         hud.remove();
                         if (this.onClose) this.onClose();
                     };
@@ -562,11 +600,12 @@ class EchoUI(EchoRichUI):
         clampHud: function() {{
           if (!this.hud) return;
           const vw = window.innerWidth, vh = window.innerHeight;
-          const w = this.hud.offsetWidth, h = this.hud.offsetHeight;
-          if (this.posX < 0) this.posX = 0;
-          if (this.posY < 0) this.posY = 0;
-          if (this.posX + w > vw) this.posX = Math.max(0, vw - w);
-          if (this.posY + h > vh) this.posY = Math.max(0, vh - h);
+          const w = this.hud.offsetWidth;
+          const maxLeft = vw - 60;
+          const maxTop = vh - 60;
+          const minLeft = -w + 60;
+          this.posX = Math.max(minLeft, Math.min(this.posX, maxLeft));
+          this.posY = Math.max(0, Math.min(this.posY, maxTop));
           this.hud.style.left = this.posX + "px";
           this.hud.style.top = this.posY + "px";
         }},
@@ -682,23 +721,13 @@ class EchoUI(EchoRichUI):
             }}
           }});
 
-          header.onmousedown = (e) => {{
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
-            e.preventDefault();
-            let ox = e.clientX, oy = e.clientY;
-            const move = (me) => {{
-              this.posX += (me.clientX - ox); this.posY += (me.clientY - oy);
-              ox = me.clientX; oy = me.clientY;
-              this.clampHud();
-            }};
-            const up = () => {{
-              document.removeEventListener('mousemove', move);
-              document.removeEventListener('mouseup', up);
+          window.echoMakeDraggable(this.hud, header, {{
+            onDragEnd: () => {{
+              this.posX = parseFloat(this.hud.style.left) || 0;
+              this.posY = parseFloat(this.hud.style.top) || 0;
               this.saveState();
-            }};
-            document.addEventListener('mousemove', move);
-            document.addEventListener('mouseup', up);
-          }};
+            }}
+          }});
 
           document.getElementById(HUD_ID + "-btn-zoom").onclick = () => {{
             const img = document.getElementById(HUD_ID + "-img");
@@ -2110,28 +2139,10 @@ return new Promise(function(resolve) {{
         if (el) el.textContent = text;
       }}
 
-      // ===== DRAG (clampé aux limites du viewport) =====
-      let isDragging = false, dragX, dragY;
-      header.onmousedown = (e) => {{
-        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
-        isDragging = true;
-        dragX = e.clientX - hud.offsetLeft;
-        dragY = e.clientY - hud.offsetTop;
-        hud.style.transform = 'none';
-      }};
-      document.onmousemove = (e) => {{
-        if (!isDragging) return;
-        const maxX = window.innerWidth - hud.offsetWidth;
-        const maxY = window.innerHeight - 44; // Header height (~44px) toujours visible
-        let newX = Math.max(0, Math.min(e.clientX - dragX, maxX));
-        let newY = Math.max(0, Math.min(e.clientY - dragY, maxY));
-        hud.style.left = newX + 'px';
-        hud.style.top = newY + 'px';
-      }};
-      document.onmouseup = () => {{
-        isDragging = false;
-        saveState();
-      }};
+      // ===== DRAG FACTORISÉ =====
+      window.echoMakeDraggable(hud, header, {{
+          onDragEnd: () => saveState()
+      }});
 
       // ===== HEADER BUTTONS =====
       document.getElementById(CODEX_ID + '-close').onclick = () => {{
