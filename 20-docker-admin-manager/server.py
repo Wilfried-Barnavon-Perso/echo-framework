@@ -2,7 +2,11 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.128 (Fix TypeError Maintenance)
+VERSION : 5.129 (Fix UX Maintenance & Timeouts)
+--- CHANGELOG 5.129 ---
+- Fix (Critique) : Propagation des exceptions de la tâche de sauvegarde (tar) vers le séquenceur pour lever les faux positifs (rapport vert malgré échec du disque).
+- Fix (Critique) : Propagation du TimeoutError (60 min) lors du redémarrage Qdrant/OWUI pour afficher "ÉCHEC" dans le rapport de purge.
+- UX : Refonte du workflow UI pour la maintenance. Le bouton "Lancer le Cycle" valide et sauvegarde d'abord la configuration (évitant le piège des cases cochées non sauvegardées) et s'exécute instantanément (suppression du sleep initial).
 --- CHANGELOG 5.128 ---
 - Fix (Critique) : Résolution du plantage silencieux de la maintenance dû à l'évaluation de {{}} en tant que set de dictionnaire (TypeError).
 --- CHANGELOG 5.127 ---
@@ -563,10 +567,7 @@ def _run_semantic_pruning(silent=False):
     services_ready = False
     for _ in range(60):
         MAINTENANCE_STATE["status"] = f"Attente des services (Itération {_+1}/60)..."
-        # Sommeil immédiat d'une minute pour laisser le temps à l'orchestrateur
-        # de stopper l'infrastructure lors d'une sauvegarde planifiée à la même heure.
-        time.sleep(60)
-
+        
         db_ok = False
         qdrant_ok = False
         owui_ok = False
@@ -607,13 +608,17 @@ def _run_semantic_pruning(silent=False):
         if db_ok and qdrant_ok and owui_ok:
             services_ready = True
             break
+            
+        # Sommeil d'une minute après vérification, pour laisser le temps à l'orchestrateur
+        # de redémarrer l'infrastructure lors d'une sauvegarde planifiée.
+        time.sleep(60)
         
     if not services_ready:
         err_msg = f"Pruning annulé : Délai d'attente dépassé (1h). Diag: db_ok={db_ok}, qdrant_ok={qdrant_ok}, owui_ok={owui_ok}"
         print(f"❌ [ECHO-LIFECYCLE] {err_msg}")
         if not silent:
             save_maint_report(err_msg)
-        return err_msg, {}
+        raise TimeoutError(err_msg)
 
     report = []
     config = load_maint_config()
@@ -822,7 +827,7 @@ def _run_semantic_pruning(silent=False):
                     if folder not in valid_ids and len(folder) > 30:
                         folder_path = os.path.join(ECHO_USERS_ROOT, folder)
                         sz = _get_tree_size(folder_path)
-                        shutil.rmtree(folder_path)
+                        shutil.rmtree(folder_path, ignore_errors=True)
                         stats["users"]["c"] += 1
                         stats["users"]["b"] += sz
             
@@ -836,7 +841,7 @@ def _run_semantic_pruning(silent=False):
                                 chat_id = cdir
                                 if chat_id not in db_valid_chats:
                                     sz = _get_tree_size(cdir_path)
-                                    shutil.rmtree(cdir_path)
+                                    shutil.rmtree(cdir_path, ignore_errors=True)
                                     stats["chats"]["c"] += 1
                                     stats["chats"]["b"] += sz
 
@@ -1295,11 +1300,12 @@ def perform_backup_task():
                                         subprocess.run(['rclone', '--config', conf_path, 'deletefile', f"{remote}/{f['Path']}"], check=False)
                             except Exception: pass
             except Exception as e: print(f"Rclone Backup Error: {e}")
-    except Exception:
+    except Exception as e:
         try: docker.from_env().containers.get(TARGET_CONTAINER).start()
         except Exception: pass
         try: docker.from_env().containers.get('echo-qdrant').start()
         except Exception: pass
+        raise e
 
 def run_nightly_maintenance_cycle():
     """Séquenceur Maître : Sauvegarde -> Redémarrage -> Purge -> Consolidation -> Vacuum."""
@@ -1920,7 +1926,11 @@ def update_maint():
     ok = save_maint_config(c)
     update_system_schedules()
     if ok:
-        flash('Cycle de vie et Mémoire mis à jour.', 'success')
+        if request.form.get("submit_action") == "run":
+            threading.Thread(target=run_semantic_pruning).start()
+            flash('Configuration sauvegardée et Élagage lancé.', 'info')
+        else:
+            flash('Cycle de vie et Mémoire mis à jour.', 'success')
     else:
         flash('Erreur : impossible d\'écrire la configuration.', 'danger')
     return redirect(url_for('index'))
@@ -2433,7 +2443,7 @@ HTML_DASHBOARD = """
 
                     <div class="tab-pane fade" id="v-pills-maint" role="tabpanel">
                         <div class="card border-info mb-3"><div class="card-header text-info"><i class="bi bi-scissors"></i> Élagage & Cycle de Vie (Jours)</div><div class="card-body small">
-                            <form action="/settings/maintenance" method="post" class="mb-3"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Durée de conservation de la mémoire (TTL par niveau) :</label></div><div class="col text-center"><label class="x-small text-secondary mb-1">Trivial</label><input type="number" name="ttl_lvl1" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl1}}" title="Lv1 (Trivial)"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Mineur</label><input type="number" name="ttl_lvl2" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl2}}" title="Lv2"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Utile</label><input type="number" name="ttl_lvl3" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl3}}" title="Lv3"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Majeur</label><input type="number" name="ttl_lvl4" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl4}}" title="Lv4"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Axiome</label><input type="number" name="ttl_lvl5" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl5}}" title="Lv5 (Axiome/Critique)"></div></div><div class="d-flex justify-content-between align-items-end"><label class="x-small fw-bold text-light mt-2">Heure du Cycle de Maintenance (Purge & Consolidation)</label></div><div id="maint-sync-warning" class="alert alert-dark x-small py-1 mb-2 mt-1 border border-secondary text-muted" style="display: none;"><i class="bi bi-info-circle text-info"></i> L'heure est synchronisée avec la sauvegarde automatique.</div><input type="time" name="cleanup_hour" id="cleanup_hour_input" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Consolidation mémoire lvl1 → lvl2 :</label></div><div class="col-6"><label class="x-small text-secondary mb-1">Seuil (nb lvl1)</label><input type="number" name="consol_threshold" class="form-control form-control-sm text-center" value="{{maint.consolidation.trigger_threshold}}" title="Nb de souvenirs Triviaux par user avant consolidation" min="3" max="50"></div><div class="col-6"><label class="x-small text-secondary mb-1">Cluster min</label><input type="number" name="consol_min_cluster" class="form-control form-control-sm text-center" value="{{maint.consolidation.min_cluster_size}}" title="Nb minimum de souvenirs similaires pour fusionner" min="2" max="10"></div><div class="col-12 mt-1"><label class="x-small text-secondary mb-1">Seuil cosinus (0.0-1.0)</label><input type="number" name="consol_similarity" class="form-control form-control-sm text-center" value="{{maint.consolidation.similarity_threshold}}" title="Score cosinus minimal pour regrouper deux souvenirs dans un même cluster (0.75 = très similaires, 0.5 = assez proches)" min="0.4" max="0.99" step="0.05"></div></div><div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" name="purge_orphaned_chats" id="sw_purge_chats" {{ 'checked' if maint.purge_orphaned_chats }}><label class="form-check-label x-small" for="sw_purge_chats" data-bs-toggle="tooltip" title="Si activé, supprime les fichiers d'un chat dans l'Espace Personnel ECHO si le chat n'existe plus dans Open WebUI.">Purger les chats orphelins</label></div><div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="purge_orphaned_users" id="sw_purge_users" {{ 'checked' if maint.purge_orphaned_users }}><label class="form-check-label x-small" for="sw_purge_users" data-bs-toggle="tooltip" title="Si activé, détruit l'Espace Personnel complet (fichiers, bases, mémoires vectorielles) d'un utilisateur supprimé d'Open WebUI.">Purger les utilisateurs orphelins</label></div><button class="btn btn-sm btn-info w-100">Programmer le Cycle</button></form><hr><p class="m-0 mb-1">Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p><div class="d-flex gap-2"><form action="/action/pruning" method="post" id="pruning-form" onsubmit="showLoader('Élagage profond...')" class="flex-grow-1"><button id="pruning-btn" class="btn btn-outline-info btn-sm w-100"><span id="pruning-status-text">Lancer le Cycle</span></button></form><button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#historyLog"><i class="bi bi-journal-text"></i> Logs</button></div><form action="/action/consolidate" method="post" onsubmit="showLoader('Consolidation lvl1 → lvl2...')" class="mt-2"><button class="btn btn-outline-warning btn-sm w-100" title="Fusionne les souvenirs Triviaux similaires en souvenirs Mineurs (centroïde vectoriel).">🧬 Consolider Mémoires Lvl1</button></form><form action="/action/docker_prune" method="post" onsubmit="return confirm('Purger les images orphelines, le cache de build Docker et le cache APT système ?') && (showLoader('Purge en cours...'), true)"><button class="btn btn-outline-danger btn-sm w-100 mt-1" title="Libère l'espace des images orphelines (<none>:<none>), du build cache Docker et du cache APT système.">🧹 Purge Cache & Orphelines</button></form><div class="collapse mt-3" id="historyLog"><div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;"><h6 class="x-small text-uppercase text-muted border-bottom border-secondary pb-1">Historique 1 an</h6>{% for entry in history %}<div class="mb-2 pb-1 border-bottom border-secondary last-child-border-0"><span class="x-small text-info">{{ entry.timestamp }}</span><br><span style="font-size: 0.75rem;">{{ entry.report | safe }}</span></div>{% endfor %}{% if not history %}<span class="x-small text-muted">Aucun log disponible.</span>{% endif %}</div></div>
+                            <form action="/settings/maintenance" method="post" class="mb-3"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Durée de conservation de la mémoire (TTL par niveau) :</label></div><div class="col text-center"><label class="x-small text-secondary mb-1">Trivial</label><input type="number" name="ttl_lvl1" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl1}}" title="Lv1 (Trivial)"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Mineur</label><input type="number" name="ttl_lvl2" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl2}}" title="Lv2"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Utile</label><input type="number" name="ttl_lvl3" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl3}}" title="Lv3"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Majeur</label><input type="number" name="ttl_lvl4" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl4}}" title="Lv4"></div><div class="col text-center"><label class="x-small text-secondary mb-1">Axiome</label><input type="number" name="ttl_lvl5" class="form-control form-control-sm text-center" value="{{maint.memory_ttl.lvl5}}" title="Lv5 (Axiome/Critique)"></div></div><div class="d-flex justify-content-between align-items-end"><label class="x-small fw-bold text-light mt-2">Heure du Cycle de Maintenance (Purge & Consolidation)</label></div><div id="maint-sync-warning" class="alert alert-dark x-small py-1 mb-2 mt-1 border border-secondary text-muted" style="display: none;"><i class="bi bi-info-circle text-info"></i> L'heure est synchronisée avec la sauvegarde automatique.</div><input type="time" name="cleanup_hour" id="cleanup_hour_input" class="form-control form-control-sm mb-2" value="{{maint.cleanup_hour}}"><div class="row g-2 mb-2"><div class="col-12"><label class="x-small text-muted">Consolidation mémoire lvl1 → lvl2 :</label></div><div class="col-6"><label class="x-small text-secondary mb-1">Seuil (nb lvl1)</label><input type="number" name="consol_threshold" class="form-control form-control-sm text-center" value="{{maint.consolidation.trigger_threshold}}" title="Nb de souvenirs Triviaux par user avant consolidation" min="3" max="50"></div><div class="col-6"><label class="x-small text-secondary mb-1">Cluster min</label><input type="number" name="consol_min_cluster" class="form-control form-control-sm text-center" value="{{maint.consolidation.min_cluster_size}}" title="Nb minimum de souvenirs similaires pour fusionner" min="2" max="10"></div><div class="col-12 mt-1"><label class="x-small text-secondary mb-1">Seuil cosinus (0.0-1.0)</label><input type="number" name="consol_similarity" class="form-control form-control-sm text-center" value="{{maint.consolidation.similarity_threshold}}" title="Score cosinus minimal pour regrouper deux souvenirs dans un même cluster (0.75 = très similaires, 0.5 = assez proches)" min="0.4" max="0.99" step="0.05"></div></div><div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" name="purge_orphaned_chats" id="sw_purge_chats" {{ 'checked' if maint.purge_orphaned_chats }}><label class="form-check-label x-small" for="sw_purge_chats" data-bs-toggle="tooltip" title="Si activé, supprime les fichiers d'un chat dans l'Espace Personnel ECHO si le chat n'existe plus dans Open WebUI.">Purger les chats orphelins</label></div><div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="purge_orphaned_users" id="sw_purge_users" {{ 'checked' if maint.purge_orphaned_users }}><label class="form-check-label x-small" for="sw_purge_users" data-bs-toggle="tooltip" title="Si activé, détruit l'Espace Personnel complet (fichiers, bases, mémoires vectorielles) d'un utilisateur supprimé d'Open WebUI.">Purger les utilisateurs orphelins</label></div><div class="d-flex gap-2"><button type="submit" name="submit_action" value="save" class="btn btn-sm btn-info w-100">Programmer le Cycle</button><button type="submit" name="submit_action" value="run" class="btn btn-sm btn-outline-info w-100" onclick="showLoader('Élagage profond...')">Lancer le Cycle</button></div></form><hr><p class="m-0 mb-1">Transit (Uploads) : <b>{{ storage_stats.uploads.size_fmt }}</b></p><button class="btn btn-sm btn-outline-secondary w-100" data-bs-toggle="collapse" data-bs-target="#historyLog"><i class="bi bi-journal-text"></i> Afficher les Logs</button><form action="/action/consolidate" method="post" onsubmit="showLoader('Consolidation lvl1 → lvl2...')" class="mt-2"><button class="btn btn-outline-warning btn-sm w-100" title="Fusionne les souvenirs Triviaux similaires en souvenirs Mineurs (centroïde vectoriel).">🧬 Consolider Mémoires Lvl1</button></form><form action="/action/docker_prune" method="post" onsubmit="return confirm('Purger les images orphelines, le cache de build Docker et le cache APT système ?') && (showLoader('Purge en cours...'), true)"><button class="btn btn-outline-danger btn-sm w-100 mt-1" title="Libère l'espace des images orphelines (<none>:<none>), du build cache Docker et du cache APT système.">🧹 Purge Cache & Orphelines</button></form><div class="collapse mt-3" id="historyLog"><div class="bg-dark p-2 rounded border border-secondary" style="max-height: 200px; overflow-y: auto;"><h6 class="x-small text-uppercase text-muted border-bottom border-secondary pb-1">Historique 1 an</h6>{% for entry in history %}<div class="mb-2 pb-1 border-bottom border-secondary last-child-border-0"><span class="x-small text-info">{{ entry.timestamp }}</span><br><span style="font-size: 0.75rem;">{{ entry.report | safe }}</span></div>{% endfor %}{% if not history %}<span class="x-small text-muted">Aucun log disponible.</span>{% endif %}</div></div>
                         </div></div>
                     </div>
 
