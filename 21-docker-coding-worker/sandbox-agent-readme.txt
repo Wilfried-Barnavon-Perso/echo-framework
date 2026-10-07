@@ -46,3 +46,12 @@ Si l'utilisateur vous demande de traiter un fichier (ex: un enregistrement audio
      if (echo_monitor.is_window_closed("votre_id_fenetre")) { process.exit(0); }
 
 Le décodage Base64 DOIT se faire dans votre script. En effet, l'IA ne reçoit JAMAIS directement ces données pour préserver sa RAM.
+
+4. CANAUX BIDIRECTIONNELS (UI <-> BACKEND SANDBOX)
+--------------------------------------------------
+Il n'existe AUCUN canal bidirectionnel en temps réel entre l'UI et un script en cours d'exécution dans la Sandbox.
+L'architecture de la Sandbox repose sur des exécutions isolées et séquentielles :
+- Les données descendantes (UI -> Sandbox) sont figées au lancement (`fetch_ui_payload`).
+- Les données montantes (Sandbox -> UI via `echo_monitor.display()`) sont lues et transmises uniquement en POST-RUN (une fois votre script totalement terminé).
+
+Toute tentative de créer une boucle d'interaction ou de "ping-pong" en temps réel entre Python/Node et l'interface utilisateur échouera silencieusement (le frontend ne recevra l'interface qu'à la fin du timeout ou du script). Pour des applications interactives, générez une SPA (Single Page Application) autonome en HTML/JS et envoyez-la à l'UI via `echo_monitor.display()`.
