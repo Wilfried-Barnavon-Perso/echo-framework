@@ -2,7 +2,9 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.127 (Rapport Esthétique)
+VERSION : 5.128 (Fix TypeError Maintenance)
+--- CHANGELOG 5.128 ---
+- Fix (Critique) : Résolution du plantage silencieux de la maintenance dû à l'évaluation de {{}} en tant que set de dictionnaire (TypeError).
 --- CHANGELOG 5.127 ---
 - Refactor : Le séquenceur nocturne génère désormais un rapport HTML esthétique formaté en grille Bootstrap, affiché nativement dans l'UI des logs, remplaçant l'arborescence texte. La fonction de purge renvoie un dictionnaire structuré au lieu d'une chaîne, annulant tout recours aux regex et limitant la redondance d'écriture.
 --- CHANGELOG 5.126 ---
@@ -1351,9 +1353,9 @@ def run_nightly_maintenance_cycle():
             </div>
             <div class='mt-2 pt-1 border-top border-secondary'>
                 <b class='text-info'><i class='bi bi-trash'></i> Bilan Élagage & SQLite</b><br>
-                <i class='bi bi-people'></i> Utilisateurs : <b>{stats.get('users', {{}}).get('c', 0)}</b> <i>({_format_bytes(stats.get('users', {{}}).get('b', 0))})</i><br>
-                <i class='bi bi-chat-left-dots'></i> Chats : <b>{stats.get('chats', {{}}).get('c', 0)}</b> <i>({_format_bytes(stats.get('chats', {{}}).get('b', 0))})</i><br>
-                <i class='bi bi-hdd'></i> Drop Zones : Libéré <b>{_format_bytes(stats.get('drop_users', {{}}).get('b', 0) + stats.get('drop_chats', {{}}).get('b', 0) + stats.get('drop_n8n', {{}}).get('b', 0))}</b><br>
+                <i class='bi bi-people'></i> Utilisateurs : <b>{stats.get('users', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('users', {}).get('b', 0))})</i><br>
+                <i class='bi bi-chat-left-dots'></i> Chats : <b>{stats.get('chats', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('chats', {}).get('b', 0))})</i><br>
+                <i class='bi bi-hdd'></i> Drop Zones : Libéré <b>{_format_bytes(stats.get('drop_users', {}).get('b', 0) + stats.get('drop_chats', {}).get('b', 0) + stats.get('drop_n8n', {}).get('b', 0))}</b><br>
                 <i class='bi bi-diagram-3'></i> Consolidation : <b>{stats.get('promoted_clusters', 0)}</b> vecteurs promus<br>
             </div>
         </div>
@@ -1364,7 +1366,7 @@ def run_nightly_maintenance_cycle():
             <div class='mb-2 pb-1 border-bottom border-secondary'>
                 <b class='text-danger'><i class='bi bi-exclamation-triangle-fill'></i> CYCLE MAINTENANCE GLOBAL (ÉCHEC)</b>
             </div>
-            <div class='text-danger'>{{str(e)}}</div>
+            <div class='text-danger'>{str(e)}</div>
         </div>
         """
     
@@ -1916,7 +1918,7 @@ def update_maint():
     c["purge_orphaned_users"] = 'purge_orphaned_users' in request.form
 
     ok = save_maint_config(c)
-    setup_lifecycle_scheduler()
+    update_system_schedules()
     if ok:
         flash('Cycle de vie et Mémoire mis à jour.', 'success')
     else:
