@@ -50,6 +50,6 @@ Le décodage Base64 DOIT se faire dans votre script. En effet, l'IA ne reçoit J
 4. CANAUX BIDIRECTIONNELS TEMPS-RÉEL (UI <-> BACKEND SANDBOX)
 -------------------------------------------------------------
 L'architecture native embarque un Pipe Bidirectionnel asynchrone fonctionnant par polling de fichiers (Bind Mount).
-- Flux Remontant : `echo_monitor.display()` met à jour l'UI *pendant l'exécution* (ex: barres de progression, logs live).
-- Flux Descendant (Multiplexé) : L'UI communique avec votre script (via iframe isolée) en émettant `window.parent.postMessage({ echoUIPayload: { window_id: "votre_id", payload: { x: 10 } } }, "*");`. Relisez ces données en boucle depuis Python/Node avec `get_ui_payload("votre_id")`.
-- Kill Autonome : `window.parent.postMessage({ echoSignal: 'abort' }, "*");` tuera de force votre propre script.
+- Flux Remontant (Upsert) : `echo_monitor.display(html, window_id="mon_id")` met à jour l'UI *pendant l'exécution*. IMPORTANT : L'utilisation du même `window_id` écrase et remplace la fenêtre existante au lieu d'en créer une nouvelle. Idéal pour animer des graphiques ou des barres de progression !
+- Flux Descendant (Multiplexé) : L'UI peut communiquer avec votre script (via iframe isolée) en émettant `window.parent.postMessage({ echoUIPayload: { window_id: "mon_id", payload: { x: 10 } } }, "*");`. Relisez ces données en boucle (ex: via `while True:` et `time.sleep()`) depuis Python/Node avec `get_ui_payload("mon_id")`.
+- Kill Autonome & Superviseur : N'implémentez PAS de bouton "Annuler" ou de logique de fermeture complexe. L'infrastructure ECHO injecte un Heartbeat invisible dans votre interface. Si l'utilisateur ferme votre fenêtre flottante via la croix native, le Superviseur détectera la mort du composant et tuera automatiquement et instantanément votre script en arrière-plan. Codez simplement votre boucle de traitement (`while True:`) sans vous soucier des fuites mémoire ni vérifier `is_window_closed()`.

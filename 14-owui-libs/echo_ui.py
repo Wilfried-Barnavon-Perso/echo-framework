@@ -1383,6 +1383,11 @@ return new Promise(function(resolve) {{
               if (event.data && event.data.echoSignal === 'abort') {
                   window._echoUIPayloads['_echo_signal'] = 'abort';
               }
+              if (event.data && event.data.echoPing) {
+                  const wid = event.data.echoPing;
+                  if (!window._echoUIPayloads['_pings']) window._echoUIPayloads['_pings'] = {};
+                  window._echoUIPayloads['_pings'][wid] = Date.now();
+              }
           });
       }
       window._echoGetAggregatedPayload = () => window._echoUIPayloads;
@@ -1419,7 +1424,12 @@ return new Promise(function(resolve) {{
               const iframe = document.createElement('iframe');
               iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
               iframe.style.cssText = 'width:100%; height:100%; border:none; display:block; flex:1;';
-              iframe.srcdoc = htmlContent;
+              const heartbeat = `<script>
+                  setInterval(function(){
+                      window.parent.postMessage({ echoPing: '${window_id}' }, '*');
+                  }, 1000);
+              </script>`;
+              iframe.srcdoc = heartbeat + htmlContent;
               body.appendChild(iframe);
               if (existingResizer) body.appendChild(existingResizer);
           }

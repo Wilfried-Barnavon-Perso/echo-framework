@@ -16,7 +16,8 @@ Fichier monolithique exposant une API Flask très légère.
 
 ### ECHO Sandbox Monitor (`echo_monitor`)
 - **Sémantique** : La librairie native `echo_monitor` permet au modèle de transmettre des interfaces HTML/JS complexes (Data Islands) vers Open WebUI.
-- **Canaux Bidirectionnels Temps-Réel** : Contrairement aux anciennes versions, l'Agent peut lire dynamiquement (en boucle) les payloads émis par l'UI via `get_ui_payload()` grâce au multiplexage frontal (`postMessage`).
+- **Canaux Bidirectionnels Temps-Réel** : L'Agent peut lire dynamiquement (en boucle) les payloads émis par l'UI via `get_ui_payload()` grâce au multiplexage frontal (`postMessage`).
+- **Supervisor Pattern & JS Heartbeat** : L'infrastructure injecte dynamiquement un *Pacemaker JS* dans les interfaces générées. Le composant maître (`code_executor_tool`) superpose une logique de Timeout d'amorçage (Boot) et de mort (Ping). Si l'utilisateur ferme la croix d'une fenêtre, le ping s'arrête, et le Superviseur exécute un Kill brutal de la sandbox (PID) via la route `/kill`, évitant toute fuite CPU sans exiger de logique `abort` côté LLM.
 - **Multiplexage** : Elle exploite le fichier `/sandbox/.echo_monitor.jsonl` en mode "append" (Multiplexage) pour gérer un fenêtrage multiple simultané (paramètre `window_id`).
 
 ### `Dockerfile` & `requirements.txt`

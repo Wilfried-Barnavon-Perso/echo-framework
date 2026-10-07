@@ -1,11 +1,12 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 7.9
+version: 7.10
 description: Composant système interne : ECHO Code Executor (Python & Node.js).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.10: Implémentation du Supervisor Pattern & JS Heartbeat (fermeture/crash automatique).
 # 7.9: Implémentation du Bidi Polling asynchrone (Temps Réel UI<->Sandbox) et outil kill_sandbox_execution.
 # 7.8: Injection dynamique de la constante ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS au worker pour l'anti-OOM.
 # 7.7: Implémentation du canal passe-plat descendant asynchrone via `fetch_ui_payload` (UI -> Sandbox) sans impact LLM.
@@ -129,6 +130,13 @@ class Tools:
             run_id = str(uuid.uuid4())
             abort_event = asyncio.Event()
             
+            supervisor = {
+                "first_seen": {},
+                "last_ping_values": {},
+                "boot_timeout": 3.0,
+                "ping_timeout": 2.5
+            }
+            
             async def bidi_polling():
                 offset = 0
                 start_t = asyncio.get_event_loop().time()
@@ -146,6 +154,29 @@ class Tools:
                                         task_audit["status"] = "aborted_by_ui"
                                         abort_event.set()
                                         break
+                                    
+                                    pings = ui_data.get("_pings", {})
+                                    now = asyncio.get_event_loop().time()
+                                    if supervisor["first_seen"]:
+                                        alive_windows = 0
+                                        for s_wid, first_t in supervisor["first_seen"].items():
+                                            current_ping = pings.get(s_wid)
+                                            if current_ping is None:
+                                                if now - first_t <= supervisor["boot_timeout"]:
+                                                    alive_windows += 1
+                                            else:
+                                                last_val, last_time = supervisor["last_ping_values"].get(s_wid, (0, now))
+                                                if current_ping > last_val:
+                                                    supervisor["last_ping_values"][s_wid] = (current_ping, now)
+                                                    alive_windows += 1
+                                                else:
+                                                    if now - last_time <= supervisor["ping_timeout"]:
+                                                        alive_windows += 1
+                                        if alive_windows == 0:
+                                            task_audit["status"] = "all_windows_closed_or_crashed"
+                                            abort_event.set()
+                                            break
+                                            
                                     await pclient.post(f"{sandbox_base}/update_payload", json={"user_id": uid, "chat_id": cid, "run_id": run_id, "ui_payload": ui_data}, timeout=2.0)
                                     task_audit["payloads_pushed"] += 1
                             except asyncio.CancelledError:
@@ -161,6 +192,10 @@ class Tools:
                                     offset = pdata.get("offset", offset)
                                     payloads_list = pdata.get("payloads", [])
                                     for meta in payloads_list:
+                                        wid = str(meta.get("window_id", "default"))
+                                        if wid not in supervisor["first_seen"]:
+                                            supervisor["first_seen"][wid] = asyncio.get_event_loop().time()
+                                            
                                         args = ", ".join(json.dumps(str(meta.get(k, d))) for k, d in (
                                             ("window_id", "default"), ("title", "Monitor"),
                                             ("width", "100%"), ("height", "400px")
