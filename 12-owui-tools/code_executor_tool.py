@@ -1,11 +1,12 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 7.7
+version: 7.8
 description: Composant système interne : ECHO Code Executor (Python & Node.js).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.8: Injection dynamique de la constante ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS au worker pour l'anti-OOM.
 # 7.7: Implémentation du canal passe-plat descendant asynchrone via `fetch_ui_payload` (UI -> Sandbox) sans impact LLM.
 # 7.6: Encapsulation du code JS (ECHO Monitor) en IIFE asynchrone pour isolation (correction return global via eval).
 # 7.5: Fix Monitor - Injection de EchoUI.get_floating_monitor_js() (fonction absente côté navigateur), sérialisation JSON des paramètres JS.
@@ -15,6 +16,7 @@ description: Composant système interne : ECHO Code Executor (Python & Node.js).
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
 from echo_constants import ECHO_CODING_WORKER_URL, ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT, ECHO_MAX_CODE_EXECUTION_TIMEOUT
+from echo_constants import ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS
 from echo_ui import EchoUI
 from echo_events import EchoEvents
 from echo_core import wrap_tool_output
@@ -100,7 +102,8 @@ class Tools:
                         "ui_payload": ui_payload_data,
                         "user_id": __user__.get("id", "system"),
                         "chat_id": __metadata__.get("chat_id"),
-                        "timeout": actual_timeout
+                        "timeout": actual_timeout,
+                        "max_output_length": ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS
                     }
                 )
 

@@ -57,6 +57,9 @@ ECHO_BASE_DATA_DIR = "/app/backend/data"
 # Fixé à 100 pour couvrir largement les usages simultanés sans saturer la RAM.
 ECHO_TOOLS_CACHE_MAX_SIZE = 100
 
+# 131 Ko (~32K tokens) : Limite anti-OOM, utilisé par api_client et injecté dynamiquement au worker_api
+ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS = 131072
+
 # HIÉRARCHIE ECHO SOUVERAINE (Standardisé)
 ECHO_USERS_ROOT = f"{ECHO_BASE_DATA_DIR}/users"
 ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"

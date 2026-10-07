@@ -1,10 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 3.5 (Passe-Plat Descendant)
+VERSION : 3.6 (Anti-OOM Dynamique)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-10-06
+DATE MAJ : 2026-10-07
 
+CHANGELOG 3.6 :
+- Baisse de la troncature Anti-OOM (via paramètre dynamique max_output_length ou 131Ko) pour protéger le contexte LLM.
 CHANGELOG 3.5 :
 - Implémentation du Passe-Plat multiplexé (Frontend vers Sandbox) avec double purge de sécurité du fichier .echo_ui_payload.json
 CHANGELOG 3.4 :
@@ -71,7 +73,7 @@ logging.getLogger("werkzeug").addFilter(RateLimitHealthCheckFilter())
 
 app = Flask(__name__)
 
-def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout_sec, ui_payload):
+def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout_sec, ui_payload, max_output_length):
     try:
         if not sandbox_dir:
             result_queue.put({'status': 'critical_error', 'error': 'Espace d\'exécution non défini.'})
@@ -239,13 +241,13 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
                 timeout=timeout_sec
             )
             
-            # Troncature Anti-OOM (Max 1 Mo)
-            result['output'] = proc.stdout[:1024 * 1024]
-            if len(proc.stdout) > 1024 * 1024:
-                result['output'] += "\n[Avertissement ECHO : Sortie tronquée à 1 Mo]"
+            # Troncature Anti-OOM (Dynamique)
+            result['output'] = proc.stdout[:max_output_length]
+            if len(proc.stdout) > max_output_length:
+                result['output'] += f"\n[Avertissement ECHO : Sortie console tronquée à 131Ko. Privilégier echo_monitor.display() pour les payloads massifs]."
                 
             if proc.stderr:
-                result['error'] = proc.stderr[:1024 * 1024]
+                result['error'] = proc.stderr[:max_output_length]
                 result['status'] = 'error'
             elif proc.returncode != 0:
                 result['error'] = result.get('error', '') + f"\nProcess exited with code {proc.returncode}"
@@ -254,7 +256,7 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
         except subprocess.TimeoutExpired as e:
             result['status'] = 'error'
             result['error'] = f"Timeout ({e.timeout}s) dépassé."
-            if e.stdout: result['output'] = e.stdout.decode()[:1024 * 1024]
+            if e.stdout: result['output'] = e.stdout.decode()[:max_output_length]
             
         # 2. LECTURE & PURGE POST-RUN ECHO Monitor
         if monitor_file and os.path.exists(monitor_file):
@@ -288,6 +290,7 @@ def execute_code():
     dependencies = data.get('dependencies', [])
     ui_payload = data.get('ui_payload', None)
     timeout = data.get('timeout', 30)
+    max_output_length = data.get('max_output_length', 131072)
     
     user_id = data.get('user_id', 'system')
     chat_id = data.get('chat_id')
@@ -308,7 +311,7 @@ def execute_code():
 
     # Création d'un processus OS distinct
     q_result = multiprocessing.Queue()
-    p = multiprocessing.Process(target=run_isolated_process, args=(file_path, dependencies, q_result, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout, ui_payload))
+    p = multiprocessing.Process(target=run_isolated_process, args=(file_path, dependencies, q_result, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout, ui_payload, max_output_length))
     p.start()
     
     try:
