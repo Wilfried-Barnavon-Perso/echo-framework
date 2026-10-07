@@ -14,6 +14,7 @@ description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 # 2.24: Améliorations de formatage PEP8 (espacements, indentations, ifs sur ligne unique).
 # 2.23: Correction (HTTP 400) : Remplacement d'une valeur par défaut mutable.
 # 2.21: Renommage search_session_context -> search_sessions_context.
+# 2.22: Focale Sémantique (certainty_level) et déduplication floue sur search_sessions_context.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -472,10 +473,12 @@ class Tools:
 
     async def search_sessions_context(
         self,
+        certainty_level: str,
         query: Optional[str] = None,
         source_id: str = "",
         global_search: bool = False,
-        limit: int = 20,
+        limit: int = 32,
+        sort_by_time: bool = False,
         start_date: str = "",
         end_date: str = "",
         __user__: Optional[dict] = None,
@@ -488,12 +491,18 @@ class Tools:
         Mode sémantique (query défini) : Extraction de fragments textuels complets.
         Mode index (query omis) : Cartographie des sources indexées (aperçu 60 chars).
 
+        :param certainty_level: Obligatoire. Niveau de certitude cosinus attendu ("BROAD", "STANDARD", "STRICT", "EXACT").
+               - BROAD : Tolérance maximale (exploration, concepts vagues).
+               - STANDARD : Équilibre pertinence/bruit.
+               - STRICT : Correspondance sémantique forte (factuel).
+               - EXACT : Correspondance quasi-littérale.
         :param query: Optionnel. Concept ciblé. Omettre pour cartographier l'index.
         :param source_id: Optionnel. UUID de la source pour filtrage strict.
         :param global_search: Optionnel. Booléen. Défaut: False (restreint à la session active).
                               Définir sur True pour étendre la recherche à l'intégralité de l'historique inter-sessions.
                               Déclencheur d'activation : référence explicite de l'utilisateur à des données antérieures ("hier", "précédemment", "autre session").
-        :param limit: Optionnel. Nombre maximum de résultats. Défaut: 20.
+        :param limit: Optionnel. Nombre maximum de fragments uniques. Défaut: 32.
+        :param sort_by_time: Optionnel. Si True, force le tri chronologique (historique). Si False (défaut), trie par pertinence (score).
         :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
         :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
         """
@@ -504,6 +513,14 @@ class Tools:
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
         scope = "globale" if global_search else "locale"
+
+        certainty_map = {
+            "BROAD": (0.40, 1.0),
+            "STANDARD": (0.55, 1.0),
+            "STRICT": (0.70, 1.0),
+            "EXACT": (0.85, 1.0)
+        }
+        c_min, c_max = certainty_map.get(certainty_level.upper(), (0.55, 1.0))
 
         try:
             from echo_constants import COLLECTION_SESSION_RAG
@@ -532,8 +549,8 @@ class Tools:
                         return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
                     search_payload = {
-                        "vector": vector, "limit": limit, "with_payload": True,
-                        "score_threshold": self.valves.SCORE_THRESHOLD,
+                        "vector": vector, "limit": limit * 2, "with_payload": True,
+                        "score_threshold": c_min,
                         "filter": {
                             "must": must_filters
                         }
@@ -550,19 +567,42 @@ class Tools:
 
                     results = resp.json().get("result", [])
 
-                    # Tri chronologique inverse (le plus récent en premier)
-                    results.sort(key=lambda x: x["payload"].get("timestamp", 0), reverse=True)
+                    if sort_by_time:
+                        results.sort(key=lambda x: x["payload"].get("timestamp", 0), reverse=True)
+                    else:
+                        results.sort(key=lambda x: x["score"], reverse=True)
 
                     if not results:
                         return wrap_tool_output(text="Aucune information trouvée.", status={"status": "success", "results": []}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-                    md = f"### 📖 Extraits RAG trouvés ({scope})\n\n"
+                    import difflib
+                    seen_texts = []
+                    md = f"### 📖 Extraits RAG trouvés ({scope} | Certitude: {certainty_level})\n\n"
+                    count = 0
+                    
                     for r in results:
-                        if r["score"] < self.valves.SCORE_THRESHOLD:
+                        if count >= limit:
+                            break
+                        score = r.get("score", 0.0)
+                        if score < c_min or score > c_max:
                             continue
+                            
                         p = r["payload"]
+                        text_snippet = p.get('text', '')
+                        
+                        is_duplicate = False
+                        for seen in seen_texts:
+                            if difflib.SequenceMatcher(None, text_snippet, seen).ratio() > 0.85:
+                                is_duplicate = True
+                                break
+                        
+                        if is_duplicate:
+                            continue
+                            
+                        seen_texts.append(text_snippet)
                         src = p.get('source_id', 'Inconnu')
-                        md += f"**Source `{src}` (Score: {r['score']:.2f})**\n> {p.get('text', '')}\n\n"
+                        md += f"**Source `{src}` (Score: {score:.2f})**\n> {text_snippet}\n\n"
+                        count += 1
 
                     await events.status("🧠 Recherche RAG terminée.", done=True)
                     return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
