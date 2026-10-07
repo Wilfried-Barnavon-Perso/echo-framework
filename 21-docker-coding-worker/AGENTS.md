@@ -11,11 +11,12 @@ Ce dossier contient le code source de l'**API d'Exécution Multi-Langages Sécur
 ### `worker_api.py`
 Fichier monolithique exposant une API Flask très légère.
 - **Sémantique** : Le serveur écoute sur le port **5000** et expose l'endpoint HTTP POST `/execute`.
-- **Exécution Isolée** : Il utilise `subprocess` pour exécuter le payload envoyé, gérant nativement le langage (Python ou Node.js) et les timeouts. Il implémente désormais la double purge de sécurité (Pre-Run / Post-Run) du fichier d'interaction `.echo_monitor.jsonl` pour garantir l'isolation stricte entre deux exécutions de sandbox.
+- **Exécution Isolée** : Il utilise `subprocess` pour exécuter le payload envoyé, gérant nativement le langage (Python ou Node.js) et les timeouts. Il implémente désormais la double purge de sécurité (Pre-Run / Post-Run) des fichiers d'interaction (`.echo_monitor.jsonl` et `.echo_ui_payload.json`) pour garantir l'isolation stricte entre deux exécutions de sandbox. Gère également la troncature dynamique des sorties (anti-OOM LLM) via le paramètre `max_output_length`.
 - **Sécurité (Sandbox)** : L'isolation repose sur le fait que ce processus tourne dans son propre conteneur Docker, avec une restriction additionnelle via `bwrap` (Bubblewrap). Il intègre désormais le montage en lecture seule (`--ro-bind-try`) du `global_files_dir` (Vault Utilisateur) pour permettre la résolution transparente des liens symboliques (symlinks) depuis le sous-système Codex, ainsi que le montage des dossiers `/echo_libs_sandbox` (librairie maison) et `/sandbox-agent-readme.txt` (documentation) avec résolution dynamique du `PYTHONPATH` et `NODE_PATH`.
 
 ### ECHO Sandbox Monitor (`echo_monitor`)
 - **Sémantique** : La librairie native `echo_monitor` (disponible en Python et Node.js) permet au modèle de transmettre des interfaces HTML/JS complexes (Data Islands) vers Open WebUI.
+- **Canal Descendant (Passe-Plat)** : Intègre désormais les fonctions `get_ui_payload(window_id)` et `is_window_closed(window_id)` permettant de rapatrier et d'exploiter dynamiquement des données massives (Base64, JSON) issues du navigateur de l'utilisateur de manière multiplexée.
 - **Multiplexage** : Elle exploite le fichier `/sandbox/.echo_monitor.jsonl` en mode "append" (Multiplexage) pour gérer un fenêtrage multiple simultané (paramètre `window_id`), remplaçant l'ancienne approche monolithique.
 
 ### `Dockerfile` & `requirements.txt`
