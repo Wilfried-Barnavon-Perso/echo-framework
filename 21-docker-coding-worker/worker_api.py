@@ -1,10 +1,13 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 3.6 (Anti-OOM Dynamique)
+VERSION : 3.7 (Hotfix NameError & Flake8)
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-10-07
 
+CHANGELOG 3.7 :
+- Hotfix NameError : Déplacement de la purge ECHO Monitor et création du fichier payload avant bwrap.
+- Fix Flake8 : Suppression du préfixe f-string inutile.
 CHANGELOG 3.6 :
 - Baisse de la troncature Anti-OOM (via paramètre dynamique max_output_length ou 131Ko) pour protéger le contexte LLM.
 CHANGELOG 3.5 :
@@ -154,6 +157,31 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
                 subprocess.run(npm_cmd, capture_output=True, text=True)
 
         # =========================================================================
+        # 1. PURGE PRE-RUN ECHO Monitor & PAYLOAD
+        # =========================================================================
+        import uuid
+        monitor_file = None
+        ui_payload_file = None
+        ui_payload_filename = None
+        if sandbox_dir:
+            monitor_file = os.path.join(sandbox_dir, ".echo_monitor.jsonl")
+            if os.path.exists(monitor_file):
+                try:
+                    os.remove(monitor_file)
+                except Exception:
+                    pass
+
+            # Pre-Run UI Payload Injection sécurisée
+            if ui_payload:
+                ui_payload_filename = f".echo_ui_{uuid.uuid4().hex}.json"
+                ui_payload_file = os.path.join(sandbox_dir, ui_payload_filename)
+                try:
+                    with open(ui_payload_file, 'w', encoding='utf-8') as f:
+                        f.write(orjson.dumps(ui_payload).decode('utf-8'))
+                except Exception:
+                    pass
+
+        # =========================================================================
         # ISOLATION ABSOLUE BUBBLEWRAP
         # =========================================================================
         bwrap_cmd = [
@@ -210,28 +238,6 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
                 node_paths.insert(0, "/.deps/node/node_modules")
             bwrap_cmd.extend(["--setenv", "NODE_PATH", ":".join(node_paths)])
             bwrap_cmd.extend(["node", f"/sandbox/{file_path}"])
-        # 1. PURGE PRE-RUN ECHO Monitor
-        import uuid
-        monitor_file = None
-        ui_payload_file = None
-        ui_payload_filename = None
-        if sandbox_dir:
-            monitor_file = os.path.join(sandbox_dir, ".echo_monitor.jsonl")
-            if os.path.exists(monitor_file):
-                try:
-                    os.remove(monitor_file)
-                except Exception:
-                    pass
-
-            # Pre-Run UI Payload Injection sécurisée
-            if ui_payload:
-                ui_payload_filename = f".echo_ui_{uuid.uuid4().hex}.json"
-                ui_payload_file = os.path.join(sandbox_dir, ui_payload_filename)
-                try:
-                    with open(ui_payload_file, 'w', encoding='utf-8') as f:
-                        f.write(orjson.dumps(ui_payload).decode('utf-8'))
-                except Exception:
-                    pass
 
         try:
             proc = subprocess.run(
@@ -244,7 +250,7 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
             # Troncature Anti-OOM (Dynamique)
             result['output'] = proc.stdout[:max_output_length]
             if len(proc.stdout) > max_output_length:
-                result['output'] += f"\n[Avertissement ECHO : Sortie console tronquée à 131Ko. Privilégier echo_monitor.display() pour les payloads massifs]."
+                result['output'] += "\n[Avertissement ECHO : Sortie console tronquée à 131Ko. Privilégier echo_monitor.display() pour les payloads massifs]."
                 
             if proc.stderr:
                 result['error'] = proc.stderr[:max_output_length]
