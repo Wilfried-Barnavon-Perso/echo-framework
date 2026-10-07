@@ -1372,6 +1372,21 @@ return new Promise(function(resolve) {{
         allow-same-origin est volontairement exclu : une iframe srcdoc hériterait sinon de l'origine
         d'Open WebUI (accès localStorage/token de session depuis le code de la Sandbox)."""
         return EchoUI.get_floating_window_class_js() + """
+      window._echoUIPayloads = window._echoUIPayloads || {};
+      if (!window._echoUIAggregatorBound) {
+          window._echoUIAggregatorBound = true;
+          window.addEventListener('message', (event) => {
+              if (event.data && event.data.echoUIPayload) {
+                  const { window_id, payload } = event.data.echoUIPayload;
+                  window._echoUIPayloads[window_id] = payload;
+              }
+              if (event.data && event.data.echoSignal === 'abort') {
+                  window._echoUIPayloads['_echo_signal'] = 'abort';
+              }
+          });
+      }
+      window._echoGetAggregatedPayload = () => window._echoUIPayloads;
+
       window.echoCreateFloatingMonitor = (window_id, title, htmlContent, width, height) => {
           const hudId = 'echo-sandbox-monitor-hud-' + window_id;
           
