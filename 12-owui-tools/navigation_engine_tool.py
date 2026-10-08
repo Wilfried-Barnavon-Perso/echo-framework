@@ -115,7 +115,7 @@ class Tools:
         BROWSER_MODE: Literal["mobile", "desktop"] = Field(default="desktop", description="Mode de navigation")
         SHOW_BROWSER_HUD: bool = Field(default=True, description="Afficher le moniteur de navigation (HUD)")
         USE_MULTIMODAL_VISION: bool = Field(default=True, description="Fournir les captures d'écran à l'agent")
-        VISION_GRID_STEP: int = Field(default=48, description="Pas de la grille de vision en pixels (ex: 48, 50, 100).")
+        VISION_GRID_STEP: int = Field(default=48, description="Pas de la grille de vision en pixels. La grille sera bicolore (Magenta/Cyan) avec des crénelures au quart du pas.")
         PRUNE_CONTENT_THRESHOLD: int = Field(default=1000, description="Seuil d'élagage (en caractères) des contenus lourds (A11y, HTML) obsolètes.")
 
     def __init__(self):
@@ -190,6 +190,7 @@ class Tools:
             "9. SYNTHÈSE : La synthèse finale DOIT être une phrase complète. Il est STRICTEMENT INTERDIT de renvoyer uniquement un nombre ou un mot isolé.\n"
             "10. SATURATION : Si une balise <system_alert> de saturation apparaît, le Modèle DOIT clore ce tour en écrivant un texte libre commençant par [SATURATION_CONTEXTE] suivi d'une synthèse détaillée des textes lus et de ses avancées. Il NE DOIT PAS appeler d'outils ce tour-ci.\n"
             "11. MÉMOIRE ET PRISE DE NOTES : Le système détruit ou tronque les données brutes massives des pages précédentes pour économiser la mémoire. Avant de changer de page ou d'action, le Modèle DOIT rédiger dans sa réponse texte les informations clés et un court résumé, car son propre texte servira de guide exclusif pour ses prochains tours.\n"
+            "12. GRILLE VISUELLE (VISION GRID) : Si une image avec grille t'est fournie, l'espacement principal est de 48px (alternant Magenta/Cyan). Des crénelures (ticks) sont présentes tous les 12px sur les lignes pour diviser chaque case en 4 (0, 25%, 50%, 75%). Utilise ces crénelures pour déduire tes coordonnées X/Y avec une précision absolue, sans deviner.\n"
             "</rules>"
         )
 

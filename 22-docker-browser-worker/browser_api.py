@@ -1,11 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.28 (Spoofing strict Webdriver/PluginArray)
+VERSION : 9.29 (Spoofing strict Webdriver/PluginArray)
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-10-08
 
-CHANGELOG 9.28 :
+CHANGELOG 9.29 :
+- FEAT: Vision Grid Optimisée (Bicolore Magenta/Cyan, crénelures de quarts) pour supprimer le biais d'interpolation IA.
 - FIX: Iframe DOM Map Offset bug (Calibration exacte via locator("html").bounding_box() pour gérer les iframes avec scale, bordures et paddings, annulant l'offset visuel).
 
 CHANGELOG 9.27 :
@@ -223,19 +224,44 @@ async (p) => {
         ctx.fillText(text, x, y);
     };
     ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(0, 255, 255, 0.45)';
+    const colors = ['rgba(255, 0, 255, 0.55)', 'rgba(0, 255, 255, 0.55)']; // Magenta et Cyan
+    const textColors = ['#ff00ff', '#00ffff']; // Magenta et Cyan
+    const tickStep = p.step / 4;
+
     for (let x = firstX; x <= xEnd; x += p.step) {
+        let idx = Math.abs(Math.floor(x / p.step));
+        ctx.strokeStyle = colors[idx % 2];
         ctx.beginPath(); ctx.moveTo(toX(x), 0); ctx.lineTo(toX(x), p.h); ctx.stroke();
+        
+        ctx.beginPath();
+        for (let y = firstY; y <= yEnd; y += tickStep) {
+            if (Math.abs(y % p.step) < 0.1) continue;
+            ctx.moveTo(toX(x), toY(y));
+            ctx.lineTo(toX(x) + 6, toY(y));
+        }
+        ctx.stroke();
     }
     for (let y = firstY; y <= yEnd; y += p.step) {
+        let idx = Math.abs(Math.floor(y / p.step));
+        ctx.strokeStyle = colors[idx % 2];
         ctx.beginPath(); ctx.moveTo(0, toY(y)); ctx.lineTo(p.w, toY(y)); ctx.stroke();
+        
+        ctx.beginPath();
+        for (let x = firstX; x <= xEnd; x += tickStep) {
+            if (Math.abs(x % p.step) < 0.1) continue;
+            ctx.moveTo(toX(x), toY(y));
+            ctx.lineTo(toX(x), toY(y) + 6);
+        }
+        ctx.stroke();
     }
     const REPEAT = 300;
     for (let x = firstX; x <= xEnd; x += p.step) {
-        for (let ly = 2; ly < p.h; ly += REPEAT) label('x' + x, toX(x) + 3, ly);
+        let idx = Math.abs(Math.floor(x / p.step));
+        for (let ly = 2; ly < p.h; ly += REPEAT) label('x' + x, toX(x) + 3, ly, textColors[idx % 2]);
     }
     for (let y = firstY; y <= yEnd; y += p.step) {
-        for (let lx = 2 + REPEAT / 2; lx < p.w; lx += REPEAT) label('y' + y, lx, toY(y) + 2);
+        let idx = Math.abs(Math.floor(y / p.step));
+        for (let lx = 2 + REPEAT / 2; lx < p.w; lx += REPEAT) label('y' + y, lx, toY(y) + 2, textColors[idx % 2]);
     }
     if (p.center) {
         const cx = toX(p.center[0]), cy = toY(p.center[1]);
